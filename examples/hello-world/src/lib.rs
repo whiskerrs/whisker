@@ -42,11 +42,12 @@ fn app() -> Element {
     }
 }
 
-/// Visible to the host so it can drive ticks from a Swift `Timer` while
-/// the proper event-driven path is still being unblocked. Once tap
-/// events flow this can go away.
+/// Swift-side tap handler shim. Until Lynx's per-element event delivery
+/// is unblocked, the iOS host attaches a UITapGestureRecognizer to the
+/// whole `LyraView` and calls this on every tap. It increments the same
+/// signal the `on_tap:` closure inside `app()` would have driven.
 #[no_mangle]
-pub extern "C" fn hello_world_tick_signal() {
+pub extern "C" fn hello_world_handle_tap() {
     counter().update(|n| n + 1);
 }
 

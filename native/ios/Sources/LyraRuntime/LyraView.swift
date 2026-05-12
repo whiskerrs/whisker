@@ -3,16 +3,20 @@ import Lynx
 import LyraBridge
 import LyraMobile
 
-// Demo-only tick increment exported by `examples/hello-world`. Will go
-// away once tap-driven events flow on iOS.
-@_silgen_name("hello_world_tick_signal")
-private func hello_world_tick_signal()
+// Demo-only tap shim exported by `examples/hello-world`. Until Lynx's
+// per-element event listener delivery is unblocked, the host attaches a
+// UITapGestureRecognizer to the whole LyraView and dispatches taps
+// through this single FFI entry point. Once tap events flow inside Lynx
+// the Rust side's `on_tap:` closure handles it directly and this shim
+// goes away.
+@_silgen_name("hello_world_handle_tap")
+private func hello_world_handle_tap()
 
 /// Hosts the Lyra runtime on iOS.
 ///
 /// **Phase 4–8**: Swift only attaches the engine and hands it to the
 /// Rust runtime via `lyra_mobile_app_main`. The element tree, the diff
-/// engine, and (eventually) reactive state all live in Rust.
+/// engine, and reactive state all live in Rust.
 public final class LyraView: LynxView {
 
     private var engine: OpaquePointer?
@@ -29,20 +33,21 @@ public final class LyraView: LynxView {
             return
         }
         self.engine = engine
-        // Hand control to Rust. The runtime dispatches to the Lynx TASM
-        // thread internally, so this returns immediately.
         lyra_mobile_app_main(UnsafeMutableRawPointer(engine))
 
-        // Tick once per second. Until tap-driven events flow on iOS the
-        // demo crate exposes `hello_world_tick_signal` to bump its
-        // counter externally; Swift calls it before each `lyra_mobile_tick`
-        // so the signal is dirty by the time `Runtime::frame` runs.
-        tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
+        // Tick at ~30Hz so tap-driven signal updates feel immediate. The
+        // tick is cheap when nothing's dirty (it short-circuits inside
+        // `Runtime::frame`).
+        tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) {
             [weak self] _ in
             guard let engine = self?.engine else { return }
-            hello_world_tick_signal()
             lyra_mobile_tick(UnsafeMutableRawPointer(engine))
         }
+
+        // Global tap gesture as a stand-in for per-element Lynx events.
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        tap.cancelsTouchesInView = false
+        addGestureRecognizer(tap)
     }
 
     public required init?(coder: NSCoder) {
@@ -54,6 +59,10 @@ public final class LyraView: LynxView {
         if let engine = engine {
             lyra_bridge_engine_release(engine)
         }
+    }
+
+    @objc private func handleTap() {
+        hello_world_handle_tap()
     }
 
     public override func onEnterForeground() {
