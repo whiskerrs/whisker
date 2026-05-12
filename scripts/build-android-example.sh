@@ -91,6 +91,11 @@ fi
 
 # --- 3. Make sure Lynx AARs are unpacked for the C++ bridge link step ---
 if [ ! -d "$ROOT/target/lynx-android-unpacked/jni/$ABI" ]; then
+    if [ ! -d "$ROOT/target/lynx-android" ] || [ -z "$(ls -A "$ROOT/target/lynx-android"/*.aar 2>/dev/null)" ]; then
+        echo "error: no Lynx AARs in $ROOT/target/lynx-android/" >&2
+        echo "       run scripts/build-lynx-android.sh first (see patches/lynx-android/README.md)" >&2
+        exit 1
+    fi
     echo "==> Unpacking Lynx AARs"
     "$ROOT/scripts/unpack-lynx-android.sh"
 fi
