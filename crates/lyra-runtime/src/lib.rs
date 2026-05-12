@@ -23,7 +23,7 @@ pub mod signal;
 pub mod runtime;
 
 pub mod prelude {
-    pub use crate::build::{page, raw_text, text, view};
+    pub use crate::build::{image, page, raw_text, scroll_view, text, view};
     pub use crate::element::{Element, ElementTag};
     pub use crate::renderer::Renderer;
     pub use crate::signal::{use_signal, Signal};

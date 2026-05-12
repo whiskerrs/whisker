@@ -30,15 +30,28 @@ mod rsx;
 /// fn app() -> Element { /* user body */ }
 ///
 /// #[no_mangle]
-/// pub extern "C" fn lyra_mobile_app_main(engine: *mut std::ffi::c_void) {
-///     ::lyra::__main_runtime::run(engine, app);
+/// pub extern "C" fn lyra_mobile_app_main(
+///     engine: *mut std::ffi::c_void,
+///     request_frame: Option<extern "C" fn(*mut std::ffi::c_void)>,
+///     request_frame_data: *mut std::ffi::c_void,
+/// ) {
+///     ::lyra::__main_runtime::run(engine, request_frame, request_frame_data, app);
 /// }
 ///
 /// #[no_mangle]
-/// pub extern "C" fn lyra_mobile_tick(engine: *mut std::ffi::c_void) {
-///     ::lyra::__main_runtime::tick(engine);
+/// pub extern "C" fn lyra_mobile_tick(engine: *mut std::ffi::c_void) -> bool {
+///     ::lyra::__main_runtime::tick(engine)
 /// }
 /// ```
+///
+/// `request_frame` is the host's "wake up the render loop" callback. The
+/// runtime invokes it when a signal update marks the tree dirty so the
+/// host can unpause its `CADisplayLink` (or equivalent) to schedule the
+/// next tick. Pass `None` to opt into an unconditional 60Hz loop.
+///
+/// `lyra_mobile_tick` returns `true` when the runtime is idle after the
+/// tick; the host can pause its render loop until the next
+/// `request_frame` fires.
 #[proc_macro_attribute]
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
@@ -48,13 +61,19 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #func
 
         #[no_mangle]
-        pub extern "C" fn lyra_mobile_app_main(engine: *mut ::std::ffi::c_void) {
-            ::lyra::__main_runtime::run(engine, #fn_name);
+        pub extern "C" fn lyra_mobile_app_main(
+            engine: *mut ::std::ffi::c_void,
+            request_frame: ::std::option::Option<
+                extern "C" fn(*mut ::std::ffi::c_void),
+            >,
+            request_frame_data: *mut ::std::ffi::c_void,
+        ) {
+            ::lyra::__main_runtime::run(engine, request_frame, request_frame_data, #fn_name);
         }
 
         #[no_mangle]
-        pub extern "C" fn lyra_mobile_tick(engine: *mut ::std::ffi::c_void) {
-            ::lyra::__main_runtime::tick(engine);
+        pub extern "C" fn lyra_mobile_tick(engine: *mut ::std::ffi::c_void) -> bool {
+            ::lyra::__main_runtime::tick(engine)
         }
     };
 

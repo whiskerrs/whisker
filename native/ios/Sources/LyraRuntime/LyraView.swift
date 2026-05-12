@@ -3,24 +3,26 @@ import Lynx
 import LyraBridge
 import LyraMobile
 
-// Demo-only tap shim exported by `examples/hello-world`. Until Lynx's
-// per-element event listener delivery is unblocked, the host attaches a
-// UITapGestureRecognizer to the whole LyraView and dispatches taps
-// through this single FFI entry point. Once tap events flow inside Lynx
-// the Rust side's `on_tap:` closure handles it directly and this shim
-// goes away.
-@_silgen_name("hello_world_handle_tap")
-private func hello_world_handle_tap()
-
 /// Hosts the Lyra runtime on iOS.
 ///
-/// **Phase 4–8**: Swift only attaches the engine and hands it to the
-/// Rust runtime via `lyra_mobile_app_main`. The element tree, the diff
-/// engine, and reactive state all live in Rust.
+/// Swift only attaches the engine and hands it to the Rust runtime via
+/// `lyra_mobile_app_main`. The element tree, the diff engine, and reactive
+/// state all live in Rust.
+///
+/// Render loop:
+///   - A `CADisplayLink` is the heartbeat. It starts paused.
+///   - Rust calls back into `requestFrameTrampoline` whenever a signal
+///     update marks the tree dirty, which unpauses the link.
+///   - On each vsync tick we call `lyra_mobile_tick`. The Rust runtime
+///     returns `true` once it has nothing further to render; we pause
+///     the link until the next signal update.
+///
+/// So idle apps consume zero per-frame wakeups while interactive updates
+/// land on the next display refresh with no `Timer` jitter.
 public final class LyraView: LynxView {
 
     private var engine: OpaquePointer?
-    private var tickTimer: Timer?
+    private var displayLink: CADisplayLink?
 
     public override init(frame: CGRect) {
         super.init(builderBlock: { builder in
@@ -33,21 +35,18 @@ public final class LyraView: LynxView {
             return
         }
         self.engine = engine
-        lyra_mobile_app_main(UnsafeMutableRawPointer(engine))
 
-        // Tick at ~30Hz so tap-driven signal updates feel immediate. The
-        // tick is cheap when nothing's dirty (it short-circuits inside
-        // `Runtime::frame`).
-        tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) {
-            [weak self] _ in
-            guard let engine = self?.engine else { return }
-            lyra_mobile_tick(UnsafeMutableRawPointer(engine))
-        }
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        lyra_mobile_app_main(
+            UnsafeMutableRawPointer(engine),
+            LyraView.requestFrameTrampoline,
+            selfPtr
+        )
 
-        // Global tap gesture as a stand-in for per-element Lynx events.
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
-        tap.cancelsTouchesInView = false
-        addGestureRecognizer(tap)
+        let link = CADisplayLink(target: self, selector: #selector(handleDisplayLink(_:)))
+        link.isPaused = true
+        link.add(to: .main, forMode: .common)
+        self.displayLink = link
     }
 
     public required init?(coder: NSCoder) {
@@ -55,14 +54,38 @@ public final class LyraView: LynxView {
     }
 
     deinit {
-        tickTimer?.invalidate()
+        displayLink?.invalidate()
         if let engine = engine {
             lyra_bridge_engine_release(engine)
         }
     }
 
-    @objc private func handleTap() {
-        hello_world_handle_tap()
+    @objc private func handleDisplayLink(_ link: CADisplayLink) {
+        guard let engine = engine else { return }
+        let idle = lyra_mobile_tick(UnsafeMutableRawPointer(engine))
+        if idle {
+            link.isPaused = true
+        }
+    }
+
+    /// C-ABI entry point Rust calls into when a signal marks the tree
+    /// dirty. `userData` is the LyraView pointer set up in `init`.
+    private static let requestFrameTrampoline:
+        @convention(c) (UnsafeMutableRawPointer?) -> Void = { userData in
+        guard let userData = userData else { return }
+        let view = Unmanaged<LyraView>.fromOpaque(userData).takeUnretainedValue()
+        // The display link must be touched from the main run loop. In our
+        // current iOS setup the runtime/Lynx-TASM thread already *is* the
+        // main thread, so this is the synchronous fast path; the
+        // `DispatchQueue.main.async` branch is a safety net for future
+        // multi-threaded TASM setups.
+        if Thread.isMainThread {
+            view.displayLink?.isPaused = false
+        } else {
+            DispatchQueue.main.async {
+                view.displayLink?.isPaused = false
+            }
+        }
     }
 
     public override func onEnterForeground() {

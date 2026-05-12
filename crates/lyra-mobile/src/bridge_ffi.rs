@@ -23,6 +23,7 @@ pub enum LyraElementTag {
     Text = 3,
     RawText = 4,
     Image = 5,
+    ScrollView = 6,
 }
 
 pub type LyraTasmCallback = extern "C" fn(user_data: *mut c_void);

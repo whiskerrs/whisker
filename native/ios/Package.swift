@@ -54,6 +54,14 @@ let package = Package(
             sources: ["src"],
             publicHeadersPath: "include",
             cxxSettings: [
+                // Lynx xcframeworks are built with NDEBUG=1 (Release mode).
+                // `RefCountedThreadSafeBase` adds two extra `bool` members
+                // in debug builds (adoption_required_, destruction_started_),
+                // which would shift every offset in subclasses like
+                // `Element` — so the bridge must match. Without this, our
+                // EventTarget* points into the wrong half of the object
+                // and AddEventListener crashes on a bogus vtable.
+                .define("NDEBUG"),
                 // Lynx C++ headers reference each other via tree-relative
                 // paths (e.g. `#include "core/shell/lynx_engine.h"`). The
                 // headers are staged under target/lynx-ios/sources/ by

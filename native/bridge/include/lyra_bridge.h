@@ -34,11 +34,12 @@ typedef struct LyraElement LyraElement;
 // Tag type passed to create functions that need a tag string. Numeric
 // IDs map to HTML-style tag names ("view", "text", "image", ...).
 typedef enum {
-    LyraElementTagPage     = 1,
-    LyraElementTagView     = 2,
-    LyraElementTagText     = 3,
-    LyraElementTagRawText  = 4,
-    LyraElementTagImage    = 5,
+    LyraElementTagPage       = 1,
+    LyraElementTagView       = 2,
+    LyraElementTagText       = 3,
+    LyraElementTagRawText    = 4,
+    LyraElementTagImage      = 5,
+    LyraElementTagScrollView = 6,
 } LyraElementTag;
 
 // ---- Engine lifecycle -----------------------------------------------------

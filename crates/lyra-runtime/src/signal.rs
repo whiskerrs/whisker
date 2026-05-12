@@ -11,6 +11,7 @@
 
 use std::any::Any;
 use std::cell::RefCell;
+use std::ffi::c_void;
 use std::fmt;
 use std::rc::Rc;
 
@@ -22,10 +23,23 @@ use std::rc::Rc;
 /// thread) so `Rc<RefCell<…>>` is fine; we don't need `Send`.
 type Arena = RefCell<Vec<Box<dyn Any>>>;
 
+/// "Wake the host" callback. The host (iOS / Android) registers one of
+/// these during init; whenever a signal marks the runtime dirty, the
+/// runtime fires this callback so the host can resume its render loop.
+///
+/// Stored as a function pointer + opaque user_data instead of a boxed
+/// closure so we can hand the C ABI a stable trampoline.
+#[derive(Copy, Clone)]
+struct RequestFrameCb {
+    func: extern "C" fn(*mut c_void),
+    user_data: *mut c_void,
+}
+
 thread_local! {
     static ARENA: Arena = RefCell::new(Vec::new());
     static DIRTY: RefCell<bool> = const { RefCell::new(false) };
     static TRACKING: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    static REQUEST_FRAME: RefCell<Option<RequestFrameCb>> = const { RefCell::new(None) };
 }
 
 /// (Test-only) clear the arena and dirty flag. Production code never
@@ -35,6 +49,33 @@ pub fn __reset_runtime() {
     ARENA.with(|a| a.borrow_mut().clear());
     DIRTY.with(|d| *d.borrow_mut() = false);
     TRACKING.with(|t| t.borrow_mut().clear());
+    REQUEST_FRAME.with(|r| *r.borrow_mut() = None);
+}
+
+/// Register the host-side "wake up please" callback. Pass `None` to clear.
+///
+/// Must be called from the same thread that runs `take_dirty` / signal
+/// updates — i.e. the runtime thread (Lynx TASM thread, which is the iOS
+/// main thread in our current setup).
+#[doc(hidden)]
+pub fn set_request_frame_callback(
+    func: Option<extern "C" fn(*mut c_void)>,
+    user_data: *mut c_void,
+) {
+    REQUEST_FRAME.with(|r| {
+        *r.borrow_mut() = func.map(|func| RequestFrameCb { func, user_data });
+    });
+}
+
+/// Marks the runtime dirty and fires the host wake-up callback. Centralised
+/// so `Signal::set` and any future setter (computed signal write, batched
+/// transaction, …) share the same wake-up logic.
+fn mark_dirty_and_wake() {
+    DIRTY.with(|d| *d.borrow_mut() = true);
+    let cb = REQUEST_FRAME.with(|r| *r.borrow());
+    if let Some(cb) = cb {
+        (cb.func)(cb.user_data);
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -96,8 +137,8 @@ impl<T: 'static + Clone> Signal<T> {
         })
     }
 
-    /// Replace the value. Marks the runtime dirty so the next tick
-    /// re-renders.
+    /// Replace the value. Marks the runtime dirty (and pings the host's
+    /// "wake up" callback) so the next tick re-renders.
     pub fn set(self, value: T) {
         ARENA.with(|a| {
             let mut arena = a.borrow_mut();
@@ -106,7 +147,7 @@ impl<T: 'static + Clone> Signal<T> {
                 .downcast_mut::<T>()
                 .expect("signal type mismatch") = value;
         });
-        DIRTY.with(|d| *d.borrow_mut() = true);
+        mark_dirty_and_wake();
     }
 }
 

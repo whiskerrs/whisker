@@ -52,6 +52,10 @@ pub fn image() -> Element {
     Element::new(ElementTag::Image)
 }
 
+pub fn scroll_view() -> Element {
+    Element::new(ElementTag::ScrollView)
+}
+
 // ---- Element builder methods --------------------------------------------
 
 impl Element {

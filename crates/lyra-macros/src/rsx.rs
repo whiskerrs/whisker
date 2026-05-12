@@ -178,7 +178,7 @@ fn constructor_for(tag: &Ident) -> TokenStream2 {
     // Whitelist the well-known constructors. Custom tags fall through to a
     // generic `Element::new(ElementTag::View)` pending custom-tag support.
     match name.as_str() {
-        "page" | "view" | "text" | "raw_text" | "image" => {
+        "page" | "view" | "text" | "raw_text" | "image" | "scroll_view" => {
             quote! { ::lyra::build::#fn_name() }
         }
         _ => {

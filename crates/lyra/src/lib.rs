@@ -38,7 +38,7 @@ pub mod __main_runtime {
 
 /// Common imports for Lyra app code.
 pub mod prelude {
-    pub use crate::build::{page, raw_text, text, text_with, view};
+    pub use crate::build::{image, page, raw_text, scroll_view, text, text_with, view};
     pub use crate::{Element, ElementTag, Signal};
     pub use crate::{main, rsx, use_signal};
 }

@@ -44,6 +44,7 @@ fn map_tag(tag: ElementTag) -> LyraElementTag {
         ElementTag::Text => LyraElementTag::Text,
         ElementTag::RawText => LyraElementTag::RawText,
         ElementTag::Image => LyraElementTag::Image,
+        ElementTag::ScrollView => LyraElementTag::ScrollView,
     }
 }
 

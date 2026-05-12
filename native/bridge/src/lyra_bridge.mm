@@ -9,11 +9,18 @@
 #import <Lynx/LynxTemplateRender.h>
 #import <Lynx/LynxTemplateRender+Internal.h>
 #import <Lynx/LynxEngineProxy.h>
+#import <Lynx/LynxUIOwner.h>
+#import <Lynx/LynxEventHandler.h>
+#import <Lynx/LynxEventEmitter.h>
+#import <Lynx/LynxEvent.h>
 #import <objc/runtime.h>
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+#include <utility>
 
 #include "core/shell/lynx_shell.h"
 #include "core/shell/lynx_engine.h"
@@ -26,8 +33,8 @@
 #include "core/renderer/dom/fiber/raw_text_element.h"
 #include "core/renderer/dom/fiber/view_element.h"
 #include "core/renderer/dom/fiber/image_element.h"
-#include "core/event/event.h"
-#include "core/event/event_listener.h"
+#include "core/renderer/dom/fiber/scroll_element.h"
+#include "core/renderer/utils/base/tasm_constants.h"
 #include "core/public/pipeline_option.h"
 #include "core/template_bundle/template_codec/binary_decoder/page_config.h"
 #include "base/include/value/base_string.h"
@@ -62,30 +69,7 @@ struct LyraEngine {
     lynx::tasm::ElementManager* manager = nullptr;
     fml::RefPtr<lynx::tasm::PageElement> root_page;
     bool fiber_arch_initialized = false;
-};
-
-// Thin EventListener subclass that forwards Invoke into a C callback.
-// Lives entirely in the bridge translation unit so we don't depend on
-// any Lepus context at construction time (unlike ClosureEventListener,
-// whose ctor's default lepus::Value argument was causing crashes).
-class LyraNativeEventListener : public lynx::event::EventListener {
- public:
-    LyraNativeEventListener(LyraEventCallback cb, void* user_data)
-        : EventListener(EventListener::Type::kClosureEventListener),
-          callback_(cb),
-          user_data_(user_data) {}
-
-    void Invoke(fml::RefPtr<lynx::event::Event> /*event*/) override {
-        if (callback_) callback_(user_data_);
-    }
-
-    bool Matches(EventListener* other) override {
-        return this == other;
-    }
-
- private:
-    LyraEventCallback callback_;
-    void* user_data_;
+    bool event_reporter_installed = false;
 };
 
 // LyraElement wraps a strong reference to a FiberElement. The C ABI hands
@@ -95,9 +79,90 @@ struct LyraElement {
     fml::RefPtr<lynx::tasm::FiberElement> ref;
 };
 
+// Native event listener registry. Lynx dispatches physical touches through
+// `Element::SetEventHandler(EventHandler*)` consumed by `TouchEventHandler`
+// (whose ultimate target is the JS runtime), not through the EventTarget /
+// AddEventListener path — so we can't just hang a `lynx::event::EventListener`
+// off a FiberElement and expect taps to fire it.
+//
+// Instead we hook the iOS-side `LynxEventEmitter`'s `eventReporter` block,
+// which is invoked once per LynxTouchEvent *before* the event is forwarded
+// to the engine. The block looks up (element_sign, event_name) in this
+// registry and fires the C callback if present, returning YES to consume
+// the event so it isn't redundantly forwarded to a (non-existent) JS app.
+namespace {
+
+struct EventKey {
+    int32_t element_sign;
+    std::string event_name;
+    bool operator==(const EventKey& other) const {
+        return element_sign == other.element_sign && event_name == other.event_name;
+    }
+};
+struct EventKeyHash {
+    size_t operator()(const EventKey& k) const noexcept {
+        return std::hash<int32_t>{}(k.element_sign) ^
+               (std::hash<std::string>{}(k.event_name) << 1);
+    }
+};
+struct EventCallback {
+    LyraEventCallback callback;
+    void* user_data;
+};
+
+std::mutex& RegistryMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<EventKey, EventCallback, EventKeyHash>& Registry() {
+    static std::unordered_map<EventKey, EventCallback, EventKeyHash> r;
+    return r;
+}
+
+}  // namespace
+
 // ----------------------------------------------------------------------------
 // Engine lifecycle
 // ----------------------------------------------------------------------------
+
+// Install our hook on the LynxEventEmitter so physical taps land in our
+// native callback registry instead of being dropped on the way to a
+// non-existent JS handler. Safe to call repeatedly — only installs once
+// per engine.
+static void InstallEventReporterIfNeeded(LyraEngine* engine, LynxView* view) {
+    if (engine == nullptr || engine->event_reporter_installed) return;
+    LynxTemplateRender* render = [view templateRender];
+    if (render == nil) return;
+    LynxUIOwner* owner = [render uiOwner];
+    if (owner == nil) return;
+    // The Internal category on LynxUIContext (declared in LynxUIOwner.h)
+    // exposes the LynxEventHandler / LynxEventEmitter pair we need.
+    LynxEventHandler* handler = owner.uiContext.eventHandler;
+    if (handler == nil) return;
+    LynxEventEmitter* emitter = handler.eventEmitter;
+    if (emitter == nil) return;
+    [emitter setEventReporterBlock:^BOOL(LynxEvent* event) {
+        if (event == nil || event.eventName == nil) return NO;
+        EventCallback hit{nullptr, nullptr};
+        bool found = false;
+        {
+            std::lock_guard<std::mutex> lock(RegistryMutex());
+            EventKey key{(int32_t)event.targetSign,
+                         std::string([event.eventName UTF8String])};
+            auto it = Registry().find(key);
+            if (it != Registry().end()) {
+                hit = it->second;
+                found = true;
+            }
+        }
+        if (found && hit.callback) {
+            hit.callback(hit.user_data);
+            return YES;
+        }
+        return NO;
+    }];
+    engine->event_reporter_installed = true;
+}
 
 extern "C" LyraEngine* lyra_bridge_engine_attach(void* lynx_view_ptr) {
     if (lynx_view_ptr == nullptr) return nullptr;
@@ -109,6 +174,7 @@ extern "C" LyraEngine* lyra_bridge_engine_attach(void* lynx_view_ptr) {
 
     auto* engine = new LyraEngine();
     engine->shell = shell;
+    InstallEventReporterIfNeeded(engine, view);
     return engine;
 }
 
@@ -129,16 +195,10 @@ extern "C" bool lyra_bridge_dispatch(LyraEngine* engine,
                                      LyraTasmCallback callback,
                                      void* user_data) {
     if (engine == nullptr || engine->shell == nullptr || callback == nullptr) {
-        NSLog(@"[LyraBridge] dispatch: bad args (engine=%p shell=%p cb=%p)",
-              engine, engine ? (void*)engine->shell : nullptr, (void*)callback);
         return false;
     }
-    NSLog(@"[LyraBridge] dispatch -> RunOnTasmThread cb=%p ud=%p",
-          (void*)callback, user_data);
     LyraEngine* engine_capture = engine;
     engine->shell->RunOnTasmThread([engine_capture, callback, user_data]() {
-        NSLog(@"[LyraBridge] RunOnTasmThread closure fired cb=%p ud=%p",
-              (void*)callback, user_data);
         // Lazy-initialize the fiber architecture + element manager on
         // first dispatch. The TemplateAssembler / ElementManager only
         // exist once the shell is fully constructed, which the shell
@@ -184,6 +244,9 @@ fml::RefPtr<lynx::tasm::FiberElement> CreateForTag(
         case LyraElementTagImage:
             // TODO(phase 4+): expose CreateFiberImage with a proper tag.
             return manager->CreateFiberView();
+        case LyraElementTagScrollView:
+            return manager->CreateFiberScrollView(
+                base::String(lynx::tasm::kElementScrollViewTag));
     }
     return nullptr;
 }
@@ -200,6 +263,19 @@ extern "C" LyraElement* lyra_bridge_create_element(LyraEngine* engine,
 
 extern "C" void lyra_bridge_release_element(LyraElement* element) {
     if (element == nullptr) return;
+    // Drop any registered native event callbacks for this element so its
+    // sign can't accidentally collide with a future element's id.
+    if (element->ref) {
+        int32_t sign = element->ref->impl_id();
+        std::lock_guard<std::mutex> lock(RegistryMutex());
+        for (auto it = Registry().begin(); it != Registry().end(); ) {
+            if (it->first.element_sign == sign) {
+                it = Registry().erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
     delete element;
 }
 
@@ -248,24 +324,9 @@ extern "C" void lyra_bridge_set_event_listener(LyraElement* element,
         callback == nullptr) {
         return;
     }
-    // KNOWN LIMITATION: Lynx's `EventTarget::event_listener_map_` is
-    // null-initialized when an element is first created via Element PAPI
-    // and there's no public path to initialize it from outside. Calling
-    // `AddEventListener` segfaults (the impl unconditionally
-    // dereferences the map). The trail to fix this likely runs through
-    // SetJSEventHandler / SetLepusEventHandler, both of which require a
-    // live Lepus context that we deliberately don't ship. Until we
-    // either fork Lynx or upstream a `EnsureEventListenerMap()` helper,
-    // event listener registration is a no-op.
-    //
-    // The Renderer trait keeps its `set_event_listener` method so the
-    // app-side API stays stable; tap-driven counter demos rely on the
-    // timer-driven re-render path until this is unblocked.
-    NSLog(@"[LyraBridge] set_event_listener(%s) — TODO: Lynx event_listener_map_ "
-          @"is null on freshly-created Fiber elements; native event delivery "
-          @"is currently a no-op. callback=%p", event_name, (void*)callback);
-    (void)element;
-    (void)user_data;
+    EventKey key{element->ref->impl_id(), std::string(event_name)};
+    std::lock_guard<std::mutex> lock(RegistryMutex());
+    Registry()[key] = EventCallback{callback, user_data};
 }
 
 // ----------------------------------------------------------------------------
