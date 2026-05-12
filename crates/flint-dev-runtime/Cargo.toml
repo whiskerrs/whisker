@@ -1,0 +1,12 @@
+[package]
+name = "flint-dev-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Development-only runtime: WebSocket client, hot reload (Tier 1 + Tier 2)."
+
+[dependencies]
+flint-runtime = { workspace = true }

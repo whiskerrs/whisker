@@ -1,0 +1,11 @@
+[package]
+name = "hello-world"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+flint = { path = "../../crates/flint" }

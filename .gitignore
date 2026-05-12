@@ -1,0 +1,38 @@
+# Rust
+target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CNG generated outputs (anchored — never matches native/android, native/ios)
+/ios/
+/android/
+/.flint/
+/examples/**/ios/
+/examples/**/android/
+/examples/**/.flint/
+
+# Native build artifacts
+native/android/.gradle/
+native/android/build/
+native/android/local.properties
+native/android/.idea/
+native/android/**/build/
+native/ios/build/
+native/ios/Pods/
+native/ios/Podfile.lock
+native/ios/.build/
+native/ios/*.xcodeproj/xcuserdata/
+native/ios/*.xcworkspace/xcuserdata/
+native/bridge/build/
+
+# Examples (separate workspaces)
+examples/**/target/
+examples/**/Cargo.lock
