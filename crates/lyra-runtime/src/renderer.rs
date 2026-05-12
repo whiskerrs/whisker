@@ -33,6 +33,18 @@ pub trait Renderer {
         child: Self::ElementHandle,
     );
 
+    /// Bind a native event listener to an element. Implementations are
+    /// expected to wire whatever underlying gesture / callback machinery
+    /// the platform uses; the closure is invoked when the named event
+    /// fires. Setting a listener for the same `(handle, event_name)` pair
+    /// twice replaces the prior listener.
+    fn set_event_listener(
+        &mut self,
+        handle: Self::ElementHandle,
+        event_name: &str,
+        callback: Box<dyn Fn() + 'static>,
+    );
+
     /// Make this element the engine's root (must be a Page).
     fn set_root(&mut self, page: Self::ElementHandle);
 
@@ -54,6 +66,7 @@ pub enum MockOp {
     SetInlineStyles { handle: u32, css: String },
     AppendChild { parent: u32, child: u32 },
     RemoveChild { parent: u32, child: u32 },
+    SetEventListener { handle: u32, event_name: String },
     SetRoot { page: u32 },
     Flush,
 }
@@ -62,10 +75,23 @@ pub enum MockOp {
 ///
 /// Hands out monotonically increasing `u32` handles starting at 1 (so 0 is
 /// always invalid and easy to spot in test failures).
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct MockRenderer {
     next_handle: u32,
     ops: Vec<MockOp>,
+    /// Event listeners keyed by `(handle, event_name)` so tests can
+    /// invoke them to simulate platform events.
+    listeners: std::collections::HashMap<(u32, String), Box<dyn Fn() + 'static>>,
+}
+
+impl std::fmt::Debug for MockRenderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockRenderer")
+            .field("next_handle", &self.next_handle)
+            .field("ops", &self.ops)
+            .field("listeners", &format!("<{} entries>", self.listeners.len()))
+            .finish()
+    }
 }
 
 impl MockRenderer {
@@ -73,6 +99,7 @@ impl MockRenderer {
         Self {
             next_handle: 0,
             ops: Vec::new(),
+            listeners: std::collections::HashMap::new(),
         }
     }
 
@@ -82,6 +109,17 @@ impl MockRenderer {
 
     pub fn into_ops(self) -> Vec<MockOp> {
         self.ops
+    }
+
+    /// (Tests only) Synchronously invoke the listener registered for
+    /// `(handle, event_name)`, simulating a platform event.
+    pub fn fire_event(&self, handle: u32, event_name: &str) -> bool {
+        if let Some(cb) = self.listeners.get(&(handle, event_name.to_owned())) {
+            cb();
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -128,6 +166,19 @@ impl Renderer for MockRenderer {
         child: Self::ElementHandle,
     ) {
         self.ops.push(MockOp::RemoveChild { parent, child });
+    }
+
+    fn set_event_listener(
+        &mut self,
+        handle: Self::ElementHandle,
+        event_name: &str,
+        callback: Box<dyn Fn() + 'static>,
+    ) {
+        self.ops.push(MockOp::SetEventListener {
+            handle,
+            event_name: event_name.to_owned(),
+        });
+        self.listeners.insert((handle, event_name.to_owned()), callback);
     }
 
     fn set_root(&mut self, page: Self::ElementHandle) {
@@ -194,5 +245,34 @@ mod tests {
         let ops = r.into_ops();
         assert!(matches!(ops[3], MockOp::RemoveChild { parent: 1, child: 2 }));
         assert!(matches!(ops[4], MockOp::Release { handle: 2 }));
+    }
+
+    #[test]
+    fn set_event_listener_records_op_and_stores_callback() {
+        let mut r = MockRenderer::new();
+        let v = r.create_element(ElementTag::View);
+        let counter = std::sync::Arc::new(std::sync::Mutex::new(0));
+        let counter_clone = counter.clone();
+        r.set_event_listener(
+            v,
+            "tap",
+            Box::new(move || {
+                *counter_clone.lock().unwrap() += 1;
+            }),
+        );
+        let listener_op = r.ops().iter().find(|op| {
+            matches!(op, MockOp::SetEventListener { handle, event_name }
+                if *handle == v && event_name == "tap")
+        });
+        assert!(listener_op.is_some());
+
+        // fire_event invokes the stored closure.
+        assert!(r.fire_event(v, "tap"));
+        r.fire_event(v, "tap");
+        assert_eq!(*counter.lock().unwrap(), 2);
+
+        // Wrong handle / wrong event name returns false.
+        assert!(!r.fire_event(999, "tap"));
+        assert!(!r.fire_event(v, "long-press"));
     }
 }

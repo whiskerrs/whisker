@@ -86,6 +86,21 @@ void lyra_bridge_append_child(LyraElement* parent, LyraElement* child);
 // Remove `child` from `parent`. No-op if not present.
 void lyra_bridge_remove_child(LyraElement* parent, LyraElement* child);
 
+// Register a native event listener on `element`. When the event fires,
+// `callback(user_data)` is invoked from the Lynx TASM thread. The bridge
+// also wires the corresponding gesture/handler so the platform UI layer
+// (UIView / UIButton) actually delivers the event.
+//
+// `user_data` is passed back to `callback` opaquely. Caller is responsible
+// for keeping it alive as long as the listener is registered. Calling
+// this function more than once for the same `name` replaces the prior
+// listener.
+typedef void (*LyraEventCallback)(void* user_data);
+void lyra_bridge_set_event_listener(LyraElement* element,
+                                    const char* event_name,
+                                    LyraEventCallback callback,
+                                    void* user_data);
+
 // ---- Pipeline (TASM thread only) -----------------------------------------
 
 // Make `page` the engine's root element. Must be a Page element produced

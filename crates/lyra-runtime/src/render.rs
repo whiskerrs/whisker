@@ -69,6 +69,10 @@ pub fn build_subtree<R: Renderer>(
     for attr in &node.attrs {
         renderer.set_attribute(handle, &attr.name, &attr.value);
     }
+    for event in &node.events {
+        let cb = event.callback.clone();
+        renderer.set_event_listener(handle, &event.name, Box::new(move || cb()));
+    }
 
     let mut children = Vec::with_capacity(node.children.len());
     for child in &node.children {

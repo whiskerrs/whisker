@@ -28,13 +28,19 @@ public final class LyraView: LynxView {
         // thread internally, so this returns immediately.
         lyra_mobile_app_main(UnsafeMutableRawPointer(engine))
 
-        // Drive one frame per second (Phase A0 demo). Once event-driven
-        // updates land we can fall back to vsync-pacing.
+        // Tick once per second for the demo so the counter increments
+        // are easy to read. When tap-driven events flow (A2/A3 follow-up)
+        // this can step up to vsync pacing.
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
             [weak self] _ in
-            guard let engine = self?.engine else { return }
+            NSLog("[LyraView] timer fired")
+            guard let engine = self?.engine else {
+                NSLog("[LyraView] timer: engine is nil")
+                return
+            }
             lyra_mobile_tick(UnsafeMutableRawPointer(engine))
         }
+        NSLog("[LyraView] tickTimer scheduled: \(String(describing: tickTimer))")
     }
 
     public required init?(coder: NSCoder) {

@@ -6,11 +6,17 @@
 use crate::bridge_ffi::{self as ffi, LyraElement, LyraElementTag, LyraEngine};
 use lyra_runtime::element::ElementTag;
 use lyra_runtime::renderer::Renderer;
-use std::ffi::CString;
+use std::ffi::{c_void, CString};
 use std::ptr::NonNull;
 
 pub struct BridgeRenderer {
     engine: NonNull<LyraEngine>,
+    /// Owned closures behind every event listener we registered with
+    /// the bridge. Boxed so we can hand the bridge a stable raw pointer
+    /// in `user_data`. Vec because each registration leaks one entry —
+    /// fine for the demo lifetime; a future iteration could reclaim
+    /// when listeners are replaced.
+    listeners: Vec<Box<Box<dyn Fn() + 'static>>>,
 }
 
 impl BridgeRenderer {
@@ -20,7 +26,10 @@ impl BridgeRenderer {
     /// only used inside a `lyra_bridge_dispatch` callback for the same
     /// engine.
     pub unsafe fn from_raw(engine: *mut LyraEngine) -> Option<Self> {
-        NonNull::new(engine).map(|engine| Self { engine })
+        NonNull::new(engine).map(|engine| Self {
+            engine,
+            listeners: Vec::new(),
+        })
     }
 
     fn engine_ptr(&self) -> *mut LyraEngine {
@@ -84,6 +93,32 @@ impl Renderer for BridgeRenderer {
         unsafe { ffi::lyra_bridge_remove_child(parent.0, child.0) }
     }
 
+    fn set_event_listener(
+        &mut self,
+        handle: Self::ElementHandle,
+        event_name: &str,
+        callback: Box<dyn Fn() + 'static>,
+    ) {
+        let name_c = match CString::new(event_name) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        // Double-box: outer Box owned by `self.listeners`, inner is the
+        // Box<dyn Fn> passed in. Convert to raw pointer for the C ABI.
+        let outer: Box<Box<dyn Fn() + 'static>> = Box::new(callback);
+        let raw = Box::as_ref(&outer) as *const Box<dyn Fn() + 'static>
+            as *mut c_void;
+        self.listeners.push(outer);
+        unsafe {
+            ffi::lyra_bridge_set_event_listener(
+                handle.0,
+                name_c.as_ptr(),
+                rust_event_trampoline,
+                raw,
+            )
+        }
+    }
+
     fn set_root(&mut self, page: Self::ElementHandle) {
         unsafe { ffi::lyra_bridge_set_root(self.engine_ptr(), page.0) }
     }
@@ -91,4 +126,15 @@ impl Renderer for BridgeRenderer {
     fn flush(&mut self) {
         unsafe { ffi::lyra_bridge_flush(self.engine_ptr()) }
     }
+}
+
+extern "C" fn rust_event_trampoline(user_data: *mut c_void) {
+    if user_data.is_null() {
+        return;
+    }
+    // SAFETY: `user_data` was set up in `set_event_listener` to point at
+    // a `Box<dyn Fn() + 'static>` whose owning Box lives in
+    // `BridgeRenderer::listeners`. We borrow it without taking ownership.
+    let cb = unsafe { &*(user_data as *const Box<dyn Fn() + 'static>) };
+    cb();
 }

@@ -26,6 +26,8 @@
 #include "core/renderer/dom/fiber/raw_text_element.h"
 #include "core/renderer/dom/fiber/view_element.h"
 #include "core/renderer/dom/fiber/image_element.h"
+#include "core/event/event.h"
+#include "core/event/event_listener.h"
 #include "core/public/pipeline_option.h"
 #include "core/template_bundle/template_codec/binary_decoder/page_config.h"
 #include "base/include/value/base_string.h"
@@ -60,6 +62,30 @@ struct LyraEngine {
     lynx::tasm::ElementManager* manager = nullptr;
     fml::RefPtr<lynx::tasm::PageElement> root_page;
     bool fiber_arch_initialized = false;
+};
+
+// Thin EventListener subclass that forwards Invoke into a C callback.
+// Lives entirely in the bridge translation unit so we don't depend on
+// any Lepus context at construction time (unlike ClosureEventListener,
+// whose ctor's default lepus::Value argument was causing crashes).
+class LyraNativeEventListener : public lynx::event::EventListener {
+ public:
+    LyraNativeEventListener(LyraEventCallback cb, void* user_data)
+        : EventListener(EventListener::Type::kClosureEventListener),
+          callback_(cb),
+          user_data_(user_data) {}
+
+    void Invoke(fml::RefPtr<lynx::event::Event> /*event*/) override {
+        if (callback_) callback_(user_data_);
+    }
+
+    bool Matches(EventListener* other) override {
+        return this == other;
+    }
+
+ private:
+    LyraEventCallback callback_;
+    void* user_data_;
 };
 
 // LyraElement wraps a strong reference to a FiberElement. The C ABI hands
@@ -103,10 +129,16 @@ extern "C" bool lyra_bridge_dispatch(LyraEngine* engine,
                                      LyraTasmCallback callback,
                                      void* user_data) {
     if (engine == nullptr || engine->shell == nullptr || callback == nullptr) {
+        NSLog(@"[LyraBridge] dispatch: bad args (engine=%p shell=%p cb=%p)",
+              engine, engine ? (void*)engine->shell : nullptr, (void*)callback);
         return false;
     }
+    NSLog(@"[LyraBridge] dispatch -> RunOnTasmThread cb=%p ud=%p",
+          (void*)callback, user_data);
     LyraEngine* engine_capture = engine;
     engine->shell->RunOnTasmThread([engine_capture, callback, user_data]() {
+        NSLog(@"[LyraBridge] RunOnTasmThread closure fired cb=%p ud=%p",
+              (void*)callback, user_data);
         // Lazy-initialize the fiber architecture + element manager on
         // first dispatch. The TemplateAssembler / ElementManager only
         // exist once the shell is fully constructed, which the shell
@@ -206,6 +238,34 @@ extern "C" void lyra_bridge_remove_child(LyraElement* parent,
         return;
     }
     parent->ref->RemoveNode(child->ref);
+}
+
+extern "C" void lyra_bridge_set_event_listener(LyraElement* element,
+                                               const char* event_name,
+                                               LyraEventCallback callback,
+                                               void* user_data) {
+    if (element == nullptr || !element->ref || event_name == nullptr ||
+        callback == nullptr) {
+        return;
+    }
+    // KNOWN LIMITATION: Lynx's `EventTarget::event_listener_map_` is
+    // null-initialized when an element is first created via Element PAPI
+    // and there's no public path to initialize it from outside. Calling
+    // `AddEventListener` segfaults (the impl unconditionally
+    // dereferences the map). The trail to fix this likely runs through
+    // SetJSEventHandler / SetLepusEventHandler, both of which require a
+    // live Lepus context that we deliberately don't ship. Until we
+    // either fork Lynx or upstream a `EnsureEventListenerMap()` helper,
+    // event listener registration is a no-op.
+    //
+    // The Renderer trait keeps its `set_event_listener` method so the
+    // app-side API stays stable; tap-driven counter demos rely on the
+    // timer-driven re-render path until this is unblocked.
+    NSLog(@"[LyraBridge] set_event_listener(%s) — TODO: Lynx event_listener_map_ "
+          @"is null on freshly-created Fiber elements; native event delivery "
+          @"is currently a no-op. callback=%p", event_name, (void*)callback);
+    (void)element;
+    (void)user_data;
 }
 
 // ----------------------------------------------------------------------------

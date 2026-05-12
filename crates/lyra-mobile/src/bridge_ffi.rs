@@ -53,6 +53,15 @@ extern "C" {
     pub fn lyra_bridge_append_child(parent: *mut LyraElement, child: *mut LyraElement);
     pub fn lyra_bridge_remove_child(parent: *mut LyraElement, child: *mut LyraElement);
 
+    pub fn lyra_bridge_set_event_listener(
+        element: *mut LyraElement,
+        event_name: *const c_char,
+        callback: LyraEventCallback,
+        user_data: *mut c_void,
+    );
+
     pub fn lyra_bridge_set_root(engine: *mut LyraEngine, page: *mut LyraElement);
     pub fn lyra_bridge_flush(engine: *mut LyraEngine);
 }
+
+pub type LyraEventCallback = extern "C" fn(user_data: *mut c_void);
