@@ -1,49 +1,43 @@
 import UIKit
-// import Lynx — wired up once the pod dependency is resolved.
 
-/// iOS counterpart of LyraView (Android).
+/// Hosts the Lyra runtime on iOS.
 ///
-/// Will inherit from `LynxView` once we wire up the Lynx pod. For the
-/// scaffold we leave it as a plain UIView so the Swift package compiles
-/// stand-alone.
+/// **Phase 0**: Pure UIKit placeholder that displays "Hello, Lyra" centered.
+/// No Lynx, no Rust. Validates the SPM distribution path end-to-end.
+///
+/// In later phases this will:
+/// - Inherit from `LynxView` (when Lynx binary is wired in)
+/// - Hand its underlying engine shell to the Rust runtime via FFI
+/// - Receive and forward lifecycle events
 public final class LyraView: UIView {
-
-    private var nativeHandle: Int = 0
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
-        // Once we have a real LynxView shell pointer we hand it to the Rust
-        // runtime here.
-        nativeHandle = lyra_runtime_attach_view(/* shellPtr = */ 0)
+        backgroundColor = .systemBackground
+        installPlaceholderLabel()
     }
 
     public required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
     }
 
-    deinit {
-        if nativeHandle != 0 {
-            lyra_runtime_destroy(nativeHandle)
-        }
+    private func installPlaceholderLabel() {
+        let label = UILabel()
+        label.text = "Hello, Lyra"
+        label.font = .systemFont(ofSize: 32, weight: .semibold)
+        label.textColor = .label
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
     }
 
-    public func onEnterForeground() {
-        if nativeHandle != 0 { lyra_runtime_on_enter_foreground(nativeHandle) }
-    }
+    /// Stub. Will forward foreground transitions to the Rust runtime once wired.
+    public func onEnterForeground() {}
 
-    public func onEnterBackground() {
-        if nativeHandle != 0 { lyra_runtime_on_enter_background(nativeHandle) }
-    }
+    /// Stub. Will forward background transitions to the Rust runtime once wired.
+    public func onEnterBackground() {}
 }
-
-@_silgen_name("lyra_runtime_attach_view")
-func lyra_runtime_attach_view(_ shellPtr: Int) -> Int
-
-@_silgen_name("lyra_runtime_on_enter_foreground")
-func lyra_runtime_on_enter_foreground(_ handle: Int)
-
-@_silgen_name("lyra_runtime_on_enter_background")
-func lyra_runtime_on_enter_background(_ handle: Int)
-
-@_silgen_name("lyra_runtime_destroy")
-func lyra_runtime_destroy(_ handle: Int)

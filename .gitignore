@@ -25,14 +25,18 @@ native/android/build/
 native/android/local.properties
 native/android/.idea/
 native/android/**/build/
-native/ios/build/
-native/ios/Pods/
-native/ios/Podfile.lock
 native/ios/.build/
-native/ios/*.xcodeproj/xcuserdata/
-native/ios/*.xcworkspace/xcuserdata/
+native/ios/.swiftpm/
+native/ios/*.xcodeproj/
+native/ios/*.xcworkspace/
 native/bridge/build/
 
 # Examples (separate workspaces)
 examples/**/target/
 examples/**/Cargo.lock
+
+# Generated Xcode projects (XcodeGen output)
+examples/**/*.xcodeproj/
+examples/**/*.xcworkspace/
+examples/**/Info.plist
+examples/**/.build/
