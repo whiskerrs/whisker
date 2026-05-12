@@ -3,7 +3,7 @@
 //! Once the `rsx!` macro and reactive runtime land, this will render a simple
 //! greeting on iOS and Android. For now it is a placeholder.
 
-#[flint::main]
+#[lyra::main]
 pub fn app() {
-    // rsx! { view { text { "Hello, Flint!" } } }
+    // rsx! { view { text { "Hello, Lyra!" } } }
 }

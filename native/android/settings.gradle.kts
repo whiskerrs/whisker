@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "flint-runtime-android"
-include(":flint-runtime")
+rootProject.name = "lyra-runtime-android"
+include(":lyra-runtime")

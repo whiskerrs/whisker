@@ -1,14 +1,14 @@
-# Flint
+# Lyra
 
 Cross-platform mobile UI framework for Rust, built on the [Lynx](https://github.com/lynx-family/lynx) C++ engine.
 
 > **Status**: Pre-alpha. Active development on the initial scaffold. Not usable yet.
 
-Flint lets you build native iOS and Android apps in Rust with a Dioxus-style declarative API. Under the hood, the [Lynx](https://github.com/lynx-family/lynx) engine drives platform-native widgets — no self-rendering, no JavaScript runtime.
+Lyra lets you build native iOS and Android apps in Rust with a Dioxus-style declarative API. Under the hood, the [Lynx](https://github.com/lynx-family/lynx) engine drives platform-native widgets — no self-rendering, no JavaScript runtime.
 
-## Why Flint
+## Why Lyra
 
-| | Flint | Flutter | React Native |
+| | Lyra | Flutter | React Native |
 |---|---|---|---|
 | Language | Rust | Dart | TypeScript / JavaScript |
 | Rendering | Native widgets (via Lynx) | Self-rendered (Skia/Impeller) | Native widgets |
@@ -18,21 +18,21 @@ Flint lets you build native iOS and Android apps in Rust with a Dioxus-style dec
 ## Project layout
 
 ```
-flint/
+lyra/
 ├── crates/                    Rust workspace
-│   ├── flint                  Umbrella crate (re-exports for users)
-│   ├── flint-app-config       AppConfig types used in flint.rs
-│   ├── flint-cli              `flint` / `cargo-flint` CLI binary
-│   ├── flint-codegen          CNG (Continuous Native Generation) codegen
-│   ├── flint-dev-runtime      Dev-only runtime (WebSocket, hot reload)
-│   ├── flint-ffi-lynx         FFI bindings to native/bridge
-│   ├── flint-macros           Proc macros (#[flint::main], rsx!)
-│   ├── flint-plugin           Plugin trait + PrebuildContext + typed mod APIs
-│   └── flint-runtime          Core runtime (reactive, element tree)
+│   ├── lyra                  Umbrella crate (re-exports for users)
+│   ├── lyra-app-config       AppConfig types used in lyra.rs
+│   ├── lyra-cli              `lyra` / `cargo-lyra` CLI binary
+│   ├── lyra-codegen          CNG (Continuous Native Generation) codegen
+│   ├── lyra-dev-runtime      Dev-only runtime (WebSocket, hot reload)
+│   ├── lyra-ffi-lynx         FFI bindings to native/bridge
+│   ├── lyra-macros           Proc macros (#[lyra::main], rsx!)
+│   ├── lyra-plugin           Plugin trait + PrebuildContext + typed mod APIs
+│   └── lyra-runtime          Core runtime (reactive, element tree)
 ├── native/
 │   ├── bridge/                C++ bridge to Lynx Element PAPI (C ABI)
-│   ├── android/               Kotlin runtime (FlintApplication / FlintView etc.)
-│   └── ios/                   Swift runtime (FlintAppDelegate / FlintView etc.)
+│   ├── android/               Kotlin runtime (LyraApplication / LyraView etc.)
+│   └── ios/                   Swift runtime (LyraAppDelegate / LyraView etc.)
 ├── examples/                  Sample apps
 ├── docs/                      Documentation
 └── xtask/                     Build automation (cargo xtask pattern)
@@ -46,8 +46,8 @@ Major decisions made so far:
 - **Element PAPI direct access** via custom JNI/Obj-C++ bridge — bypasses Lynx's template/JS layer.
 - **No JavaScript dependency** — possible because we drive the C++ engine directly. Initial builds may include unused PrimJS bytes; full removal is a planned follow-up via a light Lynx fork.
 - **Custom widgets in native languages** (Kotlin/Swift) bridged via uniffi.
-- **Code-based CNG** — `flint.rs` (Rust code) defines app config; plugins are Rust crates with a `pub fn flint_plugin(ctx)` function.
-- **Hybrid CLI** — `flint` (primary) and `cargo flint` (alias).
+- **Code-based CNG** — `lyra.rs` (Rust code) defines app config; plugins are Rust crates with a `pub fn lyra_plugin(ctx)` function.
+- **Hybrid CLI** — `lyra` (primary) and `cargo lyra` (alias).
 - **Hot reload** — Tier 1 (rsx delta, sub-second) + Tier 2 (dylib swap, 5–30s).
 
 See `docs/` (forthcoming) for the full design rationale.
@@ -61,8 +61,8 @@ See `docs/` (forthcoming) for the full design rationale.
 | Element PAPI JNI bridge | ⏳ |
 | Reactive runtime | ⏳ |
 | `rsx!` macro | ⏳ |
-| CNG (`flint prebuild`) | ⏳ |
-| `flint dev` (hot reload) | ⏳ |
+| CNG (`lyra prebuild`) | ⏳ |
+| `lyra dev` (hot reload) | ⏳ |
 | iOS xcframework build | ⏳ |
 | Android AAR build | ⏳ |
 

@@ -8,4 +8,4 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-flint = { path = "../../crates/flint" }
+lyra = { path = "../../crates/lyra" }

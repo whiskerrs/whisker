@@ -9,50 +9,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
-name = "flint"
+name = "lyra"
 version = "0.1.0"
 dependencies = [
- "flint-app-config",
- "flint-macros",
- "flint-runtime",
+ "lyra-app-config",
+ "lyra-macros",
+ "lyra-runtime",
 ]
 
 [[package]]
-name = "flint-app-config"
+name = "lyra-app-config"
 version = "0.1.0"
 
 [[package]]
-name = "flint-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "flint-app-config",
- "flint-codegen",
- "flint-plugin",
-]
-
-[[package]]
-name = "flint-codegen"
+name = "lyra-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "flint-app-config",
- "flint-plugin",
+ "lyra-app-config",
+ "lyra-codegen",
+ "lyra-plugin",
 ]
 
 [[package]]
-name = "flint-dev-runtime"
+name = "lyra-codegen"
 version = "0.1.0"
 dependencies = [
- "flint-runtime",
+ "anyhow",
+ "lyra-app-config",
+ "lyra-plugin",
 ]
 
 [[package]]
-name = "flint-ffi-lynx"
+name = "lyra-dev-runtime"
+version = "0.1.0"
+dependencies = [
+ "lyra-runtime",
+]
+
+[[package]]
+name = "lyra-ffi-lynx"
 version = "0.1.0"
 
 [[package]]
-name = "flint-macros"
+name = "lyra-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -61,17 +61,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "flint-plugin"
+name = "lyra-plugin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
-name = "flint-runtime"
+name = "lyra-runtime"
 version = "0.1.0"
 dependencies = [
- "flint-ffi-lynx",
+ "lyra-ffi-lynx",
  "thiserror",
 ]
 

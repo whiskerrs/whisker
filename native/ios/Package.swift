@@ -2,18 +2,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "FlintRuntime",
+    name: "LyraRuntime",
     platforms: [
         .iOS(.v13),
     ],
     products: [
-        .library(name: "FlintRuntime", targets: ["FlintRuntime"]),
+        .library(name: "LyraRuntime", targets: ["LyraRuntime"]),
     ],
     targets: [
         .target(
-            name: "FlintRuntime",
+            name: "LyraRuntime",
             dependencies: [],
-            path: "Sources/FlintRuntime"
+            path: "Sources/LyraRuntime"
         ),
     ]
 )

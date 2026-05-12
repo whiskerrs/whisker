@@ -1,4 +1,4 @@
-//! Build automation for Flint (cargo xtask pattern).
+//! Build automation for Lyra (cargo xtask pattern).
 //!
 //! Run via `cargo xtask <task>`. Use this for cross-language tasks that don't
 //! fit Cargo natively, e.g. building the C++ bridge, packaging the Android AAR,
@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
         Some(other) => anyhow::bail!("unknown xtask: {other}"),
         None => {
             println!(
-                "xtask — Flint build automation
+                "xtask — Lyra build automation
 
 Tasks:
   build-bridge      Build native/bridge (C++) via CMake

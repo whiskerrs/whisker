@@ -1,0 +1,13 @@
+[package]
+name = "lyra-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Core runtime for Lyra: reactive primitives, element tree, Lynx integration."
+
+[dependencies]
+lyra-ffi-lynx = { workspace = true }
+thiserror = { workspace = true }

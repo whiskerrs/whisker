@@ -14,10 +14,10 @@ Thumbs.db
 # CNG generated outputs (anchored — never matches native/android, native/ios)
 /ios/
 /android/
-/.flint/
+/.lyra/
 /examples/**/ios/
 /examples/**/android/
-/examples/**/.flint/
+/examples/**/.lyra/
 
 # Native build artifacts
 native/android/.gradle/

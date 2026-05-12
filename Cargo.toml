@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/flint",
-    "crates/flint-app-config",
-    "crates/flint-cli",
-    "crates/flint-codegen",
-    "crates/flint-dev-runtime",
-    "crates/flint-ffi-lynx",
-    "crates/flint-macros",
-    "crates/flint-plugin",
-    "crates/flint-runtime",
+    "crates/lyra",
+    "crates/lyra-app-config",
+    "crates/lyra-cli",
+    "crates/lyra-codegen",
+    "crates/lyra-dev-runtime",
+    "crates/lyra-ffi-lynx",
+    "crates/lyra-macros",
+    "crates/lyra-plugin",
+    "crates/lyra-runtime",
     "xtask",
 ]
 exclude = [
@@ -21,18 +21,18 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/itome/flint"
+repository = "https://github.com/itome/lyra"
 authors = ["itome <dev@itome.team>"]
 
 [workspace.dependencies]
-flint = { path = "crates/flint", version = "0.1.0" }
-flint-app-config = { path = "crates/flint-app-config", version = "0.1.0" }
-flint-codegen = { path = "crates/flint-codegen", version = "0.1.0" }
-flint-dev-runtime = { path = "crates/flint-dev-runtime", version = "0.1.0" }
-flint-ffi-lynx = { path = "crates/flint-ffi-lynx", version = "0.1.0" }
-flint-macros = { path = "crates/flint-macros", version = "0.1.0" }
-flint-plugin = { path = "crates/flint-plugin", version = "0.1.0" }
-flint-runtime = { path = "crates/flint-runtime", version = "0.1.0" }
+lyra = { path = "crates/lyra", version = "0.1.0" }
+lyra-app-config = { path = "crates/lyra-app-config", version = "0.1.0" }
+lyra-codegen = { path = "crates/lyra-codegen", version = "0.1.0" }
+lyra-dev-runtime = { path = "crates/lyra-dev-runtime", version = "0.1.0" }
+lyra-ffi-lynx = { path = "crates/lyra-ffi-lynx", version = "0.1.0" }
+lyra-macros = { path = "crates/lyra-macros", version = "0.1.0" }
+lyra-plugin = { path = "crates/lyra-plugin", version = "0.1.0" }
+lyra-runtime = { path = "crates/lyra-runtime", version = "0.1.0" }
 
 anyhow = "1"
 thiserror = "2"
