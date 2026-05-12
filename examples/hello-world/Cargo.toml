@@ -4,11 +4,18 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-# Two outputs:
+# Three outputs:
 # - `staticlib` is what the iOS xcframework wraps.
+# - `cdylib` is the Android `.so` loaded via JNI.
 # - `rlib` makes `cargo test` happy for the unit tests in src/lib.rs.
 [lib]
-crate-type = ["staticlib", "rlib"]
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 lyra = { path = "../../crates/lyra" }
+
+# Build script compiles the C++ bridge into this cdylib for Android.
+# build-dependencies are host-side, so we can't target-gate this — but
+# the build.rs itself short-circuits on non-Android targets.
+[build-dependencies]
+cc = "1"

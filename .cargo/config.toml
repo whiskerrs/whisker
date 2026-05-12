@@ -1,0 +1,13 @@
+[target.aarch64-linux-android]
+# `+lse` makes the compiler emit Armv8.1-A LSE atomic instructions
+# inline. That sidesteps the compiler-rt outline-atomics dispatcher
+# entirely — both its `init_have_lse_atomics` ELF initializer (which
+# crashes inside a local `getauxval` stub when the bionic build
+# differs) and the `__aarch64_cas*` helpers (which end up unresolved
+# at .so load time when we strip compiler-rt out).
+# `-outline-atomics` then guarantees no code path falls back to the
+# dispatcher. Targets Pixel 5+ / API 30+ emulator (= Armv8.2+).
+rustflags = [
+    "-C", "target-feature=+lse,-outline-atomics",
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+]

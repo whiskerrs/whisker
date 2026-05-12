@@ -7,6 +7,18 @@
 
 use lyra::prelude::*;
 
+// Override NDK compiler-rt's `init_have_lse_atomics` constructor with a
+// no-op. Stock compiler-rt's version calls `getauxval(AT_HWCAP)` via a
+// local stub, which crashes on Android API >= 30 emulators because the
+// bionic `__libc_shared_globals` offset it loads from has shifted (the
+// build of compiler-rt baked into NDK r23 expects an older layout).
+// Leaving the flag at its default 0 makes the outline-atomic dispatchers
+// (`__aarch64_cas*`) take the LL/SC fallback path — slower than LSE on
+// LSE-capable hardware, but always correct.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn init_have_lse_atomics() {}
+
 fn counter() -> Signal<i32> {
     thread_local! {
         static COUNT: std::cell::OnceCell<Signal<i32>> = const { std::cell::OnceCell::new() };

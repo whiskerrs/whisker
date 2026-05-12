@@ -10,15 +10,8 @@ android {
     defaultConfig {
         minSdk = 24
 
-        externalNativeBuild {
-            cmake {
-                arguments += listOf("-DANDROID_STL=c++_shared")
-                cppFlags += "-std=c++17"
-            }
-        }
-
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
@@ -30,20 +23,27 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
 }
 
+// Local AARs produced by scripts/build-lynx-android.sh (which patches the
+// upstream Lynx build so it exports the Element PAPI symbols our Rust
+// bridge calls into). PrimJS itself can stay on Maven — we don't depend
+// on its private symbols.
+//
+// `projectDir` is `native/android/lyra-runtime/`; the lyra repo root is
+// three levels up. Resolving here (rather than via rootProject) keeps
+// the path correct whether this module is built standalone or pulled
+// into an example app via `include(":lyra-runtime")`.
+val lynxAarDir = projectDir.resolve("../../../target/lynx-android")
+
 dependencies {
-    // Lynx prebuilt (3.7.0 stable as of 2026-05).
-    implementation("org.lynxsdk.lynx:lynx:3.7.0")
-    implementation("org.lynxsdk.lynx:lynx-jssdk:3.7.0")
-    implementation("org.lynxsdk.lynx:primjs:3.7.0")
+    // `api` (not `implementation`) so consuming apps can see LynxView /
+    // LynxEnv types that leak through `LyraView`'s superclass.
+    api(files("$lynxAarDir/LynxAndroid.aar"))
+    api(files("$lynxAarDir/LynxBase.aar"))
+    api(files("$lynxAarDir/LynxTrace.aar"))
+    api(files("$lynxAarDir/ServiceAPI.aar"))
+    api("org.lynxsdk.lynx:primjs:3.7.0")
 
     implementation("androidx.appcompat:appcompat:1.7.0")
 }
