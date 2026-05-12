@@ -1,19 +1,19 @@
-//! Top-level reactive runtime — the "tie it all together" layer.
+//! Top-level reactive runtime.
 //!
-//! `run_app(renderer, app_fn)`:
+//! [`Runtime::new`]:
 //!   1. Calls `app_fn()` inside a `track_dependencies` scope to build the
 //!      first VDOM and record signal reads.
-//!   2. [`mount`](crate::render::mount)s it on the renderer.
-//!   3. Polls [`take_dirty`] each tick. When something changes, re-runs
-//!      `app_fn`, diffs against the previous tree, and applies patches.
+//!   2. [`mount`](crate::render::mount)s it on the renderer, capturing
+//!      the [`HandleTree`].
+//!   3. Returns a runtime ready to process frames.
 //!
-//! The polling loop assumes the caller drives ticks (e.g. the iOS host
-//! calls a `lyra_runtime_tick()` function on every vsync). For tests we
-//! expose [`Runtime::frame`] that runs one tick synchronously.
+//! [`Runtime::frame`] checks the dirty flag, re-runs `app_fn`, diffs
+//! against the previous tree, and applies patches against the cached
+//! handle tree (so deep mutations target the right renderer handles).
 
 use crate::diff::{apply, diff};
 use crate::element::Element;
-use crate::render::mount;
+use crate::render::{mount, HandleTree};
 use crate::renderer::Renderer;
 use crate::signal::{take_dirty, track_dependencies};
 
@@ -21,7 +21,7 @@ pub struct Runtime<R: Renderer, F: FnMut() -> Element> {
     renderer: R,
     app_fn: F,
     last_tree: Element,
-    root_handle: R::ElementHandle,
+    handles: HandleTree<R::ElementHandle>,
 }
 
 impl<R: Renderer, F: FnMut() -> Element> Runtime<R, F> {
@@ -29,15 +29,13 @@ impl<R: Renderer, F: FnMut() -> Element> Runtime<R, F> {
     /// process frames.
     pub fn new(mut renderer: R, mut app_fn: F) -> Self {
         let (tree, _deps) = track_dependencies(&mut app_fn);
-        let root_handle = mount(&mut renderer, &tree);
-        // Clear any dirty flag set by the initial signal allocations
-        // (use_signal itself doesn't dirty, but defensive).
+        let handles = mount(&mut renderer, &tree);
         let _ = take_dirty();
         Self {
             renderer,
             app_fn,
             last_tree: tree,
-            root_handle,
+            handles,
         }
     }
 
@@ -51,18 +49,30 @@ impl<R: Renderer, F: FnMut() -> Element> Runtime<R, F> {
         let (next, _deps) = track_dependencies(&mut self.app_fn);
         let patches = diff(&self.last_tree, &next);
         let count = patches.len();
-        apply(
-            &mut self.renderer,
-            &self.last_tree,
-            self.root_handle,
-            &patches,
-        );
-        self.renderer.flush();
+        apply(&mut self.renderer, &mut self.handles, &patches);
+        if count > 0 {
+            self.renderer.flush();
+        }
         self.last_tree = next;
         count
     }
 
-    /// Borrow the underlying renderer (mostly for tests/diagnostics).
+    /// Force a re-render even if no signal is dirty. Useful after
+    /// out-of-band changes (events, timer ticks the user wants to
+    /// reflect even without state changes).
+    pub fn force_frame(&mut self) -> usize {
+        let (next, _deps) = track_dependencies(&mut self.app_fn);
+        let patches = diff(&self.last_tree, &next);
+        let count = patches.len();
+        apply(&mut self.renderer, &mut self.handles, &patches);
+        if count > 0 {
+            self.renderer.flush();
+        }
+        self.last_tree = next;
+        let _ = take_dirty();
+        count
+    }
+
     pub fn renderer(&self) -> &R {
         &self.renderer
     }
@@ -70,21 +80,6 @@ impl<R: Renderer, F: FnMut() -> Element> Runtime<R, F> {
     pub fn renderer_mut(&mut self) -> &mut R {
         &mut self.renderer
     }
-}
-
-/// One-shot helper for tests: build, run `n` ticks, and return the
-/// accumulated MockRenderer ops.
-#[cfg(test)]
-pub fn drain_mock(
-    mut app_fn: impl FnMut() -> Element,
-    apply_changes: impl FnOnce() -> (),
-) -> Vec<crate::renderer::MockOp> {
-    use crate::renderer::MockRenderer;
-    let renderer = MockRenderer::new();
-    let mut rt = Runtime::new(renderer, &mut app_fn);
-    apply_changes();
-    let _ = rt.frame();
-    rt.renderer_mut().ops().to_vec()
 }
 
 #[cfg(test)]
@@ -113,29 +108,37 @@ mod tests {
         let initial_ops = rt.renderer().ops().len();
         let count = rt.frame();
         assert_eq!(count, 0);
-        // No new ops appended.
         assert_eq!(rt.renderer().ops().len(), initial_ops);
     }
 
     #[test]
-    fn signal_change_triggers_re_render() {
+    fn signal_change_targets_correct_handle() {
         __reset_runtime();
         let counter = use_signal(|| 0_i32);
         let app = move || page().child(text_with(format!("count: {}", counter.get())));
         let mut rt = Runtime::new(MockRenderer::new(), app);
-        let before = rt.renderer().ops().len();
 
+        let before = rt.renderer().ops().len();
         counter.set(1);
-        let patches = rt.frame();
-        assert!(patches > 0, "frame must apply at least one patch");
-        assert!(rt.renderer().ops().len() > before, "ops were appended");
+        rt.frame();
+
+        let new_ops: Vec<_> = rt.renderer().ops()[before..].to_vec();
+        // Should be exactly: SetAttribute on the raw_text + Flush
+        let attr_op = new_ops.iter().find_map(|op| match op {
+            MockOp::SetAttribute { handle, key, value } if key == "text" => {
+                Some((*handle, value.clone()))
+            }
+            _ => None,
+        });
+        assert!(attr_op.is_some(), "expected SetAttribute(text=...)");
+        let (handle, value) = attr_op.unwrap();
+        assert_eq!(value, "count: 1");
+        assert_ne!(handle, 1, "must target raw_text handle, not page root");
     }
 
     #[test]
     fn no_dirty_flag_skips_app_fn_invocation() {
         __reset_runtime();
-        // Use a mutable counter to verify app_fn isn't called when nothing
-        // changed.
         let invocations = std::cell::Cell::new(0);
         let counter = use_signal(|| 0_i32);
         let app = || {
@@ -148,9 +151,6 @@ mod tests {
         rt.frame();
         rt.frame();
         rt.frame();
-        // Three frames with no signal changes — app_fn should have been
-        // called exactly once (the initial mount) and zero additional
-        // times.
         assert_eq!(invocations.get(), after_init);
     }
 
@@ -164,9 +164,49 @@ mod tests {
         counter.set(1);
         counter.set(2);
         counter.set(3);
-        // One frame coalesces all three sets.
         let _ = rt.frame();
-        // After processing, there's no further dirty work.
         assert_eq!(rt.frame(), 0);
+    }
+
+    #[test]
+    fn force_frame_runs_even_without_dirty_flag() {
+        __reset_runtime();
+        let counter = use_signal(|| 0_i32);
+        let app = move || page().child(text_with(format!("count: {}", counter.get())));
+        let mut rt = Runtime::new(MockRenderer::new(), app);
+
+        // No signal change — frame() would skip — but force_frame goes anyway.
+        let count = rt.force_frame();
+        // Tree is identical so 0 patches — but app_fn still ran.
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn many_re_renders_produce_no_handle_table_drift() {
+        __reset_runtime();
+        let counter = use_signal(|| 0_i32);
+        let app = move || page().child(text_with(format!("n={}", counter.get())));
+        let mut rt = Runtime::new(MockRenderer::new(), app);
+
+        for i in 1..=20 {
+            counter.set(i);
+            rt.frame();
+        }
+        // Final SetAttribute must still target the SAME raw_text handle
+        // we created at mount time (handle 3 in MockRenderer's numbering).
+        let last_attr = rt
+            .renderer()
+            .ops()
+            .iter()
+            .rev()
+            .find_map(|op| match op {
+                MockOp::SetAttribute { handle, key, value } if key == "text" => {
+                    Some((*handle, value.clone()))
+                }
+                _ => None,
+            })
+            .expect("attribute set during test");
+        assert_eq!(last_attr.0, 3);
+        assert_eq!(last_attr.1, "n=20");
     }
 }

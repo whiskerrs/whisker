@@ -11,6 +11,7 @@ import LyraMobile
 public final class LyraView: LynxView {
 
     private var engine: OpaquePointer?
+    private var tickTimer: Timer?
 
     public override init(frame: CGRect) {
         super.init(builderBlock: { builder in
@@ -25,9 +26,15 @@ public final class LyraView: LynxView {
         self.engine = engine
         // Hand control to Rust. The runtime dispatches to the Lynx TASM
         // thread internally, so this returns immediately.
-        // Pass via UnsafeMutableRawPointer so the LyraMobile module
-        // doesn't need to import LyraBridge's typed handle.
         lyra_mobile_app_main(UnsafeMutableRawPointer(engine))
+
+        // Drive one frame per second (Phase A0 demo). Once event-driven
+        // updates land we can fall back to vsync-pacing.
+        tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
+            [weak self] _ in
+            guard let engine = self?.engine else { return }
+            lyra_mobile_tick(UnsafeMutableRawPointer(engine))
+        }
     }
 
     public required init?(coder: NSCoder) {
@@ -35,6 +42,7 @@ public final class LyraView: LynxView {
     }
 
     deinit {
+        tickTimer?.invalidate()
         if let engine = engine {
             lyra_bridge_engine_release(engine)
         }

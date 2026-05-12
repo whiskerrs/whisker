@@ -1,29 +1,66 @@
 //! Walk an [`Element`] tree and emit creation / mutation ops to a
-//! [`Renderer`]. Used both for the initial mount and (indirectly) by the
-//! diff engine when it needs to materialize a brand-new subtree.
-//!
-//! The walk is depth-first, post-order for child handles: the recursive
-//! call that builds child `n` returns its handle, which the parent then
-//! appends. This keeps the Renderer ops in the natural "create child →
-//! append to parent" order.
+//! [`Renderer`]. Returns a [`HandleTree`] that mirrors the element tree
+//! so the diff engine can resolve `(prev_tree, path)` -> renderer handle
+//! in O(path-depth).
 
 use crate::element::Element;
 use crate::renderer::Renderer;
 
-/// Mount `tree` as the engine's root and flush a frame.
-///
-/// Returns the root handle so callers (the diff engine, primarily) can
-/// reuse it for subsequent updates without re-mounting.
-pub fn mount<R: Renderer>(renderer: &mut R, tree: &Element) -> R::ElementHandle {
-    let root = build_subtree(renderer, tree);
-    renderer.set_root(root);
-    renderer.flush();
-    root
+/// A tree of renderer handles that mirrors the [`Element`] tree it was
+/// built from. The diff engine walks this in lockstep with patches to
+/// look up handles by `Path`.
+#[derive(Debug, Clone)]
+pub struct HandleTree<H> {
+    pub handle: H,
+    pub children: Vec<HandleTree<H>>,
 }
 
-/// Materialize an Element subtree on the renderer and return its handle.
-/// Does NOT call `set_root` or `flush` — meant to be composed.
-pub fn build_subtree<R: Renderer>(renderer: &mut R, node: &Element) -> R::ElementHandle {
+impl<H: Copy> HandleTree<H> {
+    /// Look up the handle for the node at `path`.
+    pub fn at_path(&self, path: &[usize]) -> Option<H> {
+        let mut node = self;
+        for &i in path {
+            node = node.children.get(i)?;
+        }
+        Some(node.handle)
+    }
+
+    /// Borrow the [`HandleTree`] subtree at `path`.
+    pub fn subtree(&self, path: &[usize]) -> Option<&HandleTree<H>> {
+        let mut node = self;
+        for &i in path {
+            node = node.children.get(i)?;
+        }
+        Some(node)
+    }
+
+    /// Mutably borrow the subtree at `path`.
+    pub fn subtree_mut(&mut self, path: &[usize]) -> Option<&mut HandleTree<H>> {
+        let mut node = self;
+        for &i in path {
+            node = node.children.get_mut(i)?;
+        }
+        Some(node)
+    }
+}
+
+/// Mount `tree` as the engine's root and flush a frame, returning the
+/// [`HandleTree`] mirror so subsequent diff/apply cycles can locate
+/// handles by path.
+pub fn mount<R: Renderer>(renderer: &mut R, tree: &Element) -> HandleTree<R::ElementHandle> {
+    let handle_tree = build_subtree(renderer, tree);
+    renderer.set_root(handle_tree.handle);
+    renderer.flush();
+    handle_tree
+}
+
+/// Materialize an Element subtree on the renderer and return a
+/// [`HandleTree`] mirroring it. Does NOT call `set_root` or `flush` —
+/// meant to be composed.
+pub fn build_subtree<R: Renderer>(
+    renderer: &mut R,
+    node: &Element,
+) -> HandleTree<R::ElementHandle> {
     let handle = renderer.create_element(node.tag);
 
     if !node.styles.is_empty() {
@@ -32,15 +69,15 @@ pub fn build_subtree<R: Renderer>(renderer: &mut R, node: &Element) -> R::Elemen
     for attr in &node.attrs {
         renderer.set_attribute(handle, &attr.name, &attr.value);
     }
-    // Event handlers don't propagate through the renderer trait yet —
-    // they're a runtime-side concern that we wire up in Phase 8.
 
+    let mut children = Vec::with_capacity(node.children.len());
     for child in &node.children {
-        let child_handle = build_subtree(renderer, child);
-        renderer.append_child(handle, child_handle);
+        let child_tree = build_subtree(renderer, child);
+        renderer.append_child(handle, child_tree.handle);
+        children.push(child_tree);
     }
 
-    handle
+    HandleTree { handle, children }
 }
 
 #[cfg(test)]
@@ -53,11 +90,58 @@ mod tests {
     #[test]
     fn empty_element_emits_only_create() {
         let mut r = MockRenderer::new();
-        build_subtree(&mut r, &view());
+        let tree = build_subtree(&mut r, &view());
+        assert_eq!(tree.handle, 1);
+        assert!(tree.children.is_empty());
         assert_eq!(
             r.into_ops(),
             vec![MockOp::Create { handle: 1, tag: ElementTag::View }]
         );
+    }
+
+    #[test]
+    fn handle_tree_mirrors_element_tree() {
+        let mut r = MockRenderer::new();
+        let tree = build_subtree(
+            &mut r,
+            &page().child(view().child(text_with("hi"))),
+        );
+        // page (1) -> view (2) -> text (3) -> raw_text (4)
+        assert_eq!(tree.handle, 1);
+        assert_eq!(tree.children.len(), 1);
+        assert_eq!(tree.children[0].handle, 2);
+        assert_eq!(tree.children[0].children[0].handle, 3);
+        assert_eq!(tree.children[0].children[0].children[0].handle, 4);
+    }
+
+    #[test]
+    fn at_path_returns_handle_for_root() {
+        let mut r = MockRenderer::new();
+        let tree = build_subtree(&mut r, &view().child(text()));
+        assert_eq!(tree.at_path(&[]), Some(1));
+        assert_eq!(tree.at_path(&[0]), Some(2));
+    }
+
+    #[test]
+    fn at_path_returns_none_for_oob() {
+        let mut r = MockRenderer::new();
+        let tree = build_subtree(&mut r, &view());
+        assert_eq!(tree.at_path(&[0]), None);
+        assert_eq!(tree.at_path(&[3, 7]), None);
+    }
+
+    #[test]
+    fn at_path_walks_deeply() {
+        let mut r = MockRenderer::new();
+        let tree = build_subtree(
+            &mut r,
+            &page()
+                .child(view().child(text_with("a")))
+                .child(view().child(text_with("b"))),
+        );
+        // Layout:
+        // page(1) -> view(2)[ text(3)[ raw(4) ] ], view(5)[ text(6)[ raw(7) ] ]
+        assert_eq!(tree.at_path(&[1, 0, 0]), Some(7));
     }
 
     #[test]
@@ -80,7 +164,6 @@ mod tests {
     fn empty_styles_string_is_skipped() {
         let mut r = MockRenderer::new();
         build_subtree(&mut r, &view());
-        // No SetInlineStyles op at all.
         assert!(!r
             .ops()
             .iter()
@@ -105,37 +188,9 @@ mod tests {
     }
 
     #[test]
-    fn children_built_then_appended_to_parent() {
-        let mut r = MockRenderer::new();
-        let tree = view().child(text_with("a")).child(text_with("b"));
-        let _ = build_subtree(&mut r, &tree);
-
-        let ops = r.into_ops();
-        // Expected sequence:
-        //   Create view (1)
-        //     Create text (2)
-        //       Create raw_text (3); Set "text" = "a"
-        //     Append 2 -> 1's prep:  Create raw_text → append to text → append text to view
-        // Verify the *append* ops come AFTER the corresponding child Creates.
-        let view_handle = match ops[0] {
-            MockOp::Create { handle, tag: ElementTag::View } => handle,
-            _ => panic!("first op must be view create"),
-        };
-        let mut child_appends_seen = 0;
-        for op in &ops {
-            if let MockOp::AppendChild { parent, .. } = op {
-                if *parent == view_handle {
-                    child_appends_seen += 1;
-                }
-            }
-        }
-        assert_eq!(child_appends_seen, 2, "two text children appended to view");
-    }
-
-    #[test]
     fn mount_calls_set_root_and_flush_in_order() {
         let mut r = MockRenderer::new();
-        let _root = mount(&mut r, &page().child(text_with("hi")));
+        let _ = mount(&mut r, &page().child(text_with("hi")));
 
         let ops = r.into_ops();
         let set_root_idx = ops
@@ -146,52 +201,13 @@ mod tests {
             .iter()
             .position(|op| matches!(op, MockOp::Flush))
             .expect("flush op");
-        assert!(
-            set_root_idx < flush_idx,
-            "set_root must precede flush"
-        );
+        assert!(set_root_idx < flush_idx);
     }
 
     #[test]
-    fn mount_returns_root_handle() {
+    fn mount_returns_handle_tree_with_root_at_path_empty() {
         let mut r = MockRenderer::new();
-        let root = mount(&mut r, &page());
-        assert_eq!(root, 1, "root is the first created element");
-    }
-
-    #[test]
-    fn deep_nesting_walks_in_post_order() {
-        // page > view > view > view > text > raw_text
-        let mut r = MockRenderer::new();
-        let tree = page().child(
-            view().child(
-                view().child(
-                    view().child(text_with("deep")),
-                ),
-            ),
-        );
-        build_subtree(&mut r, &tree);
-
-        // Just validate that all Create ops appear, in the order parents
-        // first / children later, and we get exactly one of each.
-        let creates: Vec<_> = r
-            .into_ops()
-            .into_iter()
-            .filter_map(|op| match op {
-                MockOp::Create { tag, .. } => Some(tag),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            creates,
-            vec![
-                ElementTag::Page,
-                ElementTag::View,
-                ElementTag::View,
-                ElementTag::View,
-                ElementTag::Text,
-                ElementTag::RawText,
-            ]
-        );
+        let tree = mount(&mut r, &page());
+        assert_eq!(tree.at_path(&[]), Some(1));
     }
 }

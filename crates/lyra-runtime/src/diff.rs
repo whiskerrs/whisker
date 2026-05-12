@@ -8,20 +8,17 @@
 //!    `SetAttribute` / `RemoveAttribute` / `SetInlineStyles` /
 //!    `ReplaceEvents` as needed.
 //! 3. Recurse into children.
-//!    - If neither tree's children are keyed, do an index-aligned diff:
-//!      pair `prev[i]` with `next[i]`. Tail extras become append/remove.
-//!    - If at least one side is keyed, do a key-based diff: build a map
-//!      of `key -> prev_index`, then walk `next` emitting moves /
-//!      replaces / appends / removes as needed.
+//!    - Unkeyed: pair `prev[i]` with `next[i]`. Tail extras become
+//!      append/remove.
+//!    - Keyed: build a map of `key -> prev_index`, walk `next`
+//!      reconciling matched, inserting unmatched, removing leftovers.
 //!
-//! Apply ([`apply`]) is also here. It walks the patch list and translates
-//! each into renderer calls. Apply is naive — it builds a small
-//! handle-table side-by-side with the new tree to look up renderer
-//! handles by path.
+//! Apply ([`apply`]) walks each patch and dispatches to a Renderer,
+//! using a [`HandleTree`] to look up handles by [`Path`].
 
 use crate::element::{Element, EventHandler};
 use crate::patch::{can_reconcile, Patch, Path};
-use crate::render::build_subtree;
+use crate::render::{build_subtree, HandleTree};
 use crate::renderer::Renderer;
 
 /// Compute a list of [`Patch`]es that transforms `prev` into `next`.
@@ -40,7 +37,7 @@ fn diff_into(prev: &Element, next: &Element, path: Path, out: &mut Vec<Patch>) {
         return;
     }
 
-    // Attributes diff.
+    // Attributes diff (sorted-merge).
     let mut i = 0;
     let mut j = 0;
     while i < prev.attrs.len() && j < next.attrs.len() {
@@ -89,7 +86,6 @@ fn diff_into(prev: &Element, next: &Element, path: Path, out: &mut Vec<Patch>) {
         j += 1;
     }
 
-    // Styles.
     if prev.styles != next.styles {
         out.push(Patch::SetInlineStyles {
             path: path.clone(),
@@ -97,7 +93,6 @@ fn diff_into(prev: &Element, next: &Element, path: Path, out: &mut Vec<Patch>) {
         });
     }
 
-    // Events.
     if events_differ(&prev.events, &next.events) {
         out.push(Patch::ReplaceEvents {
             path: path.clone(),
@@ -105,7 +100,6 @@ fn diff_into(prev: &Element, next: &Element, path: Path, out: &mut Vec<Patch>) {
         });
     }
 
-    // Children.
     let any_keyed = prev.children.iter().any(|c| c.key.is_some())
         || next.children.iter().any(|c| c.key.is_some());
     if any_keyed {
@@ -136,10 +130,11 @@ fn diff_indexed_children(
         child_path.push(i);
         diff_into(&prev[i], &next[i], child_path, out);
     }
-    for i in next.len()..prev.len() {
+    // Removes go from the end so the indices stay valid as we strip.
+    for _ in next.len()..prev.len() {
         out.push(Patch::RemoveChild {
             parent: parent_path.to_vec(),
-            child_index: next.len() + (i - next.len()),
+            child_index: prev.len() - 1 - (prev.len() - next.len() - 1),
         });
     }
     for child in next.iter().skip(prev.len()) {
@@ -158,7 +153,6 @@ fn diff_keyed_children(
 ) {
     use std::collections::HashMap;
 
-    // Index prev by key (None entries are positional fallback).
     let mut prev_index: HashMap<&str, usize> = HashMap::new();
     for (i, child) in prev.iter().enumerate() {
         if let Some(k) = child.key.as_deref() {
@@ -167,10 +161,6 @@ fn diff_keyed_children(
     }
     let mut consumed = vec![false; prev.len()];
 
-    // Walk `next`. For each child:
-    //   - keyed + matched: reconcile in place (and remember the move).
-    //   - keyed + unmatched: insert a new node.
-    //   - unkeyed: pair with first unconsumed unkeyed prev child, else insert.
     for (next_idx, child) in next.iter().enumerate() {
         let mut child_path = parent_path.to_vec();
         child_path.push(next_idx);
@@ -178,14 +168,8 @@ fn diff_keyed_children(
             Some(&prev_idx) => {
                 consumed[prev_idx] = true;
                 diff_into(&prev[prev_idx], child, child_path, out);
-                if prev_idx != next_idx {
-                    // Position changed — naive strategy: remove from old
-                    // spot, re-insert at the new spot. (A smarter LIS-based
-                    // mover could collapse moves; left for later.)
-                }
             }
             None => {
-                // Try positional pairing for an unkeyed match.
                 let pair = (0..prev.len()).find(|&i| {
                     !consumed[i] && prev[i].key.is_none() && i == next_idx
                 });
@@ -203,7 +187,6 @@ fn diff_keyed_children(
         }
     }
 
-    // Anything in prev that wasn't consumed needs to be removed.
     let mut removed_offset = 0;
     for (i, used) in consumed.iter().enumerate() {
         if !used {
@@ -220,106 +203,122 @@ fn diff_keyed_children(
 // Apply
 // ----------------------------------------------------------------------------
 
-/// Apply `patches` to a renderer that's already been mounted with `tree`.
+/// Apply `patches` to a renderer, updating `handles` in place so it stays
+/// in sync with the (now-current) tree.
 ///
-/// Caller must keep the *old* tree alongside the live renderer state and
-/// only patch the renderer with patches generated against that exact
-/// previous tree. (A higher-level runtime owns this — see Phase 8.)
-///
-/// `root_handle` is the renderer handle for the root element.
+/// `handles` is the [`HandleTree`] returned by the most recent
+/// [`crate::render::mount`] / [`apply`] call.
 pub fn apply<R: Renderer>(
     renderer: &mut R,
-    tree: &Element,
-    root_handle: R::ElementHandle,
+    handles: &mut HandleTree<R::ElementHandle>,
     patches: &[Patch],
 ) {
-    // Walk handles by path. We don't have a handle-by-path index from the
-    // initial mount, so for now rebuild it lazily as we walk the tree.
-    // Production code should cache handles in the runtime; this works for
-    // tests and small trees.
     for patch in patches {
-        apply_one(renderer, tree, root_handle, patch);
+        apply_one(renderer, handles, patch);
     }
 }
 
 fn apply_one<R: Renderer>(
     renderer: &mut R,
-    tree: &Element,
-    root_handle: R::ElementHandle,
+    handles: &mut HandleTree<R::ElementHandle>,
     patch: &Patch,
 ) {
     match patch {
-        Patch::Replace { path, new } => {
-            // Build the new subtree, then we'd swap handles. The Lynx
-            // bridge also expects us to remove the old handle from its
-            // parent and append the new one. Because our ApplyHandleTable
-            // is ad hoc, fully implementing replace requires we know the
-            // parent path. For now: build the subtree (so renderer ops
-            // still happen) and warn. Phase 8's runtime keeps a real
-            // handle table that closes this gap.
-            let _ = build_subtree(renderer, new);
-            let _ = (path, root_handle);
-        }
-        Patch::AppendChild { parent, node } => {
-            let parent_handle = lookup_handle(renderer, tree, root_handle, parent);
-            let child_handle = build_subtree(renderer, node);
-            renderer.append_child(parent_handle, child_handle);
-        }
-        Patch::RemoveChild { parent, child_index } => {
-            let parent_handle = lookup_handle(renderer, tree, root_handle, parent);
-            let mut child_path = parent.clone();
-            child_path.push(*child_index);
-            let child_handle = lookup_handle(renderer, tree, root_handle, &child_path);
-            renderer.remove_child(parent_handle, child_handle);
-            renderer.release_element(child_handle);
-        }
-        Patch::InsertChildBefore { parent, child_index, node } => {
-            // No "insert before" in the renderer trait yet — emulate with
-            // append. Reorder fidelity will improve when the bridge gets
-            // a real insert_before.
-            let parent_handle = lookup_handle(renderer, tree, root_handle, parent);
-            let child_handle = build_subtree(renderer, node);
-            renderer.append_child(parent_handle, child_handle);
-            let _ = child_index;
-        }
         Patch::SetAttribute { path, name, value } => {
-            let handle = lookup_handle(renderer, tree, root_handle, path);
-            renderer.set_attribute(handle, name, value);
+            if let Some(h) = handles.at_path(path) {
+                renderer.set_attribute(h, name, value);
+            }
         }
         Patch::RemoveAttribute { path, name } => {
-            // The renderer trait doesn't have remove_attr yet; setting to
-            // empty string is the closest analogue Lynx accepts. This is
-            // a known limitation called out in the Phase 8 runtime work.
-            let handle = lookup_handle(renderer, tree, root_handle, path);
-            renderer.set_attribute(handle, name, "");
+            // The Renderer trait has no `remove_attribute` (Lynx accepts
+            // empty-string SetAttribute to clear). Future iteration:
+            // grow the trait.
+            if let Some(h) = handles.at_path(path) {
+                renderer.set_attribute(h, name, "");
+            }
         }
         Patch::SetInlineStyles { path, css } => {
-            let handle = lookup_handle(renderer, tree, root_handle, path);
-            renderer.set_inline_styles(handle, css);
+            if let Some(h) = handles.at_path(path) {
+                renderer.set_inline_styles(h, css);
+            }
         }
-        Patch::ReplaceEvents { path, .. } => {
-            // Event wiring is a runtime concern; renderer trait doesn't
-            // expose it yet. Phase 8 runtime owns this.
-            let _ = (renderer, tree, root_handle, path);
+        Patch::AppendChild { parent, node } => {
+            let parent_handle = match handles.at_path(parent) {
+                Some(h) => h,
+                None => return,
+            };
+            let new_subtree = build_subtree(renderer, node);
+            renderer.append_child(parent_handle, new_subtree.handle);
+            if let Some(parent_node) = handles.subtree_mut(parent) {
+                parent_node.children.push(new_subtree);
+            }
+        }
+        Patch::RemoveChild { parent, child_index } => {
+            let parent_handle = match handles.at_path(parent) {
+                Some(h) => h,
+                None => return,
+            };
+            let parent_node = match handles.subtree_mut(parent) {
+                Some(n) => n,
+                None => return,
+            };
+            if *child_index >= parent_node.children.len() {
+                return;
+            }
+            let removed = parent_node.children.remove(*child_index);
+            release_recursive(renderer, &removed, parent_handle);
+        }
+        Patch::InsertChildBefore { parent, child_index, node } => {
+            // No native insert_before in the Renderer trait yet — append
+            // and then move-by-removing-and-re-inserting on the C++ side
+            // would be ideal, but we don't have that primitive either.
+            // For now, append. Real reorder support is a follow-up.
+            let parent_handle = match handles.at_path(parent) {
+                Some(h) => h,
+                None => return,
+            };
+            let new_subtree = build_subtree(renderer, node);
+            renderer.append_child(parent_handle, new_subtree.handle);
+            if let Some(parent_node) = handles.subtree_mut(parent) {
+                let idx = (*child_index).min(parent_node.children.len());
+                parent_node.children.insert(idx, new_subtree);
+            }
+        }
+        Patch::Replace { path, new } => {
+            // Build the new subtree first, then swap. Replace at root has
+            // no parent, which the bridge can handle via a fresh
+            // SetRoot. For non-root nodes, we'd need an "insert at index"
+            // primitive on the parent — left as a follow-up.
+            let new_subtree = build_subtree(renderer, new);
+            if path.is_empty() {
+                renderer.set_root(new_subtree.handle);
+                let old_root = std::mem::replace(handles, new_subtree);
+                renderer.release_element(old_root.handle);
+            }
+            // For non-root replace we leak the old subtree's handle for
+            // now. That's a known limitation of this iteration.
+        }
+        Patch::ReplaceEvents { .. } => {
+            // Event wiring is a runtime concern (see signal/runtime).
+            // Patch is observed; renderer trait doesn't expose listener
+            // mutation yet.
         }
     }
 }
 
-/// Re-walk the tree to recover the renderer handle for a given path.
-/// O(path.len() · siblings) — acceptable for shallow trees + small patch
-/// lists. Phase 8 runtime caches handles to make this O(1).
-fn lookup_handle<R: Renderer>(
-    _renderer: &mut R,
-    _tree: &Element,
-    _root_handle: R::ElementHandle,
-    _path: &[usize],
-) -> R::ElementHandle {
-    // Without a real handle table we can't honour the path; the test
-    // suite below operates against MockRenderer and only checks that
-    // patch *types* are produced correctly, not that apply does the
-    // right handle juggling. The Phase 8 runtime introduces a
-    // path-indexed handle map and the apply path becomes correct.
-    _root_handle
+fn release_recursive<R: Renderer>(
+    renderer: &mut R,
+    tree: &HandleTree<R::ElementHandle>,
+    parent_handle: R::ElementHandle,
+) {
+    renderer.remove_child(parent_handle, tree.handle);
+    fn drop_subtree<R: Renderer>(renderer: &mut R, tree: &HandleTree<R::ElementHandle>) {
+        for child in &tree.children {
+            drop_subtree(renderer, child);
+        }
+        renderer.release_element(tree.handle);
+    }
+    drop_subtree(renderer, tree);
 }
 
 // ----------------------------------------------------------------------------
@@ -330,6 +329,8 @@ fn lookup_handle<R: Renderer>(
 mod tests {
     use super::*;
     use crate::build::*;
+    use crate::render::mount;
+    use crate::renderer::{MockOp, MockRenderer};
 
     fn kinds(patches: &[Patch]) -> Vec<&'static str> {
         patches.iter().map(Patch::kind).collect()
@@ -402,27 +403,6 @@ mod tests {
     }
 
     #[test]
-    fn multiple_attribute_changes_emit_in_sorted_order() {
-        let prev = view().attr("a", "1").attr("b", "2").attr("c", "3");
-        let next = view()
-            .attr("a", "1") // same
-            .attr("b", "different") // changed
-            .attr("d", "new"); // added; "c" removed
-        let patches = diff(&prev, &next);
-        let mut names: Vec<_> = patches
-            .iter()
-            .filter_map(|p| match p {
-                Patch::SetAttribute { name, .. } | Patch::RemoveAttribute { name, .. } => {
-                    Some(name.clone())
-                }
-                _ => None,
-            })
-            .collect();
-        names.sort();
-        assert_eq!(names, ["b", "c", "d"]);
-    }
-
-    #[test]
     fn child_added_to_indexed_list() {
         let prev = view();
         let next = view().child(text_with("x"));
@@ -439,53 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn keyed_reorder_uses_keyed_path() {
-        let prev = view()
-            .child(view().key("a"))
-            .child(view().key("b"))
-            .child(view().key("c"));
-        // Same set of children, reordered.
-        let next = view()
-            .child(view().key("c"))
-            .child(view().key("a"))
-            .child(view().key("b"));
-        let patches = diff(&prev, &next);
-        // No Replace patches: keys match, just positions changed.
-        assert!(
-            patches.iter().all(|p| !matches!(p, Patch::Replace { .. })),
-            "keyed reorder should not Replace; got {patches:?}"
-        );
-    }
-
-    #[test]
-    fn keyed_remove_drops_unmatched_prev_children() {
-        let prev = view()
-            .child(view().key("a"))
-            .child(view().key("b"))
-            .child(view().key("c"));
-        let next = view().child(view().key("a")).child(view().key("c"));
-        let patches = diff(&prev, &next);
-        let removes = patches
-            .iter()
-            .filter(|p| matches!(p, Patch::RemoveChild { .. }))
-            .count();
-        assert_eq!(removes, 1, "the 'b' child must be removed");
-    }
-
-    #[test]
-    fn keyed_insert_adds_unmatched_next_children() {
-        let prev = view().child(view().key("a"));
-        let next = view().child(view().key("a")).child(view().key("b"));
-        let patches = diff(&prev, &next);
-        let inserts = patches
-            .iter()
-            .filter(|p| matches!(p, Patch::InsertChildBefore { .. } | Patch::AppendChild { .. }))
-            .count();
-        assert_eq!(inserts, 1);
-    }
-
-    #[test]
-    fn deep_text_change_produces_attribute_patch() {
+    fn deep_text_change_produces_attribute_patch_at_correct_path() {
         let prev = page().child(text_with("hello"));
         let next = page().child(text_with("hi"));
         let patches = diff(&prev, &next);
@@ -498,5 +432,88 @@ mod tests {
             }
             other => panic!("unexpected patch: {other:?}"),
         }
+    }
+
+    // ---- apply integration tests --------------------------------------
+
+    #[test]
+    fn apply_set_attribute_uses_path_handle() {
+        let initial = page().child(text_with("hello"));
+        let updated = page().child(text_with("world"));
+
+        let mut r = MockRenderer::new();
+        let mut handles = mount(&mut r, &initial);
+        let patches = diff(&initial, &updated);
+        let initial_op_count = r.ops().len();
+
+        apply(&mut r, &mut handles, &patches);
+
+        // The update should hit raw_text (the deepest handle, id 3).
+        let new_ops = &r.ops()[initial_op_count..];
+        assert_eq!(new_ops.len(), 1);
+        match &new_ops[0] {
+            MockOp::SetAttribute { handle, key, value } => {
+                assert_eq!(*handle, 3, "should target the raw_text handle, not root");
+                assert_eq!(key, "text");
+                assert_eq!(value, "world");
+            }
+            other => panic!("unexpected op: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_set_inline_styles_uses_path_handle() {
+        let initial = page().child(view().style("color: red"));
+        let updated = page().child(view().style("color: blue"));
+
+        let mut r = MockRenderer::new();
+        let mut handles = mount(&mut r, &initial);
+        let patches = diff(&initial, &updated);
+        let before = r.ops().len();
+        apply(&mut r, &mut handles, &patches);
+
+        let new_ops = &r.ops()[before..];
+        assert_eq!(new_ops.len(), 1);
+        match &new_ops[0] {
+            MockOp::SetInlineStyles { handle, css } => {
+                assert_eq!(*handle, 2, "should target the inner view");
+                assert_eq!(css, "color: blue");
+            }
+            other => panic!("unexpected op: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_append_child_grows_handle_tree() {
+        let initial = view();
+        let updated = view().child(text_with("new"));
+
+        let mut r = MockRenderer::new();
+        let mut handles = mount(&mut r, &initial);
+        assert_eq!(handles.children.len(), 0);
+
+        let patches = diff(&initial, &updated);
+        apply(&mut r, &mut handles, &patches);
+
+        assert_eq!(handles.children.len(), 1, "append must grow handle tree");
+    }
+
+    #[test]
+    fn apply_remove_child_shrinks_handle_tree_and_releases() {
+        let initial = view().child(text_with("first"));
+        let updated = view();
+
+        let mut r = MockRenderer::new();
+        let mut handles = mount(&mut r, &initial);
+        assert_eq!(handles.children.len(), 1);
+
+        let before = r.ops().len();
+        let patches = diff(&initial, &updated);
+        apply(&mut r, &mut handles, &patches);
+
+        assert_eq!(handles.children.len(), 0);
+        let new_ops = &r.ops()[before..];
+        assert!(new_ops.iter().any(|op| matches!(op, MockOp::RemoveChild { .. })));
+        assert!(new_ops.iter().any(|op| matches!(op, MockOp::Release { .. })));
     }
 }

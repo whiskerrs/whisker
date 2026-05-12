@@ -23,6 +23,12 @@ const char* lyra_mobile_greeting(void);
 // on the Lynx TASM thread.
 void lyra_mobile_app_main(void* engine);
 
+// Drive one frame of the Rust runtime. Hosts call this on whatever
+// cadence they want (Swift `Timer`, Choreographer, etc.). Returns
+// immediately; the actual frame work happens asynchronously on the
+// Lynx TASM thread.
+void lyra_mobile_tick(void* engine);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

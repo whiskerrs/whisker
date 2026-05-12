@@ -1,14 +1,14 @@
 //! User-app logic shared between the production FFI entry and integration
 //! tests against `MockRenderer`.
 //!
-//! This is currently the canned example tree (Phase 8 demo). When the
-//! `#[lyra::main]` attribute is fleshed out, the user's own `app()`
-//! function will replace this.
+//! When `#[lyra::main]` lands (Phase C), the user's own `app()` will
+//! replace this module entirely.
 
 use lyra_macros::rsx;
 use lyra_runtime::element::Element;
+use lyra_runtime::signal::Signal;
 
-/// Returns the static (no-state) Lyra example tree the iOS demo renders.
+/// Produce the element tree for one frame given the current `greeting`.
 pub fn build_demo_tree(greeting: &str) -> Element {
     let greeting = greeting.to_owned();
     rsx! {
@@ -23,22 +23,30 @@ pub fn build_demo_tree(greeting: &str) -> Element {
     }
 }
 
+/// Called by the runtime on every tick. Increments the demo counter so
+/// the rendered text changes each frame, proving the reactive plumbing
+/// (signal -> dirty -> diff -> apply -> bridge) actually closes the loop.
+pub fn mutate_demo_state(tick_count: Signal<i32>) {
+    tick_count.update(|n| n + 1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lyra_runtime::renderer::{MockOp, MockRenderer};
     use lyra_runtime::render::mount;
+    use lyra_runtime::renderer::{MockOp, MockRenderer};
+    use lyra_runtime::signal::{__reset_runtime, use_signal};
 
     #[test]
     fn demo_tree_has_expected_shape() {
         let tree = build_demo_tree("Hi");
         assert_eq!(tree.tag, lyra_runtime::element::ElementTag::Page);
         assert_eq!(tree.children.len(), 1);
-        assert_eq!(tree.children[0].tag, lyra_runtime::element::ElementTag::Text);
         assert_eq!(
-            tree.children[0].children[0].get_attr("text"),
-            Some("Hi"),
+            tree.children[0].tag,
+            lyra_runtime::element::ElementTag::Text
         );
+        assert_eq!(tree.children[0].children[0].get_attr("text"), Some("Hi"));
     }
 
     #[test]
@@ -58,10 +66,8 @@ mod tests {
             .iter()
             .filter(|op| matches!(op, MockOp::Create { .. }))
             .count();
-        // page + text + raw_text = 3 elements.
-        assert_eq!(create_count, 3);
+        assert_eq!(create_count, 3); // page + text + raw_text
 
-        // The greeting must travel through to a SetAttribute("text", ...).
         let text_attr = r.ops().iter().find_map(|op| match op {
             MockOp::SetAttribute { key, value, .. } if key == "text" => Some(value.clone()),
             _ => None,
@@ -77,5 +83,16 @@ mod tests {
         let last_two: Vec<_> = ops.iter().rev().take(2).collect();
         assert!(matches!(last_two[0], MockOp::Flush));
         assert!(matches!(last_two[1], MockOp::SetRoot { .. }));
+    }
+
+    #[test]
+    fn mutate_demo_state_increments_signal() {
+        __reset_runtime();
+        let counter = use_signal(|| 0_i32);
+        mutate_demo_state(counter);
+        assert_eq!(counter.get(), 1);
+        mutate_demo_state(counter);
+        mutate_demo_state(counter);
+        assert_eq!(counter.get(), 3);
     }
 }
