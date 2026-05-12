@@ -302,3 +302,24 @@ Java_dev_lyra_runtime_LyraView_nativeTick(
     return lyra_mobile_tick(reinterpret_cast<void*>(engine_raw))
         ? JNI_TRUE : JNI_FALSE;
 }
+
+// Called from Kotlin's EventEmitter.LynxEventReporter hook for every
+// LynxEvent the engine fires. We look up the (element_sign, event_name)
+// pair in the bridge's callback registry; if a Rust closure was
+// registered for it, fire and report consumed.
+//
+// `engine_raw` isn't strictly needed today (the registry is global) but
+// kept in the signature so future per-engine registries don't require
+// an ABI break.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_dev_lyra_runtime_LyraView_nativeOnLynxEvent(
+    JNIEnv* env, jobject /*self*/, jlong /*engine_raw*/,
+    jint tag, jstring name_jstr) {
+    if (name_jstr == nullptr) return JNI_FALSE;
+    const char* name = env->GetStringUTFChars(name_jstr, nullptr);
+    if (name == nullptr) return JNI_FALSE;
+    bool handled = lyra_bridge_internal_dispatch_event(
+        static_cast<int32_t>(tag), name);
+    env->ReleaseStringUTFChars(name_jstr, name);
+    return handled ? JNI_TRUE : JNI_FALSE;
+}

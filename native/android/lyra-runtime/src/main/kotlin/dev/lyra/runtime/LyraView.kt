@@ -5,8 +5,11 @@ import android.os.Looper
 import android.util.AttributeSet
 import android.view.Choreographer
 import androidx.annotation.Keep
+import com.lynx.tasm.EventEmitter
 import com.lynx.tasm.LynxView
 import com.lynx.tasm.LynxViewBuilder
+import com.lynx.tasm.event.LynxEvent
+import com.lynx.tasm.event.LynxInternalEvent
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -35,12 +38,38 @@ class LyraView @JvmOverloads constructor(
     private val scheduled = AtomicBoolean(false)
     private val frameCallback = Choreographer.FrameCallback { onFrame() }
 
+    // LynxEventEmitter stores the reporter as a WeakReference (see
+    // `LynxEventEmitter.registerEventReporter` upstream), so if we only
+    // hand it an anonymous object the GC will reclaim it before any tap
+    // ever fires. Keep a strong reference here.
+    private val eventReporter = object : EventEmitter.LynxEventReporter {
+        override fun onLynxEvent(event: LynxEvent): Boolean {
+            val name = event.name ?: return false
+            return nativeOnLynxEvent(engine, event.tag, name)
+        }
+        override fun onInternalEvent(event: LynxInternalEvent) {}
+    }
+
     init {
         engine = nativeEngineAttach(this)
         if (engine != 0L) {
             nativeBindLyraView(engine)
+            installEventReporter()
             nativeAppMain(engine)
         }
+    }
+
+    /**
+     * Route every LynxEvent the engine fires through the bridge so Rust
+     * `on_tap:` (and friends) declared on Fiber elements get called.
+     *
+     * Mirrors the iOS path that installs an `eventReporterBlock` on
+     * `LynxEventEmitter`. The reporter is a single Java object that
+     * forwards `(tag, name)` into JNI; the bridge does the registry
+     * lookup against the native callbacks Rust registered.
+     */
+    private fun installEventReporter() {
+        lynxContext?.eventEmitter?.registerEventReporter(eventReporter)
     }
 
     override fun destroy() {
@@ -85,4 +114,5 @@ class LyraView @JvmOverloads constructor(
     private external fun nativeAppMain(engine: Long)
     private external fun nativeTick(engine: Long): Boolean
     private external fun nativeEngineRelease(engine: Long)
+    private external fun nativeOnLynxEvent(engine: Long, tag: Int, name: String): Boolean
 }
