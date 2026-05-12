@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#
+# Build the LyraMobile.xcframework from the lyra-mobile Rust crate.
+#
+# Outputs: target/lyra-mobile/LyraMobile.xcframework
+#
+# Slices produced:
+#   - ios-arm64                       (real device)
+#   - ios-arm64_x86_64-simulator      (lipo of arm64-sim + x86_64-sim)
+#
+# This is the manual-script form. We plan to migrate it into `cargo xtask
+# build-xcframework` once the build matures.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CRATE_DIR="$ROOT/crates/lyra-mobile"
+OUT="$ROOT/target/lyra-mobile"
+XCF="$OUT/LyraMobile.xcframework"
+HEADERS_SRC="$CRATE_DIR/include"
+PROFILE="release"
+
+echo "==> Cleaning $OUT"
+rm -rf "$OUT"
+mkdir -p "$OUT"
+
+echo "==> Building Rust static libs"
+for triple in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
+    echo "    -- $triple"
+    (cd "$ROOT" && cargo build --release -p lyra-mobile --target "$triple")
+done
+
+DEVICE_LIB="$ROOT/target/aarch64-apple-ios/$PROFILE/liblyra_mobile.a"
+SIM_ARM64_LIB="$ROOT/target/aarch64-apple-ios-sim/$PROFILE/liblyra_mobile.a"
+SIM_X86_LIB="$ROOT/target/x86_64-apple-ios/$PROFILE/liblyra_mobile.a"
+
+SIM_FAT="$OUT/sim/liblyra_mobile.a"
+mkdir -p "$(dirname "$SIM_FAT")"
+echo "==> Lipo simulator slices"
+lipo -create "$SIM_ARM64_LIB" "$SIM_X86_LIB" -output "$SIM_FAT"
+
+echo "==> Staging headers"
+HDR_DIR="$OUT/Headers"
+mkdir -p "$HDR_DIR"
+cp "$HEADERS_SRC/lyra_mobile.h" "$HDR_DIR/"
+cp "$HEADERS_SRC/module.modulemap" "$HDR_DIR/"
+
+echo "==> Creating xcframework"
+xcodebuild -create-xcframework \
+    -library "$DEVICE_LIB" -headers "$HDR_DIR" \
+    -library "$SIM_FAT"    -headers "$HDR_DIR" \
+    -output "$XCF"
+
+echo
+echo "✅ Created $XCF"
+ls -la "$XCF"

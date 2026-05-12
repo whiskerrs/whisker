@@ -1,0 +1,4 @@
+module LyraMobile {
+    header "lyra_mobile.h"
+    export *
+}

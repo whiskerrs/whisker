@@ -8,6 +8,7 @@ members = [
     "crates/lyra-dev-runtime",
     "crates/lyra-ffi-lynx",
     "crates/lyra-macros",
+    "crates/lyra-mobile",
     "crates/lyra-plugin",
     "crates/lyra-runtime",
     "xtask",
@@ -31,6 +32,7 @@ lyra-codegen = { path = "crates/lyra-codegen", version = "0.1.0" }
 lyra-dev-runtime = { path = "crates/lyra-dev-runtime", version = "0.1.0" }
 lyra-ffi-lynx = { path = "crates/lyra-ffi-lynx", version = "0.1.0" }
 lyra-macros = { path = "crates/lyra-macros", version = "0.1.0" }
+lyra-mobile = { path = "crates/lyra-mobile", version = "0.1.0" }
 lyra-plugin = { path = "crates/lyra-plugin", version = "0.1.0" }
 lyra-runtime = { path = "crates/lyra-runtime", version = "0.1.0" }
 

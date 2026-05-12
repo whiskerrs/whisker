@@ -1,11 +1,9 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// Phase 0: pure Swift target, no binary frameworks yet.
-//
-// In Phase 1 we add LyraRustRuntime as a binaryTarget (Rust cdylib wrapped
-// in xcframework). In Phase 2 we add Lynx and LyraBridge as binaryTargets.
-// All of those become dependencies of the LyraRuntime target.
+// Phase 1: pulls in the LyraMobile xcframework (Rust static lib + C ABI).
+// Generate it with `scripts/build-ios-xcframework.sh` before opening the
+// example project in Xcode.
 
 let package = Package(
     name: "LyraRuntime",
@@ -16,9 +14,15 @@ let package = Package(
         .library(name: "LyraRuntime", targets: ["LyraRuntime"]),
     ],
     targets: [
+        .binaryTarget(
+            name: "LyraMobile",
+            // Local path during development. Will switch to a release URL
+            // (`url:` + `checksum:`) once we cut binary releases.
+            path: "../../target/lyra-mobile/LyraMobile.xcframework"
+        ),
         .target(
             name: "LyraRuntime",
-            dependencies: [],
+            dependencies: ["LyraMobile"],
             path: "Sources/LyraRuntime"
         ),
     ]

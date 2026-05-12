@@ -61,6 +61,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lyra-mobile"
+version = "0.1.0"
+dependencies = [
+ "lyra-runtime",
+]
+
+[[package]]
 name = "lyra-plugin"
 version = "0.1.0"
 dependencies = [
