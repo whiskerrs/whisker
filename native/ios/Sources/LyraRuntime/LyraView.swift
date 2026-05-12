@@ -1,5 +1,6 @@
 import UIKit
 import Lynx
+import LyraBridge
 import LyraMobile
 
 /// Hosts the Lyra runtime on iOS.
@@ -22,6 +23,13 @@ public final class LyraView: LynxView {
             builder.frame = frame
         })
         backgroundColor = .systemBackground
+        // Phase 3a smoke test: prove the C++/Obj-C++ bridge is reachable.
+        lyra_bridge_log_hello()
+        // Phase 3b: hand our LynxView to the bridge so it can resolve the
+        // engine proxy and dispatch a task onto the Lynx TASM thread.
+        let viewPtr = Unmanaged.passUnretained(self).toOpaque()
+        let ok = lyra_bridge_dispatch_log(viewPtr)
+        NSLog("[LyraView] bridge dispatch_log returned \(ok)")
         installGreetingLabel()
     }
 

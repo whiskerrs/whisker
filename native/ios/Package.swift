@@ -1,14 +1,14 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// Phase 2: pulls in Lynx + PrimJS + LynxBase + LynxServiceAPI on top of
-// LyraMobile (Rust). Generate the binary frameworks first:
+// Phase 3a: introduces LyraBridge, a C++ / Obj-C++ target compiled by SPM
+// directly from native/bridge/. For now it's a smoke test (one NSLog
+// function). Phase 3b will start dispatching tasks onto Lynx's TASM
+// thread; Phase 3c will drive Element PAPI.
 //
+// Build pre-reqs (run before opening Xcode):
 //   scripts/build-lynx-xcframeworks.sh
 //   scripts/build-ios-xcframework.sh
-//
-// All four Lynx frameworks must be present at target/lynx-ios/ before
-// the package will resolve.
 
 let package = Package(
     name: "LyraRuntime",
@@ -19,14 +19,14 @@ let package = Package(
         .library(name: "LyraRuntime", targets: ["LyraRuntime"]),
     ],
     targets: [
-        // Rust runtime (C ABI).
+        // Rust runtime (C ABI), as xcframework.
         .binaryTarget(
             name: "LyraMobile",
             path: "../../target/lyra-mobile/LyraMobile.xcframework"
         ),
 
-        // Lynx engine + dependencies. Built from upstream source pods via
-        // scripts/build-lynx-xcframeworks.sh.
+        // Lynx engine + dependencies, as xcframeworks built from upstream
+        // CocoaPods source via scripts/build-lynx-xcframeworks.sh.
         .binaryTarget(
             name: "Lynx",
             path: "../../target/lynx-ios/Lynx.xcframework"
@@ -44,10 +44,22 @@ let package = Package(
             path: "../../target/lynx-ios/PrimJS.xcframework"
         ),
 
+        // C++ / Obj-C++ glue between Swift, Rust, and the Lynx C++ API.
+        // Compiled from source by SPM. The `bridge` directory is a symlink
+        // to `native/bridge/` (SPM forbids paths outside the package root).
+        .target(
+            name: "LyraBridge",
+            dependencies: ["Lynx", "LynxBase", "LynxServiceAPI", "PrimJS"],
+            path: "bridge",
+            sources: ["src"],
+            publicHeadersPath: "include"
+        ),
+
         .target(
             name: "LyraRuntime",
             dependencies: [
                 "LyraMobile",
+                "LyraBridge",
                 "Lynx",
                 "LynxBase",
                 "LynxServiceAPI",
@@ -55,14 +67,12 @@ let package = Package(
             ],
             path: "Sources/LyraRuntime",
             linkerSettings: [
-                // System frameworks the Lynx pods declare as dependencies.
                 .linkedFramework("JavaScriptCore"),
                 .linkedFramework("NaturalLanguage"),
                 .linkedLibrary("c++"),
-                // -ObjC: Lynx ships many Obj-C categories (e.g.
-                // `LynxTemplateRender (SetUp)`) whose methods are stripped
-                // from a static framework unless the linker is told to
-                // load every Obj-C class.
+                // Lynx ships many Obj-C categories whose methods are
+                // stripped from a static framework unless the linker is
+                // told to load every Obj-C class.
                 .unsafeFlags(["-ObjC"]),
             ]
         ),
