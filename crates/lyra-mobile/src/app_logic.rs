@@ -5,21 +5,22 @@
 //! `#[lyra::main]` attribute is fleshed out, the user's own `app()`
 //! function will replace this.
 
+use lyra_macros::rsx;
 use lyra_runtime::element::Element;
-use lyra_runtime::prelude::*;
 
 /// Returns the static (no-state) Lyra example tree the iOS demo renders.
 pub fn build_demo_tree(greeting: &str) -> Element {
-    page()
-        .style(
-            "width: 100vw; height: 100vh; background-color: white; \
-             display: flex; justify-content: center; align-items: center;",
-        )
-        .child(
-            text()
-                .style("font-size: 32px; color: black;")
-                .child(raw_text(greeting)),
-        )
+    let greeting = greeting.to_owned();
+    rsx! {
+        page {
+            style: "width: 100vw; height: 100vh; background-color: white; \
+                    display: flex; justify-content: center; align-items: center;",
+            text {
+                style: "font-size: 32px; color: black;",
+                { greeting }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -38,6 +39,13 @@ mod tests {
             tree.children[0].children[0].get_attr("text"),
             Some("Hi"),
         );
+    }
+
+    #[test]
+    fn demo_tree_carries_through_styles() {
+        let tree = build_demo_tree("anything");
+        assert!(tree.styles.contains("background-color: white"));
+        assert!(tree.children[0].styles.contains("font-size: 32px"));
     }
 
     #[test]

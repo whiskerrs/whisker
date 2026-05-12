@@ -13,3 +13,4 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 lyra-runtime = { workspace = true }
+lyra-macros = { workspace = true }

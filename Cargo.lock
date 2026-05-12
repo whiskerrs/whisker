@@ -64,6 +64,7 @@ dependencies = [
 name = "lyra-mobile"
 version = "0.1.0"
 dependencies = [
+ "lyra-macros",
  "lyra-runtime",
 ]
 
