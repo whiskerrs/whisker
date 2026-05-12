@@ -1,0 +1,37 @@
+name: HelloWorld
+options:
+  bundleIdPrefix: dev.lyra.examples
+  deploymentTarget:
+    iOS: '13.0'
+  developmentLanguage: en
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: '5.9'
+    IPHONEOS_DEPLOYMENT_TARGET: '13.0'
+
+packages:
+  # SPM package living under native/ios — relative to this project.yml.
+  LyraRuntime:
+    path: ../../../native/ios
+
+targets:
+  HelloWorld:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: HelloWorld
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lyra.examples.helloWorld
+        TARGETED_DEVICE_FAMILY: '1,2'
+    dependencies:
+      - package: LyraRuntime
