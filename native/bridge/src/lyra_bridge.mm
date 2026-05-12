@@ -27,6 +27,7 @@
 #include "core/renderer/dom/fiber/text_element.h"
 #include "core/renderer/dom/fiber/raw_text_element.h"
 #include "core/public/pipeline_option.h"
+#include "core/template_bundle/template_codec/binary_decoder/page_config.h"
 #include "base/include/value/base_string.h"
 
 namespace {
@@ -95,16 +96,29 @@ bool lyra_bridge_render_text(void* lynx_view_ptr, const char* text) {
 
         using namespace lynx::tasm;
 
+        // Force-enable the fiber architecture. PageConfig defaults to
+        // enable_fiber_arch_=false; without flipping it, CreateFiber* +
+        // OnPatchFinish never reach the painting context.
+        auto config = std::make_shared<PageConfig>();
+        config->SetEnableFiberArch(true);
+        tasm->SetPageConfig(config);
+
         // Build a minimal element tree:  <page> <text> <raw-text/> </text> </page>
         auto page = manager->CreateFiberPage(lynx::base::String("0"), 0);
         manager->SetFiberPageElement(page);
 
-        auto text_node = manager->CreateFiberText(lynx::base::String("text"));
-        auto raw_text  = manager->CreateFiberRawText();
+        // Without explicit dimensions Lynx may treat the page as 0x0 and
+        // skip layout entirely; without a background colour we couldn't
+        // tell whether the page itself rendered. Make both visible.
+        page->SetRawInlineStyles(lynx::base::String(
+            "width: 100vw; height: 100vh; background-color: white; "
+            "display: flex; justify-content: center; align-items: center;"));
 
-        // Attach the actual text content as the raw-text element's
-        // `text` attribute. lepus::Value(string) constructs a string-typed
-        // value Lynx understands.
+        auto text_node = manager->CreateFiberText(lynx::base::String("text"));
+        text_node->SetRawInlineStyles(lynx::base::String(
+            "font-size: 32px; color: black;"));
+
+        auto raw_text = manager->CreateFiberRawText();
         raw_text->SetAttribute(
             lynx::base::String("text"),
             lynx::lepus::Value(lynx::base::String(text_copy)));
@@ -112,6 +126,10 @@ bool lyra_bridge_render_text(void* lynx_view_ptr, const char* text) {
         text_node->InsertNode(raw_text);
         page->InsertNode(text_node);
 
+        // FlushActionsAsRoot drives the fiber pipeline (resolve -> layout
+        // -> paint) for the page. Then OnPatchFinish triggers the actor
+        // to flush operations to the platform painting context.
+        page->FlushActionsAsRoot();
         auto options = std::make_shared<lynx::tasm::PipelineOptions>();
         manager->OnPatchFinish(options, page.get());
 
