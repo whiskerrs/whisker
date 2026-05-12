@@ -1,3 +1,9 @@
+[alias]
+# `cargo xtask <subcommand>` — see xtask/src/main.rs. Release profile
+# so subsequent invocations stay fast (xtask itself only rebuilds
+# when its sources change).
+xtask = "run --release --package xtask --"
+
 [target.aarch64-linux-android]
 # `+lse` makes the compiler emit Armv8.1-A LSE atomic instructions
 # inline. That sidesteps the compiler-rt outline-atomics dispatcher

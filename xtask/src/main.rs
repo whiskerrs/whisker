@@ -1,28 +1,36 @@
-//! Build automation for Lyra (cargo xtask pattern).
+//! Build automation for Lyra (`cargo xtask` pattern).
 //!
-//! Run via `cargo xtask <task>`. Use this for cross-language tasks that don't
-//! fit Cargo natively, e.g. building the C++ bridge, packaging the Android AAR,
-//! producing the iOS xcframework, end-to-end CI checks.
+//! `xtask` is a workspace member that we register as the
+//! `cargo xtask` alias in `.cargo/config.toml`. It exists to host build
+//! orchestration that doesn't fit cargo natively — Android NDK glue,
+//! iOS xcframework packaging, Lynx AAR build, etc. — without pulling
+//! in external tools (Make, just, cargo-ndk, …) or shelling into
+//! brittle bash.
+//!
+//! Each subcommand corresponds to one composable build step. Higher-
+//! level orchestration (e.g. "build the hello-world example end to
+//! end") is itself a subcommand that calls the lower-level ones.
+
+use clap::{Parser, Subcommand};
+
+mod android;
+
+#[derive(Parser)]
+#[command(name = "xtask", about = "Lyra build automation", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Android build pipeline (cargo cross-compile, AAR packaging, etc.).
+    Android(android::AndroidArgs),
+}
 
 fn main() -> anyhow::Result<()> {
-    let task = std::env::args().nth(1);
-    match task.as_deref() {
-        Some("build-bridge") => todo!("build native/bridge via CMake"),
-        Some("build-aar") => todo!("assemble native/android AAR"),
-        Some("build-xcframework") => todo!("assemble native/ios xcframework"),
-        Some("ci") => todo!("run full CI suite"),
-        Some(other) => anyhow::bail!("unknown xtask: {other}"),
-        None => {
-            println!(
-                "xtask — Lyra build automation
-
-Tasks:
-  build-bridge      Build native/bridge (C++) via CMake
-  build-aar         Assemble Android AAR from native/android
-  build-xcframework Assemble iOS xcframework from native/ios
-  ci                Run full CI suite"
-            );
-            Ok(())
-        }
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Android(args) => android::run(args),
     }
 }

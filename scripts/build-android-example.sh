@@ -20,14 +20,10 @@ EXAMPLE_DIR="$ROOT/examples/hello-world/android"
 
 # --- Resolve toolchains ---
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
-export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/21.1.6352462}"
-export ANDROID_NDK="$ANDROID_NDK_HOME"
-
-if [ ! -d "$ANDROID_NDK_HOME" ]; then
-    echo "error: NDK not found at $ANDROID_NDK_HOME"
-    echo "       install via sdkmanager: sdkmanager 'ndk;21.1.6352462'"
-    exit 1
-fi
+# Do NOT pin ANDROID_NDK_HOME here: cargo xtask picks a Rust-compatible
+# NDK on its own (NDK 23+ for `-mno-outline-atomics` support), and
+# Gradle resolves the Android NDK via ndk.dir / ndkVersion. Pinning to
+# NDK 21 globally would feed it back to xtask and break the Rust build.
 
 # Android Studio's bundled JBR (Java 17/21) is the most reliable choice.
 if [ -z "${JAVA_HOME:-}" ]; then
@@ -41,30 +37,13 @@ fi
 export PATH="$JAVA_HOME/bin:$PATH"
 
 # --- 1. Build the Rust cdylib ---
-# cargo-ndk requires NDK r23+. NDK 21 works for Lynx C++ but not for
-# cargo-ndk, so we pick the newest NDK in $ANDROID_HOME/ndk for Rust.
-RUST_NDK=""
-# Prefer NDK 23 (oldest cargo-ndk-supported version). Newer NDKs add
-# `init_have_lse_atomics` ELF init code that crashes inside a local
-# `getauxval` stub on API 36 emulators.
-for cand in 23.1.7779620 26.1.10909125 26.3.11579264 27.0.12077973 27.1.12297006 29.0.14206865; do
-    if [ -d "$ANDROID_HOME/ndk/$cand" ]; then
-        RUST_NDK="$ANDROID_HOME/ndk/$cand"
-        break
-    fi
-done
-if [ -z "$RUST_NDK" ]; then
-    echo "error: no NDK r23+ installed (cargo-ndk requires it)"
-    exit 1
-fi
-echo "==> Building Rust cdylib for $ABI (NDK $(basename "$RUST_NDK"))"
-# `-P 24` matches the app's minSdk and avoids NDK r27's
-# outline-atomics init-time crash that fires on the API 36 emulator
-# when targeting aarch64-linux-android21. `--link-libcxx-shared` adds
-# libc++_shared.so to DT_NEEDED and bundles it into the output dir.
-ANDROID_NDK_HOME="$RUST_NDK" cargo ndk \
-    -t "$ABI" -P 24 --link-libcxx-shared \
-    build --release -p hello-world
+# `xtask android cargo` (xtask/src/android/cargo_build.rs) does the
+# cargo-ndk's job: pick a Rust-compatible NDK, set CC/CXX/AR/LINKER for
+# the target triple, then invoke plain `cargo build`. Bundling
+# libc++_shared.so is done below in step 2c (cargo-ndk's
+# `--link-libcxx-shared` shipped that for us; we now do it manually).
+echo "==> Building Rust cdylib for $ABI"
+(cd "$ROOT" && cargo xtask android cargo --abi "$ABI" --api 24 -p hello-world)
 
 SO_SRC="$ROOT/target/$RUST_TARGET/release/libhello_world.so"
 if [ ! -f "$SO_SRC" ]; then
@@ -81,12 +60,17 @@ cp "$SO_SRC" "$SO_DST/libhello_world.so"
 # libhello_world.so (and Lynx's .so files) DT_NEEDED libc++_shared.so.
 # Lynx's AAR no longer ships it under the new build, and our Rust cdylib
 # doesn't bundle it either — so we have to copy it from the NDK sysroot.
-# Use the Rust-side NDK (27.x); both NDK 27 and Lynx's NDK 21 use the
-# same libc++ ABI on aarch64.
-NDK_LIBCPP="$RUST_NDK/toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
-if [ -f "$NDK_LIBCPP" ]; then
+# libc++_shared.so is ABI-compatible across recent NDK versions on
+# aarch64, so the first one we find under $ANDROID_HOME/ndk is fine.
+NDK_LIBCPP=$(find "$ANDROID_HOME/ndk" \
+    -path "*toolchains/llvm/prebuilt/*/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
+    -print -quit 2>/dev/null)
+if [ -n "$NDK_LIBCPP" ] && [ -f "$NDK_LIBCPP" ]; then
     echo "==> Bundling libc++_shared.so from NDK"
     cp "$NDK_LIBCPP" "$SO_DST/libc++_shared.so"
+else
+    echo "error: libc++_shared.so not found under any NDK in $ANDROID_HOME/ndk" >&2
+    exit 1
 fi
 
 # --- 3. Make sure Lynx AARs are unpacked for the C++ bridge link step ---
