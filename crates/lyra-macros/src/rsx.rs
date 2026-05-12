@@ -17,8 +17,8 @@
 //!   - everything else → `.attr("<name>", <expr>)`
 //!
 //! Text children:
-//!   - String literals  → `.child(::lyra_runtime::build::raw_text(<lit>))`
-//!   - `{expr}` blocks  → `.child(::lyra_runtime::build::raw_text(<expr>.to_string()))`
+//!   - String literals  → `.child(::lyra::build::raw_text(<lit>))`
+//!   - `{expr}` blocks  → `.child(::lyra::build::raw_text(<expr>.to_string()))`
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -132,10 +132,10 @@ impl Node {
         match self {
             Node::Element(el) => el.to_tokens_stream(),
             Node::Text(lit) => quote! {
-                ::lyra_runtime::build::raw_text(#lit)
+                ::lyra::build::raw_text(#lit)
             },
             Node::Expr(expr) => quote! {
-                ::lyra_runtime::build::raw_text((#expr).to_string())
+                ::lyra::build::raw_text((#expr).to_string())
             },
         }
     }
@@ -179,7 +179,7 @@ fn constructor_for(tag: &Ident) -> TokenStream2 {
     // generic `Element::new(ElementTag::View)` pending custom-tag support.
     match name.as_str() {
         "page" | "view" | "text" | "raw_text" | "image" => {
-            quote! { ::lyra_runtime::build::#fn_name() }
+            quote! { ::lyra::build::#fn_name() }
         }
         _ => {
             let span = tag.span();

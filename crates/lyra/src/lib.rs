@@ -2,7 +2,20 @@
 //!
 //! Cross-platform mobile UI framework for Rust, built on the Lynx C++ engine.
 //!
-//! This is the umbrella crate. Most users should `use lyra::prelude::*;`.
+//! Most users only need:
+//!
+//! ```ignore
+//! use lyra::prelude::*;
+//!
+//! #[lyra::main]
+//! fn app() -> Element {
+//!     rsx! {
+//!         page { style: "background: white;",
+//!             text { "Hello, Lyra" }
+//!         }
+//!     }
+//! }
+//! ```
 
 pub use lyra_app_config as app_config;
 pub use lyra_runtime as runtime;
@@ -15,6 +28,13 @@ pub use lyra_runtime::renderer::Renderer;
 pub use lyra_runtime::signal::{use_signal, Signal};
 
 pub use lyra_macros::{main, rsx};
+
+/// Internal runtime entry points used by code the `#[lyra::main]` macro
+/// expands to. Not stable, not for direct use.
+#[doc(hidden)]
+pub mod __main_runtime {
+    pub use lyra_mobile::bootstrap::{run, tick};
+}
 
 /// Common imports for Lyra app code.
 pub mod prelude {

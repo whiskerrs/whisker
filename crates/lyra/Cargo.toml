@@ -11,4 +11,5 @@ description = "Cross-platform mobile UI framework built on Lynx. Umbrella crate.
 [dependencies]
 lyra-runtime = { workspace = true }
 lyra-macros = { workspace = true }
+lyra-mobile = { workspace = true }
 lyra-app-config = { workspace = true }

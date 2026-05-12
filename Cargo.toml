@@ -11,11 +11,10 @@ members = [
     "crates/lyra-mobile",
     "crates/lyra-plugin",
     "crates/lyra-runtime",
+    "examples/hello-world",
     "xtask",
 ]
-exclude = [
-    "examples",
-]
+exclude = []
 
 [workspace.package]
 version = "0.1.0"

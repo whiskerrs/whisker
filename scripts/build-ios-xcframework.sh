@@ -14,27 +14,33 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CRATE_DIR="$ROOT/crates/lyra-mobile"
+# The cdylib that ships to iOS is the *user's* crate (the one annotated
+# with #[lyra::main]). For the in-repo demo that's examples/hello-world;
+# the FFI exports `lyra_mobile_app_main` / `lyra_mobile_tick` come from
+# the macro expansion in that crate. Header file lives next to the
+# bootstrap helpers in `lyra-mobile/include/`.
+USER_CRATE="hello-world"
+USER_LIB="hello_world"
+HEADERS_SRC="$ROOT/crates/lyra-mobile/include"
 OUT="$ROOT/target/lyra-mobile"
 XCF="$OUT/LyraMobile.xcframework"
-HEADERS_SRC="$CRATE_DIR/include"
 PROFILE="release"
 
 echo "==> Cleaning $OUT"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-echo "==> Building Rust static libs"
+echo "==> Building Rust static libs (user crate: $USER_CRATE)"
 for triple in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
     echo "    -- $triple"
-    (cd "$ROOT" && cargo build --release -p lyra-mobile --target "$triple")
+    (cd "$ROOT" && cargo build --release -p "$USER_CRATE" --target "$triple")
 done
 
-DEVICE_LIB="$ROOT/target/aarch64-apple-ios/$PROFILE/liblyra_mobile.a"
-SIM_ARM64_LIB="$ROOT/target/aarch64-apple-ios-sim/$PROFILE/liblyra_mobile.a"
-SIM_X86_LIB="$ROOT/target/x86_64-apple-ios/$PROFILE/liblyra_mobile.a"
+DEVICE_LIB="$ROOT/target/aarch64-apple-ios/$PROFILE/lib${USER_LIB}.a"
+SIM_ARM64_LIB="$ROOT/target/aarch64-apple-ios-sim/$PROFILE/lib${USER_LIB}.a"
+SIM_X86_LIB="$ROOT/target/x86_64-apple-ios/$PROFILE/lib${USER_LIB}.a"
 
-SIM_FAT="$OUT/sim/liblyra_mobile.a"
+SIM_FAT="$OUT/sim/lib${USER_LIB}.a"
 mkdir -p "$(dirname "$SIM_FAT")"
 echo "==> Lipo simulator slices"
 lipo -create "$SIM_ARM64_LIB" "$SIM_X86_LIB" -output "$SIM_FAT"

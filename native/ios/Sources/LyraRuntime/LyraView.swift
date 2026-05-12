@@ -3,6 +3,11 @@ import Lynx
 import LyraBridge
 import LyraMobile
 
+// Demo-only tick increment exported by `examples/hello-world`. Will go
+// away once tap-driven events flow on iOS.
+@_silgen_name("hello_world_tick_signal")
+private func hello_world_tick_signal()
+
 /// Hosts the Lyra runtime on iOS.
 ///
 /// **Phase 4–8**: Swift only attaches the engine and hands it to the
@@ -28,19 +33,16 @@ public final class LyraView: LynxView {
         // thread internally, so this returns immediately.
         lyra_mobile_app_main(UnsafeMutableRawPointer(engine))
 
-        // Tick once per second for the demo so the counter increments
-        // are easy to read. When tap-driven events flow (A2/A3 follow-up)
-        // this can step up to vsync pacing.
+        // Tick once per second. Until tap-driven events flow on iOS the
+        // demo crate exposes `hello_world_tick_signal` to bump its
+        // counter externally; Swift calls it before each `lyra_mobile_tick`
+        // so the signal is dirty by the time `Runtime::frame` runs.
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
             [weak self] _ in
-            NSLog("[LyraView] timer fired")
-            guard let engine = self?.engine else {
-                NSLog("[LyraView] timer: engine is nil")
-                return
-            }
+            guard let engine = self?.engine else { return }
+            hello_world_tick_signal()
             lyra_mobile_tick(UnsafeMutableRawPointer(engine))
         }
-        NSLog("[LyraView] tickTimer scheduled: \(String(describing: tickTimer))")
     }
 
     public required init?(coder: NSCoder) {

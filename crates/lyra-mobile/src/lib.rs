@@ -1,25 +1,21 @@
-//! C ABI exposed to Swift (iOS) and Kotlin/JNI (Android).
+//! Mobile-side Rust runtime for Lyra.
 //!
-//! Two responsibilities:
-//!   1. Implement [`lyra_runtime::renderer::Renderer`] on top of the
-//!      `liblyra_bridge` C ABI (declared in [`bridge_ffi`]).
-//!   2. Expose Rust entry points (`lyra_mobile_*`) the host Swift/Obj-C
-//!      code calls into to bootstrap the runtime.
+//! - [`bootstrap`]: per-host runtime helpers (`run` + `tick`) the
+//!   `#[lyra::main]` macro calls into. User crates don't import this
+//!   directly.
+//! - [`bridge_renderer::BridgeRenderer`]: implementation of
+//!   [`lyra_runtime::renderer::Renderer`] backed by the C++ bridge.
+//! - [`bridge_ffi`]: raw FFI declarations matching `native/bridge`'s
+//!   C ABI.
+//!
+//! No FFI symbols are exported from this crate. The cdylib that ships
+//! to iOS/Android is the *user's* crate, which `#[lyra::main]` annotates
+//! to generate the necessary `lyra_mobile_app_main` /
+//! `lyra_mobile_tick` exports calling into [`bootstrap`].
 
-mod app_logic;
+pub mod bootstrap;
 mod bridge_ffi;
 mod bridge_renderer;
-mod entry;
 
 pub use bridge_renderer::BridgeRenderer;
 
-use std::ffi::c_char;
-
-/// Returns a NUL-terminated UTF-8 greeting from Rust.
-///
-/// The pointer references static storage and is valid for the lifetime of
-/// the loaded library. The caller MUST NOT free it.
-#[no_mangle]
-pub extern "C" fn lyra_mobile_greeting() -> *const c_char {
-    b"Hello from Rust\0".as_ptr() as *const c_char
-}

@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+# Two outputs:
+# - `staticlib` is what the iOS xcframework wraps.
+# - `rlib` makes `cargo test` happy for the unit tests in src/lib.rs.
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 lyra = { path = "../../crates/lyra" }
