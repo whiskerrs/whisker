@@ -1,15 +1,26 @@
 import UIKit
+import Lynx
 import LyraMobile
 
 /// Hosts the Lyra runtime on iOS.
 ///
-/// **Phase 1**: shows a greeting fetched from the Rust runtime via the
-/// `LyraMobile` C ABI. No Lynx yet — the parent class is still a plain
-/// `UIView`. Phase 2 will switch to inheriting from `LynxView`.
-public final class LyraView: UIView {
+/// **Phase 2**: now inherits from `LynxView` so we ride on Lynx's iOS SDK
+/// for surface management, vsync, lifecycle, touch dispatch, and
+/// accessibility. We don't load a `.lynx` template — instead we drop a
+/// plain UIKit overlay that displays a greeting fetched from Rust via
+/// the LyraMobile C ABI.
+///
+/// Phase 3 will replace the overlay with Element PAPI calls driven by
+/// the Rust runtime through the C++ bridge.
+public final class LyraView: LynxView {
 
+    /// `LynxView`'s designated initializer is `init(builderBlock:)`.
+    /// We funnel everything through it so the Lynx engine is configured
+    /// correctly even when callers pass just a frame.
     public override init(frame: CGRect) {
-        super.init(frame: frame)
+        super.init(builderBlock: { builder in
+            builder.frame = frame
+        })
         backgroundColor = .systemBackground
         installGreetingLabel()
     }
@@ -42,9 +53,13 @@ public final class LyraView: UIView {
         return String(cString: cstr)
     }
 
-    /// Stub. Will forward foreground transitions to the Rust runtime once wired.
-    public func onEnterForeground() {}
+    /// Forward foreground transitions to the Rust runtime once wired.
+    public override func onEnterForeground() {
+        super.onEnterForeground()
+    }
 
-    /// Stub. Will forward background transitions to the Rust runtime once wired.
-    public func onEnterBackground() {}
+    /// Forward background transitions to the Rust runtime once wired.
+    public override func onEnterBackground() {
+        super.onEnterBackground()
+    }
 }
