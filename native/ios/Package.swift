@@ -52,7 +52,28 @@ let package = Package(
             dependencies: ["Lynx", "LynxBase", "LynxServiceAPI", "PrimJS"],
             path: "bridge",
             sources: ["src"],
-            publicHeadersPath: "include"
+            publicHeadersPath: "include",
+            cxxSettings: [
+                // Lynx C++ headers reference each other via tree-relative
+                // paths (e.g. `#include "core/shell/lynx_engine.h"`). The
+                // headers are staged under target/lynx-ios/sources/ by
+                // scripts/build-lynx-xcframeworks.sh, and `lynx-sources`
+                // (under native/ios/) is a symlink to that directory so
+                // SPM accepts it as inside the package root.
+                .headerSearchPath("../lynx-sources/Lynx"),
+                .headerSearchPath("../lynx-sources/LynxBase"),
+                .headerSearchPath("../lynx-sources/LynxServiceAPI"),
+                // PrimJS uses several non-overlapping search roots
+                // (mirrors the Lynx pod's own xcconfig).
+                .headerSearchPath("../lynx-sources/PrimJS/src"),
+                .headerSearchPath("../lynx-sources/PrimJS/src/interpreter"),
+                .headerSearchPath("../lynx-sources/PrimJS/src/interpreter/quickjs/include"),
+                .headerSearchPath("../lynx-sources/PrimJS/src/gc"),
+                .headerSearchPath("../lynx-sources/PrimJS/src/napi"),
+                .headerSearchPath("../lynx-sources/PrimJS/src/napi/env"),
+                .headerSearchPath("../lynx-sources/PrimJS/src/napi/quickjs"),
+                .headerSearchPath("../lynx-sources/PrimJS/src/napi/jsc"),
+            ]
         ),
 
         .target(
@@ -76,5 +97,8 @@ let package = Package(
                 .unsafeFlags(["-ObjC"]),
             ]
         ),
-    ]
+    ],
+    // Lynx itself is compiled as gnu++17. Match it so the staged headers
+    // (e.g. `std::optional`, `std::is_invocable_r_v`) compile in our bridge.
+    cxxLanguageStandard: .gnucxx17
 )

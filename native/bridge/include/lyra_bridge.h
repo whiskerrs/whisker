@@ -2,10 +2,9 @@
 //
 // C ABI bridging Swift / Rust callers to the Lynx C++ engine.
 //
-// Phase 3b (current): smoke test PLUS reach into LynxView → engineProxy
-//                     and dispatch a task onto the Lynx TASM thread.
-// Phase 3c (next):    Element PAPI surface (CreatePage, CreateText,
-//                     SetAttribute, FlushElementTree, …).
+// Phase 3c (current): Element PAPI demo — given a LynxView and a text
+//                     string, build a single-element tree directly via
+//                     ElementManager / FiberElement and flush it.
 
 #ifndef LYRA_BRIDGE_H_
 #define LYRA_BRIDGE_H_
@@ -16,16 +15,16 @@
 extern "C" {
 #endif
 
-// Smoke test from Phase 3a.
+// Smoke test, kept around for debugging.
 void lyra_bridge_log_hello(void);
 
-// Hand a LynxView pointer (typed `void*` to keep the C ABI clean) to the
-// bridge. The bridge resolves the view's engine proxy and dispatches a
-// log task onto the Lynx TASM thread. Returns true on success.
-//
-// Phase 3b only — exists to verify the engine-thread bridge works before
-// we layer Element PAPI on top.
+// Phase 3b: dispatch a NSLog onto the Lynx TASM thread.
 bool lyra_bridge_dispatch_log(void* lynx_view);
+
+// Phase 3c: render `text` as a Lynx-managed element by driving Element
+// PAPI directly from the bridge. Returns true if the dispatch succeeded
+// (actual render happens asynchronously on the TASM thread).
+bool lyra_bridge_render_text(void* lynx_view, const char* text);
 
 #ifdef __cplusplus
 }  // extern "C"

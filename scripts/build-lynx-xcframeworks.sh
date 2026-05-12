@@ -130,6 +130,24 @@ for fw in Lynx PrimJS LynxBase LynxServiceAPI; do
     fi
 done
 
+echo "==> Stage Lynx C++ headers for the bridge target"
+# Lynx's framework PrivateHeaders are flattened, but the headers themselves
+# include each other via tree-relative paths like `core/...`, `base/...`.
+# Copy every pod's source tree (headers only) into a stable location with
+# directory structure preserved, so the bridge target's header search paths
+# can use them directly.
+SRC_OUT="$OUT/sources"
+rm -rf "$SRC_OUT"
+mkdir -p "$SRC_OUT"
+for pod in Lynx LynxBase LynxServiceAPI PrimJS; do
+    rsync -am --include='*/' --include='*.h' --exclude='*' \
+        "Pods/$pod/" "$SRC_OUT/$pod/"
+done
+echo "    staged headers per pod:"
+for pod in Lynx LynxBase LynxServiceAPI PrimJS; do
+    echo "      $pod: $(find "$SRC_OUT/$pod" -name '*.h' | wc -l | tr -d ' ')"
+done
+
 echo
 echo "==> Final outputs"
 ls -la "$OUT"
