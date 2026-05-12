@@ -5,9 +5,12 @@ import LyraMobile
 
 /// Hosts the Lyra runtime on iOS.
 ///
-/// **Phase 3c**: drives Lynx's Element PAPI directly from the Obj-C++
-/// bridge to render text — no `.lynx` template, no UIKit overlay.
+/// **Phase 4–8**: Swift only attaches the engine and hands it to the
+/// Rust runtime via `lyra_mobile_app_main`. The element tree, the diff
+/// engine, and (eventually) reactive state all live in Rust.
 public final class LyraView: LynxView {
+
+    private var engine: OpaquePointer?
 
     public override init(frame: CGRect) {
         super.init(builderBlock: { builder in
@@ -15,13 +18,26 @@ public final class LyraView: LynxView {
         })
 
         let viewPtr = Unmanaged.passUnretained(self).toOpaque()
-        let greeting = String(cString: lyra_mobile_greeting())
-        let ok = lyra_bridge_render_text(viewPtr, greeting)
-        NSLog("[LyraView] bridge render_text(\"\(greeting)\") returned \(ok)")
+        guard let engine = lyra_bridge_engine_attach(viewPtr) else {
+            NSLog("[LyraView] lyra_bridge_engine_attach returned NULL")
+            return
+        }
+        self.engine = engine
+        // Hand control to Rust. The runtime dispatches to the Lynx TASM
+        // thread internally, so this returns immediately.
+        // Pass via UnsafeMutableRawPointer so the LyraMobile module
+        // doesn't need to import LyraBridge's typed handle.
+        lyra_mobile_app_main(UnsafeMutableRawPointer(engine))
     }
 
     public required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    deinit {
+        if let engine = engine {
+            lyra_bridge_engine_release(engine)
+        }
     }
 
     public override func onEnterForeground() {

@@ -1,8 +1,17 @@
 //! C ABI exposed to Swift (iOS) and Kotlin/JNI (Android).
 //!
-//! Functions here are the entry points the native runtime libraries call.
-//! Keep the surface narrow and the lifetimes obvious — every pointer that
-//! crosses the FFI boundary needs a documented owner.
+//! Two responsibilities:
+//!   1. Implement [`lyra_runtime::renderer::Renderer`] on top of the
+//!      `liblyra_bridge` C ABI (declared in [`bridge_ffi`]).
+//!   2. Expose Rust entry points (`lyra_mobile_*`) the host Swift/Obj-C
+//!      code calls into to bootstrap the runtime.
+
+mod app_logic;
+mod bridge_ffi;
+mod bridge_renderer;
+mod entry;
+
+pub use bridge_renderer::BridgeRenderer;
 
 use std::ffi::c_char;
 
@@ -12,6 +21,5 @@ use std::ffi::c_char;
 /// the loaded library. The caller MUST NOT free it.
 #[no_mangle]
 pub extern "C" fn lyra_mobile_greeting() -> *const c_char {
-    // Static C-string literal: NUL-terminated, 'static lifetime, never freed.
     b"Hello from Rust\0".as_ptr() as *const c_char
 }
