@@ -54,6 +54,16 @@ pub fn run(args: BuildLynxAarArgs) -> Result<()> {
     apply_patch(&lynx_src, &patches_dir.join("lynx.patch"))?;
 
     // 3. Gradle assemble.
+    // Lynx's CMake-driven native build picks the NDK from
+    // `ANDROID_NDK_HOME` (or `ANDROID_NDK`); without those set, gradle
+    // ends up trying to compile against a non-existent
+    // `build/config/None/toolchains/...` sysroot. Push the env into
+    // this process so the spawned `gradlew` inherits it.
+    // SAFETY: short-lived xtask process, no other threads racing.
+    unsafe {
+        std::env::set_var("ANDROID_NDK_HOME", &ndk21);
+        std::env::set_var("ANDROID_NDK", &ndk21);
+    }
     println!("==> Building AARs (this takes a few minutes the first time)");
     let android_dir = lynx_src.join("platform/android");
     build_example::run_gradle(
