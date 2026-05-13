@@ -104,6 +104,12 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     APP_STATE.with(|s| {
         *s.borrow_mut() = Some(AppState { runtime });
     });
+
+    // Once the app is mounted, kick off the dev-server WebSocket
+    // receiver. Reads `TUFT_DEV_ADDR` from the env; a no-op when
+    // unset, so even a `hot-reload`-built binary stays inert without
+    // an active `tuft run`.
+    start_hot_reload_receiver();
 }
 
 #[cfg(feature = "hot-reload")]
@@ -115,6 +121,31 @@ fn wrap_for_hot_reload(mut app_fn: BoxedAppFn) -> BoxedAppFn {
 fn wrap_for_hot_reload(app_fn: BoxedAppFn) -> BoxedAppFn {
     app_fn
 }
+
+#[cfg(feature = "hot-reload")]
+fn start_hot_reload_receiver() {
+    tuft_dev_runtime::start_receiver();
+}
+
+#[cfg(not(feature = "hot-reload"))]
+fn start_hot_reload_receiver() {}
+
+#[cfg(feature = "hot-reload")]
+fn apply_pending_hot_patch() {
+    if let Some(table) = tuft_dev_runtime::take_pending_patch() {
+        // SAFETY: tick_callback runs on the Lynx TASM thread and we
+        // call this *before* `runtime.frame()`. The frame is what
+        // invokes `subsecond::call`, so no `call` is active here —
+        // the only safe window to swap dispatchers.
+        match unsafe { subsecond::apply_patch(table) } {
+            Ok(()) => eprintln!("[tuft-dev] patch applied"),
+            Err(e) => eprintln!("[tuft-dev] apply_patch failed: {e:?}"),
+        }
+    }
+}
+
+#[cfg(not(feature = "hot-reload"))]
+fn apply_pending_hot_patch() {}
 
 /// Process one frame on demand. Returns `true` when the runtime is fully
 /// idle after this tick (nothing dirty) so the host can pause its render
@@ -139,6 +170,10 @@ pub fn tick(engine_raw: *mut c_void) -> bool {
 }
 
 extern "C" fn tick_callback(_user_data: *mut c_void) {
+    // Drain any pending hot-reload patch *before* the frame runs so
+    // the new dispatcher is in place by the time `runtime.frame()`
+    // calls `subsecond::call` (a no-op in non-hot-reload builds).
+    apply_pending_hot_patch();
     APP_STATE.with(|s| {
         if let Some(state) = s.borrow_mut().as_mut() {
             state.runtime.frame();

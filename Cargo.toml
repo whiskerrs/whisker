@@ -43,3 +43,13 @@ thiserror = "2"
 # `tuft run` watcher / sender rather than depending on `dx serve`).
 # Used by tuft-driver and the subsecond-poc example.
 subsecond = "0.7"
+subsecond-types = "0.7"
+
+# Dev-time WebSocket receiver — pulled in only via the `hot-reload`
+# feature, never present in release builds. Async stack kept minimal:
+# current-thread tokio + tungstenite over std TcpStream.
+tokio = { version = "1", default-features = false }
+tokio-tungstenite = { version = "0.21", default-features = false }
+futures-util = { version = "0.3", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
