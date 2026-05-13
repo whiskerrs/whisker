@@ -19,6 +19,10 @@ path = "src/bin/cargo_tuft.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+# Section spinners while probing each toolchain. We deliberately avoid
+# a full-screen TUI (ratatui etc.) so the doctor output remains plain
+# scrollback text that AI agents and clipboard paste can read.
+indicatif = "0.17"
 tuft-codegen = { workspace = true }
 tuft-app-config = { workspace = true }
 tuft-plugin = { workspace = true }

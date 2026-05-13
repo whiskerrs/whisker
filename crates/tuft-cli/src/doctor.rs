@@ -6,10 +6,18 @@
 //!
 //! Each check is a pure inspection — no side effects (no installs, no
 //! downloads). The user runs the fix themselves; we only diagnose.
+//!
+//! ## Output style
+//! Section spinners ("Probing Android …") while each group runs, then
+//! a fixed-width-aligned list with a small ✓/⚠/✗ glyph at the left.
+//! Plain scrollback text — no boxes, no TUI takeover — so the result
+//! is easy to copy/paste into an issue or hand to an AI assistant.
 
 use anyhow::Result;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -25,27 +33,22 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    println!("{BOLD}tuft doctor{RESET}\n");
+
     let mut report = Report::default();
 
-    print_section("Rust toolchain");
-    report.extend(check_rust());
+    report.add_section("Rust toolchain", check_rust);
 
     if !args.no_android {
-        print_section("Android");
-        report.extend(check_android());
+        report.add_section("Android", check_android);
     }
-
     if !args.no_ios {
-        print_section("iOS");
-        report.extend(check_ios());
+        report.add_section("iOS", check_ios);
     }
-
     if !args.no_lynx {
-        print_section("Lynx artifacts");
-        report.extend(check_lynx());
+        report.add_section("Lynx artifacts", check_lynx);
     }
 
-    println!();
     report.print_summary();
     if report.has_errors() {
         std::process::exit(1);
@@ -53,13 +56,14 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-// ----- Output helpers --------------------------------------------------------
+// ----- Style tokens ---------------------------------------------------------
 
 const C_OK: &str = "\x1b[32m";
 const C_WARN: &str = "\x1b[33m";
 const C_ERR: &str = "\x1b[31m";
-const C_DIM: &str = "\x1b[2m";
-const C_RESET: &str = "\x1b[0m";
+const DIM: &str = "\x1b[2m";
+const BOLD: &str = "\x1b[1m";
+const RESET: &str = "\x1b[0m";
 
 #[derive(Clone, Copy)]
 enum Status {
@@ -76,38 +80,13 @@ struct Check {
 
 impl Check {
     fn ok(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            status: Status::Ok,
-            detail: detail.into(),
-        }
+        Self { name: name.into(), status: Status::Ok, detail: detail.into() }
     }
     fn warn(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            status: Status::Warn,
-            detail: detail.into(),
-        }
+        Self { name: name.into(), status: Status::Warn, detail: detail.into() }
     }
     fn err(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            status: Status::Err,
-            detail: detail.into(),
-        }
-    }
-    fn emit(&self) {
-        let (sym, col) = match self.status {
-            Status::Ok => ("✓", C_OK),
-            Status::Warn => ("⚠", C_WARN),
-            Status::Err => ("✗", C_ERR),
-        };
-        let detail = if self.detail.is_empty() {
-            String::new()
-        } else {
-            format!("  {C_DIM}{}{C_RESET}", self.detail)
-        };
-        println!("  {col}{sym}{C_RESET} {}{detail}", self.name);
+        Self { name: name.into(), status: Status::Err, detail: detail.into() }
     }
 }
 
@@ -119,31 +98,120 @@ struct Report {
 }
 
 impl Report {
-    fn extend(&mut self, checks: Vec<Check>) {
-        for c in checks {
-            c.emit();
-            match c.status {
-                Status::Ok => self.ok += 1,
-                Status::Warn => self.warn += 1,
-                Status::Err => self.err += 1,
-            }
+    fn add_section<F: FnOnce() -> Vec<Check>>(&mut self, name: &str, body: F) {
+        let pb = section_spinner(name);
+        let checks = body();
+        let (n_ok, n_warn, n_err) = tally(&checks);
+        let summary = format!(
+            "{n_ok}✓  {n_warn}⚠  {n_err}✗",
+            n_ok = n_ok,
+            n_warn = n_warn,
+            n_err = n_err,
+        );
+        pb.finish_and_clear();
+
+        // Section header (bold)
+        println!("{BOLD}{name}{RESET}  {DIM}{summary}{RESET}");
+
+        // Compute aligned width of names (clamped so very long entries
+        // don't push detail off-screen).
+        let name_w = checks
+            .iter()
+            .map(|c| visible_width(&c.name))
+            .max()
+            .unwrap_or(0)
+            .min(40);
+
+        for c in &checks {
+            let (glyph, col) = match c.status {
+                Status::Ok => ("✓", C_OK),
+                Status::Warn => ("⚠", C_WARN),
+                Status::Err => ("✗", C_ERR),
+            };
+            let pad = name_w.saturating_sub(visible_width(&c.name));
+            let detail = if c.detail.is_empty() {
+                String::new()
+            } else {
+                format!("  {DIM}{}{RESET}", c.detail)
+            };
+            println!(
+                "  {col}{glyph}{RESET}  {name}{pad}{detail}",
+                name = c.name,
+                pad = " ".repeat(pad),
+            );
         }
+        println!();
+
+        self.ok += n_ok;
+        self.warn += n_warn;
+        self.err += n_err;
     }
+
     fn has_errors(&self) -> bool {
         self.err > 0
     }
+
     fn print_summary(&self) {
         let total = self.ok + self.warn + self.err;
-        println!(
-            "{total} checks: {C_OK}{}✓{C_RESET}  {C_WARN}{}⚠{C_RESET}  {C_ERR}{}✗{C_RESET}",
-            self.ok, self.warn, self.err
-        );
+        match (self.err, self.warn) {
+            (0, 0) => println!(
+                "{C_OK}{BOLD}all {total} checks passed{RESET}"
+            ),
+            (0, w) => println!(
+                "{total} checks: {C_OK}{}✓{RESET}  {C_WARN}{w}⚠{RESET}",
+                self.ok
+            ),
+            (e, w) => println!(
+                "{total} checks: {C_OK}{}✓{RESET}  {C_WARN}{w}⚠{RESET}  {C_ERR}{e}✗{RESET}",
+                self.ok
+            ),
+        }
     }
 }
 
-fn print_section(name: &str) {
-    println!("\n{name}");
-    println!("{C_DIM}{:─<width$}{C_RESET}", "", width = name.len());
+fn tally(checks: &[Check]) -> (usize, usize, usize) {
+    let (mut o, mut w, mut e) = (0, 0, 0);
+    for c in checks {
+        match c.status {
+            Status::Ok => o += 1,
+            Status::Warn => w += 1,
+            Status::Err => e += 1,
+        }
+    }
+    (o, w, e)
+}
+
+fn section_spinner(name: &str) -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.cyan}  {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    pb.set_message(format!("Probing {name} …"));
+    pb.enable_steady_tick(Duration::from_millis(80));
+    pb
+}
+
+/// Visible width of a string ignoring ANSI escapes. Good enough for
+/// our short ASCII labels — no full Unicode width tables required.
+fn visible_width(s: &str) -> usize {
+    let mut w = 0;
+    let mut in_esc = false;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_esc = true;
+            continue;
+        }
+        if in_esc {
+            if c.is_ascii_alphabetic() {
+                in_esc = false;
+            }
+            continue;
+        }
+        w += 1;
+    }
+    w
 }
 
 // ----- Rust toolchain --------------------------------------------------------
@@ -257,8 +325,7 @@ fn check_android() -> Vec<Check> {
     }
 
     // JDK 11 — Lynx's gradle wrapper (6.7.1) refuses anything newer.
-    let jdk11 = resolve_jdk11();
-    match jdk11 {
+    match resolve_jdk11() {
         Some(p) => out.push(Check::ok("JDK 11", p.display().to_string())),
         None => out.push(Check::warn(
             "JDK 11",
@@ -313,23 +380,20 @@ fn check_ios() -> Vec<Check> {
     }
 
     match run_capture("xcode-select", &["-p"]) {
-        Ok(s) => out.push(Check::ok(
-            "Xcode (xcode-select -p)",
-            s.trim().to_string(),
-        )),
+        Ok(s) => out.push(Check::ok("Xcode", s.trim().to_string())),
         Err(_) => out.push(Check::err(
-            "Xcode (xcode-select -p)",
-            "Xcode command-line tools not configured — `xcode-select --install`",
+            "Xcode",
+            "command-line tools not configured — `xcode-select --install`",
         )),
     }
 
     match run_capture("pod", &["--version"]) {
         Ok(s) => out.push(Check::ok(
-            "CocoaPods (pod)",
+            "CocoaPods",
             format!("v{}", s.trim()),
         )),
         Err(_) => out.push(Check::warn(
-            "CocoaPods (pod)",
+            "CocoaPods",
             "not on PATH — needed for `cargo xtask ios build-lynx-frameworks`",
         )),
     }
@@ -395,12 +459,12 @@ fn check_lynx() -> Vec<Check> {
     let aars = ["LynxBase.aar", "LynxTrace.aar", "LynxAndroid.aar", "ServiceAPI.aar"];
     if aars.iter().all(|a| aar_dir.join(a).is_file()) {
         out.push(Check::ok(
-            "Lynx Android AARs",
-            format!("4 files at {}", aar_dir.display()),
+            "Android AARs",
+            format!("4 files at {}", short_path(&aar_dir)),
         ));
     } else {
         out.push(Check::warn(
-            "Lynx Android AARs",
+            "Android AARs",
             "missing — `cargo xtask android build-lynx-aar`",
         ));
     }
@@ -414,12 +478,12 @@ fn check_lynx() -> Vec<Check> {
     ];
     if xcfs.iter().all(|x| ios_dir.join(x).is_dir()) {
         out.push(Check::ok(
-            "Lynx iOS xcframeworks",
-            format!("4 frameworks at {}", ios_dir.display()),
+            "iOS xcframeworks",
+            format!("4 frameworks at {}", short_path(&ios_dir)),
         ));
     } else {
         out.push(Check::warn(
-            "Lynx iOS xcframeworks",
+            "iOS xcframeworks",
             "missing — `cargo xtask ios build-lynx-frameworks`",
         ));
     }
@@ -427,17 +491,26 @@ fn check_lynx() -> Vec<Check> {
     let headers = target.join("lynx-headers");
     if headers.join("Lynx").is_dir() && headers.join("LynxBase").is_dir() {
         out.push(Check::ok(
-            "Lynx staged headers",
-            headers.display().to_string(),
+            "Staged C++ headers",
+            short_path(&headers),
         ));
     } else {
         out.push(Check::warn(
-            "Lynx staged headers",
+            "Staged C++ headers",
             "missing — produced as a side effect of `build-lynx-frameworks`",
         ));
     }
 
     out
+}
+
+fn short_path(p: &Path) -> String {
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        if let Ok(rest) = p.strip_prefix(&home) {
+            return format!("~/{}", rest.display());
+        }
+    }
+    p.display().to_string()
 }
 
 /// Best-effort workspace root: walk up from CWD looking for a Cargo.toml
