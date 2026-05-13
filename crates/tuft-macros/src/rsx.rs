@@ -214,3 +214,76 @@ fn strip_on_prefix(name: &str) -> Option<String> {
 // separated lists in attribute values) don't need a new import.
 #[allow(dead_code)]
 fn _doc_links<P: Parse, T: ToTokens>(_p: Punctuated<P, T>) {}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_on_prefix;
+
+    // ----- snake_case form (`on_<event>`) ------------------------------
+
+    #[test]
+    fn strips_snake_case_on_prefix() {
+        assert_eq!(strip_on_prefix("on_tap"), Some("tap".into()));
+    }
+
+    #[test]
+    fn snake_case_keeps_underscores_after_first() {
+        // `on_long_press` → `long_press`. We only strip ONE `on_`.
+        assert_eq!(strip_on_prefix("on_long_press"), Some("long_press".into()));
+    }
+
+    #[test]
+    fn snake_case_empty_event_returns_empty_string() {
+        // Degenerate input but well-defined: `on_` alone → "".
+        assert_eq!(strip_on_prefix("on_"), Some(String::new()));
+    }
+
+    // ----- camelCase form (`on<Event>`) -------------------------------
+
+    #[test]
+    fn strips_camel_case_on_prefix_and_lowercases_first_char() {
+        assert_eq!(strip_on_prefix("onClick"), Some("click".into()));
+    }
+
+    #[test]
+    fn camel_case_preserves_rest_of_event_name_casing() {
+        // `onLongPress` → `longPress`. Only the first char of the
+        // remainder is lowercased.
+        assert_eq!(strip_on_prefix("onLongPress"), Some("longPress".into()));
+    }
+
+    #[test]
+    fn camel_case_works_for_unicode_first_char() {
+        // Cover the `first.len_utf8()` path: an upper-case multi-byte
+        // letter should still be lowercased and the suffix preserved.
+        assert_eq!(strip_on_prefix("onÄction"), Some("äction".into()));
+    }
+
+    // ----- non-matching shapes -----------------------------------------
+
+    #[test]
+    fn returns_none_when_no_on_prefix() {
+        assert_eq!(strip_on_prefix("tap"), None);
+        assert_eq!(strip_on_prefix(""), None);
+    }
+
+    #[test]
+    fn returns_none_for_on_followed_by_lowercase() {
+        // `ontap` is NOT a valid camelCase event handler — the char
+        // after `on` must be uppercase to disambiguate it from a
+        // regular attribute that happens to start with `on`.
+        assert_eq!(strip_on_prefix("ontap"), None);
+    }
+
+    #[test]
+    fn returns_none_for_on_followed_by_digit() {
+        // `on1` — digit isn't uppercase, so don't match.
+        assert_eq!(strip_on_prefix("on1"), None);
+    }
+
+    #[test]
+    fn returns_none_for_bare_on() {
+        // `on` with nothing after — first char doesn't exist.
+        assert_eq!(strip_on_prefix("on"), None);
+    }
+}

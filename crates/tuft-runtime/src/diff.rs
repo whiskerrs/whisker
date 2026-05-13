@@ -516,4 +516,163 @@ mod tests {
         assert!(new_ops.iter().any(|op| matches!(op, MockOp::RemoveChild { .. })));
         assert!(new_ops.iter().any(|op| matches!(op, MockOp::Release { .. })));
     }
+
+    // ---- events_differ -------------------------------------------------
+
+    #[test]
+    fn events_differ_when_count_changes() {
+        let prev = view();
+        let next = view().on("tap", || {});
+        assert_eq!(kinds(&diff(&prev, &next)), vec!["ReplaceEvents"]);
+    }
+
+    #[test]
+    fn events_differ_when_a_handler_is_removed() {
+        let prev = view().on("tap", || {});
+        let next = view();
+        assert_eq!(kinds(&diff(&prev, &next)), vec!["ReplaceEvents"]);
+    }
+
+    #[test]
+    fn events_differ_when_handler_name_changes() {
+        let prev = view().on("tap", || {});
+        let next = view().on("longpress", || {});
+        assert_eq!(kinds(&diff(&prev, &next)), vec!["ReplaceEvents"]);
+    }
+
+    #[test]
+    fn events_with_same_names_produce_no_replaceevents_patch() {
+        // Different closures but identical names → no patch. We diff
+        // by *name*, not by closure identity (Box<dyn Fn> can't be
+        // compared structurally).
+        let prev = view().on("tap", || {});
+        let next = view().on("tap", || {});
+        let patches = diff(&prev, &next);
+        assert!(
+            !patches.iter().any(|p| matches!(p, Patch::ReplaceEvents { .. })),
+            "same event names should not trigger ReplaceEvents, got {patches:?}",
+        );
+    }
+
+    // ---- RemoveAttribute apply ----------------------------------------
+
+    #[test]
+    fn apply_remove_attribute_clears_via_empty_set_attribute() {
+        // RemoveAttribute → renderer.set_attribute(handle, name, "")
+        // because the Renderer trait has no remove_attribute primitive.
+        let initial = view().attr("class", "x");
+        let updated = view();
+
+        let mut r = MockRenderer::new();
+        let mut handles = mount(&mut r, &initial);
+        let before = r.ops().len();
+        let patches = diff(&initial, &updated);
+        apply(&mut r, &mut handles, &patches);
+
+        let new_ops = &r.ops()[before..];
+        assert_eq!(new_ops.len(), 1);
+        match &new_ops[0] {
+            MockOp::SetAttribute { handle, key, value } => {
+                assert_eq!(*handle, 1, "root view");
+                assert_eq!(key, "class");
+                assert_eq!(value, "");
+            }
+            other => panic!("unexpected op: {other:?}"),
+        }
+    }
+
+    // ---- Replace at root ----------------------------------------------
+
+    #[test]
+    fn apply_replace_at_root_resets_root_and_releases_old() {
+        let initial = view();
+        let updated = text();
+
+        let mut r = MockRenderer::new();
+        let mut handles = mount(&mut r, &initial);
+        let old_handle = handles.handle;
+        let before = r.ops().len();
+
+        let patches = diff(&initial, &updated);
+        assert_eq!(kinds(&patches), vec!["Replace"]);
+        apply(&mut r, &mut handles, &patches);
+
+        let new_ops = &r.ops()[before..];
+        // Expect: Create new (text) → SetRoot(new) → Release(old).
+        assert!(
+            new_ops.iter().any(|op| matches!(op, MockOp::SetRoot { .. })),
+            "Replace at root must call set_root, got {new_ops:?}",
+        );
+        assert!(
+            new_ops
+                .iter()
+                .any(|op| matches!(op, MockOp::Release { handle } if *handle == old_handle)),
+            "Replace at root must release the old root handle ({old_handle}), got {new_ops:?}",
+        );
+    }
+
+    // ---- Keyed children -----------------------------------------------
+
+    #[test]
+    fn keyed_child_reorder_diffs_in_place_no_replace() {
+        // a, b → b, a. Both keys exist on both sides, so no
+        // Insert/Remove — the diff just recurses into each match and
+        // (since payloads are identical) produces zero patches.
+        let prev = view()
+            .child(text_with("A").key("a"))
+            .child(text_with("B").key("b"));
+        let next = view()
+            .child(text_with("B").key("b"))
+            .child(text_with("A").key("a"));
+        let patches = diff(&prev, &next);
+        assert!(
+            patches.is_empty(),
+            "keyed reorder of identical payloads should be a no-op, got {patches:?}",
+        );
+    }
+
+    #[test]
+    fn keyed_child_removed_produces_remove_patch() {
+        let prev = view()
+            .child(text_with("A").key("a"))
+            .child(text_with("B").key("b"));
+        let next = view().child(text_with("A").key("a"));
+        let kinds_v = kinds(&diff(&prev, &next));
+        assert!(
+            kinds_v.contains(&"RemoveChild"),
+            "expected a RemoveChild, got {kinds_v:?}",
+        );
+    }
+
+    #[test]
+    fn keyed_child_added_produces_insert_patch() {
+        let prev = view().child(text_with("A").key("a"));
+        let next = view()
+            .child(text_with("A").key("a"))
+            .child(text_with("B").key("b"));
+        let kinds_v = kinds(&diff(&prev, &next));
+        assert!(
+            kinds_v.contains(&"InsertChildBefore"),
+            "expected an InsertChildBefore for the new key, got {kinds_v:?}",
+        );
+    }
+
+    // ---- InsertChildBefore apply --------------------------------------
+
+    #[test]
+    fn apply_insert_child_before_grows_handle_tree() {
+        let initial = view().child(text_with("A").key("a"));
+        let updated = view()
+            .child(text_with("A").key("a"))
+            .child(text_with("B").key("b"));
+
+        let mut r = MockRenderer::new();
+        let mut handles = mount(&mut r, &initial);
+        assert_eq!(handles.children.len(), 1);
+
+        let patches = diff(&initial, &updated);
+        apply(&mut r, &mut handles, &patches);
+
+        assert_eq!(handles.children.len(), 2, "insert must grow the tree");
+    }
 }
