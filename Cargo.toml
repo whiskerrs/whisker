@@ -12,6 +12,7 @@ members = [
     "crates/tuft-plugin",
     "crates/tuft-runtime",
     "examples/hello-world",
+    "examples/subsecond-poc",
     "xtask",
 ]
 exclude = []
@@ -37,3 +38,8 @@ tuft-runtime = { path = "crates/tuft-runtime", version = "0.1.0" }
 
 anyhow = "1"
 thiserror = "2"
+
+# Rust hot-patching runtime (receive side only — we build our own
+# `tuft run` watcher / sender rather than depending on `dx serve`).
+# Used by tuft-driver and the subsecond-poc example.
+subsecond = "0.7"

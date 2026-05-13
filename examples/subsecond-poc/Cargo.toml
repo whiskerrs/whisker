@@ -1,0 +1,23 @@
+[package]
+name = "subsecond-poc"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Throwaway sanity check for the subsecond crate — verifies that
+#   1. `subsecond` builds against our workspace toolchain,
+#   2. `subsecond::call(|| f())` is observably equivalent to `f()`
+#      when no patch has been applied (no panic, no UB, no perf cliff),
+#   3. `register_handler` and `get_jump_table` do what their docs claim.
+#
+# Hot-reload itself can't be observed here — the sender side (file
+# watcher + part-rebuilder + JumpTable shipper) is a separate
+# follow-up; without it `subsecond::call` is just a pass-through. The
+# value of this POC is "does it integrate cleanly?"
+
+[[bin]]
+name = "subsecond-poc"
+path = "src/main.rs"
+
+[dependencies]
+subsecond = { workspace = true }
