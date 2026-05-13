@@ -2,6 +2,8 @@
 
 Cross-platform mobile UI framework for Rust, built on the [Lynx](https://github.com/lynx-family/lynx) C++ engine.
 
+Website: [tuft.rs](https://tuft.rs) · Source: [github.com/tuftrs/tuft](https://github.com/tuftrs/tuft)
+
 > **Status**: Pre-alpha. Active development on the initial scaffold. Not usable yet.
 
 Tuft lets you build native iOS and Android apps in Rust with a Dioxus-style declarative API. Under the hood, the [Lynx](https://github.com/lynx-family/lynx) engine drives platform-native widgets — no self-rendering, no JavaScript runtime.
