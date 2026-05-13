@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-#[derive(clap::Args)]
+#[derive(clap::Args, Debug)]
 pub struct Args {
     /// Skip the iOS section even on macOS hosts.
     #[arg(long)]
@@ -505,8 +505,15 @@ fn check_lynx() -> Vec<Check> {
 }
 
 fn short_path(p: &Path) -> String {
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        if let Ok(rest) = p.strip_prefix(&home) {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    short_path_with_home(p, home.as_deref())
+}
+
+/// Pure-function core of [`short_path`]: replace a leading `home` prefix
+/// with `~`. Factored out so unit tests don't have to mutate `$HOME`.
+fn short_path_with_home(p: &Path, home: Option<&Path>) -> String {
+    if let Some(home) = home {
+        if let Ok(rest) = p.strip_prefix(home) {
             return format!("~/{}", rest.display());
         }
     }
@@ -516,7 +523,15 @@ fn short_path(p: &Path) -> String {
 /// Best-effort workspace root: walk up from CWD looking for a Cargo.toml
 /// whose `[workspace]` table mentions tuft-driver-sys (cheap heuristic).
 fn workspace_root() -> Option<PathBuf> {
-    let mut cur = std::env::current_dir().ok()?;
+    let cwd = std::env::current_dir().ok()?;
+    workspace_root_from(&cwd)
+}
+
+/// Pure-function core of [`workspace_root`]: start the upward walk from
+/// the supplied directory rather than the process CWD. Factored out so
+/// unit tests can drive it with a tempdir.
+fn workspace_root_from(start: &Path) -> Option<PathBuf> {
+    let mut cur = start.to_path_buf();
     loop {
         let cargo = cur.join("Cargo.toml");
         if cargo.is_file() {
@@ -559,4 +574,235 @@ fn which(cmd: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    // ----- parse_rustc_version ------------------------------------------------
+
+    #[test]
+    fn parse_rustc_version_extracts_major_minor() {
+        assert_eq!(
+            parse_rustc_version("rustc 1.91.0 (f8297e351 2025-10-28)"),
+            Some((1, 91)),
+        );
+    }
+
+    #[test]
+    fn parse_rustc_version_handles_no_metadata() {
+        assert_eq!(parse_rustc_version("rustc 1.85.2"), Some((1, 85)));
+    }
+
+    #[test]
+    fn parse_rustc_version_handles_pre_release_channel() {
+        // Real-world nightly: "rustc 1.93.0-nightly (abc 2026-01-01)"
+        assert_eq!(
+            parse_rustc_version("rustc 1.93.0-nightly (abcdef 2026-01-01)"),
+            Some((1, 93)),
+        );
+    }
+
+    #[test]
+    fn parse_rustc_version_rejects_garbage() {
+        assert_eq!(parse_rustc_version(""), None);
+        assert_eq!(parse_rustc_version("cargo 1.91.0"), None);
+        assert_eq!(parse_rustc_version("rustc not-a-version"), None);
+        assert_eq!(parse_rustc_version("rustc 1"), None);
+    }
+
+    // ----- visible_width ------------------------------------------------------
+
+    #[test]
+    fn visible_width_counts_plain_ascii() {
+        assert_eq!(visible_width(""), 0);
+        assert_eq!(visible_width("hello"), 5);
+    }
+
+    #[test]
+    fn visible_width_ignores_ansi_color_escapes() {
+        // "\x1b[32m✓\x1b[0m" should report 1 visible char (✓).
+        assert_eq!(visible_width("\x1b[32m✓\x1b[0m"), 1);
+        // Mixed: "  ✓  hello" -> 10 visible chars.
+        assert_eq!(visible_width("  \x1b[32m✓\x1b[0m  hello"), 10);
+    }
+
+    #[test]
+    fn visible_width_ignores_long_ansi_sequences() {
+        // 38;5;n colour selector
+        assert_eq!(visible_width("\x1b[38;5;208mhi\x1b[0m"), 2);
+    }
+
+    // ----- Check / Status constructors ----------------------------------------
+
+    #[test]
+    fn check_constructors_set_status() {
+        assert!(matches!(Check::ok("n", "d").status, Status::Ok));
+        assert!(matches!(Check::warn("n", "d").status, Status::Warn));
+        assert!(matches!(Check::err("n", "d").status, Status::Err));
+    }
+
+    #[test]
+    fn check_constructors_store_strings() {
+        let c = Check::ok("rustc", "1.91.0");
+        assert_eq!(c.name, "rustc");
+        assert_eq!(c.detail, "1.91.0");
+    }
+
+    // ----- tally --------------------------------------------------------------
+
+    #[test]
+    fn tally_counts_each_status_bucket() {
+        let checks = vec![
+            Check::ok("a", ""),
+            Check::ok("b", ""),
+            Check::warn("c", ""),
+            Check::err("d", ""),
+            Check::err("e", ""),
+            Check::err("f", ""),
+        ];
+        assert_eq!(tally(&checks), (2, 1, 3));
+    }
+
+    #[test]
+    fn tally_of_empty_is_all_zero() {
+        assert_eq!(tally(&[]), (0, 0, 0));
+    }
+
+    // ----- Report::has_errors -------------------------------------------------
+
+    #[test]
+    fn report_has_errors_only_when_err_nonzero() {
+        let mut r = Report::default();
+        assert!(!r.has_errors());
+        r.warn = 5;
+        assert!(!r.has_errors(), "warnings alone don't constitute errors");
+        r.err = 1;
+        assert!(r.has_errors());
+    }
+
+    // ----- short_path_with_home -----------------------------------------------
+
+    #[test]
+    fn short_path_with_home_substitutes_tilde() {
+        let home = PathBuf::from("/home/itome");
+        assert_eq!(
+            short_path_with_home(
+                Path::new("/home/itome/projects/tuft"),
+                Some(&home),
+            ),
+            "~/projects/tuft",
+        );
+    }
+
+    #[test]
+    fn short_path_with_home_leaves_unrelated_paths_alone() {
+        let home = PathBuf::from("/home/itome");
+        assert_eq!(
+            short_path_with_home(Path::new("/etc/hosts"), Some(&home)),
+            "/etc/hosts",
+        );
+    }
+
+    #[test]
+    fn short_path_with_home_none_returns_full_path() {
+        assert_eq!(
+            short_path_with_home(Path::new("/tmp/x"), None),
+            "/tmp/x",
+        );
+    }
+
+    #[test]
+    fn short_path_with_home_does_not_match_overlapping_prefix() {
+        // `/home/itome2` must not get its `/home/itome` prefix stripped.
+        let home = PathBuf::from("/home/itome");
+        assert_eq!(
+            short_path_with_home(Path::new("/home/itome2/work"), Some(&home)),
+            "/home/itome2/work",
+        );
+    }
+
+    // ----- workspace_root_from ------------------------------------------------
+
+    fn write_workspace_marker(dir: &Path) {
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/tuft-driver-sys\"]\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn workspace_root_from_finds_root_at_start_dir() {
+        let tmp = tempdir();
+        write_workspace_marker(tmp.path());
+        assert_eq!(
+            workspace_root_from(tmp.path()).as_deref(),
+            Some(tmp.path()),
+        );
+    }
+
+    #[test]
+    fn workspace_root_from_walks_up_to_find_root() {
+        let tmp = tempdir();
+        write_workspace_marker(tmp.path());
+        let nested = tmp.path().join("crates/tuft-cli/src");
+        fs::create_dir_all(&nested).unwrap();
+        assert_eq!(
+            workspace_root_from(&nested).as_deref(),
+            Some(tmp.path()),
+        );
+    }
+
+    #[test]
+    fn workspace_root_from_ignores_unrelated_cargo_tomls() {
+        // A non-workspace Cargo.toml in the start dir must NOT match —
+        // we only want the one with `[workspace]` + tuft-driver-sys.
+        let tmp = tempdir();
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"foo\"\n",
+        )
+        .unwrap();
+        assert_eq!(workspace_root_from(tmp.path()), None);
+    }
+
+    #[test]
+    fn workspace_root_from_returns_none_when_no_root_above() {
+        // Bare tempdir, no Cargo.toml anywhere on the path.
+        let tmp = tempdir();
+        assert_eq!(workspace_root_from(tmp.path()), None);
+    }
+
+    // ----- tempdir helper -----------------------------------------------------
+    //
+    // The test suite is too small to justify pulling in the `tempfile`
+    // crate as a dev-dependency; this hand-rolled helper is enough.
+
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    fn tempdir() -> TempDir {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let p = std::env::temp_dir().join(format!("tuft-cli-test-{pid}-{n}"));
+        fs::create_dir_all(&p).unwrap();
+        TempDir(p)
+    }
 }
