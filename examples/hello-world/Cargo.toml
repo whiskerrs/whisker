@@ -15,9 +15,3 @@ crate-type = ["rlib"]
 
 [dependencies]
 tuft = { workspace = true }
-
-# `tuft-build` runs from build.rs and does the bridge cc::Build +
-# linker-arg dance for Android / iOS. The user's build.rs collapses
-# to one line — see ./build.rs.
-[build-dependencies]
-tuft-build = { workspace = true }

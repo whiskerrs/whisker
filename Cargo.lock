@@ -217,7 +217,6 @@ name = "hello-world"
 version = "0.1.0"
 dependencies = [
  "tuft",
- "tuft-build",
 ]
 
 [[package]]
@@ -355,14 +354,6 @@ name = "tuft-app-config"
 version = "0.1.0"
 
 [[package]]
-name = "tuft-build"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
-]
-
-[[package]]
 name = "tuft-cli"
 version = "0.1.0"
 dependencies = [
@@ -399,6 +390,10 @@ dependencies = [
 [[package]]
 name = "tuft-driver-sys"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+]
 
 [[package]]
 name = "tuft-macros"
@@ -475,7 +470,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "tuft-build",
  "walkdir",
  "zip",
 ]

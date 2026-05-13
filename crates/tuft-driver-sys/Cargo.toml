@@ -6,4 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Raw FFI declarations for the Tuft driver's C++ bridge. Internal — use `tuft-driver` for the safe wrappers."
+description = "Raw FFI + C++ bridge sources for the Tuft driver. Internal — use `tuft-driver` for the safe wrappers."
+links = "tuft_bridge_static"
+build = "build.rs"
+
+[build-dependencies]
+anyhow = { workspace = true }
+cc = "1"

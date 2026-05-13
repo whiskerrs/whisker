@@ -14,7 +14,7 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use tuft_build::paths;
+use crate::paths;
 
 #[derive(clap::Args)]
 pub struct UnpackArgs {

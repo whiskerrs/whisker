@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tuft_build::paths;
+use crate::paths;
 
 const LYNX_VERSION: &str = "3.7.0";
 const PRIMJS_VERSION: &str = "3.7.0";

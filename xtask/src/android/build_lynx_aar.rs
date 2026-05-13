@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::build_example;
-use tuft_build::paths;
+use crate::paths;
 
 #[derive(clap::Args)]
 pub struct BuildLynxAarArgs {

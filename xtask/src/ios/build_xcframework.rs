@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::Command;
 
-use tuft_build::paths;
+use crate::paths;
 
 #[derive(clap::Args)]
 pub struct Args {

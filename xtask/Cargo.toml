@@ -9,10 +9,6 @@ publish = false
 [dependencies]
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
-# `paths::*` — single source of truth for "where Lynx / bridge / Tuft
-# artifacts live". Sharing this with tuft-build means the compile and
-# pack sides can't drift on each other.
-tuft-build = { workspace = true }
 # AAR extraction (android unpack-lynx)
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # Walk source trees when staging Lynx C++ headers (ios build-lynx-frameworks).

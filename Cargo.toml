@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/tuft",
     "crates/tuft-app-config",
-    "crates/tuft-build",
     "crates/tuft-cli",
     "crates/tuft-codegen",
     "crates/tuft-dev-runtime",
@@ -28,7 +27,6 @@ authors = ["itome <dev@itome.team>"]
 [workspace.dependencies]
 tuft = { path = "crates/tuft", version = "0.1.0" }
 tuft-app-config = { path = "crates/tuft-app-config", version = "0.1.0" }
-tuft-build = { path = "crates/tuft-build", version = "0.1.0" }
 tuft-codegen = { path = "crates/tuft-codegen", version = "0.1.0" }
 tuft-dev-runtime = { path = "crates/tuft-dev-runtime", version = "0.1.0" }
 tuft-driver = { path = "crates/tuft-driver", version = "0.1.0" }
