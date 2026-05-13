@@ -31,19 +31,6 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-// Compiler-builtins (bundled into rustc's cdylib for every aarch64
-// target) ships outline-atomic dispatcher objects that hard-reference
-// `__aarch64_have_lse_atomics`. Resolving that symbol normally drags
-// `cpu_model.c.o` out of clang_rt.builtins, which in turn pulls in
-// `getauxval` from static libc.a — and that path silently hauls in a
-// duplicate copy of bionic's pthread/jemalloc internals that
-// dereference `__libc_shared_globals` at a fixed offset and crash on
-// API 30+. Providing the symbol locally severs the chain: outline
-// dispatchers always take the LSE branch (we target Armv8.1-A
-// anyway), and clang_rt.builtins / libc.a never enter the link.
-extern "C" __attribute__((visibility("hidden")))
-const unsigned char __aarch64_have_lse_atomics = 1;
-
 namespace {
 
 // Cached JVM + the Kotlin object/method we need to call back into for
