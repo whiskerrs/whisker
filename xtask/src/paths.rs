@@ -51,6 +51,14 @@ pub fn lynx_ios_root() -> PathBuf {
     target_dir().join("lynx-ios")
 }
 
+/// OS-neutral C++ header staging tree. Both `tuft-driver-sys/build.rs`
+/// (Android + iOS cc::Build) and the iOS Lynx framework build read
+/// from this directory. The C++ headers are platform-agnostic so we
+/// don't duplicate per-OS.
+pub fn lynx_staged_headers() -> PathBuf {
+    target_dir().join("lynx-headers")
+}
+
 // --- Lynx source -----------------------------------------------------
 
 pub fn lynx_src_default() -> PathBuf {

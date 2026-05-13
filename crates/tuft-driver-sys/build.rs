@@ -39,7 +39,7 @@ fn workspace_target_dir() -> PathBuf {
 }
 
 fn lynx_staged_headers() -> PathBuf {
-    workspace_target_dir().join("lynx-ios/sources")
+    workspace_target_dir().join("lynx-headers")
 }
 
 // --- Lynx C++ header path tree (shared by Android and iOS) ----------

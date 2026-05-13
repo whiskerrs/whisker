@@ -130,7 +130,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     println!("==> Stage Lynx C++ headers for the bridge target");
-    stage_headers(&build, &out)?;
+    stage_headers(&build)?;
 
     println!("\n==> Final outputs:");
     if let Ok(entries) = std::fs::read_dir(&out) {
@@ -227,11 +227,12 @@ fn patch_pods_xcconfig(build: &Path) -> Result<()> {
 /// Lynx's framework PrivateHeaders are flattened, but the headers
 /// themselves include each other via tree-relative paths like
 /// `core/...`, `base/...`. Copy every pod's source tree (headers
-/// only) into `target/lynx-ios/sources/<pod>/` with directory
-/// structure preserved so the bridge target's header search paths
-/// can use them directly.
-fn stage_headers(build: &Path, out: &Path) -> Result<()> {
-    let sources_root = out.join("sources");
+/// only) into `target/lynx-headers/<pod>/` with directory structure
+/// preserved so the bridge target's header search paths can use
+/// them directly. This output is OS-neutral — Android cc::Build
+/// reads from the same tree.
+fn stage_headers(build: &Path) -> Result<()> {
+    let sources_root = paths::lynx_staged_headers();
     if sources_root.exists() {
         std::fs::remove_dir_all(&sources_root)?;
     }
