@@ -95,11 +95,25 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // app() call (e.g. lazy `use_signal` init) correctly schedule a frame.
     set_request_frame_callback(ctx.request_frame, ctx.request_frame_data);
 
-    let runtime = Runtime::new(renderer, ctx.app_fn);
+    // Route the user fn through `subsecond::call` *only* when the
+    // `hot-reload` feature is on. On release builds this collapses to
+    // a direct call — the subsecond crate isn't even compiled.
+    let app_fn = wrap_for_hot_reload(ctx.app_fn);
+    let runtime = Runtime::new(renderer, app_fn);
 
     APP_STATE.with(|s| {
         *s.borrow_mut() = Some(AppState { runtime });
     });
+}
+
+#[cfg(feature = "hot-reload")]
+fn wrap_for_hot_reload(mut app_fn: BoxedAppFn) -> BoxedAppFn {
+    Box::new(move || subsecond::call(|| app_fn()))
+}
+
+#[cfg(not(feature = "hot-reload"))]
+fn wrap_for_hot_reload(app_fn: BoxedAppFn) -> BoxedAppFn {
+    app_fn
 }
 
 /// Process one frame on demand. Returns `true` when the runtime is fully

@@ -8,6 +8,12 @@ repository.workspace = true
 authors.workspace = true
 description = "Cross-platform mobile UI framework built on Lynx. Umbrella crate."
 
+[features]
+default = []
+# Forwarded to `tuft-driver` — enables subsecond-backed hot reload.
+# `tuft run` flips this on; release builds leave it off.
+hot-reload = ["tuft-driver/hot-reload"]
+
 [dependencies]
 tuft-runtime = { workspace = true }
 tuft-macros = { workspace = true }

@@ -11,6 +11,16 @@ description = "Backend driver for Tuft. Wraps the engine FFI and exposes the hos
 [lib]
 crate-type = ["staticlib", "rlib"]
 
+[features]
+default = []
+# Routes the user app function through `subsecond::call`, enabling
+# `tuft run` to ship hot-patches at runtime. Off by default so release
+# builds carry zero hot-reload baggage — the subsecond crate (and its
+# libloading / memmap2 / memfd transitive deps) drop out of the
+# resolved graph entirely.
+hot-reload = ["dep:subsecond"]
+
 [dependencies]
 tuft-runtime = { workspace = true }
 tuft-driver-sys = { workspace = true }
+subsecond = { workspace = true, optional = true }

@@ -623,6 +623,7 @@ dependencies = [
 name = "tuft-driver"
 version = "0.1.0"
 dependencies = [
+ "subsecond",
  "tuft-driver-sys",
  "tuft-runtime",
 ]
