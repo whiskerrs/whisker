@@ -15,7 +15,6 @@ use clap::{Parser, Subcommand};
 
 mod android;
 mod ios;
-mod paths;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Lyra build automation", long_about = None)]

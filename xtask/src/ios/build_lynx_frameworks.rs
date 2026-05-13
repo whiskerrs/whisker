@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::paths;
+use lyra_build::paths;
 
 const LYNX_VERSION: &str = "3.7.0";
 const PRIMJS_VERSION: &str = "3.7.0";
@@ -36,11 +36,10 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let root = paths::workspace_root()?;
     let build = args
         .build_dir
-        .unwrap_or_else(|| root.join("target/lynx-build"));
-    let out = args.out_dir.unwrap_or_else(|| root.join("target/lynx-ios"));
+        .unwrap_or_else(|| paths::target_dir().join("lynx-build"));
+    let out = args.out_dir.unwrap_or_else(paths::lynx_ios_root);
 
     println!("==> Clean");
     for p in [&build, &out] {

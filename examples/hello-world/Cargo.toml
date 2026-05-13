@@ -12,10 +12,10 @@ publish = false
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-lyra = { path = "../../crates/lyra" }
+lyra = { workspace = true }
 
-# Build script compiles the C++ bridge into this cdylib for Android.
-# build-dependencies are host-side, so we can't target-gate this — but
-# the build.rs itself short-circuits on non-Android targets.
+# `lyra-build` runs from build.rs and does the bridge cc::Build +
+# linker-arg dance for Android / iOS. The user's build.rs collapses
+# to one line — see ./build.rs.
 [build-dependencies]
-cc = "1"
+lyra-build = { workspace = true }

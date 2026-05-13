@@ -14,7 +14,7 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::paths;
+use lyra_build::paths;
 
 #[derive(clap::Args)]
 pub struct UnpackArgs {
@@ -28,13 +28,8 @@ pub struct UnpackArgs {
 }
 
 pub fn run(args: UnpackArgs) -> Result<()> {
-    let root = paths::workspace_root()?;
-    let src = args
-        .src
-        .unwrap_or_else(|| root.join("target/lynx-android"));
-    let dest = args
-        .dest
-        .unwrap_or_else(|| root.join("target/lynx-android-unpacked"));
+    let src = args.src.unwrap_or_else(paths::lynx_android_aars);
+    let dest = args.dest.unwrap_or_else(paths::lynx_android_unpacked);
     run_with(&src, &dest)
 }
 

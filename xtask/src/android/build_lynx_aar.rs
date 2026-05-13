@@ -4,7 +4,8 @@
 //!
 //! We deliberately don't fetch Lynx source ourselves — Lynx has its
 //! own bootstrap (`tools/envsetup.sh` + `tools/hab sync`) and we
-//! expect the user to point us at the result via `LYNX_SRC`.
+//! expect the user to put the result under `target/lynx-src/` (or
+//! override via `LYNX_SRC` / `--lynx-src`).
 //!
 //! See `patches/lynx-android/README.md` for why these patches exist.
 
@@ -13,18 +14,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::build_example;
-use crate::paths;
+use lyra_build::paths;
 
 #[derive(clap::Args)]
 pub struct BuildLynxAarArgs {
-    /// Path to a Lynx source checkout (overrides `LYNX_SRC`).
-    /// Default: `$LYNX_SRC` or `$HOME/work/lynx-src`.
+    /// Path to a Lynx source checkout. Default: `$LYNX_SRC` or
+    /// `target/lynx-src/` under the workspace.
     #[arg(long)]
     pub lynx_src: Option<PathBuf>,
 }
 
 pub fn run(args: BuildLynxAarArgs) -> Result<()> {
-    let root = paths::workspace_root()?;
     let lynx_src = resolve_lynx_src(args.lynx_src.as_deref())?;
     let java11 = resolve_java11()?;
     let ndk21 = resolve_ndk21()?;
@@ -49,7 +49,7 @@ pub fn run(args: BuildLynxAarArgs) -> Result<()> {
 
     // 2. Apply patches (idempotent).
     println!("==> Applying Lyra patches to Lynx source");
-    let patches_dir = root.join("patches/lynx-android");
+    let patches_dir = paths::workspace_root().join("patches/lynx-android");
     apply_patch(&lynx_src.join("build"), &patches_dir.join("buildroot.patch"))?;
     apply_patch(&lynx_src, &patches_dir.join("lynx.patch"))?;
 
@@ -69,7 +69,7 @@ pub fn run(args: BuildLynxAarArgs) -> Result<()> {
     )?;
 
     // 4. Copy results into target/lynx-android/.
-    let dest = root.join("target/lynx-android");
+    let dest = paths::lynx_android_aars();
     std::fs::create_dir_all(&dest)?;
     let copies: &[(&str, &str)] = &[
         (
@@ -119,13 +119,16 @@ fn resolve_lynx_src(arg: Option<&Path>) -> Result<PathBuf> {
             return Ok(p);
         }
     }
-    let default = paths::home_dir()?.join("work/lynx-src");
+    let default = paths::lynx_src_default();
     if default.is_dir() {
         return Ok(default);
     }
     anyhow::bail!(
-        "Lynx source not found. Bootstrap Lynx per its docs and set \
-         LYNX_SRC, or pass --lynx-src=/path/to/lynx."
+        "Lynx source not found at {}.\n  \
+         Bootstrap Lynx per its docs (e.g. clone + tools/envsetup.sh + \
+         tools/hab sync) into that directory, or override with \
+         LYNX_SRC=/path/to/lynx (or --lynx-src=/path/to/lynx).",
+        default.display()
     )
 }
 
@@ -138,13 +141,16 @@ fn resolve_java11() -> Result<PathBuf> {
             return Ok(p);
         }
     }
-    let home = paths::home_dir()?;
-    let candidates: &[PathBuf] = &[
-        home.join("work/java11/jdk-11.0.25+9/Contents/Home"),
-        home.join("work/java11/jdk-11.0.25+9"),
-        PathBuf::from("/Library/Java/JavaVirtualMachines/temurin-11.jdk/Contents/Home"),
-    ];
-    for p in candidates {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(home) = &home {
+        candidates.push(home.join("work/java11/jdk-11.0.25+9/Contents/Home"));
+        candidates.push(home.join("work/java11/jdk-11.0.25+9"));
+    }
+    candidates.push(PathBuf::from(
+        "/Library/Java/JavaVirtualMachines/temurin-11.jdk/Contents/Home",
+    ));
+    for p in &candidates {
         if p.is_dir() {
             return Ok(p.clone());
         }

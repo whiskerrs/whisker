@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::{cargo_build, ndk, unpack_lynx};
-use crate::paths;
+use lyra_build::paths;
 
 #[derive(clap::Args)]
 pub struct BuildExampleArgs {
@@ -28,8 +28,7 @@ pub struct BuildExampleArgs {
 }
 
 pub fn run(args: BuildExampleArgs) -> Result<()> {
-    let root = paths::workspace_root()?;
-    let example_dir = root
+    let example_dir = paths::workspace_root()
         .join("examples")
         .join(&args.package)
         .join("android");
@@ -45,9 +44,9 @@ pub fn run(args: BuildExampleArgs) -> Result<()> {
     //    `build.rs` adds `target/lynx-android-unpacked/jni/<abi>/` as
     //    a `-L` search path so `-llynx` / `-llynxbase` resolve at link
     //    time — so the unpack has to happen *before* cargo build.
-    let unpack_dir = root.join("target/lynx-android-unpacked");
-    if !unpack_dir.join("jni").join(&args.abi).is_dir() {
-        let aar_dir = root.join("target/lynx-android");
+    let unpack_dir = paths::lynx_android_unpacked();
+    if !paths::lynx_android_jni(&args.abi).is_dir() {
+        let aar_dir = paths::lynx_android_aars();
         if !has_any_aar(&aar_dir) {
             anyhow::bail!(
                 "no Lynx AARs in {}; run `cargo xtask android build-lynx-aar` first",
@@ -71,8 +70,7 @@ pub fn run(args: BuildExampleArgs) -> Result<()> {
     // 3. Drop .so + libc++_shared.so into jniLibs/<abi>/.
     let triple = ndk::abi_to_triple(&args.abi)?;
     let lib_name = format!("lib{}.so", args.package.replace('-', "_"));
-    let so_src = root
-        .join("target")
+    let so_src = paths::target_dir()
         .join(triple)
         .join("release")
         .join(&lib_name);

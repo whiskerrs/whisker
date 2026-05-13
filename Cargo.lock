@@ -216,8 +216,8 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 name = "hello-world"
 version = "0.1.0"
 dependencies = [
- "cc",
  "lyra",
+ "lyra-build",
 ]
 
 [[package]]
@@ -255,6 +255,14 @@ dependencies = [
 [[package]]
 name = "lyra-app-config"
 version = "0.1.0"
+
+[[package]]
+name = "lyra-build"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+]
 
 [[package]]
 name = "lyra-cli"
@@ -468,6 +476,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "lyra-build",
  "walkdir",
  "zip",
 ]

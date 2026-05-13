@@ -43,7 +43,7 @@ Pinned commits we tested against:
 
 ```sh
 # 1. Bootstrap Lynx per its docs (source tools/envsetup.sh, tools/hab sync, etc.)
-#    Default location:  ~/work/lynx-src
+#    Default location:  target/lynx-src/  (override via LYNX_SRC env var)
 # 2. Patch + build the AARs into target/lynx-android/
 cargo xtask android build-lynx-aar
 # 3. Unpack into target/lynx-android-unpacked/jni/<abi>/

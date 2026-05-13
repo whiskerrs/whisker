@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::paths;
+use lyra_build::paths;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -24,15 +24,13 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let root = paths::workspace_root()?;
-    let out = args
-        .out_dir
-        .unwrap_or_else(|| root.join("target/lyra-mobile"));
+    let root = paths::workspace_root();
+    let out = args.out_dir.unwrap_or_else(paths::lyra_mobile_out);
     let lib_stem = args.package.replace('-', "_");
     let lib_name = format!("lib{lib_stem}.a");
 
     let headers_src = root.join("crates/lyra-mobile/include");
-    let bridge_headers_src = root.join("native/bridge/include");
+    let bridge_headers_src = paths::bridge_include();
     for required in ["lyra_mobile.h", "module.modulemap"] {
         if !headers_src.join(required).is_file() {
             anyhow::bail!(
@@ -62,14 +60,13 @@ pub fn run(args: Args) -> Result<()> {
         cargo_build(&args.package, triple, &root)?;
     }
 
-    let device_lib = root
-        .join("target/aarch64-apple-ios/release")
+    let target_dir = paths::target_dir();
+    let device_lib = target_dir.join("aarch64-apple-ios/release").join(&lib_name);
+    let sim_arm64_lib = target_dir
+        .join("aarch64-apple-ios-sim/release")
         .join(&lib_name);
-    let sim_arm64_lib = root
-        .join("target/aarch64-apple-ios-sim/release")
-        .join(&lib_name);
-    let sim_x86_lib = root
-        .join("target/x86_64-apple-ios/release")
+    let sim_x86_lib = target_dir
+        .join("x86_64-apple-ios/release")
         .join(&lib_name);
     for p in [&device_lib, &sim_arm64_lib, &sim_x86_lib] {
         if !p.is_file() {
