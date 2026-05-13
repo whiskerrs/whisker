@@ -1,49 +1,47 @@
 //! Tuft CLI implementation.
 //!
-//! Subcommands:
-//! - `init`     — scaffold a new Tuft app
-//! - `prebuild` — run CNG, regenerate `ios/` and `android/`
-//! - `dev`      — start dev server + hot reload + log stream
-//! - `build`    — production build (debug / profile / release)
-//! - `add`      — add a plugin (cargo add + prebuild trigger)
-//! - `clean`    — clean build artifacts
+//! Subcommands (current + planned):
+//! - `doctor`   — environment / toolchain health check
+//! - `new`      — scaffold a new Tuft app (planned)
+//! - `run`      — build → install → launch on emulator/sim (planned)
+//! - `dev`      — file-watch dev loop (planned)
+//! - `build`    — production build (planned)
+//! - `prebuild` — CNG codegen (planned)
+//! - `clean`    — wipe build artifacts (planned)
+//! - `plugin`   — manage plugins (planned)
 
-pub fn run(args: impl IntoIterator<Item = String>) -> anyhow::Result<()> {
-    // First arg is program name; skip it.
-    let mut iter = args.into_iter();
-    let _program = iter.next();
-    let sub = iter.next();
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 
-    match sub.as_deref() {
-        Some("init") => todo!("tuft init"),
-        Some("prebuild") => todo!("tuft prebuild"),
-        Some("dev") => todo!("tuft dev"),
-        Some("build") => todo!("tuft build"),
-        Some("add") => todo!("tuft add"),
-        Some("clean") => todo!("tuft clean"),
-        Some(other) => {
-            anyhow::bail!("unknown subcommand: {other}");
-        }
-        None => {
-            print_help();
-            Ok(())
-        }
-    }
+pub mod doctor;
+
+#[derive(Parser)]
+#[command(
+    name = "tuft",
+    about = "Tuft — cross-platform mobile UI framework",
+    version
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
 }
 
-fn print_help() {
-    println!(
-        "tuft — cross-platform mobile UI framework
+#[derive(Subcommand)]
+enum Command {
+    /// Inspect the local toolchain — Rust targets, Android NDK/SDK/JDK,
+    /// Xcode + CocoaPods, and the Lynx artifacts under `target/`.
+    Doctor(doctor::Args),
+}
 
-Usage: tuft <SUBCOMMAND>
-
-Subcommands:
-  init      Scaffold a new Tuft app
-  prebuild  Regenerate ios/ and android/ from tuft.rs + plugins
-  dev       Start dev server with hot reload
-  build     Production build
-  add       Add a plugin
-  clean     Clean build artifacts
-"
-    );
+pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
+    // Use clap's own exit path so `--help` / `--version` print to stdout
+    // with exit code 0; bubbling the result through anyhow would prefix
+    // it with "Error: " and exit non-zero.
+    let cli = match Cli::try_parse_from(args) {
+        Ok(c) => c,
+        Err(e) => e.exit(),
+    };
+    match cli.command {
+        Command::Doctor(a) => doctor::run(a),
+    }
 }

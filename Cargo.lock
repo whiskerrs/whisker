@@ -358,6 +358,7 @@ name = "tuft-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "tuft-app-config",
  "tuft-codegen",
  "tuft-plugin",

@@ -18,6 +18,7 @@ path = "src/bin/cargo_tuft.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
 tuft-codegen = { workspace = true }
 tuft-app-config = { workspace = true }
 tuft-plugin = { workspace = true }
