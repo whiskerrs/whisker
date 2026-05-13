@@ -1,0 +1,132 @@
+//! Build the user crate as an iOS xcframework that the LyraRuntime
+//! SPM target consumes.
+//!
+//! Slices produced:
+//! - `ios-arm64` (real device)
+//! - `ios-arm64_x86_64-simulator` (lipo'd arm64-sim + x86_64-sim)
+
+use anyhow::{Context, Result};
+use std::path::PathBuf;
+use std::process::Command;
+
+use crate::paths;
+
+#[derive(clap::Args)]
+pub struct Args {
+    /// User crate (the one with `#[lyra::main]`). Its static library
+    /// is `lib<package_underscored>.a`. Default: hello-world.
+    #[arg(short = 'p', long, default_value = "hello-world")]
+    pub package: String,
+
+    /// Output directory. Default: `target/lyra-mobile/`.
+    #[arg(long)]
+    pub out_dir: Option<PathBuf>,
+}
+
+pub fn run(args: Args) -> Result<()> {
+    let root = paths::workspace_root()?;
+    let out = args
+        .out_dir
+        .unwrap_or_else(|| root.join("target/lyra-mobile"));
+    let lib_stem = args.package.replace('-', "_");
+    let lib_name = format!("lib{lib_stem}.a");
+
+    let headers_src = root.join("crates/lyra-mobile/include");
+    for required in ["lyra_mobile.h", "module.modulemap"] {
+        if !headers_src.join(required).is_file() {
+            anyhow::bail!(
+                "missing header {} (expected at {})",
+                required,
+                headers_src.display()
+            );
+        }
+    }
+
+    println!("==> Cleaning {}", out.display());
+    if out.exists() {
+        std::fs::remove_dir_all(&out)?;
+    }
+    std::fs::create_dir_all(&out)?;
+
+    let triples = ["aarch64-apple-ios", "aarch64-apple-ios-sim", "x86_64-apple-ios"];
+    println!("==> Building Rust static libs (user crate: {})", args.package);
+    for triple in triples {
+        println!("    -- {triple}");
+        cargo_build(&args.package, triple, &root)?;
+    }
+
+    let device_lib = root
+        .join("target/aarch64-apple-ios/release")
+        .join(&lib_name);
+    let sim_arm64_lib = root
+        .join("target/aarch64-apple-ios-sim/release")
+        .join(&lib_name);
+    let sim_x86_lib = root
+        .join("target/x86_64-apple-ios/release")
+        .join(&lib_name);
+    for p in [&device_lib, &sim_arm64_lib, &sim_x86_lib] {
+        if !p.is_file() {
+            anyhow::bail!("expected static lib not built: {}", p.display());
+        }
+    }
+
+    let sim_dir = out.join("sim");
+    std::fs::create_dir_all(&sim_dir)?;
+    let sim_fat = sim_dir.join(&lib_name);
+    println!("==> Lipo simulator slices");
+    let status = Command::new("lipo")
+        .args(["-create"])
+        .arg(&sim_arm64_lib)
+        .arg(&sim_x86_lib)
+        .args(["-output"])
+        .arg(&sim_fat)
+        .status()
+        .context("failed to spawn lipo")?;
+    if !status.success() {
+        anyhow::bail!("lipo failed (exit {status})");
+    }
+
+    println!("==> Staging headers");
+    let hdr_dir = out.join("Headers");
+    std::fs::create_dir_all(&hdr_dir)?;
+    std::fs::copy(headers_src.join("lyra_mobile.h"), hdr_dir.join("lyra_mobile.h"))?;
+    std::fs::copy(
+        headers_src.join("module.modulemap"),
+        hdr_dir.join("module.modulemap"),
+    )?;
+
+    let xcf = out.join("LyraMobile.xcframework");
+    println!("==> Creating xcframework");
+    let status = Command::new("xcodebuild")
+        .arg("-create-xcframework")
+        .args(["-library"])
+        .arg(&device_lib)
+        .args(["-headers"])
+        .arg(&hdr_dir)
+        .args(["-library"])
+        .arg(&sim_fat)
+        .args(["-headers"])
+        .arg(&hdr_dir)
+        .args(["-output"])
+        .arg(&xcf)
+        .status()
+        .context("failed to spawn xcodebuild")?;
+    if !status.success() {
+        anyhow::bail!("xcodebuild -create-xcframework failed (exit {status})");
+    }
+
+    println!("\n✅ Created {}", xcf.display());
+    Ok(())
+}
+
+fn cargo_build(package: &str, triple: &str, root: &std::path::Path) -> Result<()> {
+    let status = Command::new("cargo")
+        .args(["build", "--release", "-p", package, "--target", triple])
+        .current_dir(root)
+        .status()
+        .context("failed to spawn cargo")?;
+    if !status.success() {
+        anyhow::bail!("cargo build failed for target {triple} (exit {status})");
+    }
+    Ok(())
+}

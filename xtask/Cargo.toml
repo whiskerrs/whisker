@@ -9,3 +9,7 @@ publish = false
 [dependencies]
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+# AAR extraction (android unpack-lynx)
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Walk source trees when staging Lynx C++ headers (ios build-lynx-frameworks).
+walkdir = "2"

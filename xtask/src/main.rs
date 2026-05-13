@@ -14,6 +14,8 @@
 use clap::{Parser, Subcommand};
 
 mod android;
+mod ios;
+mod paths;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "Lyra build automation", long_about = None)]
@@ -26,11 +28,14 @@ struct Cli {
 enum Command {
     /// Android build pipeline (cargo cross-compile, AAR packaging, etc.).
     Android(android::AndroidArgs),
+    /// iOS build pipeline (xcframework + Lynx framework assembly).
+    Ios(ios::IosArgs),
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Android(args) => android::run(args),
+        Command::Ios(args) => ios::run(args),
     }
 }

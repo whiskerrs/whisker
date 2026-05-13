@@ -7,8 +7,8 @@ import PackageDescription
 // thread; Phase 3c will drive Element PAPI.
 //
 // Build pre-reqs (run before opening Xcode):
-//   scripts/build-lynx-xcframeworks.sh
-//   scripts/build-ios-xcframework.sh
+//   cargo xtask ios build-lynx-frameworks
+//   cargo xtask ios build-xcframework
 
 let package = Package(
     name: "LyraRuntime",
@@ -26,7 +26,7 @@ let package = Package(
         ),
 
         // Lynx engine + dependencies, as xcframeworks built from upstream
-        // CocoaPods source via scripts/build-lynx-xcframeworks.sh.
+        // CocoaPods source via `cargo xtask ios build-lynx-frameworks`.
         .binaryTarget(
             name: "Lynx",
             path: "../../target/lynx-ios/Lynx.xcframework"
@@ -65,7 +65,7 @@ let package = Package(
                 // Lynx C++ headers reference each other via tree-relative
                 // paths (e.g. `#include "core/shell/lynx_engine.h"`). The
                 // headers are staged under target/lynx-ios/sources/ by
-                // scripts/build-lynx-xcframeworks.sh, and `lynx-sources`
+                // `cargo xtask ios build-lynx-frameworks`, and `lynx-sources`
                 // (under native/ios/) is a symlink to that directory so
                 // SPM accepts it as inside the package root.
                 .headerSearchPath("../lynx-sources/Lynx"),

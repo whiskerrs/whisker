@@ -6,6 +6,8 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
+use crate::paths;
+
 /// NDK versions we know work with Lyra's link setup, in preference
 /// order. NDK 23 was the cargo-ndk minimum and is the most-tested,
 /// but anything ≥ 23 should work now that we provide
@@ -28,7 +30,7 @@ pub fn android_home() -> Result<PathBuf> {
         }
     }
     // macOS default install location.
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+    if let Ok(home) = paths::home_dir() {
         let cand = home.join("Library/Android/sdk");
         if cand.is_dir() {
             return Ok(cand);

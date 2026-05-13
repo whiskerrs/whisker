@@ -44,13 +44,14 @@ Pinned commits we tested against:
 ```sh
 # 1. Bootstrap Lynx per its docs (source tools/envsetup.sh, tools/hab sync, etc.)
 #    Default location:  ~/work/lynx-src
-# 2. Build patched AARs into target/lynx-android/
-scripts/build-lynx-android.sh
+# 2. Patch + build the AARs into target/lynx-android/
+cargo xtask android build-lynx-aar
 # 3. Unpack into target/lynx-android-unpacked/jni/<abi>/
-scripts/unpack-lynx-android.sh
-# 4. Build the example
-scripts/build-android-example.sh
+cargo xtask android unpack-lynx
+# 4. Build the example end-to-end (cargo + jniLibs + gradle assembleDebug)
+cargo xtask android build-example
 ```
 
-`build-lynx-android.sh` is idempotent: re-runs detect already-applied
-patches and skip them.
+`build-lynx-aar` is idempotent: re-runs detect already-applied
+patches and skip them. `build-example` will trigger `unpack-lynx`
+automatically if the AAR contents haven't been extracted yet.
