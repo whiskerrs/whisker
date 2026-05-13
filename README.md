@@ -71,8 +71,11 @@ cargo coverage-lcov    # writes lcov.info (for editors / CI)
 # Doctest coverage needs nightly: `cargo +nightly llvm-cov --workspace --doctests`.
 ```
 
-CI uploads LCOV to Codecov when `CODECOV_TOKEN` is set; the LCOV file
-is also stored as a workflow artifact regardless.
+In CI the coverage table is appended to the workflow's **Summary**
+tab and (on pull requests) posted as a sticky comment. The raw
+`lcov.info` is uploaded as a workflow artifact, retained for 14 days.
+No external coverage service is involved — everything stays on
+GitHub.
 
 ## Status
 

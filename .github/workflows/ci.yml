@@ -50,6 +50,10 @@ jobs:
   coverage:
     name: coverage (cargo-llvm-cov)
     runs-on: ubuntu-latest
+    permissions:
+      # Required for the PR-comment step to post on pull requests
+      # opened from forks. Plain push events ignore this.
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -57,15 +61,42 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Generate coverage (LCOV)
+
+      - name: Generate coverage
         # `--doctests` is nightly-only; stable runs doctest-free coverage.
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+        # Produce LCOV (for the artifact / editor integrations) and a
+        # human-readable summary in one pass.
+        run: |
+          cargo llvm-cov --workspace --lcov --output-path lcov.info
+          cargo llvm-cov report --summary-only | tee coverage-summary.txt
+
+      - name: Render Markdown summary
+        # cargo-llvm-cov's summary is a wide fixed-width table; wrap it
+        # in a Markdown fenced block so both the Job Summary and PR
+        # comment render with the columns intact.
+        run: |
+          {
+            echo "## Coverage"
+            echo ""
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+          } > coverage.md
+
+      - name: Append to Job Summary
+        # Renders inside the run's "Summary" tab — visible to anyone
+        # with read access, no external SaaS, no token.
+        run: cat coverage.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post / update PR comment
+        # Only on pull_request events. The sticky comment is updated in
+        # place on subsequent pushes to the same PR.
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
         with:
-          files: lcov.info
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
+          header: coverage
+          path: coverage.md
+
       - name: Archive LCOV as artifact
         uses: actions/upload-artifact@v4
         with:
