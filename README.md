@@ -54,6 +54,26 @@ Major decisions made so far:
 
 See `docs/` (forthcoming) for the full design rationale.
 
+## Development
+
+### Coverage
+
+Test coverage is measured with [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov)
+on every push (see `.github/workflows/ci.yml`). Locally:
+
+```sh
+cargo install cargo-llvm-cov     # one-time
+rustup component add llvm-tools-preview
+
+cargo coverage         # HTML report opened in the browser
+cargo coverage-text    # short terminal summary
+cargo coverage-lcov    # writes lcov.info (for editors / CI)
+# Doctest coverage needs nightly: `cargo +nightly llvm-cov --workspace --doctests`.
+```
+
+CI uploads LCOV to Codecov when `CODECOV_TOKEN` is set; the LCOV file
+is also stored as a workflow artifact regardless.
+
 ## Status
 
 | Component | Status |

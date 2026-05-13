@@ -3,6 +3,15 @@
 # so subsequent invocations stay fast (xtask itself only rebuilds
 # when its sources change).
 xtask = "run --release --package xtask --"
+# `cargo coverage` → HTML report opened in the browser.
+# Requires `cargo install cargo-llvm-cov` and `rustup component add
+# llvm-tools-preview` once. `--doctests` is nightly-only so we leave
+# doctests uninstrumented for now.
+coverage = "llvm-cov --workspace --html --open"
+# `cargo coverage-text` → terminal summary.
+coverage-text = "llvm-cov --workspace"
+# `cargo coverage-lcov` → LCOV for CI consumption.
+coverage-lcov = "llvm-cov --workspace --lcov --output-path lcov.info"
 
 [target.aarch64-linux-android]
 # `+lse` makes the compiler emit Armv8.1-A LSE atomic instructions

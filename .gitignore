@@ -2,6 +2,10 @@
 target/
 **/*.rs.bk
 
+# Coverage (cargo-llvm-cov: HTML lives under target/llvm-cov/, but the
+# LCOV file gets written to the repo root unless overridden)
+/lcov.info
+
 # IDE
 .idea/
 .vscode/
