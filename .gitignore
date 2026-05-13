@@ -30,9 +30,6 @@ Thumbs.db
 # project we need to track.
 !/examples/hello-world/android/
 
-# Linker version-script emitted at build time by examples/hello-world/build.rs
-examples/hello-world/android-exports.ver
-
 # Native build artifacts
 native/android/.gradle/
 native/android/build/
