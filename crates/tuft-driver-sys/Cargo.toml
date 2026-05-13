@@ -1,11 +1,9 @@
 [package]
-name = "tuft-ffi-lynx"
+name = "tuft-driver-sys"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "FFI bindings to native/bridge — drives Lynx Element PAPI from Rust."
-build = "build.rs"
-links = "tuft_bridge"
+description = "Raw FFI declarations for the Tuft driver's C++ bridge. Internal — use `tuft-driver` for the safe wrappers."

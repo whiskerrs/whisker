@@ -33,7 +33,7 @@ pub use tuft_macros::{main, rsx};
 /// expands to. Not stable, not for direct use.
 #[doc(hidden)]
 pub mod __main_runtime {
-    pub use tuft_mobile::bootstrap::{run, tick};
+    pub use tuft_driver::bootstrap::{run, tick};
 }
 
 /// Common imports for Tuft app code.

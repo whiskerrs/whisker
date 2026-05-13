@@ -1,23 +1,23 @@
 import UIKit
 import Lynx
-// TuftMobile re-exports the C ABI of `tuft_bridge.h` (see its
+// TuftDriver re-exports the C ABI of `tuft_bridge.h` (see its
 // module.modulemap), so `tuft_bridge_engine_attach` etc. are visible
 // from this single import.
-import TuftMobile
+import TuftDriver
 
 /// Hosts the Tuft runtime on iOS.
 ///
 /// Swift only attaches the engine and hands it to the Rust runtime via
-/// `tuft_mobile_app_main`. The element tree, the diff engine, and reactive
+/// `tuft_app_main`. The element tree, the diff engine, and reactive
 /// state all live in Rust.
 ///
 /// Render loop:
 ///   - A `CADisplayLink` is the heartbeat. It starts paused.
 ///   - Rust calls back into `requestFrameTrampoline` whenever a signal
 ///     update marks the tree dirty, which unpauses the link.
-///   - On each vsync tick we call `tuft_mobile_tick`. The Rust runtime
-///     returns `true` once it has nothing further to render; we pause
-///     the link until the next signal update.
+///   - On each vsync tick we call `tuft_tick`. The Rust runtime returns
+///     `true` once it has nothing further to render; we pause the link
+///     until the next signal update.
 ///
 /// So idle apps consume zero per-frame wakeups while interactive updates
 /// land on the next display refresh with no `Timer` jitter.
@@ -39,7 +39,7 @@ public final class TuftView: LynxView {
         self.engine = engine
 
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-        tuft_mobile_app_main(
+        tuft_app_main(
             UnsafeMutableRawPointer(engine),
             TuftView.requestFrameTrampoline,
             selfPtr
@@ -64,7 +64,7 @@ public final class TuftView: LynxView {
 
     @objc private func handleDisplayLink(_ link: CADisplayLink) {
         guard let engine = engine else { return }
-        let idle = tuft_mobile_tick(UnsafeMutableRawPointer(engine))
+        let idle = tuft_tick(UnsafeMutableRawPointer(engine))
         if idle {
             link.isPaused = true
         }

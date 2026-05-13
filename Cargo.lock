@@ -345,8 +345,8 @@ name = "tuft"
 version = "0.1.0"
 dependencies = [
  "tuft-app-config",
+ "tuft-driver",
  "tuft-macros",
- "tuft-mobile",
  "tuft-runtime",
 ]
 
@@ -389,7 +389,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "tuft-ffi-lynx"
+name = "tuft-driver"
+version = "0.1.0"
+dependencies = [
+ "tuft-driver-sys",
+ "tuft-runtime",
+]
+
+[[package]]
+name = "tuft-driver-sys"
 version = "0.1.0"
 
 [[package]]
@@ -399,14 +407,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tuft-mobile"
-version = "0.1.0"
-dependencies = [
- "tuft-macros",
- "tuft-runtime",
 ]
 
 [[package]]
@@ -421,7 +421,6 @@ name = "tuft-runtime"
 version = "0.1.0"
 dependencies = [
  "thiserror",
- "tuft-ffi-lynx",
 ]
 
 [[package]]

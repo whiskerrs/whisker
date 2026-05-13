@@ -7,9 +7,9 @@ members = [
     "crates/tuft-cli",
     "crates/tuft-codegen",
     "crates/tuft-dev-runtime",
-    "crates/tuft-ffi-lynx",
+    "crates/tuft-driver",
+    "crates/tuft-driver-sys",
     "crates/tuft-macros",
-    "crates/tuft-mobile",
     "crates/tuft-plugin",
     "crates/tuft-runtime",
     "examples/hello-world",
@@ -31,9 +31,9 @@ tuft-app-config = { path = "crates/tuft-app-config", version = "0.1.0" }
 tuft-build = { path = "crates/tuft-build", version = "0.1.0" }
 tuft-codegen = { path = "crates/tuft-codegen", version = "0.1.0" }
 tuft-dev-runtime = { path = "crates/tuft-dev-runtime", version = "0.1.0" }
-tuft-ffi-lynx = { path = "crates/tuft-ffi-lynx", version = "0.1.0" }
+tuft-driver = { path = "crates/tuft-driver", version = "0.1.0" }
+tuft-driver-sys = { path = "crates/tuft-driver-sys", version = "0.1.0" }
 tuft-macros = { path = "crates/tuft-macros", version = "0.1.0" }
-tuft-mobile = { path = "crates/tuft-mobile", version = "0.1.0" }
 tuft-plugin = { path = "crates/tuft-plugin", version = "0.1.0" }
 tuft-runtime = { path = "crates/tuft-runtime", version = "0.1.0" }
 

@@ -1,5 +1,5 @@
-module TuftMobile {
-    header "tuft_mobile.h"
+module TuftDriver {
+    header "tuft.h"
     // The C++ bridge (`native/bridge/`) is now baked into the same
     // xcframework as the Rust runtime (build.rs / cc::Build), so its
     // public C ABI is part of the same Swift module. This used to live

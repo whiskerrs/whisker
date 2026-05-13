@@ -86,7 +86,7 @@ pub fn compile() -> Result<()> {
     let version_script = std::path::PathBuf::from(out_dir).join("android-exports.ver");
     std::fs::write(
         &version_script,
-        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n    tuft_mobile_*;\n  local: *;\n};\n",
+        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n    tuft_app_main;\n    tuft_tick;\n  local: *;\n};\n",
     )?;
     println!(
         "cargo:rustc-link-arg=-Wl,--version-script={}",

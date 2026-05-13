@@ -14,9 +14,9 @@ import com.lynx.tasm.LynxEnv
  *
  * The user app's own `Application` subclass is responsible for loading
  * its Rust cdylib (the one produced from the `#[tuft::main]` crate)
- * before `super.onCreate()` — the bridge resolves
- * `tuft_mobile_app_main` from `RTLD_DEFAULT`, which only sees libraries
- * the process has already loaded.
+ * before `super.onCreate()` — the bridge resolves `tuft_app_main` from
+ * `RTLD_DEFAULT`, which only sees libraries the process has already
+ * loaded.
  */
 open class TuftApplication : Application() {
     override fun onCreate() {

@@ -266,7 +266,7 @@ Java_rs_tuft_runtime_TuftView_nativeEngineRelease(
 }
 
 // Exposed to Kotlin so it can hand the trampoline + engine pair to the
-// Rust runtime's `tuft_mobile_app_main`. Returning the function pointer
+// Rust runtime's `tuft_app_main`. Returning the function pointer
 // directly as jlong keeps the bridge ABI tidy on the Kotlin side.
 extern "C" JNIEXPORT jlong JNICALL
 Java_rs_tuft_runtime_TuftView_nativeRequestFrameFnPtr(
@@ -279,23 +279,23 @@ Java_rs_tuft_runtime_TuftView_nativeRequestFrameFnPtr(
 // bridge code below land in the same .so (build.rs compiles the bridge
 // straight into the cdylib), so we can just call them directly — no
 // dlsym dance needed.
-extern "C" void tuft_mobile_app_main(void* engine,
-                                     void (*request_frame)(void*),
-                                     void* request_frame_data);
-extern "C" bool tuft_mobile_tick(void* engine);
+extern "C" void tuft_app_main(void* engine,
+                              void (*request_frame)(void*),
+                              void* request_frame_data);
+extern "C" bool tuft_tick(void* engine);
 
 extern "C" JNIEXPORT void JNICALL
 Java_rs_tuft_runtime_TuftView_nativeAppMain(
     JNIEnv* /*env*/, jobject /*self*/, jlong engine_raw) {
-    tuft_mobile_app_main(reinterpret_cast<void*>(engine_raw),
-                          &RequestFrameTrampoline,
-                          reinterpret_cast<void*>(engine_raw));
+    tuft_app_main(reinterpret_cast<void*>(engine_raw),
+                  &RequestFrameTrampoline,
+                  reinterpret_cast<void*>(engine_raw));
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_rs_tuft_runtime_TuftView_nativeTick(
     JNIEnv* /*env*/, jobject /*self*/, jlong engine_raw) {
-    return tuft_mobile_tick(reinterpret_cast<void*>(engine_raw))
+    return tuft_tick(reinterpret_cast<void*>(engine_raw))
         ? JNI_TRUE : JNI_FALSE;
 }
 

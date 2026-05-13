@@ -1,16 +1,16 @@
 [package]
-name = "tuft-mobile"
+name = "tuft-driver"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "C ABI exposed for Swift / Kotlin to call into the Rust runtime."
+description = "Backend driver for Tuft. Wraps the engine FFI and exposes the host shim helpers (run/tick) the iOS/Android shells call into via #[tuft::main]."
 
 [lib]
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 tuft-runtime = { workspace = true }
-tuft-macros = { workspace = true }
+tuft-driver-sys = { workspace = true }

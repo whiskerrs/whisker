@@ -1,7 +1,8 @@
 //! Raw `extern "C"` declarations matching `native/bridge/include/tuft_bridge.h`.
 //!
-//! These declarations are unsafe to call directly; use [`super::BridgeRenderer`]
-//! for the safe wrapper.
+//! Everything here is `unsafe` to call. Safe wrappers (and the host shim
+//! `tuft_app_main` / `tuft_tick` exports) live in `tuft-driver`. Users
+//! never depend on this crate directly.
 
 use std::ffi::{c_char, c_void};
 
@@ -27,6 +28,7 @@ pub enum TuftElementTag {
 }
 
 pub type TuftTasmCallback = extern "C" fn(user_data: *mut c_void);
+pub type TuftEventCallback = extern "C" fn(user_data: *mut c_void);
 
 extern "C" {
     pub fn tuft_bridge_engine_attach(lynx_view_ptr: *mut c_void) -> *mut TuftEngine;
@@ -64,5 +66,3 @@ extern "C" {
     pub fn tuft_bridge_set_root(engine: *mut TuftEngine, page: *mut TuftElement);
     pub fn tuft_bridge_flush(engine: *mut TuftEngine);
 }
-
-pub type TuftEventCallback = extern "C" fn(user_data: *mut c_void);

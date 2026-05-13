@@ -18,20 +18,20 @@ pub struct Args {
     #[arg(short = 'p', long, default_value = "hello-world")]
     pub package: String,
 
-    /// Output directory. Default: `target/tuft-mobile/`.
+    /// Output directory. Default: `target/tuft-driver/`.
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
 }
 
 pub fn run(args: Args) -> Result<()> {
     let root = paths::workspace_root();
-    let out = args.out_dir.unwrap_or_else(paths::tuft_mobile_out);
+    let out = args.out_dir.unwrap_or_else(paths::tuft_driver_out);
     let lib_stem = args.package.replace('-', "_");
     let lib_name = format!("lib{lib_stem}.a");
 
-    let headers_src = root.join("crates/tuft-mobile/include");
+    let headers_src = root.join("crates/tuft-driver/include");
     let bridge_headers_src = paths::bridge_include();
-    for required in ["tuft_mobile.h", "module.modulemap"] {
+    for required in ["tuft.h", "module.modulemap"] {
         if !headers_src.join(required).is_file() {
             anyhow::bail!(
                 "missing header {} (expected at {})",
@@ -93,7 +93,7 @@ pub fn run(args: Args) -> Result<()> {
     println!("==> Staging headers");
     let hdr_dir = out.join("Headers");
     std::fs::create_dir_all(&hdr_dir)?;
-    std::fs::copy(headers_src.join("tuft_mobile.h"), hdr_dir.join("tuft_mobile.h"))?;
+    std::fs::copy(headers_src.join("tuft.h"), hdr_dir.join("tuft.h"))?;
     std::fs::copy(
         bridge_headers_src.join("tuft_bridge.h"),
         hdr_dir.join("tuft_bridge.h"),
@@ -103,7 +103,7 @@ pub fn run(args: Args) -> Result<()> {
         hdr_dir.join("module.modulemap"),
     )?;
 
-    let xcf = out.join("TuftMobile.xcframework");
+    let xcf = out.join("TuftDriver.xcframework");
     println!("==> Creating xcframework");
     let status = Command::new("xcodebuild")
         .arg("-create-xcframework")

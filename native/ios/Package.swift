@@ -4,7 +4,7 @@ import PackageDescription
 // TuftRuntime is the SPM package the iOS host app depends on. It
 // composes:
 //
-//   TuftMobile.xcframework  — Rust crate (the user's `#[tuft::main]`
+//   TuftDriver.xcframework  — Rust crate (the user's `#[tuft::main]`
 //                             code) + the C++ Lynx bridge, all
 //                             baked into one static library by
 //                             cargo + build.rs (cc::Build).
@@ -40,8 +40,8 @@ let package = Package(
         // for Lynx (`LynxShell::*` etc.) get resolved by the host
         // app's link step against the Lynx xcframeworks below.
         .binaryTarget(
-            name: "TuftMobile",
-            path: "../../target/tuft-mobile/TuftMobile.xcframework"
+            name: "TuftDriver",
+            path: "../../target/tuft-driver/TuftDriver.xcframework"
         ),
 
         // Lynx engine + dependencies, as xcframeworks built from upstream
@@ -66,7 +66,7 @@ let package = Package(
         .target(
             name: "TuftRuntime",
             dependencies: [
-                "TuftMobile",
+                "TuftDriver",
                 "Lynx",
                 "LynxBase",
                 "LynxServiceAPI",

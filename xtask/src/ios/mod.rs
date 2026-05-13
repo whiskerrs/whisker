@@ -15,7 +15,7 @@ pub struct IosArgs {
 enum IosCommand {
     /// Build the user crate's static libs for iOS device + Simulator
     /// (arm64, arm64-sim, x86_64-sim), lipo the simulator slices, and
-    /// wrap into `TuftMobile.xcframework`.
+    /// wrap into `TuftDriver.xcframework`.
     BuildXcframework(build_xcframework::Args),
     /// Build Lynx + PrimJS + LynxBase + LynxServiceAPI as xcframeworks
     /// from the upstream CocoaPods source pods. Used to feed the SPM

@@ -98,10 +98,10 @@ pub fn lynx_src_default() -> PathBuf {
     target_dir().join("lynx-src")
 }
 
-// --- Tuft mobile xcframework ----------------------------------------
+// --- Tuft driver xcframework ----------------------------------------
 
 /// Output dir for the user-crate xcframework produced by
 /// `cargo xtask ios build-xcframework`.
-pub fn tuft_mobile_out() -> PathBuf {
-    target_dir().join("tuft-mobile")
+pub fn tuft_driver_out() -> PathBuf {
+    target_dir().join("tuft-driver")
 }

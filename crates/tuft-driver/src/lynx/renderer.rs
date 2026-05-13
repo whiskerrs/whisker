@@ -3,7 +3,7 @@
 //! Must only be used from inside a `tuft_bridge_dispatch` callback (i.e.
 //! on the Lynx TASM thread).
 
-use crate::bridge_ffi::{self as ffi, TuftElement, TuftElementTag, TuftEngine};
+use tuft_driver_sys::{self as ffi, TuftElement, TuftElementTag, TuftEngine};
 use tuft_runtime::element::ElementTag;
 use tuft_runtime::renderer::Renderer;
 use std::ffi::{c_void, CString};

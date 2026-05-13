@@ -1,9 +1,8 @@
 //! Hello World — the demo Tuft app the iOS sample binds.
 //!
 //! Annotated with `#[tuft::main]`; the macro expands to the
-//! `tuft_mobile_app_main` / `tuft_mobile_tick` C ABI exports the host
-//! `TuftView.swift` calls into, plus the runtime/signal plumbing the
-//! framework needs.
+//! `tuft_app_main` / `tuft_tick` C ABI exports the host `TuftView.swift`
+//! calls into, plus the runtime/signal plumbing the framework needs.
 
 use tuft::prelude::*;
 

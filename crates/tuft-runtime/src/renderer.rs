@@ -1,7 +1,7 @@
 //! Backend abstraction.
 //!
 //! Anything that can construct a Tuft element tree implements [`Renderer`].
-//! Production builds use a `BridgeRenderer` (defined in `tuft-mobile`) that
+//! Production builds use a `BridgeRenderer` (defined in `tuft-driver`) that
 //! talks to the C++ bridge via FFI; tests use [`MockRenderer`] which records
 //! ops in a `Vec` so cargo tests don't need iOS/Android infrastructure.
 

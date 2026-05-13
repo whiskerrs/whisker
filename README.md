@@ -27,7 +27,8 @@ tuft/
 │   ├── tuft-cli              `tuft` / `cargo-tuft` CLI binary
 │   ├── tuft-codegen          CNG (Continuous Native Generation) codegen
 │   ├── tuft-dev-runtime      Dev-only runtime (WebSocket, hot reload)
-│   ├── tuft-ffi-lynx         FFI bindings to native/bridge
+│   ├── tuft-driver           Backend driver (host shim, BridgeRenderer)
+│   ├── tuft-driver-sys       Raw FFI bindings to native/bridge
 │   ├── tuft-macros           Proc macros (#[tuft::main], rsx!)
 │   ├── tuft-plugin           Plugin trait + PrebuildContext + typed mod APIs
 │   └── tuft-runtime          Core runtime (reactive, element tree)

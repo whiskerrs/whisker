@@ -1,8 +1,8 @@
 //! Procedural macros for Tuft.
 //!
 //! - [`main`] — designates the user's app entry. Generates the
-//!   `tuft_mobile_app_main` and `tuft_mobile_tick` FFI exports the
-//!   native host calls into; the user only writes `fn app() -> Element`.
+//!   `tuft_app_main` and `tuft_tick` FFI exports the native host calls
+//!   into; the user only writes `fn app() -> Element`.
 //! - [`rsx!`] — Dioxus-style declarative element-tree macro that
 //!   desugars to [`tuft_runtime::build`] calls.
 
@@ -30,7 +30,7 @@ mod rsx;
 /// fn app() -> Element { /* user body */ }
 ///
 /// #[no_mangle]
-/// pub extern "C" fn tuft_mobile_app_main(
+/// pub extern "C" fn tuft_app_main(
 ///     engine: *mut std::ffi::c_void,
 ///     request_frame: Option<extern "C" fn(*mut std::ffi::c_void)>,
 ///     request_frame_data: *mut std::ffi::c_void,
@@ -39,7 +39,7 @@ mod rsx;
 /// }
 ///
 /// #[no_mangle]
-/// pub extern "C" fn tuft_mobile_tick(engine: *mut std::ffi::c_void) -> bool {
+/// pub extern "C" fn tuft_tick(engine: *mut std::ffi::c_void) -> bool {
 ///     ::tuft::__main_runtime::tick(engine)
 /// }
 /// ```
@@ -49,9 +49,9 @@ mod rsx;
 /// host can unpause its `CADisplayLink` (or equivalent) to schedule the
 /// next tick. Pass `None` to opt into an unconditional 60Hz loop.
 ///
-/// `tuft_mobile_tick` returns `true` when the runtime is idle after the
-/// tick; the host can pause its render loop until the next
-/// `request_frame` fires.
+/// `tuft_tick` returns `true` when the runtime is idle after the tick;
+/// the host can pause its render loop until the next `request_frame`
+/// fires.
 #[proc_macro_attribute]
 pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
@@ -61,7 +61,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #func
 
         #[no_mangle]
-        pub extern "C" fn tuft_mobile_app_main(
+        pub extern "C" fn tuft_app_main(
             engine: *mut ::std::ffi::c_void,
             request_frame: ::std::option::Option<
                 extern "C" fn(*mut ::std::ffi::c_void),
@@ -72,7 +72,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #[no_mangle]
-        pub extern "C" fn tuft_mobile_tick(engine: *mut ::std::ffi::c_void) -> bool {
+        pub extern "C" fn tuft_tick(engine: *mut ::std::ffi::c_void) -> bool {
             ::tuft::__main_runtime::tick(engine)
         }
     };

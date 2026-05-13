@@ -9,5 +9,4 @@ authors.workspace = true
 description = "Core runtime for Tuft: reactive primitives, element tree, Lynx integration."
 
 [dependencies]
-tuft-ffi-lynx = { workspace = true }
 thiserror = { workspace = true }

@@ -13,8 +13,8 @@
 //!
 //! and the macro expands to FFI exports that call [`run`] / [`tick`].
 
-use crate::bridge_ffi::{tuft_bridge_dispatch, TuftEngine};
-use crate::bridge_renderer::BridgeRenderer;
+use super::renderer::BridgeRenderer;
+use tuft_driver_sys::{tuft_bridge_dispatch, TuftEngine};
 use tuft_runtime::element::Element;
 use tuft_runtime::runtime::Runtime;
 use tuft_runtime::signal::set_request_frame_callback;
