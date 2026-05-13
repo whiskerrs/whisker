@@ -58,10 +58,16 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
     let triple_env = triple.replace('-', "_");
     let triple_upper = triple_env.to_uppercase();
 
+    // `cargo rustc --crate-type cdylib` overrides whatever the
+    // user crate's manifest declares (plain `rlib` for hello-world,
+    // so host `cargo build` doesn't drown in unresolved bridge
+    // symbols). This is the symmetric counterpart of
+    // `cargo rustc --crate-type staticlib` for iOS.
     let mut cmd = Command::new("cargo");
-    cmd.arg("build")
+    cmd.arg("rustc")
         .args(["--target", triple])
-        .args(["-p", &args.package]);
+        .args(["-p", &args.package])
+        .args(["--crate-type", "cdylib"]);
     match args.profile.as_str() {
         "release" => {
             cmd.arg("--release");
@@ -85,7 +91,7 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
     cmd.env("ANDROID_NDK_HOME", &tc.ndk);
 
     println!(
-        "==> cargo build --target {triple} -p {pkg}  (NDK: {ndk})",
+        "==> cargo rustc --crate-type cdylib --target {triple} -p {pkg}  (NDK: {ndk})",
         triple = triple,
         pkg = args.package,
         ndk = tc.ndk.display()

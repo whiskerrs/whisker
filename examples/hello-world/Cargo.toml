@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-# Three outputs:
-# - `staticlib` is what the iOS xcframework wraps.
-# - `cdylib` is the Android `.so` loaded via JNI.
-# - `rlib` makes `cargo test` happy for the unit tests in src/lib.rs.
+# Plain rlib. Host workflows (`cargo build`, `cargo test`, `cargo check`,
+# rust-analyzer) only see this and succeed without a bridge — no
+# unresolved `lyra_bridge_*` symbols. The mobile outputs are produced
+# by xtask via `cargo rustc --crate-type X`:
+#   Android: cargo xtask android cargo  → cdylib  (libhello_world.so)
+#   iOS:     cargo xtask ios build-xcframework  → staticlib (libhello_world.a)
 [lib]
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 lyra = { workspace = true }
