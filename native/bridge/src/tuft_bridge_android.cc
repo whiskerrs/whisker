@@ -189,9 +189,9 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
         return JNI_ERR;
     }
-    jclass local = env->FindClass("dev/tuft/runtime/TuftView");
+    jclass local = env->FindClass("rs/tuft/runtime/TuftView");
     if (local == nullptr) {
-        LOGE("JNI_OnLoad: dev/tuft/runtime/TuftView not found");
+        LOGE("JNI_OnLoad: rs/tuft/runtime/TuftView not found");
         return JNI_ERR;
     }
     handles.tuft_view_class = static_cast<jclass>(env->NewGlobalRef(local));
@@ -205,9 +205,9 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_VERSION_1_6;
 }
 
-// dev.tuft.runtime.TuftView.nativeEngineAttach
+// rs.tuft.runtime.TuftView.nativeEngineAttach
 extern "C" JNIEXPORT jlong JNICALL
-Java_dev_tuft_runtime_TuftView_nativeEngineAttach(
+Java_rs_tuft_runtime_TuftView_nativeEngineAttach(
     JNIEnv* env, jobject /*self*/, jobject lynx_view) {
     lynx::shell::LynxShell* shell = ExtractShell(env, lynx_view);
     if (shell == nullptr) {
@@ -222,13 +222,13 @@ Java_dev_tuft_runtime_TuftView_nativeEngineAttach(
     return reinterpret_cast<jlong>(engine);
 }
 
-// dev.tuft.runtime.TuftView.nativeBindTuftView
+// rs.tuft.runtime.TuftView.nativeBindTuftView
 //
 // Pairs the TuftEngine with the Kotlin TuftView that owns it so the
 // `request_frame` trampoline can call back into Kotlin's render-loop
 // pause/unpause logic.
 extern "C" JNIEXPORT void JNICALL
-Java_dev_tuft_runtime_TuftView_nativeBindTuftView(
+Java_rs_tuft_runtime_TuftView_nativeBindTuftView(
     JNIEnv* env, jobject self, jlong engine_raw) {
     auto* engine = reinterpret_cast<TuftEngine*>(engine_raw);
     if (engine == nullptr) return;
@@ -238,7 +238,7 @@ Java_dev_tuft_runtime_TuftView_nativeBindTuftView(
     JavaStateMap()[engine] = state;
 }
 
-// dev.tuft.runtime.TuftView.nativeRequestFrameCallback
+// rs.tuft.runtime.TuftView.nativeRequestFrameCallback
 //
 // Returns the C function pointer + user_data pair that Rust should call
 // when signals dirty. Bundled into a small (fn, data) tuple via two
@@ -247,7 +247,7 @@ Java_dev_tuft_runtime_TuftView_nativeBindTuftView(
 //
 // Used by TuftView right after nativeEngineAttach.
 extern "C" JNIEXPORT void JNICALL
-Java_dev_tuft_runtime_TuftView_nativeEngineRelease(
+Java_rs_tuft_runtime_TuftView_nativeEngineRelease(
     JNIEnv* env, jobject /*self*/, jlong engine_raw) {
     auto* engine = reinterpret_cast<TuftEngine*>(engine_raw);
     if (engine == nullptr) return;
@@ -269,7 +269,7 @@ Java_dev_tuft_runtime_TuftView_nativeEngineRelease(
 // Rust runtime's `tuft_mobile_app_main`. Returning the function pointer
 // directly as jlong keeps the bridge ABI tidy on the Kotlin side.
 extern "C" JNIEXPORT jlong JNICALL
-Java_dev_tuft_runtime_TuftView_nativeRequestFrameFnPtr(
+Java_rs_tuft_runtime_TuftView_nativeRequestFrameFnPtr(
     JNIEnv* /*env*/, jclass /*clazz*/) {
     return reinterpret_cast<jlong>(&RequestFrameTrampoline);
 }
@@ -285,7 +285,7 @@ extern "C" void tuft_mobile_app_main(void* engine,
 extern "C" bool tuft_mobile_tick(void* engine);
 
 extern "C" JNIEXPORT void JNICALL
-Java_dev_tuft_runtime_TuftView_nativeAppMain(
+Java_rs_tuft_runtime_TuftView_nativeAppMain(
     JNIEnv* /*env*/, jobject /*self*/, jlong engine_raw) {
     tuft_mobile_app_main(reinterpret_cast<void*>(engine_raw),
                           &RequestFrameTrampoline,
@@ -293,7 +293,7 @@ Java_dev_tuft_runtime_TuftView_nativeAppMain(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_dev_tuft_runtime_TuftView_nativeTick(
+Java_rs_tuft_runtime_TuftView_nativeTick(
     JNIEnv* /*env*/, jobject /*self*/, jlong engine_raw) {
     return tuft_mobile_tick(reinterpret_cast<void*>(engine_raw))
         ? JNI_TRUE : JNI_FALSE;
@@ -308,7 +308,7 @@ Java_dev_tuft_runtime_TuftView_nativeTick(
 // kept in the signature so future per-engine registries don't require
 // an ABI break.
 extern "C" JNIEXPORT jboolean JNICALL
-Java_dev_tuft_runtime_TuftView_nativeOnLynxEvent(
+Java_rs_tuft_runtime_TuftView_nativeOnLynxEvent(
     JNIEnv* env, jobject /*self*/, jlong /*engine_raw*/,
     jint tag, jstring name_jstr) {
     if (name_jstr == nullptr) return JNI_FALSE;

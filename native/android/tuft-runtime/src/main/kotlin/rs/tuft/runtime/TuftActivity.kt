@@ -1,4 +1,4 @@
-package dev.tuft.runtime
+package rs.tuft.runtime
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity

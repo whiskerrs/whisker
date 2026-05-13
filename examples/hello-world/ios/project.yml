@@ -1,6 +1,6 @@
 name: HelloWorld
 options:
-  bundleIdPrefix: dev.tuft.examples
+  bundleIdPrefix: rs.tuft.examples
   deploymentTarget:
     iOS: '13.0'
   developmentLanguage: en
@@ -31,7 +31,7 @@ targets:
           UIApplicationSupportsMultipleScenes: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.tuft.examples.helloWorld
+        PRODUCT_BUNDLE_IDENTIFIER: rs.tuft.examples.helloWorld
         TARGETED_DEVICE_FAMILY: '1,2'
     dependencies:
       - package: TuftRuntime

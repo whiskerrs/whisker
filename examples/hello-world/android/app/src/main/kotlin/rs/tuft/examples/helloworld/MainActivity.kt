@@ -1,8 +1,8 @@
-package dev.tuft.examples.helloworld
+package rs.tuft.examples.helloworld
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-import dev.tuft.runtime.TuftView
+import rs.tuft.runtime.TuftView
 
 class MainActivity : AppCompatActivity() {
     private var tuftView: TuftView? = null

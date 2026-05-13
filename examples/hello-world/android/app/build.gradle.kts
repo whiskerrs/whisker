@@ -4,12 +4,12 @@ plugins {
 }
 
 android {
-    namespace = "dev.tuft.examples.helloworld"
+    namespace = "rs.tuft.examples.helloworld"
     compileSdk = 34
     ndkVersion = "21.1.6352462"
 
     defaultConfig {
-        applicationId = "dev.tuft.examples.helloworld"
+        applicationId = "rs.tuft.examples.helloworld"
         minSdk = 24
         targetSdk = 34
         versionCode = 1

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "dev.tuft.runtime"
+    namespace = "rs.tuft.runtime"
     compileSdk = 34
 
     defaultConfig {

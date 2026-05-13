@@ -157,7 +157,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         build.join("project.yml"),
         r#"name: LynxCarrier
 options:
-  bundleIdPrefix: dev.tuft.carrier
+  bundleIdPrefix: rs.tuft.carrier
   deploymentTarget:
     iOS: '13.0'
 targets:
@@ -171,7 +171,7 @@ targets:
         UILaunchScreen: {}
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.tuft.carrier.LynxCarrier
+        PRODUCT_BUNDLE_IDENTIFIER: rs.tuft.carrier.LynxCarrier
 "#,
     )?;
     Ok(())

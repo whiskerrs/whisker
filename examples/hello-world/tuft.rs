@@ -5,7 +5,7 @@ use tuft::app_config::AppConfig;
 
 pub fn configure(app: &mut AppConfig) {
     app.name("HelloWorld")
-        .bundle_id("dev.tuft.examples.helloworld")
+        .bundle_id("rs.tuft.examples.helloworld")
         .version("0.1.0")
         .build_number(1);
 
@@ -15,7 +15,7 @@ pub fn configure(app: &mut AppConfig) {
 
     app.android(|android| {
         android
-            .package("dev.tuft.examples.helloworld")
+            .package("rs.tuft.examples.helloworld")
             .min_sdk(24)
             .target_sdk(34);
     });

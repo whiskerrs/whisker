@@ -1,4 +1,4 @@
-package dev.tuft.runtime
+package rs.tuft.runtime
 
 import android.content.Context
 import android.os.Looper

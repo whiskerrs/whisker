@@ -1,6 +1,6 @@
-package dev.tuft.examples.helloworld
+package rs.tuft.examples.helloworld
 
-import dev.tuft.runtime.TuftApplication
+import rs.tuft.runtime.TuftApplication
 
 class HelloWorldApplication : TuftApplication() {
     override fun onCreate() {
