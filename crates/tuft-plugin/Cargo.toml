@@ -1,0 +1,12 @@
+[package]
+name = "tuft-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Plugin trait and PrebuildContext typed mod APIs for Tuft CNG."
+
+[dependencies]
+anyhow = { workspace = true }

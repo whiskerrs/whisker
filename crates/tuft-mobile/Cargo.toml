@@ -1,0 +1,16 @@
+[package]
+name = "tuft-mobile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "C ABI exposed for Swift / Kotlin to call into the Rust runtime."
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+tuft-runtime = { workspace = true }
+tuft-macros = { workspace = true }

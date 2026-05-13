@@ -4,12 +4,12 @@ plugins {
 }
 
 android {
-    namespace = "dev.lyra.examples.helloworld"
+    namespace = "dev.tuft.examples.helloworld"
     compileSdk = 34
     ndkVersion = "21.1.6352462"
 
     defaultConfig {
-        applicationId = "dev.lyra.examples.helloworld"
+        applicationId = "dev.tuft.examples.helloworld"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
@@ -48,7 +48,7 @@ android {
 }
 
 dependencies {
-    implementation(project(":lyra-runtime"))
+    implementation(project(":tuft-runtime"))
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
 }

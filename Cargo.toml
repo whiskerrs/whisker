@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/lyra",
-    "crates/lyra-app-config",
-    "crates/lyra-build",
-    "crates/lyra-cli",
-    "crates/lyra-codegen",
-    "crates/lyra-dev-runtime",
-    "crates/lyra-ffi-lynx",
-    "crates/lyra-macros",
-    "crates/lyra-mobile",
-    "crates/lyra-plugin",
-    "crates/lyra-runtime",
+    "crates/tuft",
+    "crates/tuft-app-config",
+    "crates/tuft-build",
+    "crates/tuft-cli",
+    "crates/tuft-codegen",
+    "crates/tuft-dev-runtime",
+    "crates/tuft-ffi-lynx",
+    "crates/tuft-macros",
+    "crates/tuft-mobile",
+    "crates/tuft-plugin",
+    "crates/tuft-runtime",
     "examples/hello-world",
     "xtask",
 ]
@@ -22,20 +22,20 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/itome/lyra"
+repository = "https://github.com/tuftrs/tuft"
 authors = ["itome <dev@itome.team>"]
 
 [workspace.dependencies]
-lyra = { path = "crates/lyra", version = "0.1.0" }
-lyra-app-config = { path = "crates/lyra-app-config", version = "0.1.0" }
-lyra-build = { path = "crates/lyra-build", version = "0.1.0" }
-lyra-codegen = { path = "crates/lyra-codegen", version = "0.1.0" }
-lyra-dev-runtime = { path = "crates/lyra-dev-runtime", version = "0.1.0" }
-lyra-ffi-lynx = { path = "crates/lyra-ffi-lynx", version = "0.1.0" }
-lyra-macros = { path = "crates/lyra-macros", version = "0.1.0" }
-lyra-mobile = { path = "crates/lyra-mobile", version = "0.1.0" }
-lyra-plugin = { path = "crates/lyra-plugin", version = "0.1.0" }
-lyra-runtime = { path = "crates/lyra-runtime", version = "0.1.0" }
+tuft = { path = "crates/tuft", version = "0.1.0" }
+tuft-app-config = { path = "crates/tuft-app-config", version = "0.1.0" }
+tuft-build = { path = "crates/tuft-build", version = "0.1.0" }
+tuft-codegen = { path = "crates/tuft-codegen", version = "0.1.0" }
+tuft-dev-runtime = { path = "crates/tuft-dev-runtime", version = "0.1.0" }
+tuft-ffi-lynx = { path = "crates/tuft-ffi-lynx", version = "0.1.0" }
+tuft-macros = { path = "crates/tuft-macros", version = "0.1.0" }
+tuft-mobile = { path = "crates/tuft-mobile", version = "0.1.0" }
+tuft-plugin = { path = "crates/tuft-plugin", version = "0.1.0" }
+tuft-runtime = { path = "crates/tuft-runtime", version = "0.1.0" }
 
 anyhow = "1"
 thiserror = "2"

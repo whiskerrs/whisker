@@ -1,0 +1,11 @@
+[package]
+name = "tuft-build"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Build helper for crates using `#[tuft::main]`. Compiles the C++ bridge and emits the link args needed for Android / iOS."
+
+[dependencies]
+anyhow = { workspace = true }
+cc = "1"

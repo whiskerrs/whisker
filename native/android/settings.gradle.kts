@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "lyra-runtime-android"
-include(":lyra-runtime")
+rootProject.name = "tuft-runtime-android"
+include(":tuft-runtime")

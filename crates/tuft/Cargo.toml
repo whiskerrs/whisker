@@ -1,0 +1,15 @@
+[package]
+name = "tuft"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cross-platform mobile UI framework built on Lynx. Umbrella crate."
+
+[dependencies]
+tuft-runtime = { workspace = true }
+tuft-macros = { workspace = true }
+tuft-mobile = { workspace = true }
+tuft-app-config = { workspace = true }

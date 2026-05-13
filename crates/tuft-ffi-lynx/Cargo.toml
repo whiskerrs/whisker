@@ -1,0 +1,11 @@
+[package]
+name = "tuft-ffi-lynx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "FFI bindings to native/bridge — drives Lynx Element PAPI from Rust."
+build = "build.rs"
+links = "tuft_bridge"

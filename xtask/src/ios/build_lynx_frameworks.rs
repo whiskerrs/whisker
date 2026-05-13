@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use lyra_build::paths;
+use tuft_build::paths;
 
 const LYNX_VERSION: &str = "3.7.0";
 const PRIMJS_VERSION: &str = "3.7.0";
@@ -157,7 +157,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         build.join("project.yml"),
         r#"name: LynxCarrier
 options:
-  bundleIdPrefix: dev.lyra.carrier
+  bundleIdPrefix: dev.tuft.carrier
   deploymentTarget:
     iOS: '13.0'
 targets:
@@ -171,7 +171,7 @@ targets:
         UILaunchScreen: {}
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.lyra.carrier.LynxCarrier
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tuft.carrier.LynxCarrier
 "#,
     )?;
     Ok(())

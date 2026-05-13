@@ -1,20 +1,20 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// LyraRuntime is the SPM package the iOS host app depends on. It
+// TuftRuntime is the SPM package the iOS host app depends on. It
 // composes:
 //
-//   LyraMobile.xcframework  — Rust crate (the user's `#[lyra::main]`
+//   TuftMobile.xcframework  — Rust crate (the user's `#[tuft::main]`
 //                             code) + the C++ Lynx bridge, all
 //                             baked into one static library by
 //                             cargo + build.rs (cc::Build).
 //   Lynx*.xcframework       — Lynx engine + PrimJS, built from the
 //                             upstream CocoaPods source pods.
-//   LyraRuntime (Swift)     — thin Swift API: LyraView, LyraAppDelegate,
+//   TuftRuntime (Swift)     — thin Swift API: TuftView, TuftAppDelegate,
 //                             CADisplayLink-driven render loop.
 //
 // The bridge is intentionally NOT an SPM target. We used to have a
-// `LyraBridge` C++ target here that compiled `native/bridge/src/*` via
+// `TuftBridge` C++ target here that compiled `native/bridge/src/*` via
 // SPM; building an iOS xcframework + an Android cdylib both requires
 // the same bridge sources, so keeping the build in `examples/<x>/build.rs`
 // (where it already lived for Android) means a single source of truth.
@@ -26,22 +26,22 @@ import PackageDescription
 //   cargo xtask ios build-xcframework
 
 let package = Package(
-    name: "LyraRuntime",
+    name: "TuftRuntime",
     platforms: [
         .iOS(.v13),
     ],
     products: [
-        .library(name: "LyraRuntime", targets: ["LyraRuntime"]),
+        .library(name: "TuftRuntime", targets: ["TuftRuntime"]),
     ],
     targets: [
         // Rust runtime + C++ bridge, packaged as a static xcframework.
-        // build.rs compiles `native/bridge/src/{lyra_bridge_common.cc,
-        // lyra_bridge_ios.mm}` into the same .a, so its UND symbols
+        // build.rs compiles `native/bridge/src/{tuft_bridge_common.cc,
+        // tuft_bridge_ios.mm}` into the same .a, so its UND symbols
         // for Lynx (`LynxShell::*` etc.) get resolved by the host
         // app's link step against the Lynx xcframeworks below.
         .binaryTarget(
-            name: "LyraMobile",
-            path: "../../target/lyra-mobile/LyraMobile.xcframework"
+            name: "TuftMobile",
+            path: "../../target/tuft-mobile/TuftMobile.xcframework"
         ),
 
         // Lynx engine + dependencies, as xcframeworks built from upstream
@@ -64,15 +64,15 @@ let package = Package(
         ),
 
         .target(
-            name: "LyraRuntime",
+            name: "TuftRuntime",
             dependencies: [
-                "LyraMobile",
+                "TuftMobile",
                 "Lynx",
                 "LynxBase",
                 "LynxServiceAPI",
                 "PrimJS",
             ],
-            path: "Sources/LyraRuntime",
+            path: "Sources/TuftRuntime",
             linkerSettings: [
                 .linkedFramework("JavaScriptCore"),
                 .linkedFramework("NaturalLanguage"),

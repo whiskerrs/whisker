@@ -1,7 +1,7 @@
 # Lynx Android patches
 
 Local patches against the Lynx 3.7.0 source tree required to produce
-AARs that Lyra's Rust C++ bridge can link against.
+AARs that Tuft's Rust C++ bridge can link against.
 
 ## Why these aren't upstreamed
 
@@ -17,13 +17,13 @@ to:
 - keep the C++ ABI surface free to refactor,
 - prevent accidental binary dependencies on internal API.
 
-Lyra's design — Rust drives the element tree directly via the Element
+Tuft's design — Rust drives the element tree directly via the Element
 PAPI — runs against every one of those goals on purpose. Upstreaming a
 flip of the defaults is a non-starter; doing it behind a `gn` arg the
 project has no use for would be hard to motivate. So we carry the
 deltas locally.
 
-If/when Lyra needs to ride a newer Lynx, re-record these patches with
+If/when Tuft needs to ride a newer Lynx, re-record these patches with
 `git diff > patches/lynx-android/<name>.patch` after porting the same
 edits forward — the script below verifies they still apply cleanly.
 

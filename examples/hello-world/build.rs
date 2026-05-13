@@ -1,3 +1,3 @@
 fn main() {
-    lyra_build::compile().unwrap();
+    tuft_build::compile().unwrap();
 }

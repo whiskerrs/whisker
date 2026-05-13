@@ -1,6 +1,6 @@
 name: HelloWorld
 options:
-  bundleIdPrefix: dev.lyra.examples
+  bundleIdPrefix: dev.tuft.examples
   deploymentTarget:
     iOS: '13.0'
   developmentLanguage: en
@@ -13,7 +13,7 @@ settings:
 
 packages:
   # SPM package living under native/ios — relative to this project.yml.
-  LyraRuntime:
+  TuftRuntime:
     path: ../../../native/ios
 
 targets:
@@ -31,7 +31,7 @@ targets:
           UIApplicationSupportsMultipleScenes: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.lyra.examples.helloWorld
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tuft.examples.helloWorld
         TARGETED_DEVICE_FAMILY: '1,2'
     dependencies:
-      - package: LyraRuntime
+      - package: TuftRuntime

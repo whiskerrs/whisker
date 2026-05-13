@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::{cargo_build, ndk, unpack_lynx};
-use lyra_build::paths;
+use tuft_build::paths;
 
 #[derive(clap::Args)]
 pub struct BuildExampleArgs {

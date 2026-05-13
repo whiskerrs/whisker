@@ -16,5 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "hello-world-android"
 include(":app")
-include(":lyra-runtime")
-project(":lyra-runtime").projectDir = file("../../../native/android/lyra-runtime")
+include(":tuft-runtime")
+project(":tuft-runtime").projectDir = file("../../../native/android/tuft-runtime")

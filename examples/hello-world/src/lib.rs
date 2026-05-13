@@ -1,11 +1,11 @@
-//! Hello World — the demo Lyra app the iOS sample binds.
+//! Hello World — the demo Tuft app the iOS sample binds.
 //!
-//! Annotated with `#[lyra::main]`; the macro expands to the
-//! `lyra_mobile_app_main` / `lyra_mobile_tick` C ABI exports the host
-//! `LyraView.swift` calls into, plus the runtime/signal plumbing the
+//! Annotated with `#[tuft::main]`; the macro expands to the
+//! `tuft_mobile_app_main` / `tuft_mobile_tick` C ABI exports the host
+//! `TuftView.swift` calls into, plus the runtime/signal plumbing the
 //! framework needs.
 
-use lyra::prelude::*;
+use tuft::prelude::*;
 
 fn counter() -> Signal<i32> {
     thread_local! {
@@ -24,7 +24,7 @@ fn build_row(i: usize) -> Element {
         .child(raw_text(format!("Row {i}")))
 }
 
-#[lyra::main]
+#[tuft::main]
 fn app() -> Element {
     let count = counter();
     let on_tap = move || count.update(|n| n + 1);
@@ -63,13 +63,13 @@ fn app() -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lyra::runtime::renderer::{MockOp, MockRenderer};
-    use lyra::runtime::render::mount;
+    use tuft::runtime::renderer::{MockOp, MockRenderer};
+    use tuft::runtime::render::mount;
 
     #[test]
     fn app_returns_a_page_with_scroll_view() {
         // Reset thread-locals between tests so each starts at count = 0.
-        lyra::runtime::signal::__reset_runtime();
+        tuft::runtime::signal::__reset_runtime();
         let tree = app();
         assert_eq!(tree.tag, ElementTag::Page);
         // count text + button text + scroll-view
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn count_text_starts_at_zero() {
-        lyra::runtime::signal::__reset_runtime();
+        tuft::runtime::signal::__reset_runtime();
         let tree = app();
         assert_eq!(
             tree.children[0].children[0].get_attr("text"),
@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn mounts_creates_expected_elements() {
-        lyra::runtime::signal::__reset_runtime();
+        tuft::runtime::signal::__reset_runtime();
         let mut r = MockRenderer::new();
         mount(&mut r, &app());
 

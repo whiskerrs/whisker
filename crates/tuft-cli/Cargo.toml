@@ -1,0 +1,23 @@
+[package]
+name = "tuft-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Tuft CLI: `tuft` and `cargo-tuft` (hybrid)."
+
+[[bin]]
+name = "tuft"
+path = "src/bin/tuft.rs"
+
+[[bin]]
+name = "cargo-tuft"
+path = "src/bin/cargo_tuft.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+tuft-codegen = { workspace = true }
+tuft-app-config = { workspace = true }
+tuft-plugin = { workspace = true }
