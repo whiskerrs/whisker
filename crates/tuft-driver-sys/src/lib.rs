@@ -1,4 +1,4 @@
-//! Raw `extern "C"` declarations matching `native/bridge/include/tuft_bridge.h`.
+//! Raw `extern "C"` declarations matching `bridge/include/tuft_bridge.h`.
 //!
 //! Everything here is `unsafe` to call. Safe wrappers (and the host shim
 //! `tuft_app_main` / `tuft_tick` exports) live in `tuft-driver`. Users

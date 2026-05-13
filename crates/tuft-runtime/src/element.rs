@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 /// Maps to the integer tag the bridge accepts. Keep `#[repr(u32)]` in sync
-/// with `TuftElementTag` in `native/bridge/include/tuft_bridge.h`.
+/// with `TuftElementTag` in `crates/tuft-driver-sys/bridge/include/tuft_bridge.h`.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ElementTag {
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn tag_repr_matches_bridge_constants() {
         // These integer values are part of the C ABI contract — see
-        // native/bridge/include/tuft_bridge.h.
+        // crates/tuft-driver-sys/bridge/include/tuft_bridge.h.
         assert_eq!(ElementTag::Page as u32, 1);
         assert_eq!(ElementTag::View as u32, 2);
         assert_eq!(ElementTag::Text as u32, 3);

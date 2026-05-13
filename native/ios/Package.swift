@@ -14,12 +14,11 @@ import PackageDescription
 //                             CADisplayLink-driven render loop.
 //
 // The bridge is intentionally NOT an SPM target. We used to have a
-// `TuftBridge` C++ target here that compiled `native/bridge/src/*` via
-// SPM; building an iOS xcframework + an Android cdylib both requires
-// the same bridge sources, so keeping the build in `examples/<x>/build.rs`
+// `TuftBridge` C++ target here that compiled bridge sources via SPM;
+// building an iOS xcframework + an Android cdylib both requires the
+// same bridge sources, so keeping the build in `examples/<x>/build.rs`
 // (where it already lived for Android) means a single source of truth.
-// As a side effect we no longer need the `bridge/` symlink under
-// `native/ios/`.
+// The bridge now lives under `crates/tuft-driver-sys/bridge/`.
 //
 // Build pre-reqs (run before opening Xcode):
 //   cargo xtask ios build-lynx-frameworks
@@ -35,10 +34,11 @@ let package = Package(
     ],
     targets: [
         // Rust runtime + C++ bridge, packaged as a static xcframework.
-        // build.rs compiles `native/bridge/src/{tuft_bridge_common.cc,
-        // tuft_bridge_ios.mm}` into the same .a, so its UND symbols
-        // for Lynx (`LynxShell::*` etc.) get resolved by the host
-        // app's link step against the Lynx xcframeworks below.
+        // build.rs compiles `crates/tuft-driver-sys/bridge/src/
+        // {tuft_bridge_common.cc, tuft_bridge_ios.mm}` into the same
+        // .a, so its UND symbols for Lynx (`LynxShell::*` etc.) get
+        // resolved by the host app's link step against the Lynx
+        // xcframeworks below.
         .binaryTarget(
             name: "TuftDriver",
             path: "../../target/tuft-driver/TuftDriver.xcframework"

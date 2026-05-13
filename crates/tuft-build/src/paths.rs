@@ -38,7 +38,7 @@ pub fn target_dir() -> PathBuf {
 // --- Bridge sources --------------------------------------------------
 
 pub fn bridge_root() -> PathBuf {
-    workspace_root().join("native/bridge")
+    workspace_root().join("crates/tuft-driver-sys/bridge")
 }
 
 pub fn bridge_include() -> PathBuf {

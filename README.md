@@ -28,12 +28,11 @@ tuft/
 │   ├── tuft-codegen          CNG (Continuous Native Generation) codegen
 │   ├── tuft-dev-runtime      Dev-only runtime (WebSocket, hot reload)
 │   ├── tuft-driver           Backend driver (host shim, BridgeRenderer)
-│   ├── tuft-driver-sys       Raw FFI bindings to native/bridge
+│   ├── tuft-driver-sys       Raw FFI bindings + C++ bridge sources (bridge/)
 │   ├── tuft-macros           Proc macros (#[tuft::main], rsx!)
 │   ├── tuft-plugin           Plugin trait + PrebuildContext + typed mod APIs
 │   └── tuft-runtime          Core runtime (reactive, element tree)
 ├── native/
-│   ├── bridge/                C++ bridge to Lynx Element PAPI (C ABI)
 │   ├── android/               Kotlin runtime (TuftApplication / TuftView etc.)
 │   └── ios/                   Swift runtime (TuftAppDelegate / TuftView etc.)
 ├── examples/                  Sample apps
