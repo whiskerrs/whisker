@@ -1,6 +1,8 @@
 import UIKit
 import Lynx
-import LyraBridge
+// LyraMobile re-exports the C ABI of `lyra_bridge.h` (see its
+// module.modulemap), so `lyra_bridge_engine_attach` etc. are visible
+// from this single import.
 import LyraMobile
 
 /// Hosts the Lyra runtime on iOS.

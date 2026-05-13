@@ -32,6 +32,7 @@ pub fn run(args: Args) -> Result<()> {
     let lib_name = format!("lib{lib_stem}.a");
 
     let headers_src = root.join("crates/lyra-mobile/include");
+    let bridge_headers_src = root.join("native/bridge/include");
     for required in ["lyra_mobile.h", "module.modulemap"] {
         if !headers_src.join(required).is_file() {
             anyhow::bail!(
@@ -40,6 +41,12 @@ pub fn run(args: Args) -> Result<()> {
                 headers_src.display()
             );
         }
+    }
+    if !bridge_headers_src.join("lyra_bridge.h").is_file() {
+        anyhow::bail!(
+            "missing lyra_bridge.h (expected at {})",
+            bridge_headers_src.display()
+        );
     }
 
     println!("==> Cleaning {}", out.display());
@@ -91,6 +98,10 @@ pub fn run(args: Args) -> Result<()> {
     std::fs::create_dir_all(&hdr_dir)?;
     std::fs::copy(headers_src.join("lyra_mobile.h"), hdr_dir.join("lyra_mobile.h"))?;
     std::fs::copy(
+        bridge_headers_src.join("lyra_bridge.h"),
+        hdr_dir.join("lyra_bridge.h"),
+    )?;
+    std::fs::copy(
         headers_src.join("module.modulemap"),
         hdr_dir.join("module.modulemap"),
     )?;
@@ -120,13 +131,28 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 fn cargo_build(package: &str, triple: &str, root: &std::path::Path) -> Result<()> {
+    // `cargo rustc --crate-type staticlib` overrides the manifest's
+    // `crate-type` to build *only* the static library. We need this on
+    // iOS because the manifest also declares `cdylib` (for Android),
+    // and a cdylib build for iOS would try to fully link — failing
+    // because the bridge symbols (compiled into staticlib via
+    // build.rs's cc::Build) are not yet wired into a final image.
     let status = Command::new("cargo")
-        .args(["build", "--release", "-p", package, "--target", triple])
+        .args([
+            "rustc",
+            "--release",
+            "-p",
+            package,
+            "--target",
+            triple,
+            "--crate-type",
+            "staticlib",
+        ])
         .current_dir(root)
         .status()
         .context("failed to spawn cargo")?;
     if !status.success() {
-        anyhow::bail!("cargo build failed for target {triple} (exit {status})");
+        anyhow::bail!("cargo rustc failed for target {triple} (exit {status})");
     }
     Ok(())
 }

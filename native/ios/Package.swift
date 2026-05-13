@@ -1,10 +1,25 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// Phase 3a: introduces LyraBridge, a C++ / Obj-C++ target compiled by SPM
-// directly from native/bridge/. For now it's a smoke test (one NSLog
-// function). Phase 3b will start dispatching tasks onto Lynx's TASM
-// thread; Phase 3c will drive Element PAPI.
+// LyraRuntime is the SPM package the iOS host app depends on. It
+// composes:
+//
+//   LyraMobile.xcframework  — Rust crate (the user's `#[lyra::main]`
+//                             code) + the C++ Lynx bridge, all
+//                             baked into one static library by
+//                             cargo + build.rs (cc::Build).
+//   Lynx*.xcframework       — Lynx engine + PrimJS, built from the
+//                             upstream CocoaPods source pods.
+//   LyraRuntime (Swift)     — thin Swift API: LyraView, LyraAppDelegate,
+//                             CADisplayLink-driven render loop.
+//
+// The bridge is intentionally NOT an SPM target. We used to have a
+// `LyraBridge` C++ target here that compiled `native/bridge/src/*` via
+// SPM; building an iOS xcframework + an Android cdylib both requires
+// the same bridge sources, so keeping the build in `examples/<x>/build.rs`
+// (where it already lived for Android) means a single source of truth.
+// As a side effect we no longer need the `bridge/` symlink under
+// `native/ios/`.
 //
 // Build pre-reqs (run before opening Xcode):
 //   cargo xtask ios build-lynx-frameworks
@@ -19,7 +34,11 @@ let package = Package(
         .library(name: "LyraRuntime", targets: ["LyraRuntime"]),
     ],
     targets: [
-        // Rust runtime (C ABI), as xcframework.
+        // Rust runtime + C++ bridge, packaged as a static xcframework.
+        // build.rs compiles `native/bridge/src/{lyra_bridge_common.cc,
+        // lyra_bridge_ios.mm}` into the same .a, so its UND symbols
+        // for Lynx (`LynxShell::*` etc.) get resolved by the host
+        // app's link step against the Lynx xcframeworks below.
         .binaryTarget(
             name: "LyraMobile",
             path: "../../target/lyra-mobile/LyraMobile.xcframework"
@@ -44,51 +63,10 @@ let package = Package(
             path: "../../target/lynx-ios/PrimJS.xcframework"
         ),
 
-        // C++ / Obj-C++ glue between Swift, Rust, and the Lynx C++ API.
-        // Compiled from source by SPM. The `bridge` directory is a symlink
-        // to `native/bridge/` (SPM forbids paths outside the package root).
-        .target(
-            name: "LyraBridge",
-            dependencies: ["Lynx", "LynxBase", "LynxServiceAPI", "PrimJS"],
-            path: "bridge",
-            sources: ["src"],
-            publicHeadersPath: "include",
-            cxxSettings: [
-                // Lynx xcframeworks are built with NDEBUG=1 (Release mode).
-                // `RefCountedThreadSafeBase` adds two extra `bool` members
-                // in debug builds (adoption_required_, destruction_started_),
-                // which would shift every offset in subclasses like
-                // `Element` — so the bridge must match. Without this, our
-                // EventTarget* points into the wrong half of the object
-                // and AddEventListener crashes on a bogus vtable.
-                .define("NDEBUG"),
-                // Lynx C++ headers reference each other via tree-relative
-                // paths (e.g. `#include "core/shell/lynx_engine.h"`). The
-                // headers are staged under target/lynx-ios/sources/ by
-                // `cargo xtask ios build-lynx-frameworks`, and `lynx-sources`
-                // (under native/ios/) is a symlink to that directory so
-                // SPM accepts it as inside the package root.
-                .headerSearchPath("../lynx-sources/Lynx"),
-                .headerSearchPath("../lynx-sources/LynxBase"),
-                .headerSearchPath("../lynx-sources/LynxServiceAPI"),
-                // PrimJS uses several non-overlapping search roots
-                // (mirrors the Lynx pod's own xcconfig).
-                .headerSearchPath("../lynx-sources/PrimJS/src"),
-                .headerSearchPath("../lynx-sources/PrimJS/src/interpreter"),
-                .headerSearchPath("../lynx-sources/PrimJS/src/interpreter/quickjs/include"),
-                .headerSearchPath("../lynx-sources/PrimJS/src/gc"),
-                .headerSearchPath("../lynx-sources/PrimJS/src/napi"),
-                .headerSearchPath("../lynx-sources/PrimJS/src/napi/env"),
-                .headerSearchPath("../lynx-sources/PrimJS/src/napi/quickjs"),
-                .headerSearchPath("../lynx-sources/PrimJS/src/napi/jsc"),
-            ]
-        ),
-
         .target(
             name: "LyraRuntime",
             dependencies: [
                 "LyraMobile",
-                "LyraBridge",
                 "Lynx",
                 "LynxBase",
                 "LynxServiceAPI",
@@ -105,8 +83,5 @@ let package = Package(
                 .unsafeFlags(["-ObjC"]),
             ]
         ),
-    ],
-    // Lynx itself is compiled as gnu++17. Match it so the staged headers
-    // (e.g. `std::optional`, `std::is_invocable_r_v`) compile in our bridge.
-    cxxLanguageStandard: .gnucxx17
+    ]
 )

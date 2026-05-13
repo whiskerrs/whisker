@@ -3,6 +3,15 @@
 // Android-specific glue: extracts the LynxShell from a Java LynxView and
 // drives the host-wake-up callback through JNI back into Kotlin. All actual
 // Element PAPI work lives in lyra_bridge_common.cc.
+//
+// The whole file is gated on `__ANDROID__` so it compiles to nothing on
+// non-Android platforms. Lyra's Cargo build scripts already select per
+// platform, but the guard is defense-in-depth: any future build system
+// (CMake / Bazel / Xcode) that scans this directory wholesale will get
+// an empty translation unit on iOS / macOS / Linux instead of a
+// `<jni.h> not found` failure.
+
+#if defined(__ANDROID__)
 
 #include <jni.h>
 #include <android/log.h>
@@ -323,3 +332,5 @@ Java_dev_lyra_runtime_LyraView_nativeOnLynxEvent(
     env->ReleaseStringUTFChars(name_jstr, name);
     return handled ? JNI_TRUE : JNI_FALSE;
 }
+
+#endif  // __ANDROID__

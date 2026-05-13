@@ -3,6 +3,13 @@
 // iOS-specific glue: extracts the LynxShell from a LynxView and installs
 // the LynxEventEmitter eventReporter block. All actual Element PAPI work
 // happens in lyra_bridge_common.cc.
+//
+// Gated on `__APPLE__` for the same defense-in-depth reason as
+// `lyra_bridge_android.cc`: any build system that scans the bridge
+// directory whole gets an empty TU on Android / Linux instead of a
+// `<Foundation/Foundation.h> not found` failure.
+
+#if defined(__APPLE__)
 
 #import <Foundation/Foundation.h>
 #import <Lynx/LynxView.h>
@@ -87,3 +94,5 @@ extern "C" LyraEngine* lyra_bridge_engine_attach(void* lynx_view_ptr) {
 extern "C" void lyra_bridge_log_hello(void) {
     NSLog(@"[LyraBridge] Hello from the Obj-C++ bridge");
 }
+
+#endif  // __APPLE__
