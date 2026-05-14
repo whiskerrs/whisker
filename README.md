@@ -52,7 +52,9 @@ Major decisions made so far:
 - **Hybrid CLI** — `tuft` (primary) and `cargo tuft` (alias).
 - **Hot reload** — Tier 1 (rsx delta, sub-second) + Tier 2 (dylib swap, 5–30s).
 
-See `docs/` (forthcoming) for the full design rationale.
+See `docs/` for design notes — currently
+[`docs/hot-reload-plan.md`](docs/hot-reload-plan.md) for the
+in-progress Tier 1 (subsecond) hot-reload pipeline.
 
 ## Development
 
