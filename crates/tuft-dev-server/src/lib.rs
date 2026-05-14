@@ -21,6 +21,10 @@
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+pub mod server;
+pub use server::{Envelope, PatchSender};
 
 // ----- Config & enums --------------------------------------------------------
 
@@ -105,24 +109,45 @@ pub enum Event {
 /// [`DevServer::run`] (which returns when the server shuts down).
 pub struct DevServer {
     config: Config,
+    on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
 }
 
 impl DevServer {
     pub fn new(config: Config) -> Result<Self> {
-        Ok(Self { config })
+        Ok(Self { config, on_event: None })
     }
 
-    /// Run the dev loop until shutdown. Skeleton: today this just
-    /// prints "started" and returns — the WebSocket server, file
-    /// watcher, and builder land in subsequent tasks.
+    /// Attach an observer for `Event`s — connect / disconnect /
+    /// build progress. The CLI uses this to drive its terminal UI;
+    /// other host shells (editor plugins) do their own thing.
+    pub fn on_event(mut self, cb: impl Fn(Event) + Send + Sync + 'static) -> Self {
+        self.on_event = Some(Arc::new(cb));
+        self
+    }
+
+    /// Bring the dev loop up. Today: WebSocket server. Coming soon:
+    /// file watcher (I4d), builder + installer (I4e), subsecond
+    /// JumpTable construction (I4g).
     pub async fn run(self) -> Result<()> {
         eprintln!(
-            "[tuft-dev-server] started (target={:?}, package={}, addr={}, mode={:?})",
+            "[tuft-dev-server] starting (target={:?}, package={}, addr={}, mode={:?})",
             self.config.target,
             self.config.package,
             self.config.bind_addr,
             self.config.hot_patch_mode,
         );
+
+        let (_sender, bound, server_handle) =
+            server::serve(self.config.bind_addr, self.on_event.clone()).await?;
+        if let Some(cb) = &self.on_event {
+            cb(Event::Started);
+        }
+        eprintln!("[tuft-dev-server] ws://{bound}/tuft-dev (waiting for clients; Ctrl-C to quit)");
+
+        // Block until the server task exits — i.e. forever in
+        // practice. Once I4d/I4e land, this becomes a `select!` over
+        // the file watcher and the build pipeline as well.
+        let _ = server_handle.await;
         Ok(())
     }
 }

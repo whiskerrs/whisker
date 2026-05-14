@@ -10,6 +10,14 @@ description = "Host-side dev server for `tuft run`. File watch + cargo build + W
 
 [dependencies]
 anyhow = { workspace = true }
-# Rest of the heavy deps (tokio / axum / notify / object) come in
-# with subsequent tasks (I4c..g). Keeping this empty for I4a means
-# the skeleton compiles in well under a second.
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+futures-util = { workspace = true, default-features = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+subsecond-types = { workspace = true }
+
+[dev-dependencies]
+# A minimal client to drive the WebSocket server in tests. The
+# production receiver in tuft-dev-runtime uses the same crate.
+tokio-tungstenite = { workspace = true, features = ["connect"] }
