@@ -13,7 +13,11 @@
 pub mod cache;
 pub mod jump_table;
 pub mod symbol_table;
+pub mod wrapper;
 
 pub use cache::HotpatchModuleCache;
 pub use jump_table::{build_jump_table, DiffReport, PatchPlan};
 pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
+pub use wrapper::{
+    default_cache_dir, load_captured_args, run_fat_build, CapturedRustcInvocation,
+};
