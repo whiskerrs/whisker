@@ -11,11 +11,19 @@ description = "Cross-platform mobile UI framework built on Lynx. Umbrella crate.
 [features]
 default = []
 # Forwarded to `tuft-driver` — enables subsecond-backed hot reload.
-# `tuft run` flips this on; release builds leave it off.
-hot-reload = ["tuft-driver/hot-reload"]
+# `tuft run` flips this on; release builds leave it off. Pulls in
+# `subsecond` here too so the `#[tuft::main]` macro can wrap the
+# user's app fn with `subsecond::call(|| user_app())` *inside the
+# user crate*. The wrapper closure has to live in the user crate
+# (not in tuft-driver) so the JumpTable that links host symbols to
+# patch symbols actually contains its `call_it` monomorphization on
+# both sides — otherwise subsecond can't dispatch to the patched
+# version.
+hot-reload = ["tuft-driver/hot-reload", "dep:subsecond"]
 
 [dependencies]
 tuft-runtime = { workspace = true }
 tuft-macros = { workspace = true }
 tuft-driver = { workspace = true }
 tuft-app-config = { workspace = true }
+subsecond = { workspace = true, optional = true }

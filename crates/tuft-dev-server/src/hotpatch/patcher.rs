@@ -37,6 +37,15 @@ pub struct Patcher {
     cwd: PathBuf,
     patch_out_dir: PathBuf,
     target_os: LinkerOs,
+    /// Path to the host `.so` (Android) that the device loaded.
+    /// Threaded into the patch link line on Linux targets so the
+    /// patch's `DT_NEEDED` lists the host, and the Android dynamic
+    /// linker can resolve undefined Rust symbols (`core::fmt::*`,
+    /// `alloc::*`, every `pub fn` in the user crate) against the
+    /// already-loaded host at `apply_patch` `dlopen` time.
+    /// `None` for macOS host — `-Wl,-undefined,dynamic_lookup`
+    /// handles symbol resolution against any loaded image there.
+    host_dylib: Option<PathBuf>,
     original_cache: HotpatchModuleCache,
     captured_rustc_args: HashMap<String, CapturedRustcInvocation>,
     captured_linker_args: HashMap<String, CapturedLinkerInvocation>,
@@ -54,6 +63,7 @@ impl Patcher {
         cwd: PathBuf,
         patch_out_dir: PathBuf,
         target_os: LinkerOs,
+        host_dylib: Option<PathBuf>,
         original_cache: HotpatchModuleCache,
         captured_rustc_args: HashMap<String, CapturedRustcInvocation>,
         captured_linker_args: HashMap<String, CapturedLinkerInvocation>,
@@ -65,6 +75,7 @@ impl Patcher {
             cwd,
             patch_out_dir,
             target_os,
+            host_dylib,
             original_cache,
             captured_rustc_args,
             captured_linker_args,
@@ -105,6 +116,13 @@ impl Patcher {
             })?;
         let patch_out_dir = workspace_root.join("target/.tuft/patches");
         let rustc_path = current_rustc();
+        // The host dylib path is the `.so` on Android. On macOS the
+        // host is a PIE executable and `-undefined,dynamic_lookup`
+        // handles symbol resolution, so we omit it.
+        let host_dylib = match target_os {
+            LinkerOs::Linux => Some(original_binary.to_path_buf()),
+            LinkerOs::Macos | LinkerOs::Other => None,
+        };
         Ok(Self::new(
             package,
             rustc_path,
@@ -112,6 +130,7 @@ impl Patcher {
             workspace_root.to_path_buf(),
             patch_out_dir,
             target_os,
+            host_dylib,
             original_cache,
             captured_rustc_args,
             captured_linker_args,
@@ -159,6 +178,7 @@ impl Patcher {
             &self.linker_path,
             &self.cwd,
             self.target_os,
+            self.host_dylib.as_deref(),
         )
         .await
         .context("thin rebuild (obj + own linker)")?;
@@ -238,15 +258,36 @@ fn current_rustc() -> PathBuf {
     PathBuf::from(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
 }
 
-/// Lift `relative_address_base` out of an arbitrary binary on disk.
-/// Used for new patch dylibs (we don't keep them in the cache; the
-/// patch is throwaway).
+/// Return the static virtual address of `main` in `path` (Mach-O's
+/// underscore-prefixed `_main` also accepted). This goes into
+/// `JumpTable::new_base_address`; subsecond's `apply_patch` then
+/// computes
+///
+/// ```ignore
+/// new_offset = dlsym(patch, "main")      // runtime main addr
+///            - table.new_base_address    // static main addr
+///            = patch image base.
+/// ```
+///
+/// Using `relative_address_base()` here (always 0 for an ELF PIE
+/// dylib) sent `new_offset = patch_runtime_main_addr`, leaving the
+/// JumpTable's values shifted by the runtime address of `main` rather
+/// than by the image base — every patched function would land
+/// somewhere meaningless. Symmetric to the host-side fix in
+/// [`crate::hotpatch::cache::HotpatchModuleCache::from_path`].
 fn read_image_base(path: &Path) -> Result<u64> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("read {}", path.display()))?;
-    let file = object::File::parse(&*bytes)
-        .with_context(|| format!("parse {} as object file", path.display()))?;
-    Ok(file.relative_address_base())
+    let table = parse_symbol_table(path)
+        .with_context(|| format!("parse {}", path.display()))?;
+    // Same fallback semantics as `HotpatchModuleCache::from_path` on
+    // the host side: 0 when neither `main` nor `_main` exists. Lets
+    // host-only test fixtures (no `main` symbol) still build a patch
+    // plan; only the runtime `apply_patch` math gets skewed.
+    Ok(table
+        .by_name
+        .get("main")
+        .or_else(|| table.by_name.get("_main"))
+        .map(|s| s.address)
+        .unwrap_or(0))
 }
 
 // ============================================================================
@@ -283,6 +324,7 @@ mod tests {
             PathBuf::from("/tmp/cwd"),
             PathBuf::from("/tmp/patches"),
             LinkerOs::Macos,
+            None,
             empty_cache(),
             HashMap::new(),
             HashMap::new(),
@@ -311,6 +353,7 @@ mod tests {
             "/cwd".into(),
             "/patches".into(),
             target_os,
+            None,
             empty_cache(),
             HashMap::new(),
             linker,
@@ -389,6 +432,7 @@ mod tests {
             "/cwd".into(),
             "/patches".into(),
             LinkerOs::Macos,
+            None,
             empty_cache(),
             HashMap::new(), // empty rustc map
             HashMap::new(),

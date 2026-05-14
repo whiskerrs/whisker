@@ -2,13 +2,13 @@
 //!
 //! Compiles the C++ bridge in `bridge/` into a static archive and
 //! emits the link directives that thread it (and Lynx) into the user
-//! crate's final cdylib (Android) or staticlib (iOS).
+//! crate's final dylib (Android) or staticlib (iOS).
 //!
 //! No-op on host targets (`cargo check`, host tests, rust-analyzer …)
 //! so the workspace stays buildable without any native toolchain.
 
-use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use anyhow::Result;
+use std::path::PathBuf;
 
 fn main() -> Result<()> {
     println!("cargo:rerun-if-changed=build.rs");
@@ -116,7 +116,7 @@ fn compile_android() -> Result<()> {
     // code references its symbols — JNI exports (`JNI_OnLoad`,
     // `Java_*`) are only "referenced" by the Android runtime at load
     // time and would otherwise be GC'd. Verified: this propagates to
-    // the parent cdylib through cargo's link-lib transitive rules.
+    // the parent dylib through cargo's link-lib transitive rules.
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     println!("cargo:rustc-link-search=native={out_dir}");
     println!("cargo:rustc-link-lib=static:+whole-archive=tuft_bridge_static");
@@ -127,32 +127,16 @@ fn compile_android() -> Result<()> {
     println!("cargo:rustc-link-lib=dylib=lynxbase");
     println!("cargo:rustc-link-lib=dylib=log");
     println!("cargo:rustc-link-lib=dylib=c++_shared");
-
-    // libc / linker quirks — these are `rustc-link-arg-cdylib` (not
-    // plain `rustc-link-arg`) because `rustc-link-arg` from a
-    // build script applies only to the *current* crate's final link,
-    // and `tuft-driver-sys` itself is an rlib. The `-cdylib` variant
-    // targets the eventual cdylib the user crate produces and is the
-    // mechanism cargo provides for *-sys crates to thread linker
-    // flags through.
-    println!("cargo:rustc-link-arg-cdylib=-Wl,-z,now");
-    println!("cargo:rustc-link-arg-cdylib=-Wl,--no-as-needed");
     println!("cargo:rustc-link-lib=dylib=c");
-    println!("cargo:rustc-link-arg-cdylib=-Wl,--as-needed");
 
-    // Override the cdylib's auto-generated `--version-script` (which
-    // hides every non-Rust symbol — including the JNI entry points
-    // the Android runtime resolves by name at load time).
-    let version_script = Path::new(&out_dir).join("tuft-android-exports.ver");
-    std::fs::write(
-        &version_script,
-        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n    tuft_app_main;\n    tuft_tick;\n  local: *;\n};\n",
-    )
-    .context("writing android version-script")?;
-    println!(
-        "cargo:rustc-link-arg-cdylib=-Wl,--version-script={}",
-        version_script.display()
-    );
+    // No `rustc-link-arg-cdylib` directives — the Android user crate
+    // is now built as `dylib`, and `rustc-link-arg-cdylib` is silently
+    // dropped (with a cargo warning) for non-cdylib consumers. The
+    // JNI export visibility that the previous `--version-script` here
+    // handled is now applied in `xtask/src/android/cargo_build.rs`
+    // via a `--version-script` that's merged with rustc's
+    // auto-generated dylib export list. See docs/hot-reload-plan.md
+    // "Second Pivot" for the cdylib → dylib rationale.
 
     Ok(())
 }

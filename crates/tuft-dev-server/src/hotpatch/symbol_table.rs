@@ -70,7 +70,7 @@ pub fn parse_symbol_table_from_bytes(bytes: &[u8]) -> Result<SymbolTable> {
     let mut by_name = HashMap::new();
     for sym in file.symbols() {
         let name = match sym.name() {
-            Ok(n) if !n.is_empty() => n.to_string(),
+            Ok(n) if !n.is_empty() => normalize_symbol_name(n),
             _ => continue, // unnamed (anonymous local) — useless to us
         };
         by_name.insert(
@@ -85,6 +85,27 @@ pub fn parse_symbol_table_from_bytes(bytes: &[u8]) -> Result<SymbolTable> {
         );
     }
     Ok(SymbolTable { by_name })
+}
+
+/// Strip LLVM's ThinLTO internalization suffix (`.llvm.<digits>`)
+/// from a symbol name.
+///
+/// LLVM appends this suffix during LTO when it promotes a previously
+/// external symbol to module-local — which is what happens to most
+/// Rust functions in a release dylib build. The host (a full fat
+/// build with LTO) emits `_ZN..hello_world..app..h<rust>E.llvm.<lto>`
+/// while the patch (a single-crate thin rebuild with no LTO) emits
+/// `_ZN..hello_world..app..h<rust>E` with no suffix. Without
+/// normalization, the JumpTable would map nothing — every patched
+/// function would look like an "added" symbol.
+///
+/// We only strip past the first `.llvm.`; the rest is opaque LLVM
+/// data with no semantic value to us.
+fn normalize_symbol_name(name: &str) -> String {
+    match name.split_once(".llvm.") {
+        Some((stem, _suffix)) => stem.to_string(),
+        None => name.to_string(),
+    }
 }
 
 // ============================================================================
@@ -150,6 +171,30 @@ mod tests {
             .values()
             .any(|s| s.kind == SymbolKind::Text && !s.is_undefined);
         assert!(any_named_text, "no defined function symbols");
+    }
+
+    #[test]
+    fn normalize_strips_llvm_internalization_suffix() {
+        // Host with ThinLTO internalization → patch without LTO.
+        // Both must collide on the normalized form so JumpTable
+        // construction sees them as the same symbol.
+        let host_form = "_ZN11hello_world3app17h04c91e1b6c02c8b4E.llvm.9162950015328890148";
+        let patch_form = "_ZN11hello_world3app17h04c91e1b6c02c8b4E";
+        assert_eq!(normalize_symbol_name(host_form), patch_form);
+        assert_eq!(normalize_symbol_name(patch_form), patch_form);
+    }
+
+    #[test]
+    fn normalize_leaves_unrelated_dots_alone() {
+        // `.llvm.X` is specifically LLVM's internalization marker;
+        // we shouldn't truncate at arbitrary dots (e.g. `.cold`,
+        // unmangled C++ symbols, or just dots inside string-encoded
+        // sections).
+        assert_eq!(
+            normalize_symbol_name("foo.cold.0"),
+            "foo.cold.0",
+        );
+        assert_eq!(normalize_symbol_name("plain_C_symbol"), "plain_C_symbol");
     }
 
     #[test]

@@ -106,7 +106,7 @@ sense.
 | **I4g-X2** ✅ | `thin_rebuild_obj` — rustc `--emit=obj --crate-type=rlib` + explicit linker invocation with `-undefined dynamic_lookup` (macOS) / `--unresolved-symbols=ignore-all` (Linux) | Fixture build, parse resulting `.dylib`, **assert mangled `__ZN18thin_build_fixture9calculate17h…E` IS exported and DEFINED**. Done in X2a (build_obj_plan), X2b (build_link_plan), X2c (runner + e2e). |
 | **I4g-X3** ✅ | `Patcher::build_patch` rewired through the new pipeline | Done in X3a (wrapper linker capture), X3b (Patcher rewrite + cdylib code removal), X3c (e2e test now passing — JumpTable entry for mangled `calculate` confirmed). |
 | **I4g-7** ✅ | `DevServer::run` branches on `HotPatchMode::Tier1Subsecond`, falls back to Tier 2 on Patcher error | Done in 7a (shim_paths), 7b (Builder.with_capture), 7c (init path), 7d (change loop branch + Tier 2 fallback). |
-| **I4g-8** | Android emulator e2e: edit a string in hello-world, observe sub-second swap, confirm signal state survives | 8a (NDK linker resolver), 8b (11 fixes for emulator path — install/INTERNET/adb-reverse/wire format/devlog/save-temps/target-linker), 8c-1 (timing logs), 8c-2 (dylib bytes delivery + host wake) ✅. 8c-3 stuck on cdylib symbol export — see "Second Pivot" below. |
+| **I4g-8** | Android emulator e2e: edit a string in hello-world, observe sub-second swap, confirm signal state survives | 8a (NDK linker resolver), 8b (11 fixes for emulator path — install/INTERNET/adb-reverse/wire format/devlog/save-temps/target-linker), 8c-1 (timing logs), 8c-2 (dylib bytes delivery + host wake), 8c-3a (cdylib → dylib + JNI version-script — `.dynsym` 175 → 2029) ✅. 8c-3 pending device-side `apply_patch` verification. |
 
 ## Pivot: why I4g-5/6 were abandoned and the new shape
 
@@ -245,19 +245,53 @@ fall back to Option A: switch the user crate to `bin` +
 NativeActivity. That's a much larger refactor but is the only
 fully-Dioxus-validated path.
 
+### 8c-3a Empirical result
+
+The straight swap works, with one extra workaround needed:
+
+- **`.dynsym` count jumped from ~175 to 2029** after the
+  `cdylib → dylib` switch — exactly the regime subsecond needs.
+  `core::fmt`, `alloc`, std runtime, every `pub fn` in user code:
+  all `GLOBAL DEFAULT` in `.dynsym`.
+- **JNI symbols got demoted to `LOCAL`** as a side effect.
+  rustc auto-generates a version-script for `dylib` listing
+  Rust-mangled symbols in `global:` and `local: *;` at the end.
+  The JNI exports from the C++ static archive (`Java_*`,
+  `JNI_OnLoad`) aren't in rustc's list, so the trailing
+  `local: *;` localizes them — and `System.loadLibrary` + JNI
+  then can't `dlsym` them at runtime.
+- **`-Wl,--export-dynamic-symbol=…` doesn't help under lld 12
+  + a version-script** (shared-object semantics — version-script
+  wins).
+- **Fix that works**: pass a second `-Wl,--version-script=<own>`
+  to the linker with `{ global: Java_*; JNI_OnLoad; };` (no
+  `local:` clause). lld merges anonymous version-scripts
+  additively — a symbol matched by any script's `global:` is
+  exported. The extra script lives at
+  `target/.tuft/android-jni-exports.ver` and is written by
+  `xtask/src/android/cargo_build.rs` on every Android build.
+
+The `cargo:rustc-link-arg-cdylib=…` directives that
+`tuft-driver-sys/build.rs` used to emit for the cdylib path
+(eager binding, libc as-needed wrap, JNI version-script) are
+now silently dropped under dylib (they fire a cargo warning),
+so the build script no longer emits them. The libc `dylib=c`
+link-lib is kept (still applies to dylib).
+
 ### Open questions for the dylib path
 
-- Does NDK clang link a Rust `dylib` cleanly? Rust dylibs export
-  unstable Rust ABI metadata that some linkers strip; bionic's
-  loader should be fine but worth verifying.
-- Does the resulting `.so` still satisfy NativeActivity-less /
-  `System.loadLibrary`-based loading on Android? Should — same
-  ELF format.
-- Are there crate-graph-level surprises? (dylib of a workspace
-  member typically requires its rlib dependencies to also be
-  dylib-loadable; for a Tier 1 dev build this might mean
-  recompiling the entire dep graph as dylib. Acceptable for dev,
-  unacceptable for release — hence keeping cdylib for release.)
+- ~~Does NDK clang link a Rust `dylib` cleanly?~~ ✅ Yes — NDK
+  23.1's lld 12 produces a valid `.so` from `--crate-type dylib`.
+- ~~Does the resulting `.so` still satisfy
+  `System.loadLibrary`-based loading on Android?~~ ✅ Yes — same
+  ELF shape; APK loads identically to the cdylib build.
+- ~~Crate-graph-level surprises (workspace deps needing
+  dylib-loadable rlibs)?~~ None observed for hello-world. The
+  workspace's rlib dependencies all link into the dylib without
+  per-dep crate-type changes.
+- **Still untested on device.** Build artifacts look right; the
+  actual `apply_patch` dlopen on an emulator/device is the
+  remaining 8c-3 verification step.
 
 ## Dependencies to add
 
@@ -328,10 +362,89 @@ semantics identical and saves one ABI-mismatch hazard.
   wire format / devlog / save-temps / target-linker / etc.)
 - I4g-8c-1: ✅ (timing logs — sub-second edit→send confirmed)
 - I4g-8c-2: ✅ (patch dylib bytes delivery + host wake)
-- **I4g-8c-3a: pending — cdylib → dylib pivot. Apply_patch fails
-  on missing std symbols; dylib avoids rustc's
-  `--exclude-libs,ALL`. See "Second Pivot" above.**
-- I4g-8c-3: pending (e2e visual + state preservation, blocked on 8c-3a)
+- I4g-8c-3a: ✅ (cdylib → dylib swap + extra JNI version-script
+  to undo rustc's `local: *;` demotion of the C++ static
+  archive's JNI exports. `.dynsym` 175 → 2029 with all
+  JNI symbols GLOBAL. APK still builds; workspace tests pass.
+  See "8c-3a Empirical result" above.)
+- I4g-8c-3b: ✅ **`apply_patch` succeeds on device** (no more
+  `cannot locate symbol _ZN4core3fmt…`; patch dlopen returns
+  Ok and `subsecond::apply_patch` commits the JumpTable in
+  ~1 ms). Required changes, all landed in this session:
+  - **Patch DT_NEEDED to host dylib** — patch link line now
+    passes `-Wl,--no-as-needed <host.so>` so the Android
+    dynamic linker resolves the patch's undefined Rust
+    symbols against the already-loaded `libhello_world.so`
+    instead of failing on missing `core::fmt::*`/`alloc::*`
+    refs (`System.loadLibrary` keeps the host at `RTLD_LOCAL`,
+    so without the DT_NEEDED back-edge the patch can't see
+    its symbols).
+  - **Strip rustc's auto-generated `--version-script` and
+    `--no-undefined-version` from the captured linker args** —
+    the fat build's version-script enumerates thousands of
+    Rust-mangled symbols. Replaying it for a patch that only
+    defines the one changed function makes the linker fail
+    with `version script assignment of 'global' to symbol
+    '...' failed: symbol not defined` for every symbol it
+    can't find.
+  - **Normalize LLVM's `.llvm.<digits>` ThinLTO suffix** when
+    parsing symbol tables (`hotpatch::symbol_table`). Rustc's
+    ThinLTO internalization renames `app` in the host to
+    `_ZN..app..E.llvm.<hash>` while the (non-LTO) patch
+    keeps `_ZN..app..E`. Without normalization, JumpTable
+    treated every internalized function as "added in patch /
+    removed from host" and built an empty map.
+  - **Use `main`'s static address as
+    `JumpTable::{aslr_reference, new_base_address}`** instead
+    of `relative_address_base()` (which is 0 for ELF PIE).
+    `subsecond::apply_patch` computes
+    `old_offset = aslr_reference() − table.aslr_reference`
+    and assumes `table.aslr_reference == static_main_addr`;
+    feeding it 0 caused `old_offset = runtime_main_addr`,
+    which shifts every map key into garbage.
+  - **`#[tuft::main]` macro synthesizes the `main` sentinel**
+    (`#[no_mangle] pub extern "C" fn main() -> c_int { 0 }`)
+    plus a hot-patchable dispatcher (`__tuft_app_dispatch`).
+    Both live in the user crate so the patch dylib has them
+    too. Macro also routes the user app fn through
+    `tuft::__main_runtime::call_user_app` (`#[inline(always)]`),
+    which expands to `subsecond::call(|| user_app())` when
+    `tuft/hot-reload` is on. The wrapper closure being in the
+    user crate is essential: the JumpTable can only map
+    symbols that exist in *both* host and patch, and the
+    patch rebuilds the user crate only.
+  - **`-Cdebug-assertions=on`** added to the Tier 1 fat
+    build's RUSTFLAGS. `subsecond::HotFn::try_call` early-
+    returns to `self.inner.call_it(args)` when
+    `!cfg!(debug_assertions)`, which a release build silently
+    folds into "skip the JumpTable lookup". Without the
+    flag, the whole hot-patch dispatcher dissolves at
+    compile time.
+  - **Patcher post-apply `force_frame`** — Tuft's runtime
+    only redraws when a signal marks itself dirty. A code
+    swap by itself doesn't fire a signal, so `tick_callback`
+    now calls `runtime.force_frame()` (instead of `frame()`)
+    on the tick immediately after `apply_patch` succeeds.
+- **I4g-8c-3 (e2e visual): not yet — subsecond's JumpTable
+  lookup at runtime isn't matching the captured fn ptr.**
+  `force_frame` runs but reports `0 renderer patches`, meaning
+  the new tree equals the cached tree — i.e. the patched
+  `user_app` is never dispatched and the host's pre-edit
+  `user_app` continues to run. The JumpTable contains an
+  entry for the user's `app` symbol (verified via
+  side-channel logging from `build_jump_table`), the address
+  math lines up on paper (static `app` addr + computed
+  `runtime_base` = the runtime addr `__tuft_app_dispatch`
+  captures), and `subsecond::call` *is* called and *does*
+  reach `get_jump_table`. The mismatch must be either in
+  (a) what `transmute_copy::<Closure, fn() -> Element>` reads
+  for our specific closure layout, (b) MTE / pointer-tag
+  handling on this Android emulator, or (c) some subtle
+  symbol-naming difference between the cached host symtab
+  and the runtime `dlsym("main")` result. Needs deeper
+  investigation — patching subsecond locally to log the
+  exact `real` value and JumpTable contents is the next
+  natural step.
 
 ### Numbers observed at session end (debug, warm cache, arm64 emulator)
 

@@ -95,11 +95,12 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // app() call (e.g. lazy `use_signal` init) correctly schedule a frame.
     set_request_frame_callback(ctx.request_frame, ctx.request_frame_data);
 
-    // Route the user fn through `subsecond::call` *only* when the
-    // `hot-reload` feature is on. On release builds this collapses to
-    // a direct call — the subsecond crate isn't even compiled.
-    let app_fn = wrap_for_hot_reload(ctx.app_fn);
-    let runtime = Runtime::new(renderer, app_fn);
+    // The `subsecond::call` wrap, when needed, is now emitted by the
+    // `#[tuft::main]` macro inside the user crate (so the wrapper
+    // closure ends up in the patch dylib's symbol table, which is
+    // the only place the JumpTable can pick it up). We just take the
+    // already-wrapped fn here.
+    let runtime = Runtime::new(renderer, ctx.app_fn);
 
     APP_STATE.with(|s| {
         *s.borrow_mut() = Some(AppState { runtime });
@@ -113,16 +114,6 @@ extern "C" fn init_callback(user_data: *mut c_void) {
 }
 
 #[cfg(feature = "hot-reload")]
-fn wrap_for_hot_reload(mut app_fn: BoxedAppFn) -> BoxedAppFn {
-    Box::new(move || subsecond::call(|| app_fn()))
-}
-
-#[cfg(not(feature = "hot-reload"))]
-fn wrap_for_hot_reload(app_fn: BoxedAppFn) -> BoxedAppFn {
-    app_fn
-}
-
-#[cfg(feature = "hot-reload")]
 fn start_hot_reload_receiver() {
     tuft_dev_runtime::start_receiver();
 }
@@ -130,35 +121,50 @@ fn start_hot_reload_receiver() {
 #[cfg(not(feature = "hot-reload"))]
 fn start_hot_reload_receiver() {}
 
+/// Apply the next pending hot patch, if any. Returns `true` when a
+/// patch was successfully applied, so the caller can force a frame
+/// even if no signal is dirty — Tuft only redraws on signal changes,
+/// and a code swap by itself doesn't mark anything dirty, so without
+/// this nudge the screen would keep showing the pre-patch tree until
+/// the next user interaction.
 #[cfg(feature = "hot-reload")]
-fn apply_pending_hot_patch() {
-    if let Some(table) = tuft_dev_runtime::take_pending_patch() {
-        let entries = table.map.len();
-        let lib = table.lib.clone();
-        tuft_dev_runtime::devlog(&format!(
-            "apply_patch: start (lib={}, entries={entries})",
-            lib.display(),
-        ));
-        let started = std::time::Instant::now();
-        // SAFETY: tick_callback runs on the Lynx TASM thread and we
-        // call this *before* `runtime.frame()`. The frame is what
-        // invokes `subsecond::call`, so no `call` is active here —
-        // the only safe window to swap dispatchers.
-        match unsafe { subsecond::apply_patch(table) } {
-            Ok(()) => tuft_dev_runtime::devlog(&format!(
+fn apply_pending_hot_patch() -> bool {
+    let Some(table) = tuft_dev_runtime::take_pending_patch() else {
+        return false;
+    };
+    let entries = table.map.len();
+    let lib = table.lib.clone();
+    tuft_dev_runtime::devlog(&format!(
+        "apply_patch: start (lib={}, entries={entries})",
+        lib.display(),
+    ));
+    let started = std::time::Instant::now();
+    // SAFETY: tick_callback runs on the Lynx TASM thread and we
+    // call this *before* `runtime.frame()`. The frame is what
+    // invokes `subsecond::call`, so no `call` is active here —
+    // the only safe window to swap dispatchers.
+    match unsafe { subsecond::apply_patch(table) } {
+        Ok(()) => {
+            tuft_dev_runtime::devlog(&format!(
                 "patch applied ({entries} entries in {:?})",
                 started.elapsed(),
-            )),
-            Err(e) => tuft_dev_runtime::devlog(&format!(
+            ));
+            true
+        }
+        Err(e) => {
+            tuft_dev_runtime::devlog(&format!(
                 "apply_patch failed: {e:?} (lib was {})",
                 lib.display(),
-            )),
+            ));
+            false
         }
     }
 }
 
 #[cfg(not(feature = "hot-reload"))]
-fn apply_pending_hot_patch() {}
+fn apply_pending_hot_patch() -> bool {
+    false
+}
 
 /// Process one frame on demand. Returns `true` when the runtime is fully
 /// idle after this tick (nothing dirty) so the host can pause its render
@@ -186,10 +192,19 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
     // Drain any pending hot-reload patch *before* the frame runs so
     // the new dispatcher is in place by the time `runtime.frame()`
     // calls `subsecond::call` (a no-op in non-hot-reload builds).
-    apply_pending_hot_patch();
+    let patched = apply_pending_hot_patch();
     APP_STATE.with(|s| {
         if let Some(state) = s.borrow_mut().as_mut() {
-            state.runtime.frame();
+            if patched {
+                // Force a re-render so the swapped function bodies
+                // run and produce a fresh tree. Without this, Tuft's
+                // signal-driven `frame()` short-circuits on `take_dirty()`
+                // and the screen stays on the pre-patch UI until the
+                // next signal write.
+                state.runtime.force_frame();
+            } else {
+                state.runtime.frame();
+            }
         }
     });
     PENDING.with(|p| p.set(false));

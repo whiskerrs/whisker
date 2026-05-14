@@ -34,6 +34,37 @@ pub use tuft_macros::{main, rsx};
 #[doc(hidden)]
 pub mod __main_runtime {
     pub use tuft_driver::bootstrap::{run, tick};
+
+    /// Wrap one invocation of the user's `app` function for hot-patch
+    /// dispatch. The `#[tuft::main]` macro calls this unconditionally
+    /// from inside the user crate so we don't need a user-crate-local
+    /// `hot-reload` feature flag to gate the call site.
+    ///
+    /// The cfg flip happens here, at tuft's compile-time, on tuft's
+    /// own `hot-reload` feature:
+    ///
+    /// - **on** (`tuft run` / Tier 1): body is
+    ///   `subsecond::call(|| f())`. The `#[inline(always)]` makes the
+    ///   body land in the *user crate's* compilation unit at every
+    ///   call site, so the wrapper closure's `<F as HotFunction<()>>::
+    ///   call_it` monomorphization is part of `libhello_world.so`
+    ///   (host) *and* `target/.tuft/patches/libhello_world.so` (patch).
+    ///   That's the symbol `subsecond::apply_patch`'s JumpTable maps
+    ///   host → patch; without it, hot patches don't dispatch and the
+    ///   screen keeps showing pre-edit content.
+    /// - **off** (release): body collapses to `f()`, `subsecond` is
+    ///   not pulled in at all.
+    #[cfg(feature = "hot-reload")]
+    #[inline(always)]
+    pub fn call_user_app(f: fn() -> crate::Element) -> crate::Element {
+        ::subsecond::call(|| f())
+    }
+
+    #[cfg(not(feature = "hot-reload"))]
+    #[inline(always)]
+    pub fn call_user_app(f: fn() -> crate::Element) -> crate::Element {
+        f()
+    }
 }
 
 /// Common imports for Tuft app code.

@@ -166,7 +166,7 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
     ];
 
     let shim = c.linker_shim.to_string_lossy().to_string();
-    // Two flags every fat build needs for Tier 1 to work:
+    // Three flags every fat build needs for Tier 1 to work:
     //
     // `-Csave-temps=y` keeps rustc's temp dir (containing the
     // version script and bridge-static archive the linker args
@@ -185,15 +185,25 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
     // "cannot locate symbol _ZN4core3fmt3num...". The cost is a
     // slightly larger .so (the dynamic symbol table grows);
     // acceptable for dev builds.
-    // Pick the flag spelling for the *target* triple, not the host —
-    // Apple linkers take `-export_dynamic`; GNU / lld take
-    // `--export-dynamic`. Default to the GNU form when target_triple
-    // is None (host-only setups land here).
+    //
+    // `-Cdebug-assertions=on` toggles the only `cfg!(debug_assertions)`
+    // branch in `subsecond::HotFn::try_call` — in release builds
+    // without this, subsecond compiles to `self.inner.call_it(args)`
+    // and skips the JumpTable entirely (apply_patch becomes a no-op
+    // from the caller's perspective). Tier 1 dev builds want the
+    // JumpTable lookup but otherwise keep release-level optimization;
+    // this flag flips the cfg without dropping to the dev profile.
+    //
+    // Pick the export-dynamic flag spelling for the *target* triple,
+    // not the host — Apple linkers take `-export_dynamic`; GNU / lld
+    // take `--export-dynamic`. Default to the GNU form when
+    // target_triple is None (host-only setups land here).
     let export_dynamic = match c.target_triple.as_deref() {
         Some(t) if t.contains("apple") => "-Clink-arg=-Wl,-export_dynamic",
         _ => "-Clink-arg=-Wl,--export-dynamic",
     };
-    let save_temps = format!("-Csave-temps=y {export_dynamic}");
+    let save_temps =
+        format!("-Csave-temps=y -Cdebug-assertions=on {export_dynamic}");
     let save_temps = save_temps.as_str();
     match c.target_triple.as_deref() {
         Some(triple) => {

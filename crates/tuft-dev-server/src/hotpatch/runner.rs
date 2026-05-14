@@ -125,10 +125,12 @@ pub async fn thin_rebuild_obj(
     linker_path: &Path,
     cwd: &Path,
     target_os: LinkerOs,
+    host_dylib: Option<&Path>,
 ) -> Result<PathBuf> {
     let obj_plan = build_obj_plan(captured_rustc, output_dir);
     let object = run_obj_plan(&obj_plan, rustc_path, cwd).await?;
-    let link_plan = build_link_plan(captured_linker_args, &object, output_dylib, target_os);
+    let link_plan =
+        build_link_plan(captured_linker_args, &object, output_dylib, target_os, host_dylib);
     run_link_plan(&link_plan, linker_path, cwd).await
 }
 

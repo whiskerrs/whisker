@@ -7,14 +7,26 @@
 //! parse the small patch dylib and diff it against the cached
 //! original — closer to the sub-second budget.
 //!
-//! Apart from the symbols, we also capture the binary's image-base
-//! address (`relative_address_base` from the `object` crate). That
-//! becomes `JumpTable::aslr_reference`, which lets the device runtime
-//! correct for the difference between the recorded base and the live
-//! process's ASLR-shifted base.
+//! Apart from the symbols, we also capture the static virtual
+//! address of `main` in the host binary. That becomes
+//! `JumpTable::aslr_reference`, and subsecond's
+//! `subsecond::apply_patch` uses it as
+//!
+//! ```ignore
+//! old_offset = aslr_reference()       // runtime main addr
+//!            - table.aslr_reference    // static main addr (us)
+//!            = runtime image base.
+//! ```
+//!
+//! so the JumpTable's static keys can be adjusted to live runtime
+//! addresses. Setting this to `file.relative_address_base()` (which
+//! is 0 for ELF PIEs and what we used to send) caused
+//! `old_offset = runtime_main_addr` — i.e. the static keys got
+//! shifted by the runtime address of `main` instead of by the image
+//! base, so `call_as_ptr`'s `jump_table.map.get(captured_fn_ptr)`
+//! always missed. Symptom: patch applied, screen didn't update.
 
 use anyhow::{Context, Result};
-use object::Object;
 use std::path::{Path, PathBuf};
 
 use super::symbol_table::{parse_symbol_table_from_bytes, SymbolTable};
@@ -28,8 +40,10 @@ pub struct HotpatchModuleCache {
     pub lib: PathBuf,
     /// All symbols projected through `parse_symbol_table_from_bytes`.
     pub symbols: SymbolTable,
-    /// Image-base address (Mach-O ≈ 0x100000000, ELF ≈ 0x0). Goes
+    /// Static virtual address of `main` in the host binary. Goes
     /// straight into [`subsecond_types::JumpTable::aslr_reference`].
+    /// See module docs for why this is `main`'s address rather than
+    /// the file's image base.
     pub aslr_reference: u64,
 }
 
@@ -44,9 +58,20 @@ impl HotpatchModuleCache {
             .with_context(|| format!("read {}", path.display()))?;
         let symbols = parse_symbol_table_from_bytes(&bytes)
             .with_context(|| format!("parse {} symbols", path.display()))?;
-        let file = object::File::parse(&*bytes)
-            .with_context(|| format!("parse {} object", path.display()))?;
-        let aslr_reference = file.relative_address_base();
+        // Mach-O symbol tables keep the legacy underscore prefix
+        // (`_main`); ELF strips it. Try both so the cache works
+        // uniformly across host and Android. When neither is present
+        // (test fixtures with no main, or unusual binaries) fall
+        // back to 0 — subsecond's `aslr_reference()` math will be
+        // off-by-`runtime_main_addr` in that case, so device hot
+        // patches won't dispatch, but the cache still parses and
+        // unit tests that just want symbol-table access still work.
+        let aslr_reference = symbols
+            .by_name
+            .get("main")
+            .or_else(|| symbols.by_name.get("_main"))
+            .map(|s| s.address)
+            .unwrap_or(0);
         Ok(Self { lib: path, symbols, aslr_reference })
     }
 

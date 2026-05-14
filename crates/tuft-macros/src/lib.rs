@@ -60,6 +60,18 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #func
 
+        // The app fn the runtime invokes every frame. Unconditionally
+        // routes through `tuft::__main_runtime::call_user_app`, which
+        // is `#[inline(always)]` so the wrapper body lands in the user
+        // crate's compilation unit. Whether the wrapper actually
+        // dispatches through `subsecond::call` (Tier 1 / hot-reload
+        // on) or just invokes `#fn_name()` directly (release) is
+        // decided by `tuft`'s own `hot-reload` feature flag — the
+        // user crate doesn't need a matching feature of its own.
+        fn __tuft_app_dispatch() -> ::tuft::Element {
+            ::tuft::__main_runtime::call_user_app(#fn_name)
+        }
+
         #[no_mangle]
         pub extern "C" fn tuft_app_main(
             engine: *mut ::std::ffi::c_void,
@@ -68,13 +80,37 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             >,
             request_frame_data: *mut ::std::ffi::c_void,
         ) {
-            ::tuft::__main_runtime::run(engine, request_frame, request_frame_data, #fn_name);
+            ::tuft::__main_runtime::run(
+                engine,
+                request_frame,
+                request_frame_data,
+                __tuft_app_dispatch,
+            );
         }
 
         #[no_mangle]
         pub extern "C" fn tuft_tick(engine: *mut ::std::ffi::c_void) -> bool {
             ::tuft::__main_runtime::tick(engine)
         }
+
+        // `subsecond::apply_patch` uses an exported `main` symbol as
+        // a sentinel for the patch dylib's base address (see
+        // subsecond-0.7.9 lib.rs:526 — `lib.get(b"main").ok().unwrap()`).
+        // Dioxus apps satisfy this because their user crate is a `bin`
+        // with a real `main`; Tuft's user crate is a library, so we
+        // synthesize one here. The stub never runs (Tuft is loaded
+        // via `System.loadLibrary` / JNI, never executed as a process
+        // entry point), but it has to be exported in both the host
+        // dylib's and every patch dylib's `.dynsym` so subsecond's
+        // sentinel lookup succeeds on both sides.
+        //
+        // Gated on `not(test)` so `cargo test --lib` (which links
+        // libtest's own `main` into the test runner) doesn't see two
+        // `main` symbols and fail with "entry symbol main declared
+        // multiple times".
+        #[cfg(not(test))]
+        #[no_mangle]
+        pub extern "C" fn main() -> ::std::ffi::c_int { 0 }
     };
 
     expanded.into()

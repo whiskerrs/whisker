@@ -30,11 +30,31 @@
 //!      re-add both).
 //!   3. **Drop `-undefined <action>`** (the separated macOS form)
 //!      so we can deterministically set `dynamic_lookup`.
-//!   4. **Append**:
+//!   4. **Drop `--version-script=<path>` and `--no-undefined-version`.**
+//!      The fat build's version-script enumerates thousands of
+//!      Rust-mangled symbols (rustc auto-generates one for both
+//!      `dylib` and `cdylib`). Re-applying it to a patch dylib
+//!      that only defines the one changed function makes the
+//!      linker emit `version script assignment ... failed:
+//!      symbol not defined` for every absent symbol — fatal under
+//!      `--no-undefined-version`. The patch dylib's default
+//!      visibility (everything global) is the right behaviour:
+//!      `subsecond::apply_patch` reads the patch's `.dynsym`
+//!      looking for the changed function's mangled name.
+//!   5. **Append**:
 //!       - `-shared`
 //!       - OS-specific "unresolved is fine" directive:
 //!           - macOS: `-Wl,-undefined,dynamic_lookup`
 //!           - Linux/Android: `-Wl,--unresolved-symbols=ignore-all`
+//!       - on Linux/Android, the host dylib as a link input
+//!         (when supplied). This adds a `DT_NEEDED` entry for
+//!         the host so the Android dynamic linker resolves the
+//!         patch's undefined Rust symbols against the host's
+//!         already-loaded `libhello_world.so` (which
+//!         `System.loadLibrary` placed into the app's classloader
+//!         namespace with `RTLD_LOCAL`). Without this, the patch's
+//!         `dlopen` fails with `cannot locate symbol _ZN4core3fmt…`
+//!         even though the host has the symbol in `.dynsym`.
 //!       - the new object path
 //!       - `-o <output>`
 //!
@@ -80,11 +100,20 @@ pub enum LinkerOs {
 
 /// Re-shape a captured linker invocation into the link step of a
 /// hot-patch build. See module docs for the rationale.
+///
+/// `host_dylib` is the path to the original `.so`/`.dylib` the
+/// device loaded — used on Linux/Android to add a `DT_NEEDED` entry
+/// so the patch's undefined Rust symbols resolve against the host
+/// at `dlopen` time. Pass `None` on Linux when the host is the main
+/// executable (no separate `.so`) or on macOS, where
+/// `-Wl,-undefined,dynamic_lookup` already routes symbol resolution
+/// through every loaded image.
 pub fn build_link_plan(
     captured_linker_args: &[String],
     new_object: &Path,
     output: &Path,
     target_os: LinkerOs,
+    host_dylib: Option<&Path>,
 ) -> LinkPlan {
     let mut args = filter_captured_linker_args(captured_linker_args);
 
@@ -99,6 +128,19 @@ pub fn build_link_plan(
             args.push("-Wl,--unresolved-symbols=ignore-all".into());
         }
         LinkerOs::Other => {}
+    }
+
+    // DT_NEEDED → host shared object (Android/Linux only). See module
+    // docs §5. `-Wl,--no-as-needed` is the linker default for
+    // positional `.so` inputs on most lld versions, but spelled
+    // explicitly here so a captured `--as-needed` arg upstream can't
+    // demote it to an unused-and-dropped entry.
+    if matches!(target_os, LinkerOs::Linux) {
+        if let Some(host) = host_dylib {
+            args.push("-Wl,--no-as-needed".into());
+            args.push(host.to_string_lossy().into());
+            args.push("-Wl,--as-needed".into());
+        }
     }
 
     args.push(new_object.to_string_lossy().into());
@@ -165,6 +207,31 @@ fn filter_captured_linker_args(args: &[String]) -> Vec<String> {
         }
         // Wholesale -Wl,--unresolved-symbols= (Linux equivalent).
         if arg.starts_with("-Wl,--unresolved-symbols=") {
+            i += 1;
+            continue;
+        }
+        // Drop fat-build version-scripts — see module docs §4.
+        // Both the `=` form (what rustc + our cargo_build.rs emit)
+        // and the separated `--version-script <path>` form (defensive;
+        // some clang drivers normalize one to the other).
+        if arg.starts_with("-Wl,--version-script=")
+            || arg.starts_with("--version-script=")
+        {
+            i += 1;
+            continue;
+        }
+        if (arg == "-Wl,--version-script" || arg == "--version-script")
+            && i + 1 < args.len()
+        {
+            i += 2;
+            continue;
+        }
+        // --no-undefined-version turns the "version-script lists a
+        // symbol not defined" warning into a hard error. We dropped
+        // the version-script anyway, but a stray --no-undefined-version
+        // is now meaningless and could become a future foot-gun if a
+        // future capture path reintroduces a version-script.
+        if arg == "-Wl,--no-undefined-version" || arg == "--no-undefined-version" {
             i += 1;
             continue;
         }
@@ -272,6 +339,35 @@ mod tests {
     }
 
     #[test]
+    fn filter_drops_fat_build_version_scripts_and_no_undefined_version() {
+        // Mirrors the actual capture from a dylib fat build: rustc
+        // emits an enormous version-script enumerating every Rust
+        // symbol it expects exported, plus --no-undefined-version
+        // to harden the check. The patch link only defines the one
+        // changed function, so re-applying these would fail with
+        // "symbol not defined" for every absent symbol.
+        let kept = filter_captured_linker_args(&s(&[
+            "-Wl,--version-script=/tmp/rustcXX/list",
+            "-Wl,--version-script=/ws/target/.tuft/android-jni-exports.ver",
+            "-Wl,--no-undefined-version",
+            "-Wl,--as-needed",
+            "-arch", "arm64",
+        ]));
+        assert_eq!(kept, s(&["-Wl,--as-needed", "-arch", "arm64"]));
+    }
+
+    #[test]
+    fn filter_drops_separated_version_script_form() {
+        // Some clang drivers split `-Wl,--version-script=/p` into
+        // `--version-script /p` when forwarding to ld. Defensive.
+        let kept = filter_captured_linker_args(&s(&[
+            "--version-script", "/tmp/rustcXX/list",
+            "-pie",
+        ]));
+        assert_eq!(kept, s(&["-pie"]));
+    }
+
+    #[test]
     fn filter_drops_existing_undefined_dynamic_lookup() {
         // Both the separated and the comma-bundled form.
         let kept = filter_captured_linker_args(&s(&[
@@ -342,6 +438,7 @@ mod tests {
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
+            None,
         );
         assert_eq!(
             plan.args,
@@ -364,6 +461,7 @@ mod tests {
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
+            None,
         );
         let shared_count = plan.args.iter().filter(|a| *a == "-shared").count();
         assert_eq!(shared_count, 1, "got args: {:?}", plan.args);
@@ -376,6 +474,7 @@ mod tests {
             Path::new("/new/demo.o"),
             Path::new("/new/libdemo.dylib"),
             LinkerOs::Macos,
+            None,
         );
         // The output path *itself* is .dylib-shaped, so we walk
         // by index and skip the arg immediately after `-o`.
@@ -401,6 +500,7 @@ mod tests {
             Path::new("/new/demo.o"),
             Path::new("/new/libnew.dylib"),
             LinkerOs::Macos,
+            None,
         );
         // Find the position of -o and check the next arg is the new output.
         let dash_o = plan.args.iter().position(|a| a == "-o").unwrap();
@@ -417,6 +517,7 @@ mod tests {
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
+            None,
         );
         assert_eq!(
             plan.args,
@@ -440,6 +541,7 @@ mod tests {
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
+            None,
         );
         let count = plan
             .args
@@ -447,6 +549,68 @@ mod tests {
             .filter(|a| *a == "-Wl,--unresolved-symbols=ignore-all")
             .count();
         assert_eq!(count, 1, "args: {:?}", plan.args);
+    }
+
+    #[test]
+    fn linux_plan_appends_host_dylib_when_supplied_for_dt_needed() {
+        // The host_dylib path lands AFTER --unresolved-symbols and
+        // BEFORE the new object — wrapped in --no-as-needed so a
+        // captured --as-needed earlier in the line can't strip it.
+        let plan = build_link_plan(
+            &s(&["-Wl,--as-needed", "-L", "/ndk/lib"]),
+            Path::new("/o/demo.o"),
+            Path::new("/o/libdemo.so"),
+            LinkerOs::Linux,
+            Some(Path::new("/jniLibs/libhello_world.so")),
+        );
+        assert_eq!(
+            plan.args,
+            s(&[
+                "-Wl,--as-needed",
+                "-L", "/ndk/lib",
+                "-shared",
+                "-Wl,--unresolved-symbols=ignore-all",
+                "-Wl,--no-as-needed",
+                "/jniLibs/libhello_world.so",
+                "-Wl,--as-needed",
+                "/o/demo.o",
+                "-o", "/o/libdemo.so",
+            ]),
+        );
+    }
+
+    #[test]
+    fn linux_plan_omits_host_dylib_when_none() {
+        let plan = build_link_plan(
+            &s(&["-L", "/ndk/lib"]),
+            Path::new("/o/demo.o"),
+            Path::new("/o/libdemo.so"),
+            LinkerOs::Linux,
+            None,
+        );
+        assert!(
+            !plan.args.iter().any(|a| a.ends_with("libhello_world.so")),
+            "args: {:?}",
+            plan.args,
+        );
+    }
+
+    #[test]
+    fn macos_plan_ignores_host_dylib_because_dynamic_lookup_handles_it() {
+        // macOS uses -Wl,-undefined,dynamic_lookup to route resolution
+        // through all loaded images; DT_NEEDED isn't needed.
+        let plan = build_link_plan(
+            &s(&["-isysroot", "/sdk"]),
+            Path::new("/o/demo.o"),
+            Path::new("/o/libdemo.dylib"),
+            LinkerOs::Macos,
+            Some(Path::new("/path/host.dylib")),
+        );
+        assert!(
+            !plan.args.iter().any(|a| a.ends_with("host.dylib")),
+            "host dylib should not appear on macOS plan: {:?}",
+            plan.args,
+        );
     }
 
     // ----- build_link_plan: Other --------------------------------------
@@ -458,6 +622,7 @@ mod tests {
             Path::new("/o/demo.obj"),
             Path::new("/o/demo.dll"),
             LinkerOs::Other,
+            None,
         );
         // No -Wl directive of any kind.
         assert!(

@@ -168,6 +168,7 @@ async fn thin_rebuild_obj_plus_dynamic_lookup_link_preserves_mangled_symbols() {
         &object,
         &dylib,
         linker_os_for_host(),
+        None, // host fixture has no separate host dylib to link against
     );
     run_link_plan(&link_plan, &linker_path(), &work)
         .await

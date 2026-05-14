@@ -146,6 +146,7 @@ async fn build_original_via_pipeline(
         &object,
         &dylib,
         linker_os_for_host(),
+        None,
     );
     run_link_plan(&link_plan, &linker_path(), cwd)
         .await
@@ -213,6 +214,11 @@ async fn build_patch_emits_a_jump_table_entry_for_a_mangled_function() {
             LinkerOs::Linux => LinkerOs::Linux,
             LinkerOs::Other => LinkerOs::Other,
         },
+        // Host-machine fixture has no separate `.so` to link against
+        // — `dynamic_lookup` on macOS / running directly on Linux
+        // both make this `None`. The Android-specific DT_NEEDED path
+        // is exercised by the live e2e, not this fixture.
+        None,
         original_cache,
         captured_rustc_args,
         captured_linker_args,
@@ -285,6 +291,7 @@ async fn build_patch_errors_when_no_captured_rustc_for_the_package() {
         work.clone(),
         work.join("patches"),
         linker_os_for_host(),
+        None,
         original_cache,
         HashMap::new(),
         HashMap::new(),
@@ -324,6 +331,7 @@ async fn build_patch_errors_when_captured_linker_is_missing() {
         work.clone(),
         work.join("patches"),
         linker_os_for_host(),
+        None,
         original_cache,
         captured_rustc_args,
         HashMap::new(), // empty linker map

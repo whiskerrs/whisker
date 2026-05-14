@@ -11,7 +11,7 @@
 //!   in our setup: it prepended the non-API-versioned sysroot dir
 //!   ahead of clang's auto-added API dir, and `-lc` ended up resolving
 //!   to the static `libc.a` instead of `libc.so` — silent static
-//!   bionic embedding into the cdylib),
+//!   bionic embedding into the dylib),
 //! - bundle `libc++_shared.so` (that's the caller's job; for our
 //!   hello-world example it lives in `build-android-example.sh`).
 //!
@@ -22,6 +22,7 @@ use anyhow::{Context, Result};
 use std::process::Command;
 
 use super::ndk;
+use crate::paths;
 
 #[derive(clap::Args)]
 pub struct CargoBuildArgs {
@@ -65,16 +66,28 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
     let triple_env = triple.replace('-', "_");
     let triple_upper = triple_env.to_uppercase();
 
-    // `cargo rustc --crate-type cdylib` overrides whatever the
-    // user crate's manifest declares (plain `rlib` for hello-world,
-    // so host `cargo build` doesn't drown in unresolved bridge
-    // symbols). This is the symmetric counterpart of
+    // `cargo rustc --crate-type dylib` overrides whatever the user
+    // crate's manifest declares (plain `rlib` for hello-world, so
+    // host `cargo build` doesn't drown in unresolved bridge symbols).
+    // This is the symmetric counterpart of
     // `cargo rustc --crate-type staticlib` for iOS.
+    //
+    // **Why `dylib` and not `cdylib`?** rustc unconditionally injects
+    // `-Wl,--exclude-libs,ALL` for `cdylib`, stripping every
+    // mangled Rust symbol from `.dynsym`. subsecond hot patches
+    // resolve std/alloc/core symbols against the host at `dlopen`
+    // time, so an excluded `.dynsym` makes the apply_patch dlopen
+    // fail with `cannot locate symbol _ZN4core3fmt…`. rustc does
+    // NOT add `--exclude-libs,ALL` to `dylib`, so std/core/alloc and
+    // every `pub fn` in the user crate stay visible. The resulting
+    // file is still a regular `.so` and `System.loadLibrary` (which
+    // doesn't care about ABI flavour) loads it identically. See
+    // docs/hot-reload-plan.md "Second Pivot" for the full analysis.
     let mut cmd = Command::new("cargo");
     cmd.arg("rustc")
         .args(["--target", triple])
         .args(["-p", &args.package])
-        .args(["--crate-type", "cdylib"]);
+        .args(["--crate-type", "dylib"]);
     match args.profile.as_str() {
         "release" => {
             cmd.arg("--release");
@@ -88,6 +101,37 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
         cmd.args(["--features", feat]);
     }
     cmd.args(&args.cargo_args);
+
+    // Append rustc-level link args. We need `Java_*` and `JNI_OnLoad`
+    // exported in `.dynsym` so `System.loadLibrary` + the Android
+    // JNI runtime can resolve them by `dlsym`. The C++ bridge defines
+    // them with default visibility, but rustc auto-generates a
+    // version-script for `dylib` that lists Rust-mangled symbols
+    // in `global:` and ends with `local: *;` — which demotes the
+    // JNI exports from the linked-in static archive to LOCAL.
+    //
+    // We supply an additional version-script (passed AFTER rustc's
+    // own) listing JNI symbols in `global:` only. lld merges multiple
+    // anonymous version-scripts additively — a symbol matching any
+    // script's `global:` is exported, even if another script's
+    // `local: *;` would otherwise hide it. The merge handles JNI
+    // exports without touching rustc's Rust-symbol list. The
+    // version-script file lives under `target/.tuft/` so it's a
+    // discoverable build artifact, not a hidden temp.
+    let vs_dir = paths::workspace_root().join("target/.tuft");
+    std::fs::create_dir_all(&vs_dir).with_context(|| {
+        format!("create version-script dir {}", vs_dir.display())
+    })?;
+    let vs_path = vs_dir.join("android-jni-exports.ver");
+    std::fs::write(
+        &vs_path,
+        b"{\n  global:\n    Java_*;\n    JNI_OnLoad;\n};\n",
+    )
+    .with_context(|| format!("write {}", vs_path.display()))?;
+    cmd.arg("--").args([
+        "-C".to_string(),
+        format!("link-arg=-Wl,--version-script={}", vs_path.display()),
+    ]);
 
     // cc-rs honours these for cross compilation.
     cmd.env(format!("CC_{triple_env}"), &tc.clang);
@@ -107,7 +151,7 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
     cmd.env("ANDROID_NDK_HOME", &tc.ndk);
 
     println!(
-        "==> cargo rustc --crate-type cdylib --target {triple} -p {pkg}  (NDK: {ndk})",
+        "==> cargo rustc --crate-type dylib --target {triple} -p {pkg}  (NDK: {ndk})",
         triple = triple,
         pkg = args.package,
         ndk = tc.ndk.display()
