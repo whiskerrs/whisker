@@ -6,7 +6,7 @@ publish = false
 
 # Plain rlib. Host workflows (`cargo build`, `cargo test`, `cargo check`,
 # rust-analyzer) only see this and succeed without a bridge — no
-# unresolved `tuft_bridge_*` symbols. The mobile outputs are produced
+# unresolved `whisker_bridge_*` symbols. The mobile outputs are produced
 # by xtask via `cargo rustc --crate-type X`:
 #   Android: cargo xtask android cargo  → cdylib  (libhello_world.so)
 #   iOS:     cargo xtask ios build-xcframework  → staticlib (libhello_world.a)
@@ -14,4 +14,4 @@ publish = false
 crate-type = ["rlib"]
 
 [dependencies]
-tuft = { workspace = true }
+whisker = { workspace = true }

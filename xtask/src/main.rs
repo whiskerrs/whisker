@@ -1,4 +1,4 @@
-//! Build automation for Tuft (`cargo xtask` pattern).
+//! Build automation for Whisker (`cargo xtask` pattern).
 //!
 //! `xtask` is a workspace member that we register as the
 //! `cargo xtask` alias in `.cargo/config.toml`. It exists to host build
@@ -18,7 +18,7 @@ mod ios;
 mod paths;
 
 #[derive(Parser)]
-#[command(name = "xtask", about = "Tuft build automation", long_about = None)]
+#[command(name = "xtask", about = "Whisker build automation", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

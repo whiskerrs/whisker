@@ -27,7 +27,7 @@ pub struct BuildExampleArgs {
     pub api: u32,
 
     /// Cargo features forwarded to the cdylib build. Repeatable.
-    /// `tuft run` uses this to pass `tuft/hot-reload`.
+    /// `whisker run` uses this to pass `whisker/hot-reload`.
     #[arg(long)]
     pub features: Vec<String>,
 }

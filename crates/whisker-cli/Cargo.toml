@@ -1,0 +1,52 @@
+[package]
+name = "whisker-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Whisker CLI: `whisker` and `cargo-whisker` (hybrid)."
+
+[[bin]]
+name = "whisker"
+path = "src/bin/whisker.rs"
+
+[[bin]]
+name = "cargo-whisker"
+path = "src/bin/cargo_whisker.rs"
+
+# `RUSTC_WORKSPACE_WRAPPER` target. Cargo invokes us as
+#   whisker-rustc-shim <rustc-path> <rustc-args...>
+# and we forward the call after dumping the args to
+# `$WHISKER_RUSTC_CACHE_DIR/<crate>-<timestamp>.json` for later thin
+# rebuilds. Same workspace pattern clippy-driver / sccache use.
+[[bin]]
+name = "whisker-rustc-shim"
+path = "src/bin/whisker_rustc_shim.rs"
+
+# `-C linker=<shim>` target. rustc invokes us with the linker driver's
+# argv directly (no real-linker-path prefix; we read WHISKER_REAL_LINKER
+# from env to know what to forward to). Captures argv to
+# `$WHISKER_LINKER_CACHE_DIR/<output>-<timestamp>.json`.
+[[bin]]
+name = "whisker-linker-shim"
+path = "src/bin/whisker_linker_shim.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Section spinners while probing each toolchain. We deliberately avoid
+# a full-screen TUI (ratatui etc.) so the doctor output remains plain
+# scrollback text that AI agents and clipboard paste can read.
+indicatif = "0.17"
+# `whisker run` is a thin wrapper that builds a Config and calls
+# DevServer::run(); the heavy deps (tokio / axum / notify / object)
+# all live in whisker-dev-server.
+whisker-dev-server = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+whisker-codegen = { workspace = true }
+whisker-app-config = { workspace = true }
+whisker-plugin = { workspace = true }

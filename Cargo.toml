@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/tuft",
-    "crates/tuft-app-config",
-    "crates/tuft-cli",
-    "crates/tuft-codegen",
-    "crates/tuft-dev-runtime",
-    "crates/tuft-dev-server",
-    "crates/tuft-driver",
-    "crates/tuft-driver-sys",
-    "crates/tuft-macros",
-    "crates/tuft-plugin",
-    "crates/tuft-runtime",
+    "crates/whisker",
+    "crates/whisker-app-config",
+    "crates/whisker-cli",
+    "crates/whisker-codegen",
+    "crates/whisker-dev-runtime",
+    "crates/whisker-dev-server",
+    "crates/whisker-driver",
+    "crates/whisker-driver-sys",
+    "crates/whisker-macros",
+    "crates/whisker-plugin",
+    "crates/whisker-runtime",
     "examples/hello-world",
     "examples/subsecond-poc",
     "xtask",
@@ -22,7 +22,7 @@ exclude = [
     # cargo would try to build it as part of the regular workspace
     # build (and we'd lose the "fresh-from-scratch crate" property
     # the test relies on).
-    "crates/tuft-dev-server/tests/fixtures/thin-build-fixture",
+    "crates/whisker-dev-server/tests/fixtures/thin-build-fixture",
 ]
 
 [workspace.package]
@@ -30,27 +30,27 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/tuftrs/tuft"
+repository = "https://github.com/whiskerrs/whisker"
 authors = ["itome <dev@itome.team>"]
 
 [workspace.dependencies]
-tuft = { path = "crates/tuft", version = "0.1.0" }
-tuft-app-config = { path = "crates/tuft-app-config", version = "0.1.0" }
-tuft-codegen = { path = "crates/tuft-codegen", version = "0.1.0" }
-tuft-dev-runtime = { path = "crates/tuft-dev-runtime", version = "0.1.0" }
-tuft-dev-server = { path = "crates/tuft-dev-server", version = "0.1.0" }
-tuft-driver = { path = "crates/tuft-driver", version = "0.1.0" }
-tuft-driver-sys = { path = "crates/tuft-driver-sys", version = "0.1.0" }
-tuft-macros = { path = "crates/tuft-macros", version = "0.1.0" }
-tuft-plugin = { path = "crates/tuft-plugin", version = "0.1.0" }
-tuft-runtime = { path = "crates/tuft-runtime", version = "0.1.0" }
+whisker = { path = "crates/whisker", version = "0.1.0" }
+whisker-app-config = { path = "crates/whisker-app-config", version = "0.1.0" }
+whisker-codegen = { path = "crates/whisker-codegen", version = "0.1.0" }
+whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.1.0" }
+whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.1.0" }
+whisker-driver = { path = "crates/whisker-driver", version = "0.1.0" }
+whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.1.0" }
+whisker-macros = { path = "crates/whisker-macros", version = "0.1.0" }
+whisker-plugin = { path = "crates/whisker-plugin", version = "0.1.0" }
+whisker-runtime = { path = "crates/whisker-runtime", version = "0.1.0" }
 
 anyhow = "1"
 thiserror = "2"
 
 # Rust hot-patching runtime (receive side only — we build our own
-# `tuft run` watcher / sender rather than depending on `dx serve`).
-# Used by tuft-driver and the subsecond-poc example.
+# `whisker run` watcher / sender rather than depending on `dx serve`).
+# Used by whisker-driver and the subsecond-poc example.
 subsecond = "0.7"
 subsecond-types = "0.7"
 
@@ -65,7 +65,7 @@ serde_json = "1"
 # Embed the patch dylib bytes in the JSON envelope (text frame).
 base64 = "0.22"
 
-# Host-side dev server (tuft-dev-server). Heavy deps confined here.
+# Host-side dev server (whisker-dev-server). Heavy deps confined here.
 axum = { version = "0.8", default-features = false, features = ["ws", "tokio", "http1"] }
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 # Reading ELF / Mach-O / WASM symbol tables for subsecond JumpTable

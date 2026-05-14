@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Required by tuft's hot-reload receiver: opens a WebSocket to
+    <!-- Required by whisker's hot-reload receiver: opens a WebSocket to
          the dev server at 127.0.0.1:9876 (forwarded via `adb reverse`
          in non-emulator setups). Harmless in Tier-2-only builds. -->
     <uses-permission android:name="android.permission.INTERNET" />

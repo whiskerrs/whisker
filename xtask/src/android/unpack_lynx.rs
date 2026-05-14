@@ -3,7 +3,7 @@
 //!
 //! Two consumers need this layout:
 //!
-//! 1. `examples/<x>/build.rs` (Tuft's C++ bridge build) passes the path
+//! 1. `examples/<x>/build.rs` (Whisker's C++ bridge build) passes the path
 //!    as a `-L` so the linker can resolve `liblynx.so` /
 //!    `liblynxbase.so` at compile time.
 //! 2. `cargo xtask android build-example` copies the .so files into the

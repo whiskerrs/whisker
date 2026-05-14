@@ -1,6 +1,6 @@
 name: HelloWorld
 options:
-  bundleIdPrefix: rs.tuft.examples
+  bundleIdPrefix: rs.whisker.examples
   deploymentTarget:
     iOS: '13.0'
   developmentLanguage: en
@@ -13,7 +13,7 @@ settings:
 
 packages:
   # SPM package living under native/ios — relative to this project.yml.
-  TuftRuntime:
+  WhiskerRuntime:
     path: ../../../native/ios
 
 targets:
@@ -31,7 +31,7 @@ targets:
           UIApplicationSupportsMultipleScenes: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: rs.tuft.examples.helloWorld
+        PRODUCT_BUNDLE_IDENTIFIER: rs.whisker.examples.helloWorld
         TARGETED_DEVICE_FAMILY: '1,2'
     dependencies:
-      - package: TuftRuntime
+      - package: WhiskerRuntime

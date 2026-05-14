@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-/// NDK versions we know work with Tuft's link setup, in preference
+/// NDK versions we know work with Whisker's link setup, in preference
 /// order. NDK 23 was the cargo-ndk minimum and is the most-tested,
 /// but anything ≥ 23 should work now that we provide
 /// `__aarch64_have_lse_atomics` ourselves and don't link

@@ -1,10 +1,10 @@
 # Hot Reload (Tier 1) — Implementation Plan
 
 Status: in progress (I4g)
-Owners: tuft-cli + tuft-dev-server + tuft-driver
+Owners: whisker-cli + whisker-dev-server + whisker-driver
 Reference: [DioxusLabs/dioxus](https://github.com/DioxusLabs/dioxus/tree/main/packages/subsecond) / [subsecond](https://crates.io/crates/subsecond) / [`object`](https://crates.io/crates/object)
 
-This document is the source-of-truth design for Tuft's Tier 1
+This document is the source-of-truth design for Whisker's Tier 1
 hot-reload pipeline. Tier 2 ("cold rebuild + reinstall + relaunch")
 is already shipped (commits `2116675..035eeaf`); Tier 1 ("function-
 level patch swap, sub-second, state preserved") is what this plan
@@ -12,7 +12,7 @@ covers.
 
 ## Goal
 
-When the user saves a `.rs` file inside a Tuft app:
+When the user saves a `.rs` file inside a Whisker app:
 
 ```
 user save  ──►  notify event  ──►  thin rebuild  ──►
@@ -27,7 +27,7 @@ because we swap function pointers, not the whole binary.
 ## Architecture
 
 ```
-┌────────── host (`tuft run --target android --hot-patch`) ───────────┐
+┌────────── host (`whisker run --target android --hot-patch`) ───────────┐
 │                                                                    │
 │  notify  ──►  debounce 200ms  ──►  Patcher::build_patch(change)    │
 │                                        │                           │
@@ -48,13 +48,13 @@ because we swap function pointers, not the whole binary.
 │                                        ▼                           │
 │                           PatchSender::send(Envelope::Patch{...})  │
 │                                        │                           │
-└─ /tuft-dev WebSocket  ─────────────────┴───────────────────────────┘
+└─ /whisker-dev WebSocket  ─────────────────┴───────────────────────────┘
                                          ▼
 ┌────────── device (Android emulator / iOS Simulator / host) ────────┐
-│  tuft-dev-runtime::hot_reload                                      │
+│  whisker-dev-runtime::hot_reload                                      │
 │    ws.recv() → PENDING.set(table)                                  │
 │                                                                    │
-│  tuft-driver::lynx::bootstrap::tick_callback (TASM thread)         │
+│  whisker-driver::lynx::bootstrap::tick_callback (TASM thread)         │
 │    apply_pending_hot_patch():                                      │
 │      take_pending_patch()                                          │
 │      unsafe { subsecond::apply_patch(table) }                      │
@@ -65,8 +65,8 @@ because we swap function pointers, not the whole binary.
 ```
 
 The receive side (right half) is **already shipped** — see commits
-`0f09521` (tuft-dev-runtime WebSocket receiver) and `b1e060c`
-(tuft-driver `subsecond::call` gate). The work in I4g is the **send
+`0f09521` (whisker-dev-runtime WebSocket receiver) and `b1e060c`
+(whisker-driver `subsecond::call` gate). The work in I4g is the **send
 side**: building a valid `subsecond_types::JumpTable` from a thin
 rebuild and shipping it.
 
@@ -96,13 +96,13 @@ sense.
 
 | ID | Output | Test strategy |
 |----|--------|---------------|
-| **I4g-1** ✅ | `hotpatch::symbol_table::parse_symbol_table(bytes) -> SymbolTable` (host-binary readable) | Parse `target/debug/tuft` (which definitely exists during CI) and assert ≥ 1 known function symbol present. |
+| **I4g-1** ✅ | `hotpatch::symbol_table::parse_symbol_table(bytes) -> SymbolTable` (host-binary readable) | Parse `target/debug/whisker` (which definitely exists during CI) and assert ≥ 1 known function symbol present. |
 | **I4g-2** ✅ | `hotpatch::jump_table::build_jump_table(old, new, …) -> JumpTable` | Hand-built `SymbolTable` fixtures: identical → empty map; one function moved → 1-entry map; only-on-old / only-on-new → skipped. |
 | **I4g-3** ✅ | `hotpatch::cache::HotpatchModuleCache` (parses original once, holds it) | Parse twice via `Cache::new(path)` vs `cache.symbols()` — verify the second is cheap (no file IO). |
-| **I4g-4** ✅ | `tuft-rustc-shim` bin + `RUSTC_WORKSPACE_WRAPPER` plumbing — captures every rustc invocation's argv to `.tuft/cache/rustc-args/<crate>.json` | Spawn the shim with a fake rustc invocation; assert the JSON file appears with the expected fields. |
+| **I4g-4** ✅ | `whisker-rustc-shim` bin + `RUSTC_WORKSPACE_WRAPPER` plumbing — captures every rustc invocation's argv to `.whisker/cache/rustc-args/<crate>.json` | Spawn the shim with a fake rustc invocation; assert the JSON file appears with the expected fields. |
 | ~~**I4g-5**~~ ❌ | ~~`thin_rebuild` via `--crate-type=cdylib`~~ — *abandoned, see "Pivot" below* | — |
 | ~~**I4g-6**~~ ❌ | ~~`Patcher::build_patch` against cdylib~~ — *abandoned, see "Pivot" below* | — |
-| **I4g-X1** ✅ | `tuft-linker-shim` bin + `-C linker=<shim>` plumbing — captures linker argv to `.tuft/cache/linker-args/<output>-<ts>.json` | Spawn shim with fake linker invocation; assert JSON appears. 11 unit tests + smoke. |
+| **I4g-X1** ✅ | `whisker-linker-shim` bin + `-C linker=<shim>` plumbing — captures linker argv to `.whisker/cache/linker-args/<output>-<ts>.json` | Spawn shim with fake linker invocation; assert JSON appears. 11 unit tests + smoke. |
 | **I4g-X2** ✅ | `thin_rebuild_obj` — rustc `--emit=obj --crate-type=rlib` + explicit linker invocation with `-undefined dynamic_lookup` (macOS) / `--unresolved-symbols=ignore-all` (Linux) | Fixture build, parse resulting `.dylib`, **assert mangled `__ZN18thin_build_fixture9calculate17h…E` IS exported and DEFINED**. Done in X2a (build_obj_plan), X2b (build_link_plan), X2c (runner + e2e). |
 | **I4g-X3** ✅ | `Patcher::build_patch` rewired through the new pipeline | Done in X3a (wrapper linker capture), X3b (Patcher rewrite + cdylib code removal), X3c (e2e test now passing — JumpTable entry for mangled `calculate` confirmed). |
 | **I4g-7** ✅ | `DevServer::run` branches on `HotPatchMode::Tier1Subsecond`, falls back to Tier 2 on Patcher error | Done in 7a (shim_paths), 7b (Builder.with_capture), 7c (init path), 7d (change loop branch + Tier 2 fallback). |
@@ -117,7 +117,7 @@ the load-bearing failure: **a `pub fn` that isn't `#[no_mangle]`
 is dropped from a cdylib's symbol table** (rustc's default symbol
 visibility for cdylib targets only exports `extern "C"` /
 `#[no_mangle]` items, plus a couple of compiler-inserted entry
-points). For Tuft user code — `#[tuft::main] fn app() -> Element`,
+points). For Whisker user code — `#[whisker::main] fn app() -> Element`,
 helper functions, closures inside `rsx!` — every interesting
 target is mangled, so the diff would always be empty.
 
@@ -139,7 +139,7 @@ shape:
      of mangled `pub fn`s — is what we diff.
 
 That extra "drive the linker yourself" step is what
-`tuft-linker-shim` (I4g-X1) and the rewritten `thin_rebuild`
+`whisker-linker-shim` (I4g-X1) and the rewritten `thin_rebuild`
 (I4g-X2) implement. The Phase 1 / Phase 2-rustc-shim code from
 I4g-1..4 stays as-is.
 
@@ -191,11 +191,11 @@ Dioxus issues searched (`cannot locate symbol`, `subsecond
 android`, `dlopen subsecond`) returned 0 hits — users don't trip
 on this because they never build cdylibs.
 
-### Options for Tuft
+### Options for Whisker
 
 | Option | Crate-type | Architectural impact | Hackiness |
 |---|---|---|---|
-| **A. Dioxus-style** | `bin` (renamed to `libmain.so`) | Lynx-Kotlin integration upended — needs NativeActivity, removes `MainActivity.kt` / `LynxView` inflation. Architecturally large. | Low for Dioxus' model, but **fights Tuft's Kotlin-driven design**. |
+| **A. Dioxus-style** | `bin` (renamed to `libmain.so`) | Lynx-Kotlin integration upended — needs NativeActivity, removes `MainActivity.kt` / `LynxView` inflation. Architecturally large. | Low for Dioxus' model, but **fights Whisker's Kotlin-driven design**. |
 | **B. Stay cdylib + workarounds** | `cdylib` | None | High — rustc-internal flags are not user-facing API. |
 | **C. dylib** | `dylib` (Rust dynamic library, still `.so`) | Switch one token in xtask's `--crate-type=cdylib` → `--crate-type=dylib`. Kotlin Activity / LynxView keep working unchanged (System.loadLibrary takes any `.so`). rustc does **not** add `--exclude-libs,ALL` to dylib. | **Low** — one-line change in xtask; everything else inherits. |
 
@@ -206,7 +206,7 @@ Looking at `examples/hello-world/Cargo.toml`:
 ```toml
 # Plain rlib. Host workflows (`cargo build`, `cargo test`, `cargo check`,
 # rust-analyzer) only see this and succeed without a bridge — no
-# unresolved `tuft_bridge_*` symbols. The mobile outputs are produced
+# unresolved `whisker_bridge_*` symbols. The mobile outputs are produced
 # by xtask via `cargo rustc --crate-type X`:
 #   Android: cargo xtask android cargo  → cdylib  (libhello_world.so)
 #   iOS:     cargo xtask ios build-xcframework  → staticlib (libhello_world.a)
@@ -230,7 +230,7 @@ produces a .so on Android and is fully compatible with
    Verify `libhello_world.so` loads via `System.loadLibrary` (it
    should — the file shape is identical, just symbol visibility
    differs).
-3. Run `tuft run --target android --hot-patch`. Expect the
+3. Run `whisker run --target android --hot-patch`. Expect the
    `dynsym` count to jump from ~175 to several thousand. Then
    the apply_patch dlopen should succeed and `patch applied (N
    entries in X ms)` should show in logcat.
@@ -240,7 +240,7 @@ produces a .so on Android and is fully compatible with
      (state preservation = the headline feature).
 
 If dylib doesn't link (some Rust crates the workspace pulls in
-might be cdylib-only — though Tuft is Rust-internal so unlikely),
+might be cdylib-only — though Whisker is Rust-internal so unlikely),
 fall back to Option A: switch the user crate to `bin` +
 NativeActivity. That's a much larger refactor but is the only
 fully-Dioxus-validated path.
@@ -268,11 +268,11 @@ The straight swap works, with one extra workaround needed:
   `local:` clause). lld merges anonymous version-scripts
   additively — a symbol matched by any script's `global:` is
   exported. The extra script lives at
-  `target/.tuft/android-jni-exports.ver` and is written by
+  `target/.whisker/android-jni-exports.ver` and is written by
   `xtask/src/android/cargo_build.rs` on every Android build.
 
 The `cargo:rustc-link-arg-cdylib=…` directives that
-`tuft-driver-sys/build.rs` used to emit for the cdylib path
+`whisker-driver-sys/build.rs` used to emit for the cdylib path
 (eager binding, libc as-needed wrap, JNI version-script) are
 now silently dropped under dylib (they fire a cargo warning),
 so the build script no longer emits them. The libc `dylib=c`
@@ -302,7 +302,7 @@ object = { version = "0.36", default-features = false, features = ["read", "std"
 serde_json  # already present (for the rustc-args cache)
 ```
 
-`tuft-dev-server`'s `Cargo.toml` picks them up. We deliberately do
+`whisker-dev-server`'s `Cargo.toml` picks them up. We deliberately do
 not pull `goblin` even though some prior art uses it — `object` is
 the same library `dx serve` uses and is the same library
 `subsecond` uses internally, which keeps the symbol-resolution
@@ -340,7 +340,7 @@ semantics identical and saves one ABI-mismatch hazard.
 
 ## What "done" looks like (I4g exit criteria)
 
-1. `tuft run --target android --hot-patch` from a fresh emulator
+1. `whisker run --target android --hot-patch` from a fresh emulator
    reflects a string edit in `hello-world` in **under 2 seconds**
    on a warm cache.
 2. The on-screen counter (the per-mix heart bitmask, etc.) keeps
@@ -402,14 +402,14 @@ semantics identical and saves one ABI-mismatch hazard.
     and assumes `table.aslr_reference == static_main_addr`;
     feeding it 0 caused `old_offset = runtime_main_addr`,
     which shifts every map key into garbage.
-  - **`#[tuft::main]` macro synthesizes the `main` sentinel**
+  - **`#[whisker::main]` macro synthesizes the `main` sentinel**
     (`#[no_mangle] pub extern "C" fn main() -> c_int { 0 }`)
-    plus a hot-patchable dispatcher (`__tuft_app_dispatch`).
+    plus a hot-patchable dispatcher (`__whisker_app_dispatch`).
     Both live in the user crate so the patch dylib has them
     too. Macro also routes the user app fn through
-    `tuft::__main_runtime::call_user_app` (`#[inline(always)]`),
+    `whisker::__main_runtime::call_user_app` (`#[inline(always)]`),
     which expands to `subsecond::call(|| user_app())` when
-    `tuft/hot-reload` is on. The wrapper closure being in the
+    `whisker/hot-reload` is on. The wrapper closure being in the
     user crate is essential: the JumpTable can only map
     symbols that exist in *both* host and patch, and the
     patch rebuilds the user crate only.
@@ -420,7 +420,7 @@ semantics identical and saves one ABI-mismatch hazard.
     folds into "skip the JumpTable lookup". Without the
     flag, the whole hot-patch dispatcher dissolves at
     compile time.
-  - **Patcher post-apply `force_frame`** — Tuft's runtime
+  - **Patcher post-apply `force_frame`** — Whisker's runtime
     only redraws when a signal marks itself dirty. A code
     swap by itself doesn't fire a signal, so `tick_callback`
     now calls `runtime.force_frame()` (instead of `frame()`)
@@ -434,7 +434,7 @@ semantics identical and saves one ABI-mismatch hazard.
   entry for the user's `app` symbol (verified via
   side-channel logging from `build_jump_table`), the address
   math lines up on paper (static `app` addr + computed
-  `runtime_base` = the runtime addr `__tuft_app_dispatch`
+  `runtime_base` = the runtime addr `__whisker_app_dispatch`
   captures), and `subsecond::call` *is* called and *does*
   reach `get_jump_table`. The mismatch must be either in
   (a) what `transmute_copy::<Closure, fn() -> Element>` reads

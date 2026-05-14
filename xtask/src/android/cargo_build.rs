@@ -44,7 +44,7 @@ pub struct CargoBuildArgs {
     pub profile: String,
 
     /// Cargo features to pass through, repeatable. Example:
-    ///   `cargo xtask android cargo -p hello-world --features tuft/hot-reload`
+    ///   `cargo xtask android cargo -p hello-world --features whisker/hot-reload`
     /// Multiple values supported either as repeated `--features` or
     /// comma-separated; both go straight to cargo's own `--features`.
     #[arg(long)]
@@ -116,9 +116,9 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
     // script's `global:` is exported, even if another script's
     // `local: *;` would otherwise hide it. The merge handles JNI
     // exports without touching rustc's Rust-symbol list. The
-    // version-script file lives under `target/.tuft/` so it's a
+    // version-script file lives under `target/.whisker/` so it's a
     // discoverable build artifact, not a hidden temp.
-    let vs_dir = paths::workspace_root().join("target/.tuft");
+    let vs_dir = paths::workspace_root().join("target/.whisker");
     std::fs::create_dir_all(&vs_dir).with_context(|| {
         format!("create version-script dir {}", vs_dir.display())
     })?;
@@ -139,8 +139,8 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
     cmd.env(format!("AR_{triple_env}"), &tc.ar);
     // cargo uses this to drive the final link. Honour any
     // pre-existing value so callers can interpose a linker shim
-    // (Tuft's Tier 1 dev loop does this with tuft-linker-shim,
-    // which then forwards to the NDK clang via TUFT_REAL_LINKER).
+    // (Whisker's Tier 1 dev loop does this with whisker-linker-shim,
+    // which then forwards to the NDK clang via WHISKER_REAL_LINKER).
     let linker_env = format!("CARGO_TARGET_{triple_upper}_LINKER");
     if std::env::var_os(&linker_env).is_none() {
         cmd.env(&linker_env, &tc.clang);

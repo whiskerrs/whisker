@@ -1,0 +1,15 @@
+[package]
+name = "whisker-driver-sys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Raw FFI + C++ bridge sources for the Whisker driver. Internal — use `whisker-driver` for the safe wrappers."
+links = "whisker_bridge_static"
+build = "build.rs"
+
+[build-dependencies]
+anyhow = { workspace = true }
+cc = "1"

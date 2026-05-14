@@ -48,7 +48,7 @@ pub fn run(args: BuildLynxAarArgs) -> Result<()> {
     }
 
     // 2. Apply patches (idempotent).
-    println!("==> Applying Tuft patches to Lynx source");
+    println!("==> Applying Whisker patches to Lynx source");
     let patches_dir = paths::workspace_root().join("patches/lynx-android");
     apply_patch(&lynx_src.join("build"), &patches_dir.join("buildroot.patch"))?;
     apply_patch(&lynx_src, &patches_dir.join("lynx.patch"))?;
@@ -146,7 +146,7 @@ fn resolve_java11() -> Result<PathBuf> {
     // Lynx's gradle wrapper (6.7.1) refuses anything newer than JDK
     // 11. Don't reuse JAVA_HOME if it's set to something newer — the
     // wrapper will fail with "Unsupported class file major version".
-    if let Some(p) = std::env::var_os("TUFT_JAVA11_HOME").map(PathBuf::from) {
+    if let Some(p) = std::env::var_os("WHISKER_JAVA11_HOME").map(PathBuf::from) {
         if p.is_dir() {
             return Ok(p);
         }
@@ -167,7 +167,7 @@ fn resolve_java11() -> Result<PathBuf> {
     }
     anyhow::bail!(
         "JDK 11 not found. Lynx's gradle 6.7.1 needs it. Install \
-         Temurin 11 or set TUFT_JAVA11_HOME."
+         Temurin 11 or set WHISKER_JAVA11_HOME."
     )
 }
 

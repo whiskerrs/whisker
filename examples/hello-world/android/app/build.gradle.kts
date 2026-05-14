@@ -4,12 +4,12 @@ plugins {
 }
 
 android {
-    namespace = "rs.tuft.examples.helloworld"
+    namespace = "rs.whisker.examples.helloworld"
     compileSdk = 34
     ndkVersion = "21.1.6352462"
 
     defaultConfig {
-        applicationId = "rs.tuft.examples.helloworld"
+        applicationId = "rs.whisker.examples.helloworld"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
@@ -48,7 +48,7 @@ android {
 }
 
 dependencies {
-    implementation(project(":tuft-runtime"))
+    implementation(project(":whisker-runtime"))
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
 }

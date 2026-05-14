@@ -2,11 +2,11 @@
 //!
 //! Exercises a wide slice of Lynx CSS (flexbox / gap / gradient /
 //! border-radius / box-shadow / position absolute / aspect-ratio /
-//! transform) and the Tuft reactive runtime: tab selection, per-card
+//! transform) and the Whisker reactive runtime: tab selection, per-card
 //! like state, and a play/pause toggle each re-render only their
 //! slice of the tree.
 
-use tuft::prelude::*;
+use whisker::prelude::*;
 
 // ---- App state (thread-local signals) ----------------------------------------
 
@@ -324,7 +324,7 @@ fn now_playing() -> Element {
 
 // ---- Main app ----------------------------------------------------------------
 
-#[tuft::main]
+#[whisker::main]
 fn app() -> Element {
     let _ = selected_tab();
     let _ = liked_mixes();
@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn app_returns_a_page() {
-        tuft::runtime::signal::__reset_runtime();
+        whisker::runtime::signal::__reset_runtime();
         let tree = app();
         assert_eq!(tree.tag, ElementTag::Page);
         // header + scroll_view + now_playing + tab_bar
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn tab_bar_has_four_items() {
-        tuft::runtime::signal::__reset_runtime();
+        whisker::runtime::signal::__reset_runtime();
         let tree = app();
         let bar = tree.children.last().unwrap();
         assert_eq!(bar.children.len(), 4);

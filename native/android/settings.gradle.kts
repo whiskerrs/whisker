@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "tuft-runtime-android"
-include(":tuft-runtime")
+rootProject.name = "whisker-runtime-android"
+include(":whisker-runtime")

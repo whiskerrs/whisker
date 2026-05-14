@@ -1,16 +1,16 @@
-# Tuft
+# Whisker
 
 Cross-platform mobile UI framework for Rust, built on the [Lynx](https://github.com/lynx-family/lynx) C++ engine.
 
-Website: [tuft.rs](https://tuft.rs) · Source: [github.com/tuftrs/tuft](https://github.com/tuftrs/tuft)
+Website: [whisker.rs](https://whisker.rs) · Source: [github.com/whiskerrs/whisker](https://github.com/whiskerrs/whisker)
 
 > **Status**: Pre-alpha. Active development on the initial scaffold. Not usable yet.
 
-Tuft lets you build native iOS and Android apps in Rust with a Dioxus-style declarative API. Under the hood, the [Lynx](https://github.com/lynx-family/lynx) engine drives platform-native widgets — no self-rendering, no JavaScript runtime.
+Whisker lets you build native iOS and Android apps in Rust with a Dioxus-style declarative API. Under the hood, the [Lynx](https://github.com/lynx-family/lynx) engine drives platform-native widgets — no self-rendering, no JavaScript runtime.
 
-## Why Tuft
+## Why Whisker
 
-| | Tuft | Flutter | React Native |
+| | Whisker | Flutter | React Native |
 |---|---|---|---|
 | Language | Rust | Dart | TypeScript / JavaScript |
 | Rendering | Native widgets (via Lynx) | Self-rendered (Skia/Impeller) | Native widgets |
@@ -20,21 +20,21 @@ Tuft lets you build native iOS and Android apps in Rust with a Dioxus-style decl
 ## Project layout
 
 ```
-tuft/
+whisker/
 ├── crates/                    Rust workspace
-│   ├── tuft                  Umbrella crate (re-exports for users)
-│   ├── tuft-app-config       AppConfig types used in tuft.rs
-│   ├── tuft-cli              `tuft` / `cargo-tuft` CLI binary
-│   ├── tuft-codegen          CNG (Continuous Native Generation) codegen
-│   ├── tuft-dev-runtime      Dev-only runtime (WebSocket, hot reload)
-│   ├── tuft-driver           Backend driver (host shim, BridgeRenderer)
-│   ├── tuft-driver-sys       Raw FFI bindings + C++ bridge sources (bridge/)
-│   ├── tuft-macros           Proc macros (#[tuft::main], rsx!)
-│   ├── tuft-plugin           Plugin trait + PrebuildContext + typed mod APIs
-│   └── tuft-runtime          Core runtime (reactive, element tree)
+│   ├── whisker                  Umbrella crate (re-exports for users)
+│   ├── whisker-app-config       AppConfig types used in whisker.rs
+│   ├── whisker-cli              `whisker` / `cargo-whisker` CLI binary
+│   ├── whisker-codegen          CNG (Continuous Native Generation) codegen
+│   ├── whisker-dev-runtime      Dev-only runtime (WebSocket, hot reload)
+│   ├── whisker-driver           Backend driver (host shim, BridgeRenderer)
+│   ├── whisker-driver-sys       Raw FFI bindings + C++ bridge sources (bridge/)
+│   ├── whisker-macros           Proc macros (#[whisker::main], rsx!)
+│   ├── whisker-plugin           Plugin trait + PrebuildContext + typed mod APIs
+│   └── whisker-runtime          Core runtime (reactive, element tree)
 ├── native/
-│   ├── android/               Kotlin runtime (TuftApplication / TuftView etc.)
-│   └── ios/                   Swift runtime (TuftAppDelegate / TuftView etc.)
+│   ├── android/               Kotlin runtime (WhiskerApplication / WhiskerView etc.)
+│   └── ios/                   Swift runtime (WhiskerAppDelegate / WhiskerView etc.)
 ├── examples/                  Sample apps
 ├── docs/                      Documentation
 └── xtask/                     Build automation (cargo xtask pattern)
@@ -48,8 +48,8 @@ Major decisions made so far:
 - **Element PAPI direct access** via custom JNI/Obj-C++ bridge — bypasses Lynx's template/JS layer.
 - **No JavaScript dependency** — possible because we drive the C++ engine directly. Initial builds may include unused PrimJS bytes; full removal is a planned follow-up via a light Lynx fork.
 - **Custom widgets in native languages** (Kotlin/Swift) bridged via uniffi.
-- **Code-based CNG** — `tuft.rs` (Rust code) defines app config; plugins are Rust crates with a `pub fn tuft_plugin(ctx)` function.
-- **Hybrid CLI** — `tuft` (primary) and `cargo tuft` (alias).
+- **Code-based CNG** — `whisker.rs` (Rust code) defines app config; plugins are Rust crates with a `pub fn whisker_plugin(ctx)` function.
+- **Hybrid CLI** — `whisker` (primary) and `cargo whisker` (alias).
 - **Hot reload** — Tier 1 (rsx delta, sub-second) + Tier 2 (dylib swap, 5–30s).
 
 See `docs/` for design notes — currently
@@ -88,8 +88,8 @@ GitHub.
 | Element PAPI JNI bridge | ⏳ |
 | Reactive runtime | ⏳ |
 | `rsx!` macro | ⏳ |
-| CNG (`tuft prebuild`) | ⏳ |
-| `tuft dev` (hot reload) | ⏳ |
+| CNG (`whisker prebuild`) | ⏳ |
+| `whisker dev` (hot reload) | ⏳ |
 | iOS xcframework build | ⏳ |
 | Android AAR build | ⏳ |
 

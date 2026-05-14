@@ -1,4 +1,4 @@
-//! Build the user crate as an iOS xcframework that the TuftRuntime
+//! Build the user crate as an iOS xcframework that the WhiskerRuntime
 //! SPM target consumes.
 //!
 //! Slices produced:
@@ -13,30 +13,30 @@ use crate::paths;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// User crate (the one with `#[tuft::main]`). Its static library
+    /// User crate (the one with `#[whisker::main]`). Its static library
     /// is `lib<package_underscored>.a`. Default: hello-world.
     #[arg(short = 'p', long, default_value = "hello-world")]
     pub package: String,
 
-    /// Output directory. Default: `target/tuft-driver/`.
+    /// Output directory. Default: `target/whisker-driver/`.
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
 
     /// Cargo features forwarded to the static-lib build for every
-    /// iOS triple. `tuft run` uses this to pass `tuft/hot-reload`.
+    /// iOS triple. `whisker run` uses this to pass `whisker/hot-reload`.
     #[arg(long)]
     pub features: Vec<String>,
 }
 
 pub fn run(args: Args) -> Result<()> {
     let root = paths::workspace_root();
-    let out = args.out_dir.unwrap_or_else(paths::tuft_driver_out);
+    let out = args.out_dir.unwrap_or_else(paths::whisker_driver_out);
     let lib_stem = args.package.replace('-', "_");
     let lib_name = format!("lib{lib_stem}.a");
 
-    let headers_src = root.join("crates/tuft-driver/include");
+    let headers_src = root.join("crates/whisker-driver/include");
     let bridge_headers_src = paths::bridge_include();
-    for required in ["tuft.h", "module.modulemap"] {
+    for required in ["whisker.h", "module.modulemap"] {
         if !headers_src.join(required).is_file() {
             anyhow::bail!(
                 "missing header {} (expected at {})",
@@ -45,9 +45,9 @@ pub fn run(args: Args) -> Result<()> {
             );
         }
     }
-    if !bridge_headers_src.join("tuft_bridge.h").is_file() {
+    if !bridge_headers_src.join("whisker_bridge.h").is_file() {
         anyhow::bail!(
-            "missing tuft_bridge.h (expected at {})",
+            "missing whisker_bridge.h (expected at {})",
             bridge_headers_src.display()
         );
     }
@@ -98,17 +98,17 @@ pub fn run(args: Args) -> Result<()> {
     println!("==> Staging headers");
     let hdr_dir = out.join("Headers");
     std::fs::create_dir_all(&hdr_dir)?;
-    std::fs::copy(headers_src.join("tuft.h"), hdr_dir.join("tuft.h"))?;
+    std::fs::copy(headers_src.join("whisker.h"), hdr_dir.join("whisker.h"))?;
     std::fs::copy(
-        bridge_headers_src.join("tuft_bridge.h"),
-        hdr_dir.join("tuft_bridge.h"),
+        bridge_headers_src.join("whisker_bridge.h"),
+        hdr_dir.join("whisker_bridge.h"),
     )?;
     std::fs::copy(
         headers_src.join("module.modulemap"),
         hdr_dir.join("module.modulemap"),
     )?;
 
-    let xcf = out.join("TuftDriver.xcframework");
+    let xcf = out.join("WhiskerDriver.xcframework");
     println!("==> Creating xcframework");
     let status = Command::new("xcodebuild")
         .arg("-create-xcframework")

@@ -1,5 +1,5 @@
 // Top-level build file. Module-specific configuration lives in
-// tuft-runtime/build.gradle.kts.
+// whisker-runtime/build.gradle.kts.
 
 plugins {
     id("com.android.library") version "8.6.1" apply false

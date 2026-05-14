@@ -1,0 +1,29 @@
+[package]
+name = "whisker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cross-platform mobile UI framework built on Lynx. Umbrella crate."
+
+[features]
+default = []
+# Forwarded to `whisker-driver` — enables subsecond-backed hot reload.
+# `whisker run` flips this on; release builds leave it off. Pulls in
+# `subsecond` here too so the `#[whisker::main]` macro can wrap the
+# user's app fn with `subsecond::call(|| user_app())` *inside the
+# user crate*. The wrapper closure has to live in the user crate
+# (not in whisker-driver) so the JumpTable that links host symbols to
+# patch symbols actually contains its `call_it` monomorphization on
+# both sides — otherwise subsecond can't dispatch to the patched
+# version.
+hot-reload = ["whisker-driver/hot-reload", "dep:subsecond"]
+
+[dependencies]
+whisker-runtime = { workspace = true }
+whisker-macros = { workspace = true }
+whisker-driver = { workspace = true }
+whisker-app-config = { workspace = true }
+subsecond = { workspace = true, optional = true }

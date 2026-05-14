@@ -1,0 +1,14 @@
+[package]
+name = "whisker-codegen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "CNG codegen: generates iOS Xcode + Android Gradle projects from app config + plugins."
+
+[dependencies]
+anyhow = { workspace = true }
+whisker-app-config = { workspace = true }
+whisker-plugin = { workspace = true }

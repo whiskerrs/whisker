@@ -7,7 +7,7 @@ index f85ec1c..fc4bd5b 100644
  
    # Whether to set -fvisibility=hidden
 -  disable_visibility_hidden = false
-+  # Tuft patch: default to true so Element PAPI / LynxShell symbols stay
++  # Whisker patch: default to true so Element PAPI / LynxShell symbols stay
 +  # visible in the resulting .so and our Rust bridge can call them.
 +  disable_visibility_hidden = true
  }
@@ -24,7 +24,7 @@ index ae5495b..7922736 100644
 -      if (use_ndk_static_cxx) {
 -        ldflags += [ "-static-libstdc++" ]
 -      }
-+      # Tuft patch: drop -static-libstdc++ so liblynx.so dynamically
++      # Whisker patch: drop -static-libstdc++ so liblynx.so dynamically
 +      # links libc++_shared.so. The static version leaves libc++abi
 +      # symbols (__cxa_pure_virtual, __cxa_throw, _Unwind_*) as
 +      # undefined externs Android's RTLD_LOCAL semantics can't
@@ -42,7 +42,7 @@ index 855c10a..bb2fc87 100644
      ldflags += [
        "-Wl,--no-undefined",
 -      "-Wl,--exclude-libs,ALL",
-+      # Tuft patch: drop --exclude-libs,ALL so symbols with default
++      # Whisker patch: drop --exclude-libs,ALL so symbols with default
 +      # visibility (see disable_visibility_hidden) are kept in .dynsym.
        "-fuse-ld=lld",
      ]

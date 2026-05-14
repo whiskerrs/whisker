@@ -7,7 +7,7 @@ index 6abd3d4..c5b9494 100644
      "-fno-short-enums",
      "-fno-strict-aliasing",
 -    "-fvisibility=hidden",
-+    # Tuft patch: lynx_android_public_config is applied to every
++    # Whisker patch: lynx_android_public_config is applied to every
 +    # lynx_core_source_set (core/shell, core/renderer/*, …) on Android.
 +    # Default visibility here makes LynxShell::RunOnTasmThread, the
 +    # Element manager's CreateFiber* helpers, and FiberElement::* land
@@ -21,7 +21,7 @@ index 6abd3d4..c5b9494 100644
  config("lynx_android_private_config") {
    ldflags = [
 -    "-Wl,--exclude-libs,ALL,--gc-sections",
-+    # Tuft patch: keep --gc-sections but drop --exclude-libs,ALL so the
++    # Whisker patch: keep --gc-sections but drop --exclude-libs,ALL so the
 +    # symbols we made visible via -fvisibility=default (disable_visibility_hidden)
 +    # actually land in liblynx.so's .dynsym. Without this, the linker
 +    # re-hides every symbol coming from input static archives.

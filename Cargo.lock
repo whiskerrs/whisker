@@ -471,7 +471,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 name = "hello-world"
 version = "0.1.0"
 dependencies = [
- "tuft",
+ "whisker",
 ]
 
 [[package]]
@@ -1339,119 +1339,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
-name = "tuft"
-version = "0.1.0"
-dependencies = [
- "subsecond",
- "tuft-app-config",
- "tuft-driver",
- "tuft-macros",
- "tuft-runtime",
-]
-
-[[package]]
-name = "tuft-app-config"
-version = "0.1.0"
-
-[[package]]
-name = "tuft-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "indicatif",
- "serde",
- "serde_json",
- "tokio",
- "tuft-app-config",
- "tuft-codegen",
- "tuft-dev-server",
- "tuft-plugin",
-]
-
-[[package]]
-name = "tuft-codegen"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "tuft-app-config",
- "tuft-plugin",
-]
-
-[[package]]
-name = "tuft-dev-runtime"
-version = "0.1.0"
-dependencies = [
- "base64",
- "futures-util",
- "serde",
- "serde_json",
- "subsecond",
- "subsecond-types",
- "tokio",
- "tokio-tungstenite 0.21.0",
- "tuft-runtime",
-]
-
-[[package]]
-name = "tuft-dev-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "base64",
- "futures-util",
- "notify",
- "object",
- "serde",
- "serde_json",
- "subsecond-types",
- "tokio",
- "tokio-tungstenite 0.21.0",
-]
-
-[[package]]
-name = "tuft-driver"
-version = "0.1.0"
-dependencies = [
- "subsecond",
- "tuft-dev-runtime",
- "tuft-driver-sys",
- "tuft-runtime",
-]
-
-[[package]]
-name = "tuft-driver-sys"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
-]
-
-[[package]]
-name = "tuft-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "tuft-plugin"
-version = "0.1.0"
-dependencies = [
- "anyhow",
-]
-
-[[package]]
-name = "tuft-runtime"
-version = "0.1.0"
-dependencies = [
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "tungstenite"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1638,6 +1525,119 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "whisker"
+version = "0.1.0"
+dependencies = [
+ "subsecond",
+ "whisker-app-config",
+ "whisker-driver",
+ "whisker-macros",
+ "whisker-runtime",
+]
+
+[[package]]
+name = "whisker-app-config"
+version = "0.1.0"
+
+[[package]]
+name = "whisker-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "indicatif",
+ "serde",
+ "serde_json",
+ "tokio",
+ "whisker-app-config",
+ "whisker-codegen",
+ "whisker-dev-server",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-codegen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "whisker-app-config",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-dev-runtime"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "subsecond",
+ "subsecond-types",
+ "tokio",
+ "tokio-tungstenite 0.21.0",
+ "whisker-runtime",
+]
+
+[[package]]
+name = "whisker-dev-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64",
+ "futures-util",
+ "notify",
+ "object",
+ "serde",
+ "serde_json",
+ "subsecond-types",
+ "tokio",
+ "tokio-tungstenite 0.21.0",
+]
+
+[[package]]
+name = "whisker-driver"
+version = "0.1.0"
+dependencies = [
+ "subsecond",
+ "whisker-dev-runtime",
+ "whisker-driver-sys",
+ "whisker-runtime",
+]
+
+[[package]]
+name = "whisker-driver-sys"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+]
+
+[[package]]
+name = "whisker-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "whisker-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
+name = "whisker-runtime"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
 ]
 
 [[package]]

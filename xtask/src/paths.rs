@@ -1,13 +1,13 @@
-//! Single source of truth for "where Lynx / Tuft artifacts live".
+//! Single source of truth for "where Lynx / Whisker artifacts live".
 //!
-//! Both `xtask` and `tuft-driver-sys/build.rs` read from these
+//! Both `xtask` and `whisker-driver-sys/build.rs` read from these
 //! conventions, but they're duplicated rather than shared via a crate
 //! because the build.rs case can resolve them from its own
 //! `CARGO_MANIFEST_DIR` without an extra dep.
 
 use std::path::PathBuf;
 
-/// Absolute path to the Tuft workspace root.
+/// Absolute path to the Whisker workspace root.
 pub fn workspace_root() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest
@@ -25,10 +25,10 @@ pub fn target_dir() -> PathBuf {
 // --- Bridge headers (consumed by `cargo xtask ios build-xcframework`
 //     when staging public headers into the xcframework). The C++
 //     sources themselves live under the same tree but are compiled
-//     by `tuft-driver-sys/build.rs` and never read from xtask. -----
+//     by `whisker-driver-sys/build.rs` and never read from xtask. -----
 
 pub fn bridge_include() -> PathBuf {
-    workspace_root().join("crates/tuft-driver-sys/bridge/include")
+    workspace_root().join("crates/whisker-driver-sys/bridge/include")
 }
 
 // --- Lynx (Android) --------------------------------------------------
@@ -51,7 +51,7 @@ pub fn lynx_ios_root() -> PathBuf {
     target_dir().join("lynx-ios")
 }
 
-/// OS-neutral C++ header staging tree. Both `tuft-driver-sys/build.rs`
+/// OS-neutral C++ header staging tree. Both `whisker-driver-sys/build.rs`
 /// (Android + iOS cc::Build) and the iOS Lynx framework build read
 /// from this directory. The C++ headers are platform-agnostic so we
 /// don't duplicate per-OS.
@@ -65,8 +65,8 @@ pub fn lynx_src_default() -> PathBuf {
     target_dir().join("lynx-src")
 }
 
-// --- Tuft driver xcframework ----------------------------------------
+// --- Whisker driver xcframework ----------------------------------------
 
-pub fn tuft_driver_out() -> PathBuf {
-    target_dir().join("tuft-driver")
+pub fn whisker_driver_out() -> PathBuf {
+    target_dir().join("whisker-driver")
 }

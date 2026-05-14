@@ -1,0 +1,32 @@
+[package]
+name = "whisker-driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Backend driver for Whisker. Wraps the engine FFI and exposes the host shim helpers (run/tick) the iOS/Android shells call into via #[whisker::main]."
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+default = []
+# Routes the user app function through `subsecond::call` and pulls in
+# `whisker-dev-runtime`'s WebSocket patch receiver. Off by default so
+# release builds carry zero hot-reload baggage — subsecond and its
+# libloading / memmap2 / memfd transitive deps, plus tokio /
+# tungstenite from `whisker-dev-runtime`, all drop out of the resolved
+# graph entirely.
+hot-reload = [
+    "dep:subsecond",
+    "dep:whisker-dev-runtime",
+    "whisker-dev-runtime/hot-reload",
+]
+
+[dependencies]
+whisker-runtime = { workspace = true }
+whisker-driver-sys = { workspace = true }
+subsecond = { workspace = true, optional = true }
+whisker-dev-runtime = { workspace = true, optional = true }

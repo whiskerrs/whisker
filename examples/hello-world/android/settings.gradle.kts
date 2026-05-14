@@ -16,5 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "hello-world-android"
 include(":app")
-include(":tuft-runtime")
-project(":tuft-runtime").projectDir = file("../../../native/android/tuft-runtime")
+include(":whisker-runtime")
+project(":whisker-runtime").projectDir = file("../../../native/android/whisker-runtime")
