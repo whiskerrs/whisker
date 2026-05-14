@@ -68,7 +68,7 @@ impl Patcher {
         original_binary: &Path,
     ) -> Result<Self> {
         let cache_dir = super::default_cache_dir(workspace_root);
-        run_fat_build(workspace_root, &package, target, shim_path, &cache_dir)
+        run_fat_build(workspace_root, &package, target, shim_path, &cache_dir, None)
             .context("fat build")?;
         let captured_args = load_captured_args(&cache_dir)?;
         let original_cache = HotpatchModuleCache::from_path(original_binary)?;

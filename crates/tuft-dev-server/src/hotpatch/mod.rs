@@ -32,5 +32,7 @@ pub use thin_build::{
 };
 pub use validate::{ensure_target_supported, extract_target_triple, validate_environment};
 pub use wrapper::{
-    default_cache_dir, load_captured_args, run_fat_build, CapturedRustcInvocation,
+    default_cache_dir, default_linker_cache_dir, load_captured_args,
+    load_captured_linker_args, resolve_host_linker, run_fat_build,
+    CapturedLinkerInvocation, CapturedRustcInvocation, LinkerCaptureConfig,
 };
