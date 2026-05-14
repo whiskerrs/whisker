@@ -80,7 +80,13 @@ pub fn build_jump_table(
         if old_sym.is_undefined || new_sym.is_undefined {
             continue;
         }
-        if old_sym.size == 0 || new_sym.size == 0 {
+        // Skip zero-sized symbols only when *both* are sized — Mach-O
+        // never populates `size` on its symbol table (it's an ELF
+        // concept), so on macOS every Text symbol comes back with
+        // size 0 and we'd discard everything otherwise. ELF defined
+        // symbols always have non-zero size, so PLT stubs / markers
+        // (size 0 on ELF) still get filtered out there.
+        if old_sym.size == 0 && new_sym.size == 0 && cfg!(target_os = "linux") {
             continue;
         }
 
@@ -227,10 +233,26 @@ mod tests {
     }
 
     #[test]
-    fn zero_sized_symbols_are_skipped() {
+    #[cfg(target_os = "linux")]
+    fn zero_sized_symbols_are_skipped_on_elf() {
+        // On ELF, defined Text symbols always have non-zero size, so
+        // a size-0 entry is a PLT stub or compiler marker — skip.
         let old = t(vec![("plt_stub", text(0x1000, 0))]);
         let new = t(vec![("plt_stub", text(0x1100, 0))]);
         assert!(build_jump_table(&old, &new, lib(), 0, 0).table.map.is_empty());
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    fn zero_sized_symbols_are_kept_on_mach_o() {
+        // Mach-O's nlist entries don't carry a size field, so every
+        // Text symbol comes back as size 0; the filter must NOT
+        // throw them away or we'd never patch anything on macOS.
+        let old = t(vec![("foo", text(0x1000, 0))]);
+        let new = t(vec![("foo", text(0x1100, 0))]);
+        let plan = build_jump_table(&old, &new, lib(), 0, 0);
+        assert_eq!(plan.table.map.len(), 1);
+        assert_eq!(plan.table.map.get(&0x1000), Some(&0x1100));
     }
 
     // ----- diff report -------------------------------------------------

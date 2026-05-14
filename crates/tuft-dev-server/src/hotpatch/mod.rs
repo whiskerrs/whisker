@@ -19,7 +19,9 @@ pub mod wrapper;
 pub use cache::HotpatchModuleCache;
 pub use jump_table::{build_jump_table, DiffReport, PatchPlan};
 pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
-pub use thin_build::{build_thin_rebuild_plan, ThinRebuildPlan};
+pub use thin_build::{
+    build_thin_rebuild_plan, library_filename, thin_rebuild, ThinRebuildPlan,
+};
 pub use wrapper::{
     default_cache_dir, load_captured_args, run_fat_build, CapturedRustcInvocation,
 };

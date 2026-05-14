@@ -16,7 +16,14 @@ members = [
     "examples/subsecond-poc",
     "xtask",
 ]
-exclude = []
+exclude = [
+    # Throwaway cdylib the dev-server's `thin_rebuild` integration
+    # test compiles standalone. Must NOT be a workspace member or
+    # cargo would try to build it as part of the regular workspace
+    # build (and we'd lose the "fresh-from-scratch crate" property
+    # the test relies on).
+    "crates/tuft-dev-server/tests/fixtures/thin-build-fixture",
+]
 
 [workspace.package]
 version = "0.1.0"

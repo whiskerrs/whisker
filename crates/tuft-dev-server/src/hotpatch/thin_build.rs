@@ -25,6 +25,7 @@
 //! already know how to make the linker happy on this OS / SDK
 //! combo, and we lean on that.
 
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use super::wrapper::CapturedRustcInvocation;
@@ -91,6 +92,67 @@ pub fn set_crate_type(args: &mut Vec<String>, new_kind: &str) {
     }
     args.push("--crate-type".into());
     args.push(new_kind.into());
+}
+
+/// Spawn rustc with `plan.args` from `cwd`. Inherits stdout/stderr
+/// so compile errors land in the dev-server's terminal. On success,
+/// returns the absolute path of the produced cdylib (resolved from
+/// `plan.output_dir` + the platform's library naming convention).
+///
+/// `rustc_path` is the rustc binary we want — typically the same one
+/// cargo would have invoked. The dev server reads `RUSTC` from env,
+/// or falls back to `"rustc"` on `$PATH`. We don't probe for it
+/// here; that's the caller's job (I4g-5c will validate version
+/// match).
+pub async fn thin_rebuild(
+    plan: &ThinRebuildPlan,
+    rustc_path: &Path,
+    cwd: &Path,
+    crate_name: &str,
+) -> Result<PathBuf> {
+    std::fs::create_dir_all(&plan.output_dir).with_context(|| {
+        format!("create out dir {}", plan.output_dir.display())
+    })?;
+
+    let status = tokio::process::Command::new(rustc_path)
+        .args(&plan.args)
+        .current_dir(cwd)
+        .status()
+        .await
+        .with_context(|| format!("spawn {}", rustc_path.display()))?;
+    if !status.success() {
+        anyhow::bail!(
+            "rustc exited {} during thin rebuild of `{crate_name}`",
+            status,
+        );
+    }
+
+    let expected = plan.output_dir.join(library_filename(crate_name));
+    if !expected.is_file() {
+        anyhow::bail!(
+            "thin rebuild succeeded but `{}` was not produced",
+            expected.display(),
+        );
+    }
+    Ok(expected)
+}
+
+/// Platform-specific cdylib filename. Matches what rustc itself
+/// emits for `--crate-type cdylib`:
+///   macOS    → `lib<crate>.dylib`
+///   Linux    → `lib<crate>.so`     (Android uses the same convention)
+///   Windows  → `<crate>.dll`
+///
+/// Hyphens in the crate name become underscores (rustc convention).
+pub fn library_filename(crate_name: &str) -> String {
+    let stem = crate_name.replace('-', "_");
+    if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
+        format!("lib{stem}.dylib")
+    } else if cfg!(target_os = "windows") {
+        format!("{stem}.dll")
+    } else {
+        format!("lib{stem}.so")
+    }
 }
 
 /// Redirect rustc's output directory. Same fold-and-add semantics

@@ -20,6 +20,8 @@ notify = { workspace = true }
 object = { workspace = true }
 
 [dev-dependencies]
+# Async runtime for integration tests (#[tokio::test]).
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process"] }
 # A minimal client to drive the WebSocket server in tests. The
 # production receiver in tuft-dev-runtime uses the same crate.
 tokio-tungstenite = { workspace = true, features = ["connect"] }

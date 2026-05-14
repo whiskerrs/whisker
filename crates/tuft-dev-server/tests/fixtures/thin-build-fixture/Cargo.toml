@@ -1,0 +1,15 @@
+# Throwaway crate the tuft-dev-server `thin_rebuild` integration
+# test compiles to validate the rustc-replay pipeline end to end.
+# Deliberately excluded from the workspace (see the root Cargo.toml's
+# `[workspace].exclude`); cargo treats it as a standalone project so
+# the test can `cargo build` / `rustc` against it without dragging the
+# rest of the workspace along.
+
+[package]
+name = "thin-build-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
