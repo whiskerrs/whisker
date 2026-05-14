@@ -125,14 +125,41 @@ async fn client_loop(addr: String) {
     }
 }
 
+/// `dlsym(RTLD_DEFAULT, "main")` on the device, computed once at app
+/// startup. We hand this value to the dev server on connect so it can
+/// build patches with the host's runtime base address baked in via
+/// stub-asm objects (Option B / Dioxus-style symbol resolution).
+///
+/// Falls back to `0` when `subsecond` isn't linked in (release builds
+/// without the `hot-reload` feature) — those builds never reach this
+/// code path anyway, the constant is just here so the cfg gating
+/// stays local to one line.
+fn device_aslr_reference() -> u64 {
+    subsecond::aslr_reference() as u64
+}
+
 async fn handle_session<S>(
     mut ws: tokio_tungstenite::WebSocketStream<S>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    use futures_util::StreamExt;
+    use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
+
+    // Send the hello envelope first — the server needs our
+    // `aslr_reference` (= runtime address of `main` here) to compute
+    // the ASLR slide when building patches under the stub-asm scheme.
+    let hello = serde_json::json!({
+        "kind": "hello",
+        "aslr_reference": device_aslr_reference(),
+    })
+    .to_string();
+    devlog(&format!(
+        "sending hello with aslr_reference={:#x}",
+        device_aslr_reference()
+    ));
+    ws.send(Message::Text(hello.into())).await?;
 
     while let Some(msg) = ws.next().await {
         let msg = msg?;

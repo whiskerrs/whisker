@@ -25,7 +25,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 use crate::Event;
@@ -89,6 +89,13 @@ pub mod wire_jump_table {
 #[derive(Clone)]
 pub struct PatchSender {
     tx: broadcast::Sender<Envelope>,
+    /// Latest `aslr_reference` reported by a connected client via the
+    /// `hello` handshake. Single-slot, last-write-wins: we don't yet
+    /// support targeted-per-client patches, so all connected clients
+    /// must share an ASLR base. For typical single-emulator dev
+    /// sessions that's fine; for multi-device this becomes the
+    /// natural boundary where patches start being per-client.
+    aslr_reference: Arc<Mutex<Option<u64>>>,
 }
 
 impl PatchSender {
@@ -103,12 +110,22 @@ impl PatchSender {
     pub fn client_count(&self) -> usize {
         self.tx.receiver_count()
     }
+
+    /// The runtime address of `main` (= `subsecond::aslr_reference()`)
+    /// most recently reported by a connected client. `None` when no
+    /// client has connected or sent its `hello` yet — the patcher
+    /// should withhold Tier 1 patches in that case (fall back to
+    /// Tier 2 cold rebuild).
+    pub fn latest_aslr_reference(&self) -> Option<u64> {
+        self.aslr_reference.lock().ok().and_then(|g| *g)
+    }
 }
 
 #[derive(Clone)]
 struct AppState {
     tx: broadcast::Sender<Envelope>,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
+    aslr_reference: Arc<Mutex<Option<u64>>>,
 }
 
 /// Bind on `addr`, spawn the axum server on the current tokio
@@ -124,9 +141,11 @@ pub async fn serve(
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
 ) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
     let (tx, _rx) = broadcast::channel::<Envelope>(16);
+    let aslr_reference: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
     let state = AppState {
         tx: tx.clone(),
         on_event,
+        aslr_reference: Arc::clone(&aslr_reference),
     };
 
     let app = Router::new()
@@ -142,7 +161,14 @@ pub async fn serve(
         }
     });
 
-    Ok((PatchSender { tx }, bound, handle))
+    Ok((
+        PatchSender {
+            tx,
+            aslr_reference,
+        },
+        bound,
+        handle,
+    ))
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -183,11 +209,23 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 }
             }
             // client → server: drain incoming so Pings/Pongs are honoured;
-            // close on Close frame or transport error.
+            // close on Close frame or transport error. Text frames are
+            // parsed for `hello` envelopes carrying the client's
+            // `aslr_reference`.
             msg = rx_ws.next() => {
                 match msg {
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Err(_)) => break,
+                    Some(Ok(Message::Text(t))) => {
+                        if let Some(aslr) = parse_client_aslr_reference(&t) {
+                            eprintln!(
+                                "[whisker-dev-server] client hello: aslr_reference={aslr:#x}"
+                            );
+                            if let Ok(mut g) = state.aslr_reference.lock() {
+                                *g = Some(aslr);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -196,6 +234,24 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     if let Some(cb) = &state.on_event {
         cb(Event::ClientDisconnected);
+    }
+}
+
+/// Pull the `aslr_reference` field out of a client hello envelope.
+/// Returns `None` for non-hello text frames (or malformed payloads)
+/// — the only thing we actively listen for client→server today is the
+/// initial handshake.
+fn parse_client_aslr_reference(text: &str) -> Option<u64> {
+    #[derive(serde::Deserialize)]
+    struct Hello {
+        kind: String,
+        aslr_reference: u64,
+    }
+    let h: Hello = serde_json::from_str(text).ok()?;
+    if h.kind == "hello" {
+        Some(h.aslr_reference)
+    } else {
+        None
     }
 }
 

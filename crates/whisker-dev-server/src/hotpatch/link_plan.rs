@@ -46,15 +46,18 @@
 //!       - OS-specific "unresolved is fine" directive:
 //!           - macOS: `-Wl,-undefined,dynamic_lookup`
 //!           - Linux/Android: `-Wl,--unresolved-symbols=ignore-all`
-//!       - on Linux/Android, the host dylib as a link input
-//!         (when supplied). This adds a `DT_NEEDED` entry for
-//!         the host so the Android dynamic linker resolves the
-//!         patch's undefined Rust symbols against the host's
-//!         already-loaded `libhello_world.so` (which
-//!         `System.loadLibrary` placed into the app's classloader
-//!         namespace with `RTLD_LOCAL`). Without this, the patch's
-//!         `dlopen` fails with `cannot locate symbol _ZN4core3fmt…`
-//!         even though the host has the symbol in `.dynsym`.
+//!       - any caller-supplied **extra objects** (typically the
+//!         `stub.o` produced by
+//!         [`crate::hotpatch::create_undefined_symbol_stub`]). The
+//!         stub defines every host symbol the patch refers to as a
+//!         tiny ARM64 trampoline branching to that symbol's
+//!         *runtime* address, computed from the device's reported
+//!         `subsecond::aslr_reference()`. Linking it in this slot
+//!         means the patch has no `DT_NEEDED` back-edge to the
+//!         host, and no dlopen-time symbol resolution to perform —
+//!         which avoids the Android linker-namespace +
+//!         `RTLD_LOCAL` corner cases the previous "back-edge to
+//!         host dylib" scheme tripped over.
 //!       - the new object path
 //!       - `-o <output>`
 //!
@@ -101,19 +104,21 @@ pub enum LinkerOs {
 /// Re-shape a captured linker invocation into the link step of a
 /// hot-patch build. See module docs for the rationale.
 ///
-/// `host_dylib` is the path to the original `.so`/`.dylib` the
-/// device loaded — used on Linux/Android to add a `DT_NEEDED` entry
-/// so the patch's undefined Rust symbols resolve against the host
-/// at `dlopen` time. Pass `None` on Linux when the host is the main
-/// executable (no separate `.so`) or on macOS, where
-/// `-Wl,-undefined,dynamic_lookup` already routes symbol resolution
-/// through every loaded image.
+/// `extra_objects` are additional `.o` paths to link alongside
+/// `new_object`. The typical caller is `thin_rebuild_obj`, which
+/// passes the `stub.o` produced by
+/// [`crate::hotpatch::create_undefined_symbol_stub`] here — that stub
+/// defines every host symbol the patch references as a tiny ARM64
+/// trampoline branching to the symbol's runtime address. After
+/// linking with the stub, the patch dylib has no `DT_NEEDED`
+/// back-edge to the host and no dlopen-time symbol resolution to
+/// perform. See `docs/hot-reload-plan.md` "Option B" for the design.
 pub fn build_link_plan(
     captured_linker_args: &[String],
     new_object: &Path,
     output: &Path,
     target_os: LinkerOs,
-    host_dylib: Option<&Path>,
+    extra_objects: &[std::path::PathBuf],
 ) -> LinkPlan {
     let mut args = filter_captured_linker_args(captured_linker_args);
 
@@ -125,24 +130,19 @@ pub fn build_link_plan(
             args.push("-Wl,-undefined,dynamic_lookup".into());
         }
         LinkerOs::Linux => {
+            // Safety net for any symbol that didn't end up in the
+            // stub object (e.g., synthesised compiler intrinsics that
+            // aren't in the host's symbol table). Stubbed symbols
+            // satisfy the linker from `extra_objects` first; this
+            // flag handles the long tail.
             args.push("-Wl,--unresolved-symbols=ignore-all".into());
         }
         LinkerOs::Other => {}
     }
 
-    // DT_NEEDED → host shared object (Android/Linux only). See module
-    // docs §5. `-Wl,--no-as-needed` is the linker default for
-    // positional `.so` inputs on most lld versions, but spelled
-    // explicitly here so a captured `--as-needed` arg upstream can't
-    // demote it to an unused-and-dropped entry.
-    if matches!(target_os, LinkerOs::Linux) {
-        if let Some(host) = host_dylib {
-            args.push("-Wl,--no-as-needed".into());
-            args.push(host.to_string_lossy().into());
-            args.push("-Wl,--as-needed".into());
-        }
+    for obj in extra_objects {
+        args.push(obj.to_string_lossy().into());
     }
-
     args.push(new_object.to_string_lossy().into());
     args.push("-o".into());
     args.push(output.to_string_lossy().into());
@@ -452,7 +452,7 @@ mod tests {
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
-            None,
+            &[],
         );
         assert_eq!(
             plan.args,
@@ -478,7 +478,7 @@ mod tests {
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
-            None,
+            &[],
         );
         let shared_count = plan.args.iter().filter(|a| *a == "-shared").count();
         assert_eq!(shared_count, 1, "got args: {:?}", plan.args);
@@ -491,7 +491,7 @@ mod tests {
             Path::new("/new/demo.o"),
             Path::new("/new/libdemo.dylib"),
             LinkerOs::Macos,
-            None,
+            &[],
         );
         // The output path *itself* is .dylib-shaped, so we walk
         // by index and skip the arg immediately after `-o`.
@@ -517,7 +517,7 @@ mod tests {
             Path::new("/new/demo.o"),
             Path::new("/new/libnew.dylib"),
             LinkerOs::Macos,
-            None,
+            &[],
         );
         // Find the position of -o and check the next arg is the new output.
         let dash_o = plan.args.iter().position(|a| a == "-o").unwrap();
@@ -537,7 +537,7 @@ mod tests {
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
-            None,
+            &[],
         );
         assert_eq!(
             plan.args,
@@ -563,7 +563,7 @@ mod tests {
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
-            None,
+            &[],
         );
         let count = plan
             .args
@@ -574,28 +574,27 @@ mod tests {
     }
 
     #[test]
-    fn linux_plan_appends_host_dylib_when_supplied_for_dt_needed() {
-        // The host_dylib path lands AFTER --unresolved-symbols and
-        // BEFORE the new object — wrapped in --no-as-needed so a
-        // captured --as-needed earlier in the line can't strip it.
+    fn linux_plan_appends_extra_objects_before_new_object() {
+        // Extra objects (typically `stub.o` from
+        // `create_undefined_symbol_stub`) land AFTER
+        // `--unresolved-symbols` and BEFORE the new object so the
+        // linker resolves the patch's references against them first.
+        let stub: std::path::PathBuf = "/o/stub.o".into();
         let plan = build_link_plan(
-            &s(&["-Wl,--as-needed", "-L", "/ndk/lib"]),
+            &s(&["-L", "/ndk/lib"]),
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
-            Some(Path::new("/jniLibs/libhello_world.so")),
+            std::slice::from_ref(&stub),
         );
         assert_eq!(
             plan.args,
             s(&[
-                "-Wl,--as-needed",
                 "-L",
                 "/ndk/lib",
                 "-shared",
                 "-Wl,--unresolved-symbols=ignore-all",
-                "-Wl,--no-as-needed",
-                "/jniLibs/libhello_world.so",
-                "-Wl,--as-needed",
+                "/o/stub.o",
                 "/o/demo.o",
                 "-o",
                 "/o/libdemo.so",
@@ -604,35 +603,40 @@ mod tests {
     }
 
     #[test]
-    fn linux_plan_omits_host_dylib_when_none() {
+    fn linux_plan_with_empty_extras_links_only_the_new_object() {
         let plan = build_link_plan(
             &s(&["-L", "/ndk/lib"]),
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
-            None,
+            &[],
         );
+        // Just `-Wl,--unresolved-symbols=ignore-all` + new object + -o
+        // -shared + the captured arg `-L /ndk/lib`. No DT_NEEDED, no
+        // back-edge to a host dylib.
         assert!(
-            !plan.args.iter().any(|a| a.ends_with("libhello_world.so")),
-            "args: {:?}",
+            !plan.args.iter().any(|a| a.contains("--no-as-needed")
+                || a.ends_with(".so") && a != "/o/libdemo.so"),
+            "no host-dylib back-edge expected: {:?}",
             plan.args,
         );
     }
 
     #[test]
-    fn macos_plan_ignores_host_dylib_because_dynamic_lookup_handles_it() {
-        // macOS uses -Wl,-undefined,dynamic_lookup to route resolution
-        // through all loaded images; DT_NEEDED isn't needed.
+    fn macos_plan_also_threads_extra_objects() {
+        // Same shape on macOS — stub objects are platform-portable
+        // (we generate Mach-O bytes there).
+        let stub: std::path::PathBuf = "/o/stub.o".into();
         let plan = build_link_plan(
             &s(&["-isysroot", "/sdk"]),
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
-            Some(Path::new("/path/host.dylib")),
+            std::slice::from_ref(&stub),
         );
         assert!(
-            !plan.args.iter().any(|a| a.ends_with("host.dylib")),
-            "host dylib should not appear on macOS plan: {:?}",
+            plan.args.iter().any(|a| a == "/o/stub.o"),
+            "stub object should appear on macOS plan: {:?}",
             plan.args,
         );
     }
@@ -646,7 +650,7 @@ mod tests {
             Path::new("/o/demo.obj"),
             Path::new("/o/demo.dll"),
             LinkerOs::Other,
-            None,
+            &[],
         );
         // No -Wl directive of any kind.
         assert!(

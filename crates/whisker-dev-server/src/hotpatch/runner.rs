@@ -107,6 +107,15 @@ pub async fn run_link_plan(plan: &LinkPlan, linker_path: &Path, cwd: &Path) -> R
 /// This function is the "happy path" — the production code (Patcher,
 /// I4g-X3) calls this directly when neither captured call is missing
 /// and the target is supported.
+///
+/// `aslr_stub` is an optional pre-built jump-stub object
+/// ([`crate::hotpatch::create_undefined_symbol_stub`]). When `Some`,
+/// it gets linked into the patch dylib alongside the freshly rebuilt
+/// `.o`, supplying every host symbol the patch references as a
+/// hardcoded runtime-address trampoline. When `None`, the patch is
+/// linked with `--unresolved-symbols=ignore-all` only — fine for
+/// host-only fixtures where the test process satisfies the patch via
+/// `dynamic_lookup`.
 #[allow(clippy::too_many_arguments)]
 pub async fn thin_rebuild_obj(
     captured_rustc: &CapturedRustcInvocation,
@@ -117,16 +126,17 @@ pub async fn thin_rebuild_obj(
     linker_path: &Path,
     cwd: &Path,
     target_os: LinkerOs,
-    host_dylib: Option<&Path>,
+    aslr_stub: Option<&Path>,
 ) -> Result<PathBuf> {
     let obj_plan = build_obj_plan(captured_rustc, output_dir);
     let object = run_obj_plan(&obj_plan, rustc_path, cwd).await?;
+    let extras: Vec<PathBuf> = aslr_stub.map(|p| vec![p.to_path_buf()]).unwrap_or_default();
     let link_plan = build_link_plan(
         captured_linker_args,
         &object,
         output_dylib,
         target_os,
-        host_dylib,
+        &extras,
     );
     run_link_plan(&link_plan, linker_path, cwd).await
 }

@@ -163,7 +163,10 @@ async fn thin_rebuild_obj_plus_dynamic_lookup_link_preserves_mangled_symbols() {
         &object,
         &dylib,
         linker_os_for_host(),
-        None, // host fixture has no separate host dylib to link against
+        &[], // host fixture has no separate stub object — the test
+             // process already satisfies the patch's refs via
+             // -Wl,-undefined,dynamic_lookup (macOS) /
+             // --unresolved-symbols=ignore-all (Linux).
     );
     run_link_plan(&link_plan, &linker_path(), &work)
         .await

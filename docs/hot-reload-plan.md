@@ -425,26 +425,87 @@ semantics identical and saves one ABI-mismatch hazard.
     swap by itself doesn't fire a signal, so `tick_callback`
     now calls `runtime.force_frame()` (instead of `frame()`)
     on the tick immediately after `apply_patch` succeeds.
-- **I4g-8c-3 (e2e visual): not yet — subsecond's JumpTable
-  lookup at runtime isn't matching the captured fn ptr.**
-  `force_frame` runs but reports `0 renderer patches`, meaning
-  the new tree equals the cached tree — i.e. the patched
-  `user_app` is never dispatched and the host's pre-edit
-  `user_app` continues to run. The JumpTable contains an
-  entry for the user's `app` symbol (verified via
-  side-channel logging from `build_jump_table`), the address
-  math lines up on paper (static `app` addr + computed
-  `runtime_base` = the runtime addr `__whisker_app_dispatch`
-  captures), and `subsecond::call` *is* called and *does*
-  reach `get_jump_table`. The mismatch must be either in
-  (a) what `transmute_copy::<Closure, fn() -> Element>` reads
-  for our specific closure layout, (b) MTE / pointer-tag
-  handling on this Android emulator, or (c) some subtle
-  symbol-naming difference between the cached host symtab
-  and the runtime `dlsym("main")` result. Needs deeper
-  investigation — patching subsecond locally to log the
-  exact `real` value and JumpTable contents is the next
-  natural step.
+- **I4g-8c-3 (e2e visual): not yet.** Subsecond's JumpTable
+  lookup at runtime isn't matching the captured fn ptr —
+  `force_frame` runs but reports `0 renderer patches`.
+
+### Option B: bake host runtime addresses into the patch via stub-asm
+
+After comparing against Dioxus 0.7.9 (which was empirically
+confirmed to hot-patch correctly on the same emulator with
+`dx serve --platform android --hot-patch`), the cleanest fix is
+to adopt their patch resolution model rather than continue
+debugging the DT_NEEDED-back-edge approach. Dioxus' `dx`:
+
+1. Receives the device's `subsecond::aslr_reference()` via the
+   `hello` handshake on its WebSocket.
+2. For every undefined symbol in the patch object, looks it up
+   in the host's cached symbol table and computes its runtime
+   address as `host_static_addr + (device_aslr_reference -
+   host_static_main)`.
+3. Synthesises an ARM64 stub object (`MOVZ`/`MOVK` × 4 + `BR x16`,
+   20 bytes per symbol) that defines each name as a trampoline
+   to that absolute address.
+4. Links the stub `.o` into the patch alongside the rebuilt
+   user-crate `.o`. The patch ends up with **no `DT_NEEDED`**
+   back-edge to the host and **no dlopen-time symbol
+   resolution** — every call from the patch into the host
+   lands at the correct address by construction.
+
+Whisker port landed in this commit:
+- **B-1** `whisker-dev-runtime`: device sends `{ kind: "hello",
+  aslr_reference: u64 }` on connect; server stashes the value
+  in `PatchSender` (single-slot, last-write-wins).
+- **B-2** `whisker-dev-server::hotpatch::stub_object`: ARM64 ELF
+  / Mach-O stub generator (`create_undefined_symbol_stub`).
+  Stub symbols are **weak** so they lose to strong defs already
+  pulled in by the captured linker args (`libunwind.a`,
+  `libwhisker_bridge_static.a`); the rest (`core::fmt::*`,
+  `alloc::*`, user-crate `pub fn`s) are satisfied by the
+  trampolines.
+- **B-3** `Patcher::build_patch(aslr_reference)`: when the
+  device has reported a base, generate `aslr-stub.o`, link it
+  in via `build_link_plan`'s new `extra_objects: &[PathBuf]`
+  parameter. The host `.so` is kept in the link line on
+  Linux/Android as a `DT_NEEDED` fallback for non-Text symbols
+  (`whisker_runtime::signal::ARENA` thread-local, etc.) — the
+  weak stub loses to strong host defs, but data symbols
+  outside the stub's purview still resolve via the dynamic
+  linker.
+
+After B-1..B-3 the device-side `apply_patch` succeeds again
+(243 entries in <2 ms), but **the visual swap still doesn't
+happen.** Diagnostics on the live emulator caught the actual
+root cause:
+
+> The `aslr_reference` value reported by the device
+> (`0x747773f304` in one run) is **not inside `libhello_world.so`'s
+> load range** on `/proc/<pid>/maps`. The .so is loaded at
+> `0x7501_xx_xxxx`; the reported address sits in a no-perm
+> reserved (`---p`) anonymous region around `0x7477_xx_xxxx`.
+
+That is, `subsecond::aslr_reference()` =
+`dlsym(RTLD_DEFAULT, "main")` on Android isn't finding
+`libhello_world.so`'s `main` — most likely the Android linker
+namespace returns a different `main` (`app_process64`'s, or a
+stale leftover from a prior patch's synthetic `main`) first.
+
+Consequence: both the server-side stub (whose `aslr_offset`
+is `device_aslr_reference - host_static_main`) and subsecond's
+own JumpTable adjustment (which uses the same `dlsym` value)
+compute a runtime base that *doesn't match* the real
+`libhello_world.so` load. The captured fn pointer the user
+crate's `__whisker_app_dispatch` hands to `subsecond::call`
+uses the *real* base, so the lookup misses.
+
+**Next session:** fork subsecond locally via `[patch.crates-io]`
+and replace the hardcoded `dlsym(RTLD_DEFAULT, "main")` sentinel
+with a uniquely-named symbol exported by `#[whisker::main]`
+(e.g. `whisker_aslr_anchor`). That gives both the device-side
+`aslr_reference()` call and any future Android namespace
+lookups a guaranteed hit inside our own dylib. Once that lines
+up, the Option B pipeline should hot-swap on screen as
+designed.
 
 ### Numbers observed at session end (debug, warm cache, arm64 emulator)
 

@@ -71,4 +71,11 @@ notify = { version = "8", default-features = false, features = ["macos_fsevent"]
 # Reading ELF / Mach-O / WASM symbol tables for subsecond JumpTable
 # construction. Same crate `dx serve` and `subsecond` itself use,
 # which keeps semantics identical and avoids ABI mismatch hazards.
-object = { version = "0.36", default-features = false, features = ["read", "std"] }
+object = { version = "0.36", default-features = false, features = [
+    "read",
+    "std",
+    # Needed by `whisker-dev-server::hotpatch::stub_object` to emit
+    # the runtime-address jump-stub `.o` linked into every hot patch
+    # (Option B / Dioxus-style symbol resolution).
+    "write",
+] }

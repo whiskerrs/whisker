@@ -270,8 +270,28 @@ impl DevServer {
                 }
                 LoopAction::Tier1Patch => {
                     let p = patcher.as_ref().expect("decide_action guarantees Some");
+                    let Some(aslr_reference) = sender.latest_aslr_reference() else {
+                        // No client has reported its `aslr_reference` yet
+                        // (handshake hasn't completed, or never connected).
+                        // Without that value we can't build a stub-asm-style
+                        // patch — fall back to Tier 2 cold rebuild.
+                        eprintln!(
+                            "[whisker-dev-server] tier1 patch skipped: \
+                             no client `aslr_reference` reported yet — \
+                             falling back to Tier 2 cold rebuild",
+                        );
+                        run_build_cycle(
+                            &builder,
+                            &installer,
+                            &self.on_event,
+                            &sender,
+                            "rebuild (tier2 fallback, no aslr_reference)",
+                        )
+                        .await;
+                        continue;
+                    };
                     let started = std::time::Instant::now();
-                    match p.build_patch().await {
+                    match p.build_patch(aslr_reference).await {
                         Ok(plan) => {
                             let built_in = started.elapsed();
                             log_patch_diff(&plan.report);

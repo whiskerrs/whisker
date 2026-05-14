@@ -24,9 +24,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::{
-    build_jump_table, load_captured_args, load_captured_linker_args, parse_symbol_table,
-    thin_build, thin_rebuild_obj, validate_environment, CapturedLinkerInvocation,
-    CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, PatchPlan,
+    build_jump_table, build_link_plan, load_captured_args, load_captured_linker_args,
+    parse_symbol_table, run_link_plan, run_obj_plan, thin_build, validate_environment,
+    CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, PatchPlan,
 };
 
 pub struct Patcher {
@@ -36,15 +36,6 @@ pub struct Patcher {
     cwd: PathBuf,
     patch_out_dir: PathBuf,
     target_os: LinkerOs,
-    /// Path to the host `.so` (Android) that the device loaded.
-    /// Threaded into the patch link line on Linux targets so the
-    /// patch's `DT_NEEDED` lists the host, and the Android dynamic
-    /// linker can resolve undefined Rust symbols (`core::fmt::*`,
-    /// `alloc::*`, every `pub fn` in the user crate) against the
-    /// already-loaded host at `apply_patch` `dlopen` time.
-    /// `None` for macOS host — `-Wl,-undefined,dynamic_lookup`
-    /// handles symbol resolution against any loaded image there.
-    host_dylib: Option<PathBuf>,
     original_cache: HotpatchModuleCache,
     captured_rustc_args: HashMap<String, CapturedRustcInvocation>,
     captured_linker_args: HashMap<String, CapturedLinkerInvocation>,
@@ -62,7 +53,6 @@ impl Patcher {
         cwd: PathBuf,
         patch_out_dir: PathBuf,
         target_os: LinkerOs,
-        host_dylib: Option<PathBuf>,
         original_cache: HotpatchModuleCache,
         captured_rustc_args: HashMap<String, CapturedRustcInvocation>,
         captured_linker_args: HashMap<String, CapturedLinkerInvocation>,
@@ -74,7 +64,6 @@ impl Patcher {
             cwd,
             patch_out_dir,
             target_os,
-            host_dylib,
             original_cache,
             captured_rustc_args,
             captured_linker_args,
@@ -109,13 +98,6 @@ impl Patcher {
             .with_context(|| format!("parse original binary {}", original_binary.display()))?;
         let patch_out_dir = workspace_root.join("target/.whisker/patches");
         let rustc_path = current_rustc();
-        // The host dylib path is the `.so` on Android. On macOS the
-        // host is a PIE executable and `-undefined,dynamic_lookup`
-        // handles symbol resolution, so we omit it.
-        let host_dylib = match target_os {
-            LinkerOs::Linux => Some(original_binary.to_path_buf()),
-            LinkerOs::Macos | LinkerOs::Other => None,
-        };
         Ok(Self::new(
             package,
             rustc_path,
@@ -123,7 +105,6 @@ impl Patcher {
             workspace_root.to_path_buf(),
             patch_out_dir,
             target_os,
-            host_dylib,
             original_cache,
             captured_rustc_args,
             captured_linker_args,
@@ -133,7 +114,17 @@ impl Patcher {
     /// Build a single hot-patch from a change. Returns the diff
     /// alongside the JumpTable so the dev loop can log warnings
     /// (added / removed / weak symbols).
-    pub async fn build_patch(&self) -> Result<PatchPlan> {
+    ///
+    /// `aslr_reference` is the runtime address of `main` reported by
+    /// the connected device through the `hello` WebSocket handshake.
+    /// We compute the ASLR slide as
+    /// `aslr_reference - cache.aslr_reference` and bake the result
+    /// into a small stub object that resolves every host symbol the
+    /// patch references — see `stub_object` for the rationale. Pass
+    /// `0` for cases where no device has connected yet (the patch
+    /// will still build but won't dispatch correctly at runtime; the
+    /// caller should refrain from sending it in that state).
+    pub async fn build_patch(&self, aslr_reference: u64) -> Result<PatchPlan> {
         // Look up the captured rustc invocation by the rustc-style
         // crate name (hyphens → underscores). Tier 1 only patches
         // the user crate today; tracking edits in dependency crates
@@ -160,20 +151,69 @@ impl Patcher {
         validate_environment(captured_rustc, &self.rustc_path)
             .context("environment validation before thin rebuild")?;
 
+        // Stage 1: rustc the user crate to a single `.o` file.
+        let obj_plan = thin_build::build_obj_plan(captured_rustc, &self.patch_out_dir);
+        let object = run_obj_plan(&obj_plan, &self.rustc_path, &self.cwd)
+            .await
+            .context("rustc --emit=obj for thin patch")?;
+
+        // Stage 2: synthesize a stub `.o` that maps every host symbol
+        // the patch refers to onto its live runtime address. The stub
+        // path lives next to the rebuilt object so cleanup is "delete
+        // the patch_out_dir" and we don't have to track it separately.
+        //
+        // `aslr_reference == 0` is the "no device reported its base
+        // yet" / test-fixture path. In that case the host's
+        // `dynamic_lookup` (macOS) or `--unresolved-symbols=ignore-all`
+        // (Linux) satisfies the patch's references against the
+        // already-loaded test process — same as before Option B. Real
+        // device dispatch always goes through the stub branch since
+        // `lib.rs::run` skips Tier 1 entirely when no aslr_reference
+        // has been reported.
+        let extras: Vec<PathBuf> = if aslr_reference == 0 {
+            Vec::new()
+        } else {
+            let stub_path = self.patch_out_dir.join("aslr-stub.o");
+            let stub_bytes = super::create_undefined_symbol_stub(
+                &self.original_cache,
+                &object,
+                self.target_os,
+                aslr_reference,
+            )
+            .context("create_undefined_symbol_stub")?;
+            std::fs::write(&stub_path, stub_bytes)
+                .with_context(|| format!("write stub object to {}", stub_path.display()))?;
+            let mut e = vec![stub_path];
+            // Belt-and-suspenders on Linux/Android: the stub is
+            // Text-only and emits weak symbols, so non-Text host
+            // refs (thread-locals, static OnceCells like
+            // `whisker_runtime::signal::ARENA`, `__data_start` style
+            // markers) and any Text whose name didn't survive
+            // `.llvm.X` ThinLTO normalization still need a fallback.
+            // Linking the host `.so` here adds a `DT_NEEDED` entry,
+            // so the Android dynamic linker fills them in at
+            // `dlopen` time — but only when the stub couldn't (the
+            // weak Text stubs lose to strong host defs, which is
+            // what we want for `_Unwind_Resume`, `whisker_bridge_*`,
+            // etc.).
+            if matches!(self.target_os, LinkerOs::Linux) {
+                e.push(self.original_cache.lib.clone());
+            }
+            e
+        };
+
+        // Stage 3: link the `.o` (+ optional stub `.o`) into a patch dylib.
         let output_dylib = self.expected_patch_path();
-        let new_dylib = thin_rebuild_obj(
-            captured_rustc,
+        let link_plan = build_link_plan(
             &captured_linker.args,
-            &self.patch_out_dir,
+            &object,
             &output_dylib,
-            &self.rustc_path,
-            &self.linker_path,
-            &self.cwd,
             self.target_os,
-            self.host_dylib.as_deref(),
-        )
-        .await
-        .context("thin rebuild (obj + own linker)")?;
+            &extras,
+        );
+        let new_dylib = run_link_plan(&link_plan, &self.linker_path, &self.cwd)
+            .await
+            .context("link patch dylib (object + stub)")?;
 
         let new_symbols = parse_symbol_table(&new_dylib)
             .with_context(|| format!("parse {}", new_dylib.display()))?;
@@ -314,7 +354,6 @@ mod tests {
             PathBuf::from("/tmp/cwd"),
             PathBuf::from("/tmp/patches"),
             LinkerOs::Macos,
-            None,
             empty_cache(),
             HashMap::new(),
             HashMap::new(),
@@ -341,7 +380,6 @@ mod tests {
             "/cwd".into(),
             "/patches".into(),
             target_os,
-            None,
             empty_cache(),
             HashMap::new(),
             linker,
@@ -417,12 +455,13 @@ mod tests {
             "/cwd".into(),
             "/patches".into(),
             LinkerOs::Macos,
-            None,
             empty_cache(),
             HashMap::new(), // empty rustc map
             HashMap::new(),
         );
-        let err = p.build_patch().await.unwrap_err();
+        // aslr_reference value is irrelevant for this error path —
+        // build_patch bails before touching it.
+        let err = p.build_patch(0).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("no captured rustc invocation"), "{msg}");
     }
