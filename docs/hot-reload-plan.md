@@ -102,9 +102,9 @@ sense.
 | **I4g-4** ✅ | `tuft-rustc-shim` bin + `RUSTC_WORKSPACE_WRAPPER` plumbing — captures every rustc invocation's argv to `.tuft/cache/rustc-args/<crate>.json` | Spawn the shim with a fake rustc invocation; assert the JSON file appears with the expected fields. |
 | ~~**I4g-5**~~ ❌ | ~~`thin_rebuild` via `--crate-type=cdylib`~~ — *abandoned, see "Pivot" below* | — |
 | ~~**I4g-6**~~ ❌ | ~~`Patcher::build_patch` against cdylib~~ — *abandoned, see "Pivot" below* | — |
-| **I4g-X1** | `tuft-linker-shim` bin + `-C linker=<shim>` plumbing — captures linker argv to `.tuft/cache/linker-args/<crate>.json` | Spawn shim with fake linker invocation; assert JSON appears. |
-| **I4g-X2** | `thin_rebuild` rewritten — rustc `--emit=obj --crate-type=lib` *plus* explicit linker invocation that combines workspace rlibs + new `.o` into a `.so`/`.dylib` | Fixture build, edit `lib.rs`, run pipeline, parse resulting `.so`, **assert mangled `calculate` IS exported** (the bit cdylib could not give us). |
-| **I4g-X3** | `Patcher::build_patch` rewired through the new pipeline | Same fixture flow as the old (failed) I4g-6 test, now passing. |
+| **I4g-X1** ✅ | `tuft-linker-shim` bin + `-C linker=<shim>` plumbing — captures linker argv to `.tuft/cache/linker-args/<output>-<ts>.json` | Spawn shim with fake linker invocation; assert JSON appears. 11 unit tests + smoke. |
+| **I4g-X2** ✅ | `thin_rebuild_obj` — rustc `--emit=obj --crate-type=rlib` + explicit linker invocation with `-undefined dynamic_lookup` (macOS) / `--unresolved-symbols=ignore-all` (Linux) | Fixture build, parse resulting `.dylib`, **assert mangled `__ZN18thin_build_fixture9calculate17h…E` IS exported and DEFINED**. Done in X2a (build_obj_plan), X2b (build_link_plan), X2c (runner + e2e). |
+| **I4g-X3** ✅ | `Patcher::build_patch` rewired through the new pipeline | Done in X3a (wrapper linker capture), X3b (Patcher rewrite + cdylib code removal), X3c (e2e test now passing — JumpTable entry for mangled `calculate` confirmed). |
 | **I4g-7** | `DevServer::run` branches on `HotPatchMode::Tier1Subsecond`, falls back to Tier 2 on Patcher error | Unit test: with mode=Tier1 and a stubbed Patcher returning Err, the run loop falls through to a cold rebuild. |
 | **I4g-8** | Android emulator e2e: edit a string in hello-world, observe sub-second swap, confirm signal state survives | Manual e2e + screenshots. Logs `[tuft-dev] patch applied` on the device side. |
 
@@ -203,8 +203,8 @@ semantics identical and saves one ABI-mismatch hazard.
 
 ## Status tracker
 
-This document is the architectural plan; per-step status lives in
-the task tracker. As of writing the implementation status is:
-
-- I4g-0: this document — **in progress**
-- I4g-1 through I4g-8: pending
+- I4g-0..4: ✅
+- I4g-5/6: abandoned (cdylib symbol stripping)
+- I4g-X1/X2/X3: ✅ (mangled-symbol JumpTable empirically proven)
+- I4g-7: in progress (DevServer wiring + Tier 2 fallback)
+- I4g-8: pending (Android e2e + sub-second wall-clock measurement)
