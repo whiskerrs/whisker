@@ -183,6 +183,14 @@ impl DevServer {
             self.config.target,
         );
 
+        // Initial build + install + launch. Without this the dev
+        // server would just sit there until the user touched a file —
+        // unfriendly when you've started an emulator and want the app
+        // up immediately. A failure here doesn't abort: the loop
+        // still enters, so fixing the source and saving recovers.
+        eprintln!("[tuft-dev-server] initial build");
+        run_build_cycle(&builder, &installer, &self.on_event, &sender, "initial").await;
+
         // Tier 2 cold rebuild loop: drain Change events, run a build,
         // install, and tell connected clients (Tier 2 is for now a
         // hint-only "we rebuilt" — actual subsecond JumpTables come
@@ -193,28 +201,37 @@ impl DevServer {
                 change.kind,
                 change.paths.len()
             );
-            emit(&self.on_event, Event::BuildingFull);
-
-            match builder.build().await {
-                Ok(()) => {
-                    emit(&self.on_event, Event::BuildSucceeded);
-                    if let Err(e) = installer.install_and_launch().await {
-                        eprintln!("[tuft-dev-server] install failed: {e}");
-                    }
-                    eprintln!(
-                        "[tuft-dev-server] rebuild done; {} client(s) connected",
-                        sender.client_count()
-                    );
-                }
-                Err(e) => {
-                    let msg = format!("{e:#}");
-                    eprintln!("[tuft-dev-server] build failed: {msg}");
-                    emit(&self.on_event, Event::BuildFailed(msg));
-                }
-            }
+            run_build_cycle(&builder, &installer, &self.on_event, &sender, "rebuild").await;
         }
 
         Ok(())
+    }
+}
+
+async fn run_build_cycle(
+    builder: &Builder,
+    installer: &Installer,
+    on_event: &Option<Arc<dyn Fn(Event) + Send + Sync>>,
+    sender: &PatchSender,
+    label: &str,
+) {
+    emit(on_event, Event::BuildingFull);
+    match builder.build().await {
+        Ok(()) => {
+            emit(on_event, Event::BuildSucceeded);
+            if let Err(e) = installer.install_and_launch().await {
+                eprintln!("[tuft-dev-server] {label} install failed: {e}");
+            }
+            eprintln!(
+                "[tuft-dev-server] {label} done; {} client(s) connected",
+                sender.client_count()
+            );
+        }
+        Err(e) => {
+            let msg = format!("{e:#}");
+            eprintln!("[tuft-dev-server] {label} build failed: {msg}");
+            emit(on_event, Event::BuildFailed(msg));
+        }
     }
 }
 

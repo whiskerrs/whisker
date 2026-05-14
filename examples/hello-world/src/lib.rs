@@ -334,10 +334,20 @@ fn app() -> Element {
     let recents = scroll_view()
         .attr("scroll-orientation", "horizontal")
         .style("padding: 4px 20px 8px; height: 200px;")
-        .child(recent_card("Sunset Drive", "Lo-Fi Beats", "#ff7e5f", "#feb47b"))
+        .child(recent_card(
+            "Sunset Drive",
+            "Lo-Fi Beats",
+            "#ff7e5f",
+            "#feb47b",
+        ))
         .child(recent_card("Deep Focus", "Ambient", "#4facfe", "#00f2fe"))
         .child(recent_card("Late Night", "Synthwave", "#9b6bff", "#ff5e9b"))
-        .child(recent_card("Coffee House", "Acoustic", "#fcb69f", "#ffecd2"))
+        .child(recent_card(
+            "Coffee House",
+            "Acoustic",
+            "#fcb69f",
+            "#ffecd2",
+        ))
         .child(recent_card("Energy Boost", "Workout", "#11998e", "#38ef7d"));
 
     // Section 2: "Made For You" — one tall featured card with overlay text.
@@ -375,8 +385,12 @@ fn app() -> Element {
 
     // Section 3: 2-column grid of "Your Top Mixes".
     let grid_titles = [
-        "Chill Mix", "Happy Mix", "Focus Mix",
-        "Workout Mix", "Sleep Mix", "Indie Mix",
+        "Chill Mix",
+        "Happy Mix",
+        "Focus Mix",
+        "Workout Mix",
+        "Sleep Mix",
+        "Indie Mix",
     ];
     let grid_colors: [(&str, &str); 6] = [
         ("#667eea", "#764ba2"),
@@ -397,11 +411,46 @@ fn app() -> Element {
     // Section 4: vertical activity feed.
     let activity = view()
         .style("display: flex; flex-direction: column; padding: 0 0 8px;")
-        .child(activity_row("A", "#ff7e5f", "#feb47b", "Alice", "Started following you", "2m"))
-        .child(activity_row("R", "#667eea", "#764ba2", "Riku", "Liked your playlist 'Late Night'", "1h"))
-        .child(activity_row("M", "#43e97b", "#38f9d7", "Mio", "Shared 'Sunset Drive' with you", "3h"))
-        .child(activity_row("K", "#fa709a", "#fee140", "Ken", "Added 5 songs to 'Workout'", "yesterday"))
-        .child(activity_row("S", "#4facfe", "#00f2fe", "Sora", "Created a new playlist 'Focus'", "2d"));
+        .child(activity_row(
+            "A",
+            "#ff7e5f",
+            "#feb47b",
+            "Alice",
+            "Started following you",
+            "2m",
+        ))
+        .child(activity_row(
+            "R",
+            "#667eea",
+            "#764ba2",
+            "Riku",
+            "Liked your playlist 'Late Night'",
+            "1h",
+        ))
+        .child(activity_row(
+            "M",
+            "#43e97b",
+            "#38f9d7",
+            "Mio",
+            "Shared 'Sunset Drive' with you",
+            "3h",
+        ))
+        .child(activity_row(
+            "K",
+            "#fa709a",
+            "#fee140",
+            "Ken",
+            "Added 5 songs to 'Workout'",
+            "yesterday",
+        ))
+        .child(activity_row(
+            "S",
+            "#4facfe",
+            "#00f2fe",
+            "Sora",
+            "Created a new playlist 'Focus'",
+            "2d",
+        ));
 
     // Filter chips strip just below the header.
     let chips = view()
@@ -474,7 +523,7 @@ fn app() -> Element {
              display: flex; flex-direction: column;"
         ))
         .child(chips)
-        .child(section_header("Recently Played"))
+        .child(section_header("Recently"))
         .child(recents)
         .child(section_header("Made For You"))
         .child(featured)
