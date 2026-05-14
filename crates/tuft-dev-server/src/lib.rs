@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub mod builder;
+pub mod hotpatch;
 pub mod installer;
 pub mod server;
 pub mod watcher;

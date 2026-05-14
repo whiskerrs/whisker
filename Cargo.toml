@@ -59,3 +59,7 @@ serde_json = "1"
 # Host-side dev server (tuft-dev-server). Heavy deps confined here.
 axum = { version = "0.8", default-features = false, features = ["ws", "tokio", "http1"] }
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+# Reading ELF / Mach-O / WASM symbol tables for subsecond JumpTable
+# construction. Same crate `dx serve` and `subsecond` itself use,
+# which keeps semantics identical and avoids ABI mismatch hazards.
+object = { version = "0.36", default-features = false, features = ["read", "std"] }
