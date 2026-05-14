@@ -12,6 +12,7 @@
 
 pub mod cache;
 pub mod jump_table;
+pub mod patcher;
 pub mod symbol_table;
 pub mod thin_build;
 pub mod validate;
@@ -19,6 +20,7 @@ pub mod wrapper;
 
 pub use cache::HotpatchModuleCache;
 pub use jump_table::{build_jump_table, DiffReport, PatchPlan};
+pub use patcher::Patcher;
 pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
 pub use thin_build::{
     build_thin_rebuild_plan, library_filename, thin_rebuild, ThinRebuildPlan,
