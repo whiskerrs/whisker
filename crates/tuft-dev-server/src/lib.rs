@@ -20,7 +20,7 @@
 
 use anyhow::Result;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub mod builder;
@@ -29,7 +29,7 @@ pub mod installer;
 pub mod server;
 pub mod watcher;
 
-pub use builder::{BuildPlan, Builder};
+pub use builder::{BuildPlan, Builder, CaptureShims};
 pub use installer::Installer;
 pub use server::{Envelope, PatchSender};
 pub use watcher::{Change, ChangeKind};
@@ -138,8 +138,14 @@ impl DevServer {
     ///   notify → debounce → cargo build → adb install → relaunch
     ///   → broadcast "rebuilt" hint over WebSocket.
     ///
-    /// Tier 1 subsecond patches replace the cargo build / install
-    /// steps in the I4g follow-up.
+    /// When `hot_patch_mode == Tier1Subsecond`, the initial build
+    /// also captures rustc + linker invocations through the
+    /// `tuft-{rustc,linker}-shim` binaries, and a `Patcher` is
+    /// initialised from those captures + the original binary's
+    /// symbol table. The change loop then prefers Tier 1
+    /// `subsecond::JumpTable` patches over cold rebuilds for
+    /// `ChangeKind::RustCode` events. Patcher initialisation or
+    /// `build_patch` failure falls back to Tier 2 silently.
     pub async fn run(self) -> Result<()> {
         eprintln!(
             "[tuft-dev-server] starting (target={:?}, package={}, addr={}, mode={:?})",
@@ -172,12 +178,38 @@ impl DevServer {
         eprintln!("[tuft-dev-server] watching {}", watch_root.display());
         emit(&self.on_event, Event::Started);
 
-        let builder = Builder::new(
+        // Configure the initial build. For Tier 1 it doubles as the
+        // fat build that fills the rustc / linker capture caches —
+        // the shims are resolved (built if missing) and installed
+        // into the builder *before* the spawn. The same Builder
+        // object is then reused for Tier 2 fallback rebuilds, which
+        // just inherit the capture env (harmless if the patcher
+        // never reads the new captures).
+        let mut builder = Builder::new(
             self.config.workspace_root.clone(),
             self.config.package.clone(),
             self.config.target,
         )
         .with_features(vec!["tuft/hot-reload".into()]);
+
+        let tier1_init = if self.config.hot_patch_mode == HotPatchMode::Tier1Subsecond {
+            match prepare_tier1_capture(&self.config.workspace_root) {
+                Ok(prep) => {
+                    builder = builder.with_capture(prep.capture.clone());
+                    Some(prep)
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[tuft-dev-server] Tier 1 capture setup failed: {e:#} — \
+                         falling back to Tier 2 cold rebuilds",
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let installer = Installer::new(
             self.config.workspace_root.clone(),
             self.config.package.clone(),
@@ -192,10 +224,29 @@ impl DevServer {
         eprintln!("[tuft-dev-server] initial build");
         run_build_cycle(&builder, &installer, &self.on_event, &sender, "initial").await;
 
-        // Tier 2 cold rebuild loop: drain Change events, run a build,
-        // install, and tell connected clients (Tier 2 is for now a
-        // hint-only "we rebuilt" — actual subsecond JumpTables come
-        // with I4g).
+        // After the fat build has happened, Patcher::initialize can
+        // read the now-populated caches. Failure here is non-fatal
+        // — log and proceed with Tier 2 only.
+        let patcher = match tier1_init {
+            Some(prep) => match init_patcher_for(&self.config, &prep) {
+                Ok(p) => {
+                    eprintln!("[tuft-dev-server] Tier 1 patcher ready");
+                    Some(p)
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[tuft-dev-server] Tier 1 patcher init failed: {e:#} — \
+                         falling back to Tier 2 cold rebuilds",
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
+
+        // Tier 2 cold rebuild loop (Tier 1 branch lands in I4g-7d).
+        // For now, the loop falls through to Tier 2 every change.
+        let _ = patcher; // silence unused — wired up in I4g-7d
         while let Some(change) = rx.recv().await {
             eprintln!(
                 "[tuft-dev-server] change ({:?}) — {} path(s)",
@@ -206,6 +257,115 @@ impl DevServer {
         }
 
         Ok(())
+    }
+}
+
+/// State produced by [`prepare_tier1_capture`]: enough to make the
+/// initial build a fat build, and to construct the patcher after the
+/// build completes.
+#[derive(Debug, Clone)]
+struct Tier1Prep {
+    capture: CaptureShims,
+    real_linker: PathBuf,
+}
+
+/// Resolve shim paths (building them if missing) and assemble the
+/// CaptureShims wiring. Returns `Err` if the shim binaries can't be
+/// produced, in which case the caller falls back to Tier 2.
+fn prepare_tier1_capture(workspace_root: &Path) -> Result<Tier1Prep> {
+    let shims = hotpatch::resolve_shim_paths(workspace_root)?;
+    let rustc_cache_dir = hotpatch::wrapper::default_cache_dir(workspace_root);
+    let linker_cache_dir = hotpatch::wrapper::default_linker_cache_dir(workspace_root);
+    let real_linker = hotpatch::wrapper::resolve_host_linker();
+    Ok(Tier1Prep {
+        capture: CaptureShims {
+            rustc_shim: shims.rustc_shim,
+            linker_shim: shims.linker_shim,
+            rustc_cache_dir,
+            linker_cache_dir,
+            real_linker: real_linker.clone(),
+        },
+        real_linker,
+    })
+}
+
+/// Construct the patcher from the captures the fat build just wrote.
+/// Splits out so [`DevServer::run`] is easier to read.
+fn init_patcher_for(
+    config: &Config,
+    prep: &Tier1Prep,
+) -> Result<hotpatch::Patcher> {
+    let original_binary = original_binary_path(
+        &config.workspace_root,
+        &config.package,
+        config.target,
+    )?;
+    hotpatch::Patcher::initialize(
+        &config.workspace_root,
+        config.package.clone(),
+        &prep.capture.rustc_cache_dir,
+        &prep.capture.linker_cache_dir,
+        &prep.real_linker,
+        &original_binary,
+        target_os_for(config.target),
+    )
+}
+
+/// Locate the device-loadable original binary for `target`. Tier 1
+/// only supports targets that produce a `.so`/`.dylib` we can mmap
+/// and diff against; `Host` (which produces just an `.rlib` today)
+/// returns `Err` so the caller falls back to Tier 2.
+fn original_binary_path(
+    workspace_root: &Path,
+    package: &str,
+    target: Target,
+) -> Result<PathBuf> {
+    let crate_underscored = package.replace('-', "_");
+    match target {
+        Target::Android => {
+            // xtask's NDK build drops the device-loadable .so into
+            // the Gradle jniLibs tree before APK packaging. Pick the
+            // first ABI we find (debug builds typically have one).
+            let jni_libs = workspace_root
+                .join("examples")
+                .join(package)
+                .join("android/app/src/main/jniLibs");
+            let so_name = format!("lib{crate_underscored}.so");
+            for abi in [
+                "arm64-v8a",
+                "armeabi-v7a",
+                "x86_64",
+                "x86",
+            ] {
+                let candidate = jni_libs.join(abi).join(&so_name);
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
+            }
+            anyhow::bail!(
+                "no Android cdylib found under {} — run the initial xtask build first",
+                jni_libs.display(),
+            );
+        }
+        Target::Host => {
+            anyhow::bail!(
+                "Tier 1 not supported for Host target yet \
+                 (hello-world is rlib-only — no patchable shared library)"
+            );
+        }
+        Target::IosSimulator => {
+            anyhow::bail!(
+                "Tier 1 not supported for iOS Simulator yet (staticlib-based xcframework)"
+            );
+        }
+    }
+}
+
+fn target_os_for(target: Target) -> hotpatch::LinkerOs {
+    match target {
+        Target::Android => hotpatch::LinkerOs::Linux,
+        Target::IosSimulator => hotpatch::LinkerOs::Macos,
+        Target::Host => hotpatch::linker_os_for_host(),
     }
 }
 
@@ -290,5 +450,75 @@ mod tests {
             Target::Host,
         );
         assert!(DevServer::new(cfg).is_ok());
+    }
+
+    // ----- original_binary_path ----------------------------------------
+
+    #[test]
+    fn original_binary_path_errors_for_host_target() {
+        let res = original_binary_path(
+            Path::new("/tmp/ws"),
+            "hello-world",
+            Target::Host,
+        );
+        let err = res.unwrap_err();
+        assert!(format!("{err:#}").contains("Host"), "got: {err:#}");
+    }
+
+    #[test]
+    fn original_binary_path_errors_for_ios_simulator() {
+        let res = original_binary_path(
+            Path::new("/tmp/ws"),
+            "hello-world",
+            Target::IosSimulator,
+        );
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn original_binary_path_finds_android_so_under_jni_libs() {
+        // Create a fake workspace layout with libhello_world.so
+        // under arm64-v8a, then verify the resolver picks it.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let ws = std::env::temp_dir().join(format!("tuft-dev-test-orig-{pid}-{n}"));
+        let _ = std::fs::remove_dir_all(&ws);
+        let abi_dir = ws
+            .join("examples/hello-world/android/app/src/main/jniLibs/arm64-v8a");
+        std::fs::create_dir_all(&abi_dir).unwrap();
+        let so = abi_dir.join("libhello_world.so");
+        std::fs::write(&so, b"fake").unwrap();
+
+        let resolved = original_binary_path(&ws, "hello-world", Target::Android).unwrap();
+        assert_eq!(resolved, so);
+
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn original_binary_path_errors_when_android_so_missing() {
+        let res = original_binary_path(
+            Path::new("/nonexistent/ws"),
+            "hello-world",
+            Target::Android,
+        );
+        assert!(res.is_err());
+    }
+
+    // ----- target_os_for -----------------------------------------------
+
+    #[test]
+    fn target_os_for_maps_android_to_linux() {
+        assert_eq!(target_os_for(Target::Android), hotpatch::LinkerOs::Linux);
+    }
+
+    #[test]
+    fn target_os_for_maps_ios_to_macos() {
+        assert_eq!(
+            target_os_for(Target::IosSimulator),
+            hotpatch::LinkerOs::Macos,
+        );
     }
 }

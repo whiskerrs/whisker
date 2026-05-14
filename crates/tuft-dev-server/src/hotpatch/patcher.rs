@@ -24,13 +24,10 @@ use object::Object;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::Target;
-
 use super::{
-    build_jump_table, library_filename, linker_os_for_host, load_captured_args,
-    load_captured_linker_args, parse_symbol_table, resolve_host_linker, run_fat_build,
-    thin_rebuild_obj, validate_environment, CapturedLinkerInvocation,
-    CapturedRustcInvocation, HotpatchModuleCache, LinkerCaptureConfig, LinkerOs,
+    build_jump_table, library_filename, load_captured_args, load_captured_linker_args,
+    parse_symbol_table, thin_rebuild_obj, validate_environment,
+    CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, LinkerOs,
     PatchPlan,
 };
 
@@ -75,47 +72,47 @@ impl Patcher {
         }
     }
 
-    /// Production setup: run the fat build with **both** shims, load
-    /// both captures, parse the original binary. Heavy — touches
-    /// cargo, the filesystem, and rustc — so we keep it out of unit
-    /// tests; integration tests stick to [`Patcher::new`].
+    /// Production setup. **Fat build already done** — the dev loop
+    /// runs it through Builder::with_capture, so this constructor
+    /// only needs to read the resulting caches and parse the
+    /// original binary. Splitting the build out lets the dev loop
+    /// reuse its existing initial-build phase rather than spawning
+    /// cargo a second time.
+    ///
+    /// `original_binary` is the file the device actually loaded —
+    /// for Android that's `lib<crate>.so` extracted from the APK or
+    /// found under the Gradle-built jniLibs tree.
+    #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         workspace_root: &Path,
         package: String,
-        target: Target,
-        rustc_shim: &Path,
-        linker_shim: &Path,
+        rustc_cache_dir: &Path,
+        linker_cache_dir: &Path,
+        real_linker: &Path,
         original_binary: &Path,
+        target_os: LinkerOs,
     ) -> Result<Self> {
-        let rustc_cache_dir = super::default_cache_dir(workspace_root);
-        let linker_cache_dir = super::default_linker_cache_dir(workspace_root);
-        let real_linker = resolve_host_linker();
-        let lc = LinkerCaptureConfig {
-            shim_path: linker_shim,
-            cache_dir: &linker_cache_dir,
-            real_linker: &real_linker,
-        };
-        run_fat_build(
-            workspace_root,
-            &package,
-            target,
-            rustc_shim,
-            &rustc_cache_dir,
-            Some(&lc),
-        )
-        .context("fat build")?;
-        let captured_rustc_args = load_captured_args(&rustc_cache_dir)?;
-        let captured_linker_args = load_captured_linker_args(&linker_cache_dir)?;
-        let original_cache = HotpatchModuleCache::from_path(original_binary)?;
+        let captured_rustc_args = load_captured_args(rustc_cache_dir)
+            .with_context(|| {
+                format!("load rustc cache {}", rustc_cache_dir.display())
+            })?;
+        let captured_linker_args = load_captured_linker_args(linker_cache_dir)
+            .with_context(|| {
+                format!("load linker cache {}", linker_cache_dir.display())
+            })?;
+        let original_cache = HotpatchModuleCache::from_path(original_binary)
+            .with_context(|| {
+                format!("parse original binary {}", original_binary.display())
+            })?;
         let patch_out_dir = workspace_root.join("target/.tuft/patches");
         let rustc_path = current_rustc();
         Ok(Self::new(
             package,
             rustc_path,
-            real_linker,
+            real_linker.to_path_buf(),
             workspace_root.to_path_buf(),
             patch_out_dir,
-            linker_os_for_host(),
+            target_os,
             original_cache,
             captured_rustc_args,
             captured_linker_args,
