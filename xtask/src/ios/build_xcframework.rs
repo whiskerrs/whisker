@@ -21,6 +21,11 @@ pub struct Args {
     /// Output directory. Default: `target/tuft-driver/`.
     #[arg(long)]
     pub out_dir: Option<PathBuf>,
+
+    /// Cargo features forwarded to the static-lib build for every
+    /// iOS triple. `tuft run` uses this to pass `tuft/hot-reload`.
+    #[arg(long)]
+    pub features: Vec<String>,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -57,7 +62,7 @@ pub fn run(args: Args) -> Result<()> {
     println!("==> Building Rust static libs (user crate: {})", args.package);
     for triple in triples {
         println!("    -- {triple}");
-        cargo_build(&args.package, triple, &root)?;
+        cargo_build(&args.package, triple, &root, &args.features)?;
     }
 
     let target_dir = paths::target_dir();
@@ -127,24 +132,33 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-fn cargo_build(package: &str, triple: &str, root: &std::path::Path) -> Result<()> {
+fn cargo_build(
+    package: &str,
+    triple: &str,
+    root: &std::path::Path,
+    features: &[String],
+) -> Result<()> {
     // `cargo rustc --crate-type staticlib` overrides the manifest's
     // `crate-type` to build *only* the static library. We need this on
     // iOS because the manifest also declares `cdylib` (for Android),
     // and a cdylib build for iOS would try to fully link — failing
     // because the bridge symbols (compiled into staticlib via
     // build.rs's cc::Build) are not yet wired into a final image.
-    let status = Command::new("cargo")
-        .args([
-            "rustc",
-            "--release",
-            "-p",
-            package,
-            "--target",
-            triple,
-            "--crate-type",
-            "staticlib",
-        ])
+    let mut cmd = Command::new("cargo");
+    cmd.args([
+        "rustc",
+        "--release",
+        "-p",
+        package,
+        "--target",
+        triple,
+        "--crate-type",
+        "staticlib",
+    ]);
+    for feat in features {
+        cmd.args(["--features", feat]);
+    }
+    let status = cmd
         .current_dir(root)
         .status()
         .context("failed to spawn cargo")?;

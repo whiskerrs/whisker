@@ -25,6 +25,11 @@ pub struct BuildExampleArgs {
 
     #[arg(long, default_value_t = 24)]
     pub api: u32,
+
+    /// Cargo features forwarded to the cdylib build. Repeatable.
+    /// `tuft run` uses this to pass `tuft/hot-reload`.
+    #[arg(long)]
+    pub features: Vec<String>,
 }
 
 pub fn run(args: BuildExampleArgs) -> Result<()> {
@@ -64,6 +69,7 @@ pub fn run(args: BuildExampleArgs) -> Result<()> {
         abi: args.abi.clone(),
         api: args.api,
         profile: "release".to_string(),
+        features: args.features.clone(),
         cargo_args: vec![],
     })?;
 

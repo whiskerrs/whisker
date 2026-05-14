@@ -42,6 +42,13 @@ pub struct CargoBuildArgs {
     #[arg(long, default_value = "release")]
     pub profile: String,
 
+    /// Cargo features to pass through, repeatable. Example:
+    ///   `cargo xtask android cargo -p hello-world --features tuft/hot-reload`
+    /// Multiple values supported either as repeated `--features` or
+    /// comma-separated; both go straight to cargo's own `--features`.
+    #[arg(long)]
+    pub features: Vec<String>,
+
     /// Extra args forwarded to `cargo build` after a literal `--`.
     /// Example: `cargo xtask android cargo -p hello-world -- --verbose`
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -76,6 +83,9 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
             // cargo's default profile — no flag needed.
         }
         other => anyhow::bail!("unsupported profile: {other} (use release or dev)"),
+    }
+    for feat in &args.features {
+        cmd.args(["--features", feat]);
     }
     cmd.args(&args.cargo_args);
 
