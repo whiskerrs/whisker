@@ -15,6 +15,7 @@ use clap::{Parser, Subcommand};
 
 pub mod doctor;
 pub mod run;
+pub mod rustc_shim;
 
 #[derive(Parser, Debug)]
 #[command(

@@ -1359,6 +1359,8 @@ dependencies = [
  "anyhow",
  "clap",
  "indicatif",
+ "serde",
+ "serde_json",
  "tokio",
  "tuft-app-config",
  "tuft-codegen",

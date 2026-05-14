@@ -16,9 +16,20 @@ path = "src/bin/tuft.rs"
 name = "cargo-tuft"
 path = "src/bin/cargo_tuft.rs"
 
+# `RUSTC_WORKSPACE_WRAPPER` target. Cargo invokes us as
+#   tuft-rustc-shim <rustc-path> <rustc-args...>
+# and we forward the call after dumping the args to
+# `$TUFT_RUSTC_CACHE_DIR/<crate>-<timestamp>.json` for later thin
+# rebuilds. Same workspace pattern clippy-driver / sccache use.
+[[bin]]
+name = "tuft-rustc-shim"
+path = "src/bin/tuft_rustc_shim.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 # Section spinners while probing each toolchain. We deliberately avoid
 # a full-screen TUI (ratatui etc.) so the doctor output remains plain
 # scrollback text that AI agents and clipboard paste can read.
