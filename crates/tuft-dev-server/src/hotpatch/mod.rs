@@ -23,7 +23,8 @@ pub use jump_table::{build_jump_table, DiffReport, PatchPlan};
 pub use patcher::Patcher;
 pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
 pub use thin_build::{
-    build_thin_rebuild_plan, library_filename, thin_rebuild, ThinRebuildPlan,
+    build_obj_plan, build_thin_rebuild_plan, library_filename, object_filename,
+    thin_rebuild, ObjBuildPlan, ThinRebuildPlan,
 };
 pub use validate::{ensure_target_supported, extract_target_triple, validate_environment};
 pub use wrapper::{

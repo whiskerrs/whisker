@@ -11,10 +11,11 @@
 //! invocation in I4g-4 and replay it here, **changing only the
 //! handful of args that have to differ for a hot-patch dylib**:
 //!
-//!   - `--crate-type` is forced to `cdylib`. The original may have
-//!     been `rlib` (a static archive of intermediate metadata) or
-//!     `bin` / whatever — a hot-patch needs to be a relocatable
-//!     shared library the device runtime can `dlopen`.
+//!   - `--crate-type` is forced to `rlib` so rustc emits an object
+//!     file containing every `pub fn`'s mangled symbol (cdylib
+//!     would strip them — see I4g-6 pivot).
+//!   - `--emit` is forced to `obj` so we get a single `.o` we can
+//!     hand to the linker ourselves.
 //!   - `--out-dir` is redirected to a session-local cache so the
 //!     patch artifact doesn't clobber the original `target/`
 //!     output.
@@ -24,6 +25,16 @@
 //! preserved verbatim. That is the whole point: rustc + cargo
 //! already know how to make the linker happy on this OS / SDK
 //! combo, and we lean on that.
+//!
+//! After rustc emits the `.o`, [`build_link_plan`] (X2b) takes the
+//! captured **linker** invocation, drops its object inputs (we have
+//! a fresh one), substitutes our `.o` and `-o`, and adds
+//! `-undefined dynamic_lookup` (macOS) /
+//! `--unresolved-symbols=ignore-all` (Linux) so unresolved symbols
+//! are deferred to the host process at `dlopen` time. The result is
+//! a `.so` / `.dylib` that re-exports back into the original binary
+//! for everything except the patched function bodies — exactly what
+//! `subsecond::apply_patch` expects.
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -61,6 +72,101 @@ pub fn build_thin_rebuild_plan(
         args,
         output_dir: output_dir.to_path_buf(),
     }
+}
+
+/// What [`build_obj_plan`] returns — captured rustc args, edited so
+/// that running `rustc` with them produces a single `.o` containing
+/// every `pub fn`'s mangled symbol.
+///
+/// `output_dir` is the directory rustc will write the object into;
+/// the actual filename rustc emits is `<crate_name>.o` (with the
+/// usual hyphen → underscore translation). `expected_object` is the
+/// absolute path the runner should expect to see after the call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjBuildPlan {
+    pub args: Vec<String>,
+    pub output_dir: PathBuf,
+    pub expected_object: PathBuf,
+}
+
+/// Object filename rustc emits for `--emit=obj --crate-type=rlib`:
+/// `<crate>.o` with hyphens converted to underscores. (Notably no
+/// `lib` prefix and no extension other than `.o` — cdylib's
+/// `lib<crate>.dylib` rules don't apply here.)
+pub fn object_filename(crate_name: &str) -> String {
+    let stem = crate_name.replace('-', "_");
+    format!("{stem}.o")
+}
+
+/// Edit a captured rustc invocation so that running it produces an
+/// object file containing every `pub fn`'s mangled symbol — the
+/// input to the linker step in [`build_link_plan`].
+///
+/// Three changes only:
+///
+///   - **`--crate-type`** is forced to `rlib`. Object files emitted
+///     for an `rlib` crate-type retain mangled `pub fn` symbols
+///     (cdylib's symbol-visibility filter wouldn't have run yet,
+///     because we stop before linking). `lib` would also work but
+///     `rlib` is what cargo itself uses for normal dependency
+///     compilation, so we stay closer to the rustc call shape that
+///     gets the most testing.
+///   - **`--emit`** is forced to a single `obj=<output_dir>/<crate>.o`
+///     directive. This skips the link step (no `lib<crate>.rlib`
+///     metadata bundle, no `.rmeta`, no codegen-units fan-out into
+///     deps) and writes one consolidated object file we can hand
+///     directly to the linker.
+///   - **`--out-dir`** is redirected so the host's `target/` isn't
+///     touched (it's still the rustc-default location for any
+///     auxiliary file rustc decides to emit).
+///
+/// Everything else is preserved verbatim — same target triple,
+/// sysroot, sysroot suffix, `-C` flags, `-L`/`-l` directives, cfg
+/// gates. This is the same "minimal edit, verbatim everything else"
+/// principle as [`build_thin_rebuild_plan`]; the only difference is
+/// where we stop in rustc's pipeline (`obj` vs `link`).
+pub fn build_obj_plan(
+    captured: &CapturedRustcInvocation,
+    output_dir: &Path,
+) -> ObjBuildPlan {
+    let mut args = captured.args.clone();
+    set_crate_type(&mut args, "rlib");
+    set_out_dir(&mut args, output_dir);
+    let object_path = output_dir.join(object_filename(&captured.crate_name));
+    set_emit_obj(&mut args, &object_path);
+    ObjBuildPlan {
+        args,
+        output_dir: output_dir.to_path_buf(),
+        expected_object: object_path,
+    }
+}
+
+/// Force `--emit` to exactly one directive: `obj=<path>`. Strips
+/// every existing `--emit` (separated, `=`, comma-separated mix)
+/// and appends one fresh pair. Same fold-and-add semantics as
+/// [`set_crate_type`].
+///
+/// rustc accepts `--emit obj=<path>` as a single output kind with
+/// an explicit destination, which avoids ambiguity when other
+/// `--emit` directives would otherwise have asked for `link` or
+/// `dep-info` etc. (cargo always passes a comma-separated set:
+/// `dep-info,metadata,link`. We collapse the lot to just `obj`.)
+pub fn set_emit_obj(args: &mut Vec<String>, object_path: &Path) {
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--emit" && i + 1 < args.len() {
+            args.drain(i..=i + 1);
+            continue;
+        }
+        if arg.starts_with("--emit=") {
+            args.remove(i);
+            continue;
+        }
+        i += 1;
+    }
+    args.push("--emit".into());
+    args.push(format!("obj={}", object_path.to_string_lossy()));
 }
 
 /// Force every `--crate-type` arg to a single value (`new_kind`).
@@ -332,6 +438,147 @@ mod tests {
                 "--out-dir", "/tmp/p",
             ]),
         );
+    }
+
+    // ----- set_emit_obj ------------------------------------------------
+
+    #[test]
+    fn set_emit_obj_replaces_separated_form() {
+        let mut args = s(&["--emit", "link", "src/lib.rs"]);
+        set_emit_obj(&mut args, Path::new("/p/demo.o"));
+        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj=/p/demo.o"]));
+    }
+
+    #[test]
+    fn set_emit_obj_replaces_equals_form_including_comma_lists() {
+        // cargo always passes `--emit=dep-info,metadata,link`; the
+        // whole comma-separated lot collapses to a single `obj=…`.
+        let mut args = s(&["--emit=dep-info,metadata,link", "src/lib.rs"]);
+        set_emit_obj(&mut args, Path::new("/p/demo.o"));
+        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj=/p/demo.o"]));
+    }
+
+    #[test]
+    fn set_emit_obj_collapses_multiple_existing_into_one() {
+        let mut args = s(&[
+            "--emit", "link",
+            "--emit=dep-info,metadata",
+            "--emit", "metadata",
+            "src/lib.rs",
+        ]);
+        set_emit_obj(&mut args, Path::new("/p/demo.o"));
+        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj=/p/demo.o"]));
+    }
+
+    #[test]
+    fn set_emit_obj_appends_when_no_existing() {
+        let mut args = s(&["src/lib.rs"]);
+        set_emit_obj(&mut args, Path::new("/p/demo.o"));
+        assert_eq!(args, s(&["src/lib.rs", "--emit", "obj=/p/demo.o"]));
+    }
+
+    // ----- object_filename ---------------------------------------------
+
+    #[test]
+    fn object_filename_is_crate_dot_o_with_underscores() {
+        assert_eq!(object_filename("demo"), "demo.o");
+        assert_eq!(object_filename("hello-world"), "hello_world.o");
+        assert_eq!(object_filename("a-b-c"), "a_b_c.o");
+    }
+
+    // ----- build_obj_plan ----------------------------------------------
+
+    #[test]
+    fn obj_plan_forces_rlib_and_obj_emit_and_redirects_out_dir() {
+        let captured = captured_with(s(&[
+            "--edition=2021",
+            "--crate-name", "demo",
+            "--crate-type", "lib",
+            "--emit=dep-info,metadata,link",
+            "--out-dir", "/cargo/target/debug/deps",
+            "-C", "opt-level=3",
+            "src/lib.rs",
+        ]));
+        let plan = build_obj_plan(&captured, Path::new("/tuft/objs/x"));
+        assert_eq!(
+            plan.args,
+            s(&[
+                "--edition=2021",
+                "--crate-name", "demo",
+                "-C", "opt-level=3",
+                "src/lib.rs",
+                "--crate-type", "rlib",
+                "--out-dir", "/tuft/objs/x",
+                "--emit", "obj=/tuft/objs/x/demo.o",
+            ]),
+        );
+        assert_eq!(plan.output_dir, Path::new("/tuft/objs/x"));
+        assert_eq!(plan.expected_object, Path::new("/tuft/objs/x/demo.o"));
+    }
+
+    #[test]
+    fn obj_plan_picks_object_filename_from_captured_crate_name() {
+        // crate_name comes from CapturedRustcInvocation.crate_name,
+        // *not* from the --crate-name arg — they're typically equal,
+        // but the captured field is what we use, so test that.
+        let captured = CapturedRustcInvocation {
+            crate_name: "thin-build-fixture".into(),
+            args: s(&["src/lib.rs"]),
+            timestamp_micros: 0,
+        };
+        let plan = build_obj_plan(&captured, Path::new("/o"));
+        assert_eq!(plan.expected_object, Path::new("/o/thin_build_fixture.o"));
+        assert!(
+            plan.args.contains(&"obj=/o/thin_build_fixture.o".into()),
+            "args: {:?}",
+            plan.args,
+        );
+    }
+
+    #[test]
+    fn obj_plan_is_idempotent_on_re_run() {
+        let captured = captured_with(s(&["src/lib.rs"]));
+        let plan1 = build_obj_plan(&captured, Path::new("/o"));
+        let plan2 = build_obj_plan(
+            &CapturedRustcInvocation {
+                crate_name: captured.crate_name.clone(),
+                args: plan1.args.clone(),
+                timestamp_micros: 0,
+            },
+            Path::new("/o"),
+        );
+        assert_eq!(plan1.args, plan2.args);
+    }
+
+    #[test]
+    fn obj_plan_preserves_target_triple_and_sysroot_args() {
+        // The whole point of "minimal edit" is that target-triple,
+        // sysroot, link-args, etc. survive untouched. Regression
+        // guard: these specific flags must come through verbatim.
+        let captured = captured_with(s(&[
+            "--target", "aarch64-linux-android",
+            "--sysroot", "/some/ndk/sysroot",
+            "-Clinker=lld",
+            "-Clink-arg=-fuse-ld=lld",
+            "-L", "native=/some/lib",
+            "-l", "log",
+            "src/lib.rs",
+        ]));
+        let plan = build_obj_plan(&captured, Path::new("/o"));
+        for needle in [
+            "--target", "aarch64-linux-android",
+            "--sysroot", "/some/ndk/sysroot",
+            "-Clinker=lld",
+            "-Clink-arg=-fuse-ld=lld",
+            "-L", "native=/some/lib",
+            "-l", "log",
+        ] {
+            assert!(
+                plan.args.iter().any(|a| a == needle),
+                "missing {needle:?} from {:?}",
+                plan.args,
+            );
+        }
     }
 
     #[test]
