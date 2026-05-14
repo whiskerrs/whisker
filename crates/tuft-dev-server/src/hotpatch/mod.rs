@@ -10,8 +10,10 @@
 //! - `thin_build`     (I4g-5): partial rebuild driver
 //! - `Patcher`        (I4g-6): the integrated `Change → JumpTable` API
 
+pub mod cache;
 pub mod jump_table;
 pub mod symbol_table;
 
+pub use cache::HotpatchModuleCache;
 pub use jump_table::{build_jump_table, DiffReport, PatchPlan};
 pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
