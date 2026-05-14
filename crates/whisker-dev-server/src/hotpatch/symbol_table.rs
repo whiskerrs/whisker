@@ -57,10 +57,8 @@ impl SymbolTable {
 
 /// Open `path` and project its symbol table.
 pub fn parse_symbol_table(path: &Path) -> Result<SymbolTable> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("read {}", path.display()))?;
-    parse_symbol_table_from_bytes(&bytes)
-        .with_context(|| format!("parse {}", path.display()))
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    parse_symbol_table_from_bytes(&bytes).with_context(|| format!("parse {}", path.display()))
 }
 
 /// Same as [`parse_symbol_table`] but takes the bytes directly. Used
@@ -190,17 +188,13 @@ mod tests {
         // we shouldn't truncate at arbitrary dots (e.g. `.cold`,
         // unmangled C++ symbols, or just dots inside string-encoded
         // sections).
-        assert_eq!(
-            normalize_symbol_name("foo.cold.0"),
-            "foo.cold.0",
-        );
+        assert_eq!(normalize_symbol_name("foo.cold.0"), "foo.cold.0",);
         assert_eq!(normalize_symbol_name("plain_C_symbol"), "plain_C_symbol");
     }
 
     #[test]
     fn rejects_non_object_bytes_with_an_error() {
-        let err = parse_symbol_table_from_bytes(b"not an object file at all")
-            .unwrap_err();
+        let err = parse_symbol_table_from_bytes(b"not an object file at all").unwrap_err();
         // We don't pin on the exact message — `object` crate may
         // word it differently across releases — only that an
         // error path exists.

@@ -13,14 +13,14 @@
 //! - [`signal`]: Phase 8 — reactive primitives.
 //! - [`runtime`]: Phase 8 — `run_app` ties everything together.
 
-pub mod renderer;
-pub mod element;
 pub mod build;
-pub mod render;
-pub mod patch;
 pub mod diff;
-pub mod signal;
+pub mod element;
+pub mod patch;
+pub mod render;
+pub mod renderer;
 pub mod runtime;
+pub mod signal;
 
 pub mod prelude {
     pub use crate::build::{image, page, raw_text, scroll_view, text, view};

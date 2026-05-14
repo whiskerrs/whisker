@@ -115,7 +115,11 @@ impl Parse for ElementNode {
             }
         }
 
-        Ok(Self { tag, attrs, children })
+        Ok(Self {
+            tag,
+            attrs,
+            children,
+        })
     }
 }
 
@@ -183,10 +187,7 @@ fn constructor_for(tag: &Ident) -> TokenStream2 {
         }
         _ => {
             let span = tag.span();
-            let err = LitStr::new(
-                &format!("unknown rsx tag `{}`", name),
-                span,
-            );
+            let err = LitStr::new(&format!("unknown rsx tag `{}`", name), span);
             quote! { compile_error!(#err) }
         }
     }

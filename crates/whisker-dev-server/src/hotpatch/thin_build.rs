@@ -92,10 +92,7 @@ pub fn object_filename(crate_name: &str) -> String {
 /// principle as the captured-args replay does for the linker side
 /// in [`super::link_plan::build_link_plan`]; the only difference is
 /// where we stop in rustc's pipeline (`obj` vs `link`).
-pub fn build_obj_plan(
-    captured: &CapturedRustcInvocation,
-    output_dir: &Path,
-) -> ObjBuildPlan {
+pub fn build_obj_plan(captured: &CapturedRustcInvocation, output_dir: &Path) -> ObjBuildPlan {
     let mut args = captured.args.clone();
     set_crate_type(&mut args, "rlib");
     set_out_dir(&mut args, output_dir);
@@ -272,8 +269,10 @@ mod tests {
         // produce both at once. For a hot-patch we want exactly
         // one, regardless of how many came in.
         let mut args = s(&[
-            "--crate-type", "rlib",
-            "--crate-type", "dylib",
+            "--crate-type",
+            "rlib",
+            "--crate-type",
+            "dylib",
             "--crate-type=staticlib",
             "src/lib.rs",
         ]);
@@ -342,9 +341,11 @@ mod tests {
     #[test]
     fn set_emit_obj_collapses_multiple_existing_into_one() {
         let mut args = s(&[
-            "--emit", "link",
+            "--emit",
+            "link",
             "--emit=dep-info,metadata",
-            "--emit", "metadata",
+            "--emit",
+            "metadata",
             "src/lib.rs",
         ]);
         set_emit_obj(&mut args, Path::new("/p/demo.o"));
@@ -373,11 +374,15 @@ mod tests {
     fn obj_plan_forces_rlib_and_obj_emit_and_redirects_out_dir() {
         let captured = captured_with(s(&[
             "--edition=2021",
-            "--crate-name", "demo",
-            "--crate-type", "lib",
+            "--crate-name",
+            "demo",
+            "--crate-type",
+            "lib",
             "--emit=dep-info,metadata,link",
-            "--out-dir", "/cargo/target/debug/deps",
-            "-C", "opt-level=3",
+            "--out-dir",
+            "/cargo/target/debug/deps",
+            "-C",
+            "opt-level=3",
             "src/lib.rs",
         ]));
         let plan = build_obj_plan(&captured, Path::new("/whisker/objs/x"));
@@ -385,12 +390,17 @@ mod tests {
             plan.args,
             s(&[
                 "--edition=2021",
-                "--crate-name", "demo",
-                "-C", "opt-level=3",
+                "--crate-name",
+                "demo",
+                "-C",
+                "opt-level=3",
                 "src/lib.rs",
-                "--crate-type", "rlib",
-                "--out-dir", "/whisker/objs/x",
-                "--emit", "obj=/whisker/objs/x/demo.o",
+                "--crate-type",
+                "rlib",
+                "--out-dir",
+                "/whisker/objs/x",
+                "--emit",
+                "obj=/whisker/objs/x/demo.o",
             ]),
         );
         assert_eq!(plan.output_dir, Path::new("/whisker/objs/x"));
@@ -437,22 +447,30 @@ mod tests {
         // sysroot, link-args, etc. survive untouched. Regression
         // guard: these specific flags must come through verbatim.
         let captured = captured_with(s(&[
-            "--target", "aarch64-linux-android",
-            "--sysroot", "/some/ndk/sysroot",
+            "--target",
+            "aarch64-linux-android",
+            "--sysroot",
+            "/some/ndk/sysroot",
             "-Clinker=lld",
             "-Clink-arg=-fuse-ld=lld",
-            "-L", "native=/some/lib",
-            "-l", "log",
+            "-L",
+            "native=/some/lib",
+            "-l",
+            "log",
             "src/lib.rs",
         ]));
         let plan = build_obj_plan(&captured, Path::new("/o"));
         for needle in [
-            "--target", "aarch64-linux-android",
-            "--sysroot", "/some/ndk/sysroot",
+            "--target",
+            "aarch64-linux-android",
+            "--sysroot",
+            "/some/ndk/sysroot",
             "-Clinker=lld",
             "-Clink-arg=-fuse-ld=lld",
-            "-L", "native=/some/lib",
-            "-l", "log",
+            "-L",
+            "native=/some/lib",
+            "-l",
+            "log",
         ] {
             assert!(
                 plan.args.iter().any(|a| a == needle),
@@ -461,5 +479,4 @@ mod tests {
             );
         }
     }
-
 }

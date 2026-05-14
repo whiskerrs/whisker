@@ -166,9 +166,18 @@ mod tests {
 
     #[test]
     fn clang_target_prefix_maps_known_abis() {
-        assert_eq!(clang_target_prefix("arm64-v8a").unwrap(), "aarch64-linux-android");
-        assert_eq!(clang_target_prefix("armeabi-v7a").unwrap(), "armv7a-linux-androideabi");
-        assert_eq!(clang_target_prefix("x86_64").unwrap(), "x86_64-linux-android");
+        assert_eq!(
+            clang_target_prefix("arm64-v8a").unwrap(),
+            "aarch64-linux-android"
+        );
+        assert_eq!(
+            clang_target_prefix("armeabi-v7a").unwrap(),
+            "armv7a-linux-androideabi"
+        );
+        assert_eq!(
+            clang_target_prefix("x86_64").unwrap(),
+            "x86_64-linux-android"
+        );
         assert_eq!(clang_target_prefix("x86").unwrap(), "i686-linux-android");
     }
 

@@ -214,15 +214,11 @@ fn filter_captured_linker_args(args: &[String]) -> Vec<String> {
         // Both the `=` form (what rustc + our cargo_build.rs emit)
         // and the separated `--version-script <path>` form (defensive;
         // some clang drivers normalize one to the other).
-        if arg.starts_with("-Wl,--version-script=")
-            || arg.starts_with("--version-script=")
-        {
+        if arg.starts_with("-Wl,--version-script=") || arg.starts_with("--version-script=") {
             i += 1;
             continue;
         }
-        if (arg == "-Wl,--version-script" || arg == "--version-script")
-            && i + 1 < args.len()
-        {
+        if (arg == "-Wl,--version-script" || arg == "--version-script") && i + 1 < args.len() {
             i += 2;
             continue;
         }
@@ -280,7 +276,8 @@ mod tests {
             "/tmp/foo.o",
             "/tmp/bar.rlib",
             "/tmp/libstd.a",
-            "-l", "iconv",
+            "-l",
+            "iconv",
         ]));
         assert_eq!(kept, s(&["-O3", "-l", "iconv"]));
     }
@@ -290,11 +287,8 @@ mod tests {
         // Captured fat-build linker may have re-linked an existing
         // .so/.dylib; we drop those for the same reason as static
         // archives — their symbols come back via dynamic_lookup.
-        let kept = filter_captured_linker_args(&s(&[
-            "/tmp/libfoo.so",
-            "/tmp/libbar.dylib",
-            "-shared",
-        ]));
+        let kept =
+            filter_captured_linker_args(&s(&["/tmp/libfoo.so", "/tmp/libbar.dylib", "-shared"]));
         // -shared also dropped (we re-add later).
         assert!(kept.is_empty(), "expected empty, got {kept:?}");
     }
@@ -302,28 +296,38 @@ mod tests {
     #[test]
     fn filter_keeps_search_path_and_link_flags() {
         let kept = filter_captured_linker_args(&s(&[
-            "-L", "/sdk/lib",
+            "-L",
+            "/sdk/lib",
             "-L/different/dir",
             "-lcurl",
-            "-l", "z",
+            "-l",
+            "z",
             "-Wl,-rpath,/some/path",
-            "-isysroot", "/Applications/Xcode.app/.../MacOSX.sdk",
-            "-arch", "arm64",
-            "-target", "arm64-apple-macosx14.0.0",
+            "-isysroot",
+            "/Applications/Xcode.app/.../MacOSX.sdk",
+            "-arch",
+            "arm64",
+            "-target",
+            "arm64-apple-macosx14.0.0",
             "-fuse-ld=lld",
             "-mmacosx-version-min=11.0",
         ]));
         assert_eq!(
             kept,
             s(&[
-                "-L", "/sdk/lib",
+                "-L",
+                "/sdk/lib",
                 "-L/different/dir",
                 "-lcurl",
-                "-l", "z",
+                "-l",
+                "z",
                 "-Wl,-rpath,/some/path",
-                "-isysroot", "/Applications/Xcode.app/.../MacOSX.sdk",
-                "-arch", "arm64",
-                "-target", "arm64-apple-macosx14.0.0",
+                "-isysroot",
+                "/Applications/Xcode.app/.../MacOSX.sdk",
+                "-arch",
+                "arm64",
+                "-target",
+                "arm64-apple-macosx14.0.0",
                 "-fuse-ld=lld",
                 "-mmacosx-version-min=11.0",
             ]),
@@ -332,9 +336,8 @@ mod tests {
 
     #[test]
     fn filter_drops_existing_output_path() {
-        let kept = filter_captured_linker_args(&s(&[
-            "-shared", "-o", "/old/libfoo.dylib", "/tmp/foo.o",
-        ]));
+        let kept =
+            filter_captured_linker_args(&s(&["-shared", "-o", "/old/libfoo.dylib", "/tmp/foo.o"]));
         assert!(kept.is_empty(), "got {kept:?}");
     }
 
@@ -351,7 +354,8 @@ mod tests {
             "-Wl,--version-script=/ws/target/.whisker/android-jni-exports.ver",
             "-Wl,--no-undefined-version",
             "-Wl,--as-needed",
-            "-arch", "arm64",
+            "-arch",
+            "arm64",
         ]));
         assert_eq!(kept, s(&["-Wl,--as-needed", "-arch", "arm64"]));
     }
@@ -360,10 +364,8 @@ mod tests {
     fn filter_drops_separated_version_script_form() {
         // Some clang drivers split `-Wl,--version-script=/p` into
         // `--version-script /p` when forwarding to ld. Defensive.
-        let kept = filter_captured_linker_args(&s(&[
-            "--version-script", "/tmp/rustcXX/list",
-            "-pie",
-        ]));
+        let kept =
+            filter_captured_linker_args(&s(&["--version-script", "/tmp/rustcXX/list", "-pie"]));
         assert_eq!(kept, s(&["-pie"]));
     }
 
@@ -371,10 +373,12 @@ mod tests {
     fn filter_drops_existing_undefined_dynamic_lookup() {
         // Both the separated and the comma-bundled form.
         let kept = filter_captured_linker_args(&s(&[
-            "-undefined", "dynamic_lookup",
+            "-undefined",
+            "dynamic_lookup",
             "-Wl,-undefined,dynamic_lookup",
             "-Wl,--unresolved-symbols=ignore-all",
-            "-arch", "arm64",
+            "-arch",
+            "arm64",
         ]));
         assert_eq!(kept, s(&["-arch", "arm64"]));
     }
@@ -393,15 +397,14 @@ mod tests {
         // -framework Foundation must keep the bare "Foundation" arg
         // (it doesn't end in an object extension).
         let kept = filter_captured_linker_args(&s(&[
-            "-framework", "Foundation",
-            "-framework", "CoreFoundation",
+            "-framework",
+            "Foundation",
+            "-framework",
+            "CoreFoundation",
         ]));
         assert_eq!(
             kept,
-            s(&[
-                "-framework", "Foundation",
-                "-framework", "CoreFoundation",
-            ]),
+            s(&["-framework", "Foundation", "-framework", "CoreFoundation",]),
         );
     }
 
@@ -410,9 +413,15 @@ mod tests {
     #[test]
     fn object_detection_covers_common_extensions() {
         for path in [
-            "foo.o", "foo.rlib", "foo.a", "foo.so", "foo.dylib",
-            "foo.OBJ", "foo.LIB", // case-insensitive (Windows)
-            "/abs/path/lib.a", "rel/dir/foo.o",
+            "foo.o",
+            "foo.rlib",
+            "foo.a",
+            "foo.so",
+            "foo.dylib",
+            "foo.OBJ",
+            "foo.LIB", // case-insensitive (Windows)
+            "/abs/path/lib.a",
+            "rel/dir/foo.o",
         ] {
             assert!(is_object_or_archive_input(path), "{path}");
         }
@@ -421,9 +430,14 @@ mod tests {
     #[test]
     fn object_detection_rejects_flags_and_non_object_paths() {
         for path in [
-            "-shared", "-o", "-Llib", "-llog",
-            "/some/source.rs", "Foundation",
-            "foo.txt", "bar",
+            "-shared",
+            "-o",
+            "-Llib",
+            "-llog",
+            "/some/source.rs",
+            "Foundation",
+            "foo.txt",
+            "bar",
         ] {
             assert!(!is_object_or_archive_input(path), "{path}");
         }
@@ -443,12 +457,15 @@ mod tests {
         assert_eq!(
             plan.args,
             s(&[
-                "-isysroot", "/sdk",
-                "-arch", "arm64",
+                "-isysroot",
+                "/sdk",
+                "-arch",
+                "arm64",
                 "-shared",
                 "-Wl,-undefined,dynamic_lookup",
                 "/o/demo.o",
-                "-o", "/o/libdemo.dylib",
+                "-o",
+                "/o/libdemo.dylib",
             ]),
         );
         assert_eq!(plan.output, Path::new("/o/libdemo.dylib"));
@@ -504,7 +521,10 @@ mod tests {
         );
         // Find the position of -o and check the next arg is the new output.
         let dash_o = plan.args.iter().position(|a| a == "-o").unwrap();
-        assert_eq!(plan.args.get(dash_o + 1).map(String::as_str), Some("/new/libnew.dylib"));
+        assert_eq!(
+            plan.args.get(dash_o + 1).map(String::as_str),
+            Some("/new/libnew.dylib")
+        );
         assert_eq!(plan.args.iter().filter(|a| *a == "-o").count(), 1);
     }
 
@@ -523,11 +543,13 @@ mod tests {
             plan.args,
             s(&[
                 "-pie",
-                "-L", "/ndk/lib",
+                "-L",
+                "/ndk/lib",
                 "-shared",
                 "-Wl,--unresolved-symbols=ignore-all",
                 "/o/demo.o",
-                "-o", "/o/libdemo.so",
+                "-o",
+                "/o/libdemo.so",
             ]),
         );
     }
@@ -567,14 +589,16 @@ mod tests {
             plan.args,
             s(&[
                 "-Wl,--as-needed",
-                "-L", "/ndk/lib",
+                "-L",
+                "/ndk/lib",
                 "-shared",
                 "-Wl,--unresolved-symbols=ignore-all",
                 "-Wl,--no-as-needed",
                 "/jniLibs/libhello_world.so",
                 "-Wl,--as-needed",
                 "/o/demo.o",
-                "-o", "/o/libdemo.so",
+                "-o",
+                "/o/libdemo.so",
             ]),
         );
     }

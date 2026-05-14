@@ -22,16 +22,8 @@ pub trait Renderer {
     fn set_attribute(&mut self, handle: Self::ElementHandle, key: &str, value: &str);
     fn set_inline_styles(&mut self, handle: Self::ElementHandle, css: &str);
 
-    fn append_child(
-        &mut self,
-        parent: Self::ElementHandle,
-        child: Self::ElementHandle,
-    );
-    fn remove_child(
-        &mut self,
-        parent: Self::ElementHandle,
-        child: Self::ElementHandle,
-    );
+    fn append_child(&mut self, parent: Self::ElementHandle, child: Self::ElementHandle);
+    fn remove_child(&mut self, parent: Self::ElementHandle, child: Self::ElementHandle);
 
     /// Bind a native event listener to an element. Implementations are
     /// expected to wire whatever underlying gesture / callback machinery
@@ -60,14 +52,37 @@ pub trait Renderer {
 /// to verify that builder/diff code emits the expected sequence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MockOp {
-    Create { handle: u32, tag: ElementTag },
-    Release { handle: u32 },
-    SetAttribute { handle: u32, key: String, value: String },
-    SetInlineStyles { handle: u32, css: String },
-    AppendChild { parent: u32, child: u32 },
-    RemoveChild { parent: u32, child: u32 },
-    SetEventListener { handle: u32, event_name: String },
-    SetRoot { page: u32 },
+    Create {
+        handle: u32,
+        tag: ElementTag,
+    },
+    Release {
+        handle: u32,
+    },
+    SetAttribute {
+        handle: u32,
+        key: String,
+        value: String,
+    },
+    SetInlineStyles {
+        handle: u32,
+        css: String,
+    },
+    AppendChild {
+        parent: u32,
+        child: u32,
+    },
+    RemoveChild {
+        parent: u32,
+        child: u32,
+    },
+    SetEventListener {
+        handle: u32,
+        event_name: String,
+    },
+    SetRoot {
+        page: u32,
+    },
     Flush,
 }
 
@@ -152,19 +167,11 @@ impl Renderer for MockRenderer {
         });
     }
 
-    fn append_child(
-        &mut self,
-        parent: Self::ElementHandle,
-        child: Self::ElementHandle,
-    ) {
+    fn append_child(&mut self, parent: Self::ElementHandle, child: Self::ElementHandle) {
         self.ops.push(MockOp::AppendChild { parent, child });
     }
 
-    fn remove_child(
-        &mut self,
-        parent: Self::ElementHandle,
-        child: Self::ElementHandle,
-    ) {
+    fn remove_child(&mut self, parent: Self::ElementHandle, child: Self::ElementHandle) {
         self.ops.push(MockOp::RemoveChild { parent, child });
     }
 
@@ -178,7 +185,8 @@ impl Renderer for MockRenderer {
             handle,
             event_name: event_name.to_owned(),
         });
-        self.listeners.insert((handle, event_name.to_owned()), callback);
+        self.listeners
+            .insert((handle, event_name.to_owned()), callback);
     }
 
     fn set_root(&mut self, page: Self::ElementHandle) {
@@ -220,13 +228,22 @@ mod tests {
         assert_eq!(
             r.ops(),
             &[
-                MockOp::Create { handle: 1, tag: ElementTag::Page },
-                MockOp::Create { handle: 2, tag: ElementTag::View },
+                MockOp::Create {
+                    handle: 1,
+                    tag: ElementTag::Page
+                },
+                MockOp::Create {
+                    handle: 2,
+                    tag: ElementTag::View
+                },
                 MockOp::SetInlineStyles {
                     handle: 1,
                     css: "background: white".into(),
                 },
-                MockOp::AppendChild { parent: 1, child: 2 },
+                MockOp::AppendChild {
+                    parent: 1,
+                    child: 2
+                },
                 MockOp::SetRoot { page: 1 },
                 MockOp::Flush,
             ]
@@ -243,7 +260,13 @@ mod tests {
         r.release_element(v);
 
         let ops = r.into_ops();
-        assert!(matches!(ops[3], MockOp::RemoveChild { parent: 1, child: 2 }));
+        assert!(matches!(
+            ops[3],
+            MockOp::RemoveChild {
+                parent: 1,
+                child: 2
+            }
+        ));
         assert!(matches!(ops[4], MockOp::Release { handle: 2 }));
     }
 

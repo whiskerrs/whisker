@@ -3,19 +3,25 @@
 //! Must only be used from inside a `whisker_bridge_dispatch` callback (i.e.
 //! on the Lynx TASM thread).
 
+use std::ffi::{c_void, CString};
+use std::ptr::NonNull;
 use whisker_driver_sys::{self as ffi, WhiskerElement, WhiskerElementTag, WhiskerEngine};
 use whisker_runtime::element::ElementTag;
 use whisker_runtime::renderer::Renderer;
-use std::ffi::{c_void, CString};
-use std::ptr::NonNull;
 
 pub struct BridgeRenderer {
     engine: NonNull<WhiskerEngine>,
     /// Owned closures behind every event listener we registered with
-    /// the bridge. Boxed so we can hand the bridge a stable raw pointer
-    /// in `user_data`. Vec because each registration leaks one entry —
-    /// fine for the demo lifetime; a future iteration could reclaim
-    /// when listeners are replaced.
+    /// the bridge. The double `Box<Box<…>>` is intentional and *not*
+    /// the `clippy::vec_box` smell: `Box<dyn Fn()>` is a fat (data +
+    /// vtable) pointer that doesn't fit in the C ABI's
+    /// `user_data: *mut c_void`. The outer `Box` gives us a stable
+    /// heap location whose *thin* address we can hand the bridge;
+    /// the inner `Box<dyn Fn()>` is the actual erased closure. Vec
+    /// because each registration leaks one entry — fine for the demo
+    /// lifetime; a future iteration could reclaim when listeners are
+    /// replaced.
+    #[allow(clippy::vec_box)]
     listeners: Vec<Box<Box<dyn Fn() + 'static>>>,
 }
 
@@ -107,8 +113,7 @@ impl Renderer for BridgeRenderer {
         // Double-box: outer Box owned by `self.listeners`, inner is the
         // Box<dyn Fn> passed in. Convert to raw pointer for the C ABI.
         let outer: Box<Box<dyn Fn() + 'static>> = Box::new(callback);
-        let raw = Box::as_ref(&outer) as *const Box<dyn Fn() + 'static>
-            as *mut c_void;
+        let raw = Box::as_ref(&outer) as *const Box<dyn Fn() + 'static> as *mut c_void;
         self.listeners.push(outer);
         unsafe {
             ffi::whisker_bridge_set_event_listener(

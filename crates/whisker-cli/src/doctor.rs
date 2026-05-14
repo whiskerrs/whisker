@@ -80,13 +80,25 @@ struct Check {
 
 impl Check {
     fn ok(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self { name: name.into(), status: Status::Ok, detail: detail.into() }
+        Self {
+            name: name.into(),
+            status: Status::Ok,
+            detail: detail.into(),
+        }
     }
     fn warn(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self { name: name.into(), status: Status::Warn, detail: detail.into() }
+        Self {
+            name: name.into(),
+            status: Status::Warn,
+            detail: detail.into(),
+        }
     }
     fn err(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self { name: name.into(), status: Status::Err, detail: detail.into() }
+        Self {
+            name: name.into(),
+            status: Status::Err,
+            detail: detail.into(),
+        }
     }
 }
 
@@ -154,9 +166,7 @@ impl Report {
     fn print_summary(&self) {
         let total = self.ok + self.warn + self.err;
         match (self.err, self.warn) {
-            (0, 0) => println!(
-                "{C_OK}{BOLD}all {total} checks passed{RESET}"
-            ),
+            (0, 0) => println!("{C_OK}{BOLD}all {total} checks passed{RESET}"),
             (0, w) => println!(
                 "{total} checks: {C_OK}{}✓{RESET}  {C_WARN}{w}⚠{RESET}",
                 self.ok
@@ -246,8 +256,7 @@ fn check_rust() -> Vec<Check> {
         Err(_) => out.push(Check::err("cargo", "not on PATH")),
     }
 
-    let installed = run_capture("rustup", &["target", "list", "--installed"])
-        .unwrap_or_default();
+    let installed = run_capture("rustup", &["target", "list", "--installed"]).unwrap_or_default();
     let installed: Vec<&str> = installed.lines().map(str::trim).collect();
     for triple in &[
         "aarch64-linux-android",
@@ -256,10 +265,7 @@ fn check_rust() -> Vec<Check> {
         "x86_64-apple-ios",
     ] {
         if installed.iter().any(|t| t == triple) {
-            out.push(Check::ok(
-                format!("rustup target {triple}"),
-                "installed",
-            ));
+            out.push(Check::ok(format!("rustup target {triple}"), "installed"));
         } else {
             out.push(Check::warn(
                 format!("rustup target {triple}"),
@@ -313,10 +319,7 @@ fn check_android() -> Vec<Check> {
     // requires that exact version (build_lynx_aar bails otherwise).
     let ndk = android_home.join("ndk/21.1.6352462");
     if ndk.is_dir() {
-        out.push(Check::ok(
-            "NDK 21.1.6352462",
-            ndk.display().to_string(),
-        ));
+        out.push(Check::ok("NDK 21.1.6352462", ndk.display().to_string()));
     } else {
         out.push(Check::err(
             "NDK 21.1.6352462",
@@ -355,16 +358,13 @@ fn resolve_jdk11() -> Option<PathBuf> {
         }
     }
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    for cand in [
+    [
         home.join("work/java11/jdk-11.0.25+9/Contents/Home"),
         home.join("work/java11/jdk-11.0.25+9"),
         PathBuf::from("/Library/Java/JavaVirtualMachines/temurin-11.jdk/Contents/Home"),
-    ] {
-        if cand.is_dir() {
-            return Some(cand);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|cand| cand.is_dir())
 }
 
 // ----- iOS -------------------------------------------------------------------
@@ -388,10 +388,7 @@ fn check_ios() -> Vec<Check> {
     }
 
     match run_capture("pod", &["--version"]) {
-        Ok(s) => out.push(Check::ok(
-            "CocoaPods",
-            format!("v{}", s.trim()),
-        )),
+        Ok(s) => out.push(Check::ok("CocoaPods", format!("v{}", s.trim()))),
         Err(_) => out.push(Check::warn(
             "CocoaPods",
             "not on PATH — needed for `cargo xtask ios build-lynx-frameworks`",
@@ -438,12 +435,8 @@ fn check_lynx() -> Vec<Check> {
 
     let lynx_src = target.join("lynx-src");
     if lynx_src.join("platform/android/lynx_android").is_dir() {
-        let head = run_capture_in(
-            &lynx_src,
-            "git",
-            &["log", "-1", "--pretty=%h %s"],
-        )
-        .unwrap_or_default();
+        let head =
+            run_capture_in(&lynx_src, "git", &["log", "-1", "--pretty=%h %s"]).unwrap_or_default();
         out.push(Check::ok(
             "lynx-src",
             head.lines().next().unwrap_or("checked out").to_string(),
@@ -456,7 +449,12 @@ fn check_lynx() -> Vec<Check> {
     }
 
     let aar_dir = target.join("lynx-android");
-    let aars = ["LynxBase.aar", "LynxTrace.aar", "LynxAndroid.aar", "ServiceAPI.aar"];
+    let aars = [
+        "LynxBase.aar",
+        "LynxTrace.aar",
+        "LynxAndroid.aar",
+        "ServiceAPI.aar",
+    ];
     if aars.iter().all(|a| aar_dir.join(a).is_file()) {
         out.push(Check::ok(
             "Android AARs",
@@ -490,10 +488,7 @@ fn check_lynx() -> Vec<Check> {
 
     let headers = target.join("lynx-headers");
     if headers.join("Lynx").is_dir() && headers.join("LynxBase").is_dir() {
-        out.push(Check::ok(
-            "Staged C++ headers",
-            short_path(&headers),
-        ));
+        out.push(Check::ok("Staged C++ headers", short_path(&headers)));
     } else {
         out.push(Check::warn(
             "Staged C++ headers",
@@ -693,10 +688,7 @@ mod tests {
     fn short_path_with_home_substitutes_tilde() {
         let home = PathBuf::from("/home/itome");
         assert_eq!(
-            short_path_with_home(
-                Path::new("/home/itome/projects/whisker"),
-                Some(&home),
-            ),
+            short_path_with_home(Path::new("/home/itome/projects/whisker"), Some(&home),),
             "~/projects/whisker",
         );
     }
@@ -712,10 +704,7 @@ mod tests {
 
     #[test]
     fn short_path_with_home_none_returns_full_path() {
-        assert_eq!(
-            short_path_with_home(Path::new("/tmp/x"), None),
-            "/tmp/x",
-        );
+        assert_eq!(short_path_with_home(Path::new("/tmp/x"), None), "/tmp/x",);
     }
 
     #[test]
@@ -742,10 +731,7 @@ mod tests {
     fn workspace_root_from_finds_root_at_start_dir() {
         let tmp = tempdir();
         write_workspace_marker(tmp.path());
-        assert_eq!(
-            workspace_root_from(tmp.path()).as_deref(),
-            Some(tmp.path()),
-        );
+        assert_eq!(workspace_root_from(tmp.path()).as_deref(), Some(tmp.path()),);
     }
 
     #[test]
@@ -754,10 +740,7 @@ mod tests {
         write_workspace_marker(tmp.path());
         let nested = tmp.path().join("crates/whisker-cli/src");
         fs::create_dir_all(&nested).unwrap();
-        assert_eq!(
-            workspace_root_from(&nested).as_deref(),
-            Some(tmp.path()),
-        );
+        assert_eq!(workspace_root_from(&nested).as_deref(), Some(tmp.path()),);
     }
 
     #[test]
@@ -765,11 +748,7 @@ mod tests {
         // A non-workspace Cargo.toml in the start dir must NOT match —
         // we only want the one with `[workspace]` + whisker-driver-sys.
         let tmp = tempdir();
-        fs::write(
-            tmp.path().join("Cargo.toml"),
-            "[package]\nname = \"foo\"\n",
-        )
-        .unwrap();
+        fs::write(tmp.path().join("Cargo.toml"), "[package]\nname = \"foo\"\n").unwrap();
         assert_eq!(workspace_root_from(tmp.path()), None);
     }
 

@@ -20,7 +20,6 @@
 //!   original binary, then call `new`.
 
 use anyhow::{Context, Result};
-use object::Object;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -103,17 +102,11 @@ impl Patcher {
         target_os: LinkerOs,
     ) -> Result<Self> {
         let captured_rustc_args = load_captured_args(rustc_cache_dir)
-            .with_context(|| {
-                format!("load rustc cache {}", rustc_cache_dir.display())
-            })?;
+            .with_context(|| format!("load rustc cache {}", rustc_cache_dir.display()))?;
         let captured_linker_args = load_captured_linker_args(linker_cache_dir)
-            .with_context(|| {
-                format!("load linker cache {}", linker_cache_dir.display())
-            })?;
+            .with_context(|| format!("load linker cache {}", linker_cache_dir.display()))?;
         let original_cache = HotpatchModuleCache::from_path(original_binary)
-            .with_context(|| {
-                format!("parse original binary {}", original_binary.display())
-            })?;
+            .with_context(|| format!("parse original binary {}", original_binary.display()))?;
         let patch_out_dir = workspace_root.join("target/.whisker/patches");
         let rustc_path = current_rustc();
         // The host dylib path is the `.so` on Android. On macOS the
@@ -146,13 +139,12 @@ impl Patcher {
         // the user crate today; tracking edits in dependency crates
         // is a future expansion.
         let crate_key = self.package.replace('-', "_");
-        let captured_rustc =
-            self.captured_rustc_args.get(&crate_key).with_context(|| {
-                format!(
-                    "no captured rustc invocation for crate `{}`; was the fat build run?",
-                    self.package,
-                )
-            })?;
+        let captured_rustc = self.captured_rustc_args.get(&crate_key).with_context(|| {
+            format!(
+                "no captured rustc invocation for crate `{}`; was the fat build run?",
+                self.package,
+            )
+        })?;
 
         // Linker capture is keyed by output basename. The fat build's
         // crate-type is whatever cargo chose (typically `cdylib` for
@@ -202,11 +194,10 @@ impl Patcher {
     /// dev session runs on macOS) so the on-device runtime can
     /// recognise it.
     pub fn expected_patch_path(&self) -> PathBuf {
-        self.patch_out_dir
-            .join(thin_build::library_filename_for_os(
-                &self.package,
-                self.target_os,
-            ))
+        self.patch_out_dir.join(thin_build::library_filename_for_os(
+            &self.package,
+            self.target_os,
+        ))
     }
 
     /// Resolve the captured linker invocation that produced this
@@ -276,8 +267,7 @@ fn current_rustc() -> PathBuf {
 /// somewhere meaningless. Symmetric to the host-side fix in
 /// [`crate::hotpatch::cache::HotpatchModuleCache::from_path`].
 fn read_image_base(path: &Path) -> Result<u64> {
-    let table = parse_symbol_table(path)
-        .with_context(|| format!("parse {}", path.display()))?;
+    let table = parse_symbol_table(path).with_context(|| format!("parse {}", path.display()))?;
     // Same fallback semantics as `HotpatchModuleCache::from_path` on
     // the host side: 0 when neither `main` nor `_main` exists. Lets
     // host-only test fixtures (no `main` symbol) still build a patch
@@ -332,10 +322,8 @@ mod tests {
         assert_eq!(p.package, "demo");
         assert_eq!(
             p.expected_patch_path(),
-            PathBuf::from("/tmp/patches").join(thin_build::library_filename_for_os(
-                "demo",
-                LinkerOs::Macos,
-            )),
+            PathBuf::from("/tmp/patches")
+                .join(thin_build::library_filename_for_os("demo", LinkerOs::Macos,)),
         );
     }
 
@@ -403,10 +391,7 @@ mod tests {
     #[test]
     fn lookup_returns_none_when_no_extension_matches() {
         let mut m = HashMap::new();
-        m.insert(
-            "libdemo.so".into(),
-            linker_inv("/path/libdemo.so", 100),
-        );
+        m.insert("libdemo.so".into(), linker_inv("/path/libdemo.so", 100));
         // Looking for macOS .dylib in a map of .so → no match.
         let p = patcher_with_linker_map(LinkerOs::Macos, "demo", m);
         assert!(p.lookup_captured_linker().is_none());

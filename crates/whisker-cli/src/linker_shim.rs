@@ -109,21 +109,23 @@ pub fn invocation_filename(invocation: &CapturedLinkerInvocation) -> String {
         .unwrap_or("_unknown");
     let safe: String = stem_for_path
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!("{}-{}.json", safe, invocation.timestamp_micros)
 }
 
-pub fn save_invocation(
-    cache_dir: &Path,
-    invocation: &CapturedLinkerInvocation,
-) -> Result<()> {
+pub fn save_invocation(cache_dir: &Path, invocation: &CapturedLinkerInvocation) -> Result<()> {
     std::fs::create_dir_all(cache_dir)
         .with_context(|| format!("create {}", cache_dir.display()))?;
     let path = cache_dir.join(invocation_filename(invocation));
     let json = serde_json::to_string_pretty(invocation).context("serialize")?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("write {}", path.display()))?;
+    std::fs::write(&path, json).with_context(|| format!("write {}", path.display()))?;
     Ok(())
 }
 
@@ -185,7 +187,10 @@ mod tests {
     #[test]
     fn capture_preserves_full_argv() {
         let args = s(&[
-            "-O3", "-shared", "-o", "/tmp/libfoo.dylib",
+            "-O3",
+            "-shared",
+            "-o",
+            "/tmp/libfoo.dylib",
             "-Wl,-undefined,dynamic_lookup",
             "/tmp/foo.o",
         ]);

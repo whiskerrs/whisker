@@ -34,10 +34,7 @@ pub fn run(args: BuildLynxAarArgs) -> Result<()> {
     println!("    NDK 21:         {}", ndk21.display());
 
     // 1. Sanity-check the Lynx tree.
-    for required in [
-        "platform/android/lynx_android",
-        "build/config",
-    ] {
+    for required in ["platform/android/lynx_android", "build/config"] {
         if !lynx_src.join(required).is_dir() {
             anyhow::bail!(
                 "Lynx source incomplete at {} (missing {required}). \
@@ -50,7 +47,10 @@ pub fn run(args: BuildLynxAarArgs) -> Result<()> {
     // 2. Apply patches (idempotent).
     println!("==> Applying Whisker patches to Lynx source");
     let patches_dir = paths::workspace_root().join("patches/lynx-android");
-    apply_patch(&lynx_src.join("build"), &patches_dir.join("buildroot.patch"))?;
+    apply_patch(
+        &lynx_src.join("build"),
+        &patches_dir.join("buildroot.patch"),
+    )?;
     apply_patch(&lynx_src, &patches_dir.join("lynx.patch"))?;
 
     // 3. Gradle assemble.

@@ -54,8 +54,7 @@ impl HotpatchModuleCache {
     /// to keep around if the original binary is malformed.
     pub fn from_path(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
-        let bytes = std::fs::read(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
         let symbols = parse_symbol_table_from_bytes(&bytes)
             .with_context(|| format!("parse {} symbols", path.display()))?;
         // Mach-O symbol tables keep the legacy underscore prefix
@@ -72,7 +71,11 @@ impl HotpatchModuleCache {
             .or_else(|| symbols.by_name.get("_main"))
             .map(|s| s.address)
             .unwrap_or(0);
-        Ok(Self { lib: path, symbols, aslr_reference })
+        Ok(Self {
+            lib: path,
+            symbols,
+            aslr_reference,
+        })
     }
 
     /// Convenience accessor (saves the caller a `cache.symbols.by_name`
@@ -164,8 +167,7 @@ mod tests {
 
     #[test]
     fn missing_path_errors_out() {
-        let err = HotpatchModuleCache::from_path("/no/such/binary/exists")
-            .unwrap_err();
+        let err = HotpatchModuleCache::from_path("/no/such/binary/exists").unwrap_err();
         assert!(
             err.to_string().contains("read") || err.to_string().contains("/no/such"),
             "{err}",

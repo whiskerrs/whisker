@@ -47,7 +47,10 @@ pub enum Patch {
 
     /// Replace the event-handler list on the node at `path`. Diff treats
     /// any change to the event set as a wholesale replacement.
-    ReplaceEvents { path: Path, events: Vec<EventHandler> },
+    ReplaceEvents {
+        path: Path,
+        events: Vec<EventHandler>,
+    },
 }
 
 impl Patch {
@@ -131,7 +134,10 @@ mod tests {
 
     #[test]
     fn patch_kind_strings_are_stable() {
-        let p = Patch::AppendChild { parent: vec![], node: view() };
+        let p = Patch::AppendChild {
+            parent: vec![],
+            node: view(),
+        };
         assert_eq!(p.kind(), "AppendChild");
     }
 }

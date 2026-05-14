@@ -487,11 +487,11 @@ fn app() -> Element {
                 view {
                     style: "display: flex; flex-direction: column;",
                     text {
-                        style: { format!("font-size: 12px; color: {TEXT_SECONDARY};") },
+                        style: format!("font-size: 12px; color: {TEXT_SECONDARY};"),
                         "Welcome back"
                     }
                     text {
-                        style: { format!("font-size: 18px; color: {TEXT_PRIMARY}; font-weight: 700;") },
+                        style: format!("font-size: 18px; color: {TEXT_PRIMARY}; font-weight: 700;"),
                         "Itome"
                     }
                 }

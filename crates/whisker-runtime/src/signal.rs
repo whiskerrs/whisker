@@ -54,8 +54,7 @@ thread_local! {
 /// `whisker-dev-runtime`) can wake the runtime without going through a
 /// signal write. Same callback, same user_data — just reachable from
 /// any thread via `wake_runtime`.
-static REMOTE_WAKE: std::sync::Mutex<Option<RequestFrameCb>> =
-    std::sync::Mutex::new(None);
+static REMOTE_WAKE: std::sync::Mutex<Option<RequestFrameCb>> = std::sync::Mutex::new(None);
 
 /// (Test-only) clear the arena and dirty flag. Production code never
 /// needs this; tests reset between cases to keep the thread-local clean.
@@ -176,9 +175,7 @@ impl<T: 'static + Clone> Signal<T> {
         ARENA.with(|a| {
             let mut arena = a.borrow_mut();
             let slot = arena.get_mut(self.id).expect("signal id out of range");
-            *slot
-                .downcast_mut::<T>()
-                .expect("signal type mismatch") = value;
+            *slot.downcast_mut::<T>().expect("signal type mismatch") = value;
         });
         mark_dirty_and_wake();
     }
@@ -294,9 +291,7 @@ mod tests {
     fn tracking_dedups_repeated_reads() {
         fresh();
         let s = use_signal(|| 1_i32);
-        let (_, deps) = track_dependencies(|| {
-            s.get() + s.get() + s.get()
-        });
+        let (_, deps) = track_dependencies(|| s.get() + s.get() + s.get());
         assert_eq!(deps, vec![s.id]);
     }
 
@@ -348,7 +343,7 @@ mod tests {
         // Just verifying the type system actually parameterises Signal<T>.
         fresh();
         let int: Signal<i32> = use_signal(|| 0);
-        let str_: Signal<String> = use_signal(|| String::new());
+        let str_: Signal<String> = use_signal(String::new);
         let _ = (int.get(), str_.get());
     }
 }

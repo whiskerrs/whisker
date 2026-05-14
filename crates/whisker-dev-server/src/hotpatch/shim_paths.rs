@@ -125,16 +125,8 @@ mod tests {
         // `<CARGO_TARGET_DIR>/debug/...`) and just sanity-check the
         // basename + suffix.
         let p = expected_shim_paths(Path::new("/tmp/ws"));
-        let rustc_basename = p
-            .rustc_shim
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap();
-        let linker_basename = p
-            .linker_shim
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap();
+        let rustc_basename = p.rustc_shim.file_name().and_then(|n| n.to_str()).unwrap();
+        let linker_basename = p.linker_shim.file_name().and_then(|n| n.to_str()).unwrap();
         assert_eq!(rustc_basename, exe_name("whisker-rustc-shim"));
         assert_eq!(linker_basename, exe_name("whisker-linker-shim"));
         assert!(

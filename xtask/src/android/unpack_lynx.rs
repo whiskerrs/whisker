@@ -47,8 +47,7 @@ pub fn run_with(src: &Path, dest: &Path) -> Result<()> {
     }
 
     if dest.exists() {
-        fs::remove_dir_all(dest)
-            .with_context(|| format!("clear stale {}", dest.display()))?;
+        fs::remove_dir_all(dest).with_context(|| format!("clear stale {}", dest.display()))?;
     }
     let dest_jni = dest.join("jni");
     fs::create_dir_all(&dest_jni).context("create dest/jni")?;
@@ -66,8 +65,7 @@ pub fn run_with(src: &Path, dest: &Path) -> Result<()> {
             .and_then(|s| s.to_str())
             .unwrap_or("(unknown)");
         println!("==> unpacking {name}");
-        extract_jni(&path, &dest_jni)
-            .with_context(|| format!("unpack {}", path.display()))?;
+        extract_jni(&path, &dest_jni).with_context(|| format!("unpack {}", path.display()))?;
     }
     if !found_any {
         anyhow::bail!("no AARs in {}", src.display());

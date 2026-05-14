@@ -90,16 +90,10 @@ impl Builder {
 
         if let Some(c) = &self.capture {
             std::fs::create_dir_all(&c.rustc_cache_dir).with_context(|| {
-                format!(
-                    "create rustc cache dir {}",
-                    c.rustc_cache_dir.display(),
-                )
+                format!("create rustc cache dir {}", c.rustc_cache_dir.display(),)
             })?;
             std::fs::create_dir_all(&c.linker_cache_dir).with_context(|| {
-                format!(
-                    "create linker cache dir {}",
-                    c.linker_cache_dir.display(),
-                )
+                format!("create linker cache dir {}", c.linker_cache_dir.display(),)
             })?;
             for (k, v) in capture_env_vars(c) {
                 cmd.env(k, v);
@@ -202,14 +196,12 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
         Some(t) if t.contains("apple") => "-Clink-arg=-Wl,-export_dynamic",
         _ => "-Clink-arg=-Wl,--export-dynamic",
     };
-    let save_temps =
-        format!("-Csave-temps=y -Cdebug-assertions=on {export_dynamic}");
+    let save_temps = format!("-Csave-temps=y -Cdebug-assertions=on {export_dynamic}");
     let save_temps = save_temps.as_str();
     match c.target_triple.as_deref() {
         Some(triple) => {
             out.push((target_linker_env_var(triple), shim));
-            let prior =
-                std::env::var(target_rustflags_env_var(triple)).unwrap_or_default();
+            let prior = std::env::var(target_rustflags_env_var(triple)).unwrap_or_default();
             let mut rustflags = String::new();
             if !prior.is_empty() {
                 rustflags.push_str(&prior);
@@ -282,7 +274,10 @@ fn plan_for(package: &str, target: Target, features: &[String]) -> BuildPlan {
         Target::Host => {
             let mut args = vec!["build".into(), "-p".into(), package.to_string()];
             push_features(&mut args, features);
-            BuildPlan { program: "cargo".into(), args }
+            BuildPlan {
+                program: "cargo".into(),
+                args,
+            }
         }
         Target::Android => {
             // Reuse the existing xtask orchestration:
@@ -298,7 +293,10 @@ fn plan_for(package: &str, target: Target, features: &[String]) -> BuildPlan {
                 package.to_string(),
             ];
             push_features(&mut args, features);
-            BuildPlan { program: "cargo".into(), args }
+            BuildPlan {
+                program: "cargo".into(),
+                args,
+            }
         }
         Target::IosSimulator => {
             // Likewise:
@@ -313,7 +311,10 @@ fn plan_for(package: &str, target: Target, features: &[String]) -> BuildPlan {
                 package.to_string(),
             ];
             push_features(&mut args, features);
-            BuildPlan { program: "cargo".into(), args }
+            BuildPlan {
+                program: "cargo".into(),
+                args,
+            }
         }
     }
 }
@@ -343,11 +344,7 @@ mod tests {
     use super::*;
 
     fn b(target: Target) -> Builder {
-        Builder::new(
-            PathBuf::from("/tmp/ws"),
-            "hello-world".into(),
-            target,
-        )
+        Builder::new(PathBuf::from("/tmp/ws"), "hello-world".into(), target)
     }
 
     #[test]
@@ -399,9 +396,9 @@ mod tests {
     #[test]
     fn android_apk_path_is_under_examples_with_debug_suffix() {
         let p = android_apk_path(Path::new("/tmp/ws"), "hello-world");
-        assert!(p.to_string_lossy().ends_with(
-            "/examples/hello-world/android/app/build/outputs/apk/debug/app-debug.apk"
-        ));
+        assert!(p
+            .to_string_lossy()
+            .ends_with("/examples/hello-world/android/app/build/outputs/apk/debug/app-debug.apk"));
     }
 
     // ----- capture_env_vars + with_capture -----------------------------

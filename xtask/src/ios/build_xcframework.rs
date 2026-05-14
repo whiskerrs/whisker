@@ -58,8 +58,15 @@ pub fn run(args: Args) -> Result<()> {
     }
     std::fs::create_dir_all(&out)?;
 
-    let triples = ["aarch64-apple-ios", "aarch64-apple-ios-sim", "x86_64-apple-ios"];
-    println!("==> Building Rust static libs (user crate: {})", args.package);
+    let triples = [
+        "aarch64-apple-ios",
+        "aarch64-apple-ios-sim",
+        "x86_64-apple-ios",
+    ];
+    println!(
+        "==> Building Rust static libs (user crate: {})",
+        args.package
+    );
     for triple in triples {
         println!("    -- {triple}");
         cargo_build(&args.package, triple, &root, &args.features)?;
@@ -70,9 +77,7 @@ pub fn run(args: Args) -> Result<()> {
     let sim_arm64_lib = target_dir
         .join("aarch64-apple-ios-sim/release")
         .join(&lib_name);
-    let sim_x86_lib = target_dir
-        .join("x86_64-apple-ios/release")
-        .join(&lib_name);
+    let sim_x86_lib = target_dir.join("x86_64-apple-ios/release").join(&lib_name);
     for p in [&device_lib, &sim_arm64_lib, &sim_x86_lib] {
         if !p.is_file() {
             anyhow::bail!("expected static lib not built: {}", p.display());

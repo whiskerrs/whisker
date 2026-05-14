@@ -14,12 +14,12 @@
 //! and the macro expands to FFI exports that call [`run`] / [`tick`].
 
 use super::renderer::BridgeRenderer;
+use std::cell::{Cell, RefCell};
+use std::ffi::c_void;
 use whisker_driver_sys::{whisker_bridge_dispatch, WhiskerEngine};
 use whisker_runtime::element::Element;
 use whisker_runtime::runtime::Runtime;
 use whisker_runtime::signal::set_request_frame_callback;
-use std::cell::{Cell, RefCell};
-use std::ffi::c_void;
 
 /// User-supplied app function box. Stored boxed so the persistent
 /// `AppState` doesn't have to be generic over the (anonymous) closure

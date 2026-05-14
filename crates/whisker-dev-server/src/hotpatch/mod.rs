@@ -32,7 +32,7 @@ pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
 pub use thin_build::{build_obj_plan, library_filename, object_filename, ObjBuildPlan};
 pub use validate::{ensure_target_supported, extract_target_triple, validate_environment};
 pub use wrapper::{
-    default_cache_dir, default_linker_cache_dir, load_captured_args,
-    load_captured_linker_args, resolve_host_linker, run_fat_build,
-    CapturedLinkerInvocation, CapturedRustcInvocation, LinkerCaptureConfig,
+    default_cache_dir, default_linker_cache_dir, load_captured_args, load_captured_linker_args,
+    resolve_host_linker, run_fat_build, CapturedLinkerInvocation, CapturedRustcInvocation,
+    LinkerCaptureConfig,
 };

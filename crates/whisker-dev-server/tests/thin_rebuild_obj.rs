@@ -21,15 +21,14 @@
 use std::path::{Path, PathBuf};
 
 use whisker_dev_server::hotpatch::{
-    build_link_plan, build_obj_plan, library_filename, linker_os_for_host,
-    parse_symbol_table, run_link_plan, run_obj_plan, CapturedRustcInvocation,
+    build_link_plan, build_obj_plan, library_filename, linker_os_for_host, parse_symbol_table,
+    run_link_plan, run_obj_plan, CapturedRustcInvocation,
 };
 
 const FIXTURE_CRATE_NAME: &str = "thin_build_fixture";
 
 fn fixture_lib_rs() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/thin-build-fixture/src/lib.rs")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/thin-build-fixture/src/lib.rs")
 }
 
 fn unique_tempdir(label: &str) -> PathBuf {
@@ -37,8 +36,7 @@ fn unique_tempdir(label: &str) -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
-    let p = std::env::temp_dir()
-        .join(format!("whisker-thin-rebuild-obj-{label}-{pid}-{n}"));
+    let p = std::env::temp_dir().join(format!("whisker-thin-rebuild-obj-{label}-{pid}-{n}"));
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).unwrap();
     p
@@ -124,12 +122,9 @@ fn captured_rustc_for_fixture(lib_rs: &Path) -> CapturedRustcInvocation {
 /// `9calculate` (Itanium ABI: `<len><name>`, calculate is 9 chars)
 /// substring is stable for a given source.
 fn find_calculate(table_keys: impl Iterator<Item = String>) -> Option<String> {
-    for k in table_keys {
-        if k.contains("thin_build_fixture") && k.contains("9calculate") {
-            return Some(k);
-        }
-    }
-    None
+    table_keys
+        .into_iter()
+        .find(|k| k.contains("thin_build_fixture") && k.contains("9calculate"))
 }
 
 #[tokio::test]

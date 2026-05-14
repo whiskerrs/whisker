@@ -148,8 +148,7 @@ mod tests {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
-        let p =
-            std::env::temp_dir().join(format!("whisker-rustc-shim-test-{pid}-{n}"));
+        let p = std::env::temp_dir().join(format!("whisker-rustc-shim-test-{pid}-{n}"));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -159,7 +158,13 @@ mod tests {
 
     #[test]
     fn extract_crate_name_from_separated_form() {
-        let args = s(&["--edition=2021", "--crate-name", "hello_world", "--out-dir", "x"]);
+        let args = s(&[
+            "--edition=2021",
+            "--crate-name",
+            "hello_world",
+            "--out-dir",
+            "x",
+        ]);
         assert_eq!(extract_crate_name(&args).as_deref(), Some("hello_world"));
     }
 
@@ -188,10 +193,12 @@ mod tests {
     #[test]
     fn capture_includes_full_argv_unchanged() {
         let argv = s(&[
-            "--crate-name", "demo",
+            "--crate-name",
+            "demo",
             "--edition=2021",
             "src/lib.rs",
-            "-C", "opt-level=0",
+            "-C",
+            "opt-level=0",
         ]);
         let inv = capture(&argv).unwrap();
         assert_eq!(inv.args, argv);
@@ -252,7 +259,11 @@ mod tests {
         save_invocation(&dir, &inv).expect("save");
 
         let path = dir.join(invocation_filename(&inv));
-        assert!(path.is_file(), "json file should exist at {}", path.display());
+        assert!(
+            path.is_file(),
+            "json file should exist at {}",
+            path.display()
+        );
 
         let body = std::fs::read_to_string(&path).unwrap();
         let parsed: CapturedRustcInvocation = serde_json::from_str(&body).unwrap();

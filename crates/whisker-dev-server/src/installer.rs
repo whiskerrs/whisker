@@ -25,7 +25,11 @@ pub struct Installer {
 
 impl Installer {
     pub fn new(workspace_root: PathBuf, package: String, target: Target) -> Self {
-        Self { workspace_root, package, target }
+        Self {
+            workspace_root,
+            package,
+            target,
+        }
     }
 
     pub async fn install_and_launch(&self) -> Result<()> {

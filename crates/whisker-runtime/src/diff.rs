@@ -170,9 +170,8 @@ fn diff_keyed_children(
                 diff_into(&prev[prev_idx], child, child_path, out);
             }
             None => {
-                let pair = (0..prev.len()).find(|&i| {
-                    !consumed[i] && prev[i].key.is_none() && i == next_idx
-                });
+                let pair = (0..prev.len())
+                    .find(|&i| !consumed[i] && prev[i].key.is_none() && i == next_idx);
                 if let Some(prev_idx) = pair {
                     consumed[prev_idx] = true;
                     diff_into(&prev[prev_idx], child, child_path, out);
@@ -253,7 +252,10 @@ fn apply_one<R: Renderer>(
                 parent_node.children.push(new_subtree);
             }
         }
-        Patch::RemoveChild { parent, child_index } => {
+        Patch::RemoveChild {
+            parent,
+            child_index,
+        } => {
             let parent_handle = match handles.at_path(parent) {
                 Some(h) => h,
                 None => return,
@@ -268,7 +270,11 @@ fn apply_one<R: Renderer>(
             let removed = parent_node.children.remove(*child_index);
             release_recursive(renderer, &removed, parent_handle);
         }
-        Patch::InsertChildBefore { parent, child_index, node } => {
+        Patch::InsertChildBefore {
+            parent,
+            child_index,
+            node,
+        } => {
             // No native insert_before in the Renderer trait yet — append
             // and then move-by-removing-and-re-inserting on the C++ side
             // would be ideal, but we don't have that primitive either.
@@ -513,8 +519,12 @@ mod tests {
 
         assert_eq!(handles.children.len(), 0);
         let new_ops = &r.ops()[before..];
-        assert!(new_ops.iter().any(|op| matches!(op, MockOp::RemoveChild { .. })));
-        assert!(new_ops.iter().any(|op| matches!(op, MockOp::Release { .. })));
+        assert!(new_ops
+            .iter()
+            .any(|op| matches!(op, MockOp::RemoveChild { .. })));
+        assert!(new_ops
+            .iter()
+            .any(|op| matches!(op, MockOp::Release { .. })));
     }
 
     // ---- events_differ -------------------------------------------------
@@ -549,7 +559,9 @@ mod tests {
         let next = view().on("tap", || {});
         let patches = diff(&prev, &next);
         assert!(
-            !patches.iter().any(|p| matches!(p, Patch::ReplaceEvents { .. })),
+            !patches
+                .iter()
+                .any(|p| matches!(p, Patch::ReplaceEvents { .. })),
             "same event names should not trigger ReplaceEvents, got {patches:?}",
         );
     }
@@ -600,7 +612,9 @@ mod tests {
         let new_ops = &r.ops()[before..];
         // Expect: Create new (text) → SetRoot(new) → Release(old).
         assert!(
-            new_ops.iter().any(|op| matches!(op, MockOp::SetRoot { .. })),
+            new_ops
+                .iter()
+                .any(|op| matches!(op, MockOp::SetRoot { .. })),
             "Replace at root must call set_root, got {new_ops:?}",
         );
         assert!(

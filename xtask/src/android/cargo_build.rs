@@ -119,9 +119,8 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
     // version-script file lives under `target/.whisker/` so it's a
     // discoverable build artifact, not a hidden temp.
     let vs_dir = paths::workspace_root().join("target/.whisker");
-    std::fs::create_dir_all(&vs_dir).with_context(|| {
-        format!("create version-script dir {}", vs_dir.display())
-    })?;
+    std::fs::create_dir_all(&vs_dir)
+        .with_context(|| format!("create version-script dir {}", vs_dir.display()))?;
     let vs_path = vs_dir.join("android-jni-exports.ver");
     std::fs::write(
         &vs_path,

@@ -96,11 +96,7 @@ pub fn spawn_watcher(
     Ok(watcher)
 }
 
-fn debounce_loop(
-    raw_rx: std_mpsc::Receiver<Event>,
-    debounce: Duration,
-    tx: mpsc::Sender<Change>,
-) {
+fn debounce_loop(raw_rx: std_mpsc::Receiver<Event>, debounce: Duration, tx: mpsc::Sender<Change>) {
     let mut pending: BTreeSet<PathBuf> = BTreeSet::new();
     let mut deadline: Option<Instant> = None;
 
@@ -201,8 +197,7 @@ mod tests {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
-        let p =
-            std::env::temp_dir().join(format!("whisker-watcher-test-{pid}-{n}"));
+        let p = std::env::temp_dir().join(format!("whisker-watcher-test-{pid}-{n}"));
         std::fs::create_dir_all(&p).unwrap();
         p
     }
@@ -213,12 +208,8 @@ mod tests {
         std::fs::write(dir.join("lib.rs"), "fn old() {}").unwrap();
 
         let (tx, mut rx) = mpsc::channel::<Change>(8);
-        let _watcher = spawn_watcher(
-            dir.clone(),
-            Duration::from_millis(120),
-            tx,
-        )
-        .expect("watcher up");
+        let _watcher =
+            spawn_watcher(dir.clone(), Duration::from_millis(120), tx).expect("watcher up");
 
         // Give notify a moment to register the watch.
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -249,12 +240,8 @@ mod tests {
         .unwrap();
 
         let (tx, mut rx) = mpsc::channel::<Change>(8);
-        let _watcher = spawn_watcher(
-            dir.clone(),
-            Duration::from_millis(120),
-            tx,
-        )
-        .expect("watcher up");
+        let _watcher =
+            spawn_watcher(dir.clone(), Duration::from_millis(120), tx).expect("watcher up");
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         std::fs::write(
@@ -278,12 +265,8 @@ mod tests {
         std::fs::write(dir.join("a.rs"), "fn a() {}").unwrap();
 
         let (tx, mut rx) = mpsc::channel::<Change>(8);
-        let _watcher = spawn_watcher(
-            dir.clone(),
-            Duration::from_millis(150),
-            tx,
-        )
-        .expect("watcher up");
+        let _watcher =
+            spawn_watcher(dir.clone(), Duration::from_millis(150), tx).expect("watcher up");
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         // 5 rapid edits within the debounce window.
@@ -300,8 +283,7 @@ mod tests {
 
         // After waiting > debounce window, no second change should
         // appear (everything coalesced into the first).
-        let second =
-            tokio::time::timeout(Duration::from_millis(500), rx.recv()).await;
+        let second = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await;
         assert!(
             second.is_err(),
             "expected no second change after coalescing, got {second:?}",

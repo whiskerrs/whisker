@@ -124,7 +124,10 @@ pub async fn serve(
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
 ) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
     let (tx, _rx) = broadcast::channel::<Envelope>(16);
-    let state = AppState { tx: tx.clone(), on_event };
+    let state = AppState {
+        tx: tx.clone(),
+        on_event,
+    };
 
     let app = Router::new()
         .route("/whisker-dev", get(ws_handler))
@@ -142,10 +145,7 @@ pub async fn serve(
     Ok((PatchSender { tx }, bound, handle))
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -235,9 +235,8 @@ mod tests {
 
     async fn connect(
         addr: SocketAddr,
-    ) -> tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    > {
+    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
+    {
         let url = format!("ws://{addr}/whisker-dev");
         let (ws, _) = tokio_tungstenite::connect_async(&url)
             .await
@@ -267,22 +266,18 @@ mod tests {
         });
         assert_eq!(n, 1);
 
-        let msg = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            client.next(),
-        )
-        .await
-        .expect("recv timed out")
-        .expect("stream ended")
-        .expect("ws error");
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+            .await
+            .expect("recv timed out")
+            .expect("stream ended")
+            .expect("ws error");
         let text = match msg {
             tokio_tungstenite::tungstenite::Message::Text(s) => s,
             other => panic!("expected text, got {other:?}"),
         };
         // It must round-trip — we deliberately use the same envelope
         // shape the receiver in whisker-dev-runtime parses.
-        let parsed: serde_json::Value =
-            serde_json::from_str(&text).expect("parse json");
+        let parsed: serde_json::Value = serde_json::from_str(&text).expect("parse json");
         assert_eq!(parsed["kind"], "patch");
         assert_eq!(parsed["table"]["lib"], "/tmp/dummy.dylib");
         assert_eq!(parsed["table"]["aslr_reference"], 4294967296_u64);
@@ -320,14 +315,11 @@ mod tests {
         assert_eq!(n, 2);
 
         for client in [&mut a, &mut b] {
-            let msg = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                client.next(),
-            )
-            .await
-            .expect("timeout")
-            .expect("stream end")
-            .expect("ws err");
+            let msg = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+                .await
+                .expect("timeout")
+                .expect("stream end")
+                .expect("ws err");
             assert!(matches!(
                 msg,
                 tokio_tungstenite::tungstenite::Message::Text(_)
@@ -342,16 +334,15 @@ mod tests {
 
         let cc = connect_count.clone();
         let dc = disconnect_count.clone();
-        let on_event: Arc<dyn Fn(Event) + Send + Sync> =
-            Arc::new(move |e| match e {
-                Event::ClientConnected => {
-                    cc.fetch_add(1, Ordering::SeqCst);
-                }
-                Event::ClientDisconnected => {
-                    dc.fetch_add(1, Ordering::SeqCst);
-                }
-                _ => {}
-            });
+        let on_event: Arc<dyn Fn(Event) + Send + Sync> = Arc::new(move |e| match e {
+            Event::ClientConnected => {
+                cc.fetch_add(1, Ordering::SeqCst);
+            }
+            Event::ClientDisconnected => {
+                dc.fetch_add(1, Ordering::SeqCst);
+            }
+            _ => {}
+        });
 
         let (sender, addr) = spawn_test_server(Some(on_event)).await;
 

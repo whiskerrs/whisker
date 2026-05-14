@@ -106,9 +106,7 @@ mod tests {
     }
 
     fn rustc_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(
-            std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()),
-        )
+        std::path::PathBuf::from(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
     }
 
     /// One target triple we're sure the test runner's rustc supports
@@ -131,14 +129,25 @@ mod tests {
 
     #[test]
     fn extract_target_triple_from_separated_form() {
-        let args = s(&["--edition=2021", "--target", "aarch64-apple-darwin", "src/lib.rs"]);
-        assert_eq!(extract_target_triple(&args).as_deref(), Some("aarch64-apple-darwin"));
+        let args = s(&[
+            "--edition=2021",
+            "--target",
+            "aarch64-apple-darwin",
+            "src/lib.rs",
+        ]);
+        assert_eq!(
+            extract_target_triple(&args).as_deref(),
+            Some("aarch64-apple-darwin")
+        );
     }
 
     #[test]
     fn extract_target_triple_from_equals_form() {
         let args = s(&["--target=x86_64-unknown-linux-gnu"]);
-        assert_eq!(extract_target_triple(&args).as_deref(), Some("x86_64-unknown-linux-gnu"));
+        assert_eq!(
+            extract_target_triple(&args).as_deref(),
+            Some("x86_64-unknown-linux-gnu")
+        );
     }
 
     #[test]
@@ -164,10 +173,7 @@ mod tests {
         let result = ensure_target_supported(&rustc_path(), "totally-not-a-real-triple-9999");
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
-        assert!(
-            msg.contains("doesn't support target triple"),
-            "got: {msg}",
-        );
+        assert!(msg.contains("doesn't support target triple"), "got: {msg}",);
     }
 
     #[test]

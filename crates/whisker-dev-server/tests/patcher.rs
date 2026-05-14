@@ -35,16 +35,15 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use whisker_dev_server::hotpatch::{
-    build_link_plan, build_obj_plan, library_filename, linker_os_for_host,
-    parse_symbol_table, run_link_plan, run_obj_plan, CapturedLinkerInvocation,
-    CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, Patcher,
+    build_link_plan, build_obj_plan, library_filename, linker_os_for_host, parse_symbol_table,
+    run_link_plan, run_obj_plan, CapturedLinkerInvocation, CapturedRustcInvocation,
+    HotpatchModuleCache, LinkerOs, Patcher,
 };
 
 const FIXTURE_CRATE_NAME: &str = "thin_build_fixture";
 
 fn fixture_lib_rs() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/thin-build-fixture/src/lib.rs")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/thin-build-fixture/src/lib.rs")
 }
 
 fn unique_tempdir(label: &str) -> PathBuf {
@@ -129,11 +128,7 @@ fn captured_linker_for_fixture(output_dylib: &Path) -> CapturedLinkerInvocation 
 /// Build the v1 dylib through the same pipeline production uses,
 /// so its symbol table contains the mangled `calculate` we want to
 /// diff against.
-async fn build_original_via_pipeline(
-    lib_rs: &Path,
-    out_dir: &Path,
-    cwd: &Path,
-) -> PathBuf {
+async fn build_original_via_pipeline(lib_rs: &Path, out_dir: &Path, cwd: &Path) -> PathBuf {
     let captured = captured_rustc_for_fixture(lib_rs);
     let obj_plan = build_obj_plan(&captured, out_dir);
     let object = run_obj_plan(&obj_plan, &rustc_path(), cwd)
@@ -158,12 +153,9 @@ async fn build_original_via_pipeline(
 /// (Itanium ABI: `<len><name>`), so the substring `9calculate`
 /// uniquely identifies it within the crate's mangled names.
 fn find_calculate(table_keys: impl Iterator<Item = String>) -> Option<String> {
-    for k in table_keys {
-        if k.contains("thin_build_fixture") && k.contains("9calculate") {
-            return Some(k);
-        }
-    }
-    None
+    table_keys
+        .into_iter()
+        .find(|k| k.contains("thin_build_fixture") && k.contains("9calculate"))
 }
 
 #[tokio::test]
@@ -175,12 +167,11 @@ async fn build_patch_emits_a_jump_table_entry_for_a_mangled_function() {
 
     let original_out = work.join("original");
     std::fs::create_dir_all(&original_out).unwrap();
-    let original_dylib =
-        build_original_via_pipeline(&lib_rs, &original_out, &work).await;
+    let original_dylib = build_original_via_pipeline(&lib_rs, &original_out, &work).await;
 
     let original_table = parse_symbol_table(&original_dylib).expect("parse v1");
-    let original_calc = find_calculate(original_table.by_name.keys().cloned())
-        .unwrap_or_else(|| {
+    let original_calc =
+        find_calculate(original_table.by_name.keys().cloned()).unwrap_or_else(|| {
             panic!(
                 "no `calculate`-shaped symbol in v1; keys: {:?}",
                 original_table.by_name.keys().take(20).collect::<Vec<_>>(),
@@ -280,8 +271,7 @@ async fn build_patch_errors_when_no_captured_rustc_for_the_package() {
     std::fs::copy(fixture_lib_rs(), &lib_rs).unwrap();
     let original_out = work.join("original");
     std::fs::create_dir_all(&original_out).unwrap();
-    let original_dylib =
-        build_original_via_pipeline(&lib_rs, &original_out, &work).await;
+    let original_dylib = build_original_via_pipeline(&lib_rs, &original_out, &work).await;
     let original_cache = HotpatchModuleCache::from_path(&original_dylib).unwrap();
 
     let patcher = Patcher::new(
@@ -314,8 +304,7 @@ async fn build_patch_errors_when_captured_linker_is_missing() {
     std::fs::copy(fixture_lib_rs(), &lib_rs).unwrap();
     let original_out = work.join("original");
     std::fs::create_dir_all(&original_out).unwrap();
-    let original_dylib =
-        build_original_via_pipeline(&lib_rs, &original_out, &work).await;
+    let original_dylib = build_original_via_pipeline(&lib_rs, &original_out, &work).await;
     let original_cache = HotpatchModuleCache::from_path(&original_dylib).unwrap();
 
     let mut captured_rustc_args = HashMap::new();

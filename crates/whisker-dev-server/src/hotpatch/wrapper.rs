@@ -95,9 +95,8 @@ pub fn run_fat_build(
         .env("WHISKER_RUSTC_CACHE_DIR", cache_dir);
 
     if let Some(lc) = linker_capture {
-        std::fs::create_dir_all(lc.cache_dir).with_context(|| {
-            format!("create linker cache dir {}", lc.cache_dir.display())
-        })?;
+        std::fs::create_dir_all(lc.cache_dir)
+            .with_context(|| format!("create linker cache dir {}", lc.cache_dir.display()))?;
         // Prepend our -Clinker to any existing RUSTFLAGS rather than
         // clobbering them — the user may have set their own through
         // .cargo/config.toml or env.
@@ -123,15 +122,13 @@ pub fn run_fat_build(
 /// the most-recent timestamp. Empty / unparseable files are skipped
 /// with a warning rather than aborting the whole load — a partial
 /// fat build shouldn't take the dev loop down.
-pub fn load_captured_args(
-    cache_dir: &Path,
-) -> Result<HashMap<String, CapturedRustcInvocation>> {
+pub fn load_captured_args(cache_dir: &Path) -> Result<HashMap<String, CapturedRustcInvocation>> {
     let mut by_crate: HashMap<String, CapturedRustcInvocation> = HashMap::new();
     if !cache_dir.is_dir() {
         return Ok(by_crate); // empty cache is fine, just nothing to do
     }
-    for entry in std::fs::read_dir(cache_dir)
-        .with_context(|| format!("read_dir {}", cache_dir.display()))?
+    for entry in
+        std::fs::read_dir(cache_dir).with_context(|| format!("read_dir {}", cache_dir.display()))?
     {
         let entry = entry?;
         let path = entry.path();
@@ -191,8 +188,8 @@ pub fn load_captured_linker_args(
     if !cache_dir.is_dir() {
         return Ok(by_output);
     }
-    for entry in std::fs::read_dir(cache_dir)
-        .with_context(|| format!("read_dir {}", cache_dir.display()))?
+    for entry in
+        std::fs::read_dir(cache_dir).with_context(|| format!("read_dir {}", cache_dir.display()))?
     {
         let entry = entry?;
         let path = entry.path();

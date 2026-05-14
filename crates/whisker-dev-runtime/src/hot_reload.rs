@@ -140,7 +140,10 @@ where
             Message::Text(text) => {
                 devlog(&format!("envelope received ({} bytes)", text.len()));
                 match parse_envelope(&text) {
-                    Ok(Envelope::Patch { mut table, lib_bytes_b64 }) => {
+                    Ok(Envelope::Patch {
+                        mut table,
+                        lib_bytes_b64,
+                    }) => {
                         devlog(&format!(
                             "envelope parsed (map={} entries, dylib_b64={} bytes)",
                             table.map.len(),
@@ -148,10 +151,9 @@ where
                         ));
                         match materialise_patch_dylib(&lib_bytes_b64) {
                             Ok(local) => {
-                                devlog(&format!(
-                                    "patch dylib materialised at {}",
-                                    local.display(),
-                                ));
+                                devlog(
+                                    &format!("patch dylib materialised at {}", local.display(),),
+                                );
                                 table.lib = local;
                                 if let Ok(mut p) = PENDING.lock() {
                                     *p = Some(table);
@@ -199,11 +201,9 @@ fn materialise_patch_dylib(
         .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
             format!("base64 decode: {e}").into()
         })?;
-    let dir = patch_cache_dir().ok_or_else(
-        || -> Box<dyn std::error::Error + Send + Sync> {
-            "could not resolve a writable cache dir".into()
-        },
-    )?;
+    let dir = patch_cache_dir().ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+        "could not resolve a writable cache dir".into()
+    })?;
     std::fs::create_dir_all(&dir)?;
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
@@ -227,16 +227,11 @@ fn patch_cache_dir() -> Option<std::path::PathBuf> {
     #[cfg(target_os = "android")]
     {
         let cmdline = std::fs::read_to_string("/proc/self/cmdline").ok()?;
-        let pkg = cmdline
-            .split('\0')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let pkg = cmdline.split('\0').next().unwrap_or("").trim().to_string();
         if !pkg.is_empty() {
-            return Some(
-                std::path::PathBuf::from(format!("/data/data/{pkg}/cache/whisker-patches")),
-            );
+            return Some(std::path::PathBuf::from(format!(
+                "/data/data/{pkg}/cache/whisker-patches"
+            )));
         }
         None
     }
@@ -327,11 +322,11 @@ mod tests {
         }"#;
         let env = parse_envelope(json).expect("should parse");
         match env {
-            Envelope::Patch { table, lib_bytes_b64 } => {
-                assert_eq!(
-                    table.lib.to_string_lossy(),
-                    "/tmp/some-patch.dylib",
-                );
+            Envelope::Patch {
+                table,
+                lib_bytes_b64,
+            } => {
+                assert_eq!(table.lib.to_string_lossy(), "/tmp/some-patch.dylib",);
                 assert_eq!(table.aslr_reference, 0x1_0000_0000);
                 assert_eq!(table.new_base_address, 0x2_0000_0000);
                 assert_eq!(table.ifunc_count, 0);
@@ -355,7 +350,10 @@ mod tests {
             "lib_bytes_b64": "AAECAw=="
         }"#;
         let env = parse_envelope(json).expect("should parse");
-        let Envelope::Patch { table, lib_bytes_b64 } = env;
+        let Envelope::Patch {
+            table,
+            lib_bytes_b64,
+        } = env;
         assert_eq!(table.map.len(), 2);
         assert_eq!(table.map.get(&100), Some(&200));
         assert_eq!(table.map.get(&300), Some(&400));

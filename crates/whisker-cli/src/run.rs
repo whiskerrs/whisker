@@ -135,11 +135,7 @@ mod tests {
     #[test]
     fn find_workspace_root_returns_dir_when_cargo_toml_at_start() {
         let tmp = unique_tempdir();
-        std::fs::write(
-            tmp.join("Cargo.toml"),
-            "[workspace]\nmembers = []\n",
-        )
-        .unwrap();
+        std::fs::write(tmp.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
         assert_eq!(find_workspace_root(&tmp).as_deref(), Some(tmp.as_path()));
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -161,10 +157,7 @@ mod tests {
             "[package]\nname = \"hello-world\"\nversion = \"0.0.0\"\n",
         )
         .unwrap();
-        assert_eq!(
-            find_workspace_root(&nested).as_deref(),
-            Some(tmp.as_path()),
-        );
+        assert_eq!(find_workspace_root(&nested).as_deref(), Some(tmp.as_path()),);
         std::fs::remove_dir_all(&tmp).ok();
     }
 

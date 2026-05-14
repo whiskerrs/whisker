@@ -162,13 +162,11 @@ mod tests {
 
     #[test]
     fn full_tree_compiles_to_expected_structure() {
-        let tree = page()
-            .style("background-color: white;")
-            .child(
-                view()
-                    .style("padding: 16px;")
-                    .child(text_with("Hello Whisker")),
-            );
+        let tree = page().style("background-color: white;").child(
+            view()
+                .style("padding: 16px;")
+                .child(text_with("Hello Whisker")),
+        );
 
         assert_eq!(tree.tag, ElementTag::Page);
         assert_eq!(tree.styles, "background-color: white;");

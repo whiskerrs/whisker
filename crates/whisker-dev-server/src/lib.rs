@@ -122,7 +122,10 @@ pub struct DevServer {
 
 impl DevServer {
     pub fn new(config: Config) -> Result<Self> {
-        Ok(Self { config, on_event: None })
+        Ok(Self {
+            config,
+            on_event: None,
+        })
     }
 
     /// Attach an observer for `Event`s — connect / disconnect /
@@ -282,9 +285,13 @@ impl DevServer {
                                         plan.table.lib.display(),
                                     );
                                     run_build_cycle(
-                                        &builder, &installer, &self.on_event,
-                                        &sender, "rebuild (tier2 fallback)",
-                                    ).await;
+                                        &builder,
+                                        &installer,
+                                        &self.on_event,
+                                        &sender,
+                                        "rebuild (tier2 fallback)",
+                                    )
+                                    .await;
                                     continue;
                                 }
                             };
@@ -319,14 +326,7 @@ impl DevServer {
                     }
                 }
                 LoopAction::Tier2Rebuild => {
-                    run_build_cycle(
-                        &builder,
-                        &installer,
-                        &self.on_event,
-                        &sender,
-                        "rebuild",
-                    )
-                    .await;
+                    run_build_cycle(&builder, &installer, &self.on_event, &sender, "rebuild").await;
                 }
             }
         }
@@ -432,15 +432,10 @@ fn prepare_tier1_capture(
 /// triple from the ABI of the existing jniLibs/.so (or arm64-v8a
 /// for the first run). Host / iOS Simulator return `None`, falling
 /// back to the global RUSTFLAGS form.
-fn target_triple_for(
-    target: Target,
-    workspace_root: &Path,
-    package: &str,
-) -> Option<String> {
+fn target_triple_for(target: Target, workspace_root: &Path, package: &str) -> Option<String> {
     match target {
         Target::Android => {
-            let abi = existing_android_abi(workspace_root, package)
-                .unwrap_or("arm64-v8a");
+            let abi = existing_android_abi(workspace_root, package).unwrap_or("arm64-v8a");
             // abi_to_triple is xtask logic, duplicated minimally:
             let triple = match abi {
                 "arm64-v8a" => "aarch64-linux-android",
@@ -459,18 +454,13 @@ fn target_triple_for(
 /// the linker shim forwards to during the fat build *and* what the
 /// thin-rebuild link step spawns directly — the same binary on both
 /// sides keeps SDK / sysroot resolution consistent.
-fn resolve_linker_for(
-    target: Target,
-    workspace_root: &Path,
-    package: &str,
-) -> Result<PathBuf> {
+fn resolve_linker_for(target: Target, workspace_root: &Path, package: &str) -> Result<PathBuf> {
     match target {
         Target::Android => {
             // Pick the API level + ABI from whatever jniLibs/.so the
             // last xtask build produced. Default to arm64-v8a + API
             // 21 when nothing is on disk yet (first run).
-            let abi = existing_android_abi(workspace_root, package)
-                .unwrap_or("arm64-v8a");
+            let abi = existing_android_abi(workspace_root, package).unwrap_or("arm64-v8a");
             let api = std::env::var("WHISKER_ANDROID_API")
                 .ok()
                 .and_then(|s| s.parse::<u32>().ok())
@@ -478,9 +468,7 @@ fn resolve_linker_for(
             hotpatch::android_ndk::android_clang_for(abi, api)
                 .with_context(|| format!("resolve NDK clang for ABI {abi} API {api}"))
         }
-        Target::Host | Target::IosSimulator => {
-            Ok(hotpatch::wrapper::resolve_host_linker())
-        }
+        Target::Host | Target::IosSimulator => Ok(hotpatch::wrapper::resolve_host_linker()),
     }
 }
 
@@ -493,25 +481,16 @@ fn existing_android_abi(workspace_root: &Path, package: &str) -> Option<&'static
         .join("examples")
         .join(package)
         .join("android/app/src/main/jniLibs");
-    for abi in ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"] {
-        if jni_libs.join(abi).join(&so_name).is_file() {
-            return Some(abi);
-        }
-    }
-    None
+    ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"]
+        .into_iter()
+        .find(|abi| jni_libs.join(abi).join(&so_name).is_file())
 }
 
 /// Construct the patcher from the captures the fat build just wrote.
 /// Splits out so [`DevServer::run`] is easier to read.
-fn init_patcher_for(
-    config: &Config,
-    prep: &Tier1Prep,
-) -> Result<hotpatch::Patcher> {
-    let original_binary = original_binary_path(
-        &config.workspace_root,
-        &config.package,
-        config.target,
-    )?;
+fn init_patcher_for(config: &Config, prep: &Tier1Prep) -> Result<hotpatch::Patcher> {
+    let original_binary =
+        original_binary_path(&config.workspace_root, &config.package, config.target)?;
     hotpatch::Patcher::initialize(
         &config.workspace_root,
         config.package.clone(),
@@ -527,11 +506,7 @@ fn init_patcher_for(
 /// only supports targets that produce a `.so`/`.dylib` we can mmap
 /// and diff against; `Host` (which produces just an `.rlib` today)
 /// returns `Err` so the caller falls back to Tier 2.
-fn original_binary_path(
-    workspace_root: &Path,
-    package: &str,
-    target: Target,
-) -> Result<PathBuf> {
+fn original_binary_path(workspace_root: &Path, package: &str, target: Target) -> Result<PathBuf> {
     let crate_underscored = package.replace('-', "_");
     match target {
         Target::Android => {
@@ -543,12 +518,7 @@ fn original_binary_path(
                 .join(package)
                 .join("android/app/src/main/jniLibs");
             let so_name = format!("lib{crate_underscored}.so");
-            for abi in [
-                "arm64-v8a",
-                "armeabi-v7a",
-                "x86_64",
-                "x86",
-            ] {
+            for abi in ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"] {
                 let candidate = jni_libs.join(abi).join(&so_name);
                 if candidate.is_file() {
                     return Ok(candidate);
@@ -588,8 +558,7 @@ fn target_os_for(target: Target) -> hotpatch::LinkerOs {
 /// WebSocket binary frames instead.
 fn read_lib_bytes_b64(path: &Path) -> Result<String> {
     use base64::Engine;
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
@@ -660,10 +629,7 @@ mod tests {
     #[test]
     fn hot_patch_mode_variants_compare_by_value() {
         assert_eq!(HotPatchMode::Disabled, HotPatchMode::Disabled);
-        assert_ne!(
-            HotPatchMode::Tier1Subsecond,
-            HotPatchMode::Tier2ColdRebuild,
-        );
+        assert_ne!(HotPatchMode::Tier1Subsecond, HotPatchMode::Tier2ColdRebuild,);
     }
 
     #[test]
@@ -680,22 +646,14 @@ mod tests {
 
     #[test]
     fn original_binary_path_errors_for_host_target() {
-        let res = original_binary_path(
-            Path::new("/tmp/ws"),
-            "hello-world",
-            Target::Host,
-        );
+        let res = original_binary_path(Path::new("/tmp/ws"), "hello-world", Target::Host);
         let err = res.unwrap_err();
         assert!(format!("{err:#}").contains("Host"), "got: {err:#}");
     }
 
     #[test]
     fn original_binary_path_errors_for_ios_simulator() {
-        let res = original_binary_path(
-            Path::new("/tmp/ws"),
-            "hello-world",
-            Target::IosSimulator,
-        );
+        let res = original_binary_path(Path::new("/tmp/ws"), "hello-world", Target::IosSimulator);
         assert!(res.is_err());
     }
 
@@ -709,8 +667,7 @@ mod tests {
         let pid = std::process::id();
         let ws = std::env::temp_dir().join(format!("whisker-dev-test-orig-{pid}-{n}"));
         let _ = std::fs::remove_dir_all(&ws);
-        let abi_dir = ws
-            .join("examples/hello-world/android/app/src/main/jniLibs/arm64-v8a");
+        let abi_dir = ws.join("examples/hello-world/android/app/src/main/jniLibs/arm64-v8a");
         std::fs::create_dir_all(&abi_dir).unwrap();
         let so = abi_dir.join("libhello_world.so");
         std::fs::write(&so, b"fake").unwrap();
@@ -723,11 +680,8 @@ mod tests {
 
     #[test]
     fn original_binary_path_errors_when_android_so_missing() {
-        let res = original_binary_path(
-            Path::new("/nonexistent/ws"),
-            "hello-world",
-            Target::Android,
-        );
+        let res =
+            original_binary_path(Path::new("/nonexistent/ws"), "hello-world", Target::Android);
         assert!(res.is_err());
     }
 

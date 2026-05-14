@@ -213,12 +213,10 @@ fn patch_pods_xcconfig(build: &Path) -> Result<()> {
         if p.extension().and_then(|s| s.to_str()) != Some("xcconfig") {
             continue;
         }
-        let body = std::fs::read_to_string(p)
-            .with_context(|| format!("read {}", p.display()))?;
+        let body = std::fs::read_to_string(p).with_context(|| format!("read {}", p.display()))?;
         if body.contains(NEEDLE) {
             let patched = body.replace(NEEDLE, REPLACEMENT);
-            std::fs::write(p, patched)
-                .with_context(|| format!("rewrite {}", p.display()))?;
+            std::fs::write(p, patched).with_context(|| format!("rewrite {}", p.display()))?;
         }
     }
     Ok(())

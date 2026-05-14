@@ -27,11 +27,7 @@ use super::wrapper::CapturedRustcInvocation;
 ///
 /// rustc with `--emit=obj <path>` writes exactly one `.o`; we don't
 /// need to scan the directory after the fact.
-pub async fn run_obj_plan(
-    plan: &ObjBuildPlan,
-    rustc_path: &Path,
-    cwd: &Path,
-) -> Result<PathBuf> {
+pub async fn run_obj_plan(plan: &ObjBuildPlan, rustc_path: &Path, cwd: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(&plan.output_dir)
         .with_context(|| format!("create out dir {}", plan.output_dir.display()))?;
     let status = tokio::process::Command::new(rustc_path)
@@ -63,11 +59,7 @@ pub async fn run_obj_plan(
 /// On macOS, `xcrun -f clang` resolves to the active toolchain's
 /// driver. On Linux/Android, the NDK ships a per-API-level wrapper
 /// (e.g. `aarch64-linux-android21-clang`).
-pub async fn run_link_plan(
-    plan: &LinkPlan,
-    linker_path: &Path,
-    cwd: &Path,
-) -> Result<PathBuf> {
+pub async fn run_link_plan(plan: &LinkPlan, linker_path: &Path, cwd: &Path) -> Result<PathBuf> {
     if let Some(parent) = plan.output.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create out dir {}", parent.display()))?;
@@ -129,8 +121,13 @@ pub async fn thin_rebuild_obj(
 ) -> Result<PathBuf> {
     let obj_plan = build_obj_plan(captured_rustc, output_dir);
     let object = run_obj_plan(&obj_plan, rustc_path, cwd).await?;
-    let link_plan =
-        build_link_plan(captured_linker_args, &object, output_dylib, target_os, host_dylib);
+    let link_plan = build_link_plan(
+        captured_linker_args,
+        &object,
+        output_dylib,
+        target_os,
+        host_dylib,
+    );
     run_link_plan(&link_plan, linker_path, cwd).await
 }
 
@@ -166,8 +163,10 @@ mod tests {
         let plan = ObjBuildPlan {
             args: s(&[
                 "--edition=2021",
-                "--crate-name", "demo",
-                "--crate-type", "rlib",
+                "--crate-name",
+                "demo",
+                "--crate-type",
+                "rlib",
                 "--out-dir",
                 dir.to_string_lossy().as_ref(),
                 "/nope/this/source/does/not/exist.rs",

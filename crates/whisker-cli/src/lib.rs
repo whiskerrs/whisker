@@ -96,10 +96,14 @@ mod tests {
     #[test]
     fn parses_run_with_explicit_target_and_flags() {
         let cli = parse([
-            "whisker", "run",
-            "-p", "my-app",
-            "--target", "android",
-            "--bind", "0.0.0.0:1234",
+            "whisker",
+            "run",
+            "-p",
+            "my-app",
+            "--target",
+            "android",
+            "--bind",
+            "0.0.0.0:1234",
             "--hot-patch",
         ])
         .unwrap();

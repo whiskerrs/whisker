@@ -220,7 +220,10 @@ mod tests {
     fn data_symbols_are_skipped() {
         let old = t(vec![("g", data(0x4000, 8))]);
         let new = t(vec![("g", data(0x4100, 8))]);
-        assert!(build_jump_table(&old, &new, lib(), 0, 0).table.map.is_empty());
+        assert!(build_jump_table(&old, &new, lib(), 0, 0)
+            .table
+            .map
+            .is_empty());
     }
 
     #[test]
@@ -239,7 +242,10 @@ mod tests {
         // a size-0 entry is a PLT stub or compiler marker — skip.
         let old = t(vec![("plt_stub", text(0x1000, 0))]);
         let new = t(vec![("plt_stub", text(0x1100, 0))]);
-        assert!(build_jump_table(&old, &new, lib(), 0, 0).table.map.is_empty());
+        assert!(build_jump_table(&old, &new, lib(), 0, 0)
+            .table
+            .map
+            .is_empty());
     }
 
     #[test]
@@ -259,10 +265,7 @@ mod tests {
 
     #[test]
     fn added_and_removed_show_up_in_the_report() {
-        let old = t(vec![
-            ("kept", text(0x1000, 16)),
-            ("gone", text(0x2000, 16)),
-        ]);
+        let old = t(vec![("kept", text(0x1000, 16)), ("gone", text(0x2000, 16))]);
         let new = t(vec![
             ("kept", text(0x1100, 16)),
             ("brand_new", text(0x3000, 16)),
@@ -285,8 +288,16 @@ mod tests {
 
     #[test]
     fn report_lists_are_sorted_for_stable_diagnostics() {
-        let old = t(vec![("c", text(0x1, 1)), ("a", text(0x2, 1)), ("b", text(0x3, 1))]);
-        let new = t(vec![("z", text(0x4, 1)), ("y", text(0x5, 1)), ("x", text(0x6, 1))]);
+        let old = t(vec![
+            ("c", text(0x1, 1)),
+            ("a", text(0x2, 1)),
+            ("b", text(0x3, 1)),
+        ]);
+        let new = t(vec![
+            ("z", text(0x4, 1)),
+            ("y", text(0x5, 1)),
+            ("x", text(0x6, 1)),
+        ]);
         let plan = build_jump_table(&old, &new, lib(), 0, 0);
         assert_eq!(plan.report.removed, vec!["a", "b", "c"]);
         assert_eq!(plan.report.added, vec!["x", "y", "z"]);
@@ -296,7 +307,13 @@ mod tests {
 
     #[test]
     fn empty_inputs_produce_empty_outputs() {
-        let plan = build_jump_table(&SymbolTable::default(), &SymbolTable::default(), lib(), 0, 0);
+        let plan = build_jump_table(
+            &SymbolTable::default(),
+            &SymbolTable::default(),
+            lib(),
+            0,
+            0,
+        );
         assert!(plan.table.map.is_empty());
         assert!(plan.report.added.is_empty());
         assert!(plan.report.removed.is_empty());

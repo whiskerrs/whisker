@@ -99,17 +99,17 @@ mod tests {
         assert!(tree.children.is_empty());
         assert_eq!(
             r.into_ops(),
-            vec![MockOp::Create { handle: 1, tag: ElementTag::View }]
+            vec![MockOp::Create {
+                handle: 1,
+                tag: ElementTag::View
+            }]
         );
     }
 
     #[test]
     fn handle_tree_mirrors_element_tree() {
         let mut r = MockRenderer::new();
-        let tree = build_subtree(
-            &mut r,
-            &page().child(view().child(text_with("hi"))),
-        );
+        let tree = build_subtree(&mut r, &page().child(view().child(text_with("hi"))));
         // page (1) -> view (2) -> text (3) -> raw_text (4)
         assert_eq!(tree.handle, 1);
         assert_eq!(tree.children.len(), 1);
@@ -155,7 +155,10 @@ mod tests {
         assert_eq!(
             r.into_ops(),
             vec![
-                MockOp::Create { handle: 1, tag: ElementTag::View },
+                MockOp::Create {
+                    handle: 1,
+                    tag: ElementTag::View
+                },
                 MockOp::SetInlineStyles {
                     handle: 1,
                     css: "color: red".into(),

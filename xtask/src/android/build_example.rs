@@ -83,9 +83,7 @@ pub fn run(args: BuildExampleArgs) -> Result<()> {
     if !so_src.is_file() {
         anyhow::bail!("cargo did not produce {}", so_src.display());
     }
-    let jni_libs = example_dir
-        .join("app/src/main/jniLibs")
-        .join(&args.abi);
+    let jni_libs = example_dir.join("app/src/main/jniLibs").join(&args.abi);
     std::fs::create_dir_all(&jni_libs)?;
     let so_dst = jni_libs.join(&lib_name);
     println!("==> Copying {lib_name} → app jniLibs");
@@ -94,12 +92,15 @@ pub fn run(args: BuildExampleArgs) -> Result<()> {
 
     println!("==> Bundling libc++_shared.so from NDK");
     let libcxx = find_libcxx_shared(&args.abi)?;
-    std::fs::copy(&libcxx, jni_libs.join("libc++_shared.so"))
-        .context("copy libc++_shared.so")?;
+    std::fs::copy(&libcxx, jni_libs.join("libc++_shared.so")).context("copy libc++_shared.so")?;
 
     // 4. gradle assembleDebug.
     println!("==> Running gradle :app:assembleDebug");
-    run_gradle(&example_dir, &java_home, &[":app:assembleDebug", "--no-daemon"])?;
+    run_gradle(
+        &example_dir,
+        &java_home,
+        &[":app:assembleDebug", "--no-daemon"],
+    )?;
 
     let apk = example_dir.join("app/build/outputs/apk/debug/app-debug.apk");
     if apk.is_file() {
@@ -133,7 +134,9 @@ fn resolve_java_home() -> Result<PathBuf> {
 }
 
 fn has_any_aar(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
     entries
         .flatten()
         .any(|e| e.path().extension().is_some_and(|x| x == "aar"))
@@ -147,8 +150,8 @@ fn find_libcxx_shared(abi: &str) -> Result<PathBuf> {
     let ndk_root = android_home.join("ndk");
     let host = ndk::host_tag()?;
     let triple = ndk::abi_to_triple(abi)?;
-    for entry in std::fs::read_dir(&ndk_root)
-        .with_context(|| format!("read {}", ndk_root.display()))?
+    for entry in
+        std::fs::read_dir(&ndk_root).with_context(|| format!("read {}", ndk_root.display()))?
     {
         let entry = entry?;
         let candidate = entry
