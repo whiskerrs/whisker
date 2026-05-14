@@ -16,6 +16,7 @@ futures-util = { workspace = true, default-features = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 subsecond-types = { workspace = true }
+notify = { workspace = true }
 
 [dev-dependencies]
 # A minimal client to drive the WebSocket server in tests. The

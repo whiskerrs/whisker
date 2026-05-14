@@ -24,7 +24,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub mod server;
+pub mod watcher;
+
 pub use server::{Envelope, PatchSender};
+pub use watcher::{Change, ChangeKind};
 
 // ----- Config & enums --------------------------------------------------------
 

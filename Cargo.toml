@@ -58,3 +58,4 @@ serde_json = "1"
 
 # Host-side dev server (tuft-dev-server). Heavy deps confined here.
 axum = { version = "0.8", default-features = false, features = ["ws", "tokio", "http1"] }
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
