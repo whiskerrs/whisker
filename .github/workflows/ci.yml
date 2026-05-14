@@ -51,6 +51,13 @@ jobs:
     name: coverage (cargo-llvm-cov)
     runs-on: ubuntu-latest
     permissions:
+      # `permissions:` is a *whitelist*: any scope not listed is
+      # revoked from `GITHUB_TOKEN`. `actions/checkout` needs
+      # `contents: read` to clone the repo — private repos respond 404
+      # to unauthenticated fetches, which surfaces as
+      # "Repository not found" (the symptom we hit before this line
+      # was here).
+      contents: read
       # Required for the PR-comment step to post on pull requests
       # opened from forks. Plain push events ignore this.
       pull-requests: write
