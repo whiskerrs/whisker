@@ -1012,8 +1012,10 @@ dependencies = [
  "anyhow",
  "clap",
  "indicatif",
+ "tokio",
  "tuft-app-config",
  "tuft-codegen",
+ "tuft-dev-server",
  "tuft-plugin",
 ]
 

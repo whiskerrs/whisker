@@ -23,6 +23,11 @@ clap = { version = "4", features = ["derive"] }
 # a full-screen TUI (ratatui etc.) so the doctor output remains plain
 # scrollback text that AI agents and clipboard paste can read.
 indicatif = "0.17"
+# `tuft run` is a thin wrapper that builds a Config and calls
+# DevServer::run(); the heavy deps (tokio / axum / notify / object)
+# all live in tuft-dev-server.
+tuft-dev-server = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tuft-codegen = { workspace = true }
 tuft-app-config = { workspace = true }
 tuft-plugin = { workspace = true }

@@ -14,6 +14,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 pub mod doctor;
+pub mod run;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -31,6 +32,9 @@ enum Command {
     /// Inspect the local toolchain — Rust targets, Android NDK/SDK/JDK,
     /// Xcode + CocoaPods, and the Lynx artifacts under `target/`.
     Doctor(doctor::Args),
+    /// Build, install, and dev-loop a Tuft app — file watch + rebuild
+    /// + (eventually) subsecond hot patches over WebSocket.
+    Run(run::Args),
 }
 
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
@@ -43,6 +47,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     };
     match cli.command {
         Command::Doctor(a) => doctor::run(a),
+        Command::Run(a) => run::run(a),
     }
 }
 
@@ -67,6 +72,43 @@ mod tests {
                 assert!(!a.no_android);
                 assert!(!a.no_lynx);
             }
+            other => panic!("expected Doctor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_run_with_defaults() {
+        let cli = parse(["tuft", "run"]).unwrap();
+        match cli.command {
+            Command::Run(a) => {
+                assert_eq!(a.package, "hello-world");
+                assert_eq!(a.target, run::CliTarget::Host);
+                assert_eq!(a.bind.port(), 9876);
+                assert!(!a.hot_patch);
+                assert!(a.workspace_root.is_none());
+            }
+            other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_run_with_explicit_target_and_flags() {
+        let cli = parse([
+            "tuft", "run",
+            "-p", "my-app",
+            "--target", "android",
+            "--bind", "0.0.0.0:1234",
+            "--hot-patch",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Run(a) => {
+                assert_eq!(a.package, "my-app");
+                assert_eq!(a.target, run::CliTarget::Android);
+                assert_eq!(a.bind.to_string(), "0.0.0.0:1234");
+                assert!(a.hot_patch);
+            }
+            other => panic!("expected Run, got {other:?}"),
         }
     }
 
@@ -79,6 +121,7 @@ mod tests {
                 assert!(!a.no_android);
                 assert!(a.no_lynx);
             }
+            other => panic!("expected Doctor, got {other:?}"),
         }
     }
 
