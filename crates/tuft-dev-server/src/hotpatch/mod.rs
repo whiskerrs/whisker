@@ -14,6 +14,7 @@ pub mod cache;
 pub mod jump_table;
 pub mod link_plan;
 pub mod patcher;
+pub mod runner;
 pub mod symbol_table;
 pub mod thin_build;
 pub mod validate;
@@ -23,6 +24,7 @@ pub use cache::HotpatchModuleCache;
 pub use jump_table::{build_jump_table, DiffReport, PatchPlan};
 pub use link_plan::{build_link_plan, linker_os_for_host, LinkPlan, LinkerOs};
 pub use patcher::Patcher;
+pub use runner::{run_link_plan, run_obj_plan, thin_rebuild_obj};
 pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
 pub use thin_build::{
     build_obj_plan, build_thin_rebuild_plan, library_filename, object_filename,
