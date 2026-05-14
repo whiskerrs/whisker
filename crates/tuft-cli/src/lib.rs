@@ -14,6 +14,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 pub mod doctor;
+pub mod linker_shim;
 pub mod run;
 pub mod rustc_shim;
 
