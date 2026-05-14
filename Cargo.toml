@@ -6,6 +6,7 @@ members = [
     "crates/tuft-cli",
     "crates/tuft-codegen",
     "crates/tuft-dev-runtime",
+    "crates/tuft-dev-server",
     "crates/tuft-driver",
     "crates/tuft-driver-sys",
     "crates/tuft-macros",
@@ -30,6 +31,7 @@ tuft = { path = "crates/tuft", version = "0.1.0" }
 tuft-app-config = { path = "crates/tuft-app-config", version = "0.1.0" }
 tuft-codegen = { path = "crates/tuft-codegen", version = "0.1.0" }
 tuft-dev-runtime = { path = "crates/tuft-dev-runtime", version = "0.1.0" }
+tuft-dev-server = { path = "crates/tuft-dev-server", version = "0.1.0" }
 tuft-driver = { path = "crates/tuft-driver", version = "0.1.0" }
 tuft-driver-sys = { path = "crates/tuft-driver-sys", version = "0.1.0" }
 tuft-macros = { path = "crates/tuft-macros", version = "0.1.0" }

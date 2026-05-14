@@ -1041,6 +1041,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tuft-dev-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "tuft-driver"
 version = "0.1.0"
 dependencies = [

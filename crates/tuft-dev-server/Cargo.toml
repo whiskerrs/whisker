@@ -1,0 +1,15 @@
+[package]
+name = "tuft-dev-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Host-side dev server for `tuft run`. File watch + cargo build + WebSocket push of subsecond patches. Pulled in by tuft-cli; no presence in release builds."
+
+[dependencies]
+anyhow = { workspace = true }
+# Rest of the heavy deps (tokio / axum / notify / object) come in
+# with subsequent tasks (I4c..g). Keeping this empty for I4a means
+# the skeleton compiles in well under a second.
