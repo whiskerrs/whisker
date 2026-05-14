@@ -244,19 +244,117 @@ impl DevServer {
             None => None,
         };
 
-        // Tier 2 cold rebuild loop (Tier 1 branch lands in I4g-7d).
-        // For now, the loop falls through to Tier 2 every change.
-        let _ = patcher; // silence unused — wired up in I4g-7d
+        // Change loop. For each debounced change, decide the
+        // action (Tier 1 patch / Tier 2 rebuild / ignore) using
+        // the kind + whether we have a Patcher, then execute it.
+        // Tier 1 failures silently fall through to Tier 2 — saves
+        // the dev loop from being killed by a transient build
+        // glitch.
         while let Some(change) = rx.recv().await {
             eprintln!(
                 "[tuft-dev-server] change ({:?}) — {} path(s)",
                 change.kind,
-                change.paths.len()
+                change.paths.len(),
             );
-            run_build_cycle(&builder, &installer, &self.on_event, &sender, "rebuild").await;
+            let action = decide_action(change.kind, patcher.is_some());
+            match action {
+                LoopAction::Ignore => {
+                    eprintln!("[tuft-dev-server] ignored ({:?})", change.kind);
+                }
+                LoopAction::Tier1Patch => {
+                    let p = patcher.as_ref().expect("decide_action guarantees Some");
+                    match p.build_patch().await {
+                        Ok(plan) => {
+                            log_patch_diff(&plan.report);
+                            let n = sender.send(Envelope::Patch { table: plan.table });
+                            eprintln!(
+                                "[tuft-dev-server] tier1 patch sent to {n} client(s)",
+                            );
+                            emit(&self.on_event, Event::PatchSent);
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[tuft-dev-server] tier1 patch failed: {e:#} — \
+                                 falling back to Tier 2 cold rebuild",
+                            );
+                            run_build_cycle(
+                                &builder,
+                                &installer,
+                                &self.on_event,
+                                &sender,
+                                "rebuild (tier2 fallback)",
+                            )
+                            .await;
+                        }
+                    }
+                }
+                LoopAction::Tier2Rebuild => {
+                    run_build_cycle(
+                        &builder,
+                        &installer,
+                        &self.on_event,
+                        &sender,
+                        "rebuild",
+                    )
+                    .await;
+                }
+            }
         }
 
         Ok(())
+    }
+}
+
+/// Decision the change loop makes for one debounced change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopAction {
+    /// Drop on the floor — `ChangeKind::Other` doesn't warrant
+    /// either a patch or a rebuild.
+    Ignore,
+    /// Try a Tier 1 subsecond patch. Caller falls back to Tier 2
+    /// on Patcher error.
+    Tier1Patch,
+    /// Full cargo rebuild + reinstall + relaunch (Tier 2). Used
+    /// when the change is dependency-shaped (`Cargo.toml`) or
+    /// when no Patcher is configured.
+    Tier2Rebuild,
+}
+
+/// Pure decision helper for the change loop. Tier 1 only handles
+/// `ChangeKind::RustCode` and only when a Patcher is available;
+/// `Cargo.toml` always needs a full rebuild because the dependency
+/// graph may have shifted; everything else is ignored.
+pub fn decide_action(kind: ChangeKind, has_patcher: bool) -> LoopAction {
+    match kind {
+        ChangeKind::Other => LoopAction::Ignore,
+        ChangeKind::CargoToml => LoopAction::Tier2Rebuild,
+        ChangeKind::RustCode if has_patcher => LoopAction::Tier1Patch,
+        ChangeKind::RustCode => LoopAction::Tier2Rebuild,
+    }
+}
+
+/// Log added / removed symbols from a Tier 1 diff. Quiet when both
+/// lists are empty (the common case) so the dev terminal stays
+/// readable; loud when something interesting happens (`pub fn`
+/// added or removed) so the user notices.
+fn log_patch_diff(report: &hotpatch::DiffReport) {
+    if report.added.is_empty() && report.removed.is_empty() {
+        return;
+    }
+    if !report.added.is_empty() {
+        eprintln!(
+            "[tuft-dev-server] patch added {} symbol(s): {:?}",
+            report.added.len(),
+            report.added.iter().take(5).collect::<Vec<_>>(),
+        );
+    }
+    if !report.removed.is_empty() {
+        eprintln!(
+            "[tuft-dev-server] patch removed {} symbol(s) — \
+             host shell may crash on stale callers: {:?}",
+            report.removed.len(),
+            report.removed.iter().take(5).collect::<Vec<_>>(),
+        );
     }
 }
 
@@ -520,5 +618,65 @@ mod tests {
             target_os_for(Target::IosSimulator),
             hotpatch::LinkerOs::Macos,
         );
+    }
+
+    // ----- decide_action -----------------------------------------------
+
+    #[test]
+    fn rust_code_with_patcher_chooses_tier1_patch() {
+        assert_eq!(
+            decide_action(ChangeKind::RustCode, true),
+            LoopAction::Tier1Patch,
+        );
+    }
+
+    #[test]
+    fn rust_code_without_patcher_falls_through_to_tier2_rebuild() {
+        assert_eq!(
+            decide_action(ChangeKind::RustCode, false),
+            LoopAction::Tier2Rebuild,
+        );
+    }
+
+    #[test]
+    fn cargo_toml_always_chooses_tier2_rebuild_even_with_patcher() {
+        // Patcher can't reload deps — Cargo.toml needs a full
+        // rebuild regardless of which mode we're in.
+        assert_eq!(
+            decide_action(ChangeKind::CargoToml, true),
+            LoopAction::Tier2Rebuild,
+        );
+        assert_eq!(
+            decide_action(ChangeKind::CargoToml, false),
+            LoopAction::Tier2Rebuild,
+        );
+    }
+
+    #[test]
+    fn other_changes_are_ignored() {
+        assert_eq!(decide_action(ChangeKind::Other, true), LoopAction::Ignore);
+        assert_eq!(decide_action(ChangeKind::Other, false), LoopAction::Ignore);
+    }
+
+    // ----- log_patch_diff (smoke: shouldn't panic) ---------------------
+
+    #[test]
+    fn log_patch_diff_handles_empty_report_silently() {
+        let r = hotpatch::DiffReport {
+            added: vec![],
+            removed: vec![],
+            weak: vec![],
+        };
+        log_patch_diff(&r); // no panic, no output
+    }
+
+    #[test]
+    fn log_patch_diff_summarises_added_and_removed() {
+        let r = hotpatch::DiffReport {
+            added: vec!["new1".into(), "new2".into()],
+            removed: vec!["old1".into()],
+            weak: vec![],
+        };
+        log_patch_diff(&r); // smoke — output goes to stderr
     }
 }
