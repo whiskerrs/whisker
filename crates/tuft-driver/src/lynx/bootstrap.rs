@@ -133,13 +133,20 @@ fn start_hot_reload_receiver() {}
 #[cfg(feature = "hot-reload")]
 fn apply_pending_hot_patch() {
     if let Some(table) = tuft_dev_runtime::take_pending_patch() {
+        let entries = table.map.len();
+        let started = std::time::Instant::now();
         // SAFETY: tick_callback runs on the Lynx TASM thread and we
         // call this *before* `runtime.frame()`. The frame is what
         // invokes `subsecond::call`, so no `call` is active here —
         // the only safe window to swap dispatchers.
         match unsafe { subsecond::apply_patch(table) } {
-            Ok(()) => eprintln!("[tuft-dev] patch applied"),
-            Err(e) => eprintln!("[tuft-dev] apply_patch failed: {e:?}"),
+            Ok(()) => tuft_dev_runtime::devlog(&format!(
+                "patch applied ({entries} entries in {:?})",
+                started.elapsed(),
+            )),
+            Err(e) => tuft_dev_runtime::devlog(&format!(
+                "apply_patch failed: {e:?}",
+            )),
         }
     }
 }

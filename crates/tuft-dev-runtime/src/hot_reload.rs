@@ -32,7 +32,10 @@ use subsecond::JumpTable;
 /// anywhere useful on Android — stderr is dropped). On other
 /// platforms it's a plain `eprintln!` so dev sessions on host /
 /// macOS / Linux still get readable output.
-fn devlog(line: &str) {
+///
+/// Public so tuft-driver's `apply_pending_hot_patch` can log under
+/// the same `tuft-dev` tag without duplicating the helper.
+pub fn devlog(line: &str) {
     #[cfg(target_os = "android")]
     {
         // bionic exports __android_log_write(prio, tag, text) → int.

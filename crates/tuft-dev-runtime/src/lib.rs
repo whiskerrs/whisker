@@ -15,4 +15,4 @@
 pub mod hot_reload;
 
 #[cfg(feature = "hot-reload")]
-pub use hot_reload::{start_receiver, take_pending_patch};
+pub use hot_reload::{devlog, start_receiver, take_pending_patch};

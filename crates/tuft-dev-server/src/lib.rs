@@ -267,12 +267,19 @@ impl DevServer {
                 }
                 LoopAction::Tier1Patch => {
                     let p = patcher.as_ref().expect("decide_action guarantees Some");
+                    let started = std::time::Instant::now();
                     match p.build_patch().await {
                         Ok(plan) => {
+                            let built_in = started.elapsed();
                             log_patch_diff(&plan.report);
+                            let send_started = std::time::Instant::now();
                             let n = sender.send(Envelope::Patch { table: plan.table });
                             eprintln!(
-                                "[tuft-dev-server] tier1 patch sent to {n} client(s)",
+                                "[tuft-dev-server] tier1 patch sent to {n} client(s) \
+                                 (built in {built_in:?}, queued for send in {:?}, \
+                                 total edit→send: {:?})",
+                                send_started.elapsed(),
+                                started.elapsed(),
                             );
                             emit(&self.on_event, Event::PatchSent);
                         }
