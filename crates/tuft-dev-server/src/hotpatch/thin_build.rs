@@ -167,13 +167,15 @@ pub fn set_crate_type(args: &mut Vec<String>, new_kind: &str) {
     args.push(new_kind.into());
 }
 
-/// Platform-specific cdylib filename. Matches what rustc itself
-/// emits for `--crate-type cdylib`:
+/// Platform-specific cdylib filename for the **host** OS. Matches
+/// what rustc itself emits for `--crate-type cdylib`:
 ///   macOS    → `lib<crate>.dylib`
 ///   Linux    → `lib<crate>.so`     (Android uses the same convention)
 ///   Windows  → `<crate>.dll`
 ///
 /// Hyphens in the crate name become underscores (rustc convention).
+/// Use [`library_filename_for_os`] when the patch target's OS differs
+/// from the host (e.g. cross-compiling for Android from macOS).
 pub fn library_filename(crate_name: &str) -> String {
     let stem = crate_name.replace('-', "_");
     if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
@@ -182,6 +184,21 @@ pub fn library_filename(crate_name: &str) -> String {
         format!("{stem}.dll")
     } else {
         format!("lib{stem}.so")
+    }
+}
+
+/// Cross-platform variant: produce the cdylib filename for the
+/// **patch target** OS (which may differ from the host). The hot-
+/// patch dylib has to match the on-device shared-library naming
+/// convention, not the host's — Android wants `lib<crate>.so` even
+/// when the dev session is on macOS.
+pub fn library_filename_for_os(crate_name: &str, os: super::link_plan::LinkerOs) -> String {
+    use super::link_plan::LinkerOs;
+    let stem = crate_name.replace('-', "_");
+    match os {
+        LinkerOs::Macos => format!("lib{stem}.dylib"),
+        LinkerOs::Linux => format!("lib{stem}.so"),
+        LinkerOs::Other => format!("{stem}.dll"),
     }
 }
 

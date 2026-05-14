@@ -93,8 +93,14 @@ pub fn run(args: CargoBuildArgs) -> Result<()> {
     cmd.env(format!("CC_{triple_env}"), &tc.clang);
     cmd.env(format!("CXX_{triple_env}"), &tc.clang_cpp);
     cmd.env(format!("AR_{triple_env}"), &tc.ar);
-    // cargo uses this to drive the final link.
-    cmd.env(format!("CARGO_TARGET_{triple_upper}_LINKER"), &tc.clang);
+    // cargo uses this to drive the final link. Honour any
+    // pre-existing value so callers can interpose a linker shim
+    // (Tuft's Tier 1 dev loop does this with tuft-linker-shim,
+    // which then forwards to the NDK clang via TUFT_REAL_LINKER).
+    let linker_env = format!("CARGO_TARGET_{triple_upper}_LINKER");
+    if std::env::var_os(&linker_env).is_none() {
+        cmd.env(&linker_env, &tc.clang);
+    }
     // Exposed so build.rs scripts that want to poke at the NDK
     // (e.g. for sysroot paths) can find it without re-implementing
     // version detection.

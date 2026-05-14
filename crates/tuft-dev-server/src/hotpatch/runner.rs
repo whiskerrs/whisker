@@ -72,18 +72,27 @@ pub async fn run_link_plan(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create out dir {}", parent.display()))?;
     }
-    let status = tokio::process::Command::new(linker_path)
+    // Capture stderr so a failed link surfaces *why* (e.g. unresolved
+    // symbols, missing libraries) instead of just "exit 1". stdout is
+    // inherited so progress / warnings remain visible.
+    let out = tokio::process::Command::new(linker_path)
         .args(&plan.args)
         .current_dir(cwd)
-        .status()
+        .stderr(std::process::Stdio::piped())
+        .output()
         .await
         .with_context(|| format!("spawn {}", linker_path.display()))?;
-    if !status.success() {
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!(
-            "linker `{}` exited {} during patch link (output={})",
+            "linker `{}` exited {} during patch link (output={})\n\
+             argv: {:?}\n\
+             stderr:\n{}",
             linker_path.display(),
-            status,
+            out.status,
             plan.output.display(),
+            plan.args,
+            stderr.trim_end(),
         );
     }
     if !plan.output.is_file() {

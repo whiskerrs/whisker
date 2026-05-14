@@ -58,6 +58,16 @@ impl Installer {
         }
         let id = AndroidIdentity::for_package(&self.package);
 
+        // adb reverse — bridge device `127.0.0.1:9876` → host port so the
+        // on-device dev-runtime can reach our WebSocket without knowing
+        // the emulator-gateway IP (10.0.2.2). Best-effort: it might
+        // already be set from a previous run, or the device might be a
+        // non-emulator that doesn't need it.
+        let _ = Command::new("adb")
+            .args(["reverse", "tcp:9876", "tcp:9876"])
+            .status()
+            .await;
+
         // adb install -r <apk>
         let install = Command::new("adb")
             .args(["install", "-r"])

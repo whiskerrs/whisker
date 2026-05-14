@@ -33,11 +33,45 @@ use crate::Event;
 /// Wire-level message pushed to clients. `Envelope` mirrors the enum
 /// `tuft-dev-runtime::hot_reload` parses on the receive side; both
 /// rely on serde's tag/snake_case to keep the shape stable.
+///
+/// The `table` field is wrapped in [`WireJumpTable`] so the address
+/// map serialises as a JSON array of `[old, new]` pairs rather than
+/// a JSON object. JSON objects can only have string keys, so the
+/// default `HashMap<u64, u64>` derive would produce
+/// `{ "1234": 5678 }` — and the matching deserialize side, given a
+/// custom hasher like `subsecond_types::BuildAddressHasher`, fails
+/// to convert the string back to `u64`. The pair-array form
+/// sidesteps both: keys travel as JSON numbers, deserialize is
+/// straightforward, and the on-the-wire payload is also smaller.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Envelope {
     /// A new subsecond JumpTable for the device to apply.
-    Patch { table: subsecond_types::JumpTable },
+    Patch {
+        #[serde(serialize_with = "wire_jump_table::serialize")]
+        table: subsecond_types::JumpTable,
+    },
+}
+
+/// Shared serde adapter used by `tuft-dev-runtime::hot_reload` too —
+/// both sides must agree on the JSON shape. Kept inline (not a
+/// shared crate) because the type is tiny and the duplication
+/// burden is one ~30-line module.
+pub mod wire_jump_table {
+    use serde::ser::SerializeStruct;
+    use serde::Serializer;
+    use subsecond_types::JumpTable;
+
+    pub fn serialize<S: Serializer>(t: &JumpTable, s: S) -> Result<S::Ok, S::Error> {
+        let pairs: Vec<(u64, u64)> = t.map.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut st = s.serialize_struct("JumpTable", 5)?;
+        st.serialize_field("lib", &t.lib)?;
+        st.serialize_field("map", &pairs)?;
+        st.serialize_field("aslr_reference", &t.aslr_reference)?;
+        st.serialize_field("new_base_address", &t.new_base_address)?;
+        st.serialize_field("ifunc_count", &t.ifunc_count)?;
+        st.end()
+    }
 }
 
 /// Cheap-to-clone handle for sending envelopes from the rest of the
@@ -111,6 +145,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let (mut tx_ws, mut rx_ws) = socket.split();
     let mut bcast_rx = state.tx.subscribe();
+    eprintln!(
+        "[tuft-dev-server] client connected (total: {})",
+        state.tx.receiver_count(),
+    );
     if let Some(cb) = &state.on_event {
         cb(Event::ClientConnected);
     }

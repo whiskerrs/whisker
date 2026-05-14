@@ -388,6 +388,7 @@ fn prepare_tier1_capture(
     let rustc_cache_dir = hotpatch::wrapper::default_cache_dir(workspace_root);
     let linker_cache_dir = hotpatch::wrapper::default_linker_cache_dir(workspace_root);
     let real_linker = resolve_linker_for(target, workspace_root, package)?;
+    let target_triple = target_triple_for(target, workspace_root, package);
     Ok(Tier1Prep {
         capture: CaptureShims {
             rustc_shim: shims.rustc_shim,
@@ -395,9 +396,37 @@ fn prepare_tier1_capture(
             rustc_cache_dir,
             linker_cache_dir,
             real_linker: real_linker.clone(),
+            target_triple,
         },
         real_linker,
     })
+}
+
+/// What Rust target triple `target` compiles for. Android picks the
+/// triple from the ABI of the existing jniLibs/.so (or arm64-v8a
+/// for the first run). Host / iOS Simulator return `None`, falling
+/// back to the global RUSTFLAGS form.
+fn target_triple_for(
+    target: Target,
+    workspace_root: &Path,
+    package: &str,
+) -> Option<String> {
+    match target {
+        Target::Android => {
+            let abi = existing_android_abi(workspace_root, package)
+                .unwrap_or("arm64-v8a");
+            // abi_to_triple is xtask logic, duplicated minimally:
+            let triple = match abi {
+                "arm64-v8a" => "aarch64-linux-android",
+                "armeabi-v7a" => "armv7-linux-androideabi",
+                "x86_64" => "x86_64-linux-android",
+                "x86" => "i686-linux-android",
+                _ => return None,
+            };
+            Some(triple.to_string())
+        }
+        Target::Host | Target::IosSimulator => None,
+    }
 }
 
 /// Pick the linker driver to use for `target`. Returned path is what

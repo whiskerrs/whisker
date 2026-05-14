@@ -25,10 +25,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::{
-    build_jump_table, library_filename, load_captured_args, load_captured_linker_args,
-    parse_symbol_table, thin_rebuild_obj, validate_environment,
-    CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, LinkerOs,
-    PatchPlan,
+    build_jump_table, load_captured_args, load_captured_linker_args, parse_symbol_table,
+    thin_build, thin_rebuild_obj, validate_environment, CapturedLinkerInvocation,
+    CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, PatchPlan,
 };
 
 pub struct Patcher {
@@ -178,10 +177,16 @@ impl Patcher {
     }
 
     /// Where this Patcher would put the next patch dylib —
-    /// `<patch_out_dir>/lib<crate>.{so,dylib,dll}`. Useful for the
-    /// dev loop's `adb push` step.
+    /// `<patch_out_dir>/lib<crate>.{so,dylib,dll}`. The filename is
+    /// chosen for the *target* OS (e.g. Android's `.so` even when the
+    /// dev session runs on macOS) so the on-device runtime can
+    /// recognise it.
     pub fn expected_patch_path(&self) -> PathBuf {
-        self.patch_out_dir.join(library_filename(&self.package))
+        self.patch_out_dir
+            .join(thin_build::library_filename_for_os(
+                &self.package,
+                self.target_os,
+            ))
     }
 
     /// Resolve the captured linker invocation that produced this
@@ -285,7 +290,10 @@ mod tests {
         assert_eq!(p.package, "demo");
         assert_eq!(
             p.expected_patch_path(),
-            PathBuf::from("/tmp/patches").join(library_filename("demo")),
+            PathBuf::from("/tmp/patches").join(thin_build::library_filename_for_os(
+                "demo",
+                LinkerOs::Macos,
+            )),
         );
     }
 

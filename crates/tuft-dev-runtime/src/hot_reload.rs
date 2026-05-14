@@ -27,6 +27,43 @@ use std::time::Duration;
 
 use subsecond::JumpTable;
 
+/// Log a one-line message tagged `tuft-dev`. On Android, writes to
+/// logcat via `__android_log_write` (Rust's `eprintln!` doesn't go
+/// anywhere useful on Android — stderr is dropped). On other
+/// platforms it's a plain `eprintln!` so dev sessions on host /
+/// macOS / Linux still get readable output.
+fn devlog(line: &str) {
+    #[cfg(target_os = "android")]
+    {
+        // bionic exports __android_log_write(prio, tag, text) → int.
+        // ANDROID_LOG_INFO = 4. Both tag and text must be
+        // NUL-terminated.
+        unsafe extern "C" {
+            fn __android_log_write(
+                prio: std::os::raw::c_int,
+                tag: *const std::os::raw::c_char,
+                text: *const std::os::raw::c_char,
+            ) -> std::os::raw::c_int;
+        }
+        const ANDROID_LOG_INFO: std::os::raw::c_int = 4;
+        let tag = b"tuft-dev\0";
+        let mut buf: Vec<u8> = Vec::with_capacity(line.len() + 1);
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(0);
+        unsafe {
+            __android_log_write(
+                ANDROID_LOG_INFO,
+                tag.as_ptr() as *const _,
+                buf.as_ptr() as *const _,
+            );
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        eprintln!("[tuft-dev] {line}");
+    }
+}
+
 /// Most-recent-wins: an older queued patch is silently superseded.
 /// `tuft run` should be sending fully-replaced JumpTables anyway.
 static PENDING: Mutex<Option<JumpTable>> = Mutex::new(None);
@@ -37,19 +74,20 @@ pub fn take_pending_patch() -> Option<JumpTable> {
     PENDING.lock().ok().and_then(|mut p| p.take())
 }
 
-/// Spawn the receiver thread. Reads `TUFT_DEV_ADDR` from the env on
-/// first call; if unset, logs once and returns — making this safe to
-/// call unconditionally from app bootstrap.
+/// Spawn the receiver thread. Reads `TUFT_DEV_ADDR` from the env;
+/// if unset, falls back to `127.0.0.1:9876` (the dev-server's
+/// default), which works on Android once `adb reverse` is in
+/// place. Safe to call unconditionally from app bootstrap — the
+/// loop retries on connection failure so a dev server starting
+/// later still gets picked up.
 pub fn start_receiver() {
-    let addr = match std::env::var("TUFT_DEV_ADDR") {
-        Ok(a) if !a.is_empty() => a,
-        _ => {
-            eprintln!(
-                "[tuft-dev] TUFT_DEV_ADDR not set; hot-reload receiver disabled",
-            );
-            return;
-        }
-    };
+    let addr = std::env::var("TUFT_DEV_ADDR")
+        .ok()
+        .filter(|a| !a.is_empty())
+        .unwrap_or_else(|| "127.0.0.1:9876".to_string());
+    devlog(&format!(
+        "hot-reload receiver targeting ws://{addr}/tuft-dev",
+    ));
     std::thread::Builder::new()
         .name("tuft-hot-reload".to_string())
         .spawn(move || {
@@ -59,7 +97,7 @@ pub fn start_receiver() {
             {
                 Ok(rt) => rt,
                 Err(e) => {
-                    eprintln!("[tuft-dev] couldn't build tokio runtime: {e}");
+                    devlog(&format!("couldn't build tokio runtime: {e}"));
                     return;
                 }
             };
@@ -73,12 +111,12 @@ async fn client_loop(addr: String) {
     loop {
         match tokio_tungstenite::connect_async(&url).await {
             Ok((ws, _)) => {
-                eprintln!("[tuft-dev] connected: {url}");
+                devlog(&format!("connected: {url}"));
                 if let Err(e) = handle_session(ws).await {
-                    eprintln!("[tuft-dev] session ended: {e}");
+                    devlog(&format!("session ended: {e}"));
                 }
             }
-            Err(e) => eprintln!("[tuft-dev] connect {url} failed: {e}"),
+            Err(e) => devlog(&format!("connect {url} failed: {e}")),
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
@@ -100,10 +138,10 @@ where
                 Ok(Envelope::Patch { table }) => {
                     if let Ok(mut p) = PENDING.lock() {
                         *p = Some(table);
-                        eprintln!("[tuft-dev] patch queued");
+                        devlog("patch queued");
                     }
                 }
-                Err(e) => eprintln!("[tuft-dev] malformed envelope: {e}"),
+                Err(e) => devlog(&format!("malformed envelope: {e}")),
             },
             Message::Close(_) => return Ok(()),
             _ => {} // ignore Binary / Ping / Pong for now
@@ -117,7 +155,45 @@ where
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Envelope {
-    Patch { table: JumpTable },
+    Patch {
+        #[serde(deserialize_with = "deserialize_jump_table")]
+        table: JumpTable,
+    },
+}
+
+/// Counterpart of `tuft-dev-server::server::wire_jump_table::serialize`.
+/// Reads the address map as a JSON array of `[old, new]` pairs and
+/// reconstructs the `subsecond_types::JumpTable`. See the server
+/// side for the JSON-object-vs-array rationale.
+fn deserialize_jump_table<'de, D>(d: D) -> Result<JumpTable, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    use std::path::PathBuf;
+    use subsecond_types::AddressMap;
+
+    #[derive(Deserialize)]
+    struct Wire {
+        lib: PathBuf,
+        map: Vec<(u64, u64)>,
+        aslr_reference: u64,
+        new_base_address: u64,
+        ifunc_count: u64,
+    }
+    let w = Wire::deserialize(d)?;
+    let mut map = AddressMap::default();
+    map.reserve(w.map.len());
+    for (k, v) in w.map {
+        map.insert(k, v);
+    }
+    Ok(JumpTable {
+        lib: w.lib,
+        map,
+        aslr_reference: w.aslr_reference,
+        new_base_address: w.new_base_address,
+        ifunc_count: w.ifunc_count,
+    })
 }
 
 fn parse_envelope(s: &str) -> Result<Envelope, serde_json::Error> {
@@ -134,14 +210,13 @@ mod tests {
 
     #[test]
     fn parses_a_minimal_patch_envelope() {
-        // Construct a JumpTable JSON by hand — we don't want to depend
-        // on a particular subsecond-types serialisation example. Just
-        // every required field present, plausible values.
+        // The wire format encodes `map` as an array of [old, new]
+        // pairs — see deserialize_jump_table for the rationale.
         let json = r#"{
             "kind": "patch",
             "table": {
                 "lib": "/tmp/some-patch.dylib",
-                "map": {},
+                "map": [],
                 "aslr_reference": 4294967296,
                 "new_base_address": 8589934592,
                 "ifunc_count": 0
@@ -157,8 +232,28 @@ mod tests {
                 assert_eq!(table.aslr_reference, 0x1_0000_0000);
                 assert_eq!(table.new_base_address, 0x2_0000_0000);
                 assert_eq!(table.ifunc_count, 0);
+                assert!(table.map.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn parses_an_envelope_with_a_non_empty_address_map() {
+        let json = r#"{
+            "kind": "patch",
+            "table": {
+                "lib": "/tmp/p.so",
+                "map": [[100, 200], [300, 400]],
+                "aslr_reference": 0,
+                "new_base_address": 0,
+                "ifunc_count": 0
+            }
+        }"#;
+        let env = parse_envelope(json).expect("should parse");
+        let Envelope::Patch { table } = env;
+        assert_eq!(table.map.len(), 2);
+        assert_eq!(table.map.get(&100), Some(&200));
+        assert_eq!(table.map.get(&300), Some(&400));
     }
 
     #[test]

@@ -20,6 +20,13 @@ use crate::Target;
 /// build. All paths are absolute; the dev-server creates the cache
 /// dirs on demand. `real_linker` is what the linker shim forwards
 /// to (typically the same `cc`/`clang` cargo would have used).
+///
+/// `target_triple` is the **Rust target triple** the user code will
+/// compile for. When set, the linker shim is installed only for
+/// that triple via cargo's `CARGO_TARGET_<UPPER>_LINKER` env var —
+/// host-only artifacts (build scripts, proc-macros) keep their
+/// default linker. When `None`, the shim is installed globally via
+/// `RUSTFLAGS=-Clinker=…` (fine for host-only Tier 1 setups).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureShims {
     pub rustc_shim: PathBuf,
@@ -27,6 +34,7 @@ pub struct CaptureShims {
     pub rustc_cache_dir: PathBuf,
     pub linker_cache_dir: PathBuf,
     pub real_linker: PathBuf,
+    pub target_triple: Option<String>,
 }
 
 /// Builds the artifact appropriate for `target`. For host targets
@@ -126,18 +134,19 @@ impl Builder {
 /// to merge these into a `Command` (test helper / production code
 /// share this function).
 ///
-/// `RUSTFLAGS` is read from the *current process* env so that a
-/// caller-supplied flag isn't clobbered — we prepend our `-C linker`
-/// rather than replacing.
+/// When `c.target_triple` is `Some(t)`, the linker shim is installed
+/// **only** for that triple via
+/// `CARGO_TARGET_<TRIPLE_UPPER>_LINKER=<shim>` — cargo's own
+/// mechanism for per-target linker selection. This is the critical
+/// piece for cross-compilation: build scripts and proc-macros, which
+/// are compiled for the **host** triple, keep their default host
+/// linker, so they don't get redirected at the NDK / cross linker.
+///
+/// When `c.target_triple` is `None`, the shim is installed via
+/// `RUSTFLAGS=-Clinker=…` (the global form). Pre-existing
+/// `RUSTFLAGS` in the dev-server's env are preserved.
 pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
-    let prior = std::env::var("RUSTFLAGS").unwrap_or_default();
-    let mut rustflags = String::new();
-    if !prior.is_empty() {
-        rustflags.push_str(&prior);
-        rustflags.push(' ');
-    }
-    rustflags.push_str(&format!("-Clinker={}", c.linker_shim.display()));
-    vec![
+    let mut out = vec![
         (
             "RUSTC_WORKSPACE_WRAPPER".into(),
             c.rustc_shim.to_string_lossy().into(),
@@ -154,8 +163,78 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
             "TUFT_REAL_LINKER".into(),
             c.real_linker.to_string_lossy().into(),
         ),
-        ("RUSTFLAGS".into(), rustflags),
-    ]
+    ];
+
+    let shim = c.linker_shim.to_string_lossy().to_string();
+    // `-C save-temps=y` keeps rustc's temp dir (containing the
+    // version script and bridge-static archive the linker args
+    // reference) on disk after the fat build finishes — without it,
+    // rustc deletes everything in `/var/folders/.../rustc*/` on
+    // exit and the captured linker invocation becomes unreplayable.
+    let save_temps = "-Csave-temps=y";
+    match c.target_triple.as_deref() {
+        Some(triple) => {
+            out.push((target_linker_env_var(triple), shim));
+            let prior =
+                std::env::var(target_rustflags_env_var(triple)).unwrap_or_default();
+            let mut rustflags = String::new();
+            if !prior.is_empty() {
+                rustflags.push_str(&prior);
+                rustflags.push(' ');
+            }
+            rustflags.push_str(save_temps);
+            out.push((target_rustflags_env_var(triple), rustflags));
+        }
+        None => {
+            let prior = std::env::var("RUSTFLAGS").unwrap_or_default();
+            let mut rustflags = String::new();
+            if !prior.is_empty() {
+                rustflags.push_str(&prior);
+                rustflags.push(' ');
+            }
+            rustflags.push_str(&format!("-Clinker={shim} {save_temps}"));
+            out.push(("RUSTFLAGS".into(), rustflags));
+        }
+    }
+    out
+}
+
+/// Same uppercasing rule as [`target_linker_env_var`] but for the
+/// `…_RUSTFLAGS` variant. Cargo applies these flags only when
+/// building for the given triple, so they don't break host build
+/// scripts.
+pub fn target_rustflags_env_var(triple: &str) -> String {
+    let mut s = String::with_capacity(triple.len() + 24);
+    s.push_str("CARGO_TARGET_");
+    for ch in triple.chars() {
+        if ch.is_ascii_alphanumeric() {
+            s.push(ch.to_ascii_uppercase());
+        } else {
+            s.push('_');
+        }
+    }
+    s.push_str("_RUSTFLAGS");
+    s
+}
+
+/// Translate a Rust target triple to the cargo env var that selects
+/// its linker. Cargo's rule: uppercase the triple and replace
+/// non-alphanumerics with `_`, then prepend `CARGO_TARGET_` and
+/// append `_LINKER`.
+///
+/// e.g. `aarch64-linux-android` → `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER`.
+pub fn target_linker_env_var(triple: &str) -> String {
+    let mut s = String::with_capacity(triple.len() + 22);
+    s.push_str("CARGO_TARGET_");
+    for ch in triple.chars() {
+        if ch.is_ascii_alphanumeric() {
+            s.push(ch.to_ascii_uppercase());
+        } else {
+            s.push('_');
+        }
+    }
+    s.push_str("_LINKER");
+    s
 }
 
 /// What command the dev loop will spawn to produce a fresh artifact.
@@ -301,6 +380,14 @@ mod tests {
             rustc_cache_dir: PathBuf::from("/cache/rustc"),
             linker_cache_dir: PathBuf::from("/cache/linker"),
             real_linker: PathBuf::from("/usr/bin/cc"),
+            target_triple: None,
+        }
+    }
+
+    fn sample_capture_for(triple: &str) -> CaptureShims {
+        CaptureShims {
+            target_triple: Some(triple.into()),
+            ..sample_capture()
         }
     }
 
@@ -365,5 +452,90 @@ mod tests {
         assert!(!plain.captures_shims());
         let wrapped = b(Target::Host).with_capture(sample_capture());
         assert!(wrapped.captures_shims());
+    }
+
+    // ----- target_linker_env_var ---------------------------------------
+
+    #[test]
+    fn target_linker_env_var_uppercases_and_underscores_the_triple() {
+        assert_eq!(
+            target_linker_env_var("aarch64-linux-android"),
+            "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER",
+        );
+        assert_eq!(
+            target_linker_env_var("x86_64-linux-android"),
+            "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER",
+        );
+        assert_eq!(
+            target_linker_env_var("armv7-linux-androideabi"),
+            "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER",
+        );
+        assert_eq!(
+            target_linker_env_var("aarch64-apple-darwin"),
+            "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER",
+        );
+    }
+
+    #[test]
+    fn target_specific_capture_uses_cargo_target_linker_not_rustflags() {
+        // The key piece: with a target_triple set, we DO NOT put
+        // `-Clinker` into RUSTFLAGS — that would apply to host
+        // build scripts too and break cross-compilation.
+        let m = env_map(&sample_capture_for("aarch64-linux-android"));
+        assert_eq!(
+            m["CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"],
+            "/bin/tuft-linker-shim",
+        );
+        assert!(
+            !m.contains_key("RUSTFLAGS"),
+            "RUSTFLAGS should not be set when target_triple is Some: {:?}",
+            m,
+        );
+    }
+
+    #[test]
+    fn target_specific_capture_sets_save_temps_in_target_rustflags() {
+        // The captured linker invocation references rustc's temp
+        // dir; without -Csave-temps it gets cleaned up before we
+        // can replay. Verify the right env var carries it.
+        let m = env_map(&sample_capture_for("aarch64-linux-android"));
+        assert!(
+            m["CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS"].contains("save-temps=y"),
+            "expected save-temps in target RUSTFLAGS, got {:?}",
+            m,
+        );
+    }
+
+    #[test]
+    fn host_only_capture_combines_clinker_and_save_temps_in_rustflags() {
+        // No target_triple → both go into the global RUSTFLAGS,
+        // which is fine for host-only (no cross-build scripts to
+        // break).
+        let m = env_map(&sample_capture());
+        assert!(m["RUSTFLAGS"].contains("-Clinker="));
+        assert!(m["RUSTFLAGS"].contains("save-temps=y"));
+    }
+
+    #[test]
+    fn target_rustflags_env_var_uppercases_like_the_linker_one() {
+        assert_eq!(
+            target_rustflags_env_var("aarch64-linux-android"),
+            "CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS",
+        );
+        assert_eq!(
+            target_rustflags_env_var("armv7-linux-androideabi"),
+            "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_RUSTFLAGS",
+        );
+    }
+
+    #[test]
+    fn target_specific_capture_still_sets_the_shared_envs() {
+        // RUSTC_WORKSPACE_WRAPPER and the cache dirs are common to
+        // both forms.
+        let m = env_map(&sample_capture_for("aarch64-linux-android"));
+        assert_eq!(m["RUSTC_WORKSPACE_WRAPPER"], "/bin/tuft-rustc-shim");
+        assert_eq!(m["TUFT_RUSTC_CACHE_DIR"], "/cache/rustc");
+        assert_eq!(m["TUFT_LINKER_CACHE_DIR"], "/cache/linker");
+        assert_eq!(m["TUFT_REAL_LINKER"], "/usr/bin/cc");
     }
 }
