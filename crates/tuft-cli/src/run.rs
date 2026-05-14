@@ -6,9 +6,9 @@
 //! lives in `tuft-dev-server` so other host shells (an editor plugin,
 //! a notebook front-end, …) can reuse the same loop.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tuft_dev_server::{Config, DevServer, HotPatchMode, Target};
 
 #[derive(clap::Args, Debug)]
@@ -58,7 +58,16 @@ impl From<CliTarget> for Target {
 pub fn run(args: Args) -> Result<()> {
     let workspace_root = match args.workspace_root {
         Some(p) => p,
-        None => std::env::current_dir().context("CWD")?,
+        None => {
+            let cwd = std::env::current_dir().context("CWD")?;
+            find_workspace_root(&cwd).ok_or_else(|| {
+                anyhow!(
+                    "could not find a Cargo workspace at or above {} \
+                     (pass --workspace-root to override)",
+                    cwd.display(),
+                )
+            })?
+        }
     };
 
     let mut config = Config::defaults_for(workspace_root, args.package, args.target.into());
@@ -78,14 +87,92 @@ pub fn run(args: Args) -> Result<()> {
     rt.block_on(DevServer::new(config)?.run())
 }
 
+/// Walk up from `start` looking for a `Cargo.toml` containing a
+/// `[workspace]` section. Returns the directory holding the matching
+/// Cargo.toml, or `None` if we walk off the top of the filesystem
+/// without finding one. Pure: no env / no CWD reads, so unit-testable.
+fn find_workspace_root(start: &Path) -> Option<PathBuf> {
+    let mut cur = start.to_path_buf();
+    loop {
+        let cargo = cur.join("Cargo.toml");
+        if cargo.is_file() {
+            if let Ok(txt) = std::fs::read_to_string(&cargo) {
+                if txt.contains("[workspace]") {
+                    return Some(cur);
+                }
+            }
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
     fn cli_target_maps_to_dev_server_target() {
         assert_eq!(Target::from(CliTarget::Host), Target::Host);
         assert_eq!(Target::from(CliTarget::Android), Target::Android);
         assert_eq!(Target::from(CliTarget::Ios), Target::IosSimulator);
+    }
+
+    /// Per-test scratch dir so concurrent tests don't tread on each
+    /// other. The test suite is too small to justify the `tempfile`
+    /// crate as a dev-dep — same pattern as in doctor.rs.
+    fn unique_tempdir() -> PathBuf {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let p = std::env::temp_dir().join(format!("tuft-cli-run-test-{pid}-{n}"));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn find_workspace_root_returns_dir_when_cargo_toml_at_start() {
+        let tmp = unique_tempdir();
+        std::fs::write(
+            tmp.join("Cargo.toml"),
+            "[workspace]\nmembers = []\n",
+        )
+        .unwrap();
+        assert_eq!(find_workspace_root(&tmp).as_deref(), Some(tmp.as_path()));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn find_workspace_root_walks_up_from_a_member_dir() {
+        let tmp = unique_tempdir();
+        std::fs::write(
+            tmp.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"examples/hello-world\"]\n",
+        )
+        .unwrap();
+        let nested = tmp.join("examples/hello-world");
+        std::fs::create_dir_all(&nested).unwrap();
+        // Member's own Cargo.toml exists but doesn't have [workspace]
+        // — walker must keep going up.
+        std::fs::write(
+            nested.join("Cargo.toml"),
+            "[package]\nname = \"hello-world\"\nversion = \"0.0.0\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            find_workspace_root(&nested).as_deref(),
+            Some(tmp.as_path()),
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn find_workspace_root_returns_none_outside_any_workspace() {
+        let tmp = unique_tempdir();
+        // No Cargo.toml at all.
+        assert_eq!(find_workspace_root(&tmp), None);
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
