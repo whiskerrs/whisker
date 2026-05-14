@@ -26,10 +26,7 @@ pub use link_plan::{build_link_plan, linker_os_for_host, LinkPlan, LinkerOs};
 pub use patcher::Patcher;
 pub use runner::{run_link_plan, run_obj_plan, thin_rebuild_obj};
 pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
-pub use thin_build::{
-    build_obj_plan, build_thin_rebuild_plan, library_filename, object_filename,
-    thin_rebuild, ObjBuildPlan, ThinRebuildPlan,
-};
+pub use thin_build::{build_obj_plan, library_filename, object_filename, ObjBuildPlan};
 pub use validate::{ensure_target_supported, extract_target_triple, validate_environment};
 pub use wrapper::{
     default_cache_dir, default_linker_cache_dir, load_captured_args,

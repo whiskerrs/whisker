@@ -36,43 +36,9 @@
 //! for everything except the patched function bodies — exactly what
 //! `subsecond::apply_patch` expects.
 
-use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use super::wrapper::CapturedRustcInvocation;
-
-/// What the dev-server will spawn to produce a patch dylib.
-/// Pure-data; the runner side reads this and `Command::new("rustc")`
-/// against it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ThinRebuildPlan {
-    /// Final argv to pass to rustc (the binary itself isn't in
-    /// here; the runner picks the same rustc cargo would have).
-    pub args: Vec<String>,
-    /// Where the patch dylib will land (computed for the caller's
-    /// convenience; equal to `<out_dir>/lib<crate>.{so,dylib}`).
-    pub output_dir: PathBuf,
-}
-
-/// Build a [`ThinRebuildPlan`] from a captured invocation by
-/// editing only the args that have to change.
-///
-/// `output_dir` is where the resulting patch dylib should land —
-/// typically `target/.tuft/patches/<session-id>/`. The directory
-/// must exist (or the runner must create it) before rustc is
-/// invoked; this function only assembles arguments.
-pub fn build_thin_rebuild_plan(
-    captured: &CapturedRustcInvocation,
-    output_dir: &Path,
-) -> ThinRebuildPlan {
-    let mut args = captured.args.clone();
-    set_crate_type(&mut args, "cdylib");
-    set_out_dir(&mut args, output_dir);
-    ThinRebuildPlan {
-        args,
-        output_dir: output_dir.to_path_buf(),
-    }
-}
 
 /// What [`build_obj_plan`] returns — captured rustc args, edited so
 /// that running `rustc` with them produces a single `.o` containing
@@ -123,7 +89,8 @@ pub fn object_filename(crate_name: &str) -> String {
 /// Everything else is preserved verbatim — same target triple,
 /// sysroot, sysroot suffix, `-C` flags, `-L`/`-l` directives, cfg
 /// gates. This is the same "minimal edit, verbatim everything else"
-/// principle as [`build_thin_rebuild_plan`]; the only difference is
+/// principle as the captured-args replay does for the linker side
+/// in [`super::link_plan::build_link_plan`]; the only difference is
 /// where we stop in rustc's pipeline (`obj` vs `link`).
 pub fn build_obj_plan(
     captured: &CapturedRustcInvocation,
@@ -198,49 +165,6 @@ pub fn set_crate_type(args: &mut Vec<String>, new_kind: &str) {
     }
     args.push("--crate-type".into());
     args.push(new_kind.into());
-}
-
-/// Spawn rustc with `plan.args` from `cwd`. Inherits stdout/stderr
-/// so compile errors land in the dev-server's terminal. On success,
-/// returns the absolute path of the produced cdylib (resolved from
-/// `plan.output_dir` + the platform's library naming convention).
-///
-/// `rustc_path` is the rustc binary we want — typically the same one
-/// cargo would have invoked. The dev server reads `RUSTC` from env,
-/// or falls back to `"rustc"` on `$PATH`. We don't probe for it
-/// here; that's the caller's job (I4g-5c will validate version
-/// match).
-pub async fn thin_rebuild(
-    plan: &ThinRebuildPlan,
-    rustc_path: &Path,
-    cwd: &Path,
-    crate_name: &str,
-) -> Result<PathBuf> {
-    std::fs::create_dir_all(&plan.output_dir).with_context(|| {
-        format!("create out dir {}", plan.output_dir.display())
-    })?;
-
-    let status = tokio::process::Command::new(rustc_path)
-        .args(&plan.args)
-        .current_dir(cwd)
-        .status()
-        .await
-        .with_context(|| format!("spawn {}", rustc_path.display()))?;
-    if !status.success() {
-        anyhow::bail!(
-            "rustc exited {} during thin rebuild of `{crate_name}`",
-            status,
-        );
-    }
-
-    let expected = plan.output_dir.join(library_filename(crate_name));
-    if !expected.is_file() {
-        anyhow::bail!(
-            "thin rebuild succeeded but `{}` was not produced",
-            expected.display(),
-        );
-    }
-    Ok(expected)
 }
 
 /// Platform-specific cdylib filename. Matches what rustc itself
@@ -378,66 +302,6 @@ mod tests {
         let mut args = s(&["src/lib.rs"]);
         set_out_dir(&mut args, Path::new("/new/path"));
         assert_eq!(args, s(&["src/lib.rs", "--out-dir", "/new/path"]));
-    }
-
-    // ----- build_thin_rebuild_plan -------------------------------------
-
-    #[test]
-    fn plan_preserves_arbitrary_other_args_verbatim() {
-        // Unrelated args must come through untouched: target triple,
-        // sysroot, -C flags, -L search paths, -l link directives,
-        // cfg flags, --check-cfg, etc. Tuft does not interpret them.
-        let captured = captured_with(s(&[
-            "--edition=2021",
-            "--crate-name", "demo",
-            "--crate-type", "rlib",
-            "--target", "aarch64-apple-darwin",
-            "-C", "opt-level=3",
-            "-C", "embed-bitcode=no",
-            "-L", "dependency=/some/path",
-            "-l", "iconv",
-            "--cfg", "feature=\"alpha\"",
-            "--check-cfg", "cfg(docsrs,test)",
-            "--out-dir", "/cargo/target/debug/deps",
-            "src/lib.rs",
-        ]));
-        let plan = build_thin_rebuild_plan(&captured, Path::new("/tuft/patches/x"));
-
-        // crate-type was rewritten, out-dir was rewritten, all other
-        // args are preserved in original order.
-        assert_eq!(
-            plan.args,
-            s(&[
-                "--edition=2021",
-                "--crate-name", "demo",
-                "--target", "aarch64-apple-darwin",
-                "-C", "opt-level=3",
-                "-C", "embed-bitcode=no",
-                "-L", "dependency=/some/path",
-                "-l", "iconv",
-                "--cfg", "feature=\"alpha\"",
-                "--check-cfg", "cfg(docsrs,test)",
-                "src/lib.rs",
-                "--crate-type", "cdylib",
-                "--out-dir", "/tuft/patches/x",
-            ]),
-        );
-        assert_eq!(plan.output_dir, Path::new("/tuft/patches/x"));
-    }
-
-    #[test]
-    fn plan_handles_an_input_with_no_out_dir_or_crate_type() {
-        let captured = captured_with(s(&["--edition=2021", "src/lib.rs"]));
-        let plan = build_thin_rebuild_plan(&captured, Path::new("/tmp/p"));
-        assert_eq!(
-            plan.args,
-            s(&[
-                "--edition=2021",
-                "src/lib.rs",
-                "--crate-type", "cdylib",
-                "--out-dir", "/tmp/p",
-            ]),
-        );
     }
 
     // ----- set_emit_obj ------------------------------------------------
@@ -581,21 +445,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn plan_is_idempotent_on_a_hot_patch_re_run() {
-        // Running build_thin_rebuild_plan on its own output should
-        // produce the same args (no duplication of --crate-type or
-        // --out-dir).
-        let captured = captured_with(s(&["src/lib.rs"]));
-        let plan1 = build_thin_rebuild_plan(&captured, Path::new("/p"));
-        let plan2 = build_thin_rebuild_plan(
-            &CapturedRustcInvocation {
-                crate_name: captured.crate_name.clone(),
-                args: plan1.args.clone(),
-                timestamp_micros: 0,
-            },
-            Path::new("/p"),
-        );
-        assert_eq!(plan1.args, plan2.args);
-    }
 }

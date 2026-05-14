@@ -1,15 +1,23 @@
 //! `Patcher` — the integrator. Turns a [`crate::Change`] into a
 //! [`subsecond_types::JumpTable`] (wrapped in [`PatchPlan`]) by
-//! stitching together the pieces from I4g-1 through I4g-5.
+//! stitching together the pieces from I4g-1 through I4g-X2:
+//!
+//!   - captured rustc args + linker args from the fat build
+//!     (`wrapper`, `tuft-rustc-shim`, `tuft-linker-shim`)
+//!   - rustc `--emit=obj` + own linker invoke (`thin_build`,
+//!     `link_plan`, `runner::thin_rebuild_obj`)
+//!   - parse the resulting patch dylib (`symbol_table`)
+//!   - diff against the cached original (`HotpatchModuleCache` +
+//!     `build_jump_table`)
 //!
 //! Two constructors:
 //!
 //! - [`Patcher::new`] takes already-loaded state. Tests use this
-//!   to build the captured-args map and the original-binary cache
-//!   by hand, so they never need to actually run a real fat build.
+//!   to build the captured maps and the original-binary cache by
+//!   hand, so they never need to actually run a real fat build.
 //! - [`Patcher::initialize`] is the production path: spawn a fat
-//!   build, load the captured args, parse the original binary,
-//!   then call `new`.
+//!   build with both shims active, load both captures, parse the
+//!   original binary, then call `new`.
 
 use anyhow::{Context, Result};
 use object::Object;
@@ -19,68 +27,98 @@ use std::path::{Path, PathBuf};
 use crate::Target;
 
 use super::{
-    build_jump_table, build_thin_rebuild_plan, library_filename,
-    load_captured_args, parse_symbol_table, run_fat_build, thin_rebuild,
-    validate_environment, CapturedRustcInvocation, HotpatchModuleCache, PatchPlan,
+    build_jump_table, library_filename, linker_os_for_host, load_captured_args,
+    load_captured_linker_args, parse_symbol_table, resolve_host_linker, run_fat_build,
+    thin_rebuild_obj, validate_environment, CapturedLinkerInvocation,
+    CapturedRustcInvocation, HotpatchModuleCache, LinkerCaptureConfig, LinkerOs,
+    PatchPlan,
 };
 
 pub struct Patcher {
     package: String,
     rustc_path: PathBuf,
+    linker_path: PathBuf,
     cwd: PathBuf,
     patch_out_dir: PathBuf,
+    target_os: LinkerOs,
     original_cache: HotpatchModuleCache,
-    captured_args: HashMap<String, CapturedRustcInvocation>,
+    captured_rustc_args: HashMap<String, CapturedRustcInvocation>,
+    captured_linker_args: HashMap<String, CapturedLinkerInvocation>,
 }
 
 impl Patcher {
     /// Direct constructor. Tests use this to inject hand-built
     /// state (so they don't have to run a real `cargo build` or
     /// touch the workspace).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         package: String,
         rustc_path: PathBuf,
+        linker_path: PathBuf,
         cwd: PathBuf,
         patch_out_dir: PathBuf,
+        target_os: LinkerOs,
         original_cache: HotpatchModuleCache,
-        captured_args: HashMap<String, CapturedRustcInvocation>,
+        captured_rustc_args: HashMap<String, CapturedRustcInvocation>,
+        captured_linker_args: HashMap<String, CapturedLinkerInvocation>,
     ) -> Self {
         Self {
             package,
             rustc_path,
+            linker_path,
             cwd,
             patch_out_dir,
+            target_os,
             original_cache,
-            captured_args,
+            captured_rustc_args,
+            captured_linker_args,
         }
     }
 
-    /// Production setup: run the fat build with the rustc shim,
-    /// load the captured args, and parse the original binary.
-    /// Heavy — touches cargo, the filesystem, and rustc — so we
-    /// keep it out of unit tests; integration tests stick to
-    /// [`Patcher::new`].
+    /// Production setup: run the fat build with **both** shims, load
+    /// both captures, parse the original binary. Heavy — touches
+    /// cargo, the filesystem, and rustc — so we keep it out of unit
+    /// tests; integration tests stick to [`Patcher::new`].
     pub fn initialize(
         workspace_root: &Path,
         package: String,
         target: Target,
-        shim_path: &Path,
+        rustc_shim: &Path,
+        linker_shim: &Path,
         original_binary: &Path,
     ) -> Result<Self> {
-        let cache_dir = super::default_cache_dir(workspace_root);
-        run_fat_build(workspace_root, &package, target, shim_path, &cache_dir, None)
-            .context("fat build")?;
-        let captured_args = load_captured_args(&cache_dir)?;
+        let rustc_cache_dir = super::default_cache_dir(workspace_root);
+        let linker_cache_dir = super::default_linker_cache_dir(workspace_root);
+        let real_linker = resolve_host_linker();
+        let lc = LinkerCaptureConfig {
+            shim_path: linker_shim,
+            cache_dir: &linker_cache_dir,
+            real_linker: &real_linker,
+        };
+        run_fat_build(
+            workspace_root,
+            &package,
+            target,
+            rustc_shim,
+            &rustc_cache_dir,
+            Some(&lc),
+        )
+        .context("fat build")?;
+        let captured_rustc_args = load_captured_args(&rustc_cache_dir)?;
+        let captured_linker_args = load_captured_linker_args(&linker_cache_dir)?;
         let original_cache = HotpatchModuleCache::from_path(original_binary)?;
         let patch_out_dir = workspace_root.join("target/.tuft/patches");
         let rustc_path = current_rustc();
         Ok(Self::new(
             package,
             rustc_path,
+            real_linker,
             workspace_root.to_path_buf(),
             patch_out_dir,
+            linker_os_for_host(),
             original_cache,
-            captured_args,
+            captured_rustc_args,
+            captured_linker_args,
         ))
     }
 
@@ -88,26 +126,46 @@ impl Patcher {
     /// alongside the JumpTable so the dev loop can log warnings
     /// (added / removed / weak symbols).
     pub async fn build_patch(&self) -> Result<PatchPlan> {
-        // Look up the captured invocation by the rustc-style crate
-        // name (hyphens → underscores). Tier 1 only patches the user
-        // crate today; tracking edits in dependency crates is a
-        // future expansion.
-        let key = self.package.replace('-', "_");
-        let captured = self.captured_args.get(&key).with_context(|| {
+        // Look up the captured rustc invocation by the rustc-style
+        // crate name (hyphens → underscores). Tier 1 only patches
+        // the user crate today; tracking edits in dependency crates
+        // is a future expansion.
+        let crate_key = self.package.replace('-', "_");
+        let captured_rustc =
+            self.captured_rustc_args.get(&crate_key).with_context(|| {
+                format!(
+                    "no captured rustc invocation for crate `{}`; was the fat build run?",
+                    self.package,
+                )
+            })?;
+
+        // Linker capture is keyed by output basename. The fat build's
+        // crate-type is whatever cargo chose (typically `cdylib` for
+        // a Tuft user crate, sometimes `bin` + dylib for examples).
+        // Try the most-likely names in order.
+        let captured_linker = self.lookup_captured_linker().with_context(|| {
             format!(
-                "no captured rustc invocation for crate `{}`; was the fat build run?",
-                self.package
+                "no captured linker invocation for `{}`; was the fat build run with linker capture?",
+                self.package,
             )
         })?;
 
-        validate_environment(captured, &self.rustc_path)
+        validate_environment(captured_rustc, &self.rustc_path)
             .context("environment validation before thin rebuild")?;
 
-        let plan = build_thin_rebuild_plan(captured, &self.patch_out_dir);
-        let new_dylib =
-            thin_rebuild(&plan, &self.rustc_path, &self.cwd, &self.package)
-                .await
-                .context("thin rebuild")?;
+        let output_dylib = self.expected_patch_path();
+        let new_dylib = thin_rebuild_obj(
+            captured_rustc,
+            &captured_linker.args,
+            &self.patch_out_dir,
+            &output_dylib,
+            &self.rustc_path,
+            &self.linker_path,
+            &self.cwd,
+            self.target_os,
+        )
+        .await
+        .context("thin rebuild (obj + own linker)")?;
 
         let new_symbols = parse_symbol_table(&new_dylib)
             .with_context(|| format!("parse {}", new_dylib.display()))?;
@@ -123,10 +181,52 @@ impl Patcher {
     }
 
     /// Where this Patcher would put the next patch dylib —
-    /// `<workspace>/target/.tuft/patches/lib<crate>.{so,dylib,dll}`.
-    /// Useful for the dev loop's `adb push` step.
+    /// `<patch_out_dir>/lib<crate>.{so,dylib,dll}`. Useful for the
+    /// dev loop's `adb push` step.
     pub fn expected_patch_path(&self) -> PathBuf {
         self.patch_out_dir.join(library_filename(&self.package))
+    }
+
+    /// Resolve the captured linker invocation that produced this
+    /// crate's library. The key is the basename of the captured
+    /// `-o`; for a typical cargo build the file is something like
+    /// `lib<crate>-<hash>.dylib`, so we match by the `lib<crate>`
+    /// prefix and the right extension. If multiple match (e.g.
+    /// rebuilds across cargo cache states), the most-recent
+    /// timestamp wins.
+    fn lookup_captured_linker(&self) -> Option<&CapturedLinkerInvocation> {
+        let stem_lib = format!("lib{}", self.package.replace('-', "_"));
+        let stem_bin = self.package.replace('-', "_");
+        let exts: &[&str] = match self.target_os {
+            LinkerOs::Macos => &[".dylib"],
+            LinkerOs::Linux => &[".so"],
+            LinkerOs::Other => &[".dll"],
+        };
+        let mut best: Option<&CapturedLinkerInvocation> = None;
+        for inv in self.captured_linker_args.values() {
+            let Some(out) = inv.output.as_deref() else {
+                continue;
+            };
+            let Some(name) = Path::new(out).file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let matches_ext = exts.iter().any(|ext| name.ends_with(ext));
+            if !matches_ext {
+                continue;
+            }
+            // `lib<crate>` (Unix shared) or `<crate>` (Windows DLL or
+            // Apple bin output) — both are valid stems for the user
+            // crate's link output.
+            let matches_stem = name.starts_with(&stem_lib) || name.starts_with(&stem_bin);
+            if !matches_stem {
+                continue;
+            }
+            best = match best {
+                Some(prev) if prev.timestamp_micros >= inv.timestamp_micros => Some(prev),
+                _ => Some(inv),
+            };
+        }
+        best
     }
 }
 
@@ -156,19 +256,33 @@ mod tests {
     use super::*;
     use crate::hotpatch::SymbolTable;
 
-    #[test]
-    fn new_holds_onto_its_inputs() {
-        let cache = HotpatchModuleCache {
+    fn empty_cache() -> HotpatchModuleCache {
+        HotpatchModuleCache {
             lib: PathBuf::from("/orig.dylib"),
             symbols: SymbolTable::default(),
             aslr_reference: 0x1_0000_0000,
-        };
+        }
+    }
+
+    fn linker_inv(output: &str, ts: u128) -> CapturedLinkerInvocation {
+        CapturedLinkerInvocation {
+            output: Some(output.into()),
+            args: vec!["-shared".into()],
+            timestamp_micros: ts,
+        }
+    }
+
+    #[test]
+    fn new_holds_onto_its_inputs() {
         let p = Patcher::new(
             "demo".into(),
             PathBuf::from("/usr/local/bin/rustc"),
+            PathBuf::from("/usr/bin/clang"),
             PathBuf::from("/tmp/cwd"),
             PathBuf::from("/tmp/patches"),
-            cache,
+            LinkerOs::Macos,
+            empty_cache(),
+            HashMap::new(),
             HashMap::new(),
         );
         assert_eq!(p.package, "demo");
@@ -176,5 +290,106 @@ mod tests {
             p.expected_patch_path(),
             PathBuf::from("/tmp/patches").join(library_filename("demo")),
         );
+    }
+
+    // ----- lookup_captured_linker --------------------------------------
+
+    fn patcher_with_linker_map(
+        target_os: LinkerOs,
+        package: &str,
+        linker: HashMap<String, CapturedLinkerInvocation>,
+    ) -> Patcher {
+        Patcher::new(
+            package.into(),
+            "/rustc".into(),
+            "/cc".into(),
+            "/cwd".into(),
+            "/patches".into(),
+            target_os,
+            empty_cache(),
+            HashMap::new(),
+            linker,
+        )
+    }
+
+    #[test]
+    fn lookup_finds_macos_dylib_with_lib_prefix() {
+        let mut m = HashMap::new();
+        m.insert(
+            "libdemo-abc123.dylib".into(),
+            linker_inv("/cargo/target/debug/deps/libdemo-abc123.dylib", 100),
+        );
+        let p = patcher_with_linker_map(LinkerOs::Macos, "demo", m);
+        let inv = p.lookup_captured_linker().expect("found");
+        assert_eq!(inv.timestamp_micros, 100);
+    }
+
+    #[test]
+    fn lookup_finds_linux_so_with_underscored_crate_name() {
+        let mut m = HashMap::new();
+        m.insert(
+            "libhello_world.so".into(),
+            linker_inv("/cargo/target/debug/deps/libhello_world.so", 50),
+        );
+        let p = patcher_with_linker_map(LinkerOs::Linux, "hello-world", m);
+        let inv = p.lookup_captured_linker().expect("found");
+        assert_eq!(inv.timestamp_micros, 50);
+    }
+
+    #[test]
+    fn lookup_returns_most_recent_when_multiple_match() {
+        let mut m = HashMap::new();
+        m.insert(
+            "libdemo.dylib".into(),
+            linker_inv("/path/libdemo.dylib", 100),
+        );
+        m.insert(
+            "libdemo-abc.dylib".into(),
+            linker_inv("/path/libdemo-abc.dylib", 200),
+        );
+        let p = patcher_with_linker_map(LinkerOs::Macos, "demo", m);
+        let inv = p.lookup_captured_linker().expect("found");
+        assert_eq!(inv.timestamp_micros, 200);
+    }
+
+    #[test]
+    fn lookup_returns_none_when_no_extension_matches() {
+        let mut m = HashMap::new();
+        m.insert(
+            "libdemo.so".into(),
+            linker_inv("/path/libdemo.so", 100),
+        );
+        // Looking for macOS .dylib in a map of .so → no match.
+        let p = patcher_with_linker_map(LinkerOs::Macos, "demo", m);
+        assert!(p.lookup_captured_linker().is_none());
+    }
+
+    #[test]
+    fn lookup_returns_none_when_crate_name_doesnt_match() {
+        let mut m = HashMap::new();
+        m.insert(
+            "libother.dylib".into(),
+            linker_inv("/path/libother.dylib", 100),
+        );
+        let p = patcher_with_linker_map(LinkerOs::Macos, "demo", m);
+        assert!(p.lookup_captured_linker().is_none());
+    }
+
+    #[tokio::test]
+    async fn build_patch_errors_when_captured_rustc_args_missing() {
+        let p = Patcher::new(
+            "package-not-in-cache".into(),
+            "/rustc".into(),
+            "/cc".into(),
+            "/cwd".into(),
+            "/patches".into(),
+            LinkerOs::Macos,
+            empty_cache(),
+            HashMap::new(), // empty rustc map
+            HashMap::new(),
+        );
+        let err = p.build_patch().await.unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no captured rustc invocation"), "{msg}");
     }
 }
