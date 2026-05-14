@@ -1,15 +1,33 @@
 //! Tier 2 cold rebuild: spawn cargo / xtask to produce a fresh
 //! artifact for the active [`Target`].
 //!
-//! No subsecond patch construction here; that's I4g. This module's
-//! job is to take a [`Change`] and run the right shell-out so the
-//! installer (next module over) has something fresh to push.
+//! For Tier 2 (`HotPatchMode::Tier2ColdRebuild`) this module just
+//! shells out to cargo / xtask and produces a fresh artifact. When
+//! Tier 1 is active, the same build doubles as the **fat build**
+//! that captures rustc + linker invocations for the hot-patch
+//! pipeline — the dev loop calls [`Builder::with_capture`] with
+//! the shim paths and cache dirs before the initial build, and
+//! cargo runs the shims transparently via env vars (no command
+//! line change).
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use crate::Target;
+
+/// Shim wiring that turns a [`Builder::build`] into a Tier 1 fat
+/// build. All paths are absolute; the dev-server creates the cache
+/// dirs on demand. `real_linker` is what the linker shim forwards
+/// to (typically the same `cc`/`clang` cargo would have used).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureShims {
+    pub rustc_shim: PathBuf,
+    pub linker_shim: PathBuf,
+    pub rustc_cache_dir: PathBuf,
+    pub linker_cache_dir: PathBuf,
+    pub real_linker: PathBuf,
+}
 
 /// Builds the artifact appropriate for `target`. For host targets
 /// that's a plain `cargo build -p`; for device targets we lean on
@@ -23,6 +41,10 @@ pub struct Builder {
     /// actually compiles the user crate. For Tier 2 development
     /// builds the dev loop turns on `tuft/hot-reload`.
     features: Vec<String>,
+    /// `Some` → set the rustc + linker shim envs on every spawn so
+    /// the resulting cargo invocation is also a fat build. `None`
+    /// for plain Tier 2.
+    capture: Option<CaptureShims>,
 }
 
 impl Builder {
@@ -32,11 +54,22 @@ impl Builder {
             package,
             target,
             features: Vec::new(),
+            capture: None,
         }
     }
 
     pub fn with_features(mut self, features: Vec<String>) -> Self {
         self.features = features;
+        self
+    }
+
+    /// Install both shims into every spawn. When set, the build
+    /// fills the configured cache dirs with rustc + linker JSON
+    /// captures while otherwise producing the same artifact a
+    /// plain `cargo build` would. Pre-existing `RUSTFLAGS` are
+    /// preserved (the `-C linker=…` is prepended).
+    pub fn with_capture(mut self, capture: CaptureShims) -> Self {
+        self.capture = Some(capture);
         self
     }
 
@@ -46,6 +79,25 @@ impl Builder {
         let plan = self.plan();
         let mut cmd = Command::new(&plan.program);
         cmd.args(&plan.args).current_dir(&self.workspace_root);
+
+        if let Some(c) = &self.capture {
+            std::fs::create_dir_all(&c.rustc_cache_dir).with_context(|| {
+                format!(
+                    "create rustc cache dir {}",
+                    c.rustc_cache_dir.display(),
+                )
+            })?;
+            std::fs::create_dir_all(&c.linker_cache_dir).with_context(|| {
+                format!(
+                    "create linker cache dir {}",
+                    c.linker_cache_dir.display(),
+                )
+            })?;
+            for (k, v) in capture_env_vars(c) {
+                cmd.env(k, v);
+            }
+        }
+
         let status = cmd
             .status()
             .await
@@ -62,6 +114,48 @@ impl Builder {
     pub fn plan(&self) -> BuildPlan {
         plan_for(&self.package, self.target, &self.features)
     }
+
+    /// Whether this builder is currently configured for a fat build.
+    pub fn captures_shims(&self) -> bool {
+        self.capture.is_some()
+    }
+}
+
+/// Compute the env vars that turn a plain `cargo` invocation into a
+/// fat build that captures rustc + linker args. Caller is expected
+/// to merge these into a `Command` (test helper / production code
+/// share this function).
+///
+/// `RUSTFLAGS` is read from the *current process* env so that a
+/// caller-supplied flag isn't clobbered — we prepend our `-C linker`
+/// rather than replacing.
+pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
+    let prior = std::env::var("RUSTFLAGS").unwrap_or_default();
+    let mut rustflags = String::new();
+    if !prior.is_empty() {
+        rustflags.push_str(&prior);
+        rustflags.push(' ');
+    }
+    rustflags.push_str(&format!("-Clinker={}", c.linker_shim.display()));
+    vec![
+        (
+            "RUSTC_WORKSPACE_WRAPPER".into(),
+            c.rustc_shim.to_string_lossy().into(),
+        ),
+        (
+            "TUFT_RUSTC_CACHE_DIR".into(),
+            c.rustc_cache_dir.to_string_lossy().into(),
+        ),
+        (
+            "TUFT_LINKER_CACHE_DIR".into(),
+            c.linker_cache_dir.to_string_lossy().into(),
+        ),
+        (
+            "TUFT_REAL_LINKER".into(),
+            c.real_linker.to_string_lossy().into(),
+        ),
+        ("RUSTFLAGS".into(), rustflags),
+    ]
 }
 
 /// What command the dev loop will spawn to produce a fresh artifact.
@@ -196,5 +290,80 @@ mod tests {
         assert!(p.to_string_lossy().ends_with(
             "/examples/hello-world/android/app/build/outputs/apk/debug/app-debug.apk"
         ));
+    }
+
+    // ----- capture_env_vars + with_capture -----------------------------
+
+    fn sample_capture() -> CaptureShims {
+        CaptureShims {
+            rustc_shim: PathBuf::from("/bin/tuft-rustc-shim"),
+            linker_shim: PathBuf::from("/bin/tuft-linker-shim"),
+            rustc_cache_dir: PathBuf::from("/cache/rustc"),
+            linker_cache_dir: PathBuf::from("/cache/linker"),
+            real_linker: PathBuf::from("/usr/bin/cc"),
+        }
+    }
+
+    fn env_map(c: &CaptureShims) -> std::collections::HashMap<String, String> {
+        capture_env_vars(c).into_iter().collect()
+    }
+
+    #[test]
+    fn capture_env_vars_sets_both_shim_envs_and_cache_dirs() {
+        let c = sample_capture();
+        let m = env_map(&c);
+        assert_eq!(m["RUSTC_WORKSPACE_WRAPPER"], "/bin/tuft-rustc-shim");
+        assert_eq!(m["TUFT_RUSTC_CACHE_DIR"], "/cache/rustc");
+        assert_eq!(m["TUFT_LINKER_CACHE_DIR"], "/cache/linker");
+        assert_eq!(m["TUFT_REAL_LINKER"], "/usr/bin/cc");
+    }
+
+    #[test]
+    fn capture_env_vars_includes_dash_c_linker_in_rustflags() {
+        // RUSTFLAGS isn't easy to mutate across threads in tests
+        // (env is process-wide), so just check the produced value
+        // contains the linker flag — the prior-value preservation is
+        // tested separately by a serial test below.
+        let c = sample_capture();
+        let m = env_map(&c);
+        assert!(
+            m["RUSTFLAGS"].contains("-Clinker=/bin/tuft-linker-shim"),
+            "RUSTFLAGS missing -Clinker: {}",
+            m["RUSTFLAGS"],
+        );
+    }
+
+    #[test]
+    fn capture_env_vars_preserves_existing_rustflags_when_set() {
+        // Process-wide env is risky to mutate in parallel tests, so
+        // synchronise on a mutex to keep this single test serial
+        // with respect to itself; it's the only test that sets
+        // RUSTFLAGS.
+        use std::sync::Mutex;
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _g = LOCK.lock().unwrap();
+
+        let prev = std::env::var_os("RUSTFLAGS");
+        std::env::set_var("RUSTFLAGS", "--cfg=existing_flag");
+        let m = env_map(&sample_capture());
+        match prev {
+            Some(p) => std::env::set_var("RUSTFLAGS", p),
+            None => std::env::remove_var("RUSTFLAGS"),
+        }
+
+        assert!(
+            m["RUSTFLAGS"].starts_with("--cfg=existing_flag "),
+            "prior flag not preserved: {}",
+            m["RUSTFLAGS"],
+        );
+        assert!(m["RUSTFLAGS"].contains("-Clinker=/bin/tuft-linker-shim"));
+    }
+
+    #[test]
+    fn with_capture_marks_builder_as_capturing() {
+        let plain = b(Target::Host);
+        assert!(!plain.captures_shims());
+        let wrapped = b(Target::Host).with_capture(sample_capture());
+        assert!(wrapped.captures_shims());
     }
 }
