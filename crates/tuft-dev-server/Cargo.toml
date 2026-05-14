@@ -11,7 +11,7 @@ description = "Host-side dev server for `tuft run`. File watch + cargo build + W
 [dependencies]
 anyhow = { workspace = true }
 axum = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process"] }
 futures-util = { workspace = true, default-features = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

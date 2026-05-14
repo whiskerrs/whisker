@@ -15,7 +15,7 @@
 use anyhow::{Context, Result};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
