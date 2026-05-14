@@ -18,7 +18,7 @@
 //! | I4f  | xtask `--features` flag plumbing          |
 //! | I4g  | Tier 1 subsecond JumpTable construction   |
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -193,7 +193,11 @@ impl DevServer {
         .with_features(vec!["tuft/hot-reload".into()]);
 
         let tier1_init = if self.config.hot_patch_mode == HotPatchMode::Tier1Subsecond {
-            match prepare_tier1_capture(&self.config.workspace_root) {
+            match prepare_tier1_capture(
+                &self.config.workspace_root,
+                &self.config.package,
+                self.config.target,
+            ) {
                 Ok(prep) => {
                     builder = builder.with_capture(prep.capture.clone());
                     Some(prep)
@@ -370,11 +374,20 @@ struct Tier1Prep {
 /// Resolve shim paths (building them if missing) and assemble the
 /// CaptureShims wiring. Returns `Err` if the shim binaries can't be
 /// produced, in which case the caller falls back to Tier 2.
-fn prepare_tier1_capture(workspace_root: &Path) -> Result<Tier1Prep> {
+///
+/// `package` + `target` are used to pick the right linker:
+///   - Android → NDK clang for the ABI of the existing jniLibs/.so
+///     (or arm64-v8a as a default if no built .so exists yet).
+///   - others → host clang via [`hotpatch::wrapper::resolve_host_linker`].
+fn prepare_tier1_capture(
+    workspace_root: &Path,
+    package: &str,
+    target: Target,
+) -> Result<Tier1Prep> {
     let shims = hotpatch::resolve_shim_paths(workspace_root)?;
     let rustc_cache_dir = hotpatch::wrapper::default_cache_dir(workspace_root);
     let linker_cache_dir = hotpatch::wrapper::default_linker_cache_dir(workspace_root);
-    let real_linker = hotpatch::wrapper::resolve_host_linker();
+    let real_linker = resolve_linker_for(target, workspace_root, package)?;
     Ok(Tier1Prep {
         capture: CaptureShims {
             rustc_shim: shims.rustc_shim,
@@ -385,6 +398,52 @@ fn prepare_tier1_capture(workspace_root: &Path) -> Result<Tier1Prep> {
         },
         real_linker,
     })
+}
+
+/// Pick the linker driver to use for `target`. Returned path is what
+/// the linker shim forwards to during the fat build *and* what the
+/// thin-rebuild link step spawns directly — the same binary on both
+/// sides keeps SDK / sysroot resolution consistent.
+fn resolve_linker_for(
+    target: Target,
+    workspace_root: &Path,
+    package: &str,
+) -> Result<PathBuf> {
+    match target {
+        Target::Android => {
+            // Pick the API level + ABI from whatever jniLibs/.so the
+            // last xtask build produced. Default to arm64-v8a + API
+            // 21 when nothing is on disk yet (first run).
+            let abi = existing_android_abi(workspace_root, package)
+                .unwrap_or("arm64-v8a");
+            let api = std::env::var("TUFT_ANDROID_API")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(21);
+            hotpatch::android_ndk::android_clang_for(abi, api)
+                .with_context(|| format!("resolve NDK clang for ABI {abi} API {api}"))
+        }
+        Target::Host | Target::IosSimulator => {
+            Ok(hotpatch::wrapper::resolve_host_linker())
+        }
+    }
+}
+
+/// Walk the package's jniLibs tree and return the first ABI that
+/// has a libxxx.so under it. None means no prior xtask build.
+fn existing_android_abi(workspace_root: &Path, package: &str) -> Option<&'static str> {
+    let crate_us = package.replace('-', "_");
+    let so_name = format!("lib{crate_us}.so");
+    let jni_libs = workspace_root
+        .join("examples")
+        .join(package)
+        .join("android/app/src/main/jniLibs");
+    for abi in ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"] {
+        if jni_libs.join(abi).join(&so_name).is_file() {
+            return Some(abi);
+        }
+    }
+    None
 }
 
 /// Construct the patcher from the captures the fat build just wrote.
