@@ -166,12 +166,35 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
     ];
 
     let shim = c.linker_shim.to_string_lossy().to_string();
-    // `-C save-temps=y` keeps rustc's temp dir (containing the
+    // Two flags every fat build needs for Tier 1 to work:
+    //
+    // `-Csave-temps=y` keeps rustc's temp dir (containing the
     // version script and bridge-static archive the linker args
     // reference) on disk after the fat build finishes — without it,
     // rustc deletes everything in `/var/folders/.../rustc*/` on
     // exit and the captured linker invocation becomes unreplayable.
-    let save_temps = "-Csave-temps=y";
+    //
+    // `-Clink-arg=-Wl,--export-dynamic` (Linux/Android) /
+    // `-Clink-arg=-Wl,-export_dynamic` (macOS) exports every
+    // symbol from the original cdylib into its dynamic-symbol
+    // table. The patch dylib references std::fmt, alloc, etc.
+    // via undefined refs and resolves them against the loaded
+    // process at `dlopen` time — but cdylib's default symbol
+    // visibility hides those internal-to-the-library symbols.
+    // Without --export-dynamic, `dlopen` on the patch fails with
+    // "cannot locate symbol _ZN4core3fmt3num...". The cost is a
+    // slightly larger .so (the dynamic symbol table grows);
+    // acceptable for dev builds.
+    // Pick the flag spelling for the *target* triple, not the host —
+    // Apple linkers take `-export_dynamic`; GNU / lld take
+    // `--export-dynamic`. Default to the GNU form when target_triple
+    // is None (host-only setups land here).
+    let export_dynamic = match c.target_triple.as_deref() {
+        Some(t) if t.contains("apple") => "-Clink-arg=-Wl,-export_dynamic",
+        _ => "-Clink-arg=-Wl,--export-dynamic",
+    };
+    let save_temps = format!("-Csave-temps=y {export_dynamic}");
+    let save_temps = save_temps.as_str();
     match c.target_triple.as_deref() {
         Some(triple) => {
             out.push((target_linker_env_var(triple), shim));

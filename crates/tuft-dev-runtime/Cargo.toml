@@ -21,6 +21,7 @@ hot-reload = [
     "dep:serde_json",
     "dep:subsecond",
     "dep:subsecond-types",
+    "dep:base64",
 ]
 
 [dependencies]
@@ -34,3 +35,6 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 subsecond = { workspace = true, optional = true }
 subsecond-types = { workspace = true, optional = true }
+# Decode the patch dylib bytes that come in over the JSON envelope.
+# Pulled in only with hot-reload (release builds carry zero).
+base64 = { workspace = true, optional = true }

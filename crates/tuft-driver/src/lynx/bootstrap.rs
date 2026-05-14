@@ -134,6 +134,11 @@ fn start_hot_reload_receiver() {}
 fn apply_pending_hot_patch() {
     if let Some(table) = tuft_dev_runtime::take_pending_patch() {
         let entries = table.map.len();
+        let lib = table.lib.clone();
+        tuft_dev_runtime::devlog(&format!(
+            "apply_patch: start (lib={}, entries={entries})",
+            lib.display(),
+        ));
         let started = std::time::Instant::now();
         // SAFETY: tick_callback runs on the Lynx TASM thread and we
         // call this *before* `runtime.frame()`. The frame is what
@@ -145,7 +150,8 @@ fn apply_pending_hot_patch() {
                 started.elapsed(),
             )),
             Err(e) => tuft_dev_runtime::devlog(&format!(
-                "apply_patch failed: {e:?}",
+                "apply_patch failed: {e:?} (lib was {})",
+                lib.display(),
             )),
         }
     }

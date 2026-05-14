@@ -35,12 +35,27 @@ struct RequestFrameCb {
     user_data: *mut c_void,
 }
 
+/// SAFETY: `user_data` is an opaque host pointer. The host promises it
+/// remains valid for the lifetime of the dev session and is safe to
+/// call from any thread (the callbacks we wire on Android / iOS just
+/// post a "wake" message to the runtime thread).
+unsafe impl Send for RequestFrameCb {}
+unsafe impl Sync for RequestFrameCb {}
+
 thread_local! {
     static ARENA: Arena = RefCell::new(Vec::new());
     static DIRTY: RefCell<bool> = const { RefCell::new(false) };
     static TRACKING: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
     static REQUEST_FRAME: RefCell<Option<RequestFrameCb>> = const { RefCell::new(None) };
 }
+
+/// Cross-thread mirror of `REQUEST_FRAME`. Stored globally so threads
+/// other than the TASM thread (e.g. the WebSocket receiver in
+/// `tuft-dev-runtime`) can wake the runtime without going through a
+/// signal write. Same callback, same user_data — just reachable from
+/// any thread via `wake_runtime`.
+static REMOTE_WAKE: std::sync::Mutex<Option<RequestFrameCb>> =
+    std::sync::Mutex::new(None);
 
 /// (Test-only) clear the arena and dirty flag. Production code never
 /// needs this; tests reset between cases to keep the thread-local clean.
@@ -56,15 +71,33 @@ pub fn __reset_runtime() {
 ///
 /// Must be called from the same thread that runs `take_dirty` / signal
 /// updates — i.e. the runtime thread (Lynx TASM thread, which is the iOS
-/// main thread in our current setup).
+/// main thread in our current setup). Also mirrors the callback into
+/// the cross-thread slot so [`wake_runtime`] can fire it from any
+/// thread.
 #[doc(hidden)]
 pub fn set_request_frame_callback(
     func: Option<extern "C" fn(*mut c_void)>,
     user_data: *mut c_void,
 ) {
-    REQUEST_FRAME.with(|r| {
-        *r.borrow_mut() = func.map(|func| RequestFrameCb { func, user_data });
-    });
+    let built = func.map(|func| RequestFrameCb { func, user_data });
+    REQUEST_FRAME.with(|r| *r.borrow_mut() = built);
+    if let Ok(mut guard) = REMOTE_WAKE.lock() {
+        *guard = built;
+    }
+}
+
+/// Wake the runtime from any thread. Used by `tuft-dev-runtime`'s
+/// WebSocket receiver to nudge the host into running another tick
+/// after parking a patch in the pending slot — the receiver thread
+/// can't touch the runtime's thread-local `REQUEST_FRAME` directly.
+///
+/// No-op when no host callback is registered yet (signal updates
+/// during init may happen before bootstrap has wired anything up).
+pub fn wake_runtime() {
+    let cb = REMOTE_WAKE.lock().ok().and_then(|g| *g);
+    if let Some(cb) = cb {
+        (cb.func)(cb.user_data);
+    }
 }
 
 /// Marks the runtime dirty and fires the host wake-up callback. Centralised

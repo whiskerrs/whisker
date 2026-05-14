@@ -43,6 +43,14 @@ use crate::Event;
 /// to convert the string back to `u64`. The pair-array form
 /// sidesteps both: keys travel as JSON numbers, deserialize is
 /// straightforward, and the on-the-wire payload is also smaller.
+///
+/// `lib_bytes_b64` carries the patch dylib's content base64-encoded
+/// alongside its metadata. The device side writes those bytes to a
+/// local file under its own cache dir, overwrites `table.lib` with
+/// the local path, then calls `subsecond::apply_patch` against the
+/// device-side copy. Without this, the path in `table.lib` points
+/// at the host's `target/` dir, which `dlopen` on the device
+/// obviously can't reach.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Envelope {
@@ -50,6 +58,7 @@ pub enum Envelope {
     Patch {
         #[serde(serialize_with = "wire_jump_table::serialize")]
         table: subsecond_types::JumpTable,
+        lib_bytes_b64: String,
     },
 }
 
@@ -252,7 +261,10 @@ mod tests {
         assert_eq!(sender.client_count(), 1);
 
         let table = make_dummy_jump_table();
-        let n = sender.send(Envelope::Patch { table: table.clone() });
+        let n = sender.send(Envelope::Patch {
+            table: table.clone(),
+            lib_bytes_b64: String::new(),
+        });
         assert_eq!(n, 1);
 
         let msg = tokio::time::timeout(
@@ -282,6 +294,7 @@ mod tests {
         assert_eq!(sender.client_count(), 0);
         let n = sender.send(Envelope::Patch {
             table: make_dummy_jump_table(),
+            lib_bytes_b64: String::new(),
         });
         assert_eq!(n, 0);
     }
@@ -302,6 +315,7 @@ mod tests {
 
         let n = sender.send(Envelope::Patch {
             table: make_dummy_jump_table(),
+            lib_bytes_b64: String::new(),
         });
         assert_eq!(n, 2);
 

@@ -1381,6 +1381,7 @@ dependencies = [
 name = "tuft-dev-runtime"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "futures-util",
  "serde",
  "serde_json",
@@ -1397,6 +1398,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "futures-util",
  "notify",
  "object",

@@ -18,6 +18,10 @@ serde_json = { workspace = true }
 subsecond-types = { workspace = true }
 notify = { workspace = true }
 object = { workspace = true }
+# base64 is used to embed the patch dylib bytes inside the JSON
+# patch envelope (the WebSocket text frame). Small payload, no
+# need for a binary frame layer.
+base64 = { workspace = true }
 
 [dev-dependencies]
 # Async runtime for integration tests (#[tokio::test]).

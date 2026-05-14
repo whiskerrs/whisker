@@ -272,8 +272,27 @@ impl DevServer {
                         Ok(plan) => {
                             let built_in = started.elapsed();
                             log_patch_diff(&plan.report);
+                            let lib_bytes_b64 = match read_lib_bytes_b64(&plan.table.lib) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    eprintln!(
+                                        "[tuft-dev-server] tier1 patch built but \
+                                         could not read dylib bytes ({}): {e:#} — \
+                                         falling back to Tier 2",
+                                        plan.table.lib.display(),
+                                    );
+                                    run_build_cycle(
+                                        &builder, &installer, &self.on_event,
+                                        &sender, "rebuild (tier2 fallback)",
+                                    ).await;
+                                    continue;
+                                }
+                            };
                             let send_started = std::time::Instant::now();
-                            let n = sender.send(Envelope::Patch { table: plan.table });
+                            let n = sender.send(Envelope::Patch {
+                                table: plan.table,
+                                lib_bytes_b64,
+                            });
                             eprintln!(
                                 "[tuft-dev-server] tier1 patch sent to {n} client(s) \
                                  (built in {built_in:?}, queued for send in {:?}, \
@@ -560,6 +579,18 @@ fn target_os_for(target: Target) -> hotpatch::LinkerOs {
         Target::IosSimulator => hotpatch::LinkerOs::Macos,
         Target::Host => hotpatch::linker_os_for_host(),
     }
+}
+
+/// Read the patch dylib off disk and base64-encode it for the JSON
+/// envelope. The size is typically tens of KB (only the changed
+/// crate's `.o` linked with `-undefined dynamic_lookup`), so the
+/// base64 overhead is acceptable. A future optimisation is to use
+/// WebSocket binary frames instead.
+fn read_lib_bytes_b64(path: &Path) -> Result<String> {
+    use base64::Engine;
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("read {}", path.display()))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
 async fn run_build_cycle(
