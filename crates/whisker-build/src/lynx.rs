@@ -68,13 +68,13 @@ pub const LYNX_VERSION: &str = "3.7.0-whisker.0";
 /// produced by the fork's CI. Pinned to the
 /// [v3.7.0-whisker.0 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.0).
 pub const LYNX_ANDROID_SHA256: &str =
-    "566a961b6c47c33d604c820f86e10d3a1c9e2b87ac1a6051229e1649abe2ccb4";
+    "9bbaa9460afd3bd77fa2df87292cbe626e35fd8cc4eb21157bbe1572374b1eab";
 
-/// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`. Empty until
-/// the iOS half of `whiskerrs/lynx`'s `build-whisker-tarballs.yml`
-/// is wired up (the iOS job is currently a stub — see
-/// `.whisker/README.md` in the fork).
-pub const LYNX_IOS_SHA256: &str = "";
+/// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`. Pinned to
+/// the same release as Android — the fork's CI builds both halves
+/// in parallel and uploads them as a pair.
+pub const LYNX_IOS_SHA256: &str =
+    "06a733c1b9bfef70cccabbb4502d0f02280633f792322e42e20ed4258cba6a54";
 
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
 /// placeholders are filled by [`download_url`].
