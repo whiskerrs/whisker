@@ -153,9 +153,8 @@ fn build_ios_app(
     }
 
     // 2. xcframework wrap (cargo per-triple → lipo sim slices → wrap).
-    //    Phase 2 still delegates to `cargo xtask ios build-xcframework`;
-    //    Phase 3 ports this into `build_ios`.
-    build_ios::build_xcframework(workspace_root, &m.package)?;
+    //    Self-contained in `build_ios` since Phase 3a — no xtask call.
+    build_ios::build_xcframework(workspace_root, &m.package, &[])?;
 
     // 3. xcodebuild release.
     let scheme = m
