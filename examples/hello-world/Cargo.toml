@@ -8,8 +8,12 @@ publish = false
 # rust-analyzer) only see this and succeed without a bridge — no
 # unresolved `whisker_bridge_*` symbols. The mobile outputs are produced
 # by xtask via `cargo rustc --crate-type X`:
-#   Android: cargo xtask android cargo  → cdylib  (libhello_world.so)
-#   iOS:     cargo xtask ios build-xcframework  → staticlib (libhello_world.a)
+#   Android: cargo xtask android cargo            → dylib (libhello_world.so)
+#   iOS:     cargo xtask ios build-xcframework    → dylib (libhello_world.dylib)
+#
+# Both mobile sides use `dylib` (not `cdylib` / `staticlib`) so the
+# subsecond JumpTable can resolve mangled host symbols at patch
+# `dlopen` time — see `docs/hot-reload-plan.md` "Second Pivot".
 [lib]
 crate-type = ["rlib"]
 

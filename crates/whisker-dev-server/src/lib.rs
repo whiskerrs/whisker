@@ -466,7 +466,22 @@ fn target_triple_for(target: Target, workspace_root: &Path, package: &str) -> Op
             };
             Some(triple.to_string())
         }
-        Target::Host | Target::IosSimulator => None,
+        Target::IosSimulator => {
+            // Pick the simulator triple that matches the host arch
+            // running `whisker run`. Both arm64 Macs (`aarch64-apple-
+            // ios-sim`) and Intel Macs (`x86_64-apple-ios`) need a
+            // simulator slice, and the dev loop only builds one
+            // (xtask `build-xcframework` builds all three for release
+            // distribution, but the hot-patch path rebuilds just the
+            // thin obj for whichever triple the user is on).
+            let triple = match std::env::consts::ARCH {
+                "aarch64" => "aarch64-apple-ios-sim",
+                "x86_64" => "x86_64-apple-ios",
+                _ => return None,
+            };
+            Some(triple.to_string())
+        }
+        Target::Host => None,
     }
 }
 
@@ -556,9 +571,30 @@ fn original_binary_path(workspace_root: &Path, package: &str, target: Target) ->
             );
         }
         Target::IosSimulator => {
-            anyhow::bail!(
-                "Tier 1 not supported for iOS Simulator yet (staticlib-based xcframework)"
-            );
+            // xtask `ios build-xcframework` writes the simulator
+            // dylib (a fat arm64+x86_64 binary inside a
+            // `.framework`) to a stable path under
+            // `target/whisker-driver/`. We point the cache at the
+            // dylib itself (not the wrapping framework dir) — the
+            // dylib's static `whisker_aslr_anchor` address and
+            // mangled symbol table are what the patch builder + the
+            // device-side dlsym must agree on. Lipo'd Mach-O fat
+            // binaries are still parseable by the `object` crate; it
+            // picks the first slice unless we ask for a specific one
+            // (host arch is fine — the static layout is identical
+            // across slices because rustc generates the same MIR).
+            let dylib = workspace_root
+                .join("target/whisker-driver/WhiskerDriver.xcframework")
+                .join("ios-arm64_x86_64-simulator")
+                .join("WhiskerDriver.framework")
+                .join("WhiskerDriver");
+            if !dylib.is_file() {
+                anyhow::bail!(
+                    "no iOS Simulator dylib found at {} — run `cargo xtask ios build-xcframework` first",
+                    dylib.display(),
+                );
+            }
+            Ok(dylib)
         }
     }
 }
@@ -672,8 +708,37 @@ mod tests {
     }
 
     #[test]
-    fn original_binary_path_errors_for_ios_simulator() {
-        let res = original_binary_path(Path::new("/tmp/ws"), "hello-world", Target::IosSimulator);
+    fn original_binary_path_finds_ios_simulator_dylib_under_xcframework() {
+        // Mirror the Android success-path test: create the expected
+        // file layout in a temp workspace, then assert the resolver
+        // returns the file rather than the framework dir.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let ws = std::env::temp_dir().join(format!("whisker-dev-test-ios-{pid}-{n}"));
+        let _ = std::fs::remove_dir_all(&ws);
+        let fw_dir = ws
+            .join("target/whisker-driver/WhiskerDriver.xcframework")
+            .join("ios-arm64_x86_64-simulator")
+            .join("WhiskerDriver.framework");
+        std::fs::create_dir_all(&fw_dir).unwrap();
+        let dylib = fw_dir.join("WhiskerDriver");
+        std::fs::write(&dylib, b"fake-macho").unwrap();
+
+        let resolved = original_binary_path(&ws, "hello-world", Target::IosSimulator).unwrap();
+        assert_eq!(resolved, dylib);
+
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn original_binary_path_errors_when_ios_simulator_dylib_missing() {
+        let res = original_binary_path(
+            Path::new("/nonexistent/ws"),
+            "hello-world",
+            Target::IosSimulator,
+        );
         assert!(res.is_err());
     }
 

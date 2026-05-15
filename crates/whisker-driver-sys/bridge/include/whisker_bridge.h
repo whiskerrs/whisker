@@ -22,6 +22,27 @@
 
 #include <stdbool.h>
 
+// Export attribute for bridge entry points.
+//
+// On iOS we ship the bridge inside a dynamic `WhiskerDriver.framework`
+// and Swift callers (`WhiskerRuntime/Sources/.../WhiskerView.swift`)
+// resolve `whisker_bridge_*` through the framework's `.dynsym` at app
+// link time. Without `visibility("default")` the Apple linker
+// dead-strips these symbols (they have no in-dylib references because
+// the Rust crate doesn't call them — only Swift does). `used` keeps
+// the compiler from removing them ahead of the link step.
+//
+// On Android the same functions are called from JNI exports
+// (`Java_rs_whisker_runtime_WhiskerView_native…`) inside the same
+// `.so`, so the symbols survive `+whole-archive` even without an
+// explicit visibility attribute — but applying it uniformly costs
+// nothing and keeps both targets consistent.
+#if defined(__GNUC__) || defined(__clang__)
+#define WHISKER_BRIDGE_EXPORT __attribute__((visibility("default"), used))
+#else
+#define WHISKER_BRIDGE_EXPORT
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -48,10 +69,10 @@ typedef enum {
 // as `LynxView*`). The caller keeps ownership of the LynxView; the
 // returned engine handle is only valid while the LynxView is alive.
 // Returns NULL on failure (e.g. no LynxShell available yet).
-WhiskerEngine* whisker_bridge_engine_attach(void* lynx_view_ptr);
+WHISKER_BRIDGE_EXPORT WhiskerEngine* whisker_bridge_engine_attach(void* lynx_view_ptr);
 
 // Free the engine handle. Does NOT touch the underlying LynxView.
-void whisker_bridge_engine_release(WhiskerEngine* engine);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_engine_release(WhiskerEngine* engine);
 
 // ---- Thread dispatch ------------------------------------------------------
 
@@ -59,33 +80,33 @@ void whisker_bridge_engine_release(WhiskerEngine* engine);
 // (the callback may not have executed yet). All `whisker_bridge_*_element`
 // and other element ops MUST be called from inside the callback.
 typedef void (*WhiskerTasmCallback)(void* user_data);
-bool whisker_bridge_dispatch(WhiskerEngine* engine,
+WHISKER_BRIDGE_EXPORT bool whisker_bridge_dispatch(WhiskerEngine* engine,
                           WhiskerTasmCallback callback,
                           void* user_data);
 
 // ---- Element creation (must be called from inside whisker_bridge_dispatch) --
 
-WhiskerElement* whisker_bridge_create_element(WhiskerEngine* engine, WhiskerElementTag tag);
+WHISKER_BRIDGE_EXPORT WhiskerElement* whisker_bridge_create_element(WhiskerEngine* engine, WhiskerElementTag tag);
 
 // Decrement the element's ref count. Always safe to call multiple times
 // (idempotent on NULL).
-void whisker_bridge_release_element(WhiskerElement* element);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_release_element(WhiskerElement* element);
 
 // ---- Element manipulation (TASM thread only) -----------------------------
 
 // Set a string attribute. `key` and `value` must be NUL-terminated UTF-8.
-void whisker_bridge_set_attribute(WhiskerElement* element,
+WHISKER_BRIDGE_EXPORT void whisker_bridge_set_attribute(WhiskerElement* element,
                                const char* key,
                                const char* value);
 
 // Apply a raw inline-style string ("font-size: 32px; color: black;").
-void whisker_bridge_set_inline_styles(WhiskerElement* element, const char* css);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_set_inline_styles(WhiskerElement* element, const char* css);
 
 // Append `child` after the parent's last child.
-void whisker_bridge_append_child(WhiskerElement* parent, WhiskerElement* child);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_append_child(WhiskerElement* parent, WhiskerElement* child);
 
 // Remove `child` from `parent`. No-op if not present.
-void whisker_bridge_remove_child(WhiskerElement* parent, WhiskerElement* child);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_remove_child(WhiskerElement* parent, WhiskerElement* child);
 
 // Register a native event listener on `element`. When the event fires,
 // `callback(user_data)` is invoked from the Lynx TASM thread. The bridge
@@ -97,7 +118,7 @@ void whisker_bridge_remove_child(WhiskerElement* parent, WhiskerElement* child);
 // this function more than once for the same `name` replaces the prior
 // listener.
 typedef void (*WhiskerEventCallback)(void* user_data);
-void whisker_bridge_set_event_listener(WhiskerElement* element,
+WHISKER_BRIDGE_EXPORT void whisker_bridge_set_event_listener(WhiskerElement* element,
                                     const char* event_name,
                                     WhiskerEventCallback callback,
                                     void* user_data);
@@ -106,15 +127,15 @@ void whisker_bridge_set_event_listener(WhiskerElement* element,
 
 // Make `page` the engine's root element. Must be a Page element produced
 // via `whisker_bridge_create_element(WhiskerElementTagPage)`.
-void whisker_bridge_set_root(WhiskerEngine* engine, WhiskerElement* page);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_set_root(WhiskerEngine* engine, WhiskerElement* page);
 
 // Run resolve / layout / paint and submit to the painting context.
 // Call after all element mutations for the current frame are complete.
-void whisker_bridge_flush(WhiskerEngine* engine);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_flush(WhiskerEngine* engine);
 
 // ---- Phase 0–3 leftovers (kept temporarily for compatibility) ------------
 
-void whisker_bridge_log_hello(void);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_log_hello(void);
 
 #ifdef __cplusplus
 }  // extern "C"

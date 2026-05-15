@@ -33,5 +33,20 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: rs.whisker.examples.helloWorld
         TARGETED_DEVICE_FAMILY: '1,2'
+        # Resolve `@rpath/WhiskerDriver.framework/WhiskerDriver` (and
+        # the Lynx frameworks that ship inside WhiskerRuntime's SPM
+        # binaryTargets) at runtime. dyld walks this list of rpaths
+        # for each `@rpath/…` install_name; without this entry the
+        # embedded frameworks under `<App>.app/Frameworks/` would not
+        # be found and dyld would abort the launch.
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
     dependencies:
+      # `WhiskerRuntime` is a Swift library product — links statically
+      # into the host app's main binary. The dynamic binaryTargets
+      # inside the package (`WhiskerDriver`, `Lynx`, `LynxBase`,
+      # `LynxServiceAPI`, `PrimJS`) are auto-embedded by Xcode 14+ into
+      # `<App>.app/Frameworks/` based on the host target's product
+      # type, so no explicit `embed:` flag is needed here — adding one
+      # makes Xcode try to embed `WhiskerRuntime` itself, which fails
+      # because it's not a framework.
       - package: WhiskerRuntime

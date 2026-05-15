@@ -2,7 +2,9 @@
 //!
 //! Compiles the C++ bridge in `bridge/` into a static archive and
 //! emits the link directives that thread it (and Lynx) into the user
-//! crate's final dylib (Android) or staticlib (iOS).
+//! crate's final dylib (Android and iOS — both targets now use the
+//! same `--crate-type=dylib` shape so subsecond hot-patches can
+//! resolve mangled host symbols at `dlopen` time).
 //!
 //! No-op on host targets (`cargo check`, host tests, rust-analyzer …)
 //! so the workspace stays buildable without any native toolchain.
@@ -162,16 +164,16 @@ fn compile_ios() -> Result<()> {
                 dir.display()
             );
         }
-        // `-F` for the final rustc link: lets the host app's linker
-        // find `<Lynx/LynxView.h>` style framework imports when this
-        // staticlib is consumed. iOS builds produce a staticlib (not
-        // cdylib) so use the `-staticlib` variant to thread args
-        // through the *parent* user crate's final link.
-        println!("cargo:rustc-link-arg-staticlib=-F{}", dir.display());
     }
 
+    // --- Bridge compile ---------------------------------------------
     let bridge_src = bridge_root().join("src");
     let mut build = cc::Build::new();
+    // Silence cc::Build's auto `cargo:rustc-link-lib=static=…`; we
+    // emit `+whole-archive` ourselves below so Swift-callable bridge
+    // entry points (`whisker_bridge_engine_attach` etc.) survive
+    // dead-strip. Same rationale as Android's JNI exports.
+    build.cargo_metadata(false);
     build
         .cpp(true)
         // Lynx itself is gnu++17; staged headers (`std::optional`,
@@ -205,10 +207,57 @@ fn compile_ios() -> Result<()> {
     // `whisker_bridge_ios.mm`.
     build.compile("whisker_bridge_static");
 
-    // We don't emit `-l` for Lynx here. The .a we produced has UND
-    // references to `LynxShell::*` etc.; the host app's final link
-    // resolves them against `Lynx.xcframework` (added via SPM's
-    // `binaryTarget`). Same goes for `c++` / Foundation — those come
-    // from `linkerSettings` on the WhiskerRuntime SPM target.
+    // --- Link-line emission for the parent dylib --------------------
+    // The user crate is now built as `dylib` on iOS (matching
+    // Android — see `xtask/src/ios/build_xcframework.rs`), so cargo
+    // *does* have a final link step and these directives flow into
+    // it. The previous `rustc-link-arg-staticlib=…` directives were
+    // silently dropped because staticlibs have no link step.
+
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    println!("cargo:rustc-link-search=native={out_dir}");
+    // Bridge entry points are called by Swift through the framework's
+    // header, not from Rust — without `+whole-archive` they'd be
+    // dead-stripped before reaching the dylib's `.dynsym`.
+    println!("cargo:rustc-link-lib=static:+whole-archive=whisker_bridge_static");
+
+    // Lynx framework search + dependent-dylib references. The bridge
+    // `.a` has UND refs to `LynxShell::*` etc.; resolving them at the
+    // dylib's link step bakes LC_LOAD_DYLIB entries pointing at
+    // `@rpath/<Lynx>.framework/<Lynx>`, which dyld resolves at runtime
+    // when the host app's `@executable_path/Frameworks` rpath hits
+    // the SPM-embedded Lynx frameworks.
+    for fw in LYNX_FRAMEWORKS {
+        let dir = lynx_root.join(format!("{fw}.xcframework")).join(slice);
+        println!("cargo:rustc-link-search=framework={}", dir.display());
+        println!("cargo:rustc-link-lib=framework={fw}");
+    }
+
+    // Apple system frameworks Lynx depends on transitively. Used to
+    // come from SPM's `linkerSettings` on the WhiskerRuntime target;
+    // with the dylib doing its own link, the dylib link line needs
+    // them too (otherwise UND refs to e.g. `_JSValue` survive into
+    // the binary and dyld fails at load time).
+    println!("cargo:rustc-link-lib=framework=JavaScriptCore");
+    println!("cargo:rustc-link-lib=framework=NaturalLanguage");
+    println!("cargo:rustc-link-lib=dylib=c++");
+
+    // -ObjC forces ld64 to load every Obj-C class from
+    // statically-archived `.o` files. Lynx ships many Obj-C
+    // categories whose methods are otherwise stripped, producing
+    // "unrecognized selector" crashes at runtime. Counterpart of
+    // the `.unsafeFlags(["-ObjC"])` setting we used on the
+    // WhiskerRuntime SPM target back when iOS was a staticlib.
+    println!("cargo:rustc-link-arg=-Wl,-ObjC");
+
+    // NOTE: forcing bridge entry points (`_whisker_bridge_*`) into the
+    // dylib's `.dynsym` happens in `xtask/src/ios/build_xcframework.rs`,
+    // not here. `cargo:rustc-link-arg=…` only flows into the link of
+    // the crate that owns the build.rs (whisker-driver-sys is an
+    // rlib — no link step) and does NOT propagate to the parent dylib
+    // build of the user crate. xtask appends the `-Wl,-exported_symbol`
+    // flags directly to the `cargo rustc` invocation that produces
+    // the user-crate dylib, where they actually take effect.
+
     Ok(())
 }
