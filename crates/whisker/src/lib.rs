@@ -57,7 +57,16 @@ pub mod __main_runtime {
     #[cfg(feature = "hot-reload")]
     #[inline(always)]
     pub fn call_user_app(f: fn() -> crate::Element) -> crate::Element {
-        ::subsecond::call(|| f())
+        // `move` is load-bearing: without it, `|| f()` captures `f` by
+        // *reference* (the body only reads `f`, and `f`'s `Copy`-ness is
+        // not enough to flip Rust to by-value capture). Subsecond's
+        // `transmute_copy` reads the closure's first 8 bytes as the
+        // dispatch key — by-ref capture stores `&f` (a stack address) in
+        // that slot, so every lookup misses with a stack-shaped key.
+        // `move` forces by-value capture so the slot holds the actual
+        // `f` fn pointer, which is the runtime address the JumpTable's
+        // keys match against.
+        ::subsecond::call(move || f())
     }
 
     #[cfg(not(feature = "hot-reload"))]
