@@ -1,0 +1,24 @@
+# Whisker build orchestration.
+#
+# Cross-platform cargo + gradle + xcodebuild invocation, factored out
+# of `whisker-cli` and `whisker-dev-server` so both can share it
+# without crate-cycle gymnastics. Tier 2 cold rebuilds (dev-server)
+# and `whisker build` (cli) both go through this crate.
+#
+# Tier 1 hot-patch construction lives in `whisker-dev-server::hotpatch`,
+# not here — this crate's contract is "spawn cargo / gradle /
+# xcodebuild and stage outputs". The hot-patch pipeline is its own
+# concern with its own machinery (shim binaries, JumpTable, etc.).
+
+[package]
+name = "whisker-build"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Whisker build orchestration: cargo cross-compile + gradle / xcodebuild + xcframework wrap."
+
+[dependencies]
+anyhow = { workspace = true }

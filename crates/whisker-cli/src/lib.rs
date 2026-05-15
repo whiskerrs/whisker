@@ -29,8 +29,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 pub mod build;
-pub mod build_android;
-pub mod build_ios;
 pub mod doctor;
 pub mod linker_shim;
 pub mod manifest;

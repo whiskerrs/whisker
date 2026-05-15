@@ -1595,6 +1595,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-build"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "whisker-cli"
 version = "0.1.0"
 dependencies = [
@@ -1606,6 +1613,7 @@ dependencies = [
  "tokio",
  "toml",
  "whisker-app-config",
+ "whisker-build",
  "whisker-cng",
  "whisker-dev-server",
 ]
@@ -1648,6 +1656,7 @@ dependencies = [
  "subsecond-types",
  "tokio",
  "tokio-tungstenite 0.21.0",
+ "whisker-build",
 ]
 
 [[package]]

@@ -23,9 +23,10 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
+use whisker_build::{android, ios, Profile};
 use whisker_dev_server::Target;
 
-use crate::{build_android, build_ios, manifest, native};
+use crate::{manifest, native};
 
 #[derive(clap::Args, Debug)]
 pub struct Args {
@@ -103,21 +104,22 @@ fn build_android_apk(m: &manifest::ResolvedManifest, workspace_root: &Path) -> R
     // 2. Cargo cross-compile.
     let abi = "arm64-v8a";
     let api = m.config.android.min_sdk.unwrap_or(24);
-    let toolchain = build_android::resolve_toolchain(abi, api)
+    let toolchain = android::resolve_toolchain(abi, api)
         .with_context(|| format!("resolve NDK toolchain for {abi} API {api}"))?;
-    let so = build_android::cargo_build_dylib(&build_android::CargoBuild {
+    let so = android::cargo_build_dylib(&android::CargoBuild {
         workspace_root,
         package: &m.package,
         toolchain: &toolchain,
-        release: true,
+        profile: Profile::Release,
         features: &[],
+        capture: None,
     })?;
 
     // 3. Stage the .so + libc++_shared.so into jniLibs/<abi>/.
-    build_android::stage_jni_libs(&sync.gen_dir, abi, &so, &toolchain)?;
+    android::stage_jni_libs(&sync.gen_dir, abi, &so, &toolchain)?;
 
     // 4. Gradle release.
-    let apk = build_android::run_gradle_assemble(&sync.gen_dir, /*release=*/ true)?;
+    let apk = android::run_gradle_assemble(&sync.gen_dir, Profile::Release)?;
     println!("\n✅ APK: {}", apk.display());
     Ok(())
 }
@@ -153,8 +155,8 @@ fn build_ios_app(
     }
 
     // 2. xcframework wrap (cargo per-triple → lipo sim slices → wrap).
-    //    Self-contained in `build_ios` since Phase 3a — no xtask call.
-    build_ios::build_xcframework(workspace_root, &m.package, &[])?;
+    //    Self-contained in `whisker_build::ios` — no xtask call.
+    ios::build_xcframework(workspace_root, &m.package, &[], None)?;
 
     // 3. xcodebuild release.
     let scheme = m
@@ -175,7 +177,7 @@ fn build_ios_app(
         IosFlavour::Simulator => "iphonesimulator",
         IosFlavour::Device => "iphoneos",
     };
-    let app = build_ios::run_xcodebuild_app(&build_ios::XcodebuildArgs {
+    let app = ios::run_xcodebuild_app(&ios::XcodebuildArgs {
         gen_ios: &sync.gen_dir,
         scheme: &scheme,
         sdk,

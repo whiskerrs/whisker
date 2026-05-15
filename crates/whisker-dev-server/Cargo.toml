@@ -18,6 +18,8 @@ serde_json = { workspace = true }
 subsecond-types = { workspace = true }
 notify = { workspace = true }
 object = { workspace = true }
+# Cold-rebuild orchestration. Shared with whisker-cli's `whisker build`.
+whisker-build = { workspace = true }
 
 [dev-dependencies]
 # Async runtime for integration tests (#[tokio::test]).

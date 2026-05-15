@@ -53,8 +53,9 @@ pub mod installer;
 pub mod server;
 pub mod watcher;
 
-pub use builder::{BuildPlan, Builder, CaptureShims};
+pub use builder::Builder;
 pub use installer::Installer;
+pub use whisker_build::CaptureShims;
 pub use server::{Patch, PatchSender};
 pub use watcher::{Change, ChangeKind};
 
@@ -280,6 +281,7 @@ impl DevServer {
         // never reads the new captures).
         let mut builder = Builder::new(
             self.config.workspace_root.clone(),
+            self.config.crate_dir.clone(),
             self.config.package.clone(),
             self.config.target,
         )

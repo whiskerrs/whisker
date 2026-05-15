@@ -1,4 +1,6 @@
-//! iOS-side production build helpers for `whisker build`.
+//! iOS cargo + xcframework + xcodebuild orchestration. Shared by
+//! `whisker-cli`'s `whisker build` and `whisker-dev-server`'s Tier 2
+//! cold rebuild path.
 //!
 //! Three phases:
 //!
@@ -19,10 +21,17 @@
 //! the dylib's `.dynsym` available to read mangled Rust symbols
 //! against at runtime. Matches the Android side's choice. See
 //! `docs/hot-reload-plan.md` "Second Pivot".
+//!
+//! Tier 1 fat-build capture (see [`crate::capture`]) is opt-in via
+//! the `capture` parameter on [`build_xcframework`]. Dev-server's
+//! Tier 2 cold rebuild passes `Some(&shims)`; `whisker build`
+//! passes `None`.
 
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use crate::capture::{capture_env_vars, CaptureShims};
 
 const FRAMEWORK_NAME: &str = "WhiskerDriver";
 
@@ -56,10 +65,18 @@ const BRIDGE_EXPORTS: &[&str] = &[
 /// (`ios-arm64` device + `ios-arm64_x86_64-simulator` fat sim).
 ///
 /// Returns the path to the resulting `.xcframework` directory.
+///
+/// When `capture` is `Some`, the cargo invocations per triple are
+/// elevated into Tier 1 fat builds — they still produce the same
+/// dylibs but populate the rustc + linker capture caches so the
+/// dev-server's Patcher can construct hot patches. Dev-server's
+/// Tier 2 cold rebuild path passes `Some(&shims)`; `whisker build`
+/// passes `None` (prod has no Tier 1).
 pub fn build_xcframework(
     workspace_root: &Path,
     package: &str,
     features: &[String],
+    capture: Option<&CaptureShims>,
 ) -> Result<PathBuf> {
     let out = workspace_root.join("target/whisker-driver");
     let lib_stem = package.replace('-', "_");
@@ -83,7 +100,7 @@ pub fn build_xcframework(
         ));
     }
 
-    eprintln!("[whisker build] cleaning {}", out.display());
+    eprintln!("[whisker-build] cleaning {}", out.display());
     if out.exists() {
         std::fs::remove_dir_all(&out)
             .with_context(|| format!("rm -rf {}", out.display()))?;
@@ -99,10 +116,10 @@ pub fn build_xcframework(
         "x86_64-apple-ios",
         "aarch64-apple-ios-sim",
     ];
-    eprintln!("[whisker build] cargo rustc per iOS triple (package: {package})");
+    eprintln!("[whisker-build] cargo rustc per iOS triple (package: {package})");
     for triple in triples {
         eprintln!("    -- {triple}");
-        cargo_build_ios_dylib(workspace_root, package, triple, features)?;
+        cargo_build_ios_dylib(workspace_root, package, triple, features, capture)?;
     }
 
     let target_dir = workspace_root.join("target");
@@ -134,7 +151,7 @@ pub fn build_xcframework(
     let sim_fat_parent = out.join("sim");
     std::fs::create_dir_all(&sim_fat_parent)?;
     let sim_fat = sim_fat_parent.join(&cargo_dylib_name);
-    eprintln!("[whisker build] lipo simulator slices → {}", sim_fat.display());
+    eprintln!("[whisker-build] lipo simulator slices → {}", sim_fat.display());
     let status = Command::new("lipo")
         .args(["-create"])
         .arg(&sim_arm64_dylib)
@@ -154,7 +171,7 @@ pub fn build_xcframework(
     )?;
 
     let xcf = out.join(format!("{FRAMEWORK_NAME}.xcframework"));
-    eprintln!("[whisker build] xcodebuild -create-xcframework");
+    eprintln!("[whisker-build] xcodebuild -create-xcframework");
     let status = Command::new("xcodebuild")
         .arg("-create-xcframework")
         .args(["-framework"])
@@ -168,7 +185,7 @@ pub fn build_xcframework(
     if !status.success() {
         return Err(anyhow!("xcodebuild -create-xcframework failed ({status})"));
     }
-    eprintln!("[whisker build] xcframework: {}", xcf.display());
+    eprintln!("[whisker-build] xcframework: {}", xcf.display());
     Ok(xcf)
 }
 
@@ -176,11 +193,18 @@ pub fn build_xcframework(
 /// iOS triple. Appends `-Wl,-exported_symbol,<sym>` for every entry in
 /// [`BRIDGE_EXPORTS`] so Swift can dlsym them across the framework
 /// boundary.
+///
+/// `--release` is always set regardless of `capture` — iOS dev's
+/// Tier 1 capture wants the same optimised codegen prod ships. The
+/// only thing that changes when `capture` is `Some` is the env-var
+/// envelope (RUSTC_WORKSPACE_WRAPPER, the linker shim, save-temps,
+/// debug-assertions, export-dynamic) — see [`crate::capture_env_vars`].
 fn cargo_build_ios_dylib(
     workspace_root: &Path,
     package: &str,
     triple: &str,
     features: &[String],
+    capture: Option<&CaptureShims>,
 ) -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.args([
@@ -199,6 +223,17 @@ fn cargo_build_ios_dylib(
     cmd.arg("--");
     for sym in BRIDGE_EXPORTS {
         cmd.arg(format!("-Clink-arg=-Wl,-exported_symbol,{sym}"));
+    }
+    if let Some(c) = capture {
+        std::fs::create_dir_all(&c.rustc_cache_dir).with_context(|| {
+            format!("create rustc cache dir {}", c.rustc_cache_dir.display())
+        })?;
+        std::fs::create_dir_all(&c.linker_cache_dir).with_context(|| {
+            format!("create linker cache dir {}", c.linker_cache_dir.display())
+        })?;
+        for (k, v) in capture_env_vars(c) {
+            cmd.env(k, v);
+        }
     }
     let status = cmd
         .current_dir(workspace_root)
@@ -225,7 +260,7 @@ fn build_framework_dir(
     bridge_headers_src: &Path,
 ) -> Result<PathBuf> {
     let fw_dir = parent.join(format!("{FRAMEWORK_NAME}.framework"));
-    eprintln!("[whisker build] staging {}", fw_dir.display());
+    eprintln!("[whisker-build] staging {}", fw_dir.display());
     if fw_dir.exists() {
         std::fs::remove_dir_all(&fw_dir)?;
     }
@@ -360,7 +395,7 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
     }
 
     eprintln!(
-        "[whisker build] xcodebuild -configuration {} -sdk {}",
+        "[whisker-build] xcodebuild -configuration {} -sdk {}",
         args.configuration, args.sdk,
     );
     let destination = match args.sdk {

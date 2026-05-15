@@ -1,4 +1,6 @@
-//! Android-side production build helpers for `whisker build`.
+//! Android cargo + gradle orchestration. Shared by `whisker-cli`'s
+//! `whisker build` and `whisker-dev-server`'s Tier 2 cold rebuild
+//! path.
 //!
 //! Three phases:
 //!
@@ -17,18 +19,20 @@
 //!    against `libc++_shared`; without it `System.loadLibrary` fails
 //!    with `dlopen failed: cannot locate symbol _ZNSt6__ndk1…`.
 //!
-//! 3. [`run_gradle_assemble_release`] — invoke `gradle :app:assembleRelease`
-//!    against the generated project. Output is `app-release-unsigned.apk`
-//!    under `app/build/outputs/apk/release/`.
+//! 3. [`run_gradle_assemble`] — invoke `gradle :app:assemble{Release,Debug}`
+//!    against the generated project. Output is `app-{release,debug}.apk`
+//!    under `app/build/outputs/apk/<profile>/`.
 //!
-//! This module is a deliberate near-duplicate of bits of
-//! `xtask/src/android/{cargo_build,build_example}.rs`. Once Phase 3
-//! lands, xtask's user-app build paths get deleted and this is the
-//! single source of truth.
+//! Tier 1 fat-build capture (see [`crate::capture`]) is opt-in via
+//! the `capture` field on [`CargoBuild`] — dev-server's Tier 2
+//! cold rebuild passes `Some(&shims)`, `whisker build` passes `None`.
 
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use crate::capture::{capture_env_vars, CaptureShims};
+use crate::Profile;
 
 // ----- NDK toolchain resolution --------------------------------------------
 
@@ -153,9 +157,15 @@ pub struct CargoBuild<'a> {
     pub workspace_root: &'a Path,
     pub package: &'a str,
     pub toolchain: &'a AndroidToolchain,
-    pub release: bool,
+    pub profile: Profile,
     /// Cargo features to forward (`--features <each>`). Empty for prod.
     pub features: &'a [String],
+    /// `Some` → fold rustc/linker shim env vars into the cargo
+    /// invocation, populating the Tier 1 capture caches. `None` →
+    /// plain build. Dev-server passes `Some(&shims)` for its initial
+    /// fat build and Tier 2 cold rebuilds; `whisker build` passes
+    /// `None` (no Tier 1 in prod).
+    pub capture: Option<&'a CaptureShims>,
 }
 
 /// Run `cargo rustc --crate-type dylib --target <triple>` against the
@@ -187,8 +197,8 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         .args(["--target", triple])
         .args(["-p", b.package])
         .args(["--crate-type", "dylib"]);
-    if b.release {
-        cmd.arg("--release");
+    if let Some(flag) = b.profile.cargo_flag() {
+        cmd.arg(flag);
     }
     for feat in b.features {
         cmd.args(["--features", feat]);
@@ -208,10 +218,28 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     cmd.env("ANDROID_NDK_HOME", &b.toolchain.ndk);
     cmd.current_dir(b.workspace_root);
 
+    // Tier 1 capture shims (rustc-shim + linker-shim + cache dirs).
+    // `CARGO_TARGET_<triple>_LINKER` set above is overridden here so
+    // the linker shim wins for this triple — the shim forwards to
+    // `WHISKER_REAL_LINKER` after writing its capture JSON. Host-only
+    // artifacts (build scripts, proc-macros) keep their default
+    // linker since the env is keyed by target triple.
+    if let Some(c) = b.capture {
+        std::fs::create_dir_all(&c.rustc_cache_dir).with_context(|| {
+            format!("create rustc cache dir {}", c.rustc_cache_dir.display())
+        })?;
+        std::fs::create_dir_all(&c.linker_cache_dir).with_context(|| {
+            format!("create linker cache dir {}", c.linker_cache_dir.display())
+        })?;
+        for (k, v) in capture_env_vars(c) {
+            cmd.env(k, v);
+        }
+    }
+
     eprintln!(
-        "[whisker build] cargo rustc --crate-type dylib --target {triple} -p {pkg} ({profile})",
+        "[whisker-build] cargo rustc --crate-type dylib --target {triple} -p {pkg} ({profile:?})",
         pkg = b.package,
-        profile = if b.release { "release" } else { "dev" },
+        profile = b.profile,
     );
     let status = cmd
         .status()
@@ -225,7 +253,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         .workspace_root
         .join("target")
         .join(triple)
-        .join(if b.release { "release" } else { "debug" })
+        .join(b.profile.dir_name())
         .join(&lib_name);
     if !so_path.is_file() {
         return Err(anyhow!(
@@ -258,7 +286,7 @@ pub fn stage_jni_libs(gen_android: &Path, abi: &str, so: &Path, tc: &AndroidTool
         .with_context(|| format!("copy {} → {}", libcxx.display(), dst_libcxx.display()))?;
 
     eprintln!(
-        "[whisker build] staged jniLibs: {} + libc++_shared.so",
+        "[whisker-build] staged jniLibs: {} + libc++_shared.so",
         so_name.to_string_lossy(),
     );
     Ok(())
@@ -292,11 +320,14 @@ fn find_libcxx_shared(ndk: &Path, abi: &str) -> Result<PathBuf> {
 
 // ----- gradle ---------------------------------------------------------------
 
-/// Invoke `./gradlew :app:assembleRelease` (or `assembleDebug`) on the
-/// gen tree. Returns the path to the produced APK.
-pub fn run_gradle_assemble(gen_android: &Path, release: bool) -> Result<PathBuf> {
-    let task = if release { ":app:assembleRelease" } else { ":app:assembleDebug" };
-    eprintln!("[whisker build] gradle {task}");
+/// Invoke `./gradlew :app:assemble{Release,Debug}` on the gen tree.
+/// Returns the path to the produced APK.
+pub fn run_gradle_assemble(gen_android: &Path, profile: Profile) -> Result<PathBuf> {
+    let task = match profile {
+        Profile::Release => ":app:assembleRelease",
+        Profile::Debug => ":app:assembleDebug",
+    };
+    eprintln!("[whisker-build] gradle {task}");
     let java_home = resolve_java_home()?;
     let gradlew = gen_android.join("gradlew");
     if !gradlew.is_file() {
@@ -315,7 +346,7 @@ pub fn run_gradle_assemble(gen_android: &Path, release: bool) -> Result<PathBuf>
     if !status.success() {
         return Err(anyhow!("gradle {task} failed ({status})"));
     }
-    let kind = if release { "release" } else { "debug" };
+    let kind = profile.dir_name();
     // Release APKs are unsigned by default; sniff both filenames so the
     // function works whether the user has wired up a signingConfig.
     let outputs = gen_android.join(format!("app/build/outputs/apk/{kind}"));
