@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Required by whisker's hot-reload receiver: opens a WebSocket to
-         the dev server at 127.0.0.1:9876 (forwarded via `adb reverse`
-         in non-emulator setups). Harmless in Tier-2-only builds. -->
+    <!-- Required by Whisker's hot-reload receiver: opens a WebSocket
+         to the dev server at 127.0.0.1:9876 (forwarded via `adb
+         reverse` in non-emulator setups). Harmless in release builds
+         since the dev-runtime is feature-gated out. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:name=".HelloWorldApplication"
-        android:label="HelloWorld"
+        android:name=".{{android_application_class}}"
+        android:label="{{app_name}}"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
         <activity

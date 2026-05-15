@@ -52,6 +52,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 # depend on whisker-app-config — the cli translates the AppConfig
 # into a flat `dev_server::Config` before handing it off.
 whisker-app-config = { workspace = true }
+# Continuous Native Generation — renders gen/{android,ios}/ from the
+# resolved AppConfig before each run / build.
+whisker-cng = { workspace = true }
 # TOML parser for reading `[package].name` from the user crate's
 # Cargo.toml. Lightweight, no async runtime.
 toml = "0.8"

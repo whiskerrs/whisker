@@ -1,0 +1,25 @@
+# Whisker CNG (Continuous Native Generation).
+#
+# Generates the Android / iOS host projects under `gen/{android,ios}/`
+# from the user's `whisker.rs` (= `whisker_app_config::AppConfig`).
+# Modelled on Expo's CNG: the source of truth is the declarative
+# config, the native directories are build artifacts, never committed.
+#
+# Pure logic crate — no CLI surface. `whisker-cli` consumes the
+# `sync_android` / `sync_ios` entry points and handles user interaction.
+
+[package]
+name = "whisker-cng"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Whisker Continuous Native Generation — declarative Android/iOS project generation from whisker.rs."
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+whisker-app-config = { workspace = true }

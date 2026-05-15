@@ -31,6 +31,7 @@ use clap::{Parser, Subcommand};
 pub mod doctor;
 pub mod linker_shim;
 pub mod manifest;
+pub mod native;
 pub mod probe;
 pub mod run;
 pub mod rustc_shim;
@@ -103,7 +104,8 @@ mod tests {
                 assert!(a.manifest_path.is_none());
                 assert_eq!(a.target, run::CliTarget::Host);
                 assert_eq!(a.bind.port(), 9876);
-                assert!(!a.hot_patch);
+                // Hot-patch is the dev default — opt out with --no-hot-patch.
+                assert!(!a.no_hot_patch);
                 assert!(a.workspace_root.is_none());
             }
             other => panic!("expected Run, got {other:?}"),
@@ -121,7 +123,7 @@ mod tests {
             "android",
             "--bind",
             "0.0.0.0:1234",
-            "--hot-patch",
+            "--no-hot-patch",
         ])
         .unwrap();
         match cli.command {
@@ -132,7 +134,7 @@ mod tests {
                 );
                 assert_eq!(a.target, run::CliTarget::Android);
                 assert_eq!(a.bind.to_string(), "0.0.0.0:1234");
-                assert!(a.hot_patch);
+                assert!(a.no_hot_patch);
             }
             other => panic!("expected Run, got {other:?}"),
         }

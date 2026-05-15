@@ -1175,27 +1175,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
-name = "subsecond"
-version = "0.7.9"
-dependencies = [
- "js-sys",
- "libc",
- "libloading",
- "memfd",
- "memmap2",
- "serde",
- "subsecond-types",
- "thiserror 2.0.18",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "subsecond-poc"
 version = "0.0.0"
 dependencies = [
- "subsecond",
+ "whisker-subsecond",
 ]
 
 [[package]]
@@ -1597,11 +1580,11 @@ dependencies = [
 name = "whisker"
 version = "0.1.0"
 dependencies = [
- "subsecond",
  "whisker-app-config",
  "whisker-driver",
  "whisker-macros",
  "whisker-runtime",
+ "whisker-subsecond",
 ]
 
 [[package]]
@@ -1623,22 +1606,32 @@ dependencies = [
  "tokio",
  "toml",
  "whisker-app-config",
+ "whisker-cng",
  "whisker-dev-server",
+]
+
+[[package]]
+name = "whisker-cng"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "whisker-app-config",
 ]
 
 [[package]]
 name = "whisker-dev-runtime"
 version = "0.1.0"
 dependencies = [
- "base64",
  "futures-util",
  "serde",
  "serde_json",
- "subsecond",
  "subsecond-types",
  "tokio",
  "tokio-tungstenite 0.21.0",
  "whisker-runtime",
+ "whisker-subsecond",
 ]
 
 [[package]]
@@ -1647,7 +1640,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "base64",
  "futures-util",
  "notify",
  "object",
@@ -1662,10 +1654,10 @@ dependencies = [
 name = "whisker-driver"
 version = "0.1.0"
 dependencies = [
- "subsecond",
  "whisker-dev-runtime",
  "whisker-driver-sys",
  "whisker-runtime",
+ "whisker-subsecond",
 ]
 
 [[package]]
@@ -1690,6 +1682,23 @@ name = "whisker-runtime"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "whisker-subsecond"
+version = "0.7.9"
+dependencies = [
+ "js-sys",
+ "libc",
+ "libloading",
+ "memfd",
+ "memmap2",
+ "serde",
+ "subsecond-types",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

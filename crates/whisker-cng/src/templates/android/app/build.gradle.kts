@@ -4,16 +4,16 @@ plugins {
 }
 
 android {
-    namespace = "rs.whisker.examples.helloworld"
-    compileSdk = 34
+    namespace = "{{android_application_id}}"
+    compileSdk = {{android_target_sdk}}
     ndkVersion = "21.1.6352462"
 
     defaultConfig {
-        applicationId = "rs.whisker.examples.helloworld"
-        minSdk = 24
-        targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        applicationId = "{{android_application_id}}"
+        minSdk = {{android_min_sdk}}
+        targetSdk = {{android_target_sdk}}
+        versionCode = {{build_number}}
+        versionName = "{{version}}"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -28,8 +28,8 @@ android {
         jvmTarget = "17"
     }
 
-    // The Rust cdylib (libhello_world.so) is compiled by
-    // scripts/build-android-example.sh and dropped into this dir.
+    // The Rust dylib (lib{{rust_lib_name}}.so) is dropped into this
+    // dir by `whisker run` / `whisker build`.
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("src/main/jniLibs")
@@ -41,8 +41,11 @@ android {
             isMinifyEnabled = false
             // Keep symbols readable for ndk-stack.
             packaging {
-                jniLibs.keepDebugSymbols += listOf("**/libhello_world.so")
+                jniLibs.keepDebugSymbols += listOf("**/lib{{rust_lib_name}}.so")
             }
+        }
+        getByName("release") {
+            isMinifyEnabled = false
         }
     }
 }

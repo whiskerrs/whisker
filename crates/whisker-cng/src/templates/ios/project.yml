@@ -1,23 +1,23 @@
-name: HelloWorld
+name: {{ios_scheme}}
 options:
-  bundleIdPrefix: rs.whisker.examples
+  bundleIdPrefix: {{ios_bundle_id_prefix}}
   deploymentTarget:
-    iOS: '13.0'
+    iOS: '{{ios_deployment_target}}'
   developmentLanguage: en
   createIntermediateGroups: true
 
 settings:
   base:
     SWIFT_VERSION: '5.9'
-    IPHONEOS_DEPLOYMENT_TARGET: '13.0'
+    IPHONEOS_DEPLOYMENT_TARGET: '{{ios_deployment_target}}'
 
 packages:
-  # SPM package living under native/ios — relative to this project.yml.
+  # SPM package shipped by Whisker (path resolved by `whisker-cli`).
   WhiskerRuntime:
-    path: ../../../native/ios
+    path: {{whisker_runtime_ios_path}}
 
 targets:
-  HelloWorld:
+  {{ios_scheme}}:
     type: application
     platform: iOS
     sources:
@@ -25,13 +25,13 @@ targets:
     info:
       path: Info.plist
       properties:
-        CFBundleDisplayName: HelloWorld
+        CFBundleDisplayName: {{app_name}}
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: rs.whisker.examples.helloWorld
+        PRODUCT_BUNDLE_IDENTIFIER: {{ios_bundle_id}}
         TARGETED_DEVICE_FAMILY: '1,2'
         # Resolve `@rpath/WhiskerDriver.framework/WhiskerDriver` (and
         # the Lynx frameworks that ship inside WhiskerRuntime's SPM
@@ -46,7 +46,5 @@ targets:
       # inside the package (`WhiskerDriver`, `Lynx`, `LynxBase`,
       # `LynxServiceAPI`, `PrimJS`) are auto-embedded by Xcode 14+ into
       # `<App>.app/Frameworks/` based on the host target's product
-      # type, so no explicit `embed:` flag is needed here — adding one
-      # makes Xcode try to embed `WhiskerRuntime` itself, which fails
-      # because it's not a framework.
+      # type, so no explicit `embed:` flag is needed here.
       - package: WhiskerRuntime

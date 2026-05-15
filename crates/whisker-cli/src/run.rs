@@ -34,10 +34,12 @@ pub struct Args {
     #[arg(long, default_value = "127.0.0.1:9876")]
     pub bind: SocketAddr,
 
-    /// Enable Tier 1 subsecond hot-patching (defaults to Tier 2 cold
-    /// rebuild).
+    /// Opt out of Tier 1 subsecond hot-patching and fall back to Tier 2
+    /// cold rebuilds. `whisker run` defaults to Tier 1; this flag is
+    /// for situations where the hot-patch path is misbehaving and you
+    /// just want the slower-but-bulletproof path.
     #[arg(long)]
-    pub hot_patch: bool,
+    pub no_hot_patch: bool,
 
     /// Override the workspace root (= directory containing the
     /// `Cargo.toml` with `[workspace]`). Defaults to walking up from
@@ -78,12 +80,33 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     let target: Target = args.target.into();
+
+    // Sync the native host project (gen/{android,ios}/) before doing
+    // anything else. Fast-path on fingerprint match — typical run is
+    // a single file read. Errors here (missing whisker.rs fields,
+    // missing native runtime) are fatal: there's no point starting
+    // the dev loop if we can't build the app it would deploy.
+    let sync = crate::native::sync_for_target(
+        target,
+        &m.config,
+        &m.crate_dir,
+        &workspace_root,
+        &m.package,
+    )
+    .context("sync native project (gen/{android,ios}/)")?;
+    if sync.regenerated {
+        eprintln!(
+            "[whisker run] native project regenerated at {}",
+            sync.gen_dir.display(),
+        );
+    }
+
     let android = match target {
-        Target::Android => Some(android_params_from(&m, &m.crate_dir)?),
+        Target::Android => Some(android_params_from(&m, &sync.gen_dir)?),
         _ => None,
     };
     let ios = match target {
-        Target::IosSimulator => Some(ios_params_from(&m, &m.crate_dir)?),
+        Target::IosSimulator => Some(ios_params_from(&m, &sync.gen_dir)?),
         _ => None,
     };
 
@@ -96,10 +119,13 @@ pub fn run(args: Args) -> Result<()> {
         target,
         watch_paths,
         bind_addr: args.bind,
-        hot_patch_mode: if args.hot_patch {
-            HotPatchMode::Tier1Subsecond
-        } else {
+        // Tier 1 is the dev-loop default — `--no-hot-patch` is the
+        // emergency-exit when subsecond is misbehaving and you just
+        // need a working cold-rebuild loop.
+        hot_patch_mode: if args.no_hot_patch {
             HotPatchMode::Tier2ColdRebuild
+        } else {
+            HotPatchMode::Tier1Subsecond
         },
         android,
         ios,
@@ -115,7 +141,15 @@ pub fn run(args: Args) -> Result<()> {
 /// Build [`AndroidParams`] from the resolved manifest. Returns an
 /// error if the user's `whisker.rs` left required fields (like the
 /// `applicationId`) unset.
-fn android_params_from(m: &manifest::ResolvedManifest, crate_dir: &Path) -> Result<AndroidParams> {
+///
+/// `project_dir` is the *generated* Gradle project under
+/// `gen/android/` — `whisker-cng` writes the tree, this function just
+/// stitches in the `applicationId` + launcher activity for installer
+/// use.
+fn android_params_from(
+    m: &manifest::ResolvedManifest,
+    project_dir: &Path,
+) -> Result<AndroidParams> {
     let a = &m.config.android;
     let application_id = a
         .application_id
@@ -131,10 +165,7 @@ fn android_params_from(m: &manifest::ResolvedManifest, crate_dir: &Path) -> Resu
         .clone()
         .unwrap_or_else(|| ".MainActivity".into());
     Ok(AndroidParams {
-        // Today the Gradle project lives at `<crate>/android/`. If we
-        // ever support a relocated project dir, this becomes a
-        // dedicated field on `whisker_app_config::AndroidConfig`.
-        project_dir: crate_dir.join("android"),
+        project_dir: project_dir.to_path_buf(),
         application_id,
         launcher_activity,
         // Single-ABI dev loops only — multi-ABI is a release concern.
@@ -142,8 +173,10 @@ fn android_params_from(m: &manifest::ResolvedManifest, crate_dir: &Path) -> Resu
     })
 }
 
-/// Build [`IosParams`] from the resolved manifest.
-fn ios_params_from(m: &manifest::ResolvedManifest, crate_dir: &Path) -> Result<IosParams> {
+/// Build [`IosParams`] from the resolved manifest. `project_dir` is
+/// the generated `gen/ios/` tree (after `whisker-cng` + xcodegen
+/// have run).
+fn ios_params_from(m: &manifest::ResolvedManifest, project_dir: &Path) -> Result<IosParams> {
     let i = &m.config.ios;
     let bundle_id = i
         .bundle_id
@@ -164,7 +197,7 @@ fn ios_params_from(m: &manifest::ResolvedManifest, crate_dir: &Path) -> Result<I
             )
         })?;
     Ok(IosParams {
-        project_dir: crate_dir.join("ios"),
+        project_dir: project_dir.to_path_buf(),
         scheme,
         bundle_id,
         device_override: std::env::var("WHISKER_IOS_SIMULATOR").ok(),

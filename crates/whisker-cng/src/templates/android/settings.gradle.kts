@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "hello-world-android"
+rootProject.name = "{{android_project_name}}"
 include(":app")
 include(":whisker-runtime")
-project(":whisker-runtime").projectDir = file("../../../native/android/whisker-runtime")
+project(":whisker-runtime").projectDir = file("{{whisker_runtime_android_path}}")

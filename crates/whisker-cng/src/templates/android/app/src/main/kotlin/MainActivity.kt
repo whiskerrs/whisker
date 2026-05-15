@@ -1,4 +1,4 @@
-package rs.whisker.examples.helloworld
+package {{android_application_id}}
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
