@@ -7,12 +7,28 @@
 //!        .bundle_id("dev.example.myapp")
 //!        .version("1.0.0");
 //!
-//!     app.ios(|ios| ios.deployment_target("13.0"));
-//!     app.android(|android| android.min_sdk(24));
+//!     app.android(|a| a
+//!         .application_id("dev.example.myapp")
+//!         .launcher_activity(".MainActivity")
+//!         .min_sdk(24));
+//!
+//!     app.ios(|i| i
+//!         .bundle_id("dev.example.MyApp")
+//!         .scheme("MyApp")
+//!         .deployment_target("14.0"));
 //! }
 //! ```
+//!
+//! `whisker run` compiles a tiny probe binary that includes the user's
+//! `whisker.rs` and serializes the resulting `AppConfig` to JSON over
+//! stdout. The host shell (`whisker-cli`) parses that JSON, projects
+//! the fields it needs (paths, application id, bundle id, scheme, …),
+//! and passes them as flat parameters to `whisker-dev-server`. The
+//! dev-server itself does not depend on this crate.
 
-#[derive(Debug, Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     pub name: Option<String>,
     pub bundle_id: Option<String>,
@@ -54,23 +70,53 @@ impl AppConfig {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct IosConfig {
+    /// CFBundleIdentifier of the iOS app. Used by `xcrun simctl
+    /// install / terminate / launch` and as the right-hand side of
+    /// the `am start -n` style component string. Falls back to the
+    /// top-level [`AppConfig::bundle_id`] if unset (since iOS and
+    /// Android often share a bundle id but not always).
+    pub bundle_id: Option<String>,
+    /// Xcode scheme + the `<scheme>.app` filename xcodebuild
+    /// produces. With XcodeGen-generated projects these always
+    /// match the project name.
+    pub scheme: Option<String>,
     pub deployment_target: Option<String>,
 }
 
 impl IosConfig {
+    pub fn bundle_id(&mut self, id: impl Into<String>) -> &mut Self {
+        self.bundle_id = Some(id.into());
+        self
+    }
+
+    pub fn scheme(&mut self, s: impl Into<String>) -> &mut Self {
+        self.scheme = Some(s.into());
+        self
+    }
+
     pub fn deployment_target(&mut self, t: impl Into<String>) -> &mut Self {
         self.deployment_target = Some(t.into());
         self
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AndroidConfig {
     pub package: Option<String>,
     pub min_sdk: Option<u32>,
     pub target_sdk: Option<u32>,
+    /// Android `applicationId` (= JVM package the launcher invokes).
+    /// Used as the left side of `am start -n <id>/<launcher>`.
+    /// Distinct from `package` (the Kotlin/Java package the manifest
+    /// declares for `R.java` lookups), which is purely a build-time
+    /// convention.
+    pub application_id: Option<String>,
+    /// Launcher activity class name, with a leading dot. `am start
+    /// -n` expands `.MainActivity` against `application_id`.
+    /// Defaults to `.MainActivity` if unset.
+    pub launcher_activity: Option<String>,
 }
 
 impl AndroidConfig {
@@ -86,6 +132,16 @@ impl AndroidConfig {
 
     pub fn target_sdk(&mut self, v: u32) -> &mut Self {
         self.target_sdk = Some(v);
+        self
+    }
+
+    pub fn application_id(&mut self, id: impl Into<String>) -> &mut Self {
+        self.application_id = Some(id.into());
+        self
+    }
+
+    pub fn launcher_activity(&mut self, a: impl Into<String>) -> &mut Self {
+        self.launcher_activity = Some(a.into());
         self
     }
 }

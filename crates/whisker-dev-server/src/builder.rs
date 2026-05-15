@@ -11,7 +11,7 @@
 //! line change).
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::process::Command;
 
 use crate::Target;
@@ -326,15 +326,6 @@ fn push_features(args: &mut Vec<String>, features: &[String]) {
     }
 }
 
-// Cheap helper so the installer module doesn't need its own
-// path-resolution logic.
-pub(crate) fn android_apk_path(workspace_root: &Path, package: &str) -> PathBuf {
-    workspace_root
-        .join("examples")
-        .join(package)
-        .join("android/app/build/outputs/apk/debug/app-debug.apk")
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -391,14 +382,6 @@ mod tests {
                 "extra",
             ],
         );
-    }
-
-    #[test]
-    fn android_apk_path_is_under_examples_with_debug_suffix() {
-        let p = android_apk_path(Path::new("/tmp/ws"), "hello-world");
-        assert!(p
-            .to_string_lossy()
-            .ends_with("/examples/hello-world/android/app/build/outputs/apk/debug/app-debug.apk"));
     }
 
     // ----- capture_env_vars + with_capture -----------------------------

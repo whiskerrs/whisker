@@ -47,3 +47,11 @@ indicatif = "0.17"
 # all live in whisker-dev-server.
 whisker-dev-server = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# `whisker run` reads the user's `whisker.rs` via a tiny probe build
+# and parses the resulting AppConfig JSON. The dev-server does NOT
+# depend on whisker-app-config — the cli translates the AppConfig
+# into a flat `dev_server::Config` before handing it off.
+whisker-app-config = { workspace = true }
+# TOML parser for reading `[package].name` from the user crate's
+# Cargo.toml. Lightweight, no async runtime.
+toml = "0.8"

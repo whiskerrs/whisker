@@ -15,6 +15,8 @@ use clap::{Parser, Subcommand};
 
 pub mod doctor;
 pub mod linker_shim;
+pub mod manifest;
+pub mod probe;
 pub mod run;
 pub mod rustc_shim;
 
@@ -83,7 +85,7 @@ mod tests {
         let cli = parse(["whisker", "run"]).unwrap();
         match cli.command {
             Command::Run(a) => {
-                assert_eq!(a.package, "hello-world");
+                assert!(a.manifest_path.is_none());
                 assert_eq!(a.target, run::CliTarget::Host);
                 assert_eq!(a.bind.port(), 9876);
                 assert!(!a.hot_patch);
@@ -98,8 +100,8 @@ mod tests {
         let cli = parse([
             "whisker",
             "run",
-            "-p",
-            "my-app",
+            "--manifest-path",
+            "/tmp/my-app/Cargo.toml",
             "--target",
             "android",
             "--bind",
@@ -109,7 +111,10 @@ mod tests {
         .unwrap();
         match cli.command {
             Command::Run(a) => {
-                assert_eq!(a.package, "my-app");
+                assert_eq!(
+                    a.manifest_path.as_deref(),
+                    Some(std::path::Path::new("/tmp/my-app/Cargo.toml")),
+                );
                 assert_eq!(a.target, run::CliTarget::Android);
                 assert_eq!(a.bind.to_string(), "0.0.0.0:1234");
                 assert!(a.hot_patch);
