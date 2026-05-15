@@ -417,83 +417,93 @@ fn check_ios() -> Vec<Check> {
     out
 }
 
-// ----- Lynx artifacts (workspace-local) --------------------------------------
+// ----- Lynx artifacts (user-cache) -------------------------------------------
 
 fn check_lynx() -> Vec<Check> {
     let mut out = Vec::new();
-    let ws = match workspace_root() {
-        Some(p) => p,
-        None => {
-            out.push(Check::warn(
-                "workspace",
-                "not inside a Whisker workspace — skipping Lynx checks",
-            ));
-            return out;
+
+    // Pinned version + source.
+    out.push(Check::ok(
+        "Pinned Lynx fork",
+        format!(
+            "{} (from whiskerrs/lynx)",
+            whisker_build::LYNX_FORK_TAG,
+        ),
+    ));
+
+    // Override status.
+    if let Some(dir) = std::env::var_os("WHISKER_LYNX_DIR") {
+        let p = PathBuf::from(&dir);
+        out.push(Check::ok(
+            "WHISKER_LYNX_DIR override",
+            short_path(&p),
+        ));
+    }
+
+    // Per-platform cache state.
+    for (label, platform, sentinel) in [
+        (
+            "Android cache",
+            whisker_build::LynxPlatform::Android,
+            "LynxAndroid.aar",
+        ),
+        (
+            "iOS cache",
+            whisker_build::LynxPlatform::Ios,
+            "Lynx.xcframework",
+        ),
+    ] {
+        match whisker_build::lynx_cache_dir(platform) {
+            Ok(dir) if dir.join(sentinel).exists() => {
+                out.push(Check::ok(label, format!("cached at {}", short_path(&dir))));
+            }
+            Ok(dir) => {
+                out.push(Check::warn(
+                    label,
+                    format!(
+                        "not cached — will be downloaded on next `whisker run/build` (would land at {})",
+                        short_path(&dir),
+                    ),
+                ));
+            }
+            Err(e) => {
+                out.push(Check::warn(label, format!("cache path unresolvable: {e:#}")));
+            }
         }
-    };
-    let target = ws.join("target");
-
-    let lynx_src = target.join("lynx-src");
-    if lynx_src.join("platform/android/lynx_android").is_dir() {
-        let head =
-            run_capture_in(&lynx_src, "git", &["log", "-1", "--pretty=%h %s"]).unwrap_or_default();
-        out.push(Check::ok(
-            "lynx-src",
-            head.lines().next().unwrap_or("checked out").to_string(),
-        ));
-    } else {
-        out.push(Check::warn(
-            "lynx-src",
-            "not bootstrapped — `git clone … target/lynx-src && tools/hab sync`",
-        ));
     }
 
-    let aar_dir = target.join("lynx-android");
-    let aars = [
-        "LynxBase.aar",
-        "LynxTrace.aar",
-        "LynxAndroid.aar",
-        "ServiceAPI.aar",
-    ];
-    if aars.iter().all(|a| aar_dir.join(a).is_file()) {
-        out.push(Check::ok(
-            "Android AARs",
-            format!("4 files at {}", short_path(&aar_dir)),
-        ));
-    } else {
-        out.push(Check::warn(
-            "Android AARs",
-            "missing — `cargo xtask android build-lynx-aar`",
-        ));
-    }
-
-    let ios_dir = target.join("lynx-ios");
-    let xcfs = [
-        "Lynx.xcframework",
-        "LynxBase.xcframework",
-        "LynxServiceAPI.xcframework",
-        "PrimJS.xcframework",
-    ];
-    if xcfs.iter().all(|x| ios_dir.join(x).is_dir()) {
-        out.push(Check::ok(
-            "iOS xcframeworks",
-            format!("4 frameworks at {}", short_path(&ios_dir)),
-        ));
-    } else {
-        out.push(Check::warn(
-            "iOS xcframeworks",
-            "missing — `cargo xtask ios build-lynx-frameworks`",
-        ));
-    }
-
-    let headers = target.join("lynx-headers");
-    if headers.join("Lynx").is_dir() && headers.join("LynxBase").is_dir() {
-        out.push(Check::ok("Staged C++ headers", short_path(&headers)));
-    } else {
-        out.push(Check::warn(
-            "Staged C++ headers",
-            "missing — produced as a side effect of `build-lynx-frameworks`",
-        ));
+    // Workspace symlinks (created by ensure_lynx_for_target). Useful
+    // sanity check for "did my last whisker run / build sync the
+    // symlinks?" — if they're stale, the next invocation rebuilds.
+    if let Some(ws) = workspace_root() {
+        let target = ws.join("target");
+        for (label, name) in [
+            ("Android jniLibs symlink", "lynx-android-unpacked"),
+            ("Android AAR symlink", "lynx-android"),
+            ("iOS xcframeworks symlink", "lynx-ios"),
+            ("Lynx headers symlink", "lynx-headers"),
+        ] {
+            let path = target.join(name);
+            match std::fs::symlink_metadata(&path) {
+                Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(&path) {
+                    Ok(dest) => out.push(Check::ok(label, format!("→ {}", short_path(&dest)))),
+                    Err(_) => out.push(Check::warn(label, "broken symlink".to_string())),
+                },
+                Ok(_) => {
+                    out.push(Check::warn(
+                        label,
+                        format!(
+                            "{} exists but isn't a symlink — `rm -rf` it to let \
+                             `whisker run/build` recreate the link",
+                            short_path(&path),
+                        ),
+                    ));
+                }
+                Err(_) => {
+                    // Missing is fine pre-first-run; whisker run/build creates it.
+                }
+            }
+        }
     }
 
     out
@@ -546,14 +556,6 @@ fn workspace_root_from(start: &Path) -> Option<PathBuf> {
 
 fn run_capture(cmd: &str, args: &[&str]) -> Result<String> {
     let out = Command::new(cmd).args(args).output()?;
-    if !out.status.success() {
-        anyhow::bail!("{cmd} exited {}", out.status);
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
-}
-
-fn run_capture_in(dir: &Path, cmd: &str, args: &[&str]) -> Result<String> {
-    let out = Command::new(cmd).args(args).current_dir(dir).output()?;
     if !out.status.success() {
         anyhow::bail!("{cmd} exited {}", out.status);
     }
