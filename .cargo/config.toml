@@ -22,6 +22,14 @@ coverage-lcov = "llvm-cov --workspace --lcov --output-path lcov.info"
 # at .so load time when we strip compiler-rt out).
 # `-outline-atomics` then guarantees no code path falls back to the
 # dispatcher. Targets Pixel 5+ / API 30+ emulator (= Armv8.2+).
+#
+# `max-page-size=16384` aligns ELF LOAD segments to 16 KB pages so
+# the `.so` works on devices that boot with 16 KB pages. Pixel
+# emulators with Android 15+ default to 16 KB; without this flag,
+# the dynamic linker rejects the library with "page boundary not
+# 16K aligned". NDK r27+ flips the default to 16 KB and the flag
+# becomes redundant — remove this line once we drop NDK r26
+# support.
 rustflags = [
     "-C", "target-feature=+lse,-outline-atomics",
     "-C", "link-arg=-Wl,-z,max-page-size=16384",
