@@ -22,15 +22,6 @@ pub fn target_dir() -> PathBuf {
     workspace_root().join("target")
 }
 
-// --- Bridge headers (consumed by `cargo xtask ios build-xcframework`
-//     when staging public headers into the xcframework). The C++
-//     sources themselves live under the same tree but are compiled
-//     by `whisker-driver-sys/build.rs` and never read from xtask. -----
-
-pub fn bridge_include() -> PathBuf {
-    workspace_root().join("crates/whisker-driver-sys/bridge/include")
-}
-
 // --- Lynx (Android) --------------------------------------------------
 
 pub fn lynx_android_aars() -> PathBuf {
@@ -39,10 +30,6 @@ pub fn lynx_android_aars() -> PathBuf {
 
 pub fn lynx_android_unpacked() -> PathBuf {
     target_dir().join("lynx-android-unpacked")
-}
-
-pub fn lynx_android_jni(abi: &str) -> PathBuf {
-    lynx_android_unpacked().join("jni").join(abi)
 }
 
 // --- Lynx (iOS) ------------------------------------------------------
@@ -63,10 +50,4 @@ pub fn lynx_staged_headers() -> PathBuf {
 
 pub fn lynx_src_default() -> PathBuf {
     target_dir().join("lynx-src")
-}
-
-// --- Whisker driver xcframework ----------------------------------------
-
-pub fn whisker_driver_out() -> PathBuf {
-    target_dir().join("whisker-driver")
 }

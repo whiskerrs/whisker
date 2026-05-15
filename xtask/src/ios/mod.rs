@@ -1,9 +1,13 @@
-//! `cargo xtask ios …` subtree.
+//! `cargo xtask ios …` subtree — Whisker-internal iOS build steps.
+//! Currently just Lynx framework wrangling.
+//!
+//! User-app iOS builds (cargo per-triple + xcframework wrap +
+//! xcodebuild) live in `whisker-cli` / `whisker-build` — run
+//! `whisker run --target ios` or `whisker build --target ios-sim`.
 
 use clap::{Args, Subcommand};
 
 mod build_lynx_frameworks;
-mod build_xcframework;
 
 #[derive(Args)]
 pub struct IosArgs {
@@ -13,10 +17,6 @@ pub struct IosArgs {
 
 #[derive(Subcommand)]
 enum IosCommand {
-    /// Build the user crate's static libs for iOS device + Simulator
-    /// (arm64, arm64-sim, x86_64-sim), lipo the simulator slices, and
-    /// wrap into `WhiskerDriver.xcframework`.
-    BuildXcframework(build_xcframework::Args),
     /// Build Lynx + PrimJS + LynxBase + LynxServiceAPI as xcframeworks
     /// from the upstream CocoaPods source pods. Used to feed the SPM
     /// binaryTarget chain.
@@ -25,7 +25,6 @@ enum IosCommand {
 
 pub fn run(args: IosArgs) -> anyhow::Result<()> {
     match args.command {
-        IosCommand::BuildXcframework(a) => build_xcframework::run(a),
         IosCommand::BuildLynxFrameworks(a) => build_lynx_frameworks::run(a),
     }
 }

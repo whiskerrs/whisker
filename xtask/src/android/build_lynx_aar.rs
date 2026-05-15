@@ -13,7 +13,6 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::build_example;
 use crate::paths;
 
 #[derive(clap::Args)]
@@ -66,7 +65,7 @@ pub fn run(args: BuildLynxAarArgs) -> Result<()> {
     }
     println!("==> Building AARs (this takes a few minutes the first time)");
     let android_dir = lynx_src.join("platform/android");
-    build_example::run_gradle(
+    run_gradle(
         &android_dir,
         &java11,
         &[
@@ -111,7 +110,9 @@ pub fn run(args: BuildLynxAarArgs) -> Result<()> {
     }
 
     println!(
-        "\n✅ Lynx Android AARs ready at {}\n   Next: cargo xtask android build-example",
+        "\n✅ Lynx Android AARs ready at {}\n   \
+         Next: `whisker run --target android` or \
+         `whisker build --target android`",
         dest.display()
     );
     Ok(())
@@ -237,5 +238,38 @@ fn apply_patch(repo: &Path, patch: &Path) -> Result<()> {
         anyhow::bail!("git apply failed for {}", patch.display());
     }
     println!("  applied: {name}");
+    Ok(())
+}
+
+/// Invoke the Lynx-vendored gradle wrapper under `dir` with `JAVA_HOME`
+/// pinned to a JDK 11. Used by `build_lynx_aar` only; whisker-build
+/// owns the user-app gradle invocation path on its own.
+fn run_gradle(dir: &Path, java_home: &Path, gradle_args: &[&str]) -> Result<()> {
+    let gradlew = if cfg!(target_os = "windows") {
+        dir.join("gradlew.bat")
+    } else {
+        dir.join("gradlew")
+    };
+    if !gradlew.is_file() {
+        anyhow::bail!("gradle wrapper not found at {}", gradlew.display());
+    }
+    let prev_path = std::env::var("PATH").unwrap_or_default();
+    let new_path = format!(
+        "{}/bin{}{}",
+        java_home.display(),
+        if prev_path.is_empty() { "" } else { ":" },
+        prev_path
+    );
+
+    let status = Command::new(&gradlew)
+        .args(gradle_args)
+        .current_dir(dir)
+        .env("JAVA_HOME", java_home)
+        .env("PATH", new_path)
+        .status()
+        .with_context(|| format!("failed to spawn {}", gradlew.display()))?;
+    if !status.success() {
+        anyhow::bail!("gradle failed (exit {status})");
+    }
     Ok(())
 }

@@ -680,7 +680,10 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
                 .join(&dylib_name);
             if !dylib.is_file() {
                 anyhow::bail!(
-                    "no iOS Simulator dylib at {} — run `cargo xtask ios build-xcframework` first",
+                    "no iOS Simulator dylib at {} — \
+                     `whisker run --target ios` would have built it; \
+                     reaching this branch means the initial build was \
+                     skipped or failed",
                     dylib.display(),
                 );
             }
