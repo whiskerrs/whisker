@@ -48,7 +48,9 @@ the **`whisker run` hot-reload dev loop** wires them together.
 
    xtask                       — build orchestration (NDK/Xcode invocations)
 
-   vendored/subsecond          — forked subsecond (whisker_aslr_anchor)
+   crates/whisker-subsecond    — forked subsecond (whisker_aslr_anchor),
+                                 lib name = `subsecond` so consumers keep
+                                 `use subsecond::*`.
 ```
 
 ## Crate responsibilities
@@ -65,7 +67,7 @@ the **`whisker run` hot-reload dev loop** wires them together.
 | `whisker-dev-server` | Host dev loop, manifest-agnostic. Drives Tier 1 patch construction. | `whisker-cli` |
 | `whisker-cli` | `whisker run`, manifest probe, doctor. Resolves AppConfig and hands flat Config to dev-server. | (binary) |
 | `xtask` | Cargo build automation: NDK, Lynx framework, xcframework wrapping | (binary) |
-| `vendored/subsecond` | Forked subsecond engine — anchors ASLR on `whisker_aslr_anchor` instead of `main` | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
+| `whisker-subsecond` | Forked subsecond engine — anchors ASLR on `whisker_aslr_anchor` instead of `main`. Exposed as `subsecond` to consumers via `[lib] name = "subsecond"`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
 ## `hot-reload` feature flow
 
@@ -167,9 +169,11 @@ A few decisions worth remembering:
   `hot-reload`, the crate compiles to nothing — no tokio, no
   tungstenite, no subsecond.
 
-- **subsecond is vendored, not a published-crate dep.** Whisker's
-  fork swaps the ASLR anchor from `main` to `whisker_aslr_anchor`.
-  On Android, multiple `main` symbols share the linker namespace
+- **subsecond is in-tree, not a published-crate dep.** The
+  `whisker-subsecond` crate is Whisker's fork; `[lib] name = "subsecond"`
+  preserves the upstream-style `use subsecond::*` API. The fork swaps
+  the ASLR anchor from `main` to `whisker_aslr_anchor`. On Android,
+  multiple `main` symbols share the linker namespace
   (`app_process64`'s, prior memfd patches'); a `dlsym` for the
   upstream sentinel returns garbage and the dispatch math fails.
-  See `vendored/subsecond/src/lib.rs` for the patch.
+  See `crates/whisker-subsecond/src/lib.rs` for the patch.

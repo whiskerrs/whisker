@@ -10,6 +10,7 @@ members = [
     "crates/whisker-driver-sys",
     "crates/whisker-macros",
     "crates/whisker-runtime",
+    "crates/whisker-subsecond",
     "examples/hello-world",
     "examples/subsecond-poc",
     "xtask",
@@ -44,16 +45,15 @@ whisker-runtime = { path = "crates/whisker-runtime", version = "0.1.0" }
 anyhow = "1"
 thiserror = "2"
 
-# Rust hot-patching runtime (receive side only — we build our own
-# `whisker run` watcher / sender rather than depending on `dx serve`).
-# Used by whisker-driver and the subsecond-poc example.
-#
-# We pin to a vendored fork (see `[patch.crates-io]` below) that
-# anchors the ASLR-slide lookup on `whisker_aslr_anchor` instead of
-# `main`. The upstream lookup `dlsym(RTLD_DEFAULT, "main")` is
-# unsafe in Whisker's dylib-based runtime on Android, where multiple
-# `main` symbols can exist in the same linker namespace.
-subsecond = "0.7"
+# Whisker-owned fork of DioxusLabs/dioxus's `subsecond` 0.7.9. The
+# crate is `whisker-subsecond` but exposes itself as `subsecond` via
+# `[lib] name = "subsecond"`, so consumers keep `use subsecond::*`.
+# The fork anchors the ASLR-slide lookup on `whisker_aslr_anchor`
+# (emitted by `#[whisker::main]`) rather than `main` — the upstream
+# `dlsym(RTLD_DEFAULT, "main")` is unsafe in Whisker's dylib-based
+# Android runtime, where multiple `main` symbols can coexist in the
+# same linker namespace.
+subsecond = { path = "crates/whisker-subsecond", version = "0.7.9", package = "whisker-subsecond" }
 subsecond-types = "0.7"
 
 # Dev-time WebSocket receiver — pulled in only via the `hot-reload`
@@ -81,8 +81,3 @@ object = { version = "0.36", default-features = false, features = [
     # (Option B / Dioxus-style symbol resolution).
     "write",
 ] }
-
-# Vendored subsecond fork — see the rationale on the `subsecond`
-# workspace dep above.
-[patch.crates-io]
-subsecond = { path = "vendored/subsecond" }

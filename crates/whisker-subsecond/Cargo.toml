@@ -1,0 +1,52 @@
+# Whisker-owned fork of DioxusLabs/dioxus's `subsecond` 0.7.9.
+#
+# Why a fork: upstream's ASLR-slide lookup uses `dlsym(RTLD_DEFAULT,
+# "main")` which is unsafe in Whisker's dylib-based Android runtime
+# (multiple `main` symbols can coexist in the same linker namespace).
+# We anchor on a Whisker-specific `whisker_aslr_anchor` symbol that
+# the `#[whisker::main]` macro emits.
+#
+# The crate is named `whisker-subsecond` but `[lib] name = "subsecond"`
+# preserves the original public API so consumers keep `use subsecond::*`.
+
+[package]
+name = "whisker-subsecond"
+version = "0.7.9"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DioxusLabs/dioxus/tree/main/packages/subsecond"
+authors = ["Jonathan Kelley", "Whisker contributors"]
+description = "Whisker fork of subsecond — runtime hot-patching engine with whisker_aslr_anchor anchoring."
+readme = "README.md"
+keywords = ["hotpatch", "engine", "subsecond", "dioxus", "hot-reload"]
+
+[lib]
+name = "subsecond"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1.0.225", features = ["derive"] }
+subsecond-types = "0.7.9"
+thiserror = "2.0.12"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libc = "0.2.174"
+libloading = "0.8.8"
+memmap2 = "0.9.8"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3.77"
+wasm-bindgen = "0.2.100"
+wasm-bindgen-futures = "0.4.50"
+web-sys = { version = "0.3.77", default-features = false, features = [
+    "FetchEvent",
+    "Request",
+    "Window",
+    "Response",
+    "ResponseType",
+    "console",
+] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+memfd = "0.6.4"
