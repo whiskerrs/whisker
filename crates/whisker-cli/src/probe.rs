@@ -33,7 +33,6 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
 use whisker_app_config::AppConfig;
 
 /// Run the probe and return the parsed config. Caches via mtime so
@@ -68,17 +67,10 @@ fn cache_is_fresh(cache: &Path, whisker_rs: &Path) -> bool {
     let Ok(src_mtime) = std::fs::metadata(whisker_rs).and_then(|m| m.modified()) else {
         return false;
     };
-    cache_mtime
-        .duration_since(src_mtime)
-        .map(|d| d > std::time::Duration::ZERO)
-        .unwrap_or(false)
-        || cache_mtime > src_mtime
-        // Defensive: clock skew can make duration_since fail even when
-        // mtime ordering says fresh. Compare SystemTime directly.
-        || matches!(
-            cache_mtime.duration_since(SystemTime::UNIX_EPOCH),
-            Ok(_),
-        ) && cache_mtime >= src_mtime
+    // `SystemTime` already implements `PartialOrd`. A direct comparison
+    // covers both the happy path and the post-`UNIX_EPOCH` clock-skew
+    // edge case that `duration_since` would `Err` on.
+    cache_mtime >= src_mtime
 }
 
 /// Write the probe's `Cargo.toml` + `src/main.rs`. Both files are

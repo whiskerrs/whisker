@@ -1,14 +1,29 @@
 //! Whisker CLI implementation.
 //!
-//! Subcommands (current + planned):
-//! - `doctor`   — environment / toolchain health check
-//! - `new`      — scaffold a new Whisker app (planned)
-//! - `run`      — build → install → launch on emulator/sim (planned)
-//! - `dev`      — file-watch dev loop (planned)
-//! - `build`    — production build (planned)
-//! - `prebuild` — CNG codegen (planned)
-//! - `clean`    — wipe build artifacts (planned)
-//! - `plugin`   — manage plugins (planned)
+//! ## Subcommands
+//!
+//! - `doctor` — environment / toolchain health check
+//!   (Rust targets, Android NDK/SDK/JDK, Xcode + CocoaPods, the
+//!   Lynx artifacts under `target/`).
+//! - `run` — `whisker run`: build → install → launch → file-watch +
+//!   hot-patch loop. Thin wrapper around
+//!   [`whisker_dev_server::DevServer`]; the cli's job is to resolve
+//!   the user crate's `whisker.rs` (via [`manifest`] + [`probe`])
+//!   and project the resulting `AppConfig` into the dev-server's
+//!   flat [`whisker_dev_server::Config`].
+//!
+//! ## Internal binaries
+//!
+//! In addition to the user-facing `whisker` binary, the package also
+//! produces two shim binaries used during the initial fat build to
+//! capture the rustc + linker invocations that Tier 1 hot-patch will
+//! replay later:
+//!
+//! - `whisker-rustc-shim` (`-Cstrip=…` / `-Csave-temps=y` style
+//!   wrapper around rustc) — captures argv to
+//!   `$WHISKER_RUSTC_CACHE_DIR/<crate>-<timestamp>.json`.
+//! - `whisker-linker-shim` (forwarded by rustc's `-C linker=…`) —
+//!   captures argv to `$WHISKER_LINKER_CACHE_DIR/<output>-…json`.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

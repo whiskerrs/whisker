@@ -117,7 +117,7 @@ async fn android_install_and_launch(p: &AndroidParams) -> Result<()> {
 
 async fn ios_install_and_launch(
     p: &IosParams,
-    workspace_root: &PathBuf,
+    workspace_root: &std::path::Path,
     package: &str,
 ) -> Result<()> {
     let xcode_project = p.project_dir.join(format!("{}.xcodeproj", p.scheme));

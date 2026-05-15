@@ -1,13 +1,17 @@
 # Whisker Documentation
 
-Design docs and architectural notes. Most of this is still in flux — see
-the workspace [README](../README.md) for current status.
+Design docs and architectural notes. See the workspace
+[README](../README.md) for status.
+
+## Current documents
+
+- [`architecture.md`](architecture.md) — crate graph, hot-reload
+  feature flow, end-to-end Tier 1 patch sequence
+- [`hot-reload-plan.md`](hot-reload-plan.md) — design + implementation
+  log for the subsecond-based hot-reload pipeline
 
 ## Planned documents
 
-- `architecture.md` — high-level overview, Phase 1' design
 - `lynx-integration.md` — how we layer on top of Lynx Android/iOS SDK + Element PAPI
-- `cng.md` — CNG plugin model, typed mod system
-- `dev-loop.md` — `whisker dev` internals (Tier 1 / Tier 2 hot reload)
 - `runtime.md` — reactive primitives, element tree, diffing
 - `building.md` — how to build Whisker itself (workspace, native bridge, AAR, xcframework)

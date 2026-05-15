@@ -1,22 +1,46 @@
 //! Host-side dev server for `whisker run`.
 //!
 //! Owns the long-running dev loop: file watch, cargo rebuild, install
-//! to the device, and (eventually) subsecond patch construction +
-//! WebSocket push. `whisker-cli`'s `run` subcommand is a thin wrapper
-//! that builds a [`Config`] and calls [`DevServer::run`] — every
-//! piece of UX-shaped logic lives here so future hosts (an editor
+//! to the device, subsecond patch construction, and WebSocket push.
+//! `whisker-cli`'s `run` subcommand is a thin wrapper that builds a
+//! [`Config`] and calls [`DevServer::run`] — every piece of
+//! UX-shaped logic lives here so future host shells (an editor
 //! plugin, a notebook, a remote-controlled CI build) can reuse it.
 //!
-//! ## Status
-//! Skeleton only. Each piece lands in its own task:
+//! ## Architecture
 //!
-//! | task | piece                                     |
-//! |------|-------------------------------------------|
-//! | I4c  | WebSocket server (axum)                   |
-//! | I4d  | file watcher (notify) + change classifier |
-//! | I4e  | builder + installer (Tier 2 cold rebuild) |
-//! | I4f  | xtask `--features` flag plumbing          |
-//! | I4g  | Tier 1 subsecond JumpTable construction   |
+//! Constructed once via [`Config`], the dev server spins up six
+//! cooperating pieces:
+//!
+//! - `builder` — translates [`Config`] into a cargo or xtask command
+//!   line and runs it. Honours `RUSTC_WORKSPACE_WRAPPER` + linker
+//!   shim env so the fat build doubles as a capture pass for Tier 1.
+//! - `installer` — for the cold-rebuild path: shells out to
+//!   `adb install` / `simctl install + launch`. Identity (bundle id,
+//!   applicationId, scheme, …) comes in flat via
+//!   [`AndroidParams`] / [`IosParams`]; the cli resolves these from
+//!   the user's `whisker.rs::configure(&mut AppConfig)`. This crate
+//!   never depends on `whisker-app-config`.
+//! - `watcher` — `notify`-based, debounced, classifies events into
+//!   `ChangeKind::{RustCode, CargoToml, Other}`.
+//! - `server` — `axum` WebSocket endpoint at
+//!   `ws://<bind>/whisker-dev`. Devices dial in, send a `hello`
+//!   carrying their `subsecond::aslr_reference()`, then receive
+//!   patch envelopes.
+//! - `hotpatch` — Tier 1 implementation. Builds a thin `.o` from the
+//!   changed user crate via captured rustc args, links it into a
+//!   patch dylib with a stub-object of host-symbol jumps, ships the
+//!   resulting `subsecond_types::JumpTable` to connected clients.
+//! - `lib.rs::run` — the orchestrator: file event → `decide_action`
+//!   (Tier 1 patch vs Tier 2 rebuild) → builder/hotpatch/sender.
+//!
+//! ## Layering
+//!
+//! Stays manifest-agnostic on purpose. The cli does the
+//! `whisker.rs` → `AppConfig` translation; this crate accepts only
+//! flat `String` / `PathBuf` fields. That keeps the dev-server
+//! reusable from any host shell that can produce the same flat
+//! `Config` (the cli is one; an editor plugin could be another).
 
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
