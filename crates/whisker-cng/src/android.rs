@@ -82,6 +82,11 @@ pub struct AndroidInputs {
     /// writes it verbatim into the `project(":whisker-runtime").projectDir`
     /// call.
     pub whisker_runtime_path: PathBuf,
+    /// Absolute path to the dir holding the Lynx AARs (typically
+    /// `<workspace>/target/lynx-android`). Registered as a `flatDir`
+    /// repo in the generated `settings.gradle.kts` so whisker-runtime's
+    /// `api(name="LynxAndroid", ext="aar")` style deps resolve.
+    pub whisker_lynx_aar_dir: PathBuf,
     /// Bumped whenever the template *shape* changes (added file,
     /// renamed placeholder, …). The fingerprint mixes this in so
     /// existing `gen/` trees regenerate after an upgrade.
@@ -128,6 +133,10 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
     v.insert(
         "whisker_runtime_android_path",
         inputs.whisker_runtime_path.display().to_string(),
+    );
+    v.insert(
+        "whisker_lynx_aar_dir",
+        inputs.whisker_lynx_aar_dir.display().to_string(),
     );
     v
 }
@@ -342,6 +351,7 @@ pub fn inputs_from(
     app_config: &AppConfig,
     rust_lib_name: String,
     whisker_runtime_path: PathBuf,
+    whisker_lynx_aar_dir: PathBuf,
 ) -> Result<AndroidInputs> {
     let app_name = app_config
         .name
@@ -371,7 +381,8 @@ pub fn inputs_from(
         target_sdk,
         rust_lib_name,
         whisker_runtime_path,
-        template_version: 1,
+        whisker_lynx_aar_dir,
+        template_version: 2,
     })
 }
 
@@ -405,7 +416,8 @@ mod tests {
             whisker_runtime_path: PathBuf::from(
                 "/abs/native/android/whisker-runtime",
             ),
-            template_version: 1,
+            whisker_lynx_aar_dir: PathBuf::from("/abs/target/lynx-android"),
+            template_version: 2,
         }
     }
 
@@ -541,7 +553,7 @@ mod tests {
     fn inputs_from_errors_when_application_id_unset() {
         let mut cfg = AppConfig::default();
         cfg.name = Some("X".into());
-        let err = inputs_from(&cfg, "x".into(), PathBuf::new()).unwrap_err();
+        let err = inputs_from(&cfg, "x".into(), PathBuf::new(), PathBuf::new()).unwrap_err();
         assert!(err.to_string().contains("application_id"), "got: {err:#}");
     }
 }

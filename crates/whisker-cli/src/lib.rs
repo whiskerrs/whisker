@@ -28,6 +28,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+pub mod build;
+pub mod build_android;
+pub mod build_ios;
 pub mod doctor;
 pub mod linker_shim;
 pub mod manifest;
@@ -53,8 +56,12 @@ enum Command {
     /// Xcode + CocoaPods, and the Lynx artifacts under `target/`.
     Doctor(doctor::Args),
     /// Build, install, and dev-loop a Whisker app — file watch + rebuild
-    /// + (eventually) subsecond hot patches over WebSocket.
+    /// + subsecond hot patches over WebSocket.
     Run(run::Args),
+    /// Production build of a Whisker app — release-mode cargo build +
+    /// gradle / xcodebuild without the dev-server. Output is the
+    /// shippable `.apk` / `.app`.
+    Build(build::Args),
 }
 
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
@@ -68,6 +75,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     match cli.command {
         Command::Doctor(a) => doctor::run(a),
         Command::Run(a) => run::run(a),
+        Command::Build(a) => build::run(a),
     }
 }
 
