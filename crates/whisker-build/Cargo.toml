@@ -22,3 +22,13 @@ description = "Whisker build orchestration: cargo cross-compile + gradle / xcode
 
 [dependencies]
 anyhow = { workspace = true }
+# Lynx artifact fetcher (whisker-build::lynx) deps. ureq picked over
+# reqwest for the sync API and small footprint — we have exactly two
+# downloads to make and no need for an async runtime here. tls=rustls
+# avoids dragging in OpenSSL/libsystem TLS coupling.
+ureq = { version = "2", default-features = false, features = ["tls"] }
+tar = "0.4"
+flate2 = "1"
+# SHA-256 verification of downloaded tarballs against the constants
+# hard-coded in src/lynx.rs.
+sha2 = "0.10"

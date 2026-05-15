@@ -108,16 +108,15 @@ impl Builder {
 
         tokio::task::spawn_blocking(move || -> Result<()> {
             let tc = whisker_build::android::resolve_toolchain(&abi, api)?;
-            let so = whisker_build::android::cargo_build_dylib(
-                &whisker_build::android::CargoBuild {
+            let so =
+                whisker_build::android::cargo_build_dylib(&whisker_build::android::CargoBuild {
                     workspace_root: &ws,
                     package: &pkg,
                     toolchain: &tc,
                     profile: whisker_build::Profile::Debug,
                     features: &features,
                     capture: capture.as_ref(),
-                },
-            )?;
+                })?;
             let gen_android = crate_dir.join("gen/android");
             whisker_build::android::stage_jni_libs(&gen_android, &abi, &so, &tc)?;
             whisker_build::android::run_gradle_assemble(

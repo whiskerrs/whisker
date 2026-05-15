@@ -86,6 +86,13 @@ pub fn run(args: Args) -> Result<()> {
 // ----- Android --------------------------------------------------------------
 
 fn build_android_apk(m: &manifest::ResolvedManifest, workspace_root: &Path) -> Result<()> {
+    // 0. Ensure Lynx artifacts are cached + symlinked into `target/`.
+    whisker_build::ensure_lynx_android()?;
+    whisker_build::link_lynx_into_workspace(
+        workspace_root,
+        whisker_build::LynxPlatform::Android,
+    )?;
+
     // 1. Sync `gen/android/` from whisker.rs.
     let sync = native::sync_for_target(
         Target::Android,
@@ -138,6 +145,10 @@ fn build_ios_app(
     workspace_root: &Path,
     flavour: IosFlavour,
 ) -> Result<()> {
+    // 0. Ensure Lynx artifacts are cached + symlinked into `target/`.
+    whisker_build::ensure_lynx_ios()?;
+    whisker_build::link_lynx_into_workspace(workspace_root, whisker_build::LynxPlatform::Ios)?;
+
     // 1. Sync `gen/ios/` (renders project.yml + Info.plist + AppDelegate
     //    and runs `xcodegen generate`).
     let sync = native::sync_for_target(

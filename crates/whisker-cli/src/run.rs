@@ -81,6 +81,12 @@ pub fn run(args: Args) -> Result<()> {
 
     let target: Target = args.target.into();
 
+    // Ensure Lynx artifacts for the target platform are cached and
+    // linked into `target/lynx-*` (where gradle's flatDir, SPM's
+    // binaryTarget paths, and whisker-driver-sys/build.rs all expect
+    // to find them). On cache hit this is a few stat() syscalls.
+    ensure_lynx_for_target(target, &workspace_root)?;
+
     // Sync the native host project (gen/{android,ios}/) before doing
     // anything else. Fast-path on fingerprint match — typical run is
     // a single file read. Errors here (missing whisker.rs fields,
@@ -202,6 +208,27 @@ fn ios_params_from(m: &manifest::ResolvedManifest, project_dir: &Path) -> Result
         bundle_id,
         device_override: std::env::var("WHISKER_IOS_SIMULATOR").ok(),
     })
+}
+
+/// Populate the Lynx artifact cache for `target` and (re)create the
+/// workspace symlinks downstream consumers read from. No-op for
+/// `Target::Host`. Duplicated in `build.rs::ensure_lynx_for_target`;
+/// if a third consumer shows up, factor into a helper module.
+fn ensure_lynx_for_target(target: Target, workspace_root: &Path) -> Result<()> {
+    use whisker_build::LynxPlatform;
+    match target {
+        Target::Host => Ok(()),
+        Target::Android => {
+            whisker_build::ensure_lynx_android()?;
+            whisker_build::link_lynx_into_workspace(workspace_root, LynxPlatform::Android)?;
+            Ok(())
+        }
+        Target::IosSimulator => {
+            whisker_build::ensure_lynx_ios()?;
+            whisker_build::link_lynx_into_workspace(workspace_root, LynxPlatform::Ios)?;
+            Ok(())
+        }
+    }
 }
 
 /// Walk up from `start` looking for a `Cargo.toml` containing a
