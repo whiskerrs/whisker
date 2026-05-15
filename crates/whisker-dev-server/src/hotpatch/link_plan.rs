@@ -128,6 +128,47 @@ pub fn build_link_plan(
     match target_os {
         LinkerOs::Macos => {
             args.push("-Wl,-undefined,dynamic_lookup".into());
+
+            // Re-add the macro-emitted user-crate exports that
+            // `-exported_symbols_list <rustc-temp>` was carrying for
+            // the fat build. We drop that file (it references
+            // symbols our thin patch doesn't define and ld errors
+            // out), but `subsecond::apply_patch` still needs at
+            // least `whisker_aslr_anchor` in the patch dylib's
+            // `.dynsym` — its `dlsym(patch, "whisker_aslr_anchor")`
+            // unwraps on None and panics across the FFI boundary,
+            // aborting the host app.
+            //
+            // `whisker_app_main` and `whisker_tick` aren't strictly
+            // required by `apply_patch` (Swift calls them on the
+            // host dylib, not the patch), but exporting them keeps
+            // the patch's `.dynsym` symmetric with the host —
+            // useful if a future patch path ever wants to dispatch
+            // through the patch's own entry points.
+            for sym in [
+                "_whisker_aslr_anchor",
+                "_whisker_app_main",
+                "_whisker_tick",
+            ] {
+                args.push(format!("-Wl,-exported_symbol,{sym}"));
+            }
+            // If the captured args target the iOS Simulator (or
+            // device), rustc's fat build resolved the SDK sysroot
+            // implicitly through its own driver — that path doesn't
+            // show up in the captured argv. Re-running clang
+            // directly we need `-isysroot <iphonesimulator-sdk>`
+            // or `-liconv` / `-lSystem` / iOS SDK frameworks fail
+            // to resolve. Detect by looking at `-target ...-simulator`
+            // / `-target ...-ios*` in the captured args, then ask
+            // xcrun for the SDK path.
+            if !args.iter().any(|a| a == "-isysroot") {
+                if let Some(sdk_kind) = detect_apple_sdk(&args) {
+                    if let Some(sdk_path) = xcrun_sdk_path(sdk_kind) {
+                        args.push("-isysroot".into());
+                        args.push(sdk_path);
+                    }
+                }
+            }
         }
         LinkerOs::Linux => {
             // Safety net for any symbol that didn't end up in the
@@ -150,6 +191,51 @@ pub fn build_link_plan(
     LinkPlan {
         args,
         output: output.to_path_buf(),
+    }
+}
+
+/// Look at the captured `-target …` triple and decide which Apple SDK
+/// to ask `xcrun` for. Returns the `--sdk` argument value
+/// (`"iphonesimulator"`, `"iphoneos"`, `"macosx"`) or `None` if the
+/// captured args don't look like an Apple build.
+fn detect_apple_sdk(args: &[String]) -> Option<&'static str> {
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        if a != "-target" {
+            continue;
+        }
+        let triple = iter.next()?;
+        return Some(if triple.contains("-simulator") {
+            "iphonesimulator"
+        } else if triple.contains("apple-ios") {
+            "iphoneos"
+        } else if triple.contains("apple-darwin") {
+            "macosx"
+        } else {
+            return None;
+        });
+    }
+    None
+}
+
+/// Run `xcrun --sdk <kind> --show-sdk-path` and return the trimmed
+/// stdout. `None` on any kind of failure — caller falls back to
+/// "no -isysroot" which will work for host-macOS builds where
+/// `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk` is the
+/// default lookup.
+fn xcrun_sdk_path(kind: &str) -> Option<String> {
+    let out = std::process::Command::new("xcrun")
+        .args(["--sdk", kind, "--show-sdk-path"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
     }
 }
 
@@ -220,6 +306,34 @@ fn filter_captured_linker_args(args: &[String]) -> Vec<String> {
         }
         if (arg == "-Wl,--version-script" || arg == "--version-script") && i + 1 < args.len() {
             i += 2;
+            continue;
+        }
+        // Mach-O equivalent: `-Wl,-exported_symbols_list <path>` (or
+        // the combined `,<path>` form). rustc emits this in the fat
+        // build's linker invocation, naming a temp file that lists
+        // every Rust `pub` symbol the full crate graph wanted to
+        // export. The patch link only links a small subset of that
+        // graph (one `.o` + the bridge `.a` + the stub `.o`), so the
+        // file references symbols our inputs don't define and ld
+        // errors out with `Undefined symbols … <initial-undefines>`.
+        // Drop it from the patch link line.
+        //
+        // We deliberately DO keep per-symbol `-Wl,-exported_symbol,…`
+        // directives (which rustc also emits, one per `#[no_mangle]
+        // pub extern "C"` symbol). Those name symbols the user's
+        // crate actually defines — `whisker_aslr_anchor`,
+        // `whisker_app_main`, `whisker_tick`, the bridge entry
+        // points — and `subsecond::apply_patch` needs at least
+        // `whisker_aslr_anchor` to be in the patch dylib's `.dynsym`
+        // so its dlsym lookup hits. Filtering them out would land
+        // us with a patch dylib that loads fine but panics inside
+        // subsecond's symbol lookup.
+        if arg == "-Wl,-exported_symbols_list" && i + 1 < args.len() {
+            i += 2;
+            continue;
+        }
+        if arg.starts_with("-Wl,-exported_symbols_list,") {
+            i += 1;
             continue;
         }
         // --no-undefined-version turns the "version-script lists a
@@ -463,6 +577,9 @@ mod tests {
                 "arm64",
                 "-shared",
                 "-Wl,-undefined,dynamic_lookup",
+                "-Wl,-exported_symbol,_whisker_aslr_anchor",
+                "-Wl,-exported_symbol,_whisker_app_main",
+                "-Wl,-exported_symbol,_whisker_tick",
                 "/o/demo.o",
                 "-o",
                 "/o/libdemo.dylib",

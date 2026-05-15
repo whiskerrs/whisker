@@ -233,22 +233,30 @@ fn compile_ios() -> Result<()> {
         println!("cargo:rustc-link-lib=framework={fw}");
     }
 
-    // Apple system frameworks Lynx depends on transitively. Used to
-    // come from SPM's `linkerSettings` on the WhiskerRuntime target;
-    // with the dylib doing its own link, the dylib link line needs
-    // them too (otherwise UND refs to e.g. `_JSValue` survive into
-    // the binary and dyld fails at load time).
+    // Apple system frameworks the bridge `.mm` directly references
+    // (NSLog, NSObject machinery, Obj-C runtime, etc.). When Lynx
+    // was static-linked into our dylib, these symbols got pulled in
+    // transitively from the Lynx archive's UND refs — but now Lynx
+    // is a dynamic framework with its own LC_LOAD_DYLIB list, so
+    // our dylib has to declare them itself.
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=framework=UIKit");
+    println!("cargo:rustc-link-lib=framework=CoreFoundation");
+    println!("cargo:rustc-link-lib=framework=QuartzCore");
+    // Lynx engine's transitive dependencies (still relevant — even
+    // with dynamic Lynx, declaring them here lets the host app's
+    // static-analysis tooling see the dependency).
     println!("cargo:rustc-link-lib=framework=JavaScriptCore");
     println!("cargo:rustc-link-lib=framework=NaturalLanguage");
+    // libc++ for the bridge's C++ standard-library uses.
     println!("cargo:rustc-link-lib=dylib=c++");
-
-    // -ObjC forces ld64 to load every Obj-C class from
-    // statically-archived `.o` files. Lynx ships many Obj-C
-    // categories whose methods are otherwise stripped, producing
-    // "unrecognized selector" crashes at runtime. Counterpart of
-    // the `.unsafeFlags(["-ObjC"])` setting we used on the
-    // WhiskerRuntime SPM target back when iOS was a staticlib.
-    println!("cargo:rustc-link-arg=-Wl,-ObjC");
+    // Obj-C runtime stubs (`_objc_msgSend`, `_objc_release_x19`,
+    // `_class_getInstanceVariable`, …). Apple linkers usually
+    // auto-link `libobjc` for any binary that touches Obj-C, but
+    // declaring it explicitly avoids the auto-link omission we saw
+    // when going from static-Lynx (carrying libobjc transitively)
+    // to dynamic-Lynx.
+    println!("cargo:rustc-link-lib=dylib=objc");
 
     // NOTE: forcing bridge entry points (`_whisker_bridge_*`) into the
     // dylib's `.dynsym` happens in `xtask/src/ios/build_xcframework.rs`,

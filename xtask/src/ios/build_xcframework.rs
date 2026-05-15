@@ -77,10 +77,17 @@ pub fn run(args: Args) -> Result<()> {
     }
     std::fs::create_dir_all(&out)?;
 
+    // Order matters: the *last* triple's rustc / linker capture is
+    // what the dev-server's Tier 1 thin-rebuild picks up (the
+    // captured-args store is timestamp-keyed and the last write
+    // wins). We put the arm64 simulator slice last because the most
+    // common developer machine is an arm64 Mac — that's the slice
+    // their simctl actually loads. x86_64 Mac users currently lose
+    // the Tier 1 path for iOS Sim; documented as a known limitation.
     let triples = [
         "aarch64-apple-ios",
-        "aarch64-apple-ios-sim",
         "x86_64-apple-ios",
+        "aarch64-apple-ios-sim",
     ];
     println!("==> Building Rust dylibs (user crate: {})", args.package);
     for triple in triples {
@@ -326,23 +333,14 @@ fn cargo_build(package: &str, triple: &str, root: &Path, features: &[String]) ->
     for sym in BRIDGE_EXPORTS {
         cmd.arg(format!("-Clink-arg=-Wl,-exported_symbol,{sym}"));
     }
-    // `-ObjC` makes ld64 pull every `.o` from each static archive
-    // in the link line if that `.o` contains Obj-C class /
-    // category metadata. Lynx ships many `+load`-less categories
-    // whose methods would otherwise be dropped, producing
-    // "unrecognized selector" crashes at first LynxView init.
-    cmd.arg("-Clink-arg=-Wl,-ObjC");
-    // Don't let rustc pass `-Wl,-dead_strip`. The default
-    // dead-strip cuts loose-end Obj-C category metadata
-    // (`__OBJC_$_CATEGORY_<Class>_$_<Cat>`) that's only referenced
-    // by `__objc_catlist`, which the Obj-C runtime walks at dyld-
-    // load time but ld64 doesn't consider a "live" reference. The
-    // result is category method `.o` files surviving the link
-    // while their metadata pointers get stripped — runtime then
-    // never registers the methods. `-C link-dead-code=yes` is the
-    // rustc-blessed way to keep dead code (effectively swallows
-    // the `-dead_strip`).
-    cmd.arg("-Clink-dead-code=yes");
+    // Note on Obj-C category retention: Lynx is now built as a
+    // *dynamic* framework (see `build_lynx_frameworks.rs`), so its
+    // categories ship inside `Lynx.framework`'s own dylib and dyld
+    // handles the catlist merge at app launch — our dylib only
+    // needs an `LC_LOAD_DYLIB` reference to Lynx. We don't need
+    // `-Wl,-ObjC` / `-Clink-dead-code=yes` workarounds anymore.
+    // If a "unrecognized selector" crash ever resurfaces, both
+    // workarounds are reachable from prior commits.
     let status = cmd
         .current_dir(root)
         .status()

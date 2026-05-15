@@ -178,9 +178,30 @@ targets:
 }
 
 fn write_podfile(build: &Path) -> Result<()> {
+    // `use_frameworks!` (no `:linkage =>` → defaults to `:dynamic`)
+    // produces `.framework` bundles whose binary is a real Mach-O
+    // dylib (LC_ID_DYLIB set to `@rpath/Lynx.framework/Lynx` etc.)
+    // rather than a static `ar archive`.
+    //
+    // Why this matters: WhiskerDriver is itself a dynamic framework
+    // (see `xtask/src/ios/build_xcframework.rs`), and when ld64
+    // links Lynx into that dylib as a static archive it dead-strips
+    // the `__objc_catlist` entries that pin Lynx's category
+    // metadata. The category method `.o` survives, but the runtime
+    // never registers the methods on the target class — first
+    // `[LynxView init]` then raises `unrecognized selector` on
+    // category methods like `setUpWithBuilder:screenSize:`.
+    //
+    // With dynamic Lynx, our dylib just emits `LC_LOAD_DYLIB` to
+    // `@rpath/Lynx.framework/Lynx` (and so on for LynxBase,
+    // LynxServiceAPI, PrimJS) — Lynx ships with its categories
+    // already in its own `__objc_catlist`, properly preserved
+    // because it was the *output* of its own link step, not an
+    // intermediate input getting stripped. dyld then merges
+    // categories into classes at app load, like normal.
     let podfile = format!(
         "platform :ios, '13.0'\n\
-         use_frameworks! :linkage => :static\n\
+         use_frameworks!\n\
          target 'LynxCarrier' do\n\
          \x20\x20pod 'Lynx', '{lynx}'\n\
          \x20\x20pod 'PrimJS', '{primjs}', :subspecs => ['quickjs', 'napi']\n\
