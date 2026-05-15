@@ -18,7 +18,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use whisker_app_config::AppConfig;
 use whisker_dev_server::Target;
 
@@ -91,11 +90,11 @@ fn sync_ios(
         .context("resolve Whisker's native/ios")?;
     let inputs = whisker_cng::ios::inputs_from(app_config, whisker_runtime)?;
     let gen_dir = crate_dir.join("gen/ios");
+    // whisker-cng renders the full Xcode project directly (pbxproj +
+    // xcworkspacedata + sources). No xcodegen subprocess needed —
+    // see crates/whisker-cng/src/ios.rs for the rationale.
     let regenerated = whisker_cng::sync_ios(&gen_dir, &inputs)
         .context("render gen/ios")?;
-    if regenerated {
-        run_xcodegen(&gen_dir).context("xcodegen generate (iOS project sync)")?;
-    }
     Ok(NativeSync {
         gen_dir,
         regenerated,
@@ -120,24 +119,6 @@ fn resolve_whisker_native(workspace_root: &Path, relative: &str) -> Result<PathB
         ));
     }
     Ok(p)
-}
-
-/// Run `xcodegen generate` in `gen_ios_dir`. `xcodegen` needs to be
-/// on PATH — `whisker doctor` flags it as a required tool.
-fn run_xcodegen(gen_ios_dir: &Path) -> Result<()> {
-    eprintln!(
-        "[whisker-cng] xcodegen generate ({})",
-        gen_ios_dir.display(),
-    );
-    let status = Command::new("xcodegen")
-        .arg("generate")
-        .current_dir(gen_ios_dir)
-        .status()
-        .context("spawn xcodegen; is it installed and on PATH?")?;
-    if !status.success() {
-        return Err(anyhow!("xcodegen generate failed ({status})"));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -387,25 +387,6 @@ fn check_ios() -> Vec<Check> {
         )),
     }
 
-    match run_capture("pod", &["--version"]) {
-        Ok(s) => out.push(Check::ok("CocoaPods", format!("v{}", s.trim()))),
-        Err(_) => out.push(Check::warn(
-            "CocoaPods",
-            "not on PATH — needed for `cargo xtask ios build-lynx-frameworks`",
-        )),
-    }
-
-    match run_capture("xcodegen", &["--version"]) {
-        Ok(s) => out.push(Check::ok(
-            "xcodegen",
-            s.lines().next().unwrap_or("").trim().to_string(),
-        )),
-        Err(_) => out.push(Check::warn(
-            "xcodegen",
-            "not on PATH — needed for `cargo xtask ios build-lynx-frameworks`",
-        )),
-    }
-
     match run_capture("xcrun", &["simctl", "help"]) {
         Ok(_) => out.push(Check::ok("xcrun simctl", "available")),
         Err(_) => out.push(Check::err(
