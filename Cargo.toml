@@ -51,6 +51,12 @@ thiserror = "2"
 # Rust hot-patching runtime (receive side only — we build our own
 # `whisker run` watcher / sender rather than depending on `dx serve`).
 # Used by whisker-driver and the subsecond-poc example.
+#
+# We pin to a vendored fork (see `[patch.crates-io]` below) that
+# anchors the ASLR-slide lookup on `whisker_aslr_anchor` instead of
+# `main`. The upstream lookup `dlsym(RTLD_DEFAULT, "main")` is
+# unsafe in Whisker's dylib-based runtime on Android, where multiple
+# `main` symbols can exist in the same linker namespace.
 subsecond = "0.7"
 subsecond-types = "0.7"
 
@@ -79,3 +85,8 @@ object = { version = "0.36", default-features = false, features = [
     # (Option B / Dioxus-style symbol resolution).
     "write",
 ] }
+
+# Vendored subsecond fork — see the rationale on the `subsecond`
+# workspace dep above.
+[patch.crates-io]
+subsecond = { path = "vendored/subsecond" }

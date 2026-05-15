@@ -161,14 +161,7 @@ pub async fn serve(
         }
     });
 
-    Ok((
-        PatchSender {
-            tx,
-            aslr_reference,
-        },
-        bound,
-        handle,
-    ))
+    Ok((PatchSender { tx, aslr_reference }, bound, handle))
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {

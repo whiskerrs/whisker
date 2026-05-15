@@ -10,10 +10,13 @@
 //! - The dev server already knows every symbol's *static* address in
 //!   the host `.so` (parsed once into [`HotpatchModuleCache`]).
 //! - The device tells us, on its `hello` handshake, its
-//!   `subsecond::aslr_reference()` — the *runtime* address of `main`
-//!   in the loaded host process.
-//! - `aslr_offset = aslr_reference - host_static_main_addr` is the
-//!   ASLR slide between the recorded `.so` and the live process.
+//!   `subsecond::aslr_reference()` — the *runtime* address of
+//!   `whisker_aslr_anchor` in the loaded host process (Whisker's
+//!   subsecond fork anchors on this unique symbol rather than
+//!   `main`; see `vendored/subsecond/src/lib.rs`).
+//! - `aslr_offset = aslr_reference - host_static_anchor_addr` is
+//!   the ASLR slide between the recorded `.so` and the live
+//!   process.
 //! - For each symbol the patch needs, we compute `runtime_addr =
 //!   host_static_addr + aslr_offset` and write a stub that jumps
 //!   straight there.
@@ -51,35 +54,38 @@ use crate::hotpatch::LinkerOs;
 /// every undefined symbol in `patch_obj` whose name is also present
 /// in `cache.symbols` as a defined symbol.
 ///
-/// `aslr_reference` is the runtime address of `main` on the device
+/// `aslr_reference` is the runtime address of
+/// `whisker_aslr_anchor` on the device
 /// (`subsecond::aslr_reference()`'s return value). The cache's
 /// `aslr_reference` field, populated in
-/// [`HotpatchModuleCache::from_path`], stores `main`'s *static*
-/// address in the host `.so`. The difference is the ASLR slide.
+/// [`HotpatchModuleCache::from_path`], stores
+/// `whisker_aslr_anchor`'s *static* address in the host `.so`. The
+/// difference is the ASLR slide.
 pub fn create_undefined_symbol_stub(
     cache: &HotpatchModuleCache,
     patch_obj: &Path,
     target_os: LinkerOs,
     aslr_reference: u64,
 ) -> Result<Vec<u8>> {
-    let host_static_main = cache.aslr_reference;
-    if host_static_main == 0 {
+    let host_static_anchor = cache.aslr_reference;
+    if host_static_anchor == 0 {
         bail!(
-            "host cache has no `main` symbol address (aslr_reference=0); \
-             ensure the `#[whisker::main]` macro emitted the synthetic \
-             main stub and that the cache parsed it"
+            "host cache has no `whisker_aslr_anchor` symbol address \
+             (aslr_reference=0); ensure the `#[whisker::main]` macro \
+             emitted the synthetic anchor and that the cache parsed it"
         );
     }
-    if aslr_reference < host_static_main {
+    if aslr_reference < host_static_anchor {
         bail!(
-            "device-reported aslr_reference {:#x} is below host's static main address {:#x} — \
-             would underflow when computing the ASLR slide. \
-             Is the device running a stale build of the host .so?",
+            "device-reported aslr_reference {:#x} is below host's static \
+             whisker_aslr_anchor address {:#x} — would underflow when \
+             computing the ASLR slide. Is the device running a stale \
+             build of the host .so?",
             aslr_reference,
-            host_static_main,
+            host_static_anchor,
         );
     }
-    let aslr_offset = aslr_reference - host_static_main;
+    let aslr_offset = aslr_reference - host_static_anchor;
 
     let bytes = std::fs::read(patch_obj)
         .with_context(|| format!("read patch obj {}", patch_obj.display()))?;
@@ -107,7 +113,10 @@ pub fn create_undefined_symbol_stub(
     let (bin_fmt, endian) = match target_os {
         LinkerOs::Linux => (BinaryFormat::Elf, Endianness::Little),
         LinkerOs::Macos => (BinaryFormat::MachO, Endianness::Little),
-        LinkerOs::Other => bail!("stub object generation: unsupported target_os {:?}", target_os),
+        LinkerOs::Other => bail!(
+            "stub object generation: unsupported target_os {:?}",
+            target_os
+        ),
     };
     let mut obj = Object::new(bin_fmt, Architecture::Aarch64, endian);
 
@@ -221,10 +230,7 @@ mod tests {
         let code = arm64_jump_stub(addr);
         // imm0 = 0x2C00
         let imm0 = (addr & 0xFFFF) as u32;
-        assert_eq!(
-            &code[0..4],
-            &(0xD280_0010_u32 | (imm0 << 5)).to_le_bytes(),
-        );
+        assert_eq!(&code[0..4], &(0xD280_0010_u32 | (imm0 << 5)).to_le_bytes(),);
         // imm3 = 0x7B40 — top word lands in the LSL#48 MOVK
         let imm3 = ((addr >> 48) & 0xFFFF) as u32;
         assert_eq!(

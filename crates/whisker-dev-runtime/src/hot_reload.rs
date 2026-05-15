@@ -125,9 +125,10 @@ async fn client_loop(addr: String) {
     }
 }
 
-/// `dlsym(RTLD_DEFAULT, "main")` on the device, computed once at app
-/// startup. We hand this value to the dev server on connect so it can
-/// build patches with the host's runtime base address baked in via
+/// `dlsym(RTLD_DEFAULT, "whisker_aslr_anchor")` on the device,
+/// computed once at app startup by the vendored subsecond fork. We
+/// hand this value to the dev server on connect so it can build
+/// patches with the host's runtime base address baked in via
 /// stub-asm objects (Option B / Dioxus-style symbol resolution).
 ///
 /// Falls back to `0` when `subsecond` isn't linked in (release builds
@@ -148,8 +149,9 @@ where
     use tokio_tungstenite::tungstenite::Message;
 
     // Send the hello envelope first — the server needs our
-    // `aslr_reference` (= runtime address of `main` here) to compute
-    // the ASLR slide when building patches under the stub-asm scheme.
+    // `aslr_reference` (= runtime address of `whisker_aslr_anchor`
+    // here) to compute the ASLR slide when building patches under
+    // the stub-asm scheme.
     let hello = serde_json::json!({
         "kind": "hello",
         "aslr_reference": device_aslr_reference(),

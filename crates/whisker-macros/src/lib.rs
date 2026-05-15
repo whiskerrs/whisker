@@ -93,24 +93,28 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ::whisker::__main_runtime::tick(engine)
         }
 
-        // `subsecond::apply_patch` uses an exported `main` symbol as
-        // a sentinel for the patch dylib's base address (see
-        // subsecond-0.7.9 lib.rs:526 — `lib.get(b"main").ok().unwrap()`).
-        // Dioxus apps satisfy this because their user crate is a `bin`
-        // with a real `main`; Whisker's user crate is a library, so we
-        // synthesize one here. The stub never runs (Whisker is loaded
-        // via `System.loadLibrary` / JNI, never executed as a process
-        // entry point), but it has to be exported in both the host
-        // dylib's and every patch dylib's `.dynsym` so subsecond's
-        // sentinel lookup succeeds on both sides.
+        // Anchor symbol used by Whisker's vendored subsecond fork to
+        // compute the ASLR slide between this dylib's static layout
+        // (cached server-side) and its runtime load address. Both the
+        // host dylib and every patch dylib must export this so
+        // `dlsym(RTLD_DEFAULT, "whisker_aslr_anchor")` resolves
+        // unambiguously inside the user's `.so`.
         //
-        // Gated on `not(test)` so `cargo test --lib` (which links
-        // libtest's own `main` into the test runner) doesn't see two
-        // `main` symbols and fail with "entry symbol main declared
-        // multiple times".
-        #[cfg(not(test))]
+        // Why a unique name instead of `main` (upstream subsecond's
+        // sentinel): on Android, Whisker is loaded via
+        // `System.loadLibrary` into a process whose linker namespace
+        // already contains several `main` symbols
+        // (`app_process64`'s, plus any prior memfd patches), so a
+        // dlsym for `main` returns the wrong one and the slide math
+        // computes garbage. A unique name only exists in the user's
+        // `.so`, so the lookup is collision-free regardless of
+        // namespace order.
+        //
+        // The stub never runs — Whisker is JNI-loaded, never executed
+        // as a process entry point. It only needs to exist in the
+        // export list at a known static address.
         #[no_mangle]
-        pub extern "C" fn main() -> ::std::ffi::c_int { 0 }
+        pub extern "C" fn whisker_aslr_anchor() -> ::std::ffi::c_int { 0 }
     };
 
     expanded.into()

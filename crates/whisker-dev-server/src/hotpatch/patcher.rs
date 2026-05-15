@@ -289,33 +289,33 @@ fn current_rustc() -> PathBuf {
     PathBuf::from(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
 }
 
-/// Return the static virtual address of `main` in `path` (Mach-O's
-/// underscore-prefixed `_main` also accepted). This goes into
-/// `JumpTable::new_base_address`; subsecond's `apply_patch` then
-/// computes
+/// Return the static virtual address of `whisker_aslr_anchor` in
+/// `path` (Mach-O's underscore-prefixed `_whisker_aslr_anchor` also
+/// accepted). This goes into `JumpTable::new_base_address`; our
+/// vendored subsecond's `apply_patch` then computes
 ///
 /// ```ignore
-/// new_offset = dlsym(patch, "main")      // runtime main addr
-///            - table.new_base_address    // static main addr
+/// new_offset = dlsym(patch, "whisker_aslr_anchor")  // runtime
+///            - table.new_base_address               // static
 ///            = patch image base.
 /// ```
 ///
 /// Using `relative_address_base()` here (always 0 for an ELF PIE
-/// dylib) sent `new_offset = patch_runtime_main_addr`, leaving the
-/// JumpTable's values shifted by the runtime address of `main` rather
-/// than by the image base — every patched function would land
-/// somewhere meaningless. Symmetric to the host-side fix in
-/// [`crate::hotpatch::cache::HotpatchModuleCache::from_path`].
+/// dylib) sent `new_offset = patch_runtime_anchor`, leaving the
+/// JumpTable's values shifted by the runtime address of the anchor
+/// rather than by the image base — every patched function would land
+/// somewhere meaningless. Symmetric to the host-side anchor lookup
+/// in [`crate::hotpatch::cache::HotpatchModuleCache::from_path`].
 fn read_image_base(path: &Path) -> Result<u64> {
     let table = parse_symbol_table(path).with_context(|| format!("parse {}", path.display()))?;
-    // Same fallback semantics as `HotpatchModuleCache::from_path` on
-    // the host side: 0 when neither `main` nor `_main` exists. Lets
-    // host-only test fixtures (no `main` symbol) still build a patch
-    // plan; only the runtime `apply_patch` math gets skewed.
+    // Same fallback semantics as the host cache: 0 when the anchor
+    // symbol is absent. Lets test fixtures that don't carry
+    // `#[whisker::main]` still build a patch plan; only the runtime
+    // `apply_patch` math gets skewed.
     Ok(table
         .by_name
-        .get("main")
-        .or_else(|| table.by_name.get("_main"))
+        .get("whisker_aslr_anchor")
+        .or_else(|| table.by_name.get("_whisker_aslr_anchor"))
         .map(|s| s.address)
         .unwrap_or(0))
 }
