@@ -571,26 +571,33 @@ fn original_binary_path(workspace_root: &Path, package: &str, target: Target) ->
             );
         }
         Target::IosSimulator => {
-            // xtask `ios build-xcframework` writes the simulator
-            // dylib (a fat arm64+x86_64 binary inside a
-            // `.framework`) to a stable path under
-            // `target/whisker-driver/`. We point the cache at the
-            // dylib itself (not the wrapping framework dir) — the
-            // dylib's static `whisker_aslr_anchor` address and
-            // mangled symbol table are what the patch builder + the
-            // device-side dlsym must agree on. Lipo'd Mach-O fat
-            // binaries are still parseable by the `object` crate; it
-            // picks the first slice unless we ask for a specific one
-            // (host arch is fine — the static layout is identical
-            // across slices because rustc generates the same MIR).
+            // Use the single-arch dylib that cargo dropped directly,
+            // not the lipo'd fat binary inside the xcframework. The
+            // `object` crate doesn't auto-resolve Mach-O FAT_MAGIC
+            // (it requires the caller to pick a slice first via
+            // `MachOFatFile`), and the static symbol layout of each
+            // slice is byte-identical to the single-arch input —
+            // lipo just prepends a fat header.
+            //
+            // Match the host arch so the slice we read corresponds
+            // to what the Simulator actually loads at runtime (the
+            // arm64 Mac runs the arm64-sim slice natively; Intel
+            // Macs run the x86_64-sim slice).
+            let crate_us = package.replace('-', "_");
+            let dylib_name = format!("lib{crate_us}.dylib");
+            let triple = match std::env::consts::ARCH {
+                "aarch64" => "aarch64-apple-ios-sim",
+                "x86_64" => "x86_64-apple-ios",
+                arch => anyhow::bail!("unsupported host arch {arch} for iOS Simulator target"),
+            };
             let dylib = workspace_root
-                .join("target/whisker-driver/WhiskerDriver.xcframework")
-                .join("ios-arm64_x86_64-simulator")
-                .join("WhiskerDriver.framework")
-                .join("WhiskerDriver");
+                .join("target")
+                .join(triple)
+                .join("release")
+                .join(&dylib_name);
             if !dylib.is_file() {
                 anyhow::bail!(
-                    "no iOS Simulator dylib found at {} — run `cargo xtask ios build-xcframework` first",
+                    "no iOS Simulator dylib at {} — run `cargo xtask ios build-xcframework` first",
                     dylib.display(),
                 );
             }
@@ -708,22 +715,25 @@ mod tests {
     }
 
     #[test]
-    fn original_binary_path_finds_ios_simulator_dylib_under_xcframework() {
+    fn original_binary_path_finds_ios_simulator_dylib_under_target() {
         // Mirror the Android success-path test: create the expected
-        // file layout in a temp workspace, then assert the resolver
-        // returns the file rather than the framework dir.
+        // single-arch dylib for the host arch, then assert the
+        // resolver returns it. We use the host arch's simulator
+        // triple, matching what `whisker run` resolves at runtime.
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let ws = std::env::temp_dir().join(format!("whisker-dev-test-ios-{pid}-{n}"));
         let _ = std::fs::remove_dir_all(&ws);
-        let fw_dir = ws
-            .join("target/whisker-driver/WhiskerDriver.xcframework")
-            .join("ios-arm64_x86_64-simulator")
-            .join("WhiskerDriver.framework");
-        std::fs::create_dir_all(&fw_dir).unwrap();
-        let dylib = fw_dir.join("WhiskerDriver");
+        let triple = match std::env::consts::ARCH {
+            "aarch64" => "aarch64-apple-ios-sim",
+            "x86_64" => "x86_64-apple-ios",
+            other => panic!("unsupported test host arch {other}"),
+        };
+        let release_dir = ws.join("target").join(triple).join("release");
+        std::fs::create_dir_all(&release_dir).unwrap();
+        let dylib = release_dir.join("libhello_world.dylib");
         std::fs::write(&dylib, b"fake-macho").unwrap();
 
         let resolved = original_binary_path(&ws, "hello-world", Target::IosSimulator).unwrap();

@@ -71,3 +71,4 @@ examples/**/Info.plist
 examples/**/build/
 examples/**/.build/
 examples/**/.swiftpm/
+.claude/
