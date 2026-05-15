@@ -65,10 +65,15 @@ pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.0";
 pub const LYNX_VERSION: &str = "3.7.0-whisker.0";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
-/// produced by the fork's CI. Empty until the first release.
-pub const LYNX_ANDROID_SHA256: &str = "";
+/// produced by the fork's CI. Pinned to the
+/// [v3.7.0-whisker.0 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.0).
+pub const LYNX_ANDROID_SHA256: &str =
+    "566a961b6c47c33d604c820f86e10d3a1c9e2b87ac1a6051229e1649abe2ccb4";
 
-/// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`.
+/// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`. Empty until
+/// the iOS half of `whiskerrs/lynx`'s `build-whisker-tarballs.yml`
+/// is wired up (the iOS job is currently a stub — see
+/// `.whisker/README.md` in the fork).
 pub const LYNX_IOS_SHA256: &str = "";
 
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
@@ -264,10 +269,43 @@ fn hex_nibble(n: u8) -> char {
 }
 
 fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<()> {
+    // Release tarballs wrap their contents in a single
+    // `whisker-lynx-<platform>-<ver>/` directory (the CI workflow
+    // does `tar czf NAME -C $WORKSPACE $STAGE_DIR`). Strip that
+    // top-level component so the unpacked layout matches what
+    // `cache_dir(platform)` returns.
+    //
+    // If a future tarball is packed without the wrapper, this still
+    // works — `strip_root_component` is a no-op on top-level files.
     let gz = flate2::read::GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(gz);
-    archive.unpack(dest).context("tar unpack")?;
+    for entry in archive.entries().context("read tar entries")? {
+        let mut entry = entry.context("tar entry")?;
+        let path = entry.path().context("entry path")?.into_owned();
+        let stripped = strip_root_component(&path);
+        if stripped.as_os_str().is_empty() {
+            // top-level dir entry itself — no file to extract
+            continue;
+        }
+        let target = dest.join(stripped);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("mkdir -p {}", parent.display()))?;
+        }
+        entry
+            .unpack(&target)
+            .with_context(|| format!("unpack {}", target.display()))?;
+    }
     Ok(())
+}
+
+/// Drop the first path component if there is one. `foo/bar/baz` →
+/// `bar/baz`; `foo` → `` (empty). Used by [`extract_tar_gz`] to
+/// flatten the wrapping dir release tarballs have.
+fn strip_root_component(p: &Path) -> PathBuf {
+    let mut it = p.components();
+    it.next();
+    it.collect()
 }
 
 // ----- Convenience: write the version line that the CI workflow
@@ -480,13 +518,16 @@ mod tests {
     }
 
     #[test]
-    fn extract_tar_gz_lays_out_files() {
+    fn extract_tar_gz_strips_the_wrapping_root_dir() {
+        // Mirrors the CI tarball layout: a single top-level dir
+        // wrapping the actual contents.
         let bytes = write_tar_gz_for_test(&[
-            ("LynxAndroid.aar", b"FAKE_AAR_BYTES"),
-            ("headers/Lynx/foo.h", b"// stub"),
+            ("whisker-lynx-android-x/LynxAndroid.aar", b"FAKE_AAR_BYTES"),
+            ("whisker-lynx-android-x/headers/Lynx/foo.h", b"// stub"),
         ]);
         let dest = unique_tempdir();
         extract_tar_gz(&bytes, &dest).expect("extract");
+        // The wrapping `whisker-lynx-android-x/` should be gone.
         assert!(dest.join("LynxAndroid.aar").is_file());
         assert!(dest.join("headers/Lynx/foo.h").is_file());
         assert_eq!(
@@ -494,6 +535,13 @@ mod tests {
             b"FAKE_AAR_BYTES",
         );
         let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn strip_root_component_drops_first_segment() {
+        assert_eq!(strip_root_component(Path::new("a/b/c")), PathBuf::from("b/c"));
+        assert_eq!(strip_root_component(Path::new("only-root")), PathBuf::new());
+        assert_eq!(strip_root_component(Path::new("a/")), PathBuf::new());
     }
 
     #[test]
