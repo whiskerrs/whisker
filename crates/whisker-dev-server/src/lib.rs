@@ -55,7 +55,7 @@ pub mod watcher;
 
 pub use builder::{BuildPlan, Builder, CaptureShims};
 pub use installer::Installer;
-pub use server::{Envelope, PatchSender};
+pub use server::{Patch, PatchSender};
 pub use watcher::{Change, ChangeKind};
 
 // ----- Config & enums --------------------------------------------------------
@@ -383,8 +383,8 @@ impl DevServer {
                         Ok(plan) => {
                             let built_in = started.elapsed();
                             log_patch_diff(&plan.report);
-                            let lib_bytes_b64 = match read_lib_bytes_b64(&plan.table.lib) {
-                                Ok(s) => s,
+                            let dylib_bytes = match read_lib_bytes(&plan.table.lib) {
+                                Ok(b) => Arc::new(b),
                                 Err(e) => {
                                     eprintln!(
                                         "[whisker-dev-server] tier1 patch built but \
@@ -404,9 +404,9 @@ impl DevServer {
                                 }
                             };
                             let send_started = std::time::Instant::now();
-                            let n = sender.send(Envelope::Patch {
+                            let n = sender.send(Patch {
                                 table: plan.table,
-                                lib_bytes_b64,
+                                dylib_bytes,
                             });
                             eprintln!(
                                 "[whisker-dev-server] tier1 patch sent to {n} client(s) \
@@ -695,15 +695,13 @@ fn target_os_for(target: Target) -> hotpatch::LinkerOs {
     }
 }
 
-/// Read the patch dylib off disk and base64-encode it for the JSON
-/// envelope. The size is typically tens of KB (only the changed
-/// crate's `.o` linked with `-undefined dynamic_lookup`), so the
-/// base64 overhead is acceptable. A future optimisation is to use
-/// WebSocket binary frames instead.
-fn read_lib_bytes_b64(path: &Path) -> Result<String> {
-    use base64::Engine;
-    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+/// Slurp the patch dylib off disk so the dev-loop can hand it to the
+/// WebSocket sender. The size is typically tens of KB (only the
+/// changed crate's `.o` linked with `-undefined dynamic_lookup`), and
+/// since switching to the binary frame protocol we ship it verbatim
+/// — no base64.
+fn read_lib_bytes(path: &Path) -> Result<Vec<u8>> {
+    std::fs::read(path).with_context(|| format!("read {}", path.display()))
 }
 
 async fn run_build_cycle(

@@ -98,11 +98,44 @@ pub fn build_obj_plan(captured: &CapturedRustcInvocation, output_dir: &Path) -> 
     set_out_dir(&mut args, output_dir);
     let object_path = output_dir.join(object_filename(&captured.crate_name));
     set_emit_obj(&mut args, &object_path);
+    // Reuse rustc's incremental cache across thin rebuilds. rustc
+    // fingerprints source files + query results into this dir; the
+    // next invocation skips re-typechecking + re-codegenning anything
+    // the fingerprints prove unchanged. For a single-function edit
+    // in a small user crate this can cut Stage 1 (~200 ms cold) to
+    // 50–100 ms warm. The cache lives under our patch dir so it's
+    // wiped together with the thin object on a fresh `whisker run`.
+    set_incremental(&mut args, &output_dir.join("incremental"));
     ObjBuildPlan {
         args,
         output_dir: output_dir.to_path_buf(),
         expected_object: object_path,
     }
+}
+
+/// Force `-C incremental=<dir>` to point at our patch cache dir.
+/// Strips any existing `-C incremental=...` rustc dropped in (cargo
+/// usually doesn't pass one when building a `dylib`/`cdylib`, but
+/// we strip defensively in case the captured args ever carry one).
+fn set_incremental(args: &mut Vec<String>, incremental_dir: &Path) {
+    let mut i = 0;
+    while i < args.len() {
+        if (args[i] == "-C" || args[i] == "--codegen") && i + 1 < args.len()
+            && args[i + 1].starts_with("incremental=")
+        {
+            args.drain(i..=i + 1);
+            continue;
+        }
+        // Combined form: `-Cincremental=...`
+        if args[i].starts_with("-Cincremental=") || args[i].starts_with("--codegen=incremental=")
+        {
+            args.remove(i);
+            continue;
+        }
+        i += 1;
+    }
+    args.push("-C".into());
+    args.push(format!("incremental={}", incremental_dir.display()));
 }
 
 /// Force `--emit` to exactly one directive: `obj=<path>`. Strips
@@ -401,6 +434,8 @@ mod tests {
                 "/whisker/objs/x",
                 "--emit",
                 "obj=/whisker/objs/x/demo.o",
+                "-C",
+                "incremental=/whisker/objs/x/incremental",
             ]),
         );
         assert_eq!(plan.output_dir, Path::new("/whisker/objs/x"));

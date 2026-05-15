@@ -2,21 +2,36 @@
 //!
 //! `whisker run` opens a TCP listener, exposes a single
 //! `GET /whisker-dev` route that upgrades to WebSocket, and pushes
-//! `Envelope` messages to every connected client. The on-device
+//! patch messages to every connected client. The on-device
 //! `whisker-dev-runtime` is the canonical client.
 //!
-//! Wire format is the same JSON envelope `whisker-dev-runtime` parses
-//! (and unit-tests against):
+//! ## Wire format
+//!
+//! Two frame types:
+//!
+//! **Patches** — *binary* frames laid out as:
 //!
 //! ```text
-//! { "kind": "patch", "table": <subsecond::JumpTable JSON> }
+//! [8 bytes: u64 BE — JSON header length]
+//! [N bytes:        JSON header { "kind": "patch", "table": {...} } ]
+//! [rest:           raw patch dylib bytes (no encoding) ]
 //! ```
 //!
-//! Architecture is a single `tokio::sync::broadcast` channel: every
-//! connected socket has its own subscriber receiver, so one
-//! `PatchSender::send` reaches all clients. New connections see only
-//! envelopes sent *after* they subscribe — the receiver is at the
-//! tail end of the broadcast buffer, not replayed.
+//! No base64. The dylib lands on the device with the original byte
+//! count, ~30 % smaller on the wire than the previous JSON-with-
+//! base64-string protocol.
+//!
+//! **Hello** — *text* frame, `{"kind":"hello","aslr_reference":<u64>}`.
+//! The device sends this on connect; the server stores the value
+//! and the patcher uses it to compute the ASLR slide.
+//!
+//! ## Architecture
+//!
+//! A single `tokio::sync::broadcast` channel: every connected socket
+//! has its own subscriber receiver, so one `PatchSender::send` reaches
+//! all clients. New connections see only payloads sent *after* they
+//! subscribe — the receiver is at the tail end of the broadcast
+//! buffer, not replayed.
 
 use anyhow::Result;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -30,35 +45,36 @@ use tokio::sync::broadcast;
 
 use crate::Event;
 
-/// Wire-level message pushed to clients. `Envelope` mirrors the enum
-/// `whisker-dev-runtime::hot_reload` parses on the receive side; both
-/// rely on serde's tag/snake_case to keep the shape stable.
+/// Cheap-to-clone broadcast payload. The dylib bytes are held by
+/// `Arc` so cloning into each subscribed client's receive queue is
+/// just a refcount bump.
+#[derive(Debug, Clone)]
+pub struct Patch {
+    /// The address-map metadata. Serialized as JSON in the binary
+    /// frame's prefix.
+    pub table: subsecond_types::JumpTable,
+    /// Raw patch dylib bytes. Streamed verbatim after the JSON
+    /// prefix; the device writes them to disk and `dlopen`s the
+    /// resulting file.
+    pub dylib_bytes: Arc<Vec<u8>>,
+}
+
+/// JSON header that prefixes the binary patch frame. Mirrors the
+/// shape `whisker-dev-runtime::hot_reload::Header` deserialises.
 ///
-/// The `table` field is wrapped in [`WireJumpTable`] so the address
-/// map serialises as a JSON array of `[old, new]` pairs rather than
-/// a JSON object. JSON objects can only have string keys, so the
-/// default `HashMap<u64, u64>` derive would produce
+/// `table.map` is serialised as a JSON array of `[old, new]` pairs
+/// rather than a JSON object. JSON objects can only have string
+/// keys, so the default `HashMap<u64, u64>` derive would produce
 /// `{ "1234": 5678 }` — and the matching deserialize side, given a
 /// custom hasher like `subsecond_types::BuildAddressHasher`, fails
 /// to convert the string back to `u64`. The pair-array form
-/// sidesteps both: keys travel as JSON numbers, deserialize is
-/// straightforward, and the on-the-wire payload is also smaller.
-///
-/// `lib_bytes_b64` carries the patch dylib's content base64-encoded
-/// alongside its metadata. The device side writes those bytes to a
-/// local file under its own cache dir, overwrites `table.lib` with
-/// the local path, then calls `subsecond::apply_patch` against the
-/// device-side copy. Without this, the path in `table.lib` points
-/// at the host's `target/` dir, which `dlopen` on the device
-/// obviously can't reach.
+/// sidesteps both.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Envelope {
-    /// A new subsecond JumpTable for the device to apply.
+enum PatchHeader<'a> {
     Patch {
         #[serde(serialize_with = "wire_jump_table::serialize")]
-        table: subsecond_types::JumpTable,
-        lib_bytes_b64: String,
+        table: &'a subsecond_types::JumpTable,
     },
 }
 
@@ -83,12 +99,12 @@ pub mod wire_jump_table {
     }
 }
 
-/// Cheap-to-clone handle for sending envelopes from the rest of the
+/// Cheap-to-clone handle for sending patches from the rest of the
 /// dev server (file watcher / builder / etc.) to every connected
 /// client.
 #[derive(Clone)]
 pub struct PatchSender {
-    tx: broadcast::Sender<Envelope>,
+    tx: broadcast::Sender<Patch>,
     /// Latest `aslr_reference` reported by a connected client via the
     /// `hello` handshake. Single-slot, last-write-wins: we don't yet
     /// support targeted-per-client patches, so all connected clients
@@ -99,11 +115,11 @@ pub struct PatchSender {
 }
 
 impl PatchSender {
-    /// Broadcast `env` to every currently-connected client.
+    /// Broadcast `patch` to every currently-connected client.
     /// Returns the number of clients the message was queued for —
     /// `0` is fine (no client connected yet) and not an error.
-    pub fn send(&self, env: Envelope) -> usize {
-        self.tx.send(env).unwrap_or(0)
+    pub fn send(&self, patch: Patch) -> usize {
+        self.tx.send(patch).unwrap_or(0)
     }
 
     /// Number of clients currently subscribed.
@@ -123,7 +139,7 @@ impl PatchSender {
 
 #[derive(Clone)]
 struct AppState {
-    tx: broadcast::Sender<Envelope>,
+    tx: broadcast::Sender<Patch>,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     aslr_reference: Arc<Mutex<Option<u64>>>,
 }
@@ -140,7 +156,7 @@ pub async fn serve(
     addr: SocketAddr,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
 ) -> Result<(PatchSender, SocketAddr, tokio::task::JoinHandle<()>)> {
-    let (tx, _rx) = broadcast::channel::<Envelope>(16);
+    let (tx, _rx) = broadcast::channel::<Patch>(16);
     let aslr_reference: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
     let state = AppState {
         tx: tx.clone(),
@@ -183,21 +199,21 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     loop {
         tokio::select! {
-            // server → client: forward broadcast envelopes as text frames.
+            // server → client: forward broadcast patches as binary frames.
             recv = bcast_rx.recv() => {
-                let env = match recv {
-                    Ok(e) => e,
+                let patch = match recv {
+                    Ok(p) => p,
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                let json = match serde_json::to_string(&env) {
-                    Ok(s) => s,
+                let frame = match encode_patch_frame(&patch) {
+                    Ok(b) => b,
                     Err(e) => {
-                        eprintln!("[whisker-dev-server] serialize: {e}");
+                        eprintln!("[whisker-dev-server] encode patch frame: {e}");
                         continue;
                     }
                 };
-                if tx_ws.send(Message::Text(json.into())).await.is_err() {
+                if tx_ws.send(Message::Binary(frame.into())).await.is_err() {
                     break;
                 }
             }
@@ -228,6 +244,22 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     if let Some(cb) = &state.on_event {
         cb(Event::ClientDisconnected);
     }
+}
+
+/// Build the on-the-wire binary frame:
+///   `[u64 BE json_len][json header][raw dylib bytes]`
+fn encode_patch_frame(patch: &Patch) -> Result<Vec<u8>> {
+    let header = PatchHeader::Patch {
+        table: &patch.table,
+    };
+    let json = serde_json::to_vec(&header)?;
+    let json_len = json.len() as u64;
+    let dylib = patch.dylib_bytes.as_slice();
+    let mut frame = Vec::with_capacity(8 + json.len() + dylib.len());
+    frame.extend_from_slice(&json_len.to_be_bytes());
+    frame.extend_from_slice(&json);
+    frame.extend_from_slice(dylib);
+    Ok(frame)
 }
 
 /// Pull the `aslr_reference` field out of a client hello envelope.
@@ -293,6 +325,18 @@ mod tests {
         ws
     }
 
+    /// Decode a wire frame back into (header JSON value, dylib bytes)
+    /// so tests can assert against both halves.
+    fn decode_patch_frame(bytes: &[u8]) -> (serde_json::Value, Vec<u8>) {
+        assert!(bytes.len() >= 8, "frame too short");
+        let json_len = u64::from_be_bytes(bytes[..8].try_into().unwrap()) as usize;
+        assert!(bytes.len() >= 8 + json_len, "frame truncated");
+        let header: serde_json::Value =
+            serde_json::from_slice(&bytes[8..8 + json_len]).expect("parse header");
+        let dylib = bytes[8 + json_len..].to_vec();
+        (header, dylib)
+    }
+
     #[tokio::test]
     async fn client_can_connect_and_receive_a_broadcast_patch() {
         let (sender, addr) = spawn_test_server(None).await;
@@ -309,9 +353,9 @@ mod tests {
         assert_eq!(sender.client_count(), 1);
 
         let table = make_dummy_jump_table();
-        let n = sender.send(Envelope::Patch {
+        let n = sender.send(Patch {
             table: table.clone(),
-            lib_bytes_b64: String::new(),
+            dylib_bytes: Arc::new(b"FAKE_DYLIB_BYTES".to_vec()),
         });
         assert_eq!(n, 1);
 
@@ -320,25 +364,24 @@ mod tests {
             .expect("recv timed out")
             .expect("stream ended")
             .expect("ws error");
-        let text = match msg {
-            tokio_tungstenite::tungstenite::Message::Text(s) => s,
-            other => panic!("expected text, got {other:?}"),
+        let bytes = match msg {
+            tokio_tungstenite::tungstenite::Message::Binary(b) => b,
+            other => panic!("expected binary, got {other:?}"),
         };
-        // It must round-trip — we deliberately use the same envelope
-        // shape the receiver in whisker-dev-runtime parses.
-        let parsed: serde_json::Value = serde_json::from_str(&text).expect("parse json");
-        assert_eq!(parsed["kind"], "patch");
-        assert_eq!(parsed["table"]["lib"], "/tmp/dummy.dylib");
-        assert_eq!(parsed["table"]["aslr_reference"], 4294967296_u64);
+        let (header, dylib) = decode_patch_frame(&bytes);
+        assert_eq!(header["kind"], "patch");
+        assert_eq!(header["table"]["lib"], "/tmp/dummy.dylib");
+        assert_eq!(header["table"]["aslr_reference"], 4294967296_u64);
+        assert_eq!(dylib, b"FAKE_DYLIB_BYTES");
     }
 
     #[tokio::test]
     async fn send_with_no_clients_returns_zero_and_does_not_error() {
         let (sender, _addr) = spawn_test_server(None).await;
         assert_eq!(sender.client_count(), 0);
-        let n = sender.send(Envelope::Patch {
+        let n = sender.send(Patch {
             table: make_dummy_jump_table(),
-            lib_bytes_b64: String::new(),
+            dylib_bytes: Arc::new(Vec::new()),
         });
         assert_eq!(n, 0);
     }
@@ -357,9 +400,9 @@ mod tests {
         }
         assert_eq!(sender.client_count(), 2);
 
-        let n = sender.send(Envelope::Patch {
+        let n = sender.send(Patch {
             table: make_dummy_jump_table(),
-            lib_bytes_b64: String::new(),
+            dylib_bytes: Arc::new(b"SHARED".to_vec()),
         });
         assert_eq!(n, 2);
 
@@ -371,7 +414,7 @@ mod tests {
                 .expect("ws err");
             assert!(matches!(
                 msg,
-                tokio_tungstenite::tungstenite::Message::Text(_)
+                tokio_tungstenite::tungstenite::Message::Binary(_)
             ));
         }
     }

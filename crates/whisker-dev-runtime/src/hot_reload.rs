@@ -2,15 +2,19 @@
 //!
 //! Connection direction is **device → host**: a Whisker app running on
 //! a device / emulator / simulator opens a WebSocket to the host
-//! running `whisker run`. The host pushes envelopes of the form
+//! running `whisker run`. The host pushes patches as *binary* frames
+//! laid out as:
 //!
 //! ```text
-//! { "kind": "patch", "table": <subsecond::JumpTable JSON> }
+//! [8 bytes: u64 BE — JSON header length]
+//! [N bytes:        JSON header { "kind": "patch", "table": {...} } ]
+//! [rest:           raw patch dylib bytes (no encoding) ]
 //! ```
 //!
-//! down the socket; the receiver dropping them into a single-slot
-//! mutex. The Lynx TASM thread later drains the slot at the top of
-//! its tick (via [`take_pending_patch`]) and invokes
+//! The receiver writes the dylib bytes to a local cache file, rewrites
+//! `table.lib` to that path, and drops the resulting JumpTable into a
+//! single-slot mutex. The Lynx TASM thread later drains the slot at
+//! the top of its tick (via [`take_pending_patch`]) and invokes
 //! `subsecond::apply_patch` while **no** `subsecond::call` is on the
 //! stack — the only safe window.
 //!
@@ -166,19 +170,16 @@ where
     while let Some(msg) = ws.next().await {
         let msg = msg?;
         match msg {
-            Message::Text(text) => {
-                devlog(&format!("envelope received ({} bytes)", text.len()));
-                match parse_envelope(&text) {
-                    Ok(Envelope::Patch {
-                        mut table,
-                        lib_bytes_b64,
-                    }) => {
+            Message::Binary(bytes) => {
+                devlog(&format!("patch frame received ({} bytes)", bytes.len()));
+                match parse_patch_frame(&bytes) {
+                    Ok((mut table, dylib_bytes)) => {
                         devlog(&format!(
-                            "envelope parsed (map={} entries, dylib_b64={} bytes)",
+                            "frame parsed (map={} entries, dylib={} bytes)",
                             table.map.len(),
-                            lib_bytes_b64.len(),
+                            dylib_bytes.len(),
                         ));
-                        match materialise_patch_dylib(&lib_bytes_b64) {
+                        match materialise_patch_dylib(dylib_bytes) {
                             Ok(local) => {
                                 devlog(
                                     &format!("patch dylib materialised at {}", local.display(),),
@@ -200,36 +201,30 @@ where
                             }
                         }
                     }
-                    Err(e) => devlog(&format!("malformed envelope: {e}")),
+                    Err(e) => devlog(&format!("malformed patch frame: {e}")),
                 }
             }
             Message::Close(_) => return Ok(()),
-            _ => {} // ignore Binary / Ping / Pong for now
+            _ => {} // ignore Text (no server→client text frames today) / Ping / Pong
         }
     }
     Ok(())
 }
 
-/// Decode the base64 patch dylib payload, write it to a local file
-/// under the app's cache dir, and return the local path. The
-/// returned path is what `table.lib` gets overwritten with, so
-/// `subsecond::apply_patch`'s `dlopen` sees a real on-device file.
+/// Write the patch dylib payload to a local file under the app's
+/// cache dir, and return the local path. The returned path is what
+/// `table.lib` gets overwritten with, so `subsecond::apply_patch`'s
+/// `dlopen` sees a real on-device file.
 ///
 /// File naming uses a monotonic counter + timestamp so multiple
 /// patches in one session don't collide; old files are left around
 /// (cleaned up when the OS reclaims the cache dir). Total disk use
 /// per session is tiny — each patch is ~tens of KB.
 fn materialise_patch_dylib(
-    lib_bytes_b64: &str,
+    bytes: &[u8],
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error + Send + Sync>> {
-    use base64::Engine;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(lib_bytes_b64)
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-            format!("base64 decode: {e}").into()
-        })?;
     let dir = patch_cache_dir().ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
         "could not resolve a writable cache dir".into()
     })?;
@@ -241,7 +236,7 @@ fn materialise_patch_dylib(
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let path = dir.join(format!("patch-{ts}-{n}.so"));
-    std::fs::write(&path, &bytes)?;
+    std::fs::write(&path, bytes)?;
     Ok(path)
 }
 
@@ -274,16 +269,10 @@ fn patch_cache_dir() -> Option<std::path::PathBuf> {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-enum Envelope {
+enum Header {
     Patch {
         #[serde(deserialize_with = "deserialize_jump_table")]
         table: JumpTable,
-        /// Base64 of the patch dylib bytes. We decode + write to a
-        /// local cache file and rewrite `table.lib` to the local
-        /// path before queuing — `subsecond::apply_patch` calls
-        /// `dlopen(table.lib)` and the host path obviously doesn't
-        /// exist on the device.
-        lib_bytes_b64: String,
     },
 }
 
@@ -322,8 +311,32 @@ where
     })
 }
 
-fn parse_envelope(s: &str) -> Result<Envelope, serde_json::Error> {
-    serde_json::from_str(s)
+/// Parse a binary patch frame into `(JumpTable, dylib_bytes_slice)`.
+/// See the module docstring for the on-the-wire layout.
+fn parse_patch_frame(
+    bytes: &[u8],
+) -> Result<(JumpTable, &[u8]), Box<dyn std::error::Error + Send + Sync>> {
+    if bytes.len() < 8 {
+        return Err(format!("frame too short ({} bytes, need ≥8)", bytes.len()).into());
+    }
+    let json_len = u64::from_be_bytes(bytes[..8].try_into().unwrap()) as usize;
+    let header_end = 8usize
+        .checked_add(json_len)
+        .ok_or("json_len overflow")?;
+    if bytes.len() < header_end {
+        return Err(format!(
+            "frame truncated: header claims {} json bytes but only {} available",
+            json_len,
+            bytes.len() - 8,
+        )
+        .into());
+    }
+    let header: Header = serde_json::from_slice(&bytes[8..header_end])
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+            format!("parse json header: {e}").into()
+        })?;
+    let Header::Patch { table } = header;
+    Ok((table, &bytes[header_end..]))
 }
 
 // ============================================================================
@@ -334,8 +347,19 @@ fn parse_envelope(s: &str) -> Result<Envelope, serde_json::Error> {
 mod tests {
     use super::*;
 
+    /// Pack a JSON header + raw dylib bytes into the on-the-wire
+    /// binary frame, matching what the server emits.
+    fn make_frame(json: &str, dylib: &[u8]) -> Vec<u8> {
+        let json_bytes = json.as_bytes();
+        let mut frame = Vec::with_capacity(8 + json_bytes.len() + dylib.len());
+        frame.extend_from_slice(&(json_bytes.len() as u64).to_be_bytes());
+        frame.extend_from_slice(json_bytes);
+        frame.extend_from_slice(dylib);
+        frame
+    }
+
     #[test]
-    fn parses_a_minimal_patch_envelope() {
+    fn parses_a_minimal_patch_frame() {
         // The wire format encodes `map` as an array of [old, new]
         // pairs — see deserialize_jump_table for the rationale.
         let json = r#"{
@@ -346,27 +370,20 @@ mod tests {
                 "aslr_reference": 4294967296,
                 "new_base_address": 8589934592,
                 "ifunc_count": 0
-            },
-            "lib_bytes_b64": ""
-        }"#;
-        let env = parse_envelope(json).expect("should parse");
-        match env {
-            Envelope::Patch {
-                table,
-                lib_bytes_b64,
-            } => {
-                assert_eq!(table.lib.to_string_lossy(), "/tmp/some-patch.dylib",);
-                assert_eq!(table.aslr_reference, 0x1_0000_0000);
-                assert_eq!(table.new_base_address, 0x2_0000_0000);
-                assert_eq!(table.ifunc_count, 0);
-                assert!(table.map.is_empty());
-                assert!(lib_bytes_b64.is_empty());
             }
-        }
+        }"#;
+        let frame = make_frame(json, b"");
+        let (table, dylib) = parse_patch_frame(&frame).expect("should parse");
+        assert_eq!(table.lib.to_string_lossy(), "/tmp/some-patch.dylib",);
+        assert_eq!(table.aslr_reference, 0x1_0000_0000);
+        assert_eq!(table.new_base_address, 0x2_0000_0000);
+        assert_eq!(table.ifunc_count, 0);
+        assert!(table.map.is_empty());
+        assert!(dylib.is_empty());
     }
 
     #[test]
-    fn parses_an_envelope_with_a_non_empty_address_map() {
+    fn parses_a_frame_with_a_non_empty_address_map_and_dylib_bytes() {
         let json = r#"{
             "kind": "patch",
             "table": {
@@ -375,28 +392,21 @@ mod tests {
                 "aslr_reference": 0,
                 "new_base_address": 0,
                 "ifunc_count": 0
-            },
-            "lib_bytes_b64": "AAECAw=="
+            }
         }"#;
-        let env = parse_envelope(json).expect("should parse");
-        let Envelope::Patch {
-            table,
-            lib_bytes_b64,
-        } = env;
+        let dylib_bytes = b"\x00\x01\x02\x03";
+        let frame = make_frame(json, dylib_bytes);
+        let (table, dylib) = parse_patch_frame(&frame).expect("should parse");
         assert_eq!(table.map.len(), 2);
         assert_eq!(table.map.get(&100), Some(&200));
         assert_eq!(table.map.get(&300), Some(&400));
-        assert_eq!(lib_bytes_b64, "AAECAw==");
+        assert_eq!(dylib, dylib_bytes);
     }
 
     #[test]
     fn materialise_patch_dylib_writes_bytes_to_cache_and_returns_path() {
-        use base64::Engine;
-        // Pick a small known byte sequence so we can verify the
-        // round-trip; base64-encode it.
         let payload = b"\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00";
-        let b64 = base64::engine::general_purpose::STANDARD.encode(payload);
-        let path = materialise_patch_dylib(&b64).expect("write");
+        let path = materialise_patch_dylib(payload).expect("write");
         let read_back = std::fs::read(&path).unwrap();
         assert_eq!(read_back, payload);
         // Cleanup so repeated runs don't accumulate.
@@ -405,13 +415,22 @@ mod tests {
 
     #[test]
     fn rejects_unknown_envelope_kind() {
-        let json = r#"{ "kind": "frobnicate" }"#;
-        assert!(parse_envelope(json).is_err());
+        let frame = make_frame(r#"{ "kind": "frobnicate" }"#, b"");
+        assert!(parse_patch_frame(&frame).is_err());
     }
 
     #[test]
-    fn rejects_malformed_json() {
-        assert!(parse_envelope("not json").is_err());
+    fn rejects_truncated_frame() {
+        // Five bytes can't hold the 8-byte length prefix.
+        assert!(parse_patch_frame(&[0u8; 5]).is_err());
+    }
+
+    #[test]
+    fn rejects_frame_whose_header_length_overruns_the_payload() {
+        // Claim 100 bytes of JSON, supply zero.
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&100u64.to_be_bytes());
+        assert!(parse_patch_frame(&frame).is_err());
     }
 
     #[test]

@@ -22,12 +22,29 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use super::{
     build_jump_table, build_link_plan, load_captured_args, load_captured_linker_args,
     parse_symbol_table, run_link_plan, run_obj_plan, thin_build, validate_environment,
     CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, PatchPlan,
 };
+
+/// Single-slot in-session cache of the stub `.o` we synthesize for the
+/// patch dylib. Most edits only change a function *body*; the set of
+/// undefined symbols the resulting `.o` references doesn't move, and
+/// the device's `aslr_reference` is fixed for the session — so the
+/// stub bytes are identical to the previous patch's. Reusing them
+/// saves the per-patch object-builder pass.
+struct StubCache {
+    /// FNV-1a hash of the sorted `needed` symbol list. Cheap, and
+    /// good enough for an "is this the same set?" check — collisions
+    /// would just mean rebuilding the stub once.
+    needed_hash: u64,
+    aslr_reference: u64,
+    target_os: LinkerOs,
+    bytes: Vec<u8>,
+}
 
 pub struct Patcher {
     package: String,
@@ -39,6 +56,7 @@ pub struct Patcher {
     original_cache: HotpatchModuleCache,
     captured_rustc_args: HashMap<String, CapturedRustcInvocation>,
     captured_linker_args: HashMap<String, CapturedLinkerInvocation>,
+    stub_cache: Mutex<Option<StubCache>>,
 }
 
 impl Patcher {
@@ -67,6 +85,7 @@ impl Patcher {
             original_cache,
             captured_rustc_args,
             captured_linker_args,
+            stub_cache: Mutex::new(None),
         }
     }
 
@@ -174,14 +193,10 @@ impl Patcher {
             Vec::new()
         } else {
             let stub_path = self.patch_out_dir.join("aslr-stub.o");
-            let stub_bytes = super::create_undefined_symbol_stub(
-                &self.original_cache,
-                &object,
-                self.target_os,
-                aslr_reference,
-            )
-            .context("create_undefined_symbol_stub")?;
-            std::fs::write(&stub_path, stub_bytes)
+            let stub_bytes = self
+                .stub_bytes_for(&object, aslr_reference)
+                .context("synthesize stub object")?;
+            std::fs::write(&stub_path, &stub_bytes)
                 .with_context(|| format!("write stub object to {}", stub_path.display()))?;
             let mut e = vec![stub_path];
             // Belt-and-suspenders on Linux/Android: the stub is
@@ -237,6 +252,42 @@ impl Patcher {
             self.original_cache.aslr_reference,
             new_base_address,
         ))
+    }
+
+    /// Return the stub object bytes for `object`+`aslr_reference`.
+    /// Reuses an in-session cached copy when the patch's UND symbol
+    /// set matches the previous build's and `aslr_reference` /
+    /// `target_os` are unchanged — the common case when an edit only
+    /// touches a function body.
+    fn stub_bytes_for(&self, object: &Path, aslr_reference: u64) -> Result<Vec<u8>> {
+        let needed = super::compute_needed_symbols(object).context("compute_needed_symbols")?;
+        let needed_hash = hash_needed(&needed);
+        if let Ok(guard) = self.stub_cache.lock() {
+            if let Some(cached) = guard.as_ref() {
+                if cached.needed_hash == needed_hash
+                    && cached.aslr_reference == aslr_reference
+                    && cached.target_os == self.target_os
+                {
+                    return Ok(cached.bytes.clone());
+                }
+            }
+        }
+        let bytes = super::build_stub_for_needed(
+            &needed,
+            &self.original_cache,
+            self.target_os,
+            aslr_reference,
+        )
+        .context("build_stub_for_needed")?;
+        if let Ok(mut guard) = self.stub_cache.lock() {
+            *guard = Some(StubCache {
+                needed_hash,
+                aslr_reference,
+                target_os: self.target_os,
+                bytes: bytes.clone(),
+            });
+        }
+        Ok(bytes)
     }
 
     /// Where this Patcher would put the next patch dylib —
@@ -298,6 +349,26 @@ impl Patcher {
 /// wins, otherwise `rustc` on PATH.
 fn current_rustc() -> PathBuf {
     PathBuf::from(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+}
+
+/// Hash a sorted symbol-name list into a u64 for the stub cache key.
+/// FNV-1a — small, fast, and we only need "did this set change?"
+/// granularity (a hash collision just means we rebuild the stub
+/// once, no correctness impact).
+fn hash_needed(needed: &[String]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
+    let mut h = FNV_OFFSET;
+    for name in needed {
+        for b in name.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+        // Separator so ["ab","c"] and ["a","bc"] hash differently.
+        h ^= 0xff;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h
 }
 
 /// Return the static virtual address of `whisker_aslr_anchor` in

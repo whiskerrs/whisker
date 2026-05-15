@@ -13,7 +13,7 @@
 //!   `subsecond::aslr_reference()` — the *runtime* address of
 //!   `whisker_aslr_anchor` in the loaded host process (Whisker's
 //!   subsecond fork anchors on this unique symbol rather than
-//!   `main`; see `vendored/subsecond/src/lib.rs`).
+//!   `main`; see `crates/whisker-subsecond/src/lib.rs`).
 //! - `aslr_offset = aslr_reference - host_static_anchor_addr` is
 //!   the ASLR slide between the recorded `.so` and the live
 //!   process.
@@ -67,6 +67,48 @@ pub fn create_undefined_symbol_stub(
     target_os: LinkerOs,
     aslr_reference: u64,
 ) -> Result<Vec<u8>> {
+    let needed = compute_needed_symbols(patch_obj)?;
+    build_stub_for_needed(&needed, cache, target_os, aslr_reference)
+}
+
+/// Parse `patch_obj` and return the sorted list of symbol names the
+/// patch refers to but doesn't itself define. Sorted (Vec, not Set)
+/// so callers can hash the result deterministically for caching.
+pub fn compute_needed_symbols(patch_obj: &Path) -> Result<Vec<String>> {
+    let bytes = std::fs::read(patch_obj)
+        .with_context(|| format!("read patch obj {}", patch_obj.display()))?;
+    let file = object::File::parse(&*bytes).context("parse patch obj")?;
+
+    let mut undefined: HashSet<String> = HashSet::new();
+    let mut defined: HashSet<String> = HashSet::new();
+    for sym in file.symbols() {
+        let Ok(name) = sym.name() else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        if sym.is_undefined() {
+            undefined.insert(name.to_string());
+        } else {
+            defined.insert(name.to_string());
+        }
+    }
+    let mut needed: Vec<String> = undefined.difference(&defined).cloned().collect();
+    needed.sort();
+    Ok(needed)
+}
+
+/// Build the stub object bytes for a precomputed `needed` list.
+/// Split out so callers (the Patcher's in-session cache) can hash
+/// `needed` against a key and skip the rebuild when the UND set
+/// hasn't changed.
+pub fn build_stub_for_needed(
+    needed: &[String],
+    cache: &HotpatchModuleCache,
+    target_os: LinkerOs,
+    aslr_reference: u64,
+) -> Result<Vec<u8>> {
     let host_static_anchor = cache.aslr_reference;
     if host_static_anchor == 0 {
         bail!(
@@ -87,29 +129,6 @@ pub fn create_undefined_symbol_stub(
     }
     let aslr_offset = aslr_reference - host_static_anchor;
 
-    let bytes = std::fs::read(patch_obj)
-        .with_context(|| format!("read patch obj {}", patch_obj.display()))?;
-    let file = object::File::parse(&*bytes).context("parse patch obj")?;
-
-    // Collect names: the difference set (undefined ∖ defined) is the
-    // set of symbols our patch will need someone else to satisfy.
-    let mut undefined: HashSet<String> = HashSet::new();
-    let mut defined: HashSet<String> = HashSet::new();
-    for sym in file.symbols() {
-        let Ok(name) = sym.name() else {
-            continue;
-        };
-        if name.is_empty() {
-            continue;
-        }
-        if sym.is_undefined() {
-            undefined.insert(name.to_string());
-        } else {
-            defined.insert(name.to_string());
-        }
-    }
-    let needed: Vec<String> = undefined.difference(&defined).cloned().collect();
-
     let (bin_fmt, endian) = match target_os {
         LinkerOs::Linux => (BinaryFormat::Elf, Endianness::Little),
         LinkerOs::Macos => (BinaryFormat::MachO, Endianness::Little),
@@ -122,7 +141,7 @@ pub fn create_undefined_symbol_stub(
 
     let text = obj.section_id(StandardSection::Text);
 
-    for name in &needed {
+    for name in needed {
         // Trim `__imp_` (a Windows-only convention) so the lookup
         // works for ELF/Mach-O even if a Rust toolchain change starts
         // emitting it on those platforms too. Currently a no-op for

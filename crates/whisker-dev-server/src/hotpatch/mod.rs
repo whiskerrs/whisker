@@ -29,7 +29,7 @@ pub use link_plan::{build_link_plan, linker_os_for_host, LinkPlan, LinkerOs};
 pub use patcher::Patcher;
 pub use runner::{run_link_plan, run_obj_plan, thin_rebuild_obj};
 pub use shim_paths::{expected_shim_paths, resolve_shim_paths, ShimPaths};
-pub use stub_object::create_undefined_symbol_stub;
+pub use stub_object::{build_stub_for_needed, compute_needed_symbols, create_undefined_symbol_stub};
 pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
 pub use thin_build::{build_obj_plan, library_filename, object_filename, ObjBuildPlan};
 pub use validate::{ensure_target_supported, extract_target_triple, validate_environment};
