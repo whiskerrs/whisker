@@ -47,6 +47,3 @@ indicatif = "0.17"
 # all live in whisker-dev-server.
 whisker-dev-server = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-whisker-codegen = { workspace = true }
-whisker-app-config = { workspace = true }
-whisker-plugin = { workspace = true }

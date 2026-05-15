@@ -164,9 +164,11 @@ async fn thin_rebuild_obj_plus_dynamic_lookup_link_preserves_mangled_symbols() {
         &dylib,
         linker_os_for_host(),
         &[], // host fixture has no separate stub object — the test
-             // process already satisfies the patch's refs via
-             // -Wl,-undefined,dynamic_lookup (macOS) /
-             // --unresolved-symbols=ignore-all (Linux).
+        // process already satisfies the patch's refs via
+        // -Wl,-undefined,dynamic_lookup (macOS) /
+        // --unresolved-symbols=ignore-all (Linux).
+        &[], // no extra exports; fixture doesn't define the
+             // `whisker_*` symbols Patcher would name here.
     );
     run_link_plan(&link_plan, &linker_path(), &work)
         .await

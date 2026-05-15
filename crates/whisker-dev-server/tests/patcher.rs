@@ -142,6 +142,7 @@ async fn build_original_via_pipeline(lib_rs: &Path, out_dir: &Path, cwd: &Path) 
         &dylib,
         linker_os_for_host(),
         &[],
+        &[],
     );
     run_link_plan(&link_plan, &linker_path(), cwd)
         .await

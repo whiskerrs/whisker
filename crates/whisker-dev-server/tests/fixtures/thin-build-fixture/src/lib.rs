@@ -32,3 +32,18 @@ pub extern "C" fn other_function() -> i32 {
 pub fn calculate(x: i32) -> i32 {
     x * 2
 }
+
+// Dummy stubs for the symbols `Patcher::build_patch` exports on
+// Mach-O. The real Whisker `#[whisker::main]` macro generates these;
+// fixtures don't go through the macro, so we define them by hand to
+// keep the integration-test link happy.
+#[no_mangle]
+pub extern "C" fn whisker_aslr_anchor() -> i32 {
+    0
+}
+#[no_mangle]
+pub extern "C" fn whisker_app_main() {}
+#[no_mangle]
+pub extern "C" fn whisker_tick() -> bool {
+    false
+}

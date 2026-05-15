@@ -1568,19 +1568,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "whisker-app-config",
- "whisker-codegen",
  "whisker-dev-server",
- "whisker-plugin",
-]
-
-[[package]]
-name = "whisker-codegen"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "whisker-app-config",
- "whisker-plugin",
 ]
 
 [[package]]
@@ -1640,13 +1628,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "whisker-plugin"
-version = "0.1.0"
-dependencies = [
- "anyhow",
 ]
 
 [[package]]

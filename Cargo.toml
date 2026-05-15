@@ -4,13 +4,11 @@ members = [
     "crates/whisker",
     "crates/whisker-app-config",
     "crates/whisker-cli",
-    "crates/whisker-codegen",
     "crates/whisker-dev-runtime",
     "crates/whisker-dev-server",
     "crates/whisker-driver",
     "crates/whisker-driver-sys",
     "crates/whisker-macros",
-    "crates/whisker-plugin",
     "crates/whisker-runtime",
     "examples/hello-world",
     "examples/subsecond-poc",
@@ -36,13 +34,11 @@ authors = ["itome <dev@itome.team>"]
 [workspace.dependencies]
 whisker = { path = "crates/whisker", version = "0.1.0" }
 whisker-app-config = { path = "crates/whisker-app-config", version = "0.1.0" }
-whisker-codegen = { path = "crates/whisker-codegen", version = "0.1.0" }
 whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.1.0" }
 whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.1.0" }
 whisker-driver = { path = "crates/whisker-driver", version = "0.1.0" }
 whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.1.0" }
 whisker-macros = { path = "crates/whisker-macros", version = "0.1.0" }
-whisker-plugin = { path = "crates/whisker-plugin", version = "0.1.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.1.0" }
 
 anyhow = "1"

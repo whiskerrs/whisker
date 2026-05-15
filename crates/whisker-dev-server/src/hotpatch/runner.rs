@@ -137,6 +137,7 @@ pub async fn thin_rebuild_obj(
         output_dylib,
         target_os,
         &extras,
+        &[],
     );
     run_link_plan(&link_plan, linker_path, cwd).await
 }

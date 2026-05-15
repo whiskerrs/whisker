@@ -119,6 +119,7 @@ pub fn build_link_plan(
     output: &Path,
     target_os: LinkerOs,
     extra_objects: &[std::path::PathBuf],
+    extra_exports: &[&str],
 ) -> LinkPlan {
     let mut args = filter_captured_linker_args(captured_linker_args);
 
@@ -129,27 +130,17 @@ pub fn build_link_plan(
         LinkerOs::Macos => {
             args.push("-Wl,-undefined,dynamic_lookup".into());
 
-            // Re-add the macro-emitted user-crate exports that
-            // `-exported_symbols_list <rustc-temp>` was carrying for
-            // the fat build. We drop that file (it references
-            // symbols our thin patch doesn't define and ld errors
-            // out), but `subsecond::apply_patch` still needs at
-            // least `whisker_aslr_anchor` in the patch dylib's
-            // `.dynsym` — its `dlsym(patch, "whisker_aslr_anchor")`
-            // unwraps on None and panics across the FFI boundary,
-            // aborting the host app.
-            //
-            // `whisker_app_main` and `whisker_tick` aren't strictly
-            // required by `apply_patch` (Swift calls them on the
-            // host dylib, not the patch), but exporting them keeps
-            // the patch's `.dynsym` symmetric with the host —
-            // useful if a future patch path ever wants to dispatch
-            // through the patch's own entry points.
-            for sym in [
-                "_whisker_aslr_anchor",
-                "_whisker_app_main",
-                "_whisker_tick",
-            ] {
+            // Caller-supplied exports for the patch dylib's
+            // `.dynsym`. Empty for test fixtures (their thin obj
+            // has none of the `whisker_*` symbols, so naming them
+            // here would fail the link); populated by
+            // `Patcher::build_patch` with
+            // `_whisker_aslr_anchor` + `_whisker_app_main` +
+            // `_whisker_tick`, which `subsecond::apply_patch`
+            // needs in the patch's `.dynsym` (it does
+            // `dlsym(patch, "whisker_aslr_anchor").unwrap()` and
+            // aborts the host app on None).
+            for sym in extra_exports {
                 args.push(format!("-Wl,-exported_symbol,{sym}"));
             }
             // If the captured args target the iOS Simulator (or
@@ -567,6 +558,7 @@ mod tests {
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
             &[],
+            &[],
         );
         assert_eq!(
             plan.args,
@@ -577,9 +569,6 @@ mod tests {
                 "arm64",
                 "-shared",
                 "-Wl,-undefined,dynamic_lookup",
-                "-Wl,-exported_symbol,_whisker_aslr_anchor",
-                "-Wl,-exported_symbol,_whisker_app_main",
-                "-Wl,-exported_symbol,_whisker_tick",
                 "/o/demo.o",
                 "-o",
                 "/o/libdemo.dylib",
@@ -596,6 +585,7 @@ mod tests {
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
             &[],
+            &[],
         );
         let shared_count = plan.args.iter().filter(|a| *a == "-shared").count();
         assert_eq!(shared_count, 1, "got args: {:?}", plan.args);
@@ -608,6 +598,7 @@ mod tests {
             Path::new("/new/demo.o"),
             Path::new("/new/libdemo.dylib"),
             LinkerOs::Macos,
+            &[],
             &[],
         );
         // The output path *itself* is .dylib-shaped, so we walk
@@ -635,6 +626,7 @@ mod tests {
             Path::new("/new/libnew.dylib"),
             LinkerOs::Macos,
             &[],
+            &[],
         );
         // Find the position of -o and check the next arg is the new output.
         let dash_o = plan.args.iter().position(|a| a == "-o").unwrap();
@@ -654,6 +646,7 @@ mod tests {
             Path::new("/o/demo.o"),
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
+            &[],
             &[],
         );
         assert_eq!(
@@ -681,6 +674,7 @@ mod tests {
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
             &[],
+            &[],
         );
         let count = plan
             .args
@@ -703,6 +697,7 @@ mod tests {
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
             std::slice::from_ref(&stub),
+            &[],
         );
         assert_eq!(
             plan.args,
@@ -727,6 +722,7 @@ mod tests {
             Path::new("/o/libdemo.so"),
             LinkerOs::Linux,
             &[],
+            &[],
         );
         // Just `-Wl,--unresolved-symbols=ignore-all` + new object + -o
         // -shared + the captured arg `-L /ndk/lib`. No DT_NEEDED, no
@@ -750,6 +746,7 @@ mod tests {
             Path::new("/o/libdemo.dylib"),
             LinkerOs::Macos,
             std::slice::from_ref(&stub),
+            &[],
         );
         assert!(
             plan.args.iter().any(|a| a == "/o/stub.o"),
@@ -767,6 +764,7 @@ mod tests {
             Path::new("/o/demo.obj"),
             Path::new("/o/demo.dll"),
             LinkerOs::Other,
+            &[],
             &[],
         );
         // No -Wl directive of any kind.

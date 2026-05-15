@@ -204,12 +204,23 @@ impl Patcher {
 
         // Stage 3: link the `.o` (+ optional stub `.o`) into a patch dylib.
         let output_dylib = self.expected_patch_path();
+        // Required exports for the patch dylib's `.dynsym`. See
+        // `build_link_plan` doc for the `whisker_aslr_anchor`
+        // rationale (subsecond panics on `dlsym(patch, ...).unwrap()`
+        // if it's missing). Only meaningful on Mach-O; the Linux
+        // / Android branch of build_link_plan ignores
+        // `extra_exports`.
+        let extra_exports: &[&str] = match self.target_os {
+            LinkerOs::Macos => &["_whisker_aslr_anchor", "_whisker_app_main", "_whisker_tick"],
+            _ => &[],
+        };
         let link_plan = build_link_plan(
             &captured_linker.args,
             &object,
             &output_dylib,
             self.target_os,
             &extras,
+            extra_exports,
         );
         let new_dylib = run_link_plan(&link_plan, &self.linker_path, &self.cwd)
             .await
