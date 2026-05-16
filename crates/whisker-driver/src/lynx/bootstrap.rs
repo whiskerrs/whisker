@@ -47,7 +47,7 @@ use std::cell::Cell;
 use std::ffi::c_void;
 
 use whisker_driver_sys::{whisker_bridge_dispatch, WhiskerEngine};
-use whisker_runtime::reactive::flush as reactive_flush;
+use whisker_runtime::reactive::{flush as reactive_flush, mark_all_dirty as reactive_mark_all_dirty};
 use whisker_runtime::view::{
     flush as renderer_flush, install_renderer, set_root, ElementHandle, DynRenderer,
 };
@@ -213,10 +213,22 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
     // Drain any pending hot-reload patch before the reactive flush so
     // any patched closures run with their new bodies when the queue
     // fires.
-    let _patched = apply_pending_hot_patch();
-    // Run any pending effects whose deps changed since the last tick.
+    let patched = apply_pending_hot_patch();
+    // After a successful patch, force every effect and memo to
+    // re-evaluate so user-visible changes (handler bodies, dynamic
+    // `{expr}` interpolations, memo formulas) reflect the patched
+    // code immediately — without waiting for a user-triggered
+    // signal write. State is fully preserved because signals are
+    // not touched. Structural changes (added signals / elements)
+    // still require a cold restart.
+    //
+    // This is the Phase 6.5a A6 "Strategy C-lite" hot-reload
+    // semantics. True per-component remount with element-slot
+    // book-keeping is future work.
+    if patched {
+        reactive_mark_all_dirty();
+    }
     reactive_flush();
-    // Commit element-tree mutations the effects produced.
     renderer_flush();
     PENDING.with(|p| p.set(false));
 }

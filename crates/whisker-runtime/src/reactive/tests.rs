@@ -558,6 +558,86 @@ fn flush_mounts_is_idempotent() {
     assert_eq!(*count.borrow(), 1, "second flush must be a no-op");
 }
 
+// ----- mark_all_dirty (Strategy C-lite hot reload) --------------------------
+
+#[test]
+fn mark_all_dirty_reruns_every_effect_without_signal_writes() {
+    fresh();
+    let owner = create_owner(None);
+    let runs_a = Rc::new(RefCell::new(0));
+    let runs_b = Rc::new(RefCell::new(0));
+    let runs_c = Rc::new(RefCell::new(0));
+
+    with_owner(owner, || {
+        let a = runs_a.clone();
+        effect(move || *a.borrow_mut() += 1);
+        let b = runs_b.clone();
+        effect(move || *b.borrow_mut() += 1);
+        let c = runs_c.clone();
+        effect(move || *c.borrow_mut() += 1);
+    });
+
+    // Each effect ran once on registration.
+    assert_eq!((*runs_a.borrow(), *runs_b.borrow(), *runs_c.borrow()), (1, 1, 1));
+
+    // Simulate the post-patch path.
+    scheduler::mark_all_dirty();
+    flush();
+
+    assert_eq!((*runs_a.borrow(), *runs_b.borrow(), *runs_c.borrow()), (2, 2, 2));
+}
+
+#[test]
+fn mark_all_dirty_preserves_signal_state() {
+    fresh();
+    let owner = create_owner(None);
+    let observed = Rc::new(RefCell::new(0_i32));
+
+    let (count, _set_count) = with_owner(owner, || {
+        let (count, set_count) = signal(42_i32);
+        let obs = observed.clone();
+        effect(move || *obs.borrow_mut() = count.get());
+        (count, set_count)
+    });
+
+    assert_eq!(*observed.borrow(), 42);
+    // Patch + re-run: signal state stays at 42, the effect runs
+    // again with whatever (possibly patched) body and re-observes
+    // the same value.
+    scheduler::mark_all_dirty();
+    flush();
+    assert_eq!(count.get(), 42);
+    assert_eq!(*observed.borrow(), 42);
+}
+
+#[test]
+fn mark_all_dirty_includes_memos() {
+    fresh();
+    let owner = create_owner(None);
+    let memo_runs = Rc::new(RefCell::new(0));
+
+    with_owner(owner, || {
+        let runs = memo_runs.clone();
+        let (count, _set) = signal(0_i32);
+        let _m = memo(move || {
+            *runs.borrow_mut() += 1;
+            count.get() * 2
+        });
+    });
+
+    // Memo's current implementation runs `f` twice during
+    // initialisation: once to seed the cached value, once during
+    // the first tracked flush to populate dependencies. Acceptable
+    // v1 trade-off — could be unified by switching to Option<T>
+    // storage later.
+    let initial_runs = *memo_runs.borrow();
+    assert!(initial_runs >= 1);
+
+    scheduler::mark_all_dirty();
+    flush();
+    assert_eq!(*memo_runs.borrow(), initial_runs + 1);
+}
+
 // ----- Self-write doesn't cause unbounded recursion --------------------------
 
 #[test]

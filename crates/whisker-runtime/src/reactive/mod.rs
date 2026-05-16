@@ -49,7 +49,7 @@ pub use effect::effect;
 pub use memo::{memo, Memo};
 pub use owner::{create_owner, dispose_owner, on_cleanup, with_owner};
 pub use runtime::{NodeId, OwnerId};
-pub use scheduler::flush;
+pub use scheduler::{flush, mark_all_dirty};
 pub use signal::{signal, ReadSignal, RwSignal, WriteSignal};
 pub use stored::StoredValue;
 

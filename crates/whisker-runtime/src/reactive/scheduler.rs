@@ -13,7 +13,7 @@
 //! of effect runs, not three. Solid / Leptos call this "microtask
 //! batching".
 
-use super::runtime::{NodeData, NodeId};
+use super::runtime::{NodeData, NodeId, NodeKind};
 use super::with_runtime;
 
 /// Safety cap on how many drain iterations [`flush`] will run before
@@ -48,6 +48,37 @@ pub(crate) fn schedule(node: NodeId) {
     if was_empty {
         crate::host_wake::wake_runtime();
     }
+}
+
+/// Mark every live `Effect` and `Memo` node as pending. Intended for
+/// the post-hot-patch path (Phase 6.5a A6): after subsecond rewrites
+/// closure bodies in place, the existing reactive graph's nodes are
+/// still alive but their compute functions silently moved on to the
+/// new code. The next signal write would re-run them eventually, but
+/// the hot-reload UX wants the patched logic visible *now* — so we
+/// proactively schedule every reactive computation to re-fire on the
+/// next flush.
+///
+/// Notes:
+///
+/// - Signals are not scheduled (they don't have a compute body).
+/// - The drain order respects scheduling order (first re-evaluation
+///   matches the order nodes were originally inserted into the arena).
+/// - Idempotent: nodes already in `pending` aren't duplicated.
+pub fn mark_all_dirty() {
+    with_runtime(|rt| {
+        let dirty: Vec<NodeId> = rt
+            .nodes
+            .iter()
+            .filter(|(_, n)| matches!(n.kind(), NodeKind::Effect | NodeKind::Memo))
+            .map(|(id, _)| id)
+            .collect();
+        for id in dirty {
+            if !rt.pending.contains(&id) {
+                rt.pending.push(id);
+            }
+        }
+    });
 }
 
 /// Drain the pending queue, re-running effects and memos in the order
