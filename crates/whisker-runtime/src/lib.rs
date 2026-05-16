@@ -11,12 +11,17 @@
 //! - [`patch`] / [`diff`]: Phase 6 — diff two [`Element`] trees into
 //!   incremental [`patch::Patch`] ops.
 //! - [`signal`]: Phase 8 — reactive primitives.
+//! - [`reactive`]: Phase 6.5a — Leptos-style fine-grained reactivity
+//!   (signal / effect / memo, owner tree, batching). Will replace
+//!   [`signal`] + [`diff`] + the value-tree [`element`] representation
+//!   once `render!` (A3) lands. See `docs/reactivity-design.md`.
 //! - [`runtime`]: Phase 8 — `run_app` ties everything together.
 
 pub mod build;
 pub mod diff;
 pub mod element;
 pub mod patch;
+pub mod reactive;
 pub mod render;
 pub mod renderer;
 pub mod runtime;
