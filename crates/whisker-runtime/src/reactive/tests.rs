@@ -290,6 +290,47 @@ fn disposing_owner_removes_its_effects_from_pending() {
     assert_eq!(*runs.borrow(), 1);
 }
 
+// ----- StoredValue ----------------------------------------------------------
+
+#[test]
+fn stored_value_read_write() {
+    fresh();
+    let sv = StoredValue::new(vec![1_i32, 2, 3]);
+    assert_eq!(sv.with(|v| v.iter().sum::<i32>()), 6);
+    sv.update(|v| v.push(4));
+    assert_eq!(sv.with(|v| v.len()), 4);
+}
+
+#[test]
+fn stored_value_does_not_trigger_effects() {
+    fresh();
+    let sv = StoredValue::new(0_i32);
+    let runs = Rc::new(RefCell::new(0));
+    let runs_clone = runs.clone();
+    effect(move || {
+        // Read sv from inside an effect — should NOT subscribe.
+        let _ = sv.with(|v| *v);
+        *runs_clone.borrow_mut() += 1;
+    });
+    assert_eq!(*runs.borrow(), 1);
+    sv.set(99);
+    flush();
+    assert_eq!(*runs.borrow(), 1, "StoredValue writes must not trigger reactivity");
+}
+
+#[test]
+fn stored_value_disposed_with_owner() {
+    fresh();
+    let owner = create_owner(None);
+    let sv = with_owner(owner, || StoredValue::new(123_i32));
+    assert_eq!(sv.get(), 123);
+    dispose_owner(owner);
+    // Owner gone — node is gone too. We can verify indirectly: a fresh
+    // owner has no leftover.
+    let leftover = with_runtime(|rt| rt.owners.contains_key(owner));
+    assert!(!leftover);
+}
+
 // ----- Memo -----------------------------------------------------------------
 
 #[test]

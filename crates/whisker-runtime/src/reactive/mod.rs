@@ -34,6 +34,7 @@ pub mod owner;
 pub mod runtime;
 pub mod scheduler;
 pub mod signal;
+pub mod stored;
 
 #[cfg(test)]
 mod tests;
@@ -44,6 +45,7 @@ pub use owner::{create_owner, dispose_owner, on_cleanup, with_owner};
 pub use runtime::{NodeId, OwnerId};
 pub use scheduler::flush;
 pub use signal::{signal, ReadSignal, RwSignal, WriteSignal};
+pub use stored::StoredValue;
 
 use std::cell::RefCell;
 
