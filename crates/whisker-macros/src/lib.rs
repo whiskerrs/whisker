@@ -15,6 +15,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, ItemFn};
 
+mod render;
 mod rsx;
 
 /// Annotates the user's app function (returning `whisker::Element`) and
@@ -143,6 +144,32 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn rsx(input: TokenStream) -> TokenStream {
     rsx::expand(input)
+}
+
+/// Phase 6.5a fine-grained renderer macro. Emits imperative
+/// element-creation code that calls into
+/// [`whisker::runtime::view`] through the thread-local installed
+/// renderer, and returns an [`ElementHandle`].
+///
+/// ```ignore
+/// use whisker::prelude::*;
+///
+/// let handle = render! {
+///     view {
+///         style: "padding: 16px;",
+///         on_tap: || println!("tapped"),
+///         text { "Hello, world" }
+///     }
+/// };
+/// ```
+///
+/// See `crates/whisker-macros/src/render.rs` for the full grammar
+/// (matches `rsx!`) and the differences from `rsx!`. `{expr}`
+/// interpolation lands in Phase 6.5a A3 Step 3; for now use string
+/// literals or assign to a variable outside the macro.
+#[proc_macro]
+pub fn render(input: TokenStream) -> TokenStream {
+    render::expand(input)
 }
 
 /// Mark a function as a Whisker reactive component.
