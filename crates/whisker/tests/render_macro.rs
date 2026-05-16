@@ -11,9 +11,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
+use whisker::runtime::reactive::{__reset_for_tests, create_owner, dispose_owner};
 use whisker::runtime::view::{
     install_renderer, uninstall_renderer, DynRenderer, ElementHandle,
 };
+use whisker::{flush, with_owner};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
@@ -85,6 +87,20 @@ fn with_recorder<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     let (rec, log) = Recorder::new();
     let prev = install_renderer(Box::new(rec));
     let result = f(log);
+    let _ = uninstall_renderer(prev);
+    result
+}
+
+/// Step 3 helper: in addition to installing the recorder, set up a
+/// reactive owner so signals/effects allocated inside `f` don't fall
+/// into the "no current owner" warn path.
+fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
+    __reset_for_tests();
+    let (rec, log) = Recorder::new();
+    let prev = install_renderer(Box::new(rec));
+    let owner = create_owner(None);
+    let result = with_owner(owner, || f(log));
+    dispose_owner(owner);
     let _ = uninstall_renderer(prev);
     result
 }
@@ -231,6 +247,173 @@ fn multiple_children_append_in_order() {
         // (whatever their ids).
         let appends_to_view: Vec<_> = appends.iter().filter(|(p, _)| *p == 0).collect();
         assert_eq!(appends_to_view.len(), 3);
+    });
+}
+
+// ----- Step 3: dynamic {expr} interpolation ---------------------------------
+
+#[test]
+fn expr_in_text_renders_initial_value_via_effect() {
+    with_recorder_and_owner(|log| {
+        let (count, _set_count) = signal(0_i32);
+        let _h = render! {
+            text { {count.get()} }
+        };
+        // Expected ops:
+        //  Create text (0)
+        //  Create raw_text (1)
+        //  SetAttr text="0"     ← effect's first run
+        //  Append raw_text → text
+        let set_text: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(set_text, vec!["0".to_string()]);
+    });
+}
+
+#[test]
+fn expr_in_text_updates_on_signal_write() {
+    with_recorder_and_owner(|log| {
+        let (count, set_count) = signal(0_i32);
+        let _h = render! {
+            text { {count.get()} }
+        };
+        // Trigger updates.
+        set_count.set(5);
+        flush();
+        set_count.set(42);
+        flush();
+
+        let set_text: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(set_text, vec!["0", "5", "42"]);
+    });
+}
+
+#[test]
+fn dynamic_style_re_runs_on_dep_change() {
+    with_recorder_and_owner(|log| {
+        let (color, set_color) = signal("red".to_string());
+        let _h = render! {
+            view {
+                style: format!("color: {};", color.get()),
+            }
+        };
+        set_color.set("blue".into());
+        flush();
+
+        let styles: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetStyles { css, .. } => Some(css.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(styles, vec!["color: red;", "color: blue;"]);
+    });
+}
+
+#[test]
+fn dynamic_attribute_re_runs_on_dep_change() {
+    with_recorder_and_owner(|log| {
+        let (src, set_src) = signal("a.png".to_string());
+        let _h = render! {
+            image {
+                src: src.get(),
+            }
+        };
+        set_src.set("b.png".into());
+        flush();
+
+        let attrs: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "src" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(attrs, vec!["a.png", "b.png"]);
+    });
+}
+
+#[test]
+fn static_text_does_not_create_effect_path() {
+    with_recorder_and_owner(|log| {
+        let _h = render! {
+            text { "static" }
+        };
+        // Only one SetAttr text="static", emitted by the non-effect
+        // path (since the child is a string literal, not `{expr}`).
+        let set_text: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(set_text, vec!["static".to_string()]);
+    });
+}
+
+#[test]
+fn mixed_static_and_dynamic_children() {
+    with_recorder_and_owner(|log| {
+        let (count, _set) = signal(7_i32);
+        let _h = render! {
+            text {
+                "count="
+                {count.get()}
+            }
+        };
+        // Should produce two SetAttr text= calls: one for "count="
+        // and one for "7" (the effect's initial run for {count.get()}).
+        let set_text: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(set_text, vec!["count=".to_string(), "7".to_string()]);
+    });
+}
+
+#[test]
+fn signal_only_updates_elements_that_read_it() {
+    with_recorder_and_owner(|log| {
+        let (a, set_a) = signal(0_i32);
+        let (b, _set_b) = signal(100_i32);
+        let _h = render! {
+            view {
+                text { {a.get()} }
+                text { {b.get()} }
+            }
+        };
+        log.borrow_mut().clear(); // ignore initial ops
+        set_a.set(1);
+        flush();
+        // Only the element reading `a` should have its SetAttr fire.
+        let set_text_count = log
+            .borrow()
+            .iter()
+            .filter(|op| matches!(op, Op::SetAttr { key, .. } if key == "text"))
+            .count();
+        assert_eq!(set_text_count, 1, "only the a-reading raw_text should update");
     });
 }
 

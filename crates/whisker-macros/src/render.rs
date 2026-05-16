@@ -145,19 +145,26 @@ impl Node {
                     __h
                 }
             },
-            // Step 3 of A3 will handle this by wrapping the expression
-            // in an `effect` that updates the underlying raw_text
-            // element on every dependency change. Until then, emit a
-            // compile error so users don't silently get non-reactive
-            // interpolation.
-            Node::Expr(_expr) => quote! {
+            // `{expr}` inside a text node: render as a raw_text
+            // element whose `text` attribute is driven by an effect.
+            // The effect's closure reads whatever signals `#expr`
+            // touches via `.get()` / `.with()`, so it re-runs (and
+            // re-updates the element) on every dependency change.
+            // Static (signal-less) expressions just run once at
+            // registration and never re-trigger.
+            Node::Expr(expr) => quote! {
                 {
-                    ::std::compile_error!(
-                        "render!: `{expr}` interpolation is not yet supported \
-                         in Phase 6.5a A3 Step 2. The reactive form lands in \
-                         Step 3. For static text, use a string literal: \"text\""
+                    let __h = ::whisker::runtime::view::create_element(
+                        ::whisker::ElementTag::RawText,
                     );
-                    ::whisker::runtime::view::ElementHandle::from_raw(0)
+                    ::whisker::effect(move || {
+                        let __text =
+                            ::std::string::ToString::to_string(&(#expr));
+                        ::whisker::runtime::view::set_attribute(
+                            __h, "text", &__text,
+                        );
+                    });
+                    __h
                 }
             },
         }
@@ -178,12 +185,23 @@ impl ElementNode {
             let name_str = attr.name.to_string();
 
             if name_str == "style" {
+                // Wrap the style setter in an effect. A signal-reading
+                // expression (e.g. `format!("color: {}", color.get())`)
+                // re-runs and re-applies the style on every dep change;
+                // a static value just runs the effect once at
+                // registration and never re-fires.
                 stmts.push(quote! {
-                    ::whisker::runtime::view::set_inline_styles(
-                        __h, &::std::string::ToString::to_string(&(#value)),
-                    );
+                    ::whisker::effect(move || {
+                        ::whisker::runtime::view::set_inline_styles(
+                            __h, &::std::string::ToString::to_string(&(#value)),
+                        );
+                    });
                 });
             } else if let Some(event) = strip_on_prefix(&name_str) {
+                // Event handlers register once and stay until the
+                // owner is disposed. Re-registering on every signal
+                // change would lose the previous registration — not
+                // what users want.
                 let event_lit = LitStr::new(&event, attr.name.span());
                 stmts.push(quote! {
                     ::whisker::runtime::view::set_event_listener(
@@ -191,18 +209,23 @@ impl ElementNode {
                     );
                 });
             } else if name_str == "key" {
-                // Keys are a `For` reconciliation hint; A4 wires them
-                // through. For now silently accept but ignore so
+                // Keys are a `For` reconciliation hint; Step 4 wires
+                // them through. For now silently accept but ignore so
                 // existing rsx! callers can rename to render! without
                 // touching their templates.
                 let _ = value;
             } else {
+                // All other attributes are routed through an effect
+                // — same uniform-treatment rationale as `style:`
+                // above.
                 let attr_name = LitStr::new(&name_str, attr.name.span());
                 stmts.push(quote! {
-                    ::whisker::runtime::view::set_attribute(
-                        __h, #attr_name,
-                        &::std::string::ToString::to_string(&(#value)),
-                    );
+                    ::whisker::effect(move || {
+                        ::whisker::runtime::view::set_attribute(
+                            __h, #attr_name,
+                            &::std::string::ToString::to_string(&(#value)),
+                        );
+                    });
                 });
             }
         }
