@@ -39,6 +39,10 @@ impl<T: 'static> StoredValue<T> {
     /// Allocate a new stored value in the current owner.
     pub fn new(initial: T) -> Self {
         let value: Rc<RefCell<dyn Any>> = Rc::new(RefCell::new(initial));
+        let needs_warning = with_runtime(|rt| rt.current_owner().is_none());
+        if needs_warning {
+            super::warn_no_owner("StoredValue::new");
+        }
         let id = with_runtime(|rt| {
             let owner = rt.current_owner().unwrap_or_else(|| {
                 let detached = rt.owners.insert(Owner::new(None));

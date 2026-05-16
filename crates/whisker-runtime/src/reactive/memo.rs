@@ -93,6 +93,10 @@ pub fn memo<T: 'static + Clone + PartialEq>(mut f: impl FnMut() -> T + 'static) 
         *compute_cell_clone.borrow_mut() = taken;
     }));
 
+    let needs_warning = with_runtime(|rt| rt.current_owner().is_none());
+    if needs_warning {
+        super::warn_no_owner("memo()");
+    }
     let node_id = with_runtime(|rt| {
         let owner = rt.current_owner().unwrap_or_else(|| {
             let detached = rt.owners.insert(Owner::new(None));

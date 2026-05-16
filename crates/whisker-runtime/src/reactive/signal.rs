@@ -49,6 +49,10 @@ pub fn signal<T: 'static>(initial: T) -> (ReadSignal<T>, WriteSignal<T>) {
 
 fn alloc_signal_node<T: 'static>(initial: T) -> NodeId {
     let value: Rc<RefCell<dyn Any>> = Rc::new(RefCell::new(initial));
+    let needs_warning = with_runtime(|rt| rt.current_owner().is_none());
+    if needs_warning {
+        super::warn_no_owner("signal()");
+    }
     with_runtime(|rt| {
         let owner = rt.current_owner().unwrap_or_else(|| {
             // No current owner — fall back to a "global" detached owner.

@@ -393,6 +393,30 @@ fn memo_does_not_notify_when_value_unchanged() {
 // ----- Self-write doesn't cause unbounded recursion --------------------------
 
 #[test]
+fn flush_breaks_self_feedback_loop_with_warning() {
+    fresh();
+    let (count, set_count) = signal(0_i32);
+    // An effect that reads AND writes the same signal — guaranteed
+    // feedback loop. flush's iteration cap must break it.
+    let runs = Rc::new(RefCell::new(0));
+    let runs_clone = runs.clone();
+    effect(move || {
+        let v = count.get();
+        set_count.set(v + 1);
+        *runs_clone.borrow_mut() += 1;
+    });
+    set_count.set(1);
+    flush();
+    // We don't assert the exact run count, only that flush returned
+    // rather than spinning forever, and that the run count is bounded.
+    let runs_after = *runs.borrow();
+    assert!(
+        runs_after < 1000,
+        "flush must break feedback loops; got {runs_after} runs"
+    );
+}
+
+#[test]
 fn effect_reading_and_writing_unrelated_signals_terminates() {
     fresh();
     let (a, _) = signal(0_i32);

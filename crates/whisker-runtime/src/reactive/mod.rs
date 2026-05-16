@@ -67,9 +67,28 @@ thread_local! {
 /// in this module take care to copy out whatever data they need
 /// (Rc handles, NodeIds, …) in a short borrow before invoking user
 /// closures.
-pub fn with_runtime<R>(f: impl FnOnce(&mut ReactiveRuntime) -> R) -> R {
+///
+/// Crate-internal; the public surface is the typed `signal` / `effect`
+/// / `memo` / `dispose_owner` etc. functions. Exposing the raw
+/// runtime would let callers violate borrow-window invariants.
+pub(crate) fn with_runtime<R>(f: impl FnOnce(&mut ReactiveRuntime) -> R) -> R {
     RUNTIME.with_borrow_mut(f)
 }
+
+/// Warn (debug only) when a reactive primitive is allocated outside
+/// any owner. The fallback path creates a detached owner that's never
+/// disposed, so this is mostly OK for one-offs (tests, app bootstrap)
+/// but should not happen inside steady-state component code.
+#[cfg(debug_assertions)]
+pub(crate) fn warn_no_owner(context: &'static str) {
+    eprintln!(
+        "whisker-reactive: {context} called outside any owner scope; \
+         allocating in a detached owner. The node will leak until \
+         `__reset_for_tests` or manual disposal."
+    );
+}
+#[cfg(not(debug_assertions))]
+pub(crate) fn warn_no_owner(_context: &'static str) {}
 
 /// (Test only) reset the thread-local runtime to an empty state. Used
 /// between unit tests to keep the arena clean.

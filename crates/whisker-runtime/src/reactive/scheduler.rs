@@ -16,18 +16,38 @@
 use super::runtime::{NodeData, NodeId};
 use super::with_runtime;
 
+/// Safety cap on how many drain iterations [`flush`] will run before
+/// logging a warning and bailing out. Each iteration processes one
+/// batch of effects scheduled during the previous batch — so a healthy
+/// cascade settles in a handful of iterations, and hitting the cap
+/// indicates a runaway feedback loop (an effect writing a signal it
+/// reads, transitively).
+const FLUSH_ITERATION_CAP: usize = 256;
+
 /// Mark `node` as needing a re-run on next flush. Called by signal
 /// writes for every subscriber of the written signal.
 ///
 /// Adding a node already in the queue is a no-op — the actual flush
 /// dedups by walking the queue and checking the live runtime state
 /// (a node may have been disposed between enqueue and flush).
+///
+/// Pings the host's request-frame callback the first time a new wave
+/// of work is scheduled (transition from empty → non-empty pending),
+/// so the runtime can wake out of an idle state.
 pub(crate) fn schedule(node: NodeId) {
-    with_runtime(|rt| {
+    let was_empty = with_runtime(|rt| {
+        let was_empty = rt.pending.is_empty();
         if !rt.pending.contains(&node) {
             rt.pending.push(node);
         }
+        was_empty
     });
+    // Only nudge the host on the leading edge of a flush wave. While
+    // a flush is already in progress (or there's other pending work),
+    // the host is either actively running or already poked.
+    if was_empty {
+        crate::signal::wake_runtime();
+    }
 }
 
 /// Drain the pending queue, re-running effects and memos in the order
@@ -55,9 +75,23 @@ pub fn flush() {
     // Drain loop. We `take` the current queue so signals written
     // during a re-run land in a fresh queue and don't perturb the
     // ordering of the current wave.
+    let mut iterations = 0;
     loop {
         let batch: Vec<NodeId> = with_runtime(|rt| std::mem::take(&mut rt.pending));
         if batch.is_empty() {
+            break;
+        }
+        iterations += 1;
+        if iterations > FLUSH_ITERATION_CAP {
+            // Drop the residual queue so we don't keep spinning, and
+            // warn loudly — this almost always indicates an effect
+            // that writes a signal it reads (a feedback loop).
+            eprintln!(
+                "whisker-reactive: flush exceeded {FLUSH_ITERATION_CAP} iterations; \
+                 likely an effect with a self-feedback loop. Dropping {} pending nodes.",
+                batch.len()
+            );
+            with_runtime(|rt| rt.pending.clear());
             break;
         }
         for node in batch {

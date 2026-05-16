@@ -30,6 +30,10 @@ pub fn effect(mut f: impl FnMut() + 'static) -> NodeId {
     // a handle out of the runtime in a short borrow.
     let compute: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(move || f()));
 
+    let needs_warning = with_runtime(|rt| rt.current_owner().is_none());
+    if needs_warning {
+        super::warn_no_owner("effect()");
+    }
     let node_id = with_runtime(|rt| {
         let owner = rt.current_owner().unwrap_or_else(|| {
             let detached = rt.owners.insert(Owner::new(None));
