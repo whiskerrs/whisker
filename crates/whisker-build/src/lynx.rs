@@ -58,23 +58,23 @@ use std::path::{Path, PathBuf};
 /// Schema: `<lynx-upstream-version>-whisker.<patch-iteration>` so a
 /// reader can tell at a glance which upstream Lynx is wrapped, and
 /// our own patch iterations bump independently.
-pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.0";
+pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.1";
 
 /// Version segment that appears in cache paths + tarball filenames.
 /// Derived from [`LYNX_FORK_TAG`] minus the leading `v`.
-pub const LYNX_VERSION: &str = "3.7.0-whisker.0";
+pub const LYNX_VERSION: &str = "3.7.0-whisker.1";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
 /// produced by the fork's CI. Pinned to the
-/// [v3.7.0-whisker.0 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.0).
+/// [v3.7.0-whisker.1 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.1).
 pub const LYNX_ANDROID_SHA256: &str =
-    "9bbaa9460afd3bd77fa2df87292cbe626e35fd8cc4eb21157bbe1572374b1eab";
+    "67f898067fee6f1ad8788fa3d432bd944fd7cae997f6e464ff32c3d8e2e20c37";
 
 /// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`. Pinned to
 /// the same release as Android — the fork's CI builds both halves
 /// in parallel and uploads them as a pair.
 pub const LYNX_IOS_SHA256: &str =
-    "06a733c1b9bfef70cccabbb4502d0f02280633f792322e42e20ed4258cba6a54";
+    "39c3e40365f950606173ad0df16546541e90e003d93f606cda0eb401b57f2b20";
 
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
 /// placeholders are filled by [`download_url`].
