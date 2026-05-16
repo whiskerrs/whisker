@@ -29,12 +29,11 @@
 //! root above (i.e. `WHISKER_LYNX_DIR/android/LynxAndroid.aar` must
 //! exist when `ensure_lynx_android` is called). Useful when:
 //!
-//! - Bootstrapping the system before the fork's CI is set up
-//!   (Phase 4c) — point at the existing `target/lynx-*` directories
-//!   that `cargo xtask android build-lynx-aar` / `ios
-//!   build-lynx-frameworks` produce.
-//! - Whisker contributors patching Lynx locally and wanting to test
-//!   without going through the GitHub release cycle.
+//! - Iterating on the Lynx fork (`whiskerrs/lynx`) locally — point
+//!   at the build output of the fork's `.whisker/ios/
+//!   build-xcframeworks.sh` script (or the Android AAR + jniLibs
+//!   tree the fork's gradle build produces) without round-tripping
+//!   through GitHub Releases on every change.
 //! - CI hosts that cache the artifacts elsewhere.
 //!
 //! ## SHA-256 verification policy

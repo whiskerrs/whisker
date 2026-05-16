@@ -197,7 +197,7 @@ on this because they never build cdylibs.
 |---|---|---|---|
 | **A. Dioxus-style** | `bin` (renamed to `libmain.so`) | Lynx-Kotlin integration upended — needs NativeActivity, removes `MainActivity.kt` / `LynxView` inflation. Architecturally large. | Low for Dioxus' model, but **fights Whisker's Kotlin-driven design**. |
 | **B. Stay cdylib + workarounds** | `cdylib` | None | High — rustc-internal flags are not user-facing API. |
-| **C. dylib** | `dylib` (Rust dynamic library, still `.so`) | Switch one token in xtask's `--crate-type=cdylib` → `--crate-type=dylib`. Kotlin Activity / LynxView keep working unchanged (System.loadLibrary takes any `.so`). rustc does **not** add `--exclude-libs,ALL` to dylib. | **Low** — one-line change in xtask; everything else inherits. |
+| **C. dylib** | `dylib` (Rust dynamic library, still `.so`) | Switch one token in the Android cargo invocation: `--crate-type=cdylib` → `--crate-type=dylib`. Kotlin Activity / LynxView keep working unchanged (System.loadLibrary takes any `.so`). rustc does **not** add `--exclude-libs,ALL` to dylib. | **Low** — one-line change; everything else inherits. |
 
 ### Why cdylib was chosen originally
 
@@ -207,9 +207,9 @@ Looking at `examples/hello-world/Cargo.toml`:
 # Plain rlib. Host workflows (`cargo build`, `cargo test`, `cargo check`,
 # rust-analyzer) only see this and succeed without a bridge — no
 # unresolved `whisker_bridge_*` symbols. The mobile outputs are produced
-# by xtask via `cargo rustc --crate-type X`:
-#   Android: cargo xtask android cargo  → cdylib  (libhello_world.so)
-#   iOS:     cargo xtask ios build-xcframework  → staticlib (libhello_world.a)
+# by `whisker-build` via `cargo rustc --crate-type X`:
+#   Android: whisker build --target android   → dylib   (libhello_world.so)
+#   iOS:     whisker build --target ios-sim   → dylib   (libhello_world.dylib)
 [lib]
 crate-type = ["rlib"]
 ```
@@ -222,14 +222,19 @@ produces a .so on Android and is fully compatible with
 
 ### Recommended next steps for I4g-8c-3a
 
-1. In `xtask/src/android/cargo_build.rs`, change
+(Historical — these were the steps when xtask still owned the
+Android cargo invocation. The equivalent code now lives in
+`whisker-build/src/android.rs`.)
+
+1. In the Android cargo build wrapper (was `xtask/src/android/
+   cargo_build.rs`, now `whisker-build/src/android.rs`), change
    `--crate-type cdylib` → `--crate-type dylib`. (Or, less
    disruptive: add a `--crate-type-override` flag honoured by
    Tier 1 builds only; release builds keep cdylib.)
-2. Rebuild + run `cargo xtask android build-example -p hello-world`.
-   Verify `libhello_world.so` loads via `System.loadLibrary` (it
-   should — the file shape is identical, just symbol visibility
-   differs).
+2. Rebuild + run `whisker build --target android` against
+   `examples/hello-world`. Verify `libhello_world.so` loads via
+   `System.loadLibrary` (it should — the file shape is identical,
+   just symbol visibility differs).
 3. Run `whisker run --target android --hot-patch`. Expect the
    `dynsym` count to jump from ~175 to several thousand. Then
    the apply_patch dlopen should succeed and `patch applied (N
@@ -269,7 +274,7 @@ The straight swap works, with one extra workaround needed:
   additively — a symbol matched by any script's `global:` is
   exported. The extra script lives at
   `target/.whisker/android-jni-exports.ver` and is written by
-  `xtask/src/android/cargo_build.rs` on every Android build.
+  `whisker-build/src/android.rs` on every Android build.
 
 The `cargo:rustc-link-arg-cdylib=…` directives that
 `whisker-driver-sys/build.rs` used to emit for the cdylib path

@@ -63,8 +63,9 @@ fn sync_android(
         .context("resolve Whisker's native/android/whisker-runtime")?;
     // Lynx AARs are not required to *exist* at sync time — they only
     // matter at gradle resolution. We still pass the canonical path
-    // so the generated settings.gradle.kts always knows where to look
-    // once the user has run `cargo xtask android build-lynx-aar`.
+    // so the generated settings.gradle.kts always knows where to
+    // look once `whisker-build` has fetched the Lynx tarball + set
+    // up the symlink under target/lynx-android.
     let lynx_aars = workspace_root.join("target/lynx-android");
     let inputs = whisker_cng::android::inputs_from(
         app_config,

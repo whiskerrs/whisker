@@ -77,7 +77,8 @@ pub struct LinkerCaptureConfig<'a> {
 ///
 /// `target` is currently a hint only; the cargo command we run is the
 /// host build (`cargo build -p <pkg>`). I4g-5 will switch to the
-/// platform-specific xtask invocations once thin rebuild is wired up.
+/// platform-specific `whisker-build` invocations once thin rebuild
+/// is wired up.
 pub fn run_fat_build(
     workspace_root: &Path,
     package: &str,

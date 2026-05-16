@@ -94,8 +94,10 @@ fn compile_android() -> Result<()> {
     if !lynx_jni.is_dir() {
         anyhow::bail!(
             "Lynx Android jniLibs missing at {}\n  \
-             Run `cargo xtask android build-lynx-aar` then \
-             `cargo xtask android unpack-lynx` first.",
+             Run `whisker build --target android` (or `whisker run`) first \
+             so `whisker-build` can fetch the pinned Lynx tarball + \
+             symlink it into target/. Set WHISKER_LYNX_DIR=/abs/path to \
+             override with a local build.",
             lynx_jni.display()
         );
     }
@@ -147,8 +149,8 @@ fn compile_android() -> Result<()> {
     // is now built as `dylib`, and `rustc-link-arg-cdylib` is silently
     // dropped (with a cargo warning) for non-cdylib consumers. The
     // JNI export visibility that the previous `--version-script` here
-    // handled is now applied in `xtask/src/android/cargo_build.rs`
-    // via a `--version-script` that's merged with rustc's
+    // handled is now applied by `whisker-build`'s Android Cargo
+    // wrapper via a `--version-script` that's merged with rustc's
     // auto-generated dylib export list. See docs/hot-reload-plan.md
     // "Second Pivot" for the cdylib → dylib rationale.
 
@@ -172,7 +174,10 @@ fn compile_ios() -> Result<()> {
         if !dir.is_dir() {
             anyhow::bail!(
                 "Lynx xcframework slice missing: {} \n  \
-                 Run `cargo xtask ios build-lynx-frameworks` first.",
+                 Run `whisker build --target ios-sim` (or ios-device, or \
+                 `whisker run`) first so `whisker-build` can fetch the \
+                 pinned Lynx tarball + symlink it into target/. Set \
+                 WHISKER_LYNX_DIR=/abs/path to override with a local build.",
                 dir.display()
             );
         }
@@ -232,10 +237,11 @@ fn compile_ios() -> Result<()> {
 
     // --- Link-line emission for the parent dylib --------------------
     // The user crate is now built as `dylib` on iOS (matching
-    // Android — see `xtask/src/ios/build_xcframework.rs`), so cargo
-    // *does* have a final link step and these directives flow into
-    // it. The previous `rustc-link-arg-staticlib=…` directives were
-    // silently dropped because staticlibs have no link step.
+    // Android — see `whisker-build/src/ios.rs::build_xcframework`),
+    // so cargo *does* have a final link step and these directives
+    // flow into it. The previous `rustc-link-arg-staticlib=…`
+    // directives were silently dropped because staticlibs have no
+    // link step.
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     println!("cargo:rustc-link-search=native={out_dir}");
@@ -282,13 +288,15 @@ fn compile_ios() -> Result<()> {
     println!("cargo:rustc-link-lib=dylib=objc");
 
     // NOTE: forcing bridge entry points (`_whisker_bridge_*`) into the
-    // dylib's `.dynsym` happens in `xtask/src/ios/build_xcframework.rs`,
-    // not here. `cargo:rustc-link-arg=…` only flows into the link of
-    // the crate that owns the build.rs (whisker-driver-sys is an
-    // rlib — no link step) and does NOT propagate to the parent dylib
-    // build of the user crate. xtask appends the `-Wl,-exported_symbol`
-    // flags directly to the `cargo rustc` invocation that produces
-    // the user-crate dylib, where they actually take effect.
+    // dylib's `.dynsym` happens in
+    // `whisker-build/src/ios.rs::build_xcframework`, not here.
+    // `cargo:rustc-link-arg=…` only flows into the link of the crate
+    // that owns the build.rs (whisker-driver-sys is an rlib — no
+    // link step) and does NOT propagate to the parent dylib build of
+    // the user crate. `whisker-build` appends the
+    // `-Wl,-exported_symbol` flags directly to the `cargo rustc`
+    // invocation that produces the user-crate dylib, where they
+    // actually take effect.
 
     Ok(())
 }

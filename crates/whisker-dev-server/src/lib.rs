@@ -12,9 +12,10 @@
 //! Constructed once via [`Config`], the dev server spins up six
 //! cooperating pieces:
 //!
-//! - `builder` — translates [`Config`] into a cargo or xtask command
-//!   line and runs it. Honours `RUSTC_WORKSPACE_WRAPPER` + linker
-//!   shim env so the fat build doubles as a capture pass for Tier 1.
+//! - `builder` — translates [`Config`] into a `whisker-build`
+//!   invocation (cargo + per-platform packaging) and runs it.
+//!   Honours `RUSTC_WORKSPACE_WRAPPER` + linker shim env so the fat
+//!   build doubles as a capture pass for Tier 1.
 //! - `installer` — for the cold-rebuild path: shells out to
 //!   `adb install` / `simctl install + launch`. Identity (bundle id,
 //!   applicationId, scheme, …) comes in flat via
@@ -74,7 +75,7 @@ pub use watcher::{Change, ChangeKind};
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Workspace root (`Cargo.toml` with `[workspace]`). Used by
-    /// xtask invocations + RUSTC capture directories.
+    /// `whisker-build` invocations + RUSTC capture directories.
     pub workspace_root: PathBuf,
     /// User-crate directory (`Cargo.toml` with `[package]`). This
     /// is what `whisker run --manifest-path` resolves to; for
@@ -555,9 +556,10 @@ fn target_triple_for(config: &Config) -> Option<String> {
             // running `whisker run`. Both arm64 Macs (`aarch64-apple-
             // ios-sim`) and Intel Macs (`x86_64-apple-ios`) need a
             // simulator slice, and the dev loop only builds one
-            // (xtask `build-xcframework` builds all three for release
-            // distribution, but the hot-patch path rebuilds just the
-            // thin obj for whichever triple the user is on).
+            // (`whisker-build`'s `build_xcframework` builds all
+            // three for release distribution, but the hot-patch
+            // path rebuilds just the thin obj for whichever triple
+            // the user is on).
             let triple = match std::env::consts::ARCH {
                 "aarch64" => "aarch64-apple-ios-sim",
                 "x86_64" => "x86_64-apple-ios",
@@ -626,8 +628,8 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
                     "target=Android but Config.android is None — cli should have populated it from whisker.rs"
                 )
             })?;
-            // xtask's NDK build drops the `lib<crate>.so` into the
-            // Gradle jniLibs tree before APK packaging.
+            // `whisker-build`'s NDK build drops the `lib<crate>.so`
+            // into the Gradle jniLibs tree before APK packaging.
             let so_name = format!("lib{crate_underscored}.so");
             let candidate = android
                 .project_dir
@@ -636,7 +638,7 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
                 .join(&so_name);
             if !candidate.is_file() {
                 anyhow::bail!(
-                    "no Android cdylib at {} — run the initial xtask build first",
+                    "no Android cdylib at {} — run `whisker build --target android` first",
                     candidate.display(),
                 );
             }

@@ -40,13 +40,16 @@ the **`whisker run` hot-reload dev loop** wires them together.
    └── run.rs                  — AppConfig → dev_server::Config (flat)
         │
         ▼
-   whisker-dev-server          — file-watch + cargo/xtask builds +
-                                 install/launch + Tier 1 subsecond patches
+   whisker-dev-server          — file-watch + `whisker-build` invocations
+                                 + install/launch + Tier 1 subsecond patches
                                  + WebSocket push. **Does not depend on
                                  whisker-app-config — accepts only flat
                                  fields via `Config`.**
 
-   xtask                       — build orchestration (NDK/Xcode invocations)
+   crates/whisker-build        — Lynx artifact fetch + per-platform cargo +
+                                 NDK/Xcode packaging (Android AAR, iOS
+                                 xcframework). Reused by both whisker-cli
+                                 (`whisker build`) and whisker-dev-server.
 
    crates/whisker-subsecond    — forked subsecond (whisker_aslr_anchor),
                                  lib name = `subsecond` so consumers keep
@@ -66,7 +69,7 @@ the **`whisker run` hot-reload dev loop** wires them together.
 | `whisker` | Umbrella crate users `use whisker::prelude::*` from | user crates |
 | `whisker-dev-server` | Host dev loop, manifest-agnostic. Drives Tier 1 patch construction. | `whisker-cli` |
 | `whisker-cli` | `whisker run`, manifest probe, doctor. Resolves AppConfig and hands flat Config to dev-server. | (binary) |
-| `xtask` | Cargo build automation: NDK, Lynx framework, xcframework wrapping | (binary) |
+| `whisker-build` | Lynx artifact fetch, cargo cross-compile, AAR/xcframework packaging | `whisker-cli`, `whisker-dev-server` |
 | `whisker-subsecond` | Forked subsecond engine — anchors ASLR on `whisker_aslr_anchor` instead of `main`. Exposed as `subsecond` to consumers via `[lib] name = "subsecond"`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
 ## `hot-reload` feature flow

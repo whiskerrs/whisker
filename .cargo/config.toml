@@ -1,8 +1,4 @@
 [alias]
-# `cargo xtask <subcommand>` — see xtask/src/main.rs. Release profile
-# so subsequent invocations stay fast (xtask itself only rebuilds
-# when its sources change).
-xtask = "run --release --package xtask --"
 # `cargo coverage` → HTML report opened in the browser.
 # Requires `cargo install cargo-llvm-cov` and `rustup component add
 # llvm-tools-preview` once. `--doctests` is nightly-only so we leave

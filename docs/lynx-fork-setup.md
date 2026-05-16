@@ -175,12 +175,12 @@ jobs:
           gem install cocoapods
 
       - name: Build Lynx iOS xcframeworks
-        run: |
-          # The exact incantation here mirrors
-          # whisker/xtask/src/ios/build_lynx_frameworks.rs — adjust to
-          # use whatever pod-install carrier project the fork keeps.
-          # If the fork ships its own iOS build script, prefer that.
-          ./tools/build_ios_xcframeworks.sh    # TODO match fork's actual entrypoint
+        run: .whisker/ios/build-xcframeworks.sh
+        # The fork's own script. Does pod-install of upstream Lynx
+        # source pods into a tiny carrier Xcode project, then
+        # xcodebuilds device + simulator and wraps each pod's
+        # framework into an xcframework. Outputs land under
+        # `$OUT_DIR/<Pod>.xcframework/` + `$OUT_DIR/headers/<Pod>/`.
 
       - name: Stage + pack
         run: |
@@ -211,9 +211,10 @@ Notes:
 - The Android header staging globs are sketched but need
   adjustment to match Lynx's actual on-disk layout. Compare with
   `crates/whisker-driver-sys/build.rs`'s `.include(...)` calls.
-- The iOS pod-install carrier project is currently captured in
-  Whisker's `xtask/src/ios/build_lynx_frameworks.rs`. Port that
-  script onto the fork so the fork is self-contained.
+- The iOS pod-install carrier project lives in the fork at
+  `.whisker/ios/build-xcframeworks.sh` — the same logic that used
+  to live in `xtask/src/ios/build_lynx_frameworks.rs` in Whisker
+  pre-Phase-4.
 
 ## 3. Cut the first release
 
@@ -243,10 +244,10 @@ first invocation, verify the SHA-256, and unpack to
 
 ## Migrating existing Whisker contributors
 
-Contributors who built Lynx locally via the pre-Phase-4 xtask flow
-will have `target/lynx-{android,android-unpacked,headers,ios}` as
-real directories. `whisker-build::lynx::link_into_workspace` refuses
-to clobber them. One-time fix:
+Contributors who built Lynx locally before the GitHub Releases
+fetcher landed will have `target/lynx-{android,android-unpacked,
+headers,ios}` as real directories. `whisker-build::lynx::
+link_into_workspace` refuses to clobber them. One-time fix:
 
 ```bash
 rm -rf target/lynx-android target/lynx-android-unpacked \

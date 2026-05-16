@@ -15,7 +15,6 @@ members = [
     "crates/whisker-subsecond",
     "examples/hello-world",
     "examples/subsecond-poc",
-    "xtask",
 ]
 exclude = [
     # Throwaway cdylib the dev-server's `thin_rebuild` integration

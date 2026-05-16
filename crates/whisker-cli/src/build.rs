@@ -166,7 +166,7 @@ fn build_ios_app(
     }
 
     // 2. xcframework wrap (cargo per-triple → lipo sim slices → wrap).
-    //    Self-contained in `whisker_build::ios` — no xtask call.
+    //    Self-contained in `whisker_build::ios`.
     ios::build_xcframework(workspace_root, &m.package, &[], None)?;
 
     // 3. xcodebuild release.

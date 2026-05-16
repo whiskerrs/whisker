@@ -36,8 +36,7 @@ whisker/
 │   ├── android/               Kotlin runtime (WhiskerApplication / WhiskerView etc.)
 │   └── ios/                   Swift runtime (WhiskerAppDelegate / WhiskerView etc.)
 ├── examples/                  Sample apps
-├── docs/                      Documentation
-└── xtask/                     Build automation (cargo xtask pattern)
+└── docs/                      Documentation
 ```
 
 ## Design decisions

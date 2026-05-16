@@ -33,7 +33,7 @@ pub struct ResolvedManifest {
     /// relative to this.
     pub crate_dir: PathBuf,
     /// `[package].name` from `Cargo.toml`. Used by the dev-server as
-    /// the cargo `-p` argument, and by xtask to find the
+    /// the cargo `-p` argument, and by `whisker-build` to find the
     /// `lib<package>.so` / `.dylib` artifact.
     pub package: String,
     /// Result of running the user's `whisker.rs::configure`. Owned

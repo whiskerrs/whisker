@@ -1,9 +1,10 @@
 //! Android NDK toolchain resolution for the hot-patch link step.
 //!
-//! Mirrors `xtask/src/android/ndk.rs` (deliberately, not a shared
-//! crate) so the dev-server doesn't pull xtask into its dep tree.
-//! The two implementations need to stay in sync — if NDK layouts
-//! shift, both have to learn about the new shape.
+//! Mirrors `whisker-build/src/android.rs`'s NDK lookup (deliberately
+//! duplicated, not shared) so the dev-server doesn't pull the
+//! whole `whisker-build` crate into its dep tree just for two
+//! helpers. The two implementations need to stay in sync — if NDK
+//! layouts shift, both have to learn about the new shape.
 //!
 //! What this module gives us:
 //!
@@ -21,7 +22,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 /// NDK versions we know work with Whisker, in preference order.
-/// Same list as xtask — keep in sync.
+/// Same list as `whisker-build/src/android.rs` — keep in sync.
 const PREFERRED_NDKS: &[&str] = &[
     "23.1.7779620",
     "25.1.8937393",
