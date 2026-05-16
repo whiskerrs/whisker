@@ -10,18 +10,15 @@
 
 #include <cstdint>
 
-namespace lynx {
-namespace shell { class LynxShell; }
-}
-
 // Opaque to platform glue — internals defined in whisker_bridge_common.cc.
 struct WhiskerEngine;
 
-// Construct a WhiskerEngine attached to an already-resolved LynxShell.
-// Used by the platform-specific `engine_attach` entry points; they're
-// responsible for extracting the shell from a LynxView (iOS) or
-// LynxView Java object (Android) before calling in here.
-WhiskerEngine* whisker_bridge_internal_engine_create(lynx::shell::LynxShell* shell);
+// Construct a WhiskerEngine attached to an already-resolved native
+// shell pointer. The platform glue extracts the raw `void*` (via JNI
+// reflection on Android, Obj-C ivar access on iOS) and hands it here
+// — the common code then runs it through Lynx's C ABI
+// (`lynx_shell_from_native_ptr`). Returns NULL if the input is NULL.
+WhiskerEngine* whisker_bridge_internal_engine_create(void* native_shell_ptr);
 
 // Mark the engine's event reporter as installed (so subsequent calls
 // don't re-install). The platform glue calls this after wiring its

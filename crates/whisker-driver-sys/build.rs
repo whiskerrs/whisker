@@ -44,9 +44,22 @@ fn lynx_staged_headers() -> PathBuf {
     workspace_target_dir().join("lynx-headers")
 }
 
-// --- Lynx C++ header path tree (shared by Android and iOS) ----------
-
-fn add_lynx_includes(build: &mut cc::Build) {
+// --- Lynx C++ header path tree (iOS only) ----------------------------
+//
+// Phase 6-α: the bridge proper (whisker_bridge_common.cc + the
+// platform-specific .cc/.mm) only needs `lynx_native_renderer_capi.h`,
+// which is vendored under `bridge/include/`. On Android, the C API
+// symbols live inside liblynx.so (compiled by the Lynx fork CI from
+// `core/native_renderer_capi/lynx_native_renderer.cc`), so the
+// bridge needs zero Lynx C++ headers at all.
+//
+// On iOS, upstream Lynx 3.7.0's CocoaPods spec doesn't include the
+// new `core/native_renderer_capi/` subtree — so we compile
+// `lynx_native_renderer.cc` ourselves into WhiskerDriver.framework.
+// THAT file pokes Lynx C++ internals (LynxShell, ElementManager,
+// FiberElement family), so the deep header tree is still required
+// for the iOS build.
+fn add_lynx_includes_for_capi_impl(build: &mut cc::Build) {
     let staged = lynx_staged_headers();
     let primjs = staged.join("PrimJS/src");
     build
@@ -88,6 +101,11 @@ fn compile_android() -> Result<()> {
     }
 
     // --- Bridge compile ---------------------------------------------
+    //
+    // Android only needs the vendored `lynx_native_renderer_capi.h`
+    // (under bridge/include/); the symbols it declares come from
+    // liblynx.so. No deep Lynx C++ header tree required — Phase 6-α
+    // removed every direct C++-internal include from the bridge.
     let mut build = cc::Build::new();
     // Silence cc's auto `cargo:rustc-link-lib=static=...` so we can
     // emit our own with `+whole-archive` (cargo refuses duplicates).
@@ -99,12 +117,6 @@ fn compile_android() -> Result<()> {
         .file(bridge_src.join("whisker_bridge_android.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);
-    add_lynx_includes(&mut build);
-    // Match Lynx's release build: NDEBUG=1 keeps
-    // `RefCountedThreadSafeBase` at the same layout (debug builds add
-    // two extra bool members and shift every offset in subclasses
-    // like FiberElement).
-    build.define("NDEBUG", Some("1"));
     // Force inline LSE atomics so the C++ side never reaches for
     // compiler-rt's outline-atomics dispatcher (`__aarch64_cas*`,
     // `init_have_lse_atomics`). The Rust side gets the same treatment
@@ -167,6 +179,16 @@ fn compile_ios() -> Result<()> {
     }
 
     // --- Bridge compile ---------------------------------------------
+    //
+    // The bridge proper (whisker_bridge_common.cc + whisker_bridge_ios.mm)
+    // only includes the vendored C API header. But the iOS Lynx
+    // distribution (CocoaPods upstream 3.7.0) doesn't carry the new
+    // `core/native_renderer_capi/` subtree the Whisker fork adds — so
+    // we compile its impl ourselves into WhiskerDriver.framework
+    // (`lynx_native_renderer.cc`). That file still touches Lynx C++
+    // internals (LynxShell, ElementManager, FiberElement family), so
+    // the deep header tree from `add_lynx_includes_for_capi_impl` is
+    // still required.
     let bridge_src = bridge_root().join("src");
     let mut build = cc::Build::new();
     // Silence cc::Build's auto `cargo:rustc-link-lib=static=…`; we
@@ -185,9 +207,10 @@ fn compile_ios() -> Result<()> {
         .flag("-fobjc-arc")
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_ios.mm"))
+        .file(bridge_src.join("lynx_native_renderer.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);
-    add_lynx_includes(&mut build);
+    add_lynx_includes_for_capi_impl(&mut build);
     for fw in LYNX_FRAMEWORKS {
         build.flag("-F");
         build.flag(

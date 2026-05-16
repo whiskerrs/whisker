@@ -22,8 +22,6 @@
 #include <map>
 #include <mutex>
 
-#include "core/shell/lynx_shell.h"
-
 #include "whisker_bridge.h"
 #include "whisker_bridge_internal.h"
 
@@ -68,10 +66,15 @@ EngineJavaState* LookupJavaState(WhiskerEngine* engine) {
     return it == m.end() ? nullptr : it->second;
 }
 
-// Extract LynxShell* from a Java LynxView via:
+// Extract the raw LynxShell pointer from a Java LynxView via:
 //   LynxView.mLynxTemplateRender   (protected LynxTemplateRender)
-//     → LynxTemplateRender.mNativePtr   (private long; cast to LynxShell*)
-lynx::shell::LynxShell* ExtractShell(JNIEnv* env, jobject lynx_view) {
+//     → LynxTemplateRender.mNativePtr   (private long; jlong-cast pointer)
+//
+// We deliberately do NOT cast to `lynx::shell::LynxShell*` here — the
+// bridge no longer pulls in Lynx C++ headers; the void* gets handed
+// to `lynx_shell_from_native_ptr` (defined inside liblynx.so) which
+// does the cast on the Lynx side.
+void* ExtractShell(JNIEnv* env, jobject lynx_view) {
     if (env == nullptr || lynx_view == nullptr) {
         LOGE("ExtractShell: env or lynx_view is null");
         return nullptr;
@@ -136,7 +139,7 @@ lynx::shell::LynxShell* ExtractShell(JNIEnv* env, jobject lynx_view) {
     }
     jlong native = env->GetLongField(render, native_ptr_field);
     env->DeleteLocalRef(render);
-    return reinterpret_cast<lynx::shell::LynxShell*>(static_cast<intptr_t>(native));
+    return reinterpret_cast<void*>(static_cast<intptr_t>(native));
 }
 
 // Trampoline the Rust runtime calls when a signal update needs a frame.
@@ -209,12 +212,12 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
 extern "C" JNIEXPORT jlong JNICALL
 Java_rs_whisker_runtime_WhiskerView_nativeEngineAttach(
     JNIEnv* env, jobject /*self*/, jobject lynx_view) {
-    lynx::shell::LynxShell* shell = ExtractShell(env, lynx_view);
-    if (shell == nullptr) {
+    void* native_shell_ptr = ExtractShell(env, lynx_view);
+    if (native_shell_ptr == nullptr) {
         LOGE("nativeEngineAttach: could not extract LynxShell* from LynxView");
         return 0;
     }
-    WhiskerEngine* engine = whisker_bridge_internal_engine_create(shell);
+    WhiskerEngine* engine = whisker_bridge_internal_engine_create(native_shell_ptr);
     if (engine == nullptr) {
         LOGE("nativeEngineAttach: whisker_bridge_internal_engine_create failed");
         return 0;

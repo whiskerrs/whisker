@@ -22,28 +22,28 @@
 #import <Lynx/LynxEvent.h>
 #import <objc/runtime.h>
 
-#include <memory>
-
-#include "core/shell/lynx_shell.h"
+#include <cstdint>
 
 #include "whisker_bridge.h"
 #include "whisker_bridge_internal.h"
 
 namespace {
 
-// LynxTemplateRender's `shell_` is a protected ivar (declared in
-// PrivateHeaders/LynxTemplateRender+Protected.h, which transitively
-// pulls in too many `""`-style imports for our header search paths).
-// Read it directly via the Obj-C runtime instead.
-lynx::shell::LynxShell* GetShell(LynxTemplateRender* render) {
+// LynxTemplateRender's `shell_` is a protected ivar of static type
+// `std::unique_ptr<lynx::shell::LynxShell>`. We can't `#include` Lynx
+// C++ headers any more (the new C ABI is the only thing the bridge
+// imports from Lynx) — but `std::unique_ptr<T>` with the default
+// deleter is a single-pointer-sized member, so reading the ivar's
+// raw storage as `void* const*` and dereferencing yields the same
+// LynxShell* the C++ code would. We then hand that void* straight to
+// `lynx_shell_from_native_ptr` on the Lynx side.
+void* GetShellPtr(LynxTemplateRender* render) {
     if (render == nil) return nullptr;
     Ivar ivar = class_getInstanceVariable([render class], "shell_");
     if (ivar == nullptr) return nullptr;
     ptrdiff_t offset = ivar_getOffset(ivar);
     auto* base = reinterpret_cast<uint8_t*>((__bridge void*)render);
-    auto* unique = reinterpret_cast<std::unique_ptr<lynx::shell::LynxShell>*>(
-        base + offset);
-    return unique->get();
+    return *reinterpret_cast<void* const*>(base + offset);
 }
 
 // Install our hook on the LynxEventEmitter so physical taps land in our
@@ -82,10 +82,10 @@ extern "C" WhiskerEngine* whisker_bridge_engine_attach(void* lynx_view_ptr) {
     LynxView* view = (__bridge LynxView*)lynx_view_ptr;
     LynxTemplateRender* render = [view templateRender];
     if (render == nil) return nullptr;
-    lynx::shell::LynxShell* shell = GetShell(render);
-    if (shell == nullptr) return nullptr;
+    void* native_shell_ptr = GetShellPtr(render);
+    if (native_shell_ptr == nullptr) return nullptr;
 
-    WhiskerEngine* engine = whisker_bridge_internal_engine_create(shell);
+    WhiskerEngine* engine = whisker_bridge_internal_engine_create(native_shell_ptr);
     InstallEventReporterIfNeeded(engine, view);
     return engine;
 }
