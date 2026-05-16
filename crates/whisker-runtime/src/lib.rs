@@ -26,6 +26,7 @@ pub mod render;
 pub mod renderer;
 pub mod runtime;
 pub mod signal;
+pub mod view;
 
 pub mod prelude {
     pub use crate::build::{image, page, raw_text, scroll_view, text, view};
