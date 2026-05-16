@@ -194,7 +194,7 @@ where
                                 // only runs inside `tick_callback`
                                 // and the TASM thread is idle when
                                 // nothing else is happening.
-                                whisker_runtime::signal::wake_runtime();
+                                whisker_runtime::host_wake::wake_runtime();
                             }
                             Err(e) => {
                                 devlog(&format!("could not materialise patch dylib: {e}"));

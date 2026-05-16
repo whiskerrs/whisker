@@ -587,6 +587,43 @@ fn for_adds_new_items_on_update() {
 }
 
 #[test]
+fn for_reorders_existing_items_visually() {
+    with_recorder_and_owner(|log| {
+        let (items, set_items) = signal(vec![1_u32, 2, 3]);
+        let _h = render! {
+            For {
+                each: move || items.get(),
+                key: |x: &u32| *x,
+                children: move |x: u32| render! { text { {x.to_string()} } },
+            }
+        };
+        log.borrow_mut().clear();
+
+        // Reverse the list — same set of keys, different order.
+        set_items.set(vec![3, 2, 1]);
+        flush();
+
+        // Each reused item must have been detached (Remove) and
+        // re-attached (Append). We don't assert exact ordering of
+        // ops, only that there's at least one Append for each
+        // surviving key — which confirms the wrapper's child list
+        // was rebuilt to reflect the new order.
+        let appends_to_wrapper = log
+            .borrow()
+            .iter()
+            .filter(|op| matches!(op, Op::Append { parent: 0, .. }))
+            .count();
+        // Wrapper id is the For's container, which was created as
+        // the very first element in this test (id 0). At least 3
+        // appends since 3 reused items got re-attached.
+        assert!(
+            appends_to_wrapper >= 3,
+            "expected re-attach for reordered items; got {appends_to_wrapper}"
+        );
+    });
+}
+
+#[test]
 fn for_removes_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]);

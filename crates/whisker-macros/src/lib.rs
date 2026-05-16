@@ -1,22 +1,21 @@
 //! Procedural macros for Whisker.
 //!
 //! - [`main`] — designates the user's app entry. Generates the
-//!   `whisker_app_main` and `whisker_tick` FFI exports the native host calls
-//!   into; the user only writes `fn app() -> Element`.
-//! - [`rsx!`] — Dioxus-style declarative element-tree macro that
-//!   desugars to [`whisker_runtime::build`] calls. (Will be replaced
-//!   by `render!` in Phase 6.5a A3.)
+//!   `whisker_app_main` and `whisker_tick` FFI exports the native
+//!   host calls into; the user writes `fn app() -> ElementHandle`.
+//! - [`render!`] — fine-grained renderer macro. Emits imperative
+//!   `view::*` dispatch + `effect`s for dynamic parts. See
+//!   `crates/whisker-macros/src/render.rs` for the grammar.
 //! - [`component`] — wraps a function so it runs inside a fresh
 //!   reactive owner. The owner is registered against the function's
-//!   fn pointer so the Strategy C hot-reload path (Phase 6.5a A6) can
-//!   find it. See `docs/reactivity-design.md`.
+//!   fn pointer so the Strategy C hot-reload path (Phase 6.5a A6)
+//!   can find it. See `docs/reactivity-design.md`.
 
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, ItemFn};
 
 mod render;
-mod rsx;
 
 /// Annotates the user's app function (returning `whisker::Element`) and
 /// generates the FFI symbols the iOS/Android host expects.
@@ -124,26 +123,6 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     expanded.into()
-}
-
-/// Build a Whisker [`Element`] tree using a JSX-like syntax.
-///
-/// ```ignore
-/// rsx! {
-///     view { class: "row",
-///         text { style: "font-size: 16px;",
-///             "Hello, {name}"
-///         }
-///     }
-/// }
-/// ```
-///
-/// Desugars to a chained builder expression returning an
-/// `whisker_runtime::Element`. See `crates/whisker-macros/src/rsx.rs` for the
-/// full grammar.
-#[proc_macro]
-pub fn rsx(input: TokenStream) -> TokenStream {
-    rsx::expand(input)
 }
 
 /// Phase 6.5a fine-grained renderer macro. Emits imperative

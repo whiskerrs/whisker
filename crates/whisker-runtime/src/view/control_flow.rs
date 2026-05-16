@@ -80,11 +80,12 @@ pub fn show(
 /// (their owners and per-item reactive state survive); items that
 /// disappear have their owners disposed.
 ///
-/// **v1 ordering limitation**: when reused items appear in a
-/// different order, they stay in their original position under the
-/// wrapper. Pure-append / pure-remove / mixed-add-remove cases work
-/// correctly; reorders look stale. A subsequent commit will fix
-/// this by re-attaching reused items into the new order.
+/// **Reordering**: when reused items appear in a different order,
+/// we detach them all (in the previous order) and re-attach them
+/// (in the new order) so the wrapper's child list reflects the new
+/// position. This is the simplest correct reorder strategy; if list
+/// churn ever becomes a perf concern, a smarter LIS-based moves
+/// path can replace the detach-all step.
 pub fn for_each<T, K, V, EachFn, KeyFn, ChildFn>(
     each: EachFn,
     key: KeyFn,
@@ -99,40 +100,77 @@ where
     ChildFn: Fn(T) -> V + 'static,
 {
     let wrapper = create_element(ElementTag::View);
-    // Map from key → (item owner, view) — view is kept so we can
-    // re-attach reused items if we add reordering later. v1 ignores
-    // the View beyond mount time.
-    let entries: Rc<RefCell<HashMap<K, crate::reactive::OwnerId>>> =
-        Rc::new(RefCell::new(HashMap::new()));
+    // Per-key bookkeeping. We track the owner so we can dispose
+    // removed items, plus the attached element handles so we can
+    // re-attach in the new order during a reorder.
+    struct Entry {
+        owner: crate::reactive::OwnerId,
+        handles: Vec<ElementHandle>,
+    }
+    let entries: Rc<RefCell<HashMap<K, Entry>>> = Rc::new(RefCell::new(HashMap::new()));
 
     effect(move || {
         let items = each();
-        let mut new_entries: HashMap<K, crate::reactive::OwnerId> = HashMap::new();
+        let mut new_entries: HashMap<K, Entry> = HashMap::new();
+        let mut new_keys_in_order: Vec<K> = Vec::with_capacity(items.len());
 
-        // Pull the old map out so we can move owners across without
-        // holding the borrow during user-code calls (children()).
+        // Pull the old map out so we can move entries across
+        // without holding the borrow during user-code calls
+        // (`children()`).
         let mut old = std::mem::take(&mut *entries.borrow_mut());
 
         for item in items {
             let k = key(&item);
             if let Some(existing) = old.remove(&k) {
-                // Reuse the existing owner (and its reactive state).
-                new_entries.insert(k, existing);
+                new_entries.insert(k.clone(), existing);
             } else {
                 let item_owner = create_owner(None);
-                with_owner(item_owner, || {
+                let handles = with_owner(item_owner, || {
                     let view = children(item).into_view();
-                    view.attach_to(wrapper);
+                    view.attach_to(wrapper)
                 });
-                new_entries.insert(k, item_owner);
+                new_entries.insert(
+                    k.clone(),
+                    Entry {
+                        owner: item_owner,
+                        handles,
+                    },
+                );
             }
+            new_keys_in_order.push(k);
         }
 
-        // Anything still in `old` has been removed from the list —
-        // dispose its owner so its children, reactive nodes, and
-        // cleanup callbacks all fire.
-        for (_, owner) in old.drain() {
-            dispose_owner(owner);
+        // Anything still in `old` has been removed — dispose so
+        // reactive nodes + cleanups fire. We detach the elements
+        // first, then dispose the owner. Order matters: dispose
+        // before detach would leave the now-freed-owner trying to
+        // touch the renderer for no reason.
+        for (_, entry) in old.drain() {
+            for h in &entry.handles {
+                super::remove_child(wrapper, *h);
+            }
+            dispose_owner(entry.owner);
+        }
+
+        // Re-attach all kept entries in the new order. We're
+        // unconditional here (rather than diffing) — for v1 the
+        // simpler implementation wins; the typical churn shape
+        // (append, prepend, single-row insert) is still cheap.
+        // First detach everything we kept...
+        for k in &new_keys_in_order {
+            if let Some(entry) = new_entries.get(k) {
+                for h in &entry.handles {
+                    super::remove_child(wrapper, *h);
+                }
+            }
+        }
+        // ...then re-attach in the desired order.
+        for k in &new_keys_in_order {
+            if let Some(entry) = new_entries.get(k) {
+                for h in &entry.handles {
+                    super::append_child(wrapper, *h);
+                }
+            }
         }
 
         *entries.borrow_mut() = new_entries;

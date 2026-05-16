@@ -20,19 +20,17 @@
 pub use whisker_app_config as app_config;
 pub use whisker_runtime as runtime;
 
-// Re-export commonly used types so users don't need to depend on the
-// inner crates directly.
-pub use whisker_runtime::build;
-pub use whisker_runtime::element::{Element, ElementTag};
-pub use whisker_runtime::renderer::Renderer;
-pub use whisker_runtime::signal::{use_signal, Signal};
+// Re-export the element tag enum the macro emit references through
+// `::whisker::ElementTag`. The C bridge keys element creation off
+// the same enum.
+pub use whisker_runtime::element::ElementTag;
 
-pub use whisker_macros::{component, main, render, rsx};
+pub use whisker_macros::{component, main, render};
 
-// Re-export the new reactive primitives at the top level so user code
-// can write `use whisker::*` and reach `signal`, `effect`, etc. The
-// underlying impl lives in `whisker_runtime::reactive` and is still
-// available there for code that prefers the long path.
+// Phase 6.5a reactive surface, lifted to the top-level namespace so
+// user code can `use whisker::*` and reach the typical primitives
+// directly. The underlying impl lives in `whisker_runtime::reactive`
+// for callers that prefer the long path.
 pub use whisker_runtime::reactive::{
     create_owner, dispose_owner, effect, flush, flush_mounts, memo, mount_component, on_cleanup,
     on_mount, provide_context, signal, unmount_component, use_context, with_context, with_owner,
@@ -92,14 +90,10 @@ pub mod __main_runtime {
 
 /// Common imports for Whisker app code.
 pub mod prelude {
-    pub use crate::build::{image, page, raw_text, scroll_view, text, text_with, view};
-    pub use crate::{component, main, render, rsx, use_signal};
-    pub use crate::{Element, ElementTag, Signal};
-    // Phase 6.5a reactive surface — the new API. Once `render!`
-    // (A3) lands and the old value-tree API retires, the prelude
-    // here will drop `use_signal` / `Signal` and rsx.
+    pub use crate::{component, main, render};
+    pub use crate::ElementTag;
     pub use crate::{
-        effect, memo, on_cleanup, on_mount, provide_context, signal, use_context, with_context,
-        Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,
+        effect, for_each, memo, on_cleanup, on_mount, provide_context, show, signal, use_context,
+        with_context, Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,
     };
 }

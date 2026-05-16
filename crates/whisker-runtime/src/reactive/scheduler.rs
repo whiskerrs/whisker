@@ -46,7 +46,7 @@ pub(crate) fn schedule(node: NodeId) {
     // a flush is already in progress (or there's other pending work),
     // the host is either actively running or already poked.
     if was_empty {
-        crate::signal::wake_runtime();
+        crate::host_wake::wake_runtime();
     }
 }
 

@@ -116,7 +116,7 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // Wire host wake-up before we touch any reactive primitive — any
     // signal writes during the initial `app()` run (lazy state
     // initialisers, eager effects) need to schedule a frame correctly.
-    whisker_runtime::signal::set_request_frame_callback(ctx.request_frame, ctx.request_frame_data);
+    whisker_runtime::host_wake::set_request_frame_callback(ctx.request_frame, ctx.request_frame_data);
 
     // Install the bridge renderer into the thread-local before
     // running user code. The `render!` macro's `view::*` calls
