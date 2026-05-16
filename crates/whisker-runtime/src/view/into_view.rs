@@ -23,35 +23,62 @@ pub trait IntoView {
 /// A rendered (or about-to-be-rendered) tree fragment.
 #[derive(Debug, Clone)]
 pub enum View {
-    /// A single element. The most common shape.
+    /// A single element handle the caller has already created.
     Element(ElementHandle),
-    /// Zero-or-more children, in order. Used for tuples / option-some
-    /// / iterator-flatten / fragments.
+    /// A text snippet — `materialize` creates a `raw_text` element
+    /// with `text=<value>`. The `IntoView` impls for `&str` /
+    /// `String` / primitive numeric types route through here so
+    /// `{count.get()}` inside `render!` can interpolate scalar
+    /// values without the caller having to manually wrap them in a
+    /// `raw_text { … }` element.
+    Text(String),
+    /// Zero-or-more child views in order. Tuples, option-some /
+    /// option-none → empty, iterator flattening, and the macro's
+    /// multi-child `Show` children all use this.
     Fragment(Vec<View>),
-    /// A view with no on-screen footprint. Used for `Show { when: false }`
-    /// and similar conditional skips; carries no children to mount.
+    /// A view with no on-screen footprint — `Show { when: false }`
+    /// and `Option::None`.
     Empty,
 }
 
 impl View {
-    /// Attach this view as a child of `parent`, calling
-    /// [`append_child`](super::append_child) for every leaf element it
-    /// contains. Fragments are spread in order; `Empty` is a no-op.
-    pub fn attach_to(&self, parent: ElementHandle) {
+    /// Realise the view: create whatever element handles the text /
+    /// fragment variants require, append them to `parent`, and return
+    /// the resulting flat list of leaf handles in attach order. The
+    /// returned list is what the `{expr}` macro path stashes so the
+    /// next effect re-run can detach the previous children before
+    /// attaching the new ones.
+    pub fn attach_to(self, parent: ElementHandle) -> Vec<ElementHandle> {
+        let mut out = Vec::new();
+        self.materialise_into(parent, &mut out);
+        out
+    }
+
+    fn materialise_into(self, parent: ElementHandle, out: &mut Vec<ElementHandle>) {
         match self {
-            View::Element(h) => super::append_child(parent, *h),
+            View::Element(h) => {
+                super::append_child(parent, h);
+                out.push(h);
+            }
+            View::Text(s) => {
+                let h = super::create_element(crate::element::ElementTag::RawText);
+                super::set_attribute(h, "text", &s);
+                super::append_child(parent, h);
+                out.push(h);
+            }
             View::Fragment(children) => {
                 for child in children {
-                    child.attach_to(parent);
+                    child.materialise_into(parent, out);
                 }
             }
             View::Empty => {}
         }
     }
 
-    /// Collect the leaf element handles this view contributes, in
-    /// child-order. Useful for renderers that want to assign sibling
-    /// indices, and for unit tests inspecting the result.
+    /// Collect the (already-realised) leaf element handles this view
+    /// contributes, in child-order. **Only `Element` and `Fragment`
+    /// contribute.** `Text` returns nothing here because its element
+    /// only exists once `attach_to` has run.
     pub fn elements(&self) -> Vec<ElementHandle> {
         let mut out = Vec::new();
         self.collect_into(&mut out);
@@ -66,7 +93,7 @@ impl View {
                     c.collect_into(out);
                 }
             }
-            View::Empty => {}
+            View::Text(_) | View::Empty => {}
         }
     }
 }
@@ -101,6 +128,52 @@ impl<T: IntoView> IntoView for Option<T> {
         }
     }
 }
+
+// Text-shaped `IntoView` impls.
+//
+// Inside `render!`, any `{expr}` that evaluates to a string- or
+// number-shaped value is routed through one of these into a
+// `View::Text`, which becomes a `raw_text` element when the surrounding
+// effect's `attach_to` runs. This is what lets the user write
+// `text { {count.get()} }` and `text { {label} }` interchangeably.
+//
+// We intentionally avoid a blanket `impl<T: Display>` to keep the
+// surface predictable and the orphan rules tractable — primitives
+// list explicitly, custom types implement `IntoView` themselves.
+
+impl IntoView for String {
+    fn into_view(self) -> View {
+        View::Text(self)
+    }
+}
+
+impl IntoView for &str {
+    fn into_view(self) -> View {
+        View::Text(self.to_owned())
+    }
+}
+
+impl IntoView for &String {
+    fn into_view(self) -> View {
+        View::Text(self.clone())
+    }
+}
+
+macro_rules! impl_into_view_via_display {
+    ($($t:ty),+) => {
+        $(
+            impl IntoView for $t {
+                fn into_view(self) -> View {
+                    View::Text(self.to_string())
+                }
+            }
+        )+
+    };
+}
+
+impl_into_view_via_display!(i8, i16, i32, i64, i128, isize);
+impl_into_view_via_display!(u8, u16, u32, u64, u128, usize);
+impl_into_view_via_display!(f32, f64, bool, char);
 
 // Tuple impls for 1–8 elements. Tuples render as fragments —
 // children mount in declaration order.

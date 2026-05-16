@@ -74,7 +74,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // on) or just invokes `#fn_name()` directly (release) is
         // decided by `whisker`'s own `hot-reload` feature flag — the
         // user crate doesn't need a matching feature of its own.
-        fn __whisker_app_dispatch() -> ::whisker::Element {
+        fn __whisker_app_dispatch() -> ::whisker::runtime::view::ElementHandle {
             ::whisker::__main_runtime::call_user_app(#fn_name)
         }
 

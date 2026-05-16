@@ -167,12 +167,27 @@ struct AttrEntry {
 
 impl Root {
     fn to_tokens(&self) -> TokenStream2 {
-        self.node.to_tokens()
+        match &self.node {
+            // A bare `{expr}` at the root just evaluates to that
+            // expression's value — render! returns whatever it does
+            // (typically an `ElementHandle` from a helper). The
+            // surrounding scope, not the macro, is responsible for
+            // anything else.
+            Node::Expr(expr) => quote! { #expr },
+            other => other.to_tokens_returning_handle(),
+        }
     }
 }
 
 impl Node {
-    fn to_tokens(&self) -> TokenStream2 {
+    /// Variant of `to_tokens` for the cases that produce a value the
+    /// surrounding code can `append_child` directly: elements,
+    /// components, and text-literal children. `Node::Expr` does NOT
+    /// support this entry point — it's handled specially by
+    /// `ElementNode::to_tokens` (where the parent `__h` is in
+    /// scope) and by `Root::to_tokens` (where the expression's
+    /// value becomes the macro output).
+    fn to_tokens_returning_handle(&self) -> TokenStream2 {
         match self {
             Node::Component(c) => c.to_tokens(),
             Node::Element(el) => el.to_tokens(),
@@ -185,28 +200,31 @@ impl Node {
                     __h
                 }
             },
-            // `{expr}` inside a text node: render as a raw_text
-            // element whose `text` attribute is driven by an effect.
-            // The effect's closure reads whatever signals `#expr`
-            // touches via `.get()` / `.with()`, so it re-runs (and
-            // re-updates the element) on every dependency change.
-            // Static (signal-less) expressions just run once at
-            // registration and never re-trigger.
+            Node::Expr(_) => unreachable!(
+                "Node::Expr is handled at ElementNode / Root layer; \
+                 should never reach to_tokens_returning_handle"
+            ),
+        }
+    }
+
+    /// Emit a `View`-shaped expression. Used by `Show` (and any
+    /// future control-flow component that wraps its body in an
+    /// `IntoView`-bearing closure). For element / component / text
+    /// children we wrap their handle in `IntoView::into_view(...)`;
+    /// for `{expr}` children we trust the user's expression to
+    /// implement `IntoView` (which all the supported primitive +
+    /// element types do).
+    fn to_tokens_as_view(&self) -> TokenStream2 {
+        match self {
             Node::Expr(expr) => quote! {
-                {
-                    let __h = ::whisker::runtime::view::create_element(
-                        ::whisker::ElementTag::RawText,
-                    );
-                    ::whisker::effect(move || {
-                        let __text =
-                            ::std::string::ToString::to_string(&(#expr));
-                        ::whisker::runtime::view::set_attribute(
-                            __h, "text", &__text,
-                        );
-                    });
-                    __h
-                }
+                ::whisker::runtime::view::IntoView::into_view(#expr)
             },
+            other => {
+                let h = other.to_tokens_returning_handle();
+                quote! {
+                    ::whisker::runtime::view::IntoView::into_view(#h)
+                }
+            }
         }
     }
 }
@@ -271,13 +289,49 @@ impl ElementNode {
         }
 
         for child in &self.children {
-            let child_code = child.to_tokens();
-            stmts.push(quote! {
-                {
-                    let __child = #child_code;
-                    ::whisker::runtime::view::append_child(__h, __child);
+            match child {
+                // `{expr}` children attach themselves through their
+                // own effect (which references the enclosing `__h`);
+                // we inline the statement and skip the
+                // wrap-in-append-child path that other child kinds
+                // use.
+                Node::Expr(expr) => {
+                    stmts.push(quote! {
+                        {
+                            let __interp_parent = __h;
+                            let __interp_last:
+                                ::std::rc::Rc<::std::cell::RefCell<
+                                    ::std::vec::Vec<
+                                        ::whisker::runtime::view::ElementHandle,
+                                    >,
+                                >> = ::std::rc::Rc::new(
+                                    ::std::cell::RefCell::new(
+                                        ::std::vec::Vec::new(),
+                                    ),
+                                );
+                            ::whisker::effect(move || {
+                                for __h_prev in __interp_last.borrow_mut().drain(..) {
+                                    ::whisker::runtime::view::remove_child(
+                                        __interp_parent, __h_prev,
+                                    );
+                                }
+                                let __view = ::whisker::runtime::view::IntoView::into_view(#expr);
+                                let __new = __view.attach_to(__interp_parent);
+                                *__interp_last.borrow_mut() = __new;
+                            });
+                        }
+                    });
                 }
-            });
+                _ => {
+                    let child_code = child.to_tokens_returning_handle();
+                    stmts.push(quote! {
+                        {
+                            let __child = #child_code;
+                            ::whisker::runtime::view::append_child(__h, __child);
+                        }
+                    });
+                }
+            }
         }
 
         quote! {
@@ -336,14 +390,8 @@ impl ComponentNode {
             }
         }
 
-        let children_views: Vec<TokenStream2> = self
-            .children
-            .iter()
-            .map(|c| {
-                let code = c.to_tokens();
-                quote! { ::whisker::runtime::view::IntoView::into_view(#code) }
-            })
-            .collect();
+        let children_views: Vec<TokenStream2> =
+            self.children.iter().map(|c| c.to_tokens_as_view()).collect();
 
         // Single-child shortcut: avoid wrapping in a Fragment Vec
         // when the user has exactly one child element.

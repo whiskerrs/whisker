@@ -66,9 +66,11 @@ pub mod __main_runtime {
     ///   screen keeps showing pre-edit content.
     /// - **off** (release): body collapses to `f()`, `subsecond` is
     ///   not pulled in at all.
+    use whisker_runtime::view::ElementHandle;
+
     #[cfg(feature = "hot-reload")]
     #[inline(always)]
-    pub fn call_user_app(f: fn() -> crate::Element) -> crate::Element {
+    pub fn call_user_app(f: fn() -> ElementHandle) -> ElementHandle {
         // `move` is load-bearing: without it, `|| f()` captures `f` by
         // *reference* (the body only reads `f`, and `f`'s `Copy`-ness is
         // not enough to flip Rust to by-value capture). Subsecond's
@@ -83,7 +85,7 @@ pub mod __main_runtime {
 
     #[cfg(not(feature = "hot-reload"))]
     #[inline(always)]
-    pub fn call_user_app(f: fn() -> crate::Element) -> crate::Element {
+    pub fn call_user_app(f: fn() -> ElementHandle) -> ElementHandle {
         f()
     }
 }
