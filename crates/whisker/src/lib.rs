@@ -38,6 +38,8 @@ pub use whisker_runtime::reactive::{
     on_mount, provide_context, signal, unmount_component, use_context, with_context, with_owner,
     Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,
 };
+// Control-flow components used by the `render!` macro.
+pub use whisker_runtime::view::{for_each, show};
 
 /// Internal runtime entry points used by code the `#[whisker::main]` macro
 /// expands to. Not stable, not for direct use.

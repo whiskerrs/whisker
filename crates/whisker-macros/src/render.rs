@@ -56,6 +56,7 @@ impl Parse for Root {
 
 enum Node {
     Element(ElementNode),
+    Component(ComponentNode),
     Text(LitStr),
     /// Reserved for Step 3 — currently emits a `compile_error!`.
     Expr(Expr),
@@ -72,43 +73,55 @@ impl Parse for Node {
             let expr: Expr = content.parse()?;
             return Ok(Node::Expr(expr));
         }
-        Ok(Node::Element(input.parse()?))
+        // IDENT { ... } — element or component depending on case of
+        // the first character of the identifier.
+        let body = TagBody::parse(input)?;
+        if starts_uppercase(&body.tag) {
+            Ok(Node::Component(ComponentNode {
+                name: body.tag,
+                kwargs: body.kwargs,
+                children: body.children,
+            }))
+        } else {
+            Ok(Node::Element(ElementNode {
+                tag: body.tag,
+                attrs: body.kwargs,
+                children: body.children,
+            }))
+        }
     }
 }
 
-struct ElementNode {
+/// Shared parse result for both element and component nodes: an
+/// identifier followed by a brace-delimited block of `name: expr`
+/// kwargs and then nested `Node` children.
+struct TagBody {
     tag: Ident,
-    attrs: Vec<AttrEntry>,
+    kwargs: Vec<AttrEntry>,
     children: Vec<Node>,
 }
 
-struct AttrEntry {
-    name: Ident,
-    value: Expr,
-}
-
-impl Parse for ElementNode {
+impl TagBody {
     fn parse(input: ParseStream) -> Result<Self> {
         let tag: Ident = input.parse()?;
         let body;
         braced!(body in input);
 
-        let mut attrs = Vec::new();
+        let mut kwargs = Vec::new();
         let mut children = Vec::new();
 
-        // Attributes: while we see `IDENT :`, parse an attribute. Once
-        // we see something else, switch to children.
+        // kwargs: while we see `IDENT :`, parse name : expr.
         while body.peek(Ident) && body.peek2(Token![:]) {
             let name: Ident = body.parse()?;
             body.parse::<Token![:]>()?;
             let value: Expr = body.parse()?;
-            attrs.push(AttrEntry { name, value });
+            kwargs.push(AttrEntry { name, value });
             if body.peek(Token![,]) {
                 body.parse::<Token![,]>()?;
             }
         }
 
-        // Children until we hit the closing brace.
+        // Children: nested nodes until the closing brace.
         while !body.is_empty() {
             children.push(body.parse()?);
             if body.peek(Token![,]) {
@@ -118,10 +131,36 @@ impl Parse for ElementNode {
 
         Ok(Self {
             tag,
-            attrs,
+            kwargs,
             children,
         })
     }
+}
+
+fn starts_uppercase(ident: &Ident) -> bool {
+    ident
+        .to_string()
+        .chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false)
+}
+
+struct ElementNode {
+    tag: Ident,
+    attrs: Vec<AttrEntry>,
+    children: Vec<Node>,
+}
+
+struct ComponentNode {
+    name: Ident,
+    kwargs: Vec<AttrEntry>,
+    children: Vec<Node>,
+}
+
+struct AttrEntry {
+    name: Ident,
+    value: Expr,
 }
 
 // ---- Codegen --------------------------------------------------------------
@@ -135,6 +174,7 @@ impl Root {
 impl Node {
     fn to_tokens(&self) -> TokenStream2 {
         match self {
+            Node::Component(c) => c.to_tokens(),
             Node::Element(el) => el.to_tokens(),
             Node::Text(lit) => quote! {
                 {
@@ -249,6 +289,153 @@ impl ElementNode {
         }
     }
 }
+
+// ---- Component codegen ----------------------------------------------------
+
+impl ComponentNode {
+    fn to_tokens(&self) -> TokenStream2 {
+        match self.name.to_string().as_str() {
+            "Show" => self.emit_show(),
+            "For" => self.emit_for(),
+            other => {
+                let span = self.name.span();
+                let err = LitStr::new(
+                    &format!(
+                        "unknown component `{other}` in render!. Phase 6.5a v1 \
+                         supports `Show` and `For`; user-defined components \
+                         are invoked as plain function calls outside the macro."
+                    ),
+                    span,
+                );
+                quote! { ::std::compile_error!(#err) }
+            }
+        }
+    }
+
+    fn kwarg(&self, name: &str) -> Option<&Expr> {
+        self.kwargs.iter().find(|k| k.name == name).map(|k| &k.value)
+    }
+
+    fn emit_show(&self) -> TokenStream2 {
+        let Some(when_expr) = self.kwarg("when") else {
+            let err = LitStr::new("Show requires `when:` kwarg", self.name.span());
+            return quote! { ::std::compile_error!(#err) };
+        };
+
+        // Validate the kwarg set so typos surface at compile time.
+        for k in &self.kwargs {
+            let n = k.name.to_string();
+            if n != "when" && n != "fallback" {
+                let err = LitStr::new(
+                    &format!(
+                        "unknown kwarg `{n}` on Show; allowed: when, fallback"
+                    ),
+                    k.name.span(),
+                );
+                return quote! { ::std::compile_error!(#err) };
+            }
+        }
+
+        let children_views: Vec<TokenStream2> = self
+            .children
+            .iter()
+            .map(|c| {
+                let code = c.to_tokens();
+                quote! { ::whisker::runtime::view::IntoView::into_view(#code) }
+            })
+            .collect();
+
+        // Single-child shortcut: avoid wrapping in a Fragment Vec
+        // when the user has exactly one child element.
+        let children_body = if children_views.len() == 1 {
+            let only = &children_views[0];
+            quote! { #only }
+        } else {
+            quote! {
+                ::whisker::runtime::view::View::Fragment(
+                    ::std::vec![#(#children_views),*]
+                )
+            }
+        };
+
+        let fallback_arg = match self.kwarg("fallback") {
+            Some(expr) => quote! {
+                ::std::option::Option::Some(::std::boxed::Box::new({
+                    // Hold the user's closure in a local so the wrapper
+                    // below captures it by move into a Fn() — the user's
+                    // closure is already Fn() (re-callable each branch
+                    // flip), we just adapt its return type to `View`.
+                    let __whisker_user_fallback = #expr;
+                    move || ::whisker::runtime::view::IntoView::into_view(
+                        __whisker_user_fallback()
+                    )
+                }))
+            },
+            None => quote! { ::std::option::Option::<
+                ::std::boxed::Box<dyn ::std::ops::Fn() -> ::whisker::runtime::view::View>,
+            >::None },
+        };
+
+        quote! {
+            ::whisker::show(
+                #when_expr,
+                move || #children_body,
+                #fallback_arg,
+            )
+        }
+    }
+
+    fn emit_for(&self) -> TokenStream2 {
+        let Some(each_expr) = self.kwarg("each") else {
+            let err = LitStr::new("For requires `each:` kwarg", self.name.span());
+            return quote! { ::std::compile_error!(#err) };
+        };
+        let Some(key_expr) = self.kwarg("key") else {
+            let err = LitStr::new("For requires `key:` kwarg", self.name.span());
+            return quote! { ::std::compile_error!(#err) };
+        };
+        let Some(children_expr) = self.kwarg("children") else {
+            let err = LitStr::new("For requires `children:` kwarg", self.name.span());
+            return quote! { ::std::compile_error!(#err) };
+        };
+
+        for k in &self.kwargs {
+            let n = k.name.to_string();
+            if n != "each" && n != "key" && n != "children" {
+                let err = LitStr::new(
+                    &format!(
+                        "unknown kwarg `{n}` on For; allowed: each, key, children"
+                    ),
+                    k.name.span(),
+                );
+                return quote! { ::std::compile_error!(#err) };
+            }
+        }
+
+        if !self.children.is_empty() {
+            let err = LitStr::new(
+                "For takes no positional children; pass them via `children:`",
+                self.name.span(),
+            );
+            return quote! { ::std::compile_error!(#err) };
+        }
+
+        quote! {
+            ::whisker::for_each(
+                #each_expr,
+                #key_expr,
+                {
+                    let __whisker_user_children = #children_expr;
+                    move |__item| ::whisker::runtime::view::IntoView::into_view(
+                        __whisker_user_children(__item)
+                    )
+                },
+            )
+        }
+    }
+}
+
+// ---- Element codegen helpers ---------------------------------------------
 
 fn tag_to_element_tag(tag: &Ident) -> std::result::Result<TokenStream2, TokenStream2> {
     let name = tag.to_string();

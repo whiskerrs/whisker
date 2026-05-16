@@ -22,6 +22,7 @@
 //! trait + [`crate::render`] module stay until A3 Step 5 deletes
 //! them; both APIs co-exist during the transition.
 
+pub mod control_flow;
 pub mod handle;
 pub mod into_view;
 pub mod renderer;
@@ -29,6 +30,7 @@ pub mod renderer;
 #[cfg(test)]
 mod tests;
 
+pub use control_flow::{for_each, show};
 pub use handle::ElementHandle;
 pub use into_view::{IntoView, View};
 pub use renderer::{

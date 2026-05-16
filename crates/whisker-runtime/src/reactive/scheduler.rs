@@ -103,17 +103,27 @@ pub fn flush() {
 }
 
 /// Re-run the compute closure for an effect or memo, if it's still
-/// alive in the arena. Sets up dependency tracking around the call.
+/// alive in the arena. Sets up dependency tracking and owner-stack
+/// scoping around the call.
 ///
 /// The compute closure itself is held as `Rc<RefCell<dyn FnMut()>>` so
 /// we can clone the handle out of the runtime in a short borrow, drop
 /// the borrow, and then invoke the closure — that way the closure
 /// body is free to re-enter the runtime to read/write signals.
+///
+/// **Owner-stack handling**: the effect's owning [`Owner`] is pushed
+/// onto `owner_stack` before the closure runs and popped after. This
+/// way any reactive primitives or component mounts the closure
+/// creates (e.g. children of a `Show` / `For` that re-mount on dep
+/// change) become *children of the effect's owner* — same as on the
+/// initial run — instead of leaking into whatever owner happened to
+/// be current at flush time.
 fn run_node_if_alive(node: NodeId) {
     // Step 1: grab the compute handle, clear old sources, set the
     // tracker. Short borrow.
-    let compute = with_runtime(|rt| {
+    let prep = with_runtime(|rt| {
         let n = rt.nodes.get(node)?;
+        let owner = n.owner;
         let compute = match &n.data {
             NodeData::Effect { compute } => compute.clone(),
             NodeData::Memo { compute, .. } => compute.clone(),
@@ -136,10 +146,11 @@ fn run_node_if_alive(node: NodeId) {
             n.sources.clear();
         }
         rt.current_tracker = Some(node);
+        rt.owner_stack.push(owner);
         Some(compute)
     });
 
-    let Some(compute) = compute else { return };
+    let Some(compute) = prep else { return };
 
     // Step 2: invoke compute. The runtime is unborrowed at this
     // point, so user code inside is free to enter `with_runtime`.
@@ -148,8 +159,10 @@ fn run_node_if_alive(node: NodeId) {
         (&mut *borrow)();
     }
 
-    // Step 3: clear the tracker.
+    // Step 3: restore book-keeping — pop the owner we pushed and
+    // clear the tracker.
     with_runtime(|rt| {
+        rt.owner_stack.pop();
         rt.current_tracker = None;
     });
 }

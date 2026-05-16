@@ -417,6 +417,206 @@ fn signal_only_updates_elements_that_read_it() {
     });
 }
 
+// ----- Step 4: Show + For control flow --------------------------------------
+
+#[test]
+fn show_renders_children_when_true() {
+    with_recorder_and_owner(|log| {
+        let (cond, _set) = signal(true);
+        let _h = render! {
+            Show {
+                when: move || cond.get(),
+                text { "main" }
+            }
+        };
+        // Look for the raw_text "main" being created and its attr set.
+        let texts: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["main".to_string()]);
+    });
+}
+
+#[test]
+fn show_renders_fallback_when_false() {
+    with_recorder_and_owner(|log| {
+        let (cond, _set) = signal(false);
+        let _h = render! {
+            Show {
+                when: move || cond.get(),
+                fallback: || render! { text { "fallback" } },
+                text { "main" }
+            }
+        };
+        let texts: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["fallback".to_string()]);
+    });
+}
+
+#[test]
+fn show_swaps_on_condition_flip() {
+    with_recorder_and_owner(|log| {
+        let (cond, set_cond) = signal(true);
+        let _h = render! {
+            Show {
+                when: move || cond.get(),
+                fallback: || render! { text { "fb" } },
+                text { "main" }
+            }
+        };
+        log.borrow_mut().clear();
+        set_cond.set(false);
+        flush();
+
+        // After flip: a new "fb" element gets created + text set.
+        let texts_after: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts_after, vec!["fb".to_string()]);
+    });
+}
+
+#[test]
+fn show_without_fallback_renders_nothing_when_false() {
+    with_recorder_and_owner(|log| {
+        let (cond, _set) = signal(false);
+        let _h = render! {
+            Show {
+                when: move || cond.get(),
+                text { "only" }
+            }
+        };
+        let texts: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            texts.is_empty(),
+            "no children should mount when when=false and no fallback"
+        );
+    });
+}
+
+#[test]
+fn for_renders_initial_items() {
+    with_recorder_and_owner(|log| {
+        #[derive(Clone)]
+        struct Item {
+            id: u32,
+            name: &'static str,
+        }
+        let (items, _set_items) = signal(vec![
+            Item { id: 1, name: "a" },
+            Item { id: 2, name: "b" },
+            Item { id: 3, name: "c" },
+        ]);
+        let _h = render! {
+            For {
+                each: move || items.get(),
+                key: |i: &Item| i.id,
+                children: move |i: Item| render! { text { {i.name} } },
+            }
+        };
+
+        let texts: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    });
+}
+
+#[test]
+fn for_adds_new_items_on_update() {
+    with_recorder_and_owner(|log| {
+        let (items, set_items) = signal(vec![1_u32, 2]);
+        let _h = render! {
+            For {
+                each: move || items.get(),
+                key: |x: &u32| *x,
+                children: move |x: u32| render! { text { {x.to_string()} } },
+            }
+        };
+        log.borrow_mut().clear();
+
+        set_items.set(vec![1, 2, 3, 4]);
+        flush();
+
+        // For items 3 and 4, new RawText elements are created and
+        // their text attribute set.
+        let new_texts: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        // Should contain "3" and "4" (newly created), but NOT "1" / "2"
+        // (whose effects don't re-fire because their signals didn't
+        // change — they were per-item closures with fixed values).
+        assert!(new_texts.contains(&"3".to_string()), "item 3 must be rendered");
+        assert!(new_texts.contains(&"4".to_string()), "item 4 must be rendered");
+        assert!(!new_texts.contains(&"1".to_string()), "item 1 must NOT be re-rendered");
+    });
+}
+
+#[test]
+fn for_removes_items_on_update() {
+    with_recorder_and_owner(|log| {
+        let (items, set_items) = signal(vec![1_u32, 2, 3]);
+        let _h = render! {
+            For {
+                each: move || items.get(),
+                key: |x: &u32| *x,
+                children: move |x: u32| render! { text { {x.to_string()} } },
+            }
+        };
+        log.borrow_mut().clear();
+
+        set_items.set(vec![2]);
+        flush();
+
+        // No new SetAttr's expected (2's element survives). The
+        // disposed owners' cleanup callbacks fire but the recorder
+        // doesn't track them.
+        let new_texts: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetAttr { key, value, .. } if key == "text" => Some(value.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(new_texts.is_empty(), "no new SetAttr for survived items");
+    });
+}
+
 #[test]
 fn page_view_image_scroll_view_tags_supported() {
     with_recorder(|log| {
