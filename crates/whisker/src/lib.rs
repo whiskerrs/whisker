@@ -27,7 +27,17 @@ pub use whisker_runtime::element::{Element, ElementTag};
 pub use whisker_runtime::renderer::Renderer;
 pub use whisker_runtime::signal::{use_signal, Signal};
 
-pub use whisker_macros::{main, rsx};
+pub use whisker_macros::{component, main, rsx};
+
+// Re-export the new reactive primitives at the top level so user code
+// can write `use whisker::*` and reach `signal`, `effect`, etc. The
+// underlying impl lives in `whisker_runtime::reactive` and is still
+// available there for code that prefers the long path.
+pub use whisker_runtime::reactive::{
+    create_owner, dispose_owner, effect, flush, flush_mounts, memo, mount_component, on_cleanup,
+    on_mount, provide_context, signal, unmount_component, use_context, with_context, with_owner,
+    Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,
+};
 
 /// Internal runtime entry points used by code the `#[whisker::main]` macro
 /// expands to. Not stable, not for direct use.
@@ -79,6 +89,13 @@ pub mod __main_runtime {
 /// Common imports for Whisker app code.
 pub mod prelude {
     pub use crate::build::{image, page, raw_text, scroll_view, text, text_with, view};
-    pub use crate::{main, rsx, use_signal};
+    pub use crate::{component, main, rsx, use_signal};
     pub use crate::{Element, ElementTag, Signal};
+    // Phase 6.5a reactive surface — the new API. Once `render!`
+    // (A3) lands and the old value-tree API retires, the prelude
+    // here will drop `use_signal` / `Signal` and rsx.
+    pub use crate::{
+        effect, memo, on_cleanup, on_mount, provide_context, signal, use_context, with_context,
+        Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,
+    };
 }

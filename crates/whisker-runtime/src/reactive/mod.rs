@@ -28,6 +28,8 @@
 //! (no `Arc`, no locks) while matching how the runtime actually
 //! executes.
 
+pub mod component;
+pub mod context;
 pub mod effect;
 pub mod memo;
 pub mod owner;
@@ -39,6 +41,10 @@ pub mod stored;
 #[cfg(test)]
 mod tests;
 
+pub use component::{
+    flush_mounts, mount_component, on_mount, owners_for_fn, unmount_component,
+};
+pub use context::{provide_context, use_context, with_context};
 pub use effect::effect;
 pub use memo::{memo, Memo};
 pub use owner::{create_owner, dispose_owner, on_cleanup, with_owner};

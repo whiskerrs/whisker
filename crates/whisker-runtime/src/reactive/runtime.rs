@@ -181,6 +181,15 @@ pub struct ReactiveRuntime {
     /// effect just enqueue; we keep draining the queue until empty
     /// rather than recursing).
     pub flushing: bool,
+    /// Component-fn-pointer → list of live owners that ran that fn.
+    /// Populated by `register_component`; consulted by the A6 hot-
+    /// reload path to find which owners to dispose when a fn body
+    /// gets subsecond-patched.
+    pub component_owners: HashMap<*const (), Vec<OwnerId>>,
+    /// Pending on_mount callbacks, in the order they were registered.
+    /// Drained by [`super::flush_mounts`] — which the renderer (A3)
+    /// will call after appending a component's view to its parent.
+    pub pending_mounts: Vec<Box<dyn FnOnce()>>,
 }
 
 impl ReactiveRuntime {
@@ -192,6 +201,8 @@ impl ReactiveRuntime {
             current_tracker: None,
             pending: Vec::new(),
             flushing: false,
+            component_owners: HashMap::new(),
+            pending_mounts: Vec::new(),
         }
     }
 

@@ -390,6 +390,174 @@ fn memo_does_not_notify_when_value_unchanged() {
     assert_eq!(*runs.borrow(), 2);
 }
 
+// ----- Context --------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq)]
+struct Theme(&'static str);
+
+#[test]
+fn context_round_trip_in_same_owner() {
+    fresh();
+    let owner = create_owner(None);
+    with_owner(owner, || {
+        provide_context(Theme("dark"));
+        assert_eq!(use_context::<Theme>(), Some(Theme("dark")));
+    });
+}
+
+#[test]
+fn context_walks_parent_chain() {
+    fresh();
+    let parent = create_owner(None);
+    let observed = Rc::new(RefCell::new(None::<Theme>));
+    with_owner(parent, || {
+        provide_context(Theme("from-parent"));
+        let child = create_owner(None);
+        let observed_clone = observed.clone();
+        with_owner(child, || {
+            *observed_clone.borrow_mut() = use_context::<Theme>();
+        });
+    });
+    assert_eq!(*observed.borrow(), Some(Theme("from-parent")));
+}
+
+#[test]
+fn context_descendant_shadows_ancestor() {
+    fresh();
+    let parent = create_owner(None);
+    let observed = Rc::new(RefCell::new(None::<Theme>));
+    with_owner(parent, || {
+        provide_context(Theme("outer"));
+        let inner = create_owner(None);
+        let observed_clone = observed.clone();
+        with_owner(inner, || {
+            provide_context(Theme("inner"));
+            *observed_clone.borrow_mut() = use_context::<Theme>();
+        });
+    });
+    assert_eq!(*observed.borrow(), Some(Theme("inner")));
+}
+
+#[test]
+fn context_missing_returns_none() {
+    fresh();
+    let owner = create_owner(None);
+    let observed = Rc::new(RefCell::new(Some(Theme("placeholder"))));
+    let obs_clone = observed.clone();
+    with_owner(owner, || {
+        *obs_clone.borrow_mut() = use_context::<Theme>();
+    });
+    assert_eq!(*observed.borrow(), None);
+}
+
+#[test]
+fn with_context_borrows_without_clone() {
+    fresh();
+    let owner = create_owner(None);
+    let observed = Rc::new(RefCell::new(0_usize));
+    let obs_clone = observed.clone();
+    with_owner(owner, || {
+        provide_context(vec![1_i32, 2, 3, 4]);
+        let len = with_context::<Vec<i32>, _>(|v| v.len()).unwrap();
+        *obs_clone.borrow_mut() = len;
+    });
+    assert_eq!(*observed.borrow(), 4);
+}
+
+// ----- Component lifecycle --------------------------------------------------
+
+fn dummy_component_a() {} // dummy fn pointers for tests
+fn dummy_component_b() {}
+
+#[test]
+fn mount_component_registers_fn_pointer() {
+    fresh();
+    let (owner, _) = mount_component(dummy_component_a as *const (), || 42_i32);
+    let registered = owners_for_fn(dummy_component_a as *const ());
+    assert_eq!(registered, vec![owner]);
+}
+
+#[test]
+fn unmount_component_removes_registration_and_disposes() {
+    fresh();
+    let (owner, _) = mount_component(dummy_component_a as *const (), || ());
+    assert_eq!(owners_for_fn(dummy_component_a as *const ()).len(), 1);
+    unmount_component(owner);
+    assert_eq!(owners_for_fn(dummy_component_a as *const ()).len(), 0);
+    // Owner slot freed.
+    let alive = with_runtime(|rt| rt.owners.contains_key(owner));
+    assert!(!alive);
+}
+
+#[test]
+fn mount_component_isolates_owner_state() {
+    fresh();
+    let (owner_a, sig_a) = mount_component(dummy_component_a as *const (), || {
+        let (r, _w) = signal(1_i32);
+        r
+    });
+    let (owner_b, sig_b) = mount_component(dummy_component_b as *const (), || {
+        let (r, _w) = signal(2_i32);
+        r
+    });
+    // Each signal lives in its own component owner.
+    assert_eq!(sig_a.get(), 1);
+    assert_eq!(sig_b.get(), 2);
+    // Disposing one doesn't touch the other.
+    unmount_component(owner_a);
+    assert_eq!(sig_b.get(), 2);
+    unmount_component(owner_b);
+}
+
+// ----- on_mount / flush_mounts ----------------------------------------------
+
+#[test]
+fn on_mount_fires_on_flush() {
+    fresh();
+    let owner = create_owner(None);
+    let fired = Rc::new(RefCell::new(false));
+    let fired_clone = fired.clone();
+    with_owner(owner, || {
+        on_mount(move || *fired_clone.borrow_mut() = true);
+    });
+    // Hasn't fired yet — needs a flush_mounts call.
+    assert!(!*fired.borrow());
+    flush_mounts();
+    assert!(*fired.borrow());
+}
+
+#[test]
+fn on_mount_runs_in_registration_order() {
+    fresh();
+    let owner = create_owner(None);
+    let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+    with_owner(owner, || {
+        let l = log.clone();
+        on_mount(move || l.borrow_mut().push("first"));
+        let l = log.clone();
+        on_mount(move || l.borrow_mut().push("second"));
+        let l = log.clone();
+        on_mount(move || l.borrow_mut().push("third"));
+    });
+    flush_mounts();
+    assert_eq!(*log.borrow(), vec!["first", "second", "third"]);
+}
+
+#[test]
+fn flush_mounts_is_idempotent() {
+    fresh();
+    let owner = create_owner(None);
+    let count = Rc::new(RefCell::new(0));
+    let count_clone = count.clone();
+    with_owner(owner, || {
+        on_mount(move || *count_clone.borrow_mut() += 1);
+    });
+    flush_mounts();
+    assert_eq!(*count.borrow(), 1);
+    flush_mounts();
+    assert_eq!(*count.borrow(), 1, "second flush must be a no-op");
+}
+
 // ----- Self-write doesn't cause unbounded recursion --------------------------
 
 #[test]

@@ -59,6 +59,7 @@ pub fn dispose_owner(owner: OwnerId) {
     let nodes;
     let cleanups;
     let parent;
+    let mount_fn;
     {
         let removed = with_runtime(|rt| rt.owners.remove(owner));
         let Some(o) = removed else { return };
@@ -66,6 +67,22 @@ pub fn dispose_owner(owner: OwnerId) {
         nodes = o.nodes;
         cleanups = o.cleanups;
         parent = o.parent;
+        mount_fn = o.mount_fn;
+    }
+
+    // Step 1b: if this was a component owner, scrub the hot-reload
+    // registry so the fn pointer doesn't list a freed slot. Without
+    // this, A6's `owners_for_fn` would return a dangling OwnerId
+    // and remount logic would fault.
+    if let Some(fp) = mount_fn {
+        with_runtime(|rt| {
+            if let Some(list) = rt.component_owners.get_mut(&fp) {
+                list.retain(|o| *o != owner);
+                if list.is_empty() {
+                    rt.component_owners.remove(&fp);
+                }
+            }
+        });
     }
 
     // Step 2: detach from parent's children list.

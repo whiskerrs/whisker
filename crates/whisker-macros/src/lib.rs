@@ -4,7 +4,12 @@
 //!   `whisker_app_main` and `whisker_tick` FFI exports the native host calls
 //!   into; the user only writes `fn app() -> Element`.
 //! - [`rsx!`] — Dioxus-style declarative element-tree macro that
-//!   desugars to [`whisker_runtime::build`] calls.
+//!   desugars to [`whisker_runtime::build`] calls. (Will be replaced
+//!   by `render!` in Phase 6.5a A3.)
+//! - [`component`] — wraps a function so it runs inside a fresh
+//!   reactive owner. The owner is registered against the function's
+//!   fn pointer so the Strategy C hot-reload path (Phase 6.5a A6) can
+//!   find it. See `docs/reactivity-design.md`.
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -138,4 +143,83 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn rsx(input: TokenStream) -> TokenStream {
     rsx::expand(input)
+}
+
+/// Mark a function as a Whisker reactive component.
+///
+/// Wraps the body so it runs inside a fresh reactive owner. The
+/// owner is created on every call (each invocation = a new mount)
+/// and is registered against the function's fn-pointer in the
+/// runtime's `component_owners` map — that's what the hot-reload
+/// path (Strategy C — Phase 6.5a A6) uses to find the live owners
+/// that came from a function whose body subsecond just patched.
+///
+/// ```ignore
+/// use whisker::prelude::*;
+///
+/// #[component]
+/// fn counter(initial: i32) -> impl IntoView {
+///     let count = signal(initial);
+///     let doubled = memo(move || count.0.get() * 2);
+///     render! { /* ... */ }
+/// }
+/// ```
+///
+/// Expansion (roughly):
+///
+/// ```ignore
+/// fn counter(initial: i32) -> impl IntoView {
+///     let (_owner, __result) = ::whisker::runtime::reactive::mount_component(
+///         counter as *const (),
+///         move || { /* user body */ },
+///     );
+///     __result
+/// }
+/// ```
+///
+/// Notes:
+///
+/// - Props become positional function parameters as written; no
+///   props struct is generated. Pass them in by value.
+/// - The owner stays alive after the component fn returns. Parent
+///   ownership / disposal is the renderer's responsibility (A3 + A6).
+/// - For the `_owner` variable to drop cleanly inside a tracking
+///   parent we don't unmount here — `unmount_component` is called
+///   from the parent when this component is removed from its view.
+/// - Calling `#[component]` on a function with no body (declaration
+///   only) is a compile error from `syn::parse` — same behaviour as
+///   `#[whisker::main]`.
+#[proc_macro_attribute]
+pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemFn);
+
+    let attrs = &input.attrs;
+    let vis = &input.vis;
+    let sig = &input.sig;
+    let block = &input.block;
+    let fn_name = &sig.ident;
+
+    let expanded = quote! {
+        #(#attrs)*
+        #vis #sig {
+            // The closure has to be `move` so prop bindings (which
+            // were moved into this function's stack frame) transfer
+            // into the body's reactive scope. The fn pointer of
+            // `#fn_name` inside its own body is stable across
+            // subsecond patches.
+            let (__owner, __result) =
+                ::whisker::runtime::reactive::mount_component(
+                    #fn_name as *const (),
+                    move || #block,
+                );
+            // Bind to suppress "unused variable" — but in production
+            // the renderer (A3) will read this through a side channel
+            // or by walking owner children; the fn return type is
+            // unchanged from what the user wrote.
+            let _ = __owner;
+            __result
+        }
+    };
+
+    expanded.into()
 }
