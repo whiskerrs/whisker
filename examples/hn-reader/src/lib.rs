@@ -224,13 +224,11 @@ pub fn hn_reader() -> ElementHandle {
         });
     });
 
-    let page_style = format!(
-        "flex-direction: column; flex: 1; background: {BG};"
-    );
+    let body_style = "flex-direction: column;".to_string();
 
     render! {
         view {
-            style: page_style,
+            style: body_style,
             {header()}
             {status_banner(state)}
             For {
@@ -246,9 +244,17 @@ pub fn hn_reader() -> ElementHandle {
 
 #[whisker::main]
 fn app() -> ElementHandle {
+    // The `page` element needs explicit dimensions + background +
+    // flex direction. Without `width: 100vw; height: 100vh;` it
+    // collapses to 0 px on iOS and the whole screen renders as the
+    // host's clear color (black).
+    let page_style = format!(
+        "width: 100vw; height: 100vh; background-color: {BG}; \
+         display: flex; flex-direction: column;"
+    );
     render! {
         page {
-            style: "flex-direction: column;",
+            style: page_style,
             {hn_reader()}
         }
     }
