@@ -48,7 +48,8 @@ use std::ffi::c_void;
 
 use whisker_driver_sys::{whisker_bridge_dispatch, WhiskerEngine};
 use whisker_runtime::reactive::{
-    flush as reactive_flush, mark_all_dirty as reactive_mark_all_dirty, remount_components_for,
+    flush as reactive_flush, flush_mounts as reactive_flush_mounts,
+    mark_all_dirty as reactive_mark_all_dirty, remount_components_for,
 };
 use whisker_runtime::view::{
     flush as renderer_flush, install_renderer, set_root, ElementHandle, DynRenderer,
@@ -145,6 +146,13 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // to run the first layout+paint pass.
     set_root(root);
     renderer_flush();
+
+    // Fire on_mount callbacks for everything that just mounted. Has
+    // to happen after the renderer flush so user-side code that asks
+    // "is my view in the tree?" (e.g. measure-after-layout) sees
+    // it. A callback that writes a signal schedules its work via the
+    // normal wake-up path; the next tick picks it up.
+    reactive_flush_mounts();
 
     start_hot_reload_receiver();
 }
@@ -244,6 +252,12 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
         reactive_mark_all_dirty();
     }
     reactive_flush();
+    // Drain on_mount queue *after* the reactive flush — effects that
+    // ran this tick may have mounted new components (via `<Show>`
+    // flipping true, `<For>` adding an item, etc.), and those
+    // newly-mounted components' on_mount callbacks belong to this
+    // frame.
+    reactive_flush_mounts();
     renderer_flush();
     PENDING.with(|p| p.set(false));
 }
