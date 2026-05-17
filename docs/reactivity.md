@@ -502,3 +502,6 @@ render! { text { {banner_text} } }
 - `examples/counter` — minimum-working example.
 - `examples/hello-world` — substantial sample exercising most of
   the surface.
+- `examples/hn-reader` — real-world async example: blocking HTTPS
+  fetch on a worker thread, signal update marshaled back via
+  `run_on_main_thread`. Mirrors React's `useState + useEffect`.
