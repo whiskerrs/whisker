@@ -22,7 +22,7 @@ use crate::reactive::{create_owner, dispose_owner, effect, with_owner};
 
 use super::handle::ElementHandle;
 use super::into_view::{IntoView, View};
-use super::renderer::{create_element, set_inline_styles};
+use super::renderer::create_element;
 
 /// Conditional rendering. When `when()` is true the `children`
 /// closure's view is mounted into the returned wrapper element; when
@@ -41,13 +41,6 @@ pub fn show(
     fallback: Option<Box<dyn Fn() -> View + 'static>>,
 ) -> ElementHandle {
     let wrapper = create_element(ElementTag::View);
-    // Default to column flex so the visible branch stretches to
-    // full width (matches `For` / typical usage). See the
-    // `for_each` wrapper for the rationale.
-    set_inline_styles(
-        wrapper,
-        "display: flex; flex-direction: column; width: 100%;",
-    );
     // Track the currently-mounted owner so we can dispose it on the
     // next flip. `Rc<RefCell>` because the effect closure runs many
     // times and needs interior mutability.
@@ -107,17 +100,6 @@ where
     ChildFn: Fn(T) -> V + 'static,
 {
     let wrapper = create_element(ElementTag::View);
-    // Default the wrapper to a column flex container so the items
-    // stack vertically — that's what users mean by `<For>` 99 % of
-    // the time. Without this the wrapper inherits the Lynx view
-    // default of `flex-direction: row` and items get squeezed into
-    // a single line (cf. `lynx_view_flex_direction_default` memory).
-    // Users who want horizontal layout wrap the For in a styled
-    // parent that overrides the children's layout.
-    set_inline_styles(
-        wrapper,
-        "display: flex; flex-direction: column; width: 100%;",
-    );
     // Per-key bookkeeping. We track the owner so we can dispose
     // removed items, plus the attached element handles so we can
     // re-attach in the new order during a reorder.
