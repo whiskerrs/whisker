@@ -120,6 +120,15 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // initialisers, eager effects) need to schedule a frame correctly.
     whisker_runtime::host_wake::set_request_frame_callback(ctx.request_frame, ctx.request_frame_data);
 
+    // Wire the main-thread dispatcher so background threads can call
+    // `run_on_main_thread(|| { ... })` to marshal work onto the TASM
+    // thread. The shim erases the `WhiskerEngine*` to `*mut c_void`
+    // because `whisker-runtime` doesn't depend on `whisker-driver-sys`.
+    whisker_runtime::main_thread::set_main_thread_dispatcher(
+        Some(dispatch_shim),
+        ctx.engine as *mut c_void,
+    );
+
     // Install the bridge renderer into the thread-local before
     // running user code. The `render!` macro's `view::*` calls
     // route through whatever is installed here.
@@ -237,4 +246,19 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
     reactive_flush();
     renderer_flush();
     PENDING.with(|p| p.set(false));
+}
+
+/// Type-erased shim handed to `whisker_runtime::main_thread`. The
+/// runtime crate stores the engine as `*mut c_void` (it doesn't
+/// depend on `whisker-driver-sys`); we cast back here before
+/// invoking the C bridge.
+extern "C" fn dispatch_shim(
+    engine: *mut c_void,
+    callback: extern "C" fn(*mut c_void),
+    user_data: *mut c_void,
+) -> bool {
+    if engine.is_null() {
+        return false;
+    }
+    unsafe { whisker_bridge_dispatch(engine as *mut WhiskerEngine, callback, user_data) }
 }

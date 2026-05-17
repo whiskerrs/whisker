@@ -39,6 +39,15 @@ pub use whisker_runtime::reactive::{
 // Control-flow components used by the `render!` macro.
 pub use whisker_runtime::view::{for_each, show};
 
+// Worker-thread → main-thread marshaling. The typical use case is
+// "fetch on a worker thread, update signal on the main thread":
+//
+//     std::thread::spawn(move || {
+//         let result = blocking_fetch();
+//         run_on_main_thread(move || data.set(Some(result)));
+//     });
+pub use whisker_runtime::main_thread::run_on_main_thread;
+
 /// Internal runtime entry points used by code the `#[whisker::main]` macro
 /// expands to. Not stable, not for direct use.
 #[doc(hidden)]
@@ -93,7 +102,7 @@ pub mod prelude {
     pub use crate::{component, main, render};
     pub use crate::ElementTag;
     pub use crate::{
-        effect, for_each, memo, on_cleanup, on_mount, provide_context, show, signal, use_context,
-        with_context, Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,
+        effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
+        signal, use_context, with_context, Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,
     };
 }
