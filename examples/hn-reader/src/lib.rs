@@ -100,15 +100,13 @@ fn fetch_blocking() -> Result<Vec<Story>, String> {
 // ---- Components -------------------------------------------------------------
 
 /// Single story row. `story` is cloned in because `For` hands each
-/// item to its `children` closure by value, and `#[component]`
-/// requires the prop to be `Clone`.
+/// item to its `children` closure by value.
 ///
-/// All String interpolations are at the top level of the body —
-/// keeping them out of nested `Show {}` blocks avoids the
-/// move-into-Fn-closure issue (the macro's per-`{expr}` effect is
-/// `move ||`, which would consume captures of a wrapping `Fn`
-/// closure like `Show`'s `children`).
-#[component]
+/// Plain `fn`, not `#[component]`, so there's no extra wrapper
+/// `view` between this and `For`'s child slot — the wrapper is
+/// unstyled and would collapse the row to 0 px. `For` already
+/// gives each item its own reactive owner, so per-component remount
+/// would be redundant.
 fn story_row(story: Story) -> ElementHandle {
     let title = story
         .title
@@ -127,9 +125,10 @@ fn story_row(story: Story) -> ElementHandle {
     let meta = format!("{points} points by {author} · {comments} comments");
 
     let row_style = format!(
-        "flex-direction: row; padding: 12px 16px; background: {BG};"
+        "width: 100%; padding: 12px 16px; \
+         display: flex; flex-direction: row; background-color: {BG};"
     );
-    let body_style = "flex-direction: column; flex: 1; gap: 4px;".to_string();
+    let body_style = "display: flex; flex-direction: column; flex-grow: 1;".to_string();
     let title_style = format!(
         "font-size: 15px; color: {TEXT_PRIMARY}; font-weight: 500;"
     );
@@ -161,7 +160,9 @@ fn story_row(story: Story) -> ElementHandle {
 /// HN-style orange header bar.
 fn header() -> ElementHandle {
     let bar_style = format!(
-        "background: {HEADER_BG}; padding: 16px; flex-direction: row;"
+        "width: 100%; padding: 16px; \
+         display: flex; flex-direction: row; \
+         background-color: {HEADER_BG};"
     );
     let title_style = format!(
         "font-size: 18px; font-weight: 700; color: {HEADER_FG};"
@@ -180,7 +181,9 @@ fn header() -> ElementHandle {
 /// Status banner — uses a closure that returns `&'static str` so
 /// we can read the signal reactively without owned-String capture
 /// issues. Empty string when there's nothing to say (loaded state).
-#[component]
+///
+/// Plain `fn` (not `#[component]`) for the same reason as
+/// `story_row`: no extra unstyled wrapper view.
 fn status_banner(state: RwSignal<LoadState>) -> ElementHandle {
     let status_text = move || match state.get() {
         LoadState::Loading => "Loading top stories…",
@@ -189,7 +192,8 @@ fn status_banner(state: RwSignal<LoadState>) -> ElementHandle {
     };
 
     let style = format!(
-        "padding: 16px; flex-direction: row; \
+        "width: 100%; padding: 16px; \
+         display: flex; flex-direction: row; \
          font-size: 13px; color: {TEXT_SECONDARY};"
     );
 
@@ -201,9 +205,12 @@ fn status_banner(state: RwSignal<LoadState>) -> ElementHandle {
     }
 }
 
-/// Root component. Owns the load-state signal and kicks off the
+/// Root of the app. Owns the load-state signal and kicks off the
 /// background fetch on mount.
-#[component]
+///
+/// Plain `fn` so the body lives directly under `page` with no extra
+/// wrapper view — needed because `page`'s flex layout propagates
+/// size to its direct child only.
 pub fn hn_reader() -> ElementHandle {
     let state = RwSignal::new(LoadState::Loading);
 
@@ -224,7 +231,15 @@ pub fn hn_reader() -> ElementHandle {
         });
     });
 
-    let body_style = "flex-direction: column;".to_string();
+    // The body view is the only direct child of `page`. We match
+    // hello-world's pattern: explicit `width: 100%` + flex-grow +
+    // `display: flex` + `flex-direction: column`. `flex: 1`
+    // shorthand seems unreliable in Lynx; the long-form
+    // `flex-grow: 1; flex-shrink: 1` is what `examples/hello-world`
+    // uses and works there.
+    let body_style = "width: 100%; flex-grow: 1; flex-shrink: 1; \
+                      display: flex; flex-direction: column;"
+        .to_string();
 
     render! {
         view {
