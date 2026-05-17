@@ -205,25 +205,83 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let block = &input.block;
     let fn_name = &sig.ident;
 
+    // Per-prop capture + per-invocation clone. Each prop's value is
+    // captured by-move into the body closure factory, then re-cloned
+    // on every body invocation so re-mount runs (hot-reload) hand
+    // the user code a fresh owned value.
+    //
+    // Limitations: this requires every prop to implement `Clone`.
+    // For Copy types (numbers, signal handles), `.clone()` is the
+    // same as a copy — no cost. For Clone-not-Copy (`String`,
+    // `Vec`, etc.) the clone happens once per remount, never during
+    // normal operation. For non-Clone non-Copy types the
+    // resulting code fails to compile with a clear bound error —
+    // user can wrap in `Rc<T>` / `Arc<T>` if Clone is genuinely
+    // impossible.
+    let prop_idents: Vec<syn::Ident> = sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Typed(pat_type) => {
+                if let syn::Pat::Ident(pi) = &*pat_type.pat {
+                    Some(pi.ident.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+
+    let captures: Vec<proc_macro2::TokenStream> = prop_idents
+        .iter()
+        .map(|ident| {
+            let cap = quote::format_ident!("__whisker_prop_{}", ident);
+            quote! { let #cap = #ident; }
+        })
+        .collect();
+
+    let restores: Vec<proc_macro2::TokenStream> = prop_idents
+        .iter()
+        .map(|ident| {
+            let cap = quote::format_ident!("__whisker_prop_{}", ident);
+            // `.clone()` is sufficient: for Copy types this is the
+            // same as a copy; for Clone types it gives an owned
+            // value matching the function's parameter type. Calling
+            // `Clone::clone` via the trait path (rather than method
+            // syntax) gives a clearer error message when the type
+            // does not implement Clone.
+            quote! {
+                let #ident = ::std::clone::Clone::clone(&#cap);
+            }
+        })
+        .collect();
+
     let expanded = quote! {
         #(#attrs)*
         #vis #sig {
-            // The closure has to be `move` so prop bindings (which
-            // were moved into this function's stack frame) transfer
-            // into the body's reactive scope. The fn pointer of
-            // `#fn_name` inside its own body is stable across
-            // subsecond patches.
-            let (__owner, __result) =
-                ::whisker::runtime::reactive::mount_component(
+            #(#captures)*
+
+            let __body: ::std::boxed::Box<
+                dyn ::std::ops::Fn() -> ::whisker::runtime::view::ElementHandle + 'static,
+            > = ::std::boxed::Box::new(move || {
+                #(#restores)*
+                #block
+            });
+            // True per-component remount: the runtime wraps `__body`
+            // in a permanent `view` element, stores the body Rc in
+            // a side table, and on each subsecond patch re-invokes
+            // the body inside a fresh owner. The wrapper element
+            // returned here is what the parent's `render!` attaches.
+            // Wrapper survives across remounts → parent's element
+            // tree is untouched → navigation / scroll position /
+            // sibling order all preserved.
+            let __wrapper =
+                ::whisker::runtime::reactive::mount_component_remountable(
                     #fn_name as *const (),
-                    move || #block,
+                    __body,
                 );
-            // Bind to suppress "unused variable" — but in production
-            // the renderer (A3) will read this through a side channel
-            // or by walking owner children; the fn return type is
-            // unchanged from what the user wrote.
-            let _ = __owner;
-            __result
+            __wrapper
         }
     };
 

@@ -1,65 +1,73 @@
-//! Integration test for the `#[component]` proc-macro.
+//! Integration test for component mounting.
 //!
-//! Compiles a tiny user-like crate against `whisker` and asserts the
-//! mounting behaviour: the component fn ptr is registered against
-//! the runtime, the body runs inside the new owner, the return type
-//! is preserved, unmounting cleans up.
+//! Originally tested `#[component]` decorated functions with various
+//! return types. After the True per-component remount change
+//! (`#[component]` now always returns `ElementHandle` via the
+//! remountable mount path), this file exercises the underlying
+//! `mount_component` API directly to verify owner cascade /
+//! cleanup semantics that the proc-macro is built on. The macro's
+//! own remount behaviour is covered by a separate test that
+//! installs a recording renderer.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
-use whisker::runtime::reactive::{__reset_for_tests, owners_for_fn, unmount_component};
+use whisker::runtime::reactive::{
+    __reset_for_tests, mount_component, on_cleanup, owners_for_fn, unmount_component,
+};
 
-#[component]
-fn counter(initial: i32, sink: Rc<RefCell<i32>>) -> i32 {
-    let (count, _set_count) = signal(initial);
-    *sink.borrow_mut() = count.get();
-    count.get()
-}
+// Stable fn pointers for the tests. Using these instead of
+// component fns since the macro now forces an `ElementHandle`
+// return type and the owner-mechanic tests don't render anything.
+fn dummy_outer() {}
+fn dummy_inner() {}
 
 #[test]
-fn component_macro_runs_body_inside_owner() {
+fn mount_component_runs_body_inside_owner() {
     __reset_for_tests();
     let sink = Rc::new(RefCell::new(0));
-    let returned = counter(7, sink.clone());
+    let sink_clone = sink.clone();
+    let (_owner, returned) = mount_component(dummy_outer as *const (), move || {
+        let (count, _set_count) = signal(7_i32);
+        let v = count.get();
+        *sink_clone.borrow_mut() = v;
+        v
+    });
     assert_eq!(returned, 7);
     assert_eq!(*sink.borrow(), 7);
 
-    // The fn pointer should be registered with at least one owner
-    // (the one created by the macro on this call).
-    let registered = owners_for_fn(counter as *const ());
+    let registered = owners_for_fn(dummy_outer as *const ());
     assert_eq!(registered.len(), 1);
 
-    // Tear it down.
     unmount_component(registered[0]);
-    assert_eq!(owners_for_fn(counter as *const ()).len(), 0);
-}
-
-#[component]
-fn outer(log: Rc<RefCell<Vec<&'static str>>>) -> () {
-    log.borrow_mut().push("outer-enter");
-    let _ = inner(log.clone());
-    log.borrow_mut().push("outer-exit");
-}
-
-#[component]
-fn inner(log: Rc<RefCell<Vec<&'static str>>>) -> () {
-    log.borrow_mut().push("inner-enter");
-    on_cleanup(move || log.borrow_mut().push("inner-cleanup"));
+    assert_eq!(owners_for_fn(dummy_outer as *const ()).len(), 0);
 }
 
 #[test]
-fn nested_components_create_owner_tree() {
+fn nested_mounts_create_owner_tree() {
     __reset_for_tests();
-    let log = Rc::new(RefCell::new(Vec::new()));
-    outer(log.clone());
+    let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+
+    let log_outer = log.clone();
+    let (_outer_owner, _) = mount_component(dummy_outer as *const (), move || {
+        log_outer.borrow_mut().push("outer-enter");
+        let log_inner = log_outer.clone();
+        let (_inner_owner, _) = mount_component(dummy_inner as *const (), move || {
+            log_inner.borrow_mut().push("inner-enter");
+            let log_cleanup = log_inner.clone();
+            on_cleanup(move || log_cleanup.borrow_mut().push("inner-cleanup"));
+        });
+        log_outer.borrow_mut().push("outer-exit");
+    });
 
     // Body ran top-down.
-    assert_eq!(*log.borrow(), vec!["outer-enter", "inner-enter", "outer-exit"]);
+    assert_eq!(
+        *log.borrow(),
+        vec!["outer-enter", "inner-enter", "outer-exit"]
+    );
 
-    // Outer + inner each registered one owner.
-    let outer_owners = owners_for_fn(outer as *const ());
-    let inner_owners = owners_for_fn(inner as *const ());
+    let outer_owners = owners_for_fn(dummy_outer as *const ());
+    let inner_owners = owners_for_fn(dummy_inner as *const ());
     assert_eq!(outer_owners.len(), 1);
     assert_eq!(inner_owners.len(), 1);
 
@@ -70,6 +78,5 @@ fn nested_components_create_owner_tree() {
         Some("inner-cleanup"),
         "inner cleanup must fire when outer is disposed"
     );
-    // Inner's registration is gone too.
-    assert_eq!(owners_for_fn(inner as *const ()).len(), 0);
+    assert_eq!(owners_for_fn(dummy_inner as *const ()).len(), 0);
 }

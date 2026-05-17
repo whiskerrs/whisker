@@ -42,7 +42,8 @@ pub mod stored;
 mod tests;
 
 pub use component::{
-    flush_mounts, mount_component, on_mount, owners_for_fn, unmount_component,
+    flush_mounts, mount_component, mount_component_remountable, on_mount, owners_for_fn,
+    remount_components_for, unmount_component, MountId,
 };
 pub use context::{provide_context, use_context, with_context};
 pub use effect::effect;

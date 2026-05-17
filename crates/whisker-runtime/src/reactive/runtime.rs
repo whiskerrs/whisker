@@ -186,6 +186,20 @@ pub struct ReactiveRuntime {
     /// reload path to find which owners to dispose when a fn body
     /// gets subsecond-patched.
     pub component_owners: HashMap<*const (), Vec<OwnerId>>,
+    /// Side table of remountable component mount sites
+    /// (`#[component]` with all-`Clone` props), keyed by a stable
+    /// `MountId`. Hot-reload remount walks this table on every
+    /// patch; ordinary `mount_component` (FnOnce body) does not
+    /// register here.
+    pub(crate) mount_sites: HashMap<super::component::MountId, super::component::MountSite>,
+    /// Component-fn-pointer → list of remountable mount sites that
+    /// ran that fn. Mirror of `component_owners` indexed by
+    /// `MountId` instead of `OwnerId` so it survives the dispose +
+    /// re-create cycle on each hot-reload remount (the owner is
+    /// fresh every time, the mount id is stable).
+    pub fn_ptr_mounts: HashMap<*const (), Vec<super::component::MountId>>,
+    /// Monotonic counter for fresh `MountId`s.
+    pub mount_id_counter: u64,
     /// Pending on_mount callbacks, in the order they were registered.
     /// Drained by [`super::flush_mounts`] — which the renderer (A3)
     /// will call after appending a component's view to its parent.
@@ -203,6 +217,9 @@ impl ReactiveRuntime {
             flushing: false,
             component_owners: HashMap::new(),
             pending_mounts: Vec::new(),
+            mount_sites: HashMap::new(),
+            fn_ptr_mounts: HashMap::new(),
+            mount_id_counter: 0,
         }
     }
 

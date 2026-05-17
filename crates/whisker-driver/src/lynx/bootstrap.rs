@@ -47,7 +47,9 @@ use std::cell::Cell;
 use std::ffi::c_void;
 
 use whisker_driver_sys::{whisker_bridge_dispatch, WhiskerEngine};
-use whisker_runtime::reactive::{flush as reactive_flush, mark_all_dirty as reactive_mark_all_dirty};
+use whisker_runtime::reactive::{
+    flush as reactive_flush, mark_all_dirty as reactive_mark_all_dirty, remount_components_for,
+};
 use whisker_runtime::view::{
     flush as renderer_flush, install_renderer, set_root, ElementHandle, DynRenderer,
 };
@@ -153,9 +155,9 @@ fn start_hot_reload_receiver() {}
 /// effect closure bodies; their re-run is up to whatever future
 /// scheduling A6 adds.
 #[cfg(feature = "hot-reload")]
-fn apply_pending_hot_patch() -> bool {
+fn apply_pending_hot_patch() -> Vec<*const ()> {
     let Some(table) = whisker_dev_runtime::take_pending_patch() else {
-        return false;
+        return Vec::new();
     };
     let entries = table.map.len();
     let lib = table.lib.clone();
@@ -168,26 +170,27 @@ fn apply_pending_hot_patch() -> bool {
     // this *before* invoking any user code that might call
     // `subsecond::call`. The only safe window to swap dispatchers.
     match unsafe { subsecond::apply_patch(table) } {
-        Ok(()) => {
+        Ok(patched) => {
             whisker_dev_runtime::devlog(&format!(
-                "patch applied ({entries} entries in {:?})",
+                "patch applied ({entries} entries in {:?}, {} fn pointers)",
                 started.elapsed(),
+                patched.len(),
             ));
-            true
+            patched
         }
         Err(e) => {
             whisker_dev_runtime::devlog(&format!(
                 "apply_patch failed: {e:?} (lib was {})",
                 lib.display(),
             ));
-            false
+            Vec::new()
         }
     }
 }
 
 #[cfg(not(feature = "hot-reload"))]
-fn apply_pending_hot_patch() -> bool {
-    false
+fn apply_pending_hot_patch() -> Vec<*const ()> {
+    Vec::new()
 }
 
 /// Process one frame on demand. Returns `true` when the runtime is
@@ -212,20 +215,23 @@ pub fn tick(engine_raw: *mut c_void) -> bool {
 extern "C" fn tick_callback(_user_data: *mut c_void) {
     // Drain any pending hot-reload patch before the reactive flush so
     // any patched closures run with their new bodies when the queue
-    // fires.
+    // fires. Returns the list of host-side fn pointers that were
+    // rewritten; empty if no patch was pending or the patch failed.
     let patched = apply_pending_hot_patch();
-    // After a successful patch, force every effect and memo to
-    // re-evaluate so user-visible changes (handler bodies, dynamic
-    // `{expr}` interpolations, memo formulas) reflect the patched
-    // code immediately — without waiting for a user-triggered
-    // signal write. State is fully preserved because signals are
-    // not touched. Structural changes (added signals / elements)
-    // still require a cold restart.
-    //
-    // This is the Phase 6.5a A6 "Strategy C-lite" hot-reload
-    // semantics. True per-component remount with element-slot
-    // book-keeping is future work.
-    if patched {
+
+    if !patched.is_empty() {
+        // 1. Per-component remount: dispose + re-mount every
+        //    `#[component]` whose fn was patched, so structural
+        //    changes (new elements, new signals) reflect in the
+        //    visible tree. State local to the remounted component
+        //    is lost; state held in context / above the remount
+        //    point survives.
+        remount_components_for(&patched);
+        // 2. Force-revalidate remaining effects/memos so closure-
+        //    body edits in non-`#[component]` helpers (called via
+        //    `{expr}` interpolation) also pick up the patched code
+        //    even though no signal write triggered them. This is
+        //    the Strategy C-lite path retained as a safety net.
         reactive_mark_all_dirty();
     }
     reactive_flush();

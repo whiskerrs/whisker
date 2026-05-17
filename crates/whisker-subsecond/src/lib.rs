@@ -495,7 +495,16 @@ impl<A, M, F: HotFunction<A, M>> HotFn<A, M, F> {
 ///
 /// This function will load the library and thus allocates. In cannot be used when the program is
 /// stopped (ie in a signal handler).
-pub unsafe fn apply_patch(mut table: JumpTable) -> Result<(), PatchError> {
+///
+/// # Returns
+///
+/// On success, returns the list of host (pre-patch) function pointers that were
+/// rewritten by this patch — already shifted to the live ASLR slide, so they can
+/// be compared against `fn_name as *const ()` values held in Whisker's runtime
+/// `component_owners` map. The Strategy C hot-reload path (Whisker A6+) uses
+/// this list to find live component owners whose body is now stale and re-mount
+/// them.
+pub unsafe fn apply_patch(mut table: JumpTable) -> Result<Vec<*const ()>, PatchError> {
     // On non-wasm platforms we can just use libloading and the known aslr offsets to load the library
     #[cfg(any(unix, windows))]
     {
@@ -552,8 +561,24 @@ pub unsafe fn apply_patch(mut table: JumpTable) -> Result<(), PatchError> {
             })
             .collect();
 
+        // Snapshot the host-side (post-slide) function pointers BEFORE
+        // committing the patch — `commit_patch` consumes `table`. Whisker's
+        // remount logic compares these against `fn as *const ()` values
+        // stashed in its component-owner registry.
+        let patched: Vec<*const ()> = table.map.keys().map(|k| *k as *const ()).collect();
+
         commit_patch(table);
+        return Ok(patched);
     };
+
+    // The non-wasm path above returns inside the block; for wasm we drop
+    // through to the wasm-specific code below which never returns Ok with
+    // a list (patches are async-applied). Surface an empty list in that
+    // case rather than restructuring the existing wasm flow.
+    #[allow(unreachable_code)]
+    {
+        let _unused: Vec<*const ()> = Vec::new();
+    }
 
     // On wasm, we need to download the module, compile it, and then run it.
     #[cfg(target_arch = "wasm32")]
@@ -696,7 +721,9 @@ pub unsafe fn apply_patch(mut table: JumpTable) -> Result<(), PatchError> {
         unsafe { commit_patch(table) };
     });
 
-    Ok(())
+    // wasm path applies the patch asynchronously inside the spawned
+    // future. We have no synchronous patched-pointer list to return.
+    Ok(Vec::new())
 }
 
 #[derive(Debug, PartialEq, thiserror::Error)]

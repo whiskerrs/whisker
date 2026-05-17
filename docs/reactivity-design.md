@@ -375,32 +375,74 @@ exactly once.
 
 ## Hot reload — Strategy C (per-component remount)
 
-subsecond patches function bodies in place. The runtime gets a callback
-listing the patched function pointers. For each:
+When subsecond patches functions, the runtime:
 
-1. Look up `component_owners[fn_ptr]` → owners that ran this fn.
-2. For each owner, find its parent's child slot, `dispose_owner` it,
-   and schedule a re-mount via the parent's `For` / `Show` / inline
-   mount logic.
-3. Closures embedded in effects / handlers / memos that *weren't* a
-   component fn entry point are picked up automatically — their code
-   body is patched in-place by subsecond, and they execute the new code
-   the next time they fire. No remount needed for these.
+1. Receives the list of patched fn pointers from
+   `subsecond::apply_patch`'s `Ok(Vec<*const ()>)` return.
+2. For each ptr, finds matching mount sites in
+   `runtime.fn_ptr_mounts`.
+3. For each site: **detach** the previous body root from the
+   permanent wrapper element, **dispose** the previous component
+   owner (cascading cleanup + reactive node freeing), **re-invoke**
+   the body closure under a fresh owner, **re-attach** the new
+   body root to the same wrapper.
 
-This means:
+The wrapper element is created at first mount and lives under the
+*parent*'s owner — it survives every remount, so the parent's
+child list is untouched and navigation / scroll position / sibling
+order are preserved.
+
+After per-component remount, `mark_all_dirty` is called to re-fire
+any remaining effects (helpers wrapped in `{expr}` interpolation
+that aren't `#[component]`s themselves) so their closure-body
+edits also pick up the patched code.
+
+### Macro-emitted body shape
+
+`#[component]` wraps the user body in a `Box<dyn Fn() -> ElementHandle>`,
+capturing props by move into a factory scope and re-cloning them on
+each body invocation:
+
+```rust
+// User writes:
+#[component]
+fn screen(name: String, count: ReadSignal<i32>) -> ElementHandle { … }
+
+// Macro emits (roughly):
+fn screen(name: String, count: ReadSignal<i32>) -> ElementHandle {
+    let __whisker_prop_name = name;
+    let __whisker_prop_count = count;
+    let __body: Box<dyn Fn() -> ElementHandle + 'static> = Box::new(move || {
+        let name  = Clone::clone(&__whisker_prop_name);
+        let count = Clone::clone(&__whisker_prop_count);
+        // user body
+    });
+    mount_component_remountable(screen as *const (), __body)
+}
+```
+
+For `Copy` types `Clone::clone` is a copy. For `Clone`-not-`Copy`
+types it's a real clone (paid only on remount). For non-`Clone`
+types it's a compile error — wrap in `Rc<T>` / `Arc<T>` if needed.
+
+### Coverage and limitations
 
 | Edit | Outcome |
 |---|---|
 | Body of an existing `effect` / `memo` / event handler | New code runs next time; state preserved |
 | Body of an existing dynamic `{expr}` in `render!` | Updates next time deps change; state preserved |
-| Adding a new `effect` / `signal` / static element | Containing component is remounted; **its** state lost |
-| Editing static styles / attributes | Containing component is remounted; **its** state lost |
-| Edits to the top-level component | App-wide remount |
+| Adding a new static element in `#[component]`'s `render!` | Component remounted; local state lost; parent attachment + sibling order preserved |
+| Adding a new `signal()` / `effect()` / `memo()` inside the component body | Component remounted; local state lost |
+| Editing static styles / attributes | Component remounted; local state lost |
+| Edits to a non-`#[component]` helper invoked via `{helper()}` | Effect re-fires with patched helper body; state preserved |
+| Edits to the top-level `app()` (`#[whisker::main]`) | Not currently re-invoked; needs manual restart |
 
-**Best practice for users** (documented in samples): keep `app()`
-minimal, push state into context-provided signals at a stable
-mid-tier component. When you iterate on leaf components, the
-mid-tier's signals are preserved and only the leaves remount.
+**Best practice for users**: keep state that should survive
+hot-reload in higher owners — typically an `AppState` struct held
+by the top-level component and made available to descendants via
+`provide_context`. When you iterate on leaf component bodies,
+their local signals get wiped but the context-stored state is
+unaffected.
 
 ### Comparison with current (Dioxus-style coarse)
 
