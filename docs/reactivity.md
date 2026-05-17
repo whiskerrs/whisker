@@ -217,6 +217,66 @@ fn greeting(name: &'static str, count: ReadSignal<i32>) -> ElementHandle {
 To share writable state with a child, pass `WriteSignal<T>` (or the
 whole `RwSignal<T>` if both halves are needed).
 
+#### Each prop type must be `Clone`
+
+This is the only framework-imposed bound on props. Every prop type
+must implement `Clone` (or `Copy`, which implies it).
+
+```rust
+#[component]
+fn user_card(user: User, badges: Vec<Badge>) -> ElementHandle { /* ... */ }
+
+#[derive(Clone)]                    // ← required
+struct User { name: String, id: u64 }
+
+#[derive(Clone)]                    // ← required
+struct Badge { label: String }
+```
+
+**Why.** When subsecond patches a component's function body during
+hot reload (tier 1), the runtime disposes the old owner and
+re-invokes the body with the *same* props. To call the body again,
+it clones the stored props.
+
+**This clone never runs in production.** Hot reload is a
+development-only path; release builds don't enable the subsecond
+patch loop. The `Clone` bound is a static contract for the dev
+loop, not a runtime cost on shipped apps. (This is the key
+difference from Dioxus, where `Clone` on props is required because
+the framework clones on every parent re-render.)
+
+**What naturally satisfies the bound.** Almost every type you'd
+want to put in a prop is already `Clone`:
+
+| Prop type | `Clone`? | Cost |
+|---|---|---|
+| Primitives (`i32`, `bool`, `f64`, ...) | yes (`Copy`) | free |
+| `String`, `Vec<T>`, `HashMap<K, V>` | yes | heap alloc, but only at patch time |
+| `&'static str`, `&'static T` | yes (`Copy`) | free |
+| `Rc<T>`, `Arc<T>` | yes | refcount inc only |
+| Signal handles (`RwSignal`, `ReadSignal`, ...) | yes (`Copy`) | free |
+| Your own structs with `#[derive(Clone)]` | yes | one derive line |
+
+**For non-`Clone` types**, wrap them in `Rc<T>` (single-threaded) or
+`Arc<T>` (cross-thread):
+
+```rust
+// `Box<dyn Fn() + 'static>` is not Clone, but Rc<dyn Fn() + 'static> is.
+#[component]
+fn button(label: &'static str, on_click: Rc<dyn Fn() + 'static>) -> ElementHandle {
+    render! {
+        view {
+            on_tap: move || on_click(),
+            text { {label} }
+        }
+    }
+}
+```
+
+`File`, `MutexGuard`, sockets, and similar move-only resources
+shouldn't be passed as props anyway — keep them inside a signal or
+context, not in the prop list.
+
 ---
 
 ## Lifecycle hooks
