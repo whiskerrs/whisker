@@ -110,9 +110,8 @@ fn recent_card(
     c1: &'static str,
     c2: &'static str,
 ) -> ElementHandle {
-    let title_style = format!(
-        "font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; margin-top: 8px;"
-    );
+    let title_style =
+        format!("font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; margin-top: 8px;");
     let sub_style = format!("font-size: 12px; color: {TEXT_SECONDARY}; margin-top: 2px;");
     render! {
         view {
@@ -155,9 +154,8 @@ fn grid_tile(
              font-size: 16px; text-align: center; line-height: 28px;"
         )
     };
-    let title_style = format!(
-        "font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; margin-top: 10px;"
-    );
+    let title_style =
+        format!("font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; margin-top: 10px;");
     let sub_style = format!("font-size: 11px; color: {TEXT_SECONDARY}; margin-top: 2px;");
     render! {
         view {
@@ -223,7 +221,11 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str) -> ElementHa
     let tab = selected_tab();
     let on_pick = move || tab.set(index);
     let glyph_style = move || {
-        let color = if tab.get() == index { ACCENT } else { TEXT_MUTED };
+        let color = if tab.get() == index {
+            ACCENT
+        } else {
+            TEXT_MUTED
+        };
         format!("font-size: 22px; color: {color};")
     };
     let label_style = move || {
@@ -306,7 +308,7 @@ fn now_playing() -> ElementHandle {
 
 fn header() -> ElementHandle {
     let bg_style = format!(
-        "width: 100%; padding: 60px 20px 18px; \
+        "width: 100%; \
          background-image: linear-gradient(180deg, #2c1860 0%, {BG} 100%); \
          display: flex; flex-direction: row; align-items: center; \
          justify-content: space-between;"
@@ -377,9 +379,8 @@ fn featured() -> ElementHandle {
         "font-size: 12px; color: {TEXT_SECONDARY}; \
          text-transform: uppercase; letter-spacing: 1.5px;"
     );
-    let title = format!(
-        "font-size: 26px; font-weight: 700; color: {TEXT_PRIMARY}; margin-top: 6px;"
-    );
+    let title =
+        format!("font-size: 26px; font-weight: 700; color: {TEXT_PRIMARY}; margin-top: 6px;");
     let sub = format!("font-size: 13px; color: {TEXT_SECONDARY}; margin-top: 4px;");
     render! {
         view {
@@ -433,7 +434,7 @@ fn scroll_body() -> ElementHandle {
             scroll_orientation: "vertical",
             style: style,
             {chips()}
-            {section_header("Recently")}
+            {section_header("Recently Played")}
             {recents()}
             {section_header("Made For You")}
             {featured()}

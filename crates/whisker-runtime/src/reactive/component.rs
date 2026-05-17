@@ -189,6 +189,22 @@ where
     F: Fn() -> ElementHandle + 'static,
 {
     let wrapper = view::create_element(crate::element::ElementTag::View);
+    // The wrapper is a remount placeholder — Whisker needs a stable
+    // handle to swap the body root underneath on hot-reload patches.
+    // But it must not participate in layout, otherwise the
+    // unstyled view collapses inside flex parents (Lynx's view
+    // default is `flex-direction: row; content-fit`, which
+    // squeezes the body's flex sizing to nothing).
+    //
+    // `display: contents` is the CSS feature designed for exactly
+    // this — the element exists in the element tree but contributes
+    // no layout box; its children inherit the parent's slot for
+    // layout purposes (flex / grid / alignment).
+    //
+    // If Lynx doesn't honour `display: contents` we'll see the same
+    // layout breakage `#[component]` showed before this line; fall
+    // back to the marker-elements approach (see issue #17).
+    view::set_inline_styles(wrapper, "display: contents;");
     let body: Rc<dyn Fn() -> ElementHandle + 'static> = Rc::new(body);
 
     // Initial mount: fresh owner, run body, attach to wrapper.
