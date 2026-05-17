@@ -276,7 +276,19 @@ impl ElementNode {
                 // All other attributes are routed through an effect
                 // — same uniform-treatment rationale as `style:`
                 // above.
-                let attr_name = LitStr::new(&name_str, attr.name.span());
+                //
+                // Rust identifiers can't contain `-`, but Lynx (and
+                // HTML / Web Components in general) uses
+                // hyphen-separated attribute names like
+                // `scroll-orientation`, `enable-scroll`,
+                // `safe-area-insets`. Translate `_` → `-` here so
+                // users write `scroll_orientation: "horizontal"` and
+                // Lynx sees `scroll-orientation`. JSX / Solid /
+                // Leptos do equivalent rewrites; the alternative
+                // (string-key syntax) is uglier and the choice of
+                // separator is locked by the underlying engine.
+                let lynx_name: String = name_str.replace('_', "-");
+                let attr_name = LitStr::new(&lynx_name, attr.name.span());
                 stmts.push(quote! {
                     ::whisker::effect(move || {
                         ::whisker::runtime::view::set_attribute(
