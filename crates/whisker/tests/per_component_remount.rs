@@ -187,6 +187,89 @@ fn remount_disposes_old_owner_and_registers_new() {
     });
 }
 
+// ----------------------------------------------------------------------------
+// Element-handle leak coverage — these tests pin down the (currently
+// missing) cleanup on dispose so future regressions surface
+// immediately.
+// ----------------------------------------------------------------------------
+
+#[test]
+fn remount_releases_old_body_elements() {
+    with_recorder_and_owner(|log| {
+        let _wrapper = leaf("v1");
+        // Count the elements the initial mount created. The wrapper is
+        // the first element (id 0); everything else (body view + text
+        // + raw_text) was created inside the component's owner and
+        // should be released when that owner is disposed by remount.
+        let creates_initial = log
+            .borrow()
+            .iter()
+            .filter(|op| matches!(op, Op::Create { .. }))
+            .count();
+        // Wrapper + body = at least 2; for `leaf` it's wrapper + body
+        // view + text + raw_text = 4.
+        let expected_releases = creates_initial - 1; // everything except the wrapper
+
+        log.borrow_mut().clear();
+        remount_components_for(&[leaf as *const ()]);
+
+        let releases = log
+            .borrow()
+            .iter()
+            .filter(|op| matches!(op, Op::Release { .. }))
+            .count();
+        assert_eq!(
+            releases, expected_releases,
+            "every element under the disposed component owner must be released; \
+             expected {expected_releases} (= initial creates {creates_initial} minus \
+             the surviving wrapper), got {releases}",
+        );
+    });
+}
+
+#[test]
+fn dispose_owner_releases_owned_elements() {
+    // A leaf component mount creates several elements through `view::*`
+    // while the component's owner is the current owner. Disposing that
+    // owner directly (without remount) must release the same set, so
+    // that future "owner disappears for any reason" paths (e.g.
+    // `<Show>` flipping false, `<For>` items leaving the list) don't
+    // leak.
+    __reset_for_tests();
+    let (rec, log) = Recorder::new();
+    let _prev = install_renderer(Box::new(rec));
+
+    let root_owner = create_owner(None);
+    // Mount the component inside the root owner. The wrapper element
+    // belongs to the root owner; the body to the component's owner.
+    let _wrapper = with_owner(root_owner, || leaf("hi"));
+
+    let creates_initial = log
+        .borrow()
+        .iter()
+        .filter(|op| matches!(op, Op::Create { .. }))
+        .count();
+    log.borrow_mut().clear();
+
+    // Disposing the root owner cascades into the component owner,
+    // which should release every element it tracked. This includes
+    // the wrapper itself this time (because it lives in root_owner).
+    dispose_owner(root_owner);
+
+    let releases = log
+        .borrow()
+        .iter()
+        .filter(|op| matches!(op, Op::Release { .. }))
+        .count();
+    assert_eq!(
+        releases, creates_initial,
+        "every element created under the disposed owner tree must be released; \
+         expected {creates_initial}, got {releases}",
+    );
+
+    uninstall_renderer(None);
+}
+
 #[test]
 fn remount_preserves_signal_held_above_in_context() {
     // Demonstrates the recommended state-survival pattern: state
