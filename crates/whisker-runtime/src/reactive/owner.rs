@@ -60,6 +60,7 @@ pub fn dispose_owner(owner: OwnerId) {
     let cleanups;
     let parent;
     let mount_fn;
+    let elements;
     {
         let removed = with_runtime(|rt| rt.owners.remove(owner));
         let Some(o) = removed else { return };
@@ -68,6 +69,7 @@ pub fn dispose_owner(owner: OwnerId) {
         cleanups = o.cleanups;
         parent = o.parent;
         mount_fn = o.mount_fn;
+        elements = o.elements;
     }
 
     // Step 1b: if this was a component owner, scrub the hot-reload
@@ -125,7 +127,19 @@ pub fn dispose_owner(owner: OwnerId) {
         rt.pending.retain(|n| !nodes.contains(n));
     });
 
-    // Step 5: run cleanups in LIFO order, with no runtime borrow held
+    // Step 5: release every element handle the disposed owner created.
+    // We do this AFTER recursing into children so that bottom-up
+    // disposal order matches what the renderer expects (a child
+    // element's release before its parent's is fine; the bridge
+    // only complains if a parent is missing when a child reaches up).
+    // Done with the runtime borrow released so a future renderer
+    // that wants to call back into the reactive system (e.g. to
+    // notify "element released") can do so.
+    for handle in elements {
+        crate::view::release_element(handle);
+    }
+
+    // Step 6: run cleanups in LIFO order, with no runtime borrow held
     // (cleanups may legitimately touch other parts of the runtime).
     for cleanup in cleanups.into_iter().rev() {
         cleanup();

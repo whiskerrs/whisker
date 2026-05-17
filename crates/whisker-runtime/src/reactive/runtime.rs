@@ -130,6 +130,14 @@ pub struct Owner {
     /// non-component owners (e.g. the root, or manually-created
     /// scopes in tests).
     pub mount_fn: Option<*const ()>,
+    /// Element handles created via `view::create_element` while this
+    /// owner was at the top of the owner stack. Released through
+    /// `view::release_element` when the owner is disposed (or its
+    /// ancestor disposes via cascade), preventing the renderer-side
+    /// `BridgeRenderer::elements` map from accumulating dangling
+    /// `WhiskerElement*` pointers across `<Show>` flips, `<For>`
+    /// item removals, and per-component remounts.
+    pub elements: Vec<crate::view::ElementHandle>,
 }
 
 impl Owner {
@@ -141,6 +149,7 @@ impl Owner {
             contexts: HashMap::new(),
             cleanups: Vec::new(),
             mount_fn: None,
+            elements: Vec::new(),
         }
     }
 }

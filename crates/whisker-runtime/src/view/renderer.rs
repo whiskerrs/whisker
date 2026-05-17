@@ -116,7 +116,24 @@ fn with_renderer<R>(f: impl FnOnce(&mut dyn DynRenderer) -> R, default: R) -> R 
 // ---------------------------------------------------------------------------
 
 pub fn create_element(tag: ElementTag) -> ElementHandle {
-    with_renderer(|r| r.create_element(tag), ElementHandle(u32::MAX))
+    let handle = with_renderer(|r| r.create_element(tag), ElementHandle(u32::MAX));
+    // Track the freshly-created element in whichever reactive owner
+    // is currently active. `dispose_owner` later releases everything
+    // in this list via `release_element`. This is what stops
+    // `BridgeRenderer::elements` (and the underlying Lynx
+    // FiberElement refcounts) from accumulating across `<Show>`
+    // branch flips, `<For>` item removals, and per-component
+    // remounts.
+    if handle.id() != u32::MAX {
+        crate::reactive::with_runtime(|rt| {
+            if let Some(owner_id) = rt.current_owner() {
+                if let Some(owner) = rt.owners.get_mut(owner_id) {
+                    owner.elements.push(handle);
+                }
+            }
+        });
+    }
+    handle
 }
 
 pub fn release_element(handle: ElementHandle) {
