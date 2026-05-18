@@ -156,24 +156,6 @@ pub fn release_element(handle: ElementHandle) {
 }
 
 pub fn set_attribute(handle: ElementHandle, key: &str, value: &str) {
-    // Diagnostic log — only for text attribute so we can see what
-    // labels are being applied during remount.
-    if key == "text" {
-        #[cfg(target_os = "ios")]
-        {
-            unsafe extern "C" {
-                fn syslog(priority: std::os::raw::c_int, fmt: *const std::os::raw::c_char, ...);
-            }
-            const LOG_INFO: std::os::raw::c_int = 6;
-            let msg = format!("set_attribute id={} text={:?}", handle.id(), value);
-            let mut buf: Vec<u8> = Vec::with_capacity(msg.len() + 16);
-            buf.extend_from_slice(b"[whisker-dev] ");
-            buf.extend_from_slice(msg.as_bytes());
-            buf.push(0);
-            let fmt = b"%s\0";
-            unsafe { syslog(LOG_INFO, fmt.as_ptr() as *const _, buf.as_ptr()); }
-        }
-    }
     with_renderer(|r| r.set_attribute(handle, key, value), ())
 }
 
@@ -255,6 +237,14 @@ pub fn child_index(parent: ElementHandle, child: ElementHandle) -> Option<usize>
         let children = map.get(&parent)?;
         children.iter().position(|c| *c == child)
     })
+}
+
+/// Snapshot of `parent`'s current ordered child list. Empty Vec if
+/// the parent has no tracked children. Used by the batched
+/// `remount_components_for` so it can compute the final desired
+/// child order before any mutation churns the indices.
+pub fn children_of(parent: ElementHandle) -> Vec<ElementHandle> {
+    CHILDREN_OF.with_borrow(|map| map.get(&parent).cloned().unwrap_or_default())
 }
 
 /// Test/internal: clear the parent → children mirror. Call between

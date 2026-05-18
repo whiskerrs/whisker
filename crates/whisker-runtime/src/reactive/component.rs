@@ -27,32 +27,7 @@ use std::rc::Rc;
 use super::owner::{create_owner, dispose_owner, with_owner};
 use super::runtime::OwnerId;
 use super::with_runtime;
-use crate::view::{self, ElementHandle};
-
-/// Temporary diagnostic log helper. iOS-aware so messages reach
-/// `xcrun simctl spawn booted log stream` for hot-reload debugging
-/// (`eprintln!` to stderr is dropped on iOS by default).
-fn log_diag(msg: &str) {
-    #[cfg(target_os = "ios")]
-    {
-        unsafe extern "C" {
-            fn syslog(priority: std::os::raw::c_int, fmt: *const std::os::raw::c_char, ...);
-        }
-        const LOG_INFO: std::os::raw::c_int = 6;
-        let mut buf: Vec<u8> = Vec::with_capacity(msg.len() + 16);
-        buf.extend_from_slice(b"[whisker-dev] ");
-        buf.extend_from_slice(msg.as_bytes());
-        buf.push(0);
-        let fmt = b"%s\0";
-        unsafe {
-            syslog(LOG_INFO, fmt.as_ptr() as *const _, buf.as_ptr());
-        }
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-        eprintln!("[whisker-dev] {msg}");
-    }
-}
+use crate::view::ElementHandle;
 
 /// Mount a component: create a fresh child owner, register `fn_ptr`
 /// against it for hot reload, run `body` inside that owner, and
@@ -396,104 +371,192 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
             .collect()
     });
 
-    for mount_id in ids {
-        remount_one(mount_id);
-    }
-}
-
-fn remount_one(mount_id: MountId) {
-    log_diag(&format!("remount_one START: {:?}", mount_id));
-    // Step 1: pull parent / anchor / body Rc / previous owner+root
-    // out of the runtime. We can't hold the borrow across `body()`
-    // because user code inside it re-enters via `view::*` /
-    // `signal()` etc.
-    let (parent, anchor, body, old_owner, old_body_root, fn_ptr) = match with_runtime(|rt| {
-        let site = rt.mount_sites.get_mut(&mount_id)?;
-        let body = site.body.clone();
-        let owner = site.owner.take();
-        let body_root = site.body_root.take();
-        Some((
-            site.parent,
-            site.anchor,
-            body,
-            owner,
-            body_root,
-            site.fn_ptr,
-        ))
-    }) {
-        Some(t) => t,
-        None => return,
-    };
-
-    // If the mount never finished binding to a parent (orphaned —
-    // body root never went through `append_child`), there's nowhere
-    // to remount it. Skip; the entry stays in the registry but is
-    // effectively dead.
-    let Some(parent) = parent else {
-        log_diag(&format!("remount_one SKIP (no parent): {:?}", mount_id));
+    if ids.is_empty() {
         return;
-    };
-    log_diag(&format!(
-        "remount_one {:?}: parent={:?} anchor={:?} fn_ptr={:?}",
-        mount_id, parent, anchor, fn_ptr
-    ));
-
-    // Step 2: figure out where the old body root sits in `parent`'s
-    // child list, so we can re-insert at the same position. We
-    // prefer the recorded anchor (stable across sibling churn) and
-    // fall back to the body_root's current numeric position if the
-    // anchor was removed in the meantime.
-    let insert_index: usize = if let Some(a) = anchor {
-        crate::view::child_index(parent, a)
-            .map(|i| i + 1)
-            .unwrap_or(0)
-    } else if let Some(r) = old_body_root {
-        crate::view::child_index(parent, r).unwrap_or(0)
-    } else {
-        0
-    };
-
-    // Step 3: detach the old body root from parent.
-    if let Some(root) = old_body_root {
-        view::remove_child(parent, root);
     }
 
-    // Step 4: dispose the old owner, cascading reactive cleanup +
-    // running any registered `on_cleanup` callbacks. This also
-    // pulls the old owner out of `component_owners` (the existing
-    // `dispose_owner` scrub logic).
-    if let Some(o) = old_owner {
-        dispose_owner(o);
+    // ---- Batched remount that preserves sibling order ---------------------
+    //
+    // The naive "one-at-a-time" version (`remount_one` per site) suffers
+    // anchor staleness when sibling components are remounted together:
+    // each site's `anchor` is a sibling's body_root, and once that
+    // sibling has been remounted earlier in the loop, the anchor points
+    // at an element that has already been detached → fallback to
+    // index 0 → siblings clump at the top of the parent in
+    // hash-iteration order, visibly scrambling the layout.
+    //
+    // Instead we do the whole batch as one operation:
+    //   1. Snapshot each unique parent's current child list before
+    //      anything mutates.
+    //   2. For every site, dispose old owner + run new body to get the
+    //      new body_root. The new body runs against a fresh owner so
+    //      reactive state is isolated. None of this touches the parent's
+    //      child list.
+    //   3. For each parent, build the desired final child list by
+    //      replacing each old body_root with its new body_root, leaving
+    //      non-replaced siblings untouched.
+    //   4. Remove every old body_root from the parent, then re-insert
+    //      each new body_root at its desired index (ascending order).
+    //   5. Refresh anchors from the post-mutation child list so future
+    //      individual remounts also see a coherent state.
+
+    struct RemountInfo {
+        mount_id: MountId,
+        parent: ElementHandle,
+        old_body_root: ElementHandle,
+        body: Rc<dyn Fn() -> ElementHandle + 'static>,
+        fn_ptr: *const (),
     }
 
-    // Step 5: create a fresh owner and re-invoke the body inside it.
-    let new_owner = create_owner(None);
-    with_runtime(|rt| {
-        if let Some(o) = rt.owners.get_mut(new_owner) {
-            o.mount_fn = Some(fn_ptr);
-        }
-        rt.component_owners.entry(fn_ptr).or_default().push(new_owner);
+    let infos: Vec<RemountInfo> = with_runtime(|rt| {
+        ids.iter()
+            .filter_map(|mid| {
+                let site = rt.mount_sites.get(mid)?;
+                Some(RemountInfo {
+                    mount_id: *mid,
+                    parent: site.parent?,
+                    old_body_root: site.body_root?,
+                    body: site.body.clone(),
+                    fn_ptr: site.fn_ptr,
+                })
+            })
+            .collect()
     });
-    let new_body_root = with_owner(new_owner, || (*body)());
-    log_diag(&format!(
-        "remount_one {:?}: new_body_root={:?} (old was {:?})",
-        mount_id, new_body_root, old_body_root
-    ));
 
-    // Step 6: insert new body_root at the slot's original index,
-    // clear the pending-mount entry the body's
-    // `mount_component_remountable` call left behind (we're not
-    // going through the normal "caller does append_child" path
-    // here; we're inserting directly), and update the mount site.
-    PENDING_MOUNT.with(|cell| cell.set(None));
-    view::insert_child_at(parent, new_body_root, insert_index);
+    if infos.is_empty() {
+        return;
+    }
 
-    with_runtime(|rt| {
-        if let Some(site) = rt.mount_sites.get_mut(&mount_id) {
-            site.owner = Some(new_owner);
-            site.body_root = Some(new_body_root);
-            // parent and anchor are unchanged (we re-inserted at
-            // the same logical slot).
+    // 1. Snapshot each unique parent's child list.
+    let mut parent_snapshot: std::collections::HashMap<ElementHandle, Vec<ElementHandle>> =
+        std::collections::HashMap::new();
+    for info in &infos {
+        parent_snapshot
+            .entry(info.parent)
+            .or_insert_with(|| crate::view::children_of(info.parent));
+    }
+
+    // 2. Detach every old body_root from its parent *before* any
+    //    dispose runs. Element handles get invalidated by
+    //    `dispose_owner` (renderer slot becomes `None`), so once
+    //    disposed, subsequent `remove_child` calls would silently
+    //    no-op against Lynx — visible as "stale subtree still on
+    //    screen" after hot reload. Doing the remove first keeps the
+    //    handle live.
+    let mut by_parent: std::collections::HashMap<
+        ElementHandle,
+        Vec<(ElementHandle, Option<ElementHandle>)>,
+    > = std::collections::HashMap::new();
+    for info in &infos {
+        crate::view::remove_child(info.parent, info.old_body_root);
+        by_parent
+            .entry(info.parent)
+            .or_default()
+            .push((info.old_body_root, None));
+    }
+
+    // 3. Dispose old owners + run new bodies, collecting (mount_id,
+    //    parent, old_root, new_root, new_owner).
+    let mut results: Vec<(MountId, ElementHandle, ElementHandle, ElementHandle, OwnerId)> =
+        Vec::with_capacity(infos.len());
+    for info in infos {
+        let old_owner = with_runtime(|rt| {
+            let site = rt.mount_sites.get_mut(&info.mount_id)?;
+            site.body_root.take();
+            site.owner.take()
+        });
+        if let Some(o) = old_owner {
+            dispose_owner(o);
         }
-    });
+
+        let new_owner = create_owner(None);
+        with_runtime(|rt| {
+            if let Some(o) = rt.owners.get_mut(new_owner) {
+                o.mount_fn = Some(info.fn_ptr);
+            }
+            rt.component_owners
+                .entry(info.fn_ptr)
+                .or_default()
+                .push(new_owner);
+        });
+        let new_body_root = with_owner(new_owner, || (*info.body)());
+        // The body's `mount_component_remountable` calls leave a
+        // PENDING_MOUNT entry behind; we drain it here because the
+        // batched path attaches the new root via `insert_child_at`
+        // directly, not via the caller's `append_child`.
+        PENDING_MOUNT.with(|cell| cell.set(None));
+
+        // Backfill the new_root into by_parent so step 4 can map
+        // old → new when computing the desired final order.
+        if let Some(list) = by_parent.get_mut(&info.parent) {
+            if let Some(entry) = list
+                .iter_mut()
+                .find(|(o, n)| *o == info.old_body_root && n.is_none())
+            {
+                entry.1 = Some(new_body_root);
+            }
+        }
+
+        results.push((
+            info.mount_id,
+            info.parent,
+            info.old_body_root,
+            new_body_root,
+            new_owner,
+        ));
+    }
+
+    // 4. Per-parent: compute desired final order, insert new roots
+    //    at their target indices. (Removes already happened in
+    //    step 2 — the live-handle requirement.)
+    for (parent, pairs) in &by_parent {
+        let snapshot = parent_snapshot.get(parent).cloned().unwrap_or_default();
+        let old_to_new: std::collections::HashMap<ElementHandle, ElementHandle> = pairs
+            .iter()
+            .filter_map(|(o, n)| n.map(|new_root| (*o, new_root)))
+            .collect();
+
+        // Desired final list = snapshot with each old replaced by its
+        // matching new (leaving non-replaced siblings untouched).
+        let desired: Vec<ElementHandle> = snapshot
+            .iter()
+            .map(|c| old_to_new.get(c).copied().unwrap_or(*c))
+            .collect();
+
+        // Insert new body_roots at their desired indices in ascending
+        // order. Non-replaced siblings remain in place; inserting at
+        // index `i` only shifts elements from `i` onwards by one slot,
+        // which is exactly the semantics we want.
+        let new_set: std::collections::HashSet<ElementHandle> =
+            pairs.iter().filter_map(|(_, n)| *n).collect();
+        for (idx, child) in desired.iter().enumerate() {
+            if new_set.contains(child) {
+                crate::view::insert_child_at(*parent, *child, idx);
+            }
+        }
+    }
+
+    // 4. Update each MountSite to point at its new owner + new root.
+    for (mount_id, _, _, new_root, new_owner) in &results {
+        with_runtime(|rt| {
+            if let Some(site) = rt.mount_sites.get_mut(mount_id) {
+                site.owner = Some(*new_owner);
+                site.body_root = Some(*new_root);
+            }
+        });
+    }
+
+    // 5. Refresh anchors based on the now-final parent children
+    //    layout — otherwise a *future* solo patch of one of these
+    //    siblings would inherit a stale anchor and fall back to
+    //    index 0 again.
+    for (mount_id, parent, _, new_root, _) in &results {
+        let new_anchor = crate::view::previous_sibling(*parent, *new_root);
+        with_runtime(|rt| {
+            if let Some(site) = rt.mount_sites.get_mut(mount_id) {
+                site.anchor = new_anchor;
+            }
+        });
+    }
 }
+

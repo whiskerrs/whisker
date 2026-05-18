@@ -48,8 +48,7 @@ use std::ffi::c_void;
 
 use whisker_driver_sys::{whisker_bridge_dispatch, WhiskerEngine};
 use whisker_runtime::reactive::{
-    flush as reactive_flush, flush_mounts as reactive_flush_mounts,
-    mark_all_dirty as reactive_mark_all_dirty, remount_components_for,
+    flush as reactive_flush, flush_mounts as reactive_flush_mounts, remount_components_for,
 };
 use whisker_runtime::view::{
     flush as renderer_flush, install_renderer, set_root, ElementHandle, DynRenderer,
@@ -237,26 +236,25 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
     let patched = apply_pending_hot_patch();
 
     if !patched.is_empty() {
-        #[cfg(feature = "hot-reload")]
-        whisker_dev_runtime::devlog(&format!(
-            "tick_callback: patched={}, calling remount_components_for",
-            patched.len(),
-        ));
-        // 1. Per-component remount: dispose + re-mount every
-        //    `#[component]` whose fn was patched, so structural
-        //    changes (new elements, new signals) reflect in the
-        //    visible tree. State local to the remounted component
-        //    is lost; state held in context / above the remount
-        //    point survives.
+        // Per-component remount: dispose + re-mount every
+        // `#[component]` whose fn was patched, so structural
+        // changes (new elements, new signals) reflect in the
+        // visible tree. State local to the remounted component is
+        // lost; state held in context / above the remount point
+        // survives.
+        //
+        // We deliberately do NOT call `mark_all_dirty` here. The
+        // `{expr}` interpolation child in `render!` registers as
+        // an effect that, when fired, *removes its previous
+        // attached element* and re-runs `attach_to(parent, expr)`.
+        // For `{component_call()}` children that means dropping the
+        // freshly-remounted body_root (the one our batched remount
+        // just attached) and creating a *second* MountSite for the
+        // same component, duplicating it in the parent's child
+        // list. The duplication was the cause of the
+        // "two scroll-views on top of each other" symptom during
+        // hot reload prior to fix.
         remount_components_for(&patched);
-        // 2. Force-revalidate remaining effects/memos so closure-
-        //    body edits in non-`#[component]` helpers (called via
-        //    `{expr}` interpolation) also pick up the patched code
-        //    even though no signal write triggered them. This is
-        //    the Strategy C-lite path retained as a safety net.
-        reactive_mark_all_dirty();
-        #[cfg(feature = "hot-reload")]
-        whisker_dev_runtime::devlog("tick_callback: remount + mark_all_dirty done");
     }
     reactive_flush();
     // Drain on_mount queue *after* the reactive flush — effects that
