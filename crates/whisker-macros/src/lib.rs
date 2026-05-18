@@ -262,11 +262,28 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #vis #sig {
             #(#captures)*
 
+            // The body closure has two layers:
+            //
+            // 1. Outer: re-clones the captured props on every
+            //    invocation, then hands them off to subsecond's
+            //    dispatch. Sits in `Box<dyn Fn>` so the runtime can
+            //    hold it via `Rc` and re-invoke on remount.
+            //
+            // 2. Inner: the user's actual `#block`. Wrapped by
+            //    `whisker::__main_runtime::call_component_body`,
+            //    which routes through `subsecond::call` so that
+            //    `HotFn::try_call` consults the JumpTable for the
+            //    inner closure's `call_it` and dispatches to the
+            //    patched address. Without this layer, calling the
+            //    body's vtable runs OLD code even after the JumpTable
+            //    has been updated.
             let __body: ::std::boxed::Box<
                 dyn ::std::ops::Fn() -> ::whisker::runtime::view::ElementHandle + 'static,
             > = ::std::boxed::Box::new(move || {
                 #(#restores)*
-                #block
+                ::whisker::__main_runtime::call_component_body(move || {
+                    #block
+                })
             });
             // True per-component remount: the runtime wraps `__body`
             // in a permanent `view` element, stores the body Rc in

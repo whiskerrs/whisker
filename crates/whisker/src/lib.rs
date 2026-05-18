@@ -95,6 +95,47 @@ pub mod __main_runtime {
     pub fn call_user_app(f: fn() -> ElementHandle) -> ElementHandle {
         f()
     }
+
+    /// Dispatch a `#[component]` body through subsecond so that hot
+    /// patches to the body (or any closure it transitively
+    /// instantiates — effects, memos, event handlers) reach the
+    /// running app.
+    ///
+    /// Without this wrapper, the body's `Rc<dyn Fn>` would be called
+    /// directly via its vtable, which points at the OLD `call_it`
+    /// address. Subsecond's `apply_patch` only updates the global
+    /// JumpTable; old call sites that don't consult it keep running
+    /// the pre-patch code. `HotFn::try_call` (what `subsecond::call`
+    /// uses internally) does consult the JumpTable — looking up
+    /// `<F as HotFunction>::call_it` for the wrapped closure and
+    /// transmuting to the patched fn pointer.
+    ///
+    /// The closure passed here is anonymous — instantiated at the
+    /// `#[component]` macro's expansion site in the user crate.
+    /// Its `call_it` has a stable mangled name across recompiles, so
+    /// patch builds keep the JumpTable entry pointing at the new
+    /// address.
+    ///
+    /// Like `call_user_app`, this is `#[inline(always)]` so the
+    /// `subsecond::call` invocation lands in the user crate's
+    /// compilation unit — that's where the JumpTable expects to find
+    /// the matching `call_it`.
+    #[cfg(feature = "hot-reload")]
+    #[inline(always)]
+    pub fn call_component_body<F: FnOnce() -> ElementHandle>(body: F) -> ElementHandle {
+        // `subsecond::call` wants `FnMut`. The user body is logically
+        // `FnOnce` (each remount creates a fresh closure), so we
+        // wrap in an `Option::take` adapter. `body` is only called
+        // once per `call_component_body` invocation.
+        let mut body_slot = Some(body);
+        ::subsecond::call(move || (body_slot.take().expect("body called twice"))())
+    }
+
+    #[cfg(not(feature = "hot-reload"))]
+    #[inline(always)]
+    pub fn call_component_body<F: FnOnce() -> ElementHandle>(body: F) -> ElementHandle {
+        body()
+    }
 }
 
 /// Common imports for Whisker app code.
