@@ -379,6 +379,79 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
 }
 
 #[test]
+fn batch_with_parent_and_child_skips_descendant() {
+    // Regression test for the iOS-side breakage: when subsecond
+    // patches a parent + child component in the same batch
+    // (typical, because crate rebuilds touch every fn pointer),
+    // remount_components_for must skip the children — their
+    // re-creation is the parent's responsibility. Without this
+    // filter, a child remount that runs BEFORE its parent's
+    // remount operates on still-live parent state, and the
+    // parent's subsequent remount cascade-disposes the child's
+    // brand-new owner, corrupting the visible tree.
+    use whisker::runtime::reactive::owners_for_fn;
+
+    #[component]
+    fn child() -> ElementHandle {
+        render! {
+            view { text { "c" } }
+        }
+    }
+
+    #[component]
+    fn parent_of_child() -> ElementHandle {
+        render! {
+            view {
+                {child()}
+                {child()}
+            }
+        }
+    }
+
+    with_recorder_and_owner(|_log| {
+        let (_p, _r) = mount_under_test_parent(|| parent_of_child());
+        assert_eq!(owners_for_fn(parent_of_child as *const ()).len(), 1);
+        assert_eq!(owners_for_fn(child as *const ()).len(), 2);
+
+        let initial_parent_owner = owners_for_fn(parent_of_child as *const ())[0];
+        let initial_child_owners = owners_for_fn(child as *const ());
+
+        // Worst-case ordering: child listed FIRST in the patch
+        // batch. Filter must skip the children because their
+        // ancestor `parent_of_child` is also in the batch.
+        remount_components_for(&[
+            child as *const (),
+            parent_of_child as *const (),
+        ]);
+
+        // Parent was remounted (new owner).
+        let new_parent_owners = owners_for_fn(parent_of_child as *const ());
+        assert_eq!(new_parent_owners.len(), 1);
+        assert_ne!(
+            new_parent_owners[0], initial_parent_owner,
+            "parent must be remounted in the batch"
+        );
+
+        // Children should have been replaced by the parent's
+        // remount, NOT remounted independently. Concretely: the
+        // new child owners are different from the initial ones
+        // (because parent's body re-ran and called child() fresh).
+        let new_child_owners = owners_for_fn(child as *const ());
+        assert_eq!(
+            new_child_owners.len(),
+            2,
+            "child count must stay at 2 — not grow to 4 from independent remounts"
+        );
+        for old in &initial_child_owners {
+            assert!(
+                !new_child_owners.contains(old),
+                "old child owners must have been disposed by parent's cascade"
+            );
+        }
+    });
+}
+
+#[test]
 fn remount_preserves_signal_held_above_in_context() {
     // Demonstrates the recommended state-survival pattern: state
     // held in an outer signal/context survives remount, while

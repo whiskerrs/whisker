@@ -324,18 +324,51 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
     if patched_fns.is_empty() {
         return;
     }
+    // Collect candidate mount sites, then filter out any whose
+    // ancestor component is also in this patch batch. When a
+    // parent component's body is patched, remounting it
+    // re-creates the whole subtree from scratch — separately
+    // remounting children would either operate on stale parent
+    // state (if processed first) or no-op (if scrubbed by the
+    // cascading dispose). Both outcomes are wrong; skipping the
+    // descendant entirely is the correct semantics.
+    let patched_set: std::collections::HashSet<*const ()> =
+        patched_fns.iter().copied().collect();
     let ids: Vec<MountId> = with_runtime(|rt| {
-        let mut out: Vec<MountId> = Vec::new();
+        let mut candidates: Vec<MountId> = Vec::new();
         for fp in patched_fns {
             if let Some(list) = rt.fn_ptr_mounts.get(fp) {
                 for id in list {
-                    if !out.contains(id) {
-                        out.push(*id);
+                    if !candidates.contains(id) {
+                        candidates.push(*id);
                     }
                 }
             }
         }
-        out
+        candidates
+            .into_iter()
+            .filter(|mount_id| {
+                // Walk the owner chain upward; if any ancestor
+                // owner's mount_fn is in `patched_set`, skip.
+                let site = match rt.mount_sites.get(mount_id) {
+                    Some(s) => s,
+                    None => return false,
+                };
+                let mut cursor = match site.owner {
+                    Some(o) => o,
+                    None => return false,
+                };
+                while let Some(parent) = rt.owners.get(cursor).and_then(|o| o.parent) {
+                    if let Some(mf) = rt.owners.get(parent).and_then(|o| o.mount_fn) {
+                        if patched_set.contains(&mf) {
+                            return false;
+                        }
+                    }
+                    cursor = parent;
+                }
+                true
+            })
+            .collect()
     });
 
     for mount_id in ids {

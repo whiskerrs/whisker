@@ -455,7 +455,7 @@ fn scroll_body() -> ElementHandle {
             scroll_orientation: "vertical",
             style: style,
             {chips()}
-            {section_header("Recently Played")}
+            {section_header("Recently")}
             {recents()}
             {section_header("Made For You")}
             {featured()}
