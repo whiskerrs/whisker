@@ -237,6 +237,11 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
     let patched = apply_pending_hot_patch();
 
     if !patched.is_empty() {
+        #[cfg(feature = "hot-reload")]
+        whisker_dev_runtime::devlog(&format!(
+            "tick_callback: patched={}, calling remount_components_for",
+            patched.len(),
+        ));
         // 1. Per-component remount: dispose + re-mount every
         //    `#[component]` whose fn was patched, so structural
         //    changes (new elements, new signals) reflect in the
@@ -250,6 +255,8 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
         //    even though no signal write triggered them. This is
         //    the Strategy C-lite path retained as a safety net.
         reactive_mark_all_dirty();
+        #[cfg(feature = "hot-reload")]
+        whisker_dev_runtime::devlog("tick_callback: remount + mark_all_dirty done");
     }
     reactive_flush();
     // Drain on_mount queue *after* the reactive flush — effects that
