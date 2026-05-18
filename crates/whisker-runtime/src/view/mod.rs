@@ -34,7 +34,10 @@ pub use control_flow::{for_each, show};
 pub use handle::ElementHandle;
 pub use into_view::{IntoView, View};
 pub use renderer::{
-    append_child, create_element, current_renderer_id, flush, install_renderer, release_element,
-    remove_child, set_attribute, set_event_listener, set_inline_styles, set_root,
-    uninstall_renderer, with_installed_renderer, DynRenderer,
+    append_child, child_index, create_element, current_renderer_id, flush, insert_child_at,
+    install_renderer, previous_sibling, release_element, remove_child, set_attribute,
+    set_event_listener, set_inline_styles, set_root, uninstall_renderer, with_installed_renderer,
+    DynRenderer,
 };
+#[doc(hidden)]
+pub use renderer::__reset_children_mirror_for_tests;

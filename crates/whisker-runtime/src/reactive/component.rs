@@ -116,31 +116,55 @@ pub fn owners_for_fn(fn_ptr: *const ()) -> Vec<OwnerId> {
 }
 
 // ===========================================================================
-// True per-component remount (PR #15 enhancement)
+// True per-component remount — wrapper-less (issue #17 / Y-2 P1)
 // ===========================================================================
 //
-// `mount_component_remountable` wraps the user's body in a permanent
-// `view` element ("wrapper") that survives across remounts. The body
-// closure (`Rc<dyn Fn() -> ElementHandle>`) is stored in a side table
-// keyed by a stable `MountId`. On a subsecond patch, the runtime
-// walks the patched fn pointers, finds the matching mount sites,
-// detaches the previous body root from the wrapper, disposes the
-// component owner (cascading cleanups), re-invokes the body closure
-// inside a fresh owner, and re-attaches the new body root to the
-// wrapper. The parent's child list is unchanged throughout — only
-// the wrapper's interior swaps.
+// `mount_component_remountable` runs the user's body inside a fresh
+// owner and **returns the body's root element directly** — no wrapper
+// `view` is inserted between the body and its parent. The Whisker
+// component tree maps 1:1 with the Lynx element tree.
 //
-// Trade-offs documented in PR #15:
-// - Adds one wrapper `view` per `#[component]` (extra layer in the
-//   element tree; typically invisible to Flexbox layouts but worth
-//   noting for tight CSS).
+// To make remount still work without a wrapper as a stable
+// placeholder, we capture each mount's `(parent, previous_sibling)`
+// lazily: `mount_component_remountable` stashes the freshly-created
+// `MountId` + body_root in a thread-local `PENDING_MOUNT` slot,
+// and `view::append_child` (when it sees that body_root being
+// attached) calls back via [`on_component_root_attached`] to
+// populate `MountSite.parent` / `MountSite.anchor`.
+//
+// On a subsecond patch:
+// 1. Look up the MountSite by patched fn_ptr.
+// 2. Detach old body_root from parent (Whisker-side child mirror
+//    keeps the position information so we know where to re-insert).
+// 3. Dispose old owner — cascading reactive cleanup, on_cleanup,
+//    nested component disposal.
+// 4. Re-invoke body inside a fresh owner → new body_root.
+// 5. Insert new body_root at the same slot (after the same
+//    previous-sibling anchor, or at the start if no anchor).
+//
+// Trade-offs / known limitations:
+// - The "previous sibling" anchor must remain alive across remounts.
+//   If a sibling-managed component disposed itself between mount
+//   and patch, the anchor is stale and remount falls back to
+//   inserting at the previous numeric position (best effort).
+//   For/Show interactions don't normally cause this because their
+//   wrappers are themselves stable elements.
 // - Component-local signal state is lost on remount; context-stored
 //   state survives because its owners live above the disposed scope.
 // - Props must implement `Clone` so the body closure can hand the
-//   user code fresh owned values on each invocation. The
-//   `#[component]` macro emits `let prop = prop_capture.clone();`
-//   inside the body, so `Copy` types pay no cost and `Clone` types
-//   clone once per remount (never during normal operation).
+//   user code fresh owned values on each invocation.
+
+use std::cell::Cell;
+
+thread_local! {
+    /// Set immediately before `mount_component_remountable` returns
+    /// its body_root. Consumed by `view::append_child` on the next
+    /// matching attach. The TLS is single-slot (last-writer-wins):
+    /// nested component mounts handle themselves because the body's
+    /// inner `view::append_child` calls drain the inner pending
+    /// mounts before this function's own value is stashed.
+    static PENDING_MOUNT: Cell<Option<(MountId, ElementHandle)>> = Cell::new(None);
+}
 
 /// Stable identifier for a remountable mount site. Generationless on
 /// purpose — entries are removed when the site is torn down, so the
@@ -150,9 +174,6 @@ pub struct MountId(pub(crate) u64);
 
 /// One live remountable component mount.
 pub(crate) struct MountSite {
-    /// The wrapper `view` element this mount lives inside. Visible to
-    /// the parent's `append_child`; stable across remounts.
-    pub wrapper: ElementHandle,
     /// Function pointer of the component fn that produced this mount.
     /// Used for the patched-fn lookup at hot-reload time.
     pub fn_ptr: *const (),
@@ -165,33 +186,83 @@ pub(crate) struct MountSite {
     /// dispose-then-remount window.
     pub owner: Option<OwnerId>,
     /// Element handle the body returned for its outermost element.
-    /// Detached from `wrapper` at the start of each remount, then
-    /// replaced by the new body's root.
+    /// Detached from the parent at the start of each remount, then
+    /// replaced by the new body's root inserted at the same slot.
     pub body_root: Option<ElementHandle>,
+    /// Parent element this component is attached to. `None` until
+    /// `view::append_child` fires for the body_root for the first
+    /// time. `Some(_)` thereafter, kept up to date across remounts.
+    pub parent: Option<ElementHandle>,
+    /// Element handle that was the body_root's immediate predecessor
+    /// in `parent`'s child list at attach time. `None` if the body
+    /// was the first child of parent. Stable across remounts unless
+    /// the anchor itself is removed by some other code path.
+    pub anchor: Option<ElementHandle>,
 }
 
-/// Mount a component with full remount support.
+/// Called by `view::append_child` after every successful attach.
+/// If there's a pending component mount whose body_root matches the
+/// just-attached `child`, finalise its MountSite by recording the
+/// parent + previous-sibling anchor.
 ///
-/// Creates a permanent `view` wrapper, runs `body` inside a fresh
-/// owner, appends the body's root to the wrapper, and registers a
-/// `MountSite` keyed by a fresh `MountId`. Returns the wrapper —
-/// callers (typically the `#[component]` proc-macro) treat it as
-/// the component's output, and the parent's `render!` attaches it
-/// the same way it would any other child element.
+/// No-op if no mount is pending or the pending body_root doesn't
+/// match — in that case the pending entry is restored so a later
+/// matching attach can still claim it.
+pub fn on_component_root_attached(parent: ElementHandle, child: ElementHandle) {
+    let pending = PENDING_MOUNT.with(|cell| cell.take());
+    let Some((mount_id, root)) = pending else {
+        return;
+    };
+    if root != child {
+        // The attach was for some other element. Put the pending
+        // entry back so the body_root's eventual `append_child`
+        // can still pick it up.
+        PENDING_MOUNT.with(|cell| cell.set(Some((mount_id, root))));
+        return;
+    }
+    let anchor = crate::view::previous_sibling(parent, child);
+    super::with_runtime(|rt| {
+        if let Some(site) = rt.mount_sites.get_mut(&mount_id) {
+            site.parent = Some(parent);
+            site.anchor = anchor;
+        }
+    });
+}
+
+/// Test/internal: clear the pending-mount slot. Use between
+/// scenarios that share a thread.
+#[doc(hidden)]
+pub fn __reset_pending_mount_for_tests() {
+    PENDING_MOUNT.with(|cell| cell.set(None));
+}
+
+/// Mount a component with full remount support — wrapper-less.
+///
+/// Runs `body` inside a fresh owner and returns the body's root
+/// element directly to the caller. No wrapper element is created,
+/// so the Whisker component tree maps 1:1 with the Lynx element
+/// tree (issue #17).
+///
+/// To make remount work without a stable wrapper handle in the
+/// parent's child list, the function stashes a pending-mount entry
+/// in a thread-local just before returning. The next
+/// [`view::append_child`] call that sees this body_root being
+/// attached finalises the MountSite (recording parent + previous
+/// sibling). The [`on_component_root_attached`] callback handles
+/// that side of the handshake.
 ///
 /// On a subsecond patch matching `fn_ptr`, the runtime calls
-/// [`remount_components_for`] (via the bootstrap tick callback)
-/// which disposes the current owner, re-invokes `body` in a new
-/// owner, and re-attaches the result to the still-living wrapper.
-/// The parent's child list is untouched.
+/// [`remount_components_for`] which disposes the current owner,
+/// re-invokes `body` in a new owner, removes the old body_root
+/// from its parent, and inserts the new body_root at the same slot
+/// (using the recorded anchor).
 pub fn mount_component_remountable<F>(fn_ptr: *const (), body: F) -> ElementHandle
 where
     F: Fn() -> ElementHandle + 'static,
 {
-    let wrapper = view::create_element(crate::element::ElementTag::View);
     let body: Rc<dyn Fn() -> ElementHandle + 'static> = Rc::new(body);
 
-    // Initial mount: fresh owner, run body, attach to wrapper.
+    // Initial mount: fresh owner, run body, capture root.
     let body_for_first = body.clone();
     let owner = create_owner(None);
     with_runtime(|rt| {
@@ -201,34 +272,38 @@ where
         rt.component_owners.entry(fn_ptr).or_default().push(owner);
     });
     let body_root = with_owner(owner, || (*body_for_first)());
-    view::append_child(wrapper, body_root);
 
-    // Stash the site for later remount. We don't add the wrapper to
-    // any owner's element list — its lifetime is managed by the
-    // parent, since the parent's `append_child(parent, wrapper)`
-    // will keep it visible until the parent dropping detaches it.
+    // Register the MountSite with parent / anchor as `None` for now
+    // — the next `view::append_child` that attaches `body_root`
+    // will populate them via `on_component_root_attached`.
     let mount_id = with_runtime(|rt| {
         rt.mount_id_counter += 1;
         let id = MountId(rt.mount_id_counter);
         rt.mount_sites.insert(
             id,
             MountSite {
-                wrapper,
                 fn_ptr,
                 body,
                 owner: Some(owner),
                 body_root: Some(body_root),
+                parent: None,
+                anchor: None,
             },
         );
         rt.fn_ptr_mounts.entry(fn_ptr).or_default().push(id);
         id
     });
-    // Suppress unused — `mount_id` is the canonical identifier; we
-    // keep the binding so future debugging / tracing has a hook,
-    // and so the mount-site insertion above isn't optimised out.
-    let _ = mount_id;
 
-    wrapper
+    // Hand the (MountId, body_root) pair to the pending slot. The
+    // caller's `view::append_child(parent, body_root)` consumes it
+    // and binds parent + anchor. Any previously-stashed pending
+    // mount that *wasn't* consumed (orphaned — body returned a root
+    // that was never attached) gets dropped here; the orphan's
+    // MountSite stays in the registry without a parent and will
+    // simply be skipped by remount lookups.
+    PENDING_MOUNT.with(|cell| cell.set(Some((mount_id, body_root))));
+
+    body_root
 }
 
 /// Re-mount every remountable site whose `fn_ptr` is in the given
@@ -269,27 +344,57 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
 }
 
 fn remount_one(mount_id: MountId) {
-    // Step 1: pull wrapper + body Rc + previous owner/root out of
-    // the runtime. We can't hold the borrow across `body()` because
-    // user code inside it re-enters via `view::*` / `signal()` etc.
-    let (wrapper, body, old_owner, old_body_root, fn_ptr) = match with_runtime(|rt| {
+    // Step 1: pull parent / anchor / body Rc / previous owner+root
+    // out of the runtime. We can't hold the borrow across `body()`
+    // because user code inside it re-enters via `view::*` /
+    // `signal()` etc.
+    let (parent, anchor, body, old_owner, old_body_root, fn_ptr) = match with_runtime(|rt| {
         let site = rt.mount_sites.get_mut(&mount_id)?;
         let body = site.body.clone();
         let owner = site.owner.take();
         let body_root = site.body_root.take();
-        Some((site.wrapper, body, owner, body_root, site.fn_ptr))
+        Some((
+            site.parent,
+            site.anchor,
+            body,
+            owner,
+            body_root,
+            site.fn_ptr,
+        ))
     }) {
         Some(t) => t,
         None => return,
     };
 
-    // Step 2: detach the old body root from the wrapper (the new
-    // root will land in the same slot when we re-append below).
+    // If the mount never finished binding to a parent (orphaned —
+    // body root never went through `append_child`), there's nowhere
+    // to remount it. Skip; the entry stays in the registry but is
+    // effectively dead.
+    let Some(parent) = parent else {
+        return;
+    };
+
+    // Step 2: figure out where the old body root sits in `parent`'s
+    // child list, so we can re-insert at the same position. We
+    // prefer the recorded anchor (stable across sibling churn) and
+    // fall back to the body_root's current numeric position if the
+    // anchor was removed in the meantime.
+    let insert_index: usize = if let Some(a) = anchor {
+        crate::view::child_index(parent, a)
+            .map(|i| i + 1)
+            .unwrap_or(0)
+    } else if let Some(r) = old_body_root {
+        crate::view::child_index(parent, r).unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Step 3: detach the old body root from parent.
     if let Some(root) = old_body_root {
-        view::remove_child(wrapper, root);
+        view::remove_child(parent, root);
     }
 
-    // Step 3: dispose the old owner, cascading reactive cleanup +
+    // Step 4: dispose the old owner, cascading reactive cleanup +
     // running any registered `on_cleanup` callbacks. This also
     // pulls the old owner out of `component_owners` (the existing
     // `dispose_owner` scrub logic).
@@ -297,7 +402,7 @@ fn remount_one(mount_id: MountId) {
         dispose_owner(o);
     }
 
-    // Step 4: create a fresh owner and re-invoke the body inside it.
+    // Step 5: create a fresh owner and re-invoke the body inside it.
     let new_owner = create_owner(None);
     with_runtime(|rt| {
         if let Some(o) = rt.owners.get_mut(new_owner) {
@@ -307,12 +412,20 @@ fn remount_one(mount_id: MountId) {
     });
     let new_body_root = with_owner(new_owner, || (*body)());
 
-    // Step 5: re-attach to the wrapper and update the mount site.
-    view::append_child(wrapper, new_body_root);
+    // Step 6: insert new body_root at the slot's original index,
+    // clear the pending-mount entry the body's
+    // `mount_component_remountable` call left behind (we're not
+    // going through the normal "caller does append_child" path
+    // here; we're inserting directly), and update the mount site.
+    PENDING_MOUNT.with(|cell| cell.set(None));
+    view::insert_child_at(parent, new_body_root, insert_index);
+
     with_runtime(|rt| {
         if let Some(site) = rt.mount_sites.get_mut(&mount_id) {
             site.owner = Some(new_owner);
             site.body_root = Some(new_body_root);
+            // parent and anchor are unchanged (we re-inserted at
+            // the same logical slot).
         }
     });
 }

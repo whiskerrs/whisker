@@ -19,6 +19,7 @@
 //! once at startup and keeps it for the life of the process.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use super::handle::ElementHandle;
 use crate::element::ElementTag;
@@ -59,6 +60,20 @@ thread_local! {
     /// another atomically and tests can run with no renderer installed
     /// (where dispatch functions silently no-op + warn).
     static CURRENT_RENDERER: RefCell<Option<Box<dyn DynRenderer>>> = const { RefCell::new(None) };
+
+    /// Whisker-side mirror of every parent → ordered-children
+    /// relationship the runtime has emitted. Maintained by
+    /// [`append_child`] / [`remove_child`].
+    ///
+    /// Used by `mount_component_remountable` (#17 wrapper-removal
+    /// follow-up) to compute the "previous sibling at mount time"
+    /// anchor without asking Lynx — Lynx's C API doesn't expose a
+    /// child-position query, and we'd rather not add one. Side
+    /// effect: the mirror also enables `previous_sibling` /
+    /// `next_sibling` queries for any future need (e.g. insert_after
+    /// shimming when we ship the wrapper-less remount path).
+    static CHILDREN_OF: RefCell<HashMap<ElementHandle, Vec<ElementHandle>>> =
+        RefCell::new(HashMap::new());
 }
 
 /// Install `r` as the current renderer for this thread, returning
@@ -149,11 +164,87 @@ pub fn set_inline_styles(handle: ElementHandle, css: &str) {
 }
 
 pub fn append_child(parent: ElementHandle, child: ElementHandle) {
-    with_renderer(|r| r.append_child(parent, child), ())
+    with_renderer(|r| r.append_child(parent, child), ());
+    CHILDREN_OF.with_borrow_mut(|map| {
+        map.entry(parent).or_default().push(child);
+    });
+    // Notify the component-mount machinery: if `child` is the body
+    // root of a freshly-mounted `#[component]`, this is when its
+    // MountSite learns where it landed (parent + previous sibling).
+    crate::reactive::on_component_root_attached(parent, child);
 }
 
 pub fn remove_child(parent: ElementHandle, child: ElementHandle) {
-    with_renderer(|r| r.remove_child(parent, child), ())
+    with_renderer(|r| r.remove_child(parent, child), ());
+    CHILDREN_OF.with_borrow_mut(|map| {
+        if let Some(children) = map.get_mut(&parent) {
+            children.retain(|c| *c != child);
+        }
+    });
+}
+
+/// Insert `child` into `parent`'s child list at position `index`.
+/// If `index >= current_len`, behaves like [`append_child`].
+///
+/// First-pass implementation: Lynx's C ABI doesn't yet expose
+/// `insert_before` / `insert_at`, so we simulate ordered insertion
+/// by detaching every sibling at or after `index`, appending the
+/// new child, then re-appending the detached siblings in order. The
+/// O(N) cost is fine for `<For>` reorders and #[component] remounts
+/// where N is the parent's current child count. Replace with a
+/// direct Lynx API once the bridge gains one.
+pub fn insert_child_at(parent: ElementHandle, child: ElementHandle, index: usize) {
+    let to_re_append: Vec<ElementHandle> = CHILDREN_OF.with_borrow(|map| {
+        map.get(&parent)
+            .map(|children| {
+                if index >= children.len() {
+                    Vec::new()
+                } else {
+                    children[index..].to_vec()
+                }
+            })
+            .unwrap_or_default()
+    });
+    for c in &to_re_append {
+        remove_child(parent, *c);
+    }
+    append_child(parent, child);
+    for c in to_re_append {
+        append_child(parent, c);
+    }
+}
+
+/// Return the element handle that appears immediately before `child`
+/// in `parent`'s child list, or `None` if `child` is the first child
+/// or `parent` has no recorded children.
+pub fn previous_sibling(parent: ElementHandle, child: ElementHandle) -> Option<ElementHandle> {
+    CHILDREN_OF.with_borrow(|map| {
+        let children = map.get(&parent)?;
+        let idx = children.iter().position(|c| *c == child)?;
+        if idx == 0 {
+            None
+        } else {
+            Some(children[idx - 1])
+        }
+    })
+}
+
+/// Index of `child` in `parent`'s ordered child list, or `None` if
+/// not tracked. Used by the wrapper-less remount path to re-insert
+/// the new body root at the same position as the old one.
+pub fn child_index(parent: ElementHandle, child: ElementHandle) -> Option<usize> {
+    CHILDREN_OF.with_borrow(|map| {
+        let children = map.get(&parent)?;
+        children.iter().position(|c| *c == child)
+    })
+}
+
+/// Test/internal: clear the parent → children mirror. Call between
+/// scenarios that share a thread (the production runtime never
+/// needs this).
+#[doc(hidden)]
+pub fn __reset_children_mirror_for_tests() {
+    CHILDREN_OF.with_borrow_mut(|map| map.clear());
 }
 
 pub fn set_event_listener(
