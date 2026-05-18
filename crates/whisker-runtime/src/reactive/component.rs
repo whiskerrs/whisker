@@ -163,7 +163,7 @@ thread_local! {
     /// nested component mounts handle themselves because the body's
     /// inner `view::append_child` calls drain the inner pending
     /// mounts before this function's own value is stashed.
-    static PENDING_MOUNT: Cell<Option<(MountId, ElementHandle)>> = Cell::new(None);
+    static PENDING_MOUNT: Cell<Option<(MountId, ElementHandle)>> = const { Cell::new(None) };
 }
 
 /// Stable identifier for a remountable mount site. Generationless on
@@ -332,8 +332,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
     // state (if processed first) or no-op (if scrubbed by the
     // cascading dispose). Both outcomes are wrong; skipping the
     // descendant entirely is the correct semantics.
-    let patched_set: std::collections::HashSet<*const ()> =
-        patched_fns.iter().copied().collect();
+    let patched_set: std::collections::HashSet<*const ()> = patched_fns.iter().copied().collect();
     let ids: Vec<MountId> = with_runtime(|rt| {
         let mut candidates: Vec<MountId> = Vec::new();
         for fp in patched_fns {
@@ -457,8 +456,13 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
 
     // 3. Dispose old owners + run new bodies, collecting (mount_id,
     //    parent, old_root, new_root, new_owner).
-    let mut results: Vec<(MountId, ElementHandle, ElementHandle, ElementHandle, OwnerId)> =
-        Vec::with_capacity(infos.len());
+    let mut results: Vec<(
+        MountId,
+        ElementHandle,
+        ElementHandle,
+        ElementHandle,
+        OwnerId,
+    )> = Vec::with_capacity(infos.len());
     for info in infos {
         let old_owner = with_runtime(|rt| {
             let site = rt.mount_sites.get_mut(&info.mount_id)?;
@@ -559,4 +563,3 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
         });
     }
 }
-

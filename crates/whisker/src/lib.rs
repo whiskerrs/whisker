@@ -95,7 +95,6 @@ pub mod __main_runtime {
     pub fn call_user_app(f: fn() -> ElementHandle) -> ElementHandle {
         f()
     }
-
 }
 
 /// Hot-reload dispatcher namespace exposed for the `#[component]`
@@ -127,8 +126,8 @@ pub mod __hot {
 
 /// Common imports for Whisker app code.
 pub mod prelude {
-    pub use crate::{component, main, render};
     pub use crate::ElementTag;
+    pub use crate::{component, main, render};
     pub use crate::{
         effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
         signal, use_context, with_context, Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,

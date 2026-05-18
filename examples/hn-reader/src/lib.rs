@@ -92,8 +92,7 @@ fn fetch_blocking() -> Result<Vec<Story>, String> {
         .map_err(|e| format!("network: {e}"))?
         .into_string()
         .map_err(|e| format!("read: {e}"))?;
-    let parsed: HnResponse =
-        serde_json::from_str(&body).map_err(|e| format!("parse: {e}"))?;
+    let parsed: HnResponse = serde_json::from_str(&body).map_err(|e| format!("parse: {e}"))?;
     Ok(parsed.hits)
 }
 
@@ -134,9 +133,7 @@ fn story_row(story: Story) -> ElementHandle {
         .to_string();
     let body_inner_style =
         "flex-grow: 1; flex-shrink: 1; display: flex; flex-direction: column;".to_string();
-    let title_style = format!(
-        "font-size: 15px; color: {TEXT_PRIMARY}; font-weight: 500;"
-    );
+    let title_style = format!("font-size: 15px; color: {TEXT_PRIMARY}; font-weight: 500;");
     let sub_style = format!("font-size: 12px; color: {TEXT_SECONDARY}; margin-top: 4px;");
 
     render! {
@@ -165,9 +162,7 @@ fn header() -> ElementHandle {
          display: flex; flex-direction: row; \
          background-color: {HEADER_BG};"
     );
-    let title_style = format!(
-        "font-size: 18px; font-weight: 700; color: {HEADER_FG};"
-    );
+    let title_style = format!("font-size: 18px; font-weight: 700; color: {HEADER_FG};");
     render! {
         view {
             style: bar_style,

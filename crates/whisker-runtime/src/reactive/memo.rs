@@ -80,7 +80,8 @@ pub fn memo<T: 'static + Clone + PartialEq>(mut f: impl FnMut() -> T + 'static) 
     // The compute closure needs to be set after we know the NodeId,
     // since recomputing must write back into the same value slot and
     // notify subscribers if the new value differs.
-    let compute_cell: Rc<RefCell<Option<Box<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+    type ComputeCell = Rc<RefCell<Option<Box<dyn FnMut()>>>>;
+    let compute_cell: ComputeCell = Rc::new(RefCell::new(None));
     let compute_cell_clone = compute_cell.clone();
     let trampoline: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(move || {
         // Take ownership of the inner closure, call it, put it back.

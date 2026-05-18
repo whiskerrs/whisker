@@ -102,8 +102,7 @@ pub fn build_xcframework(
 
     eprintln!("[whisker-build] cleaning {}", out.display());
     if out.exists() {
-        std::fs::remove_dir_all(&out)
-            .with_context(|| format!("rm -rf {}", out.display()))?;
+        std::fs::remove_dir_all(&out).with_context(|| format!("rm -rf {}", out.display()))?;
     }
     std::fs::create_dir_all(&out).with_context(|| format!("mkdir -p {}", out.display()))?;
 
@@ -151,7 +150,10 @@ pub fn build_xcframework(
     let sim_fat_parent = out.join("sim");
     std::fs::create_dir_all(&sim_fat_parent)?;
     let sim_fat = sim_fat_parent.join(&cargo_dylib_name);
-    eprintln!("[whisker-build] lipo simulator slices → {}", sim_fat.display());
+    eprintln!(
+        "[whisker-build] lipo simulator slices → {}",
+        sim_fat.display()
+    );
     let status = Command::new("lipo")
         .args(["-create"])
         .arg(&sim_arm64_dylib)
@@ -225,12 +227,10 @@ fn cargo_build_ios_dylib(
         cmd.arg(format!("-Clink-arg=-Wl,-exported_symbol,{sym}"));
     }
     if let Some(c) = capture {
-        std::fs::create_dir_all(&c.rustc_cache_dir).with_context(|| {
-            format!("create rustc cache dir {}", c.rustc_cache_dir.display())
-        })?;
-        std::fs::create_dir_all(&c.linker_cache_dir).with_context(|| {
-            format!("create linker cache dir {}", c.linker_cache_dir.display())
-        })?;
+        std::fs::create_dir_all(&c.rustc_cache_dir)
+            .with_context(|| format!("create rustc cache dir {}", c.rustc_cache_dir.display()))?;
+        std::fs::create_dir_all(&c.linker_cache_dir)
+            .with_context(|| format!("create linker cache dir {}", c.linker_cache_dir.display()))?;
         // Use the *current iteration's* triple, not whatever was
         // baked into `c.target_triple`. Without this override every
         // slice except the matching one would build without
@@ -393,7 +393,9 @@ pub struct XcodebuildArgs<'a> {
 /// Run `xcodebuild -configuration <configuration>` and return the
 /// produced `.app` directory.
 pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
-    let project = args.gen_ios.join(format!("{}.xcodeproj", args.xcodeproj_name));
+    let project = args
+        .gen_ios
+        .join(format!("{}.xcodeproj", args.xcodeproj_name));
     if !project.is_dir() {
         return Err(anyhow!(
             "Xcode project missing at {} — did `xcodegen generate` run?",

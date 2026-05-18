@@ -348,4 +348,3 @@ fn write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: bool
         }
     }
 }
-

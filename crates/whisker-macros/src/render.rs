@@ -379,7 +379,10 @@ impl ComponentNode {
     }
 
     fn kwarg(&self, name: &str) -> Option<&Expr> {
-        self.kwargs.iter().find(|k| k.name == name).map(|k| &k.value)
+        self.kwargs
+            .iter()
+            .find(|k| k.name == name)
+            .map(|k| &k.value)
     }
 
     fn emit_show(&self) -> TokenStream2 {
@@ -393,17 +396,18 @@ impl ComponentNode {
             let n = k.name.to_string();
             if n != "when" && n != "fallback" {
                 let err = LitStr::new(
-                    &format!(
-                        "unknown kwarg `{n}` on Show; allowed: when, fallback"
-                    ),
+                    &format!("unknown kwarg `{n}` on Show; allowed: when, fallback"),
                     k.name.span(),
                 );
                 return quote! { ::std::compile_error!(#err) };
             }
         }
 
-        let children_views: Vec<TokenStream2> =
-            self.children.iter().map(|c| c.to_tokens_as_view()).collect();
+        let children_views: Vec<TokenStream2> = self
+            .children
+            .iter()
+            .map(|c| c.to_tokens_as_view())
+            .collect();
 
         // Single-child shortcut: avoid wrapping in a Fragment Vec
         // when the user has exactly one child element.
@@ -463,9 +467,7 @@ impl ComponentNode {
             let n = k.name.to_string();
             if n != "each" && n != "key" && n != "children" {
                 let err = LitStr::new(
-                    &format!(
-                        "unknown kwarg `{n}` on For; allowed: each, key, children"
-                    ),
+                    &format!("unknown kwarg `{n}` on For; allowed: each, key, children"),
                     k.name.span(),
                 );
                 return quote! { ::std::compile_error!(#err) };

@@ -342,9 +342,7 @@ fn parse_patch_frame(
         return Err(format!("frame too short ({} bytes, need ≥8)", bytes.len()).into());
     }
     let json_len = u64::from_be_bytes(bytes[..8].try_into().unwrap()) as usize;
-    let header_end = 8usize
-        .checked_add(json_len)
-        .ok_or("json_len overflow")?;
+    let header_end = 8usize.checked_add(json_len).ok_or("json_len overflow")?;
     if bytes.len() < header_end {
         return Err(format!(
             "frame truncated: header claims {} json bytes but only {} available",
@@ -353,10 +351,11 @@ fn parse_patch_frame(
         )
         .into());
     }
-    let header: Header = serde_json::from_slice(&bytes[8..header_end])
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+    let header: Header = serde_json::from_slice(&bytes[8..header_end]).map_err(
+        |e| -> Box<dyn std::error::Error + Send + Sync> {
             format!("parse json header: {e}").into()
-        })?;
+        },
+    )?;
     let Header::Patch { table } = header;
     Ok((table, &bytes[header_end..]))
 }

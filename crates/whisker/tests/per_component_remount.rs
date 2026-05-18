@@ -17,6 +17,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
+use whisker::runtime::reactive::__reset_pending_mount_for_tests;
 use whisker::runtime::reactive::{
     __reset_for_tests, create_owner, dispose_owner, owners_for_fn, remount_components_for,
     with_owner,
@@ -26,7 +27,6 @@ use whisker::runtime::view::{
     uninstall_renderer, DynRenderer, ElementHandle,
 };
 use whisker::{flush, ElementTag};
-use whisker::runtime::reactive::__reset_pending_mount_for_tests;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
@@ -88,12 +88,7 @@ impl DynRenderer for Recorder {
             child: c.id(),
         });
     }
-    fn set_event_listener(
-        &mut self,
-        h: ElementHandle,
-        name: &str,
-        _cb: Box<dyn Fn() + 'static>,
-    ) {
+    fn set_event_listener(&mut self, h: ElementHandle, name: &str, _cb: Box<dyn Fn() + 'static>) {
         self.log.borrow_mut().push(Op::Event {
             id: h.id(),
             name: name.into(),
@@ -167,10 +162,7 @@ fn component_returns_body_root_directly() {
         // First created element should be the body's outer `view`
         // (id 0), not a separate wrapper. The text and raw_text
         // follow.
-        assert!(
-            !creates.is_empty(),
-            "leaf must create at least one element"
-        );
+        assert!(!creates.is_empty(), "leaf must create at least one element");
         assert_eq!(
             creates[0],
             (0, ElementTag::View),
@@ -353,7 +345,7 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
     }
 
     with_recorder_and_owner(|_log| {
-        let (_parent, _root) = mount_under_test_parent(|| outer());
+        let (_parent, _root) = mount_under_test_parent(outer);
 
         // After initial mount: 1 outer + 3 inner owners.
         assert_eq!(owners_for_fn(outer as *const ()).len(), 1);
@@ -409,7 +401,7 @@ fn batch_with_parent_and_child_skips_descendant() {
     }
 
     with_recorder_and_owner(|_log| {
-        let (_p, _r) = mount_under_test_parent(|| parent_of_child());
+        let (_p, _r) = mount_under_test_parent(parent_of_child);
         assert_eq!(owners_for_fn(parent_of_child as *const ()).len(), 1);
         assert_eq!(owners_for_fn(child as *const ()).len(), 2);
 
@@ -419,10 +411,7 @@ fn batch_with_parent_and_child_skips_descendant() {
         // Worst-case ordering: child listed FIRST in the patch
         // batch. Filter must skip the children because their
         // ancestor `parent_of_child` is also in the batch.
-        remount_components_for(&[
-            child as *const (),
-            parent_of_child as *const (),
-        ]);
+        remount_components_for(&[child as *const (), parent_of_child as *const ()]);
 
         // Parent was remounted (new owner).
         let new_parent_owners = owners_for_fn(parent_of_child as *const ());
@@ -478,7 +467,7 @@ fn remount_preserves_signal_held_above_in_context() {
         provide_context(AppState {
             counter: RwSignal::new(42),
         });
-        let (_parent, _root) = mount_under_test_parent(|| inner_screen());
+        let (_parent, _root) = mount_under_test_parent(inner_screen);
         log.borrow_mut().clear();
 
         // Mutate the outer state, then remount.

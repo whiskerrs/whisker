@@ -44,8 +44,7 @@ pub fn show(
     // Track the currently-mounted owner so we can dispose it on the
     // next flip. `Rc<RefCell>` because the effect closure runs many
     // times and needs interior mutability.
-    let mounted: Rc<RefCell<Option<crate::reactive::OwnerId>>> =
-        Rc::new(RefCell::new(None));
+    let mounted: Rc<RefCell<Option<crate::reactive::OwnerId>>> = Rc::new(RefCell::new(None));
 
     effect(move || {
         // 1. Dispose whatever's currently mounted, if anything.

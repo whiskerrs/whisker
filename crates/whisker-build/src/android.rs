@@ -179,8 +179,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     // anonymous scripts, so JNI exports survive without touching
     // rustc's Rust-symbol list.
     let vs_dir = b.workspace_root.join("target/.whisker");
-    std::fs::create_dir_all(&vs_dir)
-        .with_context(|| format!("create {}", vs_dir.display()))?;
+    std::fs::create_dir_all(&vs_dir).with_context(|| format!("create {}", vs_dir.display()))?;
     let vs_path = vs_dir.join("android-jni-exports.ver");
     std::fs::write(
         &vs_path,
@@ -225,12 +224,10 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     // artifacts (build scripts, proc-macros) keep their default
     // linker since the env is keyed by target triple.
     if let Some(c) = b.capture {
-        std::fs::create_dir_all(&c.rustc_cache_dir).with_context(|| {
-            format!("create rustc cache dir {}", c.rustc_cache_dir.display())
-        })?;
-        std::fs::create_dir_all(&c.linker_cache_dir).with_context(|| {
-            format!("create linker cache dir {}", c.linker_cache_dir.display())
-        })?;
+        std::fs::create_dir_all(&c.rustc_cache_dir)
+            .with_context(|| format!("create rustc cache dir {}", c.rustc_cache_dir.display()))?;
+        std::fs::create_dir_all(&c.linker_cache_dir)
+            .with_context(|| format!("create linker cache dir {}", c.linker_cache_dir.display()))?;
         for (k, v) in capture_env_vars(c) {
             cmd.env(k, v);
         }
@@ -268,10 +265,14 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
 
 /// Copy `so` plus the NDK-shipped `libc++_shared.so` into
 /// `gen/android/app/src/main/jniLibs/<abi>/`.
-pub fn stage_jni_libs(gen_android: &Path, abi: &str, so: &Path, tc: &AndroidToolchain) -> Result<()> {
+pub fn stage_jni_libs(
+    gen_android: &Path,
+    abi: &str,
+    so: &Path,
+    tc: &AndroidToolchain,
+) -> Result<()> {
     let dst_dir = gen_android.join("app/src/main/jniLibs").join(abi);
-    std::fs::create_dir_all(&dst_dir)
-        .with_context(|| format!("mkdir -p {}", dst_dir.display()))?;
+    std::fs::create_dir_all(&dst_dir).with_context(|| format!("mkdir -p {}", dst_dir.display()))?;
 
     let so_name = so
         .file_name()

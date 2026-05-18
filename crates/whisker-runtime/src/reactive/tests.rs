@@ -172,7 +172,11 @@ fn multiple_writes_coalesce_into_one_rerun() {
     set_a.set(1);
     set_b.set(2);
     flush();
-    assert_eq!(*runs.borrow(), 2, "two writes must produce exactly one re-run");
+    assert_eq!(
+        *runs.borrow(),
+        2,
+        "two writes must produce exactly one re-run"
+    );
 }
 
 #[test]
@@ -241,7 +245,10 @@ fn dispose_cascades_to_children() {
 
     // Owner map should have neither.
     let alive = with_runtime(|rt| {
-        (rt.owners.contains_key(parent), rt.owners.contains_key(child))
+        (
+            rt.owners.contains_key(parent),
+            rt.owners.contains_key(child),
+        )
     });
     assert_eq!(alive, (false, false));
 }
@@ -315,7 +322,11 @@ fn stored_value_does_not_trigger_effects() {
     assert_eq!(*runs.borrow(), 1);
     sv.set(99);
     flush();
-    assert_eq!(*runs.borrow(), 1, "StoredValue writes must not trigger reactivity");
+    assert_eq!(
+        *runs.borrow(),
+        1,
+        "StoredValue writes must not trigger reactivity"
+    );
 }
 
 #[test]

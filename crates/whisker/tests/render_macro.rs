@@ -12,9 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, create_owner, dispose_owner};
-use whisker::runtime::view::{
-    install_renderer, uninstall_renderer, DynRenderer, ElementHandle,
-};
+use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, ElementHandle};
 use whisker::{flush, with_owner};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,12 +66,7 @@ impl DynRenderer for Recorder {
         });
     }
     fn remove_child(&mut self, _p: ElementHandle, _c: ElementHandle) {}
-    fn set_event_listener(
-        &mut self,
-        h: ElementHandle,
-        name: &str,
-        _cb: Box<dyn Fn() + 'static>,
-    ) {
+    fn set_event_listener(&mut self, h: ElementHandle, name: &str, _cb: Box<dyn Fn() + 'static>) {
         self.log.borrow_mut().push(Op::Event {
             id: h.id(),
             name: name.into(),
@@ -87,7 +80,7 @@ fn with_recorder<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     let (rec, log) = Recorder::new();
     let prev = install_renderer(Box::new(rec));
     let result = f(log);
-    let _ = uninstall_renderer(prev);
+    uninstall_renderer(prev);
     result
 }
 
@@ -101,7 +94,7 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     let owner = create_owner(None);
     let result = with_owner(owner, || f(log));
     dispose_owner(owner);
-    let _ = uninstall_renderer(prev);
+    uninstall_renderer(prev);
     result
 }
 
@@ -112,7 +105,13 @@ fn single_view_emits_create_and_returns_handle() {
     with_recorder(|log| {
         let h = render! { view {} };
         assert_eq!(h.id(), 0);
-        assert_eq!(*log.borrow(), vec![Op::Create { id: 0, tag: ElementTag::View }]);
+        assert_eq!(
+            *log.borrow(),
+            vec![Op::Create {
+                id: 0,
+                tag: ElementTag::View
+            }]
+        );
     });
 }
 
@@ -132,9 +131,27 @@ fn nested_view_with_text_child() {
         //  Append raw_text → text
         //  Append text → view
         let ops = log.borrow();
-        assert_eq!(ops[0], Op::Create { id: 0, tag: ElementTag::View });
-        assert_eq!(ops[1], Op::Create { id: 1, tag: ElementTag::Text });
-        assert_eq!(ops[2], Op::Create { id: 2, tag: ElementTag::RawText });
+        assert_eq!(
+            ops[0],
+            Op::Create {
+                id: 0,
+                tag: ElementTag::View
+            }
+        );
+        assert_eq!(
+            ops[1],
+            Op::Create {
+                id: 1,
+                tag: ElementTag::Text
+            }
+        );
+        assert_eq!(
+            ops[2],
+            Op::Create {
+                id: 2,
+                tag: ElementTag::RawText
+            }
+        );
         assert_eq!(
             ops[3],
             Op::SetAttr {
@@ -143,8 +160,20 @@ fn nested_view_with_text_child() {
                 value: "Hello".into()
             }
         );
-        assert_eq!(ops[4], Op::Append { parent: 1, child: 2 });
-        assert_eq!(ops[5], Op::Append { parent: 0, child: 1 });
+        assert_eq!(
+            ops[4],
+            Op::Append {
+                parent: 1,
+                child: 2
+            }
+        );
+        assert_eq!(
+            ops[5],
+            Op::Append {
+                parent: 0,
+                child: 1
+            }
+        );
         assert_eq!(ops.len(), 6);
     });
 }
@@ -158,7 +187,13 @@ fn style_attribute_emits_set_inline_styles() {
             }
         };
         let ops = log.borrow();
-        assert_eq!(ops[0], Op::Create { id: 0, tag: ElementTag::View });
+        assert_eq!(
+            ops[0],
+            Op::Create {
+                id: 0,
+                tag: ElementTag::View
+            }
+        );
         assert_eq!(
             ops[1],
             Op::SetStyles {
@@ -179,7 +214,13 @@ fn arbitrary_attribute_emits_set_attribute() {
             }
         };
         let ops = log.borrow();
-        assert_eq!(ops[0], Op::Create { id: 0, tag: ElementTag::Image });
+        assert_eq!(
+            ops[0],
+            Op::Create {
+                id: 0,
+                tag: ElementTag::Image
+            }
+        );
         assert!(ops.contains(&Op::SetAttr {
             id: 0,
             key: "src".into(),
@@ -204,7 +245,9 @@ fn on_tap_emits_set_event_listener() {
             }
         };
         let ops = log.borrow();
-        assert!(ops.iter().any(|op| matches!(op, Op::Event { name, .. } if name == "tap")));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, Op::Event { name, .. } if name == "tap")));
         // The recorder stored but doesn't fire the callback —
         // verifying registration is enough at the macro layer.
         assert!(!*fired.borrow());
@@ -220,7 +263,9 @@ fn camel_case_event_handler_lowercased() {
             }
         };
         let ops = log.borrow();
-        assert!(ops.iter().any(|op| matches!(op, Op::Event { name, .. } if name == "tap")));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, Op::Event { name, .. } if name == "tap")));
     });
 }
 
@@ -413,7 +458,10 @@ fn signal_only_updates_elements_that_read_it() {
             .iter()
             .filter(|op| matches!(op, Op::SetAttr { key, .. } if key == "text"))
             .count();
-        assert_eq!(set_text_count, 1, "only the a-reading raw_text should update");
+        assert_eq!(
+            set_text_count, 1,
+            "only the a-reading raw_text should update"
+        );
     });
 }
 
@@ -547,7 +595,10 @@ fn for_renders_initial_items() {
                 _ => None,
             })
             .collect();
-        assert_eq!(texts, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(
+            texts,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
     });
 }
 
@@ -580,9 +631,18 @@ fn for_adds_new_items_on_update() {
         // Should contain "3" and "4" (newly created), but NOT "1" / "2"
         // (whose effects don't re-fire because their signals didn't
         // change — they were per-item closures with fixed values).
-        assert!(new_texts.contains(&"3".to_string()), "item 3 must be rendered");
-        assert!(new_texts.contains(&"4".to_string()), "item 4 must be rendered");
-        assert!(!new_texts.contains(&"1".to_string()), "item 1 must NOT be re-rendered");
+        assert!(
+            new_texts.contains(&"3".to_string()),
+            "item 3 must be rendered"
+        );
+        assert!(
+            new_texts.contains(&"4".to_string()),
+            "item 4 must be rendered"
+        );
+        assert!(
+            !new_texts.contains(&"1".to_string()),
+            "item 1 must NOT be re-rendered"
+        );
     });
 }
 

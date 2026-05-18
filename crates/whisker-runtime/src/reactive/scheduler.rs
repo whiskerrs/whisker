@@ -130,13 +130,7 @@ fn run_node_if_alive(node: NodeId) {
             NodeData::Signal { .. } => return None,
         };
         // Detach from existing sources before re-tracking.
-        let sources: Vec<_> = rt
-            .nodes
-            .get(node)?
-            .sources
-            .iter()
-            .copied()
-            .collect();
+        let sources: Vec<_> = rt.nodes.get(node)?.sources.iter().copied().collect();
         for src in sources {
             if let Some(src_node) = rt.nodes.get_mut(src) {
                 src_node.subscribers.remove(&node);
@@ -156,7 +150,7 @@ fn run_node_if_alive(node: NodeId) {
     // point, so user code inside is free to enter `with_runtime`.
     {
         let mut borrow = compute.borrow_mut();
-        (&mut *borrow)();
+        (*borrow)();
     }
 
     // Step 3: restore book-keeping — pop the owner we pushed and

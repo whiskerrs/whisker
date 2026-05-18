@@ -158,15 +158,15 @@ fn override_opt_level(args: &mut Vec<String>, level: &str) {
 fn set_incremental(args: &mut Vec<String>, incremental_dir: &Path) {
     let mut i = 0;
     while i < args.len() {
-        if (args[i] == "-C" || args[i] == "--codegen") && i + 1 < args.len()
+        if (args[i] == "-C" || args[i] == "--codegen")
+            && i + 1 < args.len()
             && args[i + 1].starts_with("incremental=")
         {
             args.drain(i..=i + 1);
             continue;
         }
         // Combined form: `-Cincremental=...`
-        if args[i].starts_with("-Cincremental=") || args[i].starts_with("--codegen=incremental=")
-        {
+        if args[i].starts_with("-Cincremental=") || args[i].starts_with("--codegen=incremental=") {
             args.remove(i);
             continue;
         }

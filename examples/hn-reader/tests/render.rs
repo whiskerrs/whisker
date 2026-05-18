@@ -14,9 +14,7 @@ use std::rc::Rc;
 use hn_reader::hn_reader;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, create_owner, with_owner};
-use whisker::runtime::view::{
-    install_renderer, uninstall_renderer, DynRenderer, ElementHandle,
-};
+use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, ElementHandle};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
@@ -69,12 +67,7 @@ impl DynRenderer for Recorder {
         });
     }
     fn remove_child(&mut self, _p: ElementHandle, _c: ElementHandle) {}
-    fn set_event_listener(
-        &mut self,
-        h: ElementHandle,
-        name: &str,
-        _cb: Box<dyn Fn() + 'static>,
-    ) {
+    fn set_event_listener(&mut self, h: ElementHandle, name: &str, _cb: Box<dyn Fn() + 'static>) {
         self.log.borrow_mut().push(Op::Event {
             id: h.id(),
             name: name.into(),
@@ -100,7 +93,7 @@ fn initial_render_shows_loading_banner() {
     let _prev = install_renderer(Box::new(rec));
     let owner = create_owner(None);
 
-    let _root = with_owner(owner, || hn_reader());
+    let _root = with_owner(owner, hn_reader);
 
     let ts = texts(&log.borrow());
     assert!(

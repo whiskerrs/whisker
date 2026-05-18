@@ -104,8 +104,15 @@ fn dispatch_routes_to_installed_renderer() {
     assert_eq!(
         ops.as_slice(),
         &[
-            Op::Create { id: 0, tag: ElementTag::View },
-            Op::SetAttr { id: 0, key: "k".into(), value: "v".into() },
+            Op::Create {
+                id: 0,
+                tag: ElementTag::View
+            },
+            Op::SetAttr {
+                id: 0,
+                key: "k".into(),
+                value: "v".into()
+            },
             Op::Flush,
         ],
     );
@@ -158,7 +165,10 @@ fn unit_into_empty() {
 fn option_some_and_none() {
     let some_h = Some(ElementHandle::from_raw(3));
     let none_h: Option<ElementHandle> = None;
-    assert_eq!(some_h.into_view().elements(), vec![ElementHandle::from_raw(3)]);
+    assert_eq!(
+        some_h.into_view().elements(),
+        vec![ElementHandle::from_raw(3)]
+    );
     assert_eq!(none_h.into_view().elements(), Vec::<ElementHandle>::new());
 }
 
@@ -213,6 +223,9 @@ fn view_attach_appends_each_leaf() {
         frag.attach_to(parent);
     });
     let ops = log.borrow();
-    let appends: Vec<_> = ops.iter().filter(|o| matches!(o, Op::Append { .. })).collect();
+    let appends: Vec<_> = ops
+        .iter()
+        .filter(|o| matches!(o, Op::Append { .. }))
+        .collect();
     assert_eq!(appends.len(), 3, "Empty fragments must be skipped");
 }

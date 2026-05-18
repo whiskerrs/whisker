@@ -769,8 +769,7 @@ pub fn aslr_reference() -> usize {
             // `#[whisker::main]` and is unique to the user's `.so`.
             #[cfg(unix)]
             {
-                MAIN_PTR =
-                    libc::dlsym(libc::RTLD_DEFAULT, c"whisker_aslr_anchor".as_ptr() as _);
+                MAIN_PTR = libc::dlsym(libc::RTLD_DEFAULT, c"whisker_aslr_anchor".as_ptr() as _);
             }
 
             #[cfg(windows)]

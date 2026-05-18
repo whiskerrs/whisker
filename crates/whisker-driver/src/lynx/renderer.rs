@@ -90,14 +90,22 @@ impl DynRenderer for BridgeRenderer {
     }
 
     fn set_attribute(&mut self, handle: ElementHandle, key: &str, value: &str) {
-        let Some(ptr) = self.lookup(handle) else { return };
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
         let Ok(key_c) = CString::new(key) else { return };
-        let Ok(value_c) = CString::new(value) else { return };
-        unsafe { ffi::whisker_bridge_set_attribute(ptr.as_ptr(), key_c.as_ptr(), value_c.as_ptr()) };
+        let Ok(value_c) = CString::new(value) else {
+            return;
+        };
+        unsafe {
+            ffi::whisker_bridge_set_attribute(ptr.as_ptr(), key_c.as_ptr(), value_c.as_ptr())
+        };
     }
 
     fn set_inline_styles(&mut self, handle: ElementHandle, css: &str) {
-        let Some(ptr) = self.lookup(handle) else { return };
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
         let Ok(css_c) = CString::new(css) else { return };
         unsafe { ffi::whisker_bridge_set_inline_styles(ptr.as_ptr(), css_c.as_ptr()) };
     }
@@ -120,8 +128,12 @@ impl DynRenderer for BridgeRenderer {
         event_name: &str,
         callback: Box<dyn Fn() + 'static>,
     ) {
-        let Some(ptr) = self.lookup(handle) else { return };
-        let Ok(name_c) = CString::new(event_name) else { return };
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
+        let Ok(name_c) = CString::new(event_name) else {
+            return;
+        };
         let outer: Box<Box<dyn Fn() + 'static>> = Box::new(callback);
         let raw = Box::as_ref(&outer) as *const Box<dyn Fn() + 'static> as *mut c_void;
         self.listeners.push(outer);

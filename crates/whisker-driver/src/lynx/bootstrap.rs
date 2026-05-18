@@ -51,7 +51,7 @@ use whisker_runtime::reactive::{
     flush as reactive_flush, flush_mounts as reactive_flush_mounts, remount_components_for,
 };
 use whisker_runtime::view::{
-    flush as renderer_flush, install_renderer, set_root, ElementHandle, DynRenderer,
+    flush as renderer_flush, install_renderer, set_root, DynRenderer, ElementHandle,
 };
 
 thread_local! {
@@ -118,7 +118,10 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // Wire host wake-up before we touch any reactive primitive — any
     // signal writes during the initial `app()` run (lazy state
     // initialisers, eager effects) need to schedule a frame correctly.
-    whisker_runtime::host_wake::set_request_frame_callback(ctx.request_frame, ctx.request_frame_data);
+    whisker_runtime::host_wake::set_request_frame_callback(
+        ctx.request_frame,
+        ctx.request_frame_data,
+    );
 
     // Wire the main-thread dispatcher so background threads can call
     // `run_on_main_thread(|| { ... })` to marshal work onto the TASM

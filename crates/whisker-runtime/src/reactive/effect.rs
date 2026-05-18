@@ -23,12 +23,12 @@ use super::with_runtime;
 /// The closure receives no arguments and returns nothing. The
 /// `Option<R>`-of-previous-value variant from Solid/Leptos is omitted
 /// in v1 — it can be layered on later without breaking this API.
-pub fn effect(mut f: impl FnMut() + 'static) -> NodeId {
+pub fn effect(f: impl FnMut() + 'static) -> NodeId {
     // Allocate the node first (with a placeholder compute we replace
     // before running) so the closure can see its own id if it ever
     // needs to. The Rc<RefCell<...>> wrapper lets the scheduler clone
     // a handle out of the runtime in a short borrow.
-    let compute: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(move || f()));
+    let compute: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(f));
 
     let needs_warning = with_runtime(|rt| rt.current_owner().is_none());
     if needs_warning {

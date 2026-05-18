@@ -12,12 +12,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use counter::{counter, AppState};
+use whisker::flush;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, create_owner, with_owner};
-use whisker::runtime::view::{
-    install_renderer, uninstall_renderer, DynRenderer, ElementHandle,
-};
-use whisker::flush;
+use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, ElementHandle};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
@@ -70,12 +68,7 @@ impl DynRenderer for Recorder {
         });
     }
     fn remove_child(&mut self, _p: ElementHandle, _c: ElementHandle) {}
-    fn set_event_listener(
-        &mut self,
-        h: ElementHandle,
-        name: &str,
-        _cb: Box<dyn Fn() + 'static>,
-    ) {
+    fn set_event_listener(&mut self, h: ElementHandle, name: &str, _cb: Box<dyn Fn() + 'static>) {
         self.log.borrow_mut().push(Op::Event {
             id: h.id(),
             name: name.into(),
