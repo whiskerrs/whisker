@@ -31,7 +31,7 @@ use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::capture::{capture_env_vars, CaptureShims};
+use crate::capture::{capture_env_vars_for_triple, CaptureShims};
 
 const FRAMEWORK_NAME: &str = "WhiskerDriver";
 
@@ -231,7 +231,14 @@ fn cargo_build_ios_dylib(
         std::fs::create_dir_all(&c.linker_cache_dir).with_context(|| {
             format!("create linker cache dir {}", c.linker_cache_dir.display())
         })?;
-        for (k, v) in capture_env_vars(c) {
+        // Use the *current iteration's* triple, not whatever was
+        // baked into `c.target_triple`. Without this override every
+        // slice except the matching one would build without
+        // `-Cdebug-assertions=on`, which silently disables
+        // subsecond's JumpTable dispatch — `subsecond::call` then
+        // inlines to its `if !cfg!(debug_assertions) { return f() }`
+        // early return and hot reload patches never reach user code.
+        for (k, v) in capture_env_vars_for_triple(c, Some(triple)) {
             cmd.env(k, v);
         }
     }

@@ -57,6 +57,27 @@ pub struct CaptureShims {
 /// `RUSTFLAGS=-Clinker=…` (the global form). Pre-existing
 /// `RUSTFLAGS` in the dev-server's env are preserved.
 pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
+    capture_env_vars_for_triple(c, c.target_triple.as_deref())
+}
+
+/// Like [`capture_env_vars`] but applies the linker shim + rustflags
+/// to `triple_override` instead of `c.target_triple`. Used by
+/// multi-triple builds (e.g. iOS, which emits dylibs for
+/// device + intel-sim + arm64-sim) where every per-target slice
+/// needs the same Tier-1 capture envelope — the original
+/// `CaptureShims::target_triple` only carries one slot, so a naive
+/// `capture_env_vars(c)` call would only set
+/// `CARGO_TARGET_<that-one-triple>_RUSTFLAGS` and silently leave
+/// the other slices building without `-Cdebug-assertions=on` /
+/// `-Csave-temps` / export-dynamic. The downstream symptom on iOS
+/// was that `subsecond::call` got inlined to the early-`return f()`
+/// branch in every slice except the configured one, so hot reload
+/// dispatched to OLD code on device / intel-sim no matter what the
+/// JumpTable contained.
+pub fn capture_env_vars_for_triple(
+    c: &CaptureShims,
+    triple_override: Option<&str>,
+) -> Vec<(String, String)> {
     let mut out = vec![
         (
             "RUSTC_WORKSPACE_WRAPPER".into(),
@@ -109,13 +130,13 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
     // not the host — Apple linkers take `-export_dynamic`; GNU / lld
     // take `--export-dynamic`. Default to the GNU form when
     // target_triple is None (host-only setups land here).
-    let export_dynamic = match c.target_triple.as_deref() {
+    let export_dynamic = match triple_override {
         Some(t) if t.contains("apple") => "-Clink-arg=-Wl,-export_dynamic",
         _ => "-Clink-arg=-Wl,--export-dynamic",
     };
     let save_temps = format!("-Csave-temps=y -Cdebug-assertions=on {export_dynamic}");
     let save_temps = save_temps.as_str();
-    match c.target_triple.as_deref() {
+    match triple_override {
         Some(triple) => {
             out.push((target_linker_env_var(triple), shim));
             let prior = std::env::var(target_rustflags_env_var(triple)).unwrap_or_default();
