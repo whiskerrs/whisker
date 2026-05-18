@@ -106,11 +106,49 @@ pub fn build_obj_plan(captured: &CapturedRustcInvocation, output_dir: &Path) -> 
     // 50–100 ms warm. The cache lives under our patch dir so it's
     // wiped together with the thin object on a fresh `whisker run`.
     set_incremental(&mut args, &output_dir.join("incremental"));
+    // The fat (release) build captured `-Copt-level=3`. For Tier 1
+    // hot patches we strip the LLVM optimization pipeline entirely —
+    // `time-passes` confirms LLVM passes account for ~88% of rustc's
+    // wall time on opt-level=3 user crates. The patched code only
+    // has to *run*, not run fast: hot reload is a dev affordance, so
+    // a 3-4x runtime slowdown of just the patched function bodies is
+    // an excellent trade for a 3× compile-time win. opt-level=0 also
+    // disables intra-crate inlining, which keeps the patch dylib's
+    // call graph well-aligned with the host's exported symbols (no
+    // mystery UND references from functions the host inlined away).
+    override_opt_level(&mut args, "0");
     ObjBuildPlan {
         args,
         output_dir: output_dir.to_path_buf(),
         expected_object: object_path,
     }
+}
+
+/// Force `-Copt-level=<level>`. Strips any existing opt-level
+/// directive (single-arg `-Copt-level=N`, split form `-C opt-level=N`,
+/// and the shorthand `-O` = opt-level=2).
+fn override_opt_level(args: &mut Vec<String>, level: &str) {
+    let mut i = 0;
+    while i < args.len() {
+        if (args[i] == "-C" || args[i] == "--codegen")
+            && i + 1 < args.len()
+            && args[i + 1].starts_with("opt-level=")
+        {
+            args.drain(i..i + 2);
+            continue;
+        }
+        if args[i].starts_with("-Copt-level=") || args[i].starts_with("--codegen=opt-level=") {
+            args.remove(i);
+            continue;
+        }
+        if args[i] == "-O" {
+            args.remove(i);
+            continue;
+        }
+        i += 1;
+    }
+    args.push("-C".into());
+    args.push(format!("opt-level={level}"));
 }
 
 /// Force `-C incremental=<dir>` to point at our patch cache dir.
@@ -425,8 +463,6 @@ mod tests {
                 "--edition=2021",
                 "--crate-name",
                 "demo",
-                "-C",
-                "opt-level=3",
                 "src/lib.rs",
                 "--crate-type",
                 "rlib",
@@ -436,6 +472,8 @@ mod tests {
                 "obj=/whisker/objs/x/demo.o",
                 "-C",
                 "incremental=/whisker/objs/x/incremental",
+                "-C",
+                "opt-level=0",
             ]),
         );
         assert_eq!(plan.output_dir, Path::new("/whisker/objs/x"));
