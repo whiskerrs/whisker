@@ -121,35 +121,36 @@ fn story_row(story: Story) -> ElementHandle {
     let author = story.author.clone().unwrap_or_else(|| "anon".to_string());
     let points = story.points.unwrap_or(0);
     let comments = story.num_comments.unwrap_or(0);
-    let meta = format!("{points} points by {author} · {comments} comments");
+    let meta_text = if domain.is_empty() {
+        format!("{points} points by {author} · {comments} comments")
+    } else {
+        format!("{domain}  ·  {points} points by {author} · {comments} comments")
+    };
 
-    let row_style = format!(
-        "width: 100%; padding: 12px 16px; \
-         display: flex; flex-direction: row; background-color: {BG};"
-    );
-    let body_style = "display: flex; flex-direction: column; flex-grow: 1;".to_string();
+    let row_style = "width: 100%; display: flex; flex-direction: row; \
+                     padding: 12px 16px; \
+                     border-bottom-width: 1px; border-bottom-style: solid; \
+                     border-bottom-color: rgba(0,0,0,0.06);"
+        .to_string();
+    let body_inner_style =
+        "flex-grow: 1; flex-shrink: 1; display: flex; flex-direction: column;".to_string();
     let title_style = format!(
         "font-size: 15px; color: {TEXT_PRIMARY}; font-weight: 500;"
     );
-    let sub_style = format!("font-size: 12px; color: {TEXT_SECONDARY};");
-    let sub_style_2 = sub_style.clone();
+    let sub_style = format!("font-size: 12px; color: {TEXT_SECONDARY}; margin-top: 4px;");
 
     render! {
         view {
             style: row_style,
             view {
-                style: body_style,
+                style: body_inner_style,
                 text {
                     style: title_style,
                     {title.clone()}
                 }
                 text {
                     style: sub_style,
-                    {domain.clone()}
-                }
-                text {
-                    style: sub_style_2,
-                    {meta.clone()}
+                    {meta_text.clone()}
                 }
             }
         }
@@ -236,15 +237,22 @@ pub fn hn_reader() -> ElementHandle {
                       display: flex; flex-direction: column;"
         .to_string();
 
+    let list_style =
+        "flex-grow: 1; flex-shrink: 1; width: 100%; display: flex; flex-direction: column;"
+            .to_string();
     render! {
         view {
             style: body_style,
             {header()}
             {status_banner(state)}
-            For {
-                each: move || state.get().stories(),
-                key: |s: &Story| s.object_id.clone(),
-                children: |s: Story| story_row(s),
+            scroll_view {
+                scroll_orientation: "vertical",
+                style: list_style,
+                For {
+                    each: move || state.get().stories(),
+                    key: |s: &Story| s.object_id.clone(),
+                    children: |s: Story| story_row(s),
+                }
             }
         }
     }

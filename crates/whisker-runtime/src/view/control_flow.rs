@@ -100,6 +100,10 @@ where
     ChildFn: Fn(T) -> V + 'static,
 {
     let wrapper = create_element(ElementTag::View);
+    // Default to a vertical list. Lynx `view` defaults to
+    // `flex-direction: row` (memory: lynx_view_flex_direction_default);
+    // for lists that's almost always the wrong axis.
+    super::set_inline_styles(wrapper, "display: flex; flex-direction: column;");
     // Per-key bookkeeping. We track the owner so we can dispose
     // removed items, plus the attached element handles so we can
     // re-attach in the new order during a reorder.
