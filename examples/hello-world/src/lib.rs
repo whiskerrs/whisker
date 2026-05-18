@@ -58,7 +58,13 @@ const ACCENT_2: &str = "#ff5e9b";
 
 // ---- Building blocks --------------------------------------------------------
 
-fn art_tile(c1: &str, c2: &str, w: &str, radius: &str) -> ElementHandle {
+#[component]
+fn art_tile(
+    c1: &'static str,
+    c2: &'static str,
+    w: &'static str,
+    radius: &'static str,
+) -> ElementHandle {
     let style = format!(
         "width: {w}; aspect-ratio: 1; border-radius: {radius}; \
          background-image: linear-gradient(135deg, {c1} 0%, {c2} 100%);"
@@ -68,6 +74,7 @@ fn art_tile(c1: &str, c2: &str, w: &str, radius: &str) -> ElementHandle {
     }
 }
 
+#[component]
 fn chip(label: &'static str, accented: bool) -> ElementHandle {
     let (bg, fg) = if accented {
         (ACCENT, TEXT_PRIMARY)
@@ -87,6 +94,7 @@ fn chip(label: &'static str, accented: bool) -> ElementHandle {
     }
 }
 
+#[component]
 fn section_header(title: &'static str) -> ElementHandle {
     render! {
         view {
@@ -104,6 +112,7 @@ fn section_header(title: &'static str) -> ElementHandle {
     }
 }
 
+#[component]
 fn recent_card(
     title: &'static str,
     sub: &'static str,
@@ -124,6 +133,7 @@ fn recent_card(
     }
 }
 
+#[component]
 fn grid_tile(
     index: usize,
     title: &'static str,
@@ -180,6 +190,7 @@ fn grid_tile(
     }
 }
 
+#[component]
 fn activity_row(
     initial: &'static str,
     c1: &'static str,
@@ -219,6 +230,7 @@ fn activity_row(
     }
 }
 
+#[component]
 fn tab_item(index: usize, label: &'static str, glyph: &'static str) -> ElementHandle {
     let tab = selected_tab();
     let on_pick = move || tab.set(index);
@@ -243,6 +255,7 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str) -> ElementHa
     }
 }
 
+#[component]
 fn tab_bar() -> ElementHandle {
     let style = format!(
         "position: absolute; left: 0; right: 0; bottom: 0; \
@@ -262,6 +275,7 @@ fn tab_bar() -> ElementHandle {
     }
 }
 
+#[component]
 fn now_playing() -> ElementHandle {
     let playing = is_playing();
     let toggle = move || playing.update(|p| *p = !*p);
@@ -304,6 +318,7 @@ fn now_playing() -> ElementHandle {
     }
 }
 
+#[component]
 fn header() -> ElementHandle {
     let bg_style = format!(
         "width: 100%; padding: 60px 20px 18px; \
@@ -346,6 +361,7 @@ fn header() -> ElementHandle {
     }
 }
 
+#[component]
 fn chips() -> ElementHandle {
     render! {
         view {
@@ -358,6 +374,7 @@ fn chips() -> ElementHandle {
     }
 }
 
+#[component]
 fn recents() -> ElementHandle {
     render! {
         scroll_view {
@@ -372,6 +389,7 @@ fn recents() -> ElementHandle {
     }
 }
 
+#[component]
 fn featured() -> ElementHandle {
     let cap = format!(
         "font-size: 12px; color: {TEXT_SECONDARY}; \
@@ -395,6 +413,7 @@ fn featured() -> ElementHandle {
     }
 }
 
+#[component]
 fn grid() -> ElementHandle {
     render! {
         view {
@@ -410,6 +429,7 @@ fn grid() -> ElementHandle {
     }
 }
 
+#[component]
 fn activity_feed() -> ElementHandle {
     render! {
         view {
@@ -423,6 +443,7 @@ fn activity_feed() -> ElementHandle {
     }
 }
 
+#[component]
 fn scroll_body() -> ElementHandle {
     let style = format!(
         "flex-grow: 1; flex-shrink: 1; width: 100%; background-color: {BG}; \

@@ -102,11 +102,10 @@ fn fetch_blocking() -> Result<Vec<Story>, String> {
 /// Single story row. `story` is cloned in because `For` hands each
 /// item to its `children` closure by value.
 ///
-/// Plain `fn`, not `#[component]`, so there's no extra wrapper
-/// `view` between this and `For`'s child slot — the wrapper is
-/// unstyled and would collapse the row to 0 px. `For` already
-/// gives each item its own reactive owner, so per-component remount
-/// would be redundant.
+/// `#[component]` so that editing the row layout / styling reflects
+/// via per-component remount on hot reload (issue #17 made
+/// `#[component]` layout-transparent).
+#[component]
 fn story_row(story: Story) -> ElementHandle {
     let title = story
         .title
@@ -158,6 +157,7 @@ fn story_row(story: Story) -> ElementHandle {
 }
 
 /// HN-style orange header bar.
+#[component]
 fn header() -> ElementHandle {
     let bar_style = format!(
         "width: 100%; padding: 16px; \
@@ -181,9 +181,7 @@ fn header() -> ElementHandle {
 /// Status banner — uses a closure that returns `&'static str` so
 /// we can read the signal reactively without owned-String capture
 /// issues. Empty string when there's nothing to say (loaded state).
-///
-/// Plain `fn` (not `#[component]`) for the same reason as
-/// `story_row`: no extra unstyled wrapper view.
+#[component]
 fn status_banner(state: RwSignal<LoadState>) -> ElementHandle {
     let status_text = move || match state.get() {
         LoadState::Loading => "Loading top stories…",
@@ -207,10 +205,7 @@ fn status_banner(state: RwSignal<LoadState>) -> ElementHandle {
 
 /// Root of the app. Owns the load-state signal and kicks off the
 /// background fetch on mount.
-///
-/// Plain `fn` so the body lives directly under `page` with no extra
-/// wrapper view — needed because `page`'s flex layout propagates
-/// size to its direct child only.
+#[component]
 pub fn hn_reader() -> ElementHandle {
     let state = RwSignal::new(LoadState::Loading);
 
