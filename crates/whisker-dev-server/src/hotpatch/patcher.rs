@@ -167,18 +167,14 @@ impl Patcher {
             )
         })?;
 
-        let t_validate = std::time::Instant::now();
         validate_environment(captured_rustc, &self.rustc_path)
             .context("environment validation before thin rebuild")?;
-        let dt_validate = t_validate.elapsed();
 
         // Stage 1: rustc the user crate to a single `.o` file.
-        let t_rustc = std::time::Instant::now();
         let obj_plan = thin_build::build_obj_plan(captured_rustc, &self.patch_out_dir);
         let object = run_obj_plan(&obj_plan, &self.rustc_path, &self.cwd)
             .await
             .context("rustc --emit=obj for thin patch")?;
-        let dt_rustc = t_rustc.elapsed();
 
         // Stage 2: synthesize a stub `.o` that maps every host symbol
         // the patch refers to onto its live runtime address. The stub
@@ -193,7 +189,6 @@ impl Patcher {
         // device dispatch always goes through the stub branch since
         // `lib.rs::run` skips Tier 1 entirely when no aslr_reference
         // has been reported.
-        let t_stub = std::time::Instant::now();
         let extras: Vec<PathBuf> = if aslr_reference == 0 {
             Vec::new()
         } else {
@@ -222,10 +217,7 @@ impl Patcher {
             e
         };
 
-        let dt_stub = t_stub.elapsed();
-
         // Stage 3: link the `.o` (+ optional stub `.o`) into a patch dylib.
-        let t_link = std::time::Instant::now();
         let output_dylib = self.expected_patch_path();
         // Required exports for the patch dylib's `.dynsym`. See
         // `build_link_plan` doc for the `whisker_aslr_anchor`
@@ -248,31 +240,18 @@ impl Patcher {
         let new_dylib = run_link_plan(&link_plan, &self.linker_path, &self.cwd)
             .await
             .context("link patch dylib (object + stub)")?;
-        let dt_link = t_link.elapsed();
 
-        let t_parse = std::time::Instant::now();
         let new_symbols = parse_symbol_table(&new_dylib)
             .with_context(|| format!("parse {}", new_dylib.display()))?;
         let new_base_address = read_image_base(&new_dylib)?;
-        let dt_parse = t_parse.elapsed();
 
-        let t_diff = std::time::Instant::now();
-        let plan = build_jump_table(
+        Ok(build_jump_table(
             &self.original_cache.symbols,
             &new_symbols,
             new_dylib,
             self.original_cache.aslr_reference,
             new_base_address,
-        );
-        let dt_diff = t_diff.elapsed();
-
-        eprintln!(
-            "[whisker-dev-server] patch breakdown: validate={:?}, rustc={:?}, \
-             stub={:?}, link={:?}, parse={:?}, diff={:?}",
-            dt_validate, dt_rustc, dt_stub, dt_link, dt_parse, dt_diff,
-        );
-
-        Ok(plan)
+        ))
     }
 
     /// Return the stub object bytes for `object`+`aslr_reference`.

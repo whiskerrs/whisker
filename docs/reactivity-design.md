@@ -392,11 +392,6 @@ The wrapper element is created at first mount and lives under the
 child list is untouched and navigation / scroll position / sibling
 order are preserved.
 
-After per-component remount, `mark_all_dirty` is called to re-fire
-any remaining effects (helpers wrapped in `{expr}` interpolation
-that aren't `#[component]`s themselves) so their closure-body
-edits also pick up the patched code.
-
 ### Macro-emitted body shape
 
 `#[component]` wraps the user body in a `Box<dyn Fn() -> ElementHandle>`,

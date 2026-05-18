@@ -242,18 +242,6 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
         // visible tree. State local to the remounted component is
         // lost; state held in context / above the remount point
         // survives.
-        //
-        // We deliberately do NOT call `mark_all_dirty` here. The
-        // `{expr}` interpolation child in `render!` registers as
-        // an effect that, when fired, *removes its previous
-        // attached element* and re-runs `attach_to(parent, expr)`.
-        // For `{component_call()}` children that means dropping the
-        // freshly-remounted body_root (the one our batched remount
-        // just attached) and creating a *second* MountSite for the
-        // same component, duplicating it in the parent's child
-        // list. The duplication was the cause of the
-        // "two scroll-views on top of each other" symptom during
-        // hot reload prior to fix.
         remount_components_for(&patched);
     }
     reactive_flush();
