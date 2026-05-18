@@ -265,23 +265,29 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
             // The body closure has two layers:
             //
             // 1. Outer: re-clones the captured props on every
-            //    invocation, then hands them off to subsecond's
-            //    dispatch. Sits in `Box<dyn Fn>` so the runtime can
-            //    hold it via `Rc` and re-invoke on remount.
+            //    invocation (`#restores`), then dispatches the user
+            //    body through subsecond. Sits in `Box<dyn Fn>` so the
+            //    runtime can hold it via `Rc` and re-invoke on remount.
             //
-            // 2. Inner: the user's actual `#block`. Wrapped by
-            //    `whisker::__main_runtime::call_component_body`,
-            //    which routes through `subsecond::call` so that
-            //    `HotFn::try_call` consults the JumpTable for the
-            //    inner closure's `call_it` and dispatches to the
-            //    patched address. Without this layer, calling the
-            //    body's vtable runs OLD code even after the JumpTable
-            //    has been updated.
+            // 2. Inner: the user's actual `#block`. `::whisker::__hot::call`
+            //    is `::subsecond::call` (or a no-op shim when the
+            //    `hot-reload` feature is off). The crucial detail is
+            //    that the closure literal `move || { #block }`
+            //    appears here in the macro expansion — which lives
+            //    at the user crate's source position, not whisker's.
+            //    `<F as HotFunction>::call_it`'s mangled name
+            //    therefore lives at the user crate's path, and
+            //    JumpTable entries from `apply_patch` (which
+            //    enumerate user crate symbols) can target it.
+            //    Going through a wrapper closure defined inside
+            //    whisker would put `call_it` at a whisker-side path
+            //    that no user-crate patch touches, and hot reload
+            //    would silently fail.
             let __body: ::std::boxed::Box<
                 dyn ::std::ops::Fn() -> ::whisker::runtime::view::ElementHandle + 'static,
             > = ::std::boxed::Box::new(move || {
                 #(#restores)*
-                ::whisker::__main_runtime::call_component_body(move || {
+                ::whisker::__hot::call(move || {
                     #block
                 })
             });

@@ -96,45 +96,32 @@ pub mod __main_runtime {
         f()
     }
 
-    /// Dispatch a `#[component]` body through subsecond so that hot
-    /// patches to the body (or any closure it transitively
-    /// instantiates — effects, memos, event handlers) reach the
-    /// running app.
-    ///
-    /// Without this wrapper, the body's `Rc<dyn Fn>` would be called
-    /// directly via its vtable, which points at the OLD `call_it`
-    /// address. Subsecond's `apply_patch` only updates the global
-    /// JumpTable; old call sites that don't consult it keep running
-    /// the pre-patch code. `HotFn::try_call` (what `subsecond::call`
-    /// uses internally) does consult the JumpTable — looking up
-    /// `<F as HotFunction>::call_it` for the wrapped closure and
-    /// transmuting to the patched fn pointer.
-    ///
-    /// The closure passed here is anonymous — instantiated at the
-    /// `#[component]` macro's expansion site in the user crate.
-    /// Its `call_it` has a stable mangled name across recompiles, so
-    /// patch builds keep the JumpTable entry pointing at the new
-    /// address.
-    ///
-    /// Like `call_user_app`, this is `#[inline(always)]` so the
-    /// `subsecond::call` invocation lands in the user crate's
-    /// compilation unit — that's where the JumpTable expects to find
-    /// the matching `call_it`.
+}
+
+/// Hot-reload dispatcher namespace exposed for the `#[component]`
+/// macro. With the `hot-reload` feature on, this re-exports
+/// `subsecond::call`; with it off, a no-op shim that just calls the
+/// closure directly.
+///
+/// The macro emits `::whisker::__hot::call(move || { #block })`
+/// **inline at the user crate's source position**. That placement is
+/// the load-bearing detail: the closure type (and thus its
+/// `<F as HotFunction>::call_it` monomorphization) lives at the
+/// user crate's mangled path, which is what `apply_patch`'s
+/// JumpTable entries key on. Wrapping the call through a helper
+/// closure that lives in this crate (as the earlier
+/// `call_component_body` attempt did) puts the dispatchable
+/// `call_it` at a whisker-side path that the user-crate patch
+/// never touches — and hot reload silently fails.
+#[doc(hidden)]
+pub mod __hot {
     #[cfg(feature = "hot-reload")]
-    #[inline(always)]
-    pub fn call_component_body<F: FnOnce() -> ElementHandle>(body: F) -> ElementHandle {
-        // `subsecond::call` wants `FnMut`. The user body is logically
-        // `FnOnce` (each remount creates a fresh closure), so we
-        // wrap in an `Option::take` adapter. `body` is only called
-        // once per `call_component_body` invocation.
-        let mut body_slot = Some(body);
-        ::subsecond::call(move || (body_slot.take().expect("body called twice"))())
-    }
+    pub use ::subsecond::call;
 
     #[cfg(not(feature = "hot-reload"))]
     #[inline(always)]
-    pub fn call_component_body<F: FnOnce() -> ElementHandle>(body: F) -> ElementHandle {
-        body()
+    pub fn call<O>(mut f: impl FnMut() -> O) -> O {
+        f()
     }
 }
 
