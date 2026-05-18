@@ -29,6 +29,31 @@ use super::runtime::OwnerId;
 use super::with_runtime;
 use crate::view::{self, ElementHandle};
 
+/// Temporary diagnostic log helper. iOS-aware so messages reach
+/// `xcrun simctl spawn booted log stream` for hot-reload debugging
+/// (`eprintln!` to stderr is dropped on iOS by default).
+fn log_diag(msg: &str) {
+    #[cfg(target_os = "ios")]
+    {
+        unsafe extern "C" {
+            fn syslog(priority: std::os::raw::c_int, fmt: *const std::os::raw::c_char, ...);
+        }
+        const LOG_INFO: std::os::raw::c_int = 6;
+        let mut buf: Vec<u8> = Vec::with_capacity(msg.len() + 16);
+        buf.extend_from_slice(b"[whisker-dev] ");
+        buf.extend_from_slice(msg.as_bytes());
+        buf.push(0);
+        let fmt = b"%s\0";
+        unsafe {
+            syslog(LOG_INFO, fmt.as_ptr() as *const _, buf.as_ptr());
+        }
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        eprintln!("[whisker-dev] {msg}");
+    }
+}
+
 /// Mount a component: create a fresh child owner, register `fn_ptr`
 /// against it for hot reload, run `body` inside that owner, and
 /// return both the owner id and the body's result.
@@ -377,7 +402,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
 }
 
 fn remount_one(mount_id: MountId) {
-    eprintln!("[whisker-dev] remount_one START: {:?}", mount_id);
+    log_diag(&format!("remount_one START: {:?}", mount_id));
     // Step 1: pull parent / anchor / body Rc / previous owner+root
     // out of the runtime. We can't hold the borrow across `body()`
     // because user code inside it re-enters via `view::*` /
@@ -405,13 +430,13 @@ fn remount_one(mount_id: MountId) {
     // to remount it. Skip; the entry stays in the registry but is
     // effectively dead.
     let Some(parent) = parent else {
-        eprintln!("[whisker-dev] remount_one SKIP (no parent): {:?}", mount_id);
+        log_diag(&format!("remount_one SKIP (no parent): {:?}", mount_id));
         return;
     };
-    eprintln!(
-        "[whisker-dev] remount_one {:?}: parent={:?} anchor={:?} fn_ptr={:?}",
+    log_diag(&format!(
+        "remount_one {:?}: parent={:?} anchor={:?} fn_ptr={:?}",
         mount_id, parent, anchor, fn_ptr
-    );
+    ));
 
     // Step 2: figure out where the old body root sits in `parent`'s
     // child list, so we can re-insert at the same position. We

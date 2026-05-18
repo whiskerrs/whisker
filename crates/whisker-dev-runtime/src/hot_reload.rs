@@ -65,7 +65,29 @@ pub fn devlog(line: &str) {
             );
         }
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        // iOS app stderr from `eprintln!` doesn't reach the unified
+        // log, so use `syslog(3)` which does. `simctl spawn booted log
+        // stream` then picks it up — the simplest device-side
+        // observability for dev builds.
+        unsafe extern "C" {
+            fn syslog(priority: std::os::raw::c_int, fmt: *const std::os::raw::c_char, ...);
+        }
+        // LOG_INFO = 6 — surfaces in `log stream` without being
+        // filtered as noisy debug output by default.
+        const LOG_INFO: std::os::raw::c_int = 6;
+        let mut buf: Vec<u8> = Vec::with_capacity(line.len() + 16);
+        buf.extend_from_slice(b"[whisker-dev] ");
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(0);
+        let fmt = b"%s\0";
+        unsafe {
+            syslog(LOG_INFO, fmt.as_ptr() as *const _, buf.as_ptr());
+        }
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         eprintln!("[whisker-dev] {line}");
     }
