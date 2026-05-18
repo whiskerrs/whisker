@@ -475,6 +475,10 @@ fn remount_one(mount_id: MountId) {
         rt.component_owners.entry(fn_ptr).or_default().push(new_owner);
     });
     let new_body_root = with_owner(new_owner, || (*body)());
+    log_diag(&format!(
+        "remount_one {:?}: new_body_root={:?} (old was {:?})",
+        mount_id, new_body_root, old_body_root
+    ));
 
     // Step 6: insert new body_root at the slot's original index,
     // clear the pending-mount entry the body's
