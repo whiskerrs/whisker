@@ -85,6 +85,42 @@ pub fn dispose_owner(owner: OwnerId) {
                 }
             }
         });
+
+        // Step 1c: also clean up any remountable MountSite whose
+        // owner is this one. Without this scrub, cascading disposal
+        // (e.g. parent component re-mounts and discards its
+        // sub-tree) leaves orphan MountSites behind, and the next
+        // `remount_components_for` call processes them — operating
+        // on freed parent / body_root handles, with visible
+        // corruption (issue #17 follow-up).
+        //
+        // `site.owner` is `None` *during* a remount (the takes-then-
+        // reinstalls window in `remount_one`), so this scan won't
+        // accidentally evict the site that's mid-flight. It only
+        // matches MountSites whose component owner is the one
+        // actually being disposed.
+        with_runtime(|rt| {
+            let stale: Vec<super::component::MountId> = rt
+                .mount_sites
+                .iter()
+                .filter_map(|(id, site)| {
+                    if site.owner == Some(owner) {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for id in stale {
+                rt.mount_sites.remove(&id);
+                if let Some(list) = rt.fn_ptr_mounts.get_mut(&fp) {
+                    list.retain(|m| *m != id);
+                    if list.is_empty() {
+                        rt.fn_ptr_mounts.remove(&fp);
+                    }
+                }
+            }
+        });
     }
 
     // Step 2: detach from parent's children list.

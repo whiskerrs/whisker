@@ -319,6 +319,66 @@ fn dispose_owner_releases_owned_elements() {
 }
 
 #[test]
+fn nested_component_mount_sites_cleared_on_parent_remount() {
+    // Regression test for the iOS-side breakage when `scroll_body`
+    // (a parent #[component]) was remounted after a string-literal
+    // edit: child `#[component]` MountSites from the disposed
+    // subtree were left in the runtime registry, and the next
+    // `remount_components_for` call processed them too — touching
+    // freed parent / body_root handles and corrupting the screen.
+    //
+    // The fix in `dispose_owner` scrubs `mount_sites` /
+    // `fn_ptr_mounts` for any orphaned child. This test pins that
+    // behaviour: after a parent remount, the child fn pointer's
+    // MountSite list should equal the count of live child
+    // invocations, not double up with the pre-remount entries.
+    use whisker::runtime::reactive::owners_for_fn;
+
+    #[component]
+    fn inner() -> ElementHandle {
+        render! {
+            view { text { "x" } }
+        }
+    }
+
+    #[component]
+    fn outer() -> ElementHandle {
+        render! {
+            view {
+                {inner()}
+                {inner()}
+                {inner()}
+            }
+        }
+    }
+
+    with_recorder_and_owner(|_log| {
+        let (_parent, _root) = mount_under_test_parent(|| outer());
+
+        // After initial mount: 1 outer + 3 inner owners.
+        assert_eq!(owners_for_fn(outer as *const ()).len(), 1);
+        assert_eq!(
+            owners_for_fn(inner as *const ()).len(),
+            3,
+            "three inner invocations expected after initial mount",
+        );
+
+        // Remount outer (simulates subsecond patching outer's body).
+        // This should dispose the 3 old inner owners + their
+        // MountSites, then create 3 fresh inner invocations.
+        remount_components_for(&[outer as *const ()]);
+
+        // The count must stay at 3 — not balloon to 6.
+        assert_eq!(
+            owners_for_fn(inner as *const ()).len(),
+            3,
+            "after parent remount, child owners should be exactly the new 3, \
+             not the old 3 + new 3 (orphan MountSites must be scrubbed)",
+        );
+    });
+}
+
+#[test]
 fn remount_preserves_signal_held_above_in_context() {
     // Demonstrates the recommended state-survival pattern: state
     // held in an outer signal/context survives remount, while
