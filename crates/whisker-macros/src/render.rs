@@ -114,7 +114,15 @@ impl Parse for Node {
                 kwargs: body.kwargs,
                 children: body.children,
             }))
-        } else if starts_uppercase(&body.tag) {
+        } else if starts_uppercase(&body.tag)
+            && (!body.kwargs.is_empty() || !body.children.is_empty())
+        {
+            // PascalCase with a non-empty body is an explicit user
+            // mistake — give a snake_case hint. We skip the
+            // rejection when the body is empty (no kwargs and no
+            // children) because that's overwhelmingly an
+            // in-flight typing state (`render! { Sh| `) where RA
+            // wants identifier completion at the tag span.
             Err(syn::Error::new(
                 body.tag.span(),
                 format!(
@@ -172,6 +180,24 @@ struct TagBody {
 impl TagBody {
     fn parse(input: ParseStream) -> Result<Self> {
         let tag: Ident = input.parse()?;
+
+        // Tolerate the partial-input shape `IDENT` with no following
+        // `{ … }`. When the user is mid-typing (`render! { v|`) the
+        // macro should still produce *some* expansion so
+        // rust-analyzer can perform tag-name completion at the
+        // identifier's source span. We return an empty body and let
+        // the codegen path emit a bare builder-call shape; if the
+        // tag identifier is incomplete the resulting code won't
+        // compile, but its only purpose is to expose the cursor
+        // position to RA.
+        if !input.peek(token::Brace) {
+            return Ok(Self {
+                tag,
+                kwargs: Vec::new(),
+                children: Vec::new(),
+            });
+        }
+
         let body;
         braced!(body in input);
 
