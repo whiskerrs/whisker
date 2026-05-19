@@ -689,10 +689,17 @@ impl ElementNode {
         // tag-name token preserves the user's source span so RA
         // jump-to-definition and hover docs hit the right thing.
         let tag_ident = &self.tag;
-        let ctor = {
-            let span = self.tag.span();
-            quote_spanned! {span=> ::whisker::__tags::#tag_ident() }
-        };
+        let tag_span = self.tag.span();
+        let ctor = quote_spanned! {tag_span=> ::whisker::__tags::#tag_ident() };
+        // Explicit type annotation on the builder binding. Helps
+        // rust-analyzer's method completion on partial input: when
+        // the user types `view { s|`, the macro emission is
+        // `__b.s(())` where `__b: ::whisker::__tags::view`. With the
+        // type annotated up front, RA doesn't need to re-resolve
+        // the builder's type through the (possibly invalid) chain
+        // — it knows the receiver is `view` and offers `view`'s
+        // methods (`style`, `class`, …) as completion candidates.
+        let builder_ty = quote_spanned! {tag_span=> ::whisker::__tags::#tag_ident };
 
         // Partial-kwarg identifiers that didn't match any builder
         // method get re-emitted as bare identifier references so
@@ -737,9 +744,8 @@ impl ElementNode {
 
         quote! {
             {
-                let __h = #ctor
-                    #(#setter_calls)*
-                    .__h();
+                let __b: #builder_ty = #ctor;
+                let __h = __b #(#setter_calls)* .__h();
                 #ident_refs_block
                 #(#child_stmts)*
                 __h
@@ -1292,6 +1298,37 @@ mod tests {
         assert!(
             output.contains(". sty"),
             "partial kwarg matching method prefix must emit `.sty(())`; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn single_char_partial_kwarg_emits_method_call() {
+        let input: TokenStream2 = quote::quote! { view { s } };
+        let output = super::expand_test(input).to_string();
+        eprintln!("DUMP partial-s: {output}");
+        assert!(
+            output.contains(". s ("),
+            "view {{ s }} should emit `.s(())`; output was: {output}"
+        );
+    }
+
+    #[test]
+    fn partial_kwarg_followed_by_child_still_emits_method_call() {
+        // The real-world failing case: user typed `s` inside a
+        // `view {}` that already has another child below it, e.g.
+        // `view { s\n text {...} }`.
+        let input: TokenStream2 = quote::quote! {
+            view {
+                s
+                text { "hi" }
+            }
+        };
+        let output = super::expand_test(input).to_string();
+        eprintln!("DUMP partial-s-with-child: {output}");
+        assert!(
+            output.contains(". s ("),
+            "partial `s` followed by child should still emit `.s(())`; \
              output was: {output}"
         );
     }
