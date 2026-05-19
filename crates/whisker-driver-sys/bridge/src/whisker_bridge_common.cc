@@ -34,9 +34,6 @@ struct WhiskerEngine {
     // Borrowed Lynx shell handle. Lifetime is bounded by the LynxView the
     // engine was attached to — see WhiskerEngine destruction below.
     lynx_shell_t* shell = nullptr;
-    // Strong reference to the installed root page (so Lynx doesn't
-    // drop it while we still own the engine).
-    lynx_fiber_element_t* root_page = nullptr;
     // Set by the platform glue once it has wired its event hook into
     // the host. Only meaningful to the glue layer; common code just
     // stores it.
@@ -144,13 +141,11 @@ bool whisker_bridge_internal_dispatch_event(int32_t element_sign,
 
 extern "C" void whisker_bridge_engine_release(WhiskerEngine* engine) {
     if (engine == nullptr) return;
-    // The root page keeps a reference into Lynx; drop it first so the
-    // shell can clean up cleanly even if the caller has torn down the
-    // LynxView already.
-    if (engine->root_page != nullptr) {
-        lynx_element_release(engine->root_page);
-        engine->root_page = nullptr;
-    }
+    // The shell owns its own RefPtr to the root page (constructed
+    // inside `lynx_shell_set_root_element`), so releasing the shell
+    // transitively drops Lynx's reference to it. The WhiskerElement
+    // wrapper for the page is freed via its `release_element` call
+    // on the Whisker-runtime side, independently of this.
     if (engine->shell != nullptr) {
         lynx_shell_release(engine->shell);
         engine->shell = nullptr;
@@ -273,16 +268,27 @@ extern "C" void whisker_bridge_set_root(WhiskerEngine* engine, WhiskerElement* p
         page == nullptr || page->handle == nullptr) {
         return;
     }
-    // Take over the page's Lynx handle. The engine now owns the
-    // strong ref; clear the WhiskerElement's handle so subsequent
-    // release_element is a no-op (the caller's WhiskerElement* is
-    // still safe to call release on, just won't double-free).
-    if (engine->root_page != nullptr) {
-        lynx_element_release(engine->root_page);
-    }
-    engine->root_page = page->handle;
-    page->handle = nullptr;
-    lynx_shell_set_root_element(engine->shell, engine->root_page);
+    // `lynx_shell_set_root_element` constructs its own
+    // `fml::RefPtr<PageElement>` from the handle (bumping Lynx's
+    // intrusive refcount) and stores it inside the shell. After this
+    // call the page's underlying FiberElement is kept alive by the
+    // shell's strong ref, *independent* of the WhiskerElement's
+    // handle.
+    //
+    // We deliberately do NOT clear `page->handle` here, nor stash an
+    // aliased pointer in `engine->root_page`. Both would break
+    // subsequent `append_child(page, …)` / `remove_child(page, …)`
+    // calls (the null-handle guard in those functions would silently
+    // no-op every operation on the root page), which is fatal for
+    // the per-component remount path — every hot patch detaches /
+    // reattaches body roots on the root page.
+    //
+    // Shell teardown releases its strong ref via `lynx_shell_release`
+    // (in `whisker_bridge_engine_release`); the WhiskerElement's ref
+    // is released via the normal `release_element` path when the
+    // root owner is disposed. The two refs never share ownership of
+    // the `lynx_fiber_element_t` wrapper, so there's no double-free.
+    lynx_shell_set_root_element(engine->shell, page->handle);
 }
 
 extern "C" void whisker_bridge_flush(WhiskerEngine* engine) {

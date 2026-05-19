@@ -6,7 +6,28 @@ Website: [whisker.rs](https://whisker.rs) · Source: [github.com/whiskerrs/whisk
 
 > **Status**: Pre-alpha. Active development on the initial scaffold. Not usable yet.
 
-Whisker lets you build native iOS and Android apps in Rust with a Dioxus-style declarative API. Under the hood, the [Lynx](https://github.com/lynx-family/lynx) engine drives platform-native widgets — no self-rendering, no JavaScript runtime.
+Whisker lets you build native iOS and Android apps in Rust with a Leptos-style **fine-grained reactive** API — components run once, signals + effects drive granular updates, no virtual DOM. Under the hood, the [Lynx](https://github.com/lynx-family/lynx) engine drives platform-native widgets — no self-rendering, no JavaScript runtime.
+
+```rust
+use whisker::prelude::*;
+use whisker::runtime::view::ElementHandle;
+
+#[whisker::main]
+fn app() -> ElementHandle {
+    let count = RwSignal::new(0);
+    render! {
+        page {
+            style: "padding: 20px; display: flex; flex-direction: column; gap: 12px;",
+            text { "Count: " {count.get()} }
+            view {
+                style: "padding: 8px 16px; background: #3b82f6; border-radius: 6px;",
+                on_tap: move || count.update(|n| *n += 1),
+                text { style: "color: white;", "+1" }
+            }
+        }
+    }
+}
+```
 
 ## Why Whisker
 
@@ -15,7 +36,8 @@ Whisker lets you build native iOS and Android apps in Rust with a Dioxus-style d
 | Language | Rust | Dart | TypeScript / JavaScript |
 | Rendering | Native widgets (via Lynx) | Self-rendered (Skia/Impeller) | Native widgets |
 | Runtime dependency | None | Dart VM | JS engine (Hermes / JSC) |
-| Hot reload | Yes (rsx delta + dylib swap) | Yes (Dart VM) | Yes (Metro / Fast Refresh) |
+| Reactivity model | Fine-grained signals + effects (Leptos-style) | StatefulWidget rebuilds | Component re-render + diff |
+| Hot reload | Yes (subsecond function-body patch) | Yes (Dart VM) | Yes (Metro / Fast Refresh) |
 
 ## Project layout
 
@@ -29,9 +51,9 @@ whisker/
 │   ├── whisker-dev-runtime      Dev-only runtime (WebSocket, hot reload)
 │   ├── whisker-driver           Backend driver (host shim, BridgeRenderer)
 │   ├── whisker-driver-sys       Raw FFI bindings + C++ bridge sources (bridge/)
-│   ├── whisker-macros           Proc macros (#[whisker::main], rsx!)
+│   ├── whisker-macros           Proc macros (#[whisker::main], #[component], render!)
 │   ├── whisker-plugin           Plugin trait + PrebuildContext + typed mod APIs
-│   └── whisker-runtime          Core runtime (reactive, element tree)
+│   └── whisker-runtime          Core runtime (reactive arena, view layer)
 ├── native/
 │   ├── android/               Kotlin runtime (WhiskerApplication / WhiskerView etc.)
 │   └── ios/                   Swift runtime (WhiskerAppDelegate / WhiskerView etc.)
@@ -49,11 +71,23 @@ Major decisions made so far:
 - **Custom widgets in native languages** (Kotlin/Swift) bridged via uniffi.
 - **Code-based CNG** — `whisker.rs` (Rust code) defines app config; plugins are Rust crates with a `pub fn whisker_plugin(ctx)` function.
 - **Hybrid CLI** — `whisker` (primary) and `cargo whisker` (alias).
-- **Hot reload** — Tier 1 (rsx delta, sub-second) + Tier 2 (dylib swap, 5–30s).
+- **Hot reload** — Tier 1 (subsecond function-body patch, ~1s) + Tier 2 (dylib swap, 5–30s).
+- **Leptos-style fine-grained reactivity** — components run once,
+  `signal` + `effect` + `memo` form a dependency graph, the
+  `render!` macro wires up per-property effects so a signal write
+  updates only the affected element attribute. No virtual DOM, no
+  diff pass.
 
-See `docs/` for design notes — currently
-[`docs/hot-reload-plan.md`](docs/hot-reload-plan.md) for the
-in-progress Tier 1 (subsecond) hot-reload pipeline.
+See `docs/` for design notes:
+
+- [`docs/reactivity.md`](docs/reactivity.md) — user guide for
+  signals, effects, components, control flow.
+- [`docs/render-macro.md`](docs/render-macro.md) — `render!`
+  syntax reference.
+- [`docs/reactivity-design.md`](docs/reactivity-design.md) —
+  internal architecture (arena, owner tree, batching, hot-reload).
+- [`docs/hot-reload-plan.md`](docs/hot-reload-plan.md) — Tier 1
+  subsecond pipeline.
 
 ## Development
 

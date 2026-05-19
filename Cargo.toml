@@ -13,7 +13,9 @@ members = [
     "crates/whisker-macros",
     "crates/whisker-runtime",
     "crates/whisker-subsecond",
+    "examples/counter",
     "examples/hello-world",
+    "examples/hn-reader",
     "examples/subsecond-poc",
 ]
 exclude = [

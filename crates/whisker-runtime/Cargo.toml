@@ -10,3 +10,8 @@ description = "Core runtime for Whisker: reactive primitives, element tree, Lynx
 
 [dependencies]
 thiserror = { workspace = true }
+# Generational slot map for reactive node / owner storage. Generational
+# keys mean a disposed slot can't be confused with a fresh allocation
+# at the same index — critical for `Copy` signal handles that may
+# outlive their owner.
+slotmap = "1"

@@ -1,45 +1,60 @@
-//! Renderer impl that calls into the C++ bridge.
+//! `DynRenderer` impl that drives the C++ Lynx bridge.
 //!
-//! Must only be used from inside a `whisker_bridge_dispatch` callback (i.e.
-//! on the Lynx TASM thread).
+//! Must only be used from inside a `whisker_bridge_dispatch` callback
+//! (i.e. on the Lynx TASM thread). The bootstrap installs an instance
+//! of this type into the `whisker_runtime::view` thread-local before
+//! invoking the user's `render!`-bearing fn, so the macro's
+//! `create_element` / `set_attribute` / etc. calls land here.
+//!
+//! Translation layer: the public `ElementHandle` is a `u32` index
+//! assigned by [`BridgeRenderer::create_element`]. Internally a
+//! `Vec<Option<NonNull<WhiskerElement>>>` maps each index back to the
+//! raw C pointer the bridge gave us. Released slots become `None`;
+//! we don't currently reuse them (cheap; can be revisited if
+//! per-frame churn ever matters).
 
 use std::ffi::{c_void, CString};
 use std::ptr::NonNull;
+
 use whisker_driver_sys::{self as ffi, WhiskerElement, WhiskerElementTag, WhiskerEngine};
 use whisker_runtime::element::ElementTag;
-use whisker_runtime::renderer::Renderer;
+use whisker_runtime::view::{DynRenderer, ElementHandle};
 
 pub struct BridgeRenderer {
     engine: NonNull<WhiskerEngine>,
-    /// Owned closures behind every event listener we registered with
-    /// the bridge. The double `Box<Box<…>>` is intentional and *not*
-    /// the `clippy::vec_box` smell: `Box<dyn Fn()>` is a fat (data +
-    /// vtable) pointer that doesn't fit in the C ABI's
-    /// `user_data: *mut c_void`. The outer `Box` gives us a stable
-    /// heap location whose *thin* address we can hand the bridge;
-    /// the inner `Box<dyn Fn()>` is the actual erased closure. Vec
-    /// because each registration leaks one entry — fine for the demo
-    /// lifetime; a future iteration could reclaim when listeners are
-    /// replaced.
+    /// Index → raw C element pointer. `None` means the slot has been
+    /// released. Index assigned at `create_element` time, returned in
+    /// the public `ElementHandle`.
+    elements: Vec<Option<NonNull<WhiskerElement>>>,
+    /// Owned per-event listener closures. See the type-shape comment
+    /// on the old `Renderer` impl for the double-box rationale —
+    /// unchanged because the bridge's C ABI is unchanged.
     #[allow(clippy::vec_box)]
     listeners: Vec<Box<Box<dyn Fn() + 'static>>>,
 }
 
 impl BridgeRenderer {
     /// # Safety
-    /// `engine` must point to a valid WhiskerEngine returned from
-    /// `whisker_bridge_engine_attach`. Caller must ensure this renderer is
-    /// only used inside a `whisker_bridge_dispatch` callback for the same
-    /// engine.
+    /// `engine` must point to a valid `WhiskerEngine` returned from
+    /// `whisker_bridge_engine_attach`. Caller guarantees the
+    /// renderer is only used inside a `whisker_bridge_dispatch`
+    /// callback for the same engine.
     pub unsafe fn from_raw(engine: *mut WhiskerEngine) -> Option<Self> {
         NonNull::new(engine).map(|engine| Self {
             engine,
+            elements: Vec::new(),
             listeners: Vec::new(),
         })
     }
 
     fn engine_ptr(&self) -> *mut WhiskerEngine {
         self.engine.as_ptr()
+    }
+
+    fn lookup(&self, handle: ElementHandle) -> Option<NonNull<WhiskerElement>> {
+        self.elements
+            .get(handle.id() as usize)
+            .and_then(|slot| *slot)
     }
 }
 
@@ -54,83 +69,91 @@ fn map_tag(tag: ElementTag) -> WhiskerElementTag {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ElementHandle(*mut WhiskerElement);
-
-// SAFETY: handles are only used from a single thread (TASM).
-unsafe impl Send for ElementHandle {}
-
-impl Renderer for BridgeRenderer {
-    type ElementHandle = ElementHandle;
-
-    fn create_element(&mut self, tag: ElementTag) -> Self::ElementHandle {
+impl DynRenderer for BridgeRenderer {
+    fn create_element(&mut self, tag: ElementTag) -> ElementHandle {
         let raw = unsafe { ffi::whisker_bridge_create_element(self.engine_ptr(), map_tag(tag)) };
-        ElementHandle(raw)
-    }
-
-    fn release_element(&mut self, handle: Self::ElementHandle) {
-        unsafe { ffi::whisker_bridge_release_element(handle.0) }
-    }
-
-    fn set_attribute(&mut self, handle: Self::ElementHandle, key: &str, value: &str) {
-        let key_c = match CString::new(key) {
-            Ok(c) => c,
-            Err(_) => return,
+        let ptr = match NonNull::new(raw) {
+            Some(p) => p,
+            None => return ElementHandle::from_raw(u32::MAX),
         };
-        let value_c = match CString::new(value) {
-            Ok(c) => c,
-            Err(_) => return,
+        let id = self.elements.len() as u32;
+        self.elements.push(Some(ptr));
+        ElementHandle::from_raw(id)
+    }
+
+    fn release_element(&mut self, handle: ElementHandle) {
+        if let Some(slot) = self.elements.get_mut(handle.id() as usize) {
+            if let Some(ptr) = slot.take() {
+                unsafe { ffi::whisker_bridge_release_element(ptr.as_ptr()) };
+            }
+        }
+    }
+
+    fn set_attribute(&mut self, handle: ElementHandle, key: &str, value: &str) {
+        let Some(ptr) = self.lookup(handle) else {
+            return;
         };
-        unsafe { ffi::whisker_bridge_set_attribute(handle.0, key_c.as_ptr(), value_c.as_ptr()) }
-    }
-
-    fn set_inline_styles(&mut self, handle: Self::ElementHandle, css: &str) {
-        let css_c = match CString::new(css) {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(key_c) = CString::new(key) else { return };
+        let Ok(value_c) = CString::new(value) else {
+            return;
         };
-        unsafe { ffi::whisker_bridge_set_inline_styles(handle.0, css_c.as_ptr()) }
+        unsafe {
+            ffi::whisker_bridge_set_attribute(ptr.as_ptr(), key_c.as_ptr(), value_c.as_ptr())
+        };
     }
 
-    fn append_child(&mut self, parent: Self::ElementHandle, child: Self::ElementHandle) {
-        unsafe { ffi::whisker_bridge_append_child(parent.0, child.0) }
+    fn set_inline_styles(&mut self, handle: ElementHandle, css: &str) {
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
+        let Ok(css_c) = CString::new(css) else { return };
+        unsafe { ffi::whisker_bridge_set_inline_styles(ptr.as_ptr(), css_c.as_ptr()) };
     }
 
-    fn remove_child(&mut self, parent: Self::ElementHandle, child: Self::ElementHandle) {
-        unsafe { ffi::whisker_bridge_remove_child(parent.0, child.0) }
+    fn append_child(&mut self, parent: ElementHandle, child: ElementHandle) {
+        let Some(p) = self.lookup(parent) else { return };
+        let Some(c) = self.lookup(child) else { return };
+        unsafe { ffi::whisker_bridge_append_child(p.as_ptr(), c.as_ptr()) };
+    }
+
+    fn remove_child(&mut self, parent: ElementHandle, child: ElementHandle) {
+        let Some(p) = self.lookup(parent) else { return };
+        let Some(c) = self.lookup(child) else { return };
+        unsafe { ffi::whisker_bridge_remove_child(p.as_ptr(), c.as_ptr()) };
     }
 
     fn set_event_listener(
         &mut self,
-        handle: Self::ElementHandle,
+        handle: ElementHandle,
         event_name: &str,
         callback: Box<dyn Fn() + 'static>,
     ) {
-        let name_c = match CString::new(event_name) {
-            Ok(c) => c,
-            Err(_) => return,
+        let Some(ptr) = self.lookup(handle) else {
+            return;
         };
-        // Double-box: outer Box owned by `self.listeners`, inner is the
-        // Box<dyn Fn> passed in. Convert to raw pointer for the C ABI.
+        let Ok(name_c) = CString::new(event_name) else {
+            return;
+        };
         let outer: Box<Box<dyn Fn() + 'static>> = Box::new(callback);
         let raw = Box::as_ref(&outer) as *const Box<dyn Fn() + 'static> as *mut c_void;
         self.listeners.push(outer);
         unsafe {
             ffi::whisker_bridge_set_event_listener(
-                handle.0,
+                ptr.as_ptr(),
                 name_c.as_ptr(),
                 rust_event_trampoline,
                 raw,
             )
-        }
+        };
     }
 
-    fn set_root(&mut self, page: Self::ElementHandle) {
-        unsafe { ffi::whisker_bridge_set_root(self.engine_ptr(), page.0) }
+    fn set_root(&mut self, page: ElementHandle) {
+        let Some(ptr) = self.lookup(page) else { return };
+        unsafe { ffi::whisker_bridge_set_root(self.engine_ptr(), ptr.as_ptr()) };
     }
 
     fn flush(&mut self) {
-        unsafe { ffi::whisker_bridge_flush(self.engine_ptr()) }
+        unsafe { ffi::whisker_bridge_flush(self.engine_ptr()) };
     }
 }
 
@@ -138,9 +161,6 @@ extern "C" fn rust_event_trampoline(user_data: *mut c_void) {
     if user_data.is_null() {
         return;
     }
-    // SAFETY: `user_data` was set up in `set_event_listener` to point at
-    // a `Box<dyn Fn() + 'static>` whose owning Box lives in
-    // `BridgeRenderer::listeners`. We borrow it without taking ownership.
     let cb = unsafe { &*(user_data as *const Box<dyn Fn() + 'static>) };
     cb();
 }

@@ -41,14 +41,11 @@ use crate::render::render;
 // (the gradle wrapper jar) are copied verbatim. `gradlew` is text but
 // needs the +x bit on Unix so it lives in its own list.
 
-const APP_BUILD_GRADLE_KTS: &str =
-    include_str!("templates/android/app/build.gradle.kts");
-const APP_MANIFEST_XML: &str =
-    include_str!("templates/android/app/src/main/AndroidManifest.xml");
+const APP_BUILD_GRADLE_KTS: &str = include_str!("templates/android/app/build.gradle.kts");
+const APP_MANIFEST_XML: &str = include_str!("templates/android/app/src/main/AndroidManifest.xml");
 const MAIN_ACTIVITY_KT: &str =
     include_str!("templates/android/app/src/main/kotlin/MainActivity.kt");
-const APPLICATION_KT: &str =
-    include_str!("templates/android/app/src/main/kotlin/Application.kt");
+const APPLICATION_KT: &str = include_str!("templates/android/app/src/main/kotlin/Application.kt");
 const ROOT_BUILD_GRADLE_KTS: &str = include_str!("templates/android/build.gradle.kts");
 const SETTINGS_GRADLE_KTS: &str = include_str!("templates/android/settings.gradle.kts");
 const GRADLE_PROPERTIES: &str = include_str!("templates/android/gradle.properties");
@@ -125,7 +122,10 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
     v.insert("version", inputs.version.clone());
     v.insert("build_number", inputs.build_number.to_string());
     v.insert("android_application_id", inputs.application_id.clone());
-    v.insert("android_application_class", application_class_name(&inputs.app_name));
+    v.insert(
+        "android_application_class",
+        application_class_name(&inputs.app_name),
+    );
     v.insert("android_min_sdk", inputs.min_sdk.to_string());
     v.insert("android_target_sdk", inputs.target_sdk.to_string());
     v.insert("android_project_name", project_name(&inputs.app_name));
@@ -214,8 +214,8 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
         ),
     ];
     for (path, template) in text_files {
-        let rendered = render(template, &vars)
-            .with_context(|| format!("render {}", path.display()))?;
+        let rendered =
+            render(template, &vars).with_context(|| format!("render {}", path.display()))?;
         write_file(path, rendered.as_bytes(), false)?;
     }
 
@@ -243,8 +243,8 @@ fn clean_managed_tree(out_dir: &Path) -> Result<()> {
         return Ok(());
     }
     let keep = ["app/build", ".gradle", "app/src/main/jniLibs"];
-    for entry in std::fs::read_dir(out_dir)
-        .with_context(|| format!("read_dir {}", out_dir.display()))?
+    for entry in
+        std::fs::read_dir(out_dir).with_context(|| format!("read_dir {}", out_dir.display()))?
     {
         let entry = entry?;
         let rel = entry
@@ -273,8 +273,8 @@ fn clean_managed_tree(out_dir: &Path) -> Result<()> {
 }
 
 fn clean_under_app(app_dir: &Path) -> Result<()> {
-    for entry in std::fs::read_dir(app_dir)
-        .with_context(|| format!("read_dir {}", app_dir.display()))?
+    for entry in
+        std::fs::read_dir(app_dir).with_context(|| format!("read_dir {}", app_dir.display()))?
     {
         let entry = entry?;
         // Keep `build/` (gradle's output) and the jniLibs subtree.
@@ -291,8 +291,8 @@ fn clean_under_app(app_dir: &Path) -> Result<()> {
 }
 
 fn clean_under_src(src_dir: &Path) -> Result<()> {
-    for entry in std::fs::read_dir(src_dir)
-        .with_context(|| format!("read_dir {}", src_dir.display()))?
+    for entry in
+        std::fs::read_dir(src_dir).with_context(|| format!("read_dir {}", src_dir.display()))?
     {
         let entry = entry?;
         if entry.path().is_dir() && entry.file_name() == "main" {
@@ -305,8 +305,8 @@ fn clean_under_src(src_dir: &Path) -> Result<()> {
 }
 
 fn clean_under_main(main_dir: &Path) -> Result<()> {
-    for entry in std::fs::read_dir(main_dir)
-        .with_context(|| format!("read_dir {}", main_dir.display()))?
+    for entry in
+        std::fs::read_dir(main_dir).with_context(|| format!("read_dir {}", main_dir.display()))?
     {
         let entry = entry?;
         // Keep the jniLibs subtree (dylib drops here).
@@ -413,9 +413,7 @@ mod tests {
             min_sdk: 24,
             target_sdk: 34,
             rust_lib_name: "hello_world".into(),
-            whisker_runtime_path: PathBuf::from(
-                "/abs/native/android/whisker-runtime",
-            ),
+            whisker_runtime_path: PathBuf::from("/abs/native/android/whisker-runtime"),
             whisker_lynx_aar_dir: PathBuf::from("/abs/target/lynx-android"),
             template_version: 2,
         }
@@ -425,7 +423,10 @@ mod tests {
     fn template_vars_carry_required_keys() {
         let inputs = sample_inputs();
         let vars = template_vars(&inputs);
-        assert_eq!(vars["android_application_id"], "rs.whisker.examples.helloworld");
+        assert_eq!(
+            vars["android_application_id"],
+            "rs.whisker.examples.helloworld"
+        );
         assert_eq!(vars["android_application_class"], "HelloWorldApplication");
         assert_eq!(vars["android_min_sdk"], "24");
         assert_eq!(vars["android_target_sdk"], "34");
@@ -436,7 +437,10 @@ mod tests {
 
     #[test]
     fn application_class_strips_punctuation() {
-        assert_eq!(application_class_name("Hello World"), "HelloWorldApplication");
+        assert_eq!(
+            application_class_name("Hello World"),
+            "HelloWorldApplication"
+        );
         assert_eq!(application_class_name("My-App"), "MyAppApplication");
     }
 
@@ -522,8 +526,7 @@ mod tests {
         next.target_sdk = 35;
         let regenerated = sync(&out, &next).unwrap();
         assert!(regenerated);
-        let app_gradle =
-            std::fs::read_to_string(out.join("app/build.gradle.kts")).unwrap();
+        let app_gradle = std::fs::read_to_string(out.join("app/build.gradle.kts")).unwrap();
         assert!(app_gradle.contains("compileSdk = 35"));
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -551,8 +554,10 @@ mod tests {
 
     #[test]
     fn inputs_from_errors_when_application_id_unset() {
-        let mut cfg = AppConfig::default();
-        cfg.name = Some("X".into());
+        let cfg = AppConfig {
+            name: Some("X".into()),
+            ..AppConfig::default()
+        };
         let err = inputs_from(&cfg, "x".into(), PathBuf::new(), PathBuf::new()).unwrap_err();
         assert!(err.to_string().contains("application_id"), "got: {err:#}");
     }

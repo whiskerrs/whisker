@@ -406,19 +406,13 @@ fn check_lynx() -> Vec<Check> {
     // Pinned version + source.
     out.push(Check::ok(
         "Pinned Lynx fork",
-        format!(
-            "{} (from whiskerrs/lynx)",
-            whisker_build::LYNX_FORK_TAG,
-        ),
+        format!("{} (from whiskerrs/lynx)", whisker_build::LYNX_FORK_TAG,),
     ));
 
     // Override status.
     if let Some(dir) = std::env::var_os("WHISKER_LYNX_DIR") {
         let p = PathBuf::from(&dir);
-        out.push(Check::ok(
-            "WHISKER_LYNX_DIR override",
-            short_path(&p),
-        ));
+        out.push(Check::ok("WHISKER_LYNX_DIR override", short_path(&p)));
     }
 
     // Per-platform cache state.
@@ -448,7 +442,10 @@ fn check_lynx() -> Vec<Check> {
                 ));
             }
             Err(e) => {
-                out.push(Check::warn(label, format!("cache path unresolvable: {e:#}")));
+                out.push(Check::warn(
+                    label,
+                    format!("cache path unresolvable: {e:#}"),
+                ));
             }
         }
     }

@@ -33,11 +33,9 @@ use whisker_app_config::AppConfig;
 use crate::fingerprint;
 use crate::render::render;
 
-const PBXPROJ: &str =
-    include_str!("templates/ios/Project.xcodeproj/project.pbxproj");
-const XCWORKSPACEDATA: &str = include_str!(
-    "templates/ios/Project.xcodeproj/project.xcworkspace/contents.xcworkspacedata"
-);
+const PBXPROJ: &str = include_str!("templates/ios/Project.xcodeproj/project.pbxproj");
+const XCWORKSPACEDATA: &str =
+    include_str!("templates/ios/Project.xcodeproj/project.xcworkspace/contents.xcworkspacedata");
 const INFO_PLIST: &str = include_str!("templates/ios/Info.plist");
 const APP_DELEGATE_SWIFT: &str = include_str!("templates/ios/Sources/AppDelegate.swift");
 
@@ -90,10 +88,7 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
     v.insert("build_number", inputs.build_number.to_string());
     v.insert("ios_scheme", inputs.scheme.clone());
     v.insert("ios_bundle_id", inputs.bundle_id.clone());
-    v.insert(
-        "ios_deployment_target",
-        inputs.deployment_target.clone(),
-    );
+    v.insert("ios_deployment_target", inputs.deployment_target.clone());
     v.insert(
         "whisker_runtime_ios_path",
         inputs.whisker_runtime_path.display().to_string(),
@@ -106,17 +101,19 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
 
     // Wipe the previous tree but keep the per-build output dir —
     // expensive to recreate and re-derivable by re-running xcodebuild.
-    clean_managed_tree(out_dir, &inputs.scheme)
-        .context("clean previous iOS gen tree")?;
+    clean_managed_tree(out_dir, &inputs.scheme).context("clean previous iOS gen tree")?;
 
     // Top-level text files (plain templates).
     let text_files: &[(PathBuf, &str)] = &[
         (out_dir.join("Info.plist"), INFO_PLIST),
-        (out_dir.join("Sources/AppDelegate.swift"), APP_DELEGATE_SWIFT),
+        (
+            out_dir.join("Sources/AppDelegate.swift"),
+            APP_DELEGATE_SWIFT,
+        ),
     ];
     for (path, template) in text_files {
-        let rendered = render(template, &vars)
-            .with_context(|| format!("render {}", path.display()))?;
+        let rendered =
+            render(template, &vars).with_context(|| format!("render {}", path.display()))?;
         write_file(path, rendered.as_bytes())?;
     }
 
@@ -146,8 +143,8 @@ fn clean_managed_tree(out_dir: &Path, scheme: &str) -> Result<()> {
     // and is expensive to rebuild; preserve it.
     let xcodeproj_dir = format!("{scheme}.xcodeproj");
     let keep = ["build"];
-    for entry in std::fs::read_dir(out_dir)
-        .with_context(|| format!("read_dir {}", out_dir.display()))?
+    for entry in
+        std::fs::read_dir(out_dir).with_context(|| format!("read_dir {}", out_dir.display()))?
     {
         let entry = entry?;
         let name = entry.file_name();
@@ -185,10 +182,7 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Pull the iOS-relevant subset of `AppConfig` into the renderer
 /// input struct. Errors out on required fields. `scheme` defaults to
 /// `name`; `bundle_id` defaults to the top-level `app.bundle_id`.
-pub fn inputs_from(
-    app_config: &AppConfig,
-    whisker_runtime_path: PathBuf,
-) -> Result<IosInputs> {
+pub fn inputs_from(app_config: &AppConfig, whisker_runtime_path: PathBuf) -> Result<IosInputs> {
     let app_name = app_config
         .name
         .clone()
@@ -208,9 +202,11 @@ pub fn inputs_from(
         .bundle_id
         .clone()
         .or_else(|| app_config.bundle_id.clone())
-        .ok_or_else(|| anyhow!(
+        .ok_or_else(|| {
+            anyhow!(
             "whisker.rs: app.ios(|i| i.bundle_id(\"…\")) (or app.bundle_id) is required for iOS"
-        ))?;
+        )
+        })?;
     let deployment_target = app_config
         .ios
         .deployment_target
@@ -286,10 +282,8 @@ mod tests {
         let tmp = unique_tempdir();
         let out = tmp.join("gen/ios");
         sync(&out, &sample_inputs()).unwrap();
-        let pbxproj = std::fs::read_to_string(
-            out.join("HelloWorld.xcodeproj/project.pbxproj"),
-        )
-        .unwrap();
+        let pbxproj =
+            std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
         assert!(pbxproj.contains("PRODUCT_BUNDLE_IDENTIFIER = \"rs.whisker.examples.helloWorld\""));
         assert!(pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = \"13.0\""));
         assert!(pbxproj.contains("relativePath = \"/abs/native/ios\""));
@@ -339,8 +333,10 @@ mod tests {
 
     #[test]
     fn inputs_from_errors_when_bundle_id_unset() {
-        let mut cfg = AppConfig::default();
-        cfg.name = Some("X".into());
+        let cfg = AppConfig {
+            name: Some("X".into()),
+            ..AppConfig::default()
+        };
         let err = inputs_from(&cfg, PathBuf::new()).unwrap_err();
         assert!(err.to_string().contains("bundle_id"), "got: {err:#}");
     }

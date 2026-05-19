@@ -65,7 +65,29 @@ pub fn devlog(line: &str) {
             );
         }
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_os = "ios")]
+    {
+        // iOS app stderr from `eprintln!` doesn't reach the unified
+        // log, so use `syslog(3)` which does. `simctl spawn booted log
+        // stream` then picks it up — the simplest device-side
+        // observability for dev builds.
+        unsafe extern "C" {
+            fn syslog(priority: std::os::raw::c_int, fmt: *const std::os::raw::c_char, ...);
+        }
+        // LOG_INFO = 6 — surfaces in `log stream` without being
+        // filtered as noisy debug output by default.
+        const LOG_INFO: std::os::raw::c_int = 6;
+        let mut buf: Vec<u8> = Vec::with_capacity(line.len() + 16);
+        buf.extend_from_slice(b"[whisker-dev] ");
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(0);
+        let fmt = b"%s\0";
+        unsafe {
+            syslog(LOG_INFO, fmt.as_ptr() as *const _, buf.as_ptr());
+        }
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         eprintln!("[whisker-dev] {line}");
     }
@@ -194,7 +216,7 @@ where
                                 // only runs inside `tick_callback`
                                 // and the TASM thread is idle when
                                 // nothing else is happening.
-                                whisker_runtime::signal::wake_runtime();
+                                whisker_runtime::host_wake::wake_runtime();
                             }
                             Err(e) => {
                                 devlog(&format!("could not materialise patch dylib: {e}"));
@@ -320,9 +342,7 @@ fn parse_patch_frame(
         return Err(format!("frame too short ({} bytes, need ≥8)", bytes.len()).into());
     }
     let json_len = u64::from_be_bytes(bytes[..8].try_into().unwrap()) as usize;
-    let header_end = 8usize
-        .checked_add(json_len)
-        .ok_or("json_len overflow")?;
+    let header_end = 8usize.checked_add(json_len).ok_or("json_len overflow")?;
     if bytes.len() < header_end {
         return Err(format!(
             "frame truncated: header claims {} json bytes but only {} available",
@@ -331,10 +351,11 @@ fn parse_patch_frame(
         )
         .into());
     }
-    let header: Header = serde_json::from_slice(&bytes[8..header_end])
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+    let header: Header = serde_json::from_slice(&bytes[8..header_end]).map_err(
+        |e| -> Box<dyn std::error::Error + Send + Sync> {
             format!("parse json header: {e}").into()
-        })?;
+        },
+    )?;
     let Header::Patch { table } = header;
     Ok((table, &bytes[header_end..]))
 }

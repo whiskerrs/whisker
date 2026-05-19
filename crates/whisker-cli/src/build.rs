@@ -88,10 +88,7 @@ pub fn run(args: Args) -> Result<()> {
 fn build_android_apk(m: &manifest::ResolvedManifest, workspace_root: &Path) -> Result<()> {
     // 0. Ensure Lynx artifacts are cached + symlinked into `target/`.
     whisker_build::ensure_lynx_android()?;
-    whisker_build::link_lynx_into_workspace(
-        workspace_root,
-        whisker_build::LynxPlatform::Android,
-    )?;
+    whisker_build::link_lynx_into_workspace(workspace_root, whisker_build::LynxPlatform::Android)?;
 
     // 1. Sync `gen/android/` from whisker.rs.
     let sync = native::sync_for_target(

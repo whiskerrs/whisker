@@ -1,0 +1,22 @@
+[package]
+name = "hn-reader"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Hacker News reader — Whisker example demonstrating worker-thread fetch + run_on_main_thread marshaling."
+
+# Plain rlib — mirrors counter / hello-world. `whisker run/build`
+# rebuilds this as a dylib for mobile targets.
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+
+# Blocking HTTPS client. `tls` (default) uses rustls + webpki-roots, so
+# no system-cert dependency on Android / iOS.
+ureq = "2"
+
+# JSON parsing for the Algolia HN API response.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

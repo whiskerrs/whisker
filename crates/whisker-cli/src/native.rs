@@ -74,28 +74,22 @@ fn sync_android(
         lynx_aars,
     )?;
     let gen_dir = crate_dir.join("gen/android");
-    let regenerated = whisker_cng::sync_android(&gen_dir, &inputs)
-        .context("render gen/android")?;
+    let regenerated = whisker_cng::sync_android(&gen_dir, &inputs).context("render gen/android")?;
     Ok(NativeSync {
         gen_dir,
         regenerated,
     })
 }
 
-fn sync_ios(
-    app_config: &AppConfig,
-    crate_dir: &Path,
-    workspace_root: &Path,
-) -> Result<NativeSync> {
-    let whisker_runtime = resolve_whisker_native(workspace_root, "ios")
-        .context("resolve Whisker's native/ios")?;
+fn sync_ios(app_config: &AppConfig, crate_dir: &Path, workspace_root: &Path) -> Result<NativeSync> {
+    let whisker_runtime =
+        resolve_whisker_native(workspace_root, "ios").context("resolve Whisker's native/ios")?;
     let inputs = whisker_cng::ios::inputs_from(app_config, whisker_runtime)?;
     let gen_dir = crate_dir.join("gen/ios");
     // whisker-cng renders the full Xcode project directly (pbxproj +
     // xcworkspacedata + sources). No xcodegen subprocess needed —
     // see crates/whisker-cng/src/ios.rs for the rationale.
-    let regenerated = whisker_cng::sync_ios(&gen_dir, &inputs)
-        .context("render gen/ios")?;
+    let regenerated = whisker_cng::sync_ios(&gen_dir, &inputs).context("render gen/ios")?;
     Ok(NativeSync {
         gen_dir,
         regenerated,

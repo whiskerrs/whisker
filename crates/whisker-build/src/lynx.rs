@@ -179,8 +179,7 @@ fn ensure_lynx(platform: LynxPlatform) -> Result<PathBuf> {
 
     let url = download_url(platform);
     eprintln!("[whisker-build::lynx] downloading {url}");
-    let bytes = http_get(&url)
-        .with_context(|| format!("download {url}"))?;
+    let bytes = http_get(&url).with_context(|| format!("download {url}"))?;
     verify_sha256(&bytes, expected_sha).with_context(|| {
         format!(
             "checksum mismatch for {url}; \
@@ -189,8 +188,7 @@ fn ensure_lynx(platform: LynxPlatform) -> Result<PathBuf> {
         )
     })?;
 
-    std::fs::create_dir_all(&cache)
-        .with_context(|| format!("mkdir -p {}", cache.display()))?;
+    std::fs::create_dir_all(&cache).with_context(|| format!("mkdir -p {}", cache.display()))?;
     extract_tar_gz(&bytes, &cache)
         .with_context(|| format!("extract tar.gz into {}", cache.display()))?;
 
@@ -201,10 +199,7 @@ fn ensure_lynx(platform: LynxPlatform) -> Result<PathBuf> {
             cache.display(),
         );
     }
-    eprintln!(
-        "[whisker-build::lynx] cached at {}",
-        cache.display(),
-    );
+    eprintln!("[whisker-build::lynx] cached at {}", cache.display(),);
     Ok(cache)
 }
 
@@ -354,13 +349,15 @@ pub fn tarball_filename(platform: LynxPlatform) -> String {
 pub fn link_into_workspace(workspace_root: &Path, platform: LynxPlatform) -> Result<()> {
     let cache = cache_dir(platform)?;
     let target = workspace_root.join("target");
-    std::fs::create_dir_all(&target)
-        .with_context(|| format!("mkdir -p {}", target.display()))?;
+    std::fs::create_dir_all(&target).with_context(|| format!("mkdir -p {}", target.display()))?;
 
     match platform {
         LynxPlatform::Android => {
             relink(&target.join("lynx-android"), &cache)?;
-            relink(&target.join("lynx-android-unpacked"), &cache.join("unpacked"))?;
+            relink(
+                &target.join("lynx-android-unpacked"),
+                &cache.join("unpacked"),
+            )?;
         }
         LynxPlatform::Ios => {
             relink(&target.join("lynx-ios"), &cache)?;
@@ -401,9 +398,8 @@ fn relink(link: &Path, target: &Path) -> Result<()> {
 
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(target, link).with_context(|| {
-            format!("symlink {} -> {}", link.display(), target.display())
-        })?;
+        std::os::unix::fs::symlink(target, link)
+            .with_context(|| format!("symlink {} -> {}", link.display(), target.display()))?;
     }
     #[cfg(not(unix))]
     {
@@ -418,8 +414,7 @@ fn relink(link: &Path, target: &Path) -> Result<()> {
 
 #[cfg(test)]
 fn write_tar_gz_for_test(files: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut gz =
-        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     {
         let mut tar = tar::Builder::new(&mut gz);
         for (path, contents) in files {
@@ -538,7 +533,10 @@ mod tests {
 
     #[test]
     fn strip_root_component_drops_first_segment() {
-        assert_eq!(strip_root_component(Path::new("a/b/c")), PathBuf::from("b/c"));
+        assert_eq!(
+            strip_root_component(Path::new("a/b/c")),
+            PathBuf::from("b/c")
+        );
         assert_eq!(strip_root_component(Path::new("only-root")), PathBuf::new());
         assert_eq!(strip_root_component(Path::new("a/")), PathBuf::new());
     }
@@ -591,6 +589,7 @@ mod tests {
         // Skip the test if the SHA constants are pinned to non-empty
         // (i.e. P4c has happened and a real release exists). In that
         // case this code path would actually go fetch from the net.
+        #[allow(clippy::const_is_empty)]
         if !LYNX_ANDROID_SHA256.is_empty() {
             unsafe {
                 std::env::remove_var("XDG_CACHE_HOME");
@@ -599,10 +598,7 @@ mod tests {
             return;
         }
         let err = ensure_lynx_android().unwrap_err();
-        assert!(
-            err.to_string().contains("not available"),
-            "got: {err:#}",
-        );
+        assert!(err.to_string().contains("not available"), "got: {err:#}",);
         unsafe {
             std::env::remove_var("XDG_CACHE_HOME");
         }
@@ -671,7 +667,10 @@ mod tests {
         let target = tmp.join("dest");
         std::fs::create_dir_all(&target).unwrap();
         let err = relink(&link, &target).unwrap_err();
-        assert!(err.to_string().contains("refusing to clobber"), "got: {err:#}");
+        assert!(
+            err.to_string().contains("refusing to clobber"),
+            "got: {err:#}"
+        );
         // File should still be there with its original contents.
         assert_eq!(std::fs::read(&link).unwrap(), b"important");
         let _ = std::fs::remove_dir_all(&tmp);

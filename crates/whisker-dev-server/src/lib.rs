@@ -56,9 +56,9 @@ pub mod watcher;
 
 pub use builder::Builder;
 pub use installer::Installer;
-pub use whisker_build::CaptureShims;
 pub use server::{Patch, PatchSender};
 pub use watcher::{Change, ChangeKind};
+pub use whisker_build::CaptureShims;
 
 // ----- Config & enums --------------------------------------------------------
 
