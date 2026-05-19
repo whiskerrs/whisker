@@ -724,15 +724,23 @@ impl ElementNode {
             })
             .collect();
 
+        let ident_refs_block = if ident_refs.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                #[allow(dead_code, unused_variables, path_statements)]
+                {
+                    #(#ident_refs)*
+                }
+            }
+        };
+
         quote! {
             {
                 let __h = #ctor
                     #(#setter_calls)*
                     .__h();
-                #[allow(dead_code, unused_variables, path_statements)]
-                {
-                    #(#ident_refs)*
-                }
+                #ident_refs_block
                 #(#child_stmts)*
                 __h
             }
@@ -1269,6 +1277,37 @@ mod tests {
         assert!(
             output.contains(". scroll_orientation"),
             "scroll_view.scroll_orientation should lower to the dedicated method; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn partial_kwarg_matching_method_emits_method_call() {
+        // `view { sty|` mid-typing: parser produces partial kwarg
+        // `sty`, codegen should still emit `.sty(())` so RA can do
+        // method completion against `view`'s builder.
+        let input: TokenStream2 = quote::quote! { view { sty } };
+        let output = super::expand_test(input).to_string();
+        eprintln!("DUMP partial-sty: {output}");
+        assert!(
+            output.contains(". sty"),
+            "partial kwarg matching method prefix must emit `.sty(())`; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn partial_kwarg_non_matching_emits_ident_ref() {
+        // `view { v|` mid-typing: `v` doesn't match any of view's
+        // builder methods (`style`, `class`, `on_tap`, …), so the
+        // emitter falls through to a bare `let _ = v;` reference
+        // for identifier completion.
+        let input: TokenStream2 = quote::quote! { view { v } };
+        let output = super::expand_test(input).to_string();
+        eprintln!("DUMP partial-v: {output}");
+        assert!(
+            output.contains("let _ = v"),
+            "non-method-matching partial should emit ident-ref; \
              output was: {output}"
         );
     }
