@@ -28,7 +28,7 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::{
     braced,
     parse::{Parse, ParseStream, Result},
@@ -38,6 +38,16 @@ use syn::{
 pub fn expand(input: TokenStream) -> TokenStream {
     let root = parse_macro_input!(input as Root);
     root.to_tokens().into()
+}
+
+/// Test-only hook: same parse + lowering as `expand` but works on
+/// `proc_macro2::TokenStream` so unit tests can drive it without
+/// going through `proc_macro::TokenStream` (which needs the real
+/// compiler context).
+#[cfg(test)]
+fn expand_test(input: TokenStream2) -> TokenStream2 {
+    let root: Root = syn::parse2(input).expect("test input must parse");
+    root.to_tokens()
 }
 
 // ---- AST ------------------------------------------------------------------
@@ -415,11 +425,72 @@ impl ElementNode {
             }
         }
 
+        let ra_hint = self.emit_ra_hint();
+
         quote! {
             {
+                #ra_hint
                 let __h = ::whisker::runtime::view::create_element(#tag_path);
                 #(#stmts)*
                 __h
+            }
+        }
+    }
+
+    /// Emit a `if false { … }` "hint block" so rust-analyzer can
+    /// resolve the tag identifier (jump-to-definition) and offer
+    /// field-name completion on prop kwargs. Only built-in tags with
+    /// a corresponding `::whisker::__tags::<tag>` struct produce a
+    /// hint; everything else gets an empty block.
+    ///
+    /// The user's prop value expressions are **not** duplicated into
+    /// the hint — doing so would break `move ||` closures and
+    /// double-move owned values (the borrow checker analyses inside
+    /// `if false` regardless of run-time reachability). The hint
+    /// uses `None` placeholders for each known field; the user's
+    /// value still type-checks at the real codegen site below.
+    fn emit_ra_hint(&self) -> TokenStream2 {
+        let tag_name = self.tag.to_string();
+        let tag_span = self.tag.span();
+        let hint_path = match tag_name.as_str() {
+            "view" => quote_spanned!(tag_span=> ::whisker::__tags::view),
+            _ => return quote! {},
+        };
+
+        // Only emit fields the hint struct knows about; pass-through
+        // attribute names are skipped from the hint (the real
+        // codegen below still handles them).
+        let known_fields: &[&str] = match tag_name.as_str() {
+            "view" => &["style", "on_tap", "class"],
+            _ => &[],
+        };
+        let fields: Vec<TokenStream2> = self
+            .attrs
+            .iter()
+            .filter(|attr| known_fields.contains(&attr.name.to_string().as_str()))
+            .map(|attr| {
+                let name = &attr.name;
+                // Field name keeps the user's span (interpolated
+                // as-is); the colon, value, and trailing comma use
+                // macro-internal call-site spans so RA isn't
+                // confused about which source position corresponds
+                // to which part of the struct-init.
+                quote! {
+                    #name : ::std::option::Option::None ,
+                }
+            })
+            .collect();
+
+        quote! {
+            // Hint to rust-analyzer. Never executed.
+            #[allow(unreachable_code, unused, dead_code, clippy::all)]
+            {
+                if false {
+                    let _: #hint_path = #hint_path {
+                        #(#fields)*
+                        ..::std::default::Default::default()
+                    };
+                }
             }
         }
     }
@@ -717,7 +788,7 @@ mod tests {
     use super::{
         is_builtin_tag, pascal_to_snake_hint, snake_to_props_ident, strip_on_prefix,
     };
-    use proc_macro2::Span;
+    use proc_macro2::{Span, TokenStream as TokenStream2};
     use syn::Ident;
 
     #[test]
@@ -799,5 +870,52 @@ mod tests {
 
         let id = Ident::new("tab_item", Span::call_site());
         assert_eq!(snake_to_props_ident(&id).to_string(), "TabItemProps");
+    }
+
+    // ---- RA hint emission ----------------------------------------
+
+    #[test]
+    fn view_emission_includes_ra_hint() {
+        // The macro's output for `render! { view { style: "x" } }`
+        // must include a reference to `::whisker::__tags::view` so
+        // rust-analyzer can resolve the tag identifier for
+        // jump-to-definition.
+        let input: TokenStream2 = quote::quote! { view { style: "x" } };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains("__tags") && output.contains(":: view"),
+            "view emission must reference ::whisker::__tags::view; \
+             output was: {output}"
+        );
+        // The user's prop name must appear inside the hint struct
+        // init (drives RA's field-name completion).
+        assert!(
+            output.contains("style :"),
+            "hint should include `style:` field; output was: {output}"
+        );
+    }
+
+    #[test]
+    fn non_view_tag_skips_ra_hint() {
+        // Other built-ins don't yet have hint structs — make sure we
+        // emit nothing rather than blow up.
+        let input: TokenStream2 = quote::quote! { text { "hello" } };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            !output.contains("__tags"),
+            "text emission must not reference __tags yet; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn user_component_skips_ra_hint() {
+        let input: TokenStream2 = quote::quote! { my_card { title: "x" } };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            !output.contains("__tags"),
+            "user components must not emit built-in tag hints; \
+             output was: {output}"
+        );
     }
 }

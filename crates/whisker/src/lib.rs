@@ -56,6 +56,51 @@ pub mod __typed_builder {
     pub use ::typed_builder::TypedBuilder;
 }
 
+/// Type hints the `render!` macro emits so rust-analyzer can offer
+/// jump-to-definition, hover docs, and field-name completion on
+/// built-in tags. These structs are never instantiated at runtime —
+/// the macro wraps each hint in an `if false {}` block whose only
+/// purpose is to expose RA-readable token positions.
+///
+/// Internal. Not part of the public surface.
+#[doc(hidden)]
+pub mod __tags {
+    /// `<view>` — Lynx's flex container.
+    ///
+    /// The most basic layout primitive in Whisker: a rectangular
+    /// box that lays out its children with CSS flexbox. Equivalent
+    /// to `<View>` in React Native or `<div>` in the web.
+    ///
+    /// ## Common props
+    ///
+    /// - `style:` — CSS-string. Static (`"padding: 16px;"`) or
+    ///   reactive (`format!("color: {}", color.get())`).
+    /// - `on_tap:` — `Fn()` callback invoked when the user taps the
+    ///   view's bounds.
+    /// - `class:` — Lynx class name (rarely used; inline `style:`
+    ///   is the idiomatic choice).
+    ///
+    /// Any other attribute name is forwarded to Lynx's
+    /// `set_attribute` (snake_case → kebab-case translation). The
+    /// fields listed here are the ones rust-analyzer offers in
+    /// auto-completion; pass-through attributes still work, they
+    /// just don't show up in the IDE prompts.
+    #[allow(non_camel_case_types)]
+    #[derive(Default)]
+    pub struct view {
+        /// Inline CSS string. Anything that converts to `String`
+        /// via `ToString` (static `&str`, owned `String`,
+        /// `format!()` interpolating signal reads, …).
+        pub style: ::std::option::Option<::std::string::String>,
+        /// Tap handler — invoked once per tap on the view's bounds.
+        pub on_tap: ::std::option::Option<
+            ::std::boxed::Box<dyn ::std::ops::Fn()>,
+        >,
+        /// Lynx class name applied to the element.
+        pub class: ::std::option::Option<::std::string::String>,
+    }
+}
+
 // Worker-thread → main-thread marshaling. The typical use case is
 // "fetch on a worker thread, update signal on the main thread":
 //
@@ -152,4 +197,11 @@ pub mod prelude {
         effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
         signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,
     };
+    // Built-in tag names re-exported as zero-sized hint structs so
+    // rust-analyzer can complete `v|` → `view` etc. when typing
+    // inside `render! { … }`. These are never used at runtime — the
+    // macro consumes the identifier and emits imperative
+    // element-creation code itself.
+    #[doc(hidden)]
+    pub use crate::__tags::view;
 }
