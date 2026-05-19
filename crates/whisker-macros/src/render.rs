@@ -55,10 +55,17 @@ impl Parse for Root {
 }
 
 enum Node {
+    /// Built-in element (`view`, `text`, `image`, …). Lowered to
+    /// `view::create_element` + `set_attribute` + `append_child`.
     Element(ElementNode),
-    Component(ComponentNode),
+    /// Built-in control-flow component (`Show`, `For`). PascalCase
+    /// idents that aren't `Show`/`For` are a compile error.
+    ControlFlow(ControlFlowNode),
+    /// User-defined `#[component]` invocation: lowercase ident NOT in
+    /// the built-in whitelist. Lowered to
+    /// `fn_name(FnNameProps::builder().kwarg(value)…build())`.
+    UserComponent(UserComponentNode),
     Text(LitStr),
-    /// Reserved for Step 3 — currently emits a `compile_error!`.
     Expr(Expr),
 }
 
@@ -73,23 +80,74 @@ impl Parse for Node {
             let expr: Expr = content.parse()?;
             return Ok(Node::Expr(expr));
         }
-        // IDENT { ... } — element or component depending on case of
-        // the first character of the identifier.
+        // IDENT { ... } dispatch:
+        //
+        //   - lowercase + in built-in whitelist → Element
+        //   - lowercase + NOT in whitelist     → UserComponent
+        //   - "Show" / "For"                   → ControlFlow
+        //   - other uppercase                  → compile error
+        //
+        // The case split mirrors Leptos: only built-in primitives
+        // and control-flow keywords are special-cased; everything
+        // else is a user component invocation.
         let body = TagBody::parse(input)?;
-        if starts_uppercase(&body.tag) {
-            Ok(Node::Component(ComponentNode {
-                name: body.tag,
-                kwargs: body.kwargs,
-                children: body.children,
-            }))
-        } else {
+        let name = body.tag.to_string();
+        if is_builtin_tag(&name) {
             Ok(Node::Element(ElementNode {
                 tag: body.tag,
                 attrs: body.kwargs,
                 children: body.children,
             }))
+        } else if name == "Show" || name == "For" {
+            Ok(Node::ControlFlow(ControlFlowNode {
+                name: body.tag,
+                kwargs: body.kwargs,
+                children: body.children,
+            }))
+        } else if starts_uppercase(&body.tag) {
+            Err(syn::Error::new(
+                body.tag.span(),
+                format!(
+                    "unknown PascalCase identifier `{name}` in render!. \
+                     Only built-in control flow (`Show`, `For`) uses \
+                     PascalCase. User components are snake_case — \
+                     invoke as `{}{}` instead.",
+                    pascal_to_snake_hint(&name),
+                    " { … }",
+                ),
+            ))
+        } else {
+            Ok(Node::UserComponent(UserComponentNode {
+                fn_name: body.tag,
+                kwargs: body.kwargs,
+                children: body.children,
+            }))
         }
     }
+}
+
+/// Lowercase identifiers that lower to `view::create_element` calls
+/// rather than user component invocations. Matches the `ElementTag`
+/// enum + the C bridge's `whisker_bridge_create_element` switch.
+fn is_builtin_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "page" | "view" | "text" | "raw_text" | "image" | "scroll_view"
+    )
+}
+
+/// PascalCase → snake_case hint for the "unknown PascalCase" error.
+/// `MyComponent` → `my_component`. Best-effort, only used in an
+/// error message so it doesn't need to be perfect.
+fn pascal_to_snake_hint(pascal: &str) -> String {
+    let mut out = String::with_capacity(pascal.len() + 4);
+    for (i, c) in pascal.chars().enumerate() {
+        if c.is_uppercase() && i != 0 {
+            out.push('_');
+        }
+        out.extend(c.to_lowercase());
+    }
+    out
 }
 
 /// Shared parse result for both element and component nodes: an
@@ -152,8 +210,18 @@ struct ElementNode {
     children: Vec<Node>,
 }
 
-struct ComponentNode {
+/// Built-in control-flow (`Show`, `For`). Lowered to the matching
+/// `show()` / `for_each()` helper call.
+struct ControlFlowNode {
     name: Ident,
+    kwargs: Vec<AttrEntry>,
+    children: Vec<Node>,
+}
+
+/// User-defined `#[component]` invocation. Lowered to
+/// `fn_name(FnNameProps::builder().k(v)…build())`.
+struct UserComponentNode {
+    fn_name: Ident,
     kwargs: Vec<AttrEntry>,
     children: Vec<Node>,
 }
@@ -189,7 +257,8 @@ impl Node {
     /// value becomes the macro output).
     fn to_tokens_returning_handle(&self) -> TokenStream2 {
         match self {
-            Node::Component(c) => c.to_tokens(),
+            Node::ControlFlow(c) => c.to_tokens(),
+            Node::UserComponent(u) => u.to_tokens(),
             Node::Element(el) => el.to_tokens(),
             Node::Text(lit) => quote! {
                 {
@@ -356,25 +425,15 @@ impl ElementNode {
     }
 }
 
-// ---- Component codegen ----------------------------------------------------
+// ---- Control-flow codegen (Show / For) -----------------------------------
 
-impl ComponentNode {
+impl ControlFlowNode {
     fn to_tokens(&self) -> TokenStream2 {
         match self.name.to_string().as_str() {
             "Show" => self.emit_show(),
             "For" => self.emit_for(),
-            other => {
-                let span = self.name.span();
-                let err = LitStr::new(
-                    &format!(
-                        "unknown component `{other}` in render!. Phase 6.5a v1 \
-                         supports `Show` and `For`; user-defined components \
-                         are invoked as plain function calls outside the macro."
-                    ),
-                    span,
-                );
-                quote! { ::std::compile_error!(#err) }
-            }
+            // Parse path ensures we only get Show / For here.
+            other => unreachable!("ControlFlowNode constructed with name `{other}`"),
         }
     }
 
@@ -497,6 +556,121 @@ impl ComponentNode {
     }
 }
 
+// ---- User-component codegen (snake_case `#[component]` invocation) -------
+
+impl UserComponentNode {
+    fn to_tokens(&self) -> TokenStream2 {
+        // Map fn name → Props struct name (`my_component` →
+        // `MyComponentProps`). Matches what `#[component]` emits.
+        let props_ident = snake_to_props_ident(&self.fn_name);
+        let fn_ident = &self.fn_name;
+
+        // One `.kwarg(value)` per attribute. typed-builder's
+        // `setter(into)` (which `#[component]` adds by default)
+        // handles `&str` → `String` / `i32` → `f64` coercion at the
+        // call site, so users write naive values.
+        //
+        // The `kwarg` name is the parameter name from the user's
+        // `fn foo(<kwarg>: T)` — `#[component]` lowers it into a
+        // `XxxProps::<kwarg>` field with a setter of the same name.
+        let setter_calls: Vec<TokenStream2> = self
+            .kwargs
+            .iter()
+            .map(|attr| {
+                let name = &attr.name;
+                let value = &attr.value;
+                quote! { .#name(#value) }
+            })
+            .collect();
+
+        // Reject `key:` here — it's only meaningful inside `For`'s
+        // `children:` callback and would otherwise collide with a
+        // user's actual `key` prop if they ever defined one. The
+        // For-level filter is in `emit_for`; this one catches
+        // accidental top-level usage.
+        for kw in &self.kwargs {
+            if kw.name == "key" {
+                let err = LitStr::new(
+                    "`key` is only valid on direct children of `For`, \
+                     not on user components",
+                    kw.name.span(),
+                );
+                return quote! { ::std::compile_error!(#err) };
+            }
+        }
+
+        // Children handling: if any non-kwarg children are present,
+        // build them into a `move || View::Fragment(...)` closure and
+        // pass as `.children(...)`. typed-builder's default kicks in
+        // when no children are given (the `#[component]` macro emits
+        // an "empty closure" default for `Children` props), so
+        // components that don't declare a `children` prop still work
+        // as long as the user doesn't try to nest any children.
+        //
+        // When the user nests children but the component has no
+        // `children` prop, typed-builder produces a compile error
+        // ("method `children` not found on the builder") at the
+        // call site — clearer than any custom diagnostic we could
+        // emit here.
+        let children_call = if self.children.is_empty() {
+            quote! {}
+        } else {
+            // Each child is materialised to a `View` via
+            // `to_tokens_as_view` (same path `Show` uses). Single-
+            // child case skips the Fragment wrapper to keep the
+            // expansion lean.
+            let child_views: Vec<TokenStream2> =
+                self.children.iter().map(|c| c.to_tokens_as_view()).collect();
+            let body = if child_views.len() == 1 {
+                let only = &child_views[0];
+                quote! { #only }
+            } else {
+                quote! {
+                    ::whisker::runtime::view::View::Fragment(
+                        ::std::vec![#(#child_views),*]
+                    )
+                }
+            };
+            quote! {
+                .children(::std::rc::Rc::new(move || { #body }))
+            }
+        };
+
+        quote! {
+            #fn_ident(
+                #props_ident::builder()
+                    #(#setter_calls)*
+                    #children_call
+                    .build()
+            )
+        }
+    }
+}
+
+/// `my_component` → `MyComponentProps`. Mirror of the same helper in
+/// `component.rs`; kept duplicated to avoid a cross-module dep within
+/// the proc-macro crate (the modules see entirely different syn
+/// types and this conversion is the only thing they share).
+fn snake_to_props_ident(fn_name: &Ident) -> Ident {
+    let snake = fn_name.to_string();
+    let mut camel = String::with_capacity(snake.len() + 5);
+    let mut upper_next = true;
+    for c in snake.chars() {
+        if c == '_' {
+            upper_next = true;
+            continue;
+        }
+        if upper_next {
+            camel.extend(c.to_uppercase());
+            upper_next = false;
+        } else {
+            camel.push(c);
+        }
+    }
+    camel.push_str("Props");
+    Ident::new(&camel, fn_name.span())
+}
+
 // ---- Element codegen helpers ---------------------------------------------
 
 fn tag_to_element_tag(tag: &Ident) -> std::result::Result<TokenStream2, TokenStream2> {
@@ -540,7 +714,11 @@ fn strip_on_prefix(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_on_prefix;
+    use super::{
+        is_builtin_tag, pascal_to_snake_hint, snake_to_props_ident, strip_on_prefix,
+    };
+    use proc_macro2::Span;
+    use syn::Ident;
 
     #[test]
     fn strips_snake_case() {
@@ -556,5 +734,70 @@ mod tests {
     fn rejects_non_event_prefixes() {
         assert_eq!(strip_on_prefix("tap"), None);
         assert_eq!(strip_on_prefix("ontap"), None);
+    }
+
+    // ---- Tag classification ------------------------------------
+
+    #[test]
+    fn builtin_tags_recognised() {
+        for t in ["page", "view", "text", "raw_text", "image", "scroll_view"] {
+            assert!(is_builtin_tag(t), "{t} should be a builtin");
+        }
+    }
+
+    #[test]
+    fn non_builtin_lowercase_is_not_builtin() {
+        // These should be classified as user components, not elements.
+        for t in [
+            "card",
+            "my_component",
+            "tab_item",
+            "now_playing",
+            "header",
+        ] {
+            assert!(!is_builtin_tag(t), "{t} should NOT be a builtin");
+        }
+    }
+
+    #[test]
+    fn user_component_with_underscore_name_is_not_builtin() {
+        // Regression guard: it's tempting to special-case the
+        // built-in list as "anything with an underscore is a
+        // component", but `raw_text` and `scroll_view` are
+        // built-ins with underscores. Make sure we don't slip.
+        assert!(is_builtin_tag("raw_text"));
+        assert!(is_builtin_tag("scroll_view"));
+        assert!(!is_builtin_tag("scroll_view_x"));
+        assert!(!is_builtin_tag("my_view"));
+    }
+
+    // ---- Pascal→snake error hint --------------------------------
+
+    #[test]
+    fn pascal_to_snake_hint_basic() {
+        assert_eq!(pascal_to_snake_hint("MyComponent"), "my_component");
+        assert_eq!(pascal_to_snake_hint("Card"), "card");
+        assert_eq!(pascal_to_snake_hint("TabItem"), "tab_item");
+    }
+
+    #[test]
+    fn pascal_to_snake_hint_starts_with_lowercase() {
+        // Defensive: even if it accidentally gets called on a
+        // lowercase ident, no panic, no leading underscore.
+        assert_eq!(pascal_to_snake_hint("foo"), "foo");
+    }
+
+    // ---- snake→Props ident -------------------------------------
+
+    #[test]
+    fn snake_to_props_ident_basic() {
+        let id = Ident::new("my_component", Span::call_site());
+        assert_eq!(snake_to_props_ident(&id).to_string(), "MyComponentProps");
+
+        let id = Ident::new("card", Span::call_site());
+        assert_eq!(snake_to_props_ident(&id).to_string(), "CardProps");
+
+        let id = Ident::new("tab_item", Span::call_site());
+        assert_eq!(snake_to_props_ident(&id).to_string(), "TabItemProps");
     }
 }

@@ -100,5 +100,5 @@ pub fn render_app() -> whisker::runtime::view::ElementHandle {
     let state = AppState {
         count: RwSignal::new(0),
     };
-    counter(state)
+    render! { counter { state: state } }
 }

@@ -137,7 +137,7 @@ fn recent_card(
     render! {
         view {
             style: "width: 140px; margin-right: 14px; display: flex; flex-direction: column;",
-            {art_tile(c1, c2, "140px", "12px")}
+            art_tile { c1: c1, c2: c2, w: "140px", radius: "12px" }
             text { style: title_style, {title} }
             text { style: sub_style, {sub} }
         }
@@ -188,7 +188,7 @@ fn grid_tile(
                     display: flex; flex-direction: column;",
             view {
                 style: "position: relative; width: 100%;",
-                {art_tile(c1, c2, "100%", "10px")}
+                art_tile { c1: c1, c2: c2, w: "100%", radius: "10px" }
                 text {
                     style: { heart_style() },
                     on_tap: on_heart,
@@ -287,10 +287,10 @@ fn tab_bar(state: AppState) -> ElementHandle {
     render! {
         view {
             style: style,
-            {tab_item(0, "Home", "⌂", state)}
-            {tab_item(1, "Search", "⌕", state)}
-            {tab_item(2, "Library", "♫", state)}
-            {tab_item(3, "Profile", "○", state)}
+            tab_item { index: 0_usize, label: "Home",    glyph: "⌂", state: state }
+            tab_item { index: 1_usize, label: "Search",  glyph: "⌕", state: state }
+            tab_item { index: 2_usize, label: "Library", glyph: "♫", state: state }
+            tab_item { index: 3_usize, label: "Profile", glyph: "○", state: state }
         }
     }
 }
@@ -323,7 +323,7 @@ fn now_playing(state: AppState) -> ElementHandle {
     render! {
         view {
             style: container_style,
-            {art_tile("#ff7e5f", "#feb47b", "48px", "8px")}
+            art_tile { c1: "#ff7e5f", c2: "#feb47b", w: "48px", radius: "8px" }
             view {
                 style: "flex: 1; padding: 0 12px; display: flex; flex-direction: column;",
                 text { style: title_style, "Sunset Drive" }
@@ -386,10 +386,10 @@ fn chips() -> ElementHandle {
     render! {
         view {
             style: "display: flex; flex-direction: row; padding: 0 20px 8px; flex-wrap: nowrap;",
-            {chip("All", true)}
-            {chip("Music", false)}
-            {chip("Podcasts", false)}
-            {chip("Audiobooks", false)}
+            chip { label: "All",        accented: true  }
+            chip { label: "Music",      accented: false }
+            chip { label: "Podcasts",   accented: false }
+            chip { label: "Audiobooks", accented: false }
         }
     }
 }
@@ -400,11 +400,11 @@ fn recents() -> ElementHandle {
         scroll_view {
             scroll_orientation: "horizontal",
             style: "padding: 4px 20px 8px; height: 200px;",
-            {recent_card("Sunset Drive", "Lo-Fi Beats", "#ff7e5f", "#feb47b")}
-            {recent_card("Deep Focus", "Ambient", "#4facfe", "#00f2fe")}
-            {recent_card("Late Night", "Synthwave", "#9b6bff", "#ff5e9b")}
-            {recent_card("Coffee House", "Acoustic", "#fcb69f", "#ffecd2")}
-            {recent_card("Energy Boost", "Workout", "#11998e", "#38ef7d")}
+            recent_card { title: "Sunset Drive",  sub: "Lo-Fi Beats", c1: "#ff7e5f", c2: "#feb47b" }
+            recent_card { title: "Deep Focus",    sub: "Ambient",     c1: "#4facfe", c2: "#00f2fe" }
+            recent_card { title: "Late Night",    sub: "Synthwave",   c1: "#9b6bff", c2: "#ff5e9b" }
+            recent_card { title: "Coffee House",  sub: "Acoustic",    c1: "#fcb69f", c2: "#ffecd2" }
+            recent_card { title: "Energy Boost", sub: "Workout",      c1: "#11998e", c2: "#38ef7d" }
         }
     }
 }
@@ -438,12 +438,12 @@ fn grid(state: AppState) -> ElementHandle {
         view {
             style: "padding: 4px 20px 0; display: flex; flex-direction: row; \
                     flex-wrap: wrap; justify-content: space-between;",
-            {grid_tile(0, "Chill Mix",   "#667eea", "#764ba2", state)}
-            {grid_tile(1, "Happy Mix",   "#f093fb", "#f5576c", state)}
-            {grid_tile(2, "Focus Mix",   "#4facfe", "#00f2fe", state)}
-            {grid_tile(3, "Workout Mix", "#43e97b", "#38f9d7", state)}
-            {grid_tile(4, "Sleep Mix",   "#fa709a", "#fee140", state)}
-            {grid_tile(5, "Indie Mix",   "#30cfd0", "#330867", state)}
+            grid_tile { index: 0_usize, title: "Chill Mix",   c1: "#667eea", c2: "#764ba2", state: state }
+            grid_tile { index: 1_usize, title: "Happy Mix",   c1: "#f093fb", c2: "#f5576c", state: state }
+            grid_tile { index: 2_usize, title: "Focus Mix",   c1: "#4facfe", c2: "#00f2fe", state: state }
+            grid_tile { index: 3_usize, title: "Workout Mix", c1: "#43e97b", c2: "#38f9d7", state: state }
+            grid_tile { index: 4_usize, title: "Sleep Mix",   c1: "#fa709a", c2: "#fee140", state: state }
+            grid_tile { index: 5_usize, title: "Indie Mix",   c1: "#30cfd0", c2: "#330867", state: state }
         }
     }
 }
@@ -453,11 +453,11 @@ fn activity_feed() -> ElementHandle {
     render! {
         view {
             style: "display: flex; flex-direction: column; padding: 0 0 8px;",
-            {activity_row("A", "#ff7e5f", "#feb47b", "Alice", "Started following you",            "2m")}
-            {activity_row("R", "#667eea", "#764ba2", "Riku",  "Liked your playlist 'Late Night'", "1h")}
-            {activity_row("M", "#43e97b", "#38f9d7", "Mio",   "Shared 'Sunset Drive' with you",   "3h")}
-            {activity_row("K", "#fa709a", "#fee140", "Ken",   "Added 5 songs to 'Workout'",       "yesterday")}
-            {activity_row("S", "#4facfe", "#00f2fe", "Sora",  "Created a new playlist 'Focus'",   "2d")}
+            activity_row { initial: "A", c1: "#ff7e5f", c2: "#feb47b", title: "Alice", sub: "Started following you",            when: "2m"        }
+            activity_row { initial: "R", c1: "#667eea", c2: "#764ba2", title: "Riku",  sub: "Liked your playlist 'Late Night'", when: "1h"        }
+            activity_row { initial: "M", c1: "#43e97b", c2: "#38f9d7", title: "Mio",   sub: "Shared 'Sunset Drive' with you",   when: "3h"        }
+            activity_row { initial: "K", c1: "#fa709a", c2: "#fee140", title: "Ken",   sub: "Added 5 songs to 'Workout'",       when: "yesterday" }
+            activity_row { initial: "S", c1: "#4facfe", c2: "#00f2fe", title: "Sora",  sub: "Created a new playlist 'Focus'",   when: "2d"        }
         }
     }
 }
@@ -472,15 +472,15 @@ fn scroll_body(state: AppState) -> ElementHandle {
         scroll_view {
             scroll_orientation: "vertical",
             style: style,
-            {chips()}
-            {section_header("Recently Played")}
-            {recents()}
-            {section_header("Made For You")}
-            {featured()}
-            {section_header("Your Top Mixes")}
-            {grid(state)}
-            {section_header("Activity")}
-            {activity_feed()}
+            chips {}
+            section_header { title: "Recently Played" }
+            recents {}
+            section_header { title: "Made For You" }
+            featured {}
+            section_header { title: "Your Top Mixes" }
+            grid { state: state }
+            section_header { title: "Activity" }
+            activity_feed {}
             view { style: "height: 160px;" }
         }
     }
@@ -502,10 +502,10 @@ fn app() -> ElementHandle {
     render! {
         page {
             style: page_style,
-            {header()}
-            {scroll_body(state)}
-            {now_playing(state)}
-            {tab_bar(state)}
+            header {}
+            scroll_body { state: state }
+            now_playing { state: state }
+            tab_bar { state: state }
         }
     }
 }

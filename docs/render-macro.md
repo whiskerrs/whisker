@@ -183,21 +183,66 @@ update.
 
 ## Components
 
-Capitalised tag names dispatch to component constructors. Phase
-6.5a v1 supports two built-in components: `Show` and `For`.
-User-defined `#[component]` functions are invoked as plain function
-calls outside `render!` (and their return value can be embedded via
-`{...}`):
+User-defined `#[component]` functions are invoked directly in
+`render!` using their snake-cased function name followed by a brace
+block of keyword arguments (mirroring the built-in element syntax):
 
 ```rust
 render! {
     view {
-        {my_component(props)}       // user component
-        Show { /* … */ }            // built-in
-        For { /* … */ }             // built-in
+        my_component { src: "https://…", alt: "logo" }   // user component
+        Show { /* … */ }                                  // built-in
+        For { /* … */ }                                   // built-in
     }
 }
 ```
+
+The brace block maps kwarg-by-kwarg onto fields of the `XxxProps`
+struct that `#[component]` auto-generates from the function's
+parameter list (see `docs/reactivity.md`). At expansion the call
+above lowers to:
+
+```rust
+my_component(
+    MyComponentProps::builder()
+        .src("https://…")
+        .alt("logo")
+        .build(),
+)
+```
+
+`typed-builder`'s `setter(into)` handles common coercions at the call
+site — `&'static str` → `String`, `i32` → `f64`, etc. — so callers
+write the natural value and the macro takes care of the rest.
+
+Nested children passed inside the brace block (not associated with a
+kwarg) are bundled into a `children:` closure of type
+[`whisker::Children`](../crates/whisker-runtime/src/view/into_view.rs):
+
+```rust
+render! {
+    card {
+        title: "About",
+        // these are routed into the card's `children: Children` prop.
+        text { "First child" }
+        text { "Second child" }
+    }
+}
+```
+
+Components that don't declare a `children` prop compile-error when
+called with positional children, telling the user which props the
+component does accept.
+
+> **Positional calls no longer compile.** A `#[component]` function
+> always takes a single Props argument; bare `my_component("…", "…")`
+> at the call site is a type error. Components must be invoked
+> through `render!`'s brace syntax (or, in the rare case the user
+> needs to bypass the macro, by constructing the Props struct
+> explicitly).
+
+Two component names are reserved as built-ins and must use the
+capitalised form: `Show` and `For`.
 
 ### `Show`
 
@@ -251,7 +296,11 @@ are accepted.
 The macro tries hard to give specific compile errors:
 
 ```rust
-// "unknown render! tag `foo`"
+// `foo` resolves to a user component. If `foo` isn't in scope you
+// get the normal Rust "cannot find function `foo`" error. The
+// macro does NOT treat lowercase identifiers as built-in tags
+// (the whitelist is `page`, `view`, `text`, `raw_text`, `image`,
+// `scroll_view`).
 render! { foo {} }
 
 // "Show requires `when:` kwarg"
@@ -266,7 +315,9 @@ render! { For { key: |x| x, children: |x| x } }
 // "For takes no positional children; pass them via `children:`"
 render! { For { each: || vec![], key: |x| 0, text { "stray" } } }
 
-// "unknown component `Foo` in render!"
+// PascalCase is reserved for built-in components only. Writing
+// `Foo { ... }` for a user component is a macro error suggesting
+// the snake_case spelling.
 render! { Foo { text { "x" } } }
 ```
 
@@ -285,8 +336,9 @@ render! { Foo { text { "x" } } }
   …but the macro itself doesn't parse `if`/`match` as macro syntax.
 - **Iterator-spreading via `for` / `while`.** Use `For { ... }`.
 - **Slot-style composition (named children).** Phase 7+ if needed.
-- **Custom component invocation in macro position.** Use a function
-  call wrapped in `{...}`.
+- **Positional component invocation.** Components only accept
+  brace-style kwargs (`my_component { src: "…" }`). Positional
+  function calls don't compile.
 
 ---
 
