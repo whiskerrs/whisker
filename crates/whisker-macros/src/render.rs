@@ -193,7 +193,7 @@ impl TagBody {
                 let name: Ident = body.parse()?;
                 body.parse::<Token![:]>()?;
                 let value: Expr = body.parse()?;
-                kwargs.push(AttrEntry { name, value });
+                kwargs.push(AttrEntry { name, value, partial: false });
                 if body.peek(Token![,]) {
                     body.parse::<Token![,]>()?;
                 }
@@ -207,7 +207,7 @@ impl TagBody {
                 // the macro expansion still references the name.
                 let name: Ident = body.parse()?;
                 let value: Expr = syn::parse_quote_spanned!(name.span()=> ());
-                kwargs.push(AttrEntry { name, value });
+                kwargs.push(AttrEntry { name, value, partial: true });
                 if body.peek(Token![,]) {
                     body.parse::<Token![,]>()?;
                 }
@@ -264,6 +264,12 @@ struct UserComponentNode {
 struct AttrEntry {
     name: Ident,
     value: Expr,
+    /// `true` when the parser synthesized `value` because the user
+    /// hadn't typed `:` + an expression yet (cursor mid-typing). The
+    /// builder-chain emitter uses this to always route partial input
+    /// through `.#name(…)` (so rust-analyzer's method completion
+    /// fires) instead of the usual `.attr(kebab, …)` fallback.
+    partial: bool,
 }
 
 // ---- Codegen --------------------------------------------------------------
@@ -511,6 +517,21 @@ impl ElementNode {
                 // route through the generic `.on(event, handler)`.
                 // Anything else falls through to `.attr(kebab, move
                 // || value)`.
+                // Partial-input case: emit `.#name(())` so RA sees
+                // a method call at the user's `name|` span and can
+                // offer the builder's matching method names as
+                // completion candidates. This emission is **not
+                // expected to compile** — the partial kwarg
+                // typically doesn't match a real method — but RA's
+                // completion runs on the type-error result too,
+                // suggesting methods of the receiver type whose
+                // names share the user's prefix.
+                if attr.partial {
+                    return Some(quote_spanned! {span=>
+                        .#name(())
+                    });
+                }
+
                 let call = match name_str.as_str() {
                     "style" | "class" => {
                         // Wrap the value in a closure that borrows
