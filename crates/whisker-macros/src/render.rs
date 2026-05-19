@@ -650,7 +650,16 @@ impl UserComponentNode {
             .map(|attr| {
                 let name = &attr.name;
                 let value = &attr.value;
-                quote! { .#name(#value) }
+                // Set the *whole* `.kwarg(value)` token group to the
+                // user's kwarg-name span so rust-analyzer can map
+                // the user's `kwarg|` cursor position to this
+                // method-call in the expansion, triggering method
+                // completion against the auto-generated
+                // `XxxPropsBuilder`. Matches how leptos's view!
+                // macro preserves prop-name spans on its builder
+                // chain — that's what drives RA completion there.
+                let span = name.span();
+                quote_spanned! {span=> .#name(#value) }
             })
             .collect();
 
