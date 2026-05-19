@@ -34,8 +34,13 @@ pub use whisker_macros::{component, main, render};
 pub use whisker_runtime::reactive::{
     create_owner, dispose_owner, effect, flush, flush_mounts, memo, mount_component, on_cleanup,
     on_mount, provide_context, signal, unmount_component, use_context, with_context, with_owner,
-    Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,
+    ReadSignal, RwSignal, StoredValue, WriteSignal,
 };
+// Back-compat type alias. `memo()` now returns `ReadSignal<T>`; this
+// alias keeps `Memo<T>` in old type signatures compiling. New code
+// should write `ReadSignal<T>`.
+#[allow(deprecated)]
+pub use whisker_runtime::reactive::Memo;
 // Control-flow components used by the `render!` macro.
 pub use whisker_runtime::view::{for_each, show};
 
@@ -127,9 +132,11 @@ pub mod __hot {
 /// Common imports for Whisker app code.
 pub mod prelude {
     pub use crate::ElementTag;
+    #[allow(deprecated)]
+    pub use crate::Memo;
     pub use crate::{component, main, render};
     pub use crate::{
         effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
-        signal, use_context, with_context, Memo, ReadSignal, RwSignal, StoredValue, WriteSignal,
+        signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,
     };
 }

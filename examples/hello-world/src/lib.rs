@@ -1,48 +1,60 @@
 //! Hello World — a music-streaming-style home screen.
 //!
 //! Migrated to Phase 6.5a (Leptos-style) reactivity. The visual
-//! design is preserved, but state lives in `RwSignal`s, every
-//! handler updates them via `.update` / `.set`, and the macro is
-//! `render!` (effect-driven) rather than `rsx!` (value tree).
+//! design is preserved, but state lives in `RwSignal`s and every
+//! handler updates them via `.update` / `.set`.
+//!
+//! ## State management — props drilling
+//!
+//! App-wide reactive state is created at the [`app`] root in a single
+//! `Copy` [`AppState`] struct and threaded down to the components
+//! that need it via `#[component]` props. There is no global
+//! accessor / no `thread_local!` cell. The visual / structural
+//! components that don't touch state (`header`, `chips`,
+//! `section_header`, …) keep their signatures unchanged.
+//!
+//! Bigger apps usually graduate from props drilling to
+//! `provide_context` / `use_context` once the prop chain gets too
+//! noisy. For a one-screen demo this is direct and the type signature
+//! of every component documents exactly which state it depends on.
 //!
 //! Exercises a wide slice of the Whisker surface:
 //!
 //! - `#[whisker::main]` returning `ElementHandle`.
-//! - `RwSignal<T>` shared via thread-local lazily-initialised
-//!   accessors (the same module-scoped pattern users will pick
-//!   up for global app state pre-context).
+//! - `RwSignal<T>` shared by passing a `Copy` `AppState` through
+//!   the component tree.
 //! - `render!` with `{expr}` interpolation, `style:` and other
 //!   attributes, `on_tap:` handlers.
-//! - `Show` for the heart toggle's filled/outline glyph and the
-//!   now-playing button's pause/play glyph (state-driven swap).
 //! - Lynx CSS: flex, gradient backgrounds, rounded corners,
 //!   shadows, `position: absolute`.
 
 use whisker::prelude::*;
 use whisker::runtime::view::ElementHandle;
 
-// ---- App state (lazily-initialised thread-local RwSignals) ------------------
+// ---- App state --------------------------------------------------------------
 
-fn selected_tab() -> RwSignal<usize> {
-    thread_local! {
-        static S: std::cell::OnceCell<RwSignal<usize>> = const { std::cell::OnceCell::new() };
-    }
-    S.with(|c| *c.get_or_init(|| RwSignal::new(0_usize)))
+/// App-wide reactive state. All fields are `RwSignal<T>` (i.e. `Copy`
+/// handles into the reactive arena), so the struct itself is `Copy`
+/// and free to thread through `#[component]` props without `move ||`
+/// boilerplate.
+#[derive(Copy, Clone)]
+struct AppState {
+    /// Index of the bottom-tab the user has selected (0..=3).
+    selected_tab: RwSignal<usize>,
+    /// Bitmask: bit `i` set ⇒ mix `i` in the grid is liked.
+    liked_mixes: RwSignal<u8>,
+    /// Whether the now-playing widget is showing the "playing" state.
+    is_playing: RwSignal<bool>,
 }
 
-fn liked_mixes() -> RwSignal<u8> {
-    // Bitmask: bit i set ⇒ mix i is liked.
-    thread_local! {
-        static S: std::cell::OnceCell<RwSignal<u8>> = const { std::cell::OnceCell::new() };
+impl AppState {
+    fn new() -> Self {
+        Self {
+            selected_tab: RwSignal::new(0_usize),
+            liked_mixes: RwSignal::new(0b000_010_u8),
+            is_playing: RwSignal::new(true),
+        }
     }
-    S.with(|c| *c.get_or_init(|| RwSignal::new(0b000_010_u8)))
-}
-
-fn is_playing() -> RwSignal<bool> {
-    thread_local! {
-        static S: std::cell::OnceCell<RwSignal<bool>> = const { std::cell::OnceCell::new() };
-    }
-    S.with(|c| *c.get_or_init(|| RwSignal::new(true)))
 }
 
 // ---- Palette / constants ----------------------------------------------------
@@ -138,8 +150,9 @@ fn grid_tile(
     title: &'static str,
     c1: &'static str,
     c2: &'static str,
+    state: AppState,
 ) -> ElementHandle {
-    let bitmask = liked_mixes();
+    let bitmask = state.liked_mixes;
     let liked_bit = 1u8 << index;
     let on_heart = move || bitmask.update(|b| *b ^= liked_bit);
 
@@ -229,8 +242,13 @@ fn activity_row(
 }
 
 #[component]
-fn tab_item(index: usize, label: &'static str, glyph: &'static str) -> ElementHandle {
-    let tab = selected_tab();
+fn tab_item(
+    index: usize,
+    label: &'static str,
+    glyph: &'static str,
+    state: AppState,
+) -> ElementHandle {
+    let tab = state.selected_tab;
     let on_pick = move || tab.set(index);
     let glyph_style = move || {
         let color = if tab.get() == index {
@@ -258,7 +276,7 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str) -> ElementHa
 }
 
 #[component]
-fn tab_bar() -> ElementHandle {
+fn tab_bar(state: AppState) -> ElementHandle {
     let style = format!(
         "position: absolute; left: 0; right: 0; bottom: 0; \
          display: flex; flex-direction: row; justify-content: space-around; \
@@ -269,17 +287,17 @@ fn tab_bar() -> ElementHandle {
     render! {
         view {
             style: style,
-            {tab_item(0, "Home", "⌂")}
-            {tab_item(1, "Search", "⌕")}
-            {tab_item(2, "Library", "♫")}
-            {tab_item(3, "Profile", "○")}
+            {tab_item(0, "Home", "⌂", state)}
+            {tab_item(1, "Search", "⌕", state)}
+            {tab_item(2, "Library", "♫", state)}
+            {tab_item(3, "Profile", "○", state)}
         }
     }
 }
 
 #[component]
-fn now_playing() -> ElementHandle {
-    let playing = is_playing();
+fn now_playing(state: AppState) -> ElementHandle {
+    let playing = state.is_playing;
     let toggle = move || playing.update(|p| *p = !*p);
     let glyph = move || if playing.get() { "▌▌" } else { "▶" };
     let status = move || {
@@ -415,17 +433,17 @@ fn featured() -> ElementHandle {
 }
 
 #[component]
-fn grid() -> ElementHandle {
+fn grid(state: AppState) -> ElementHandle {
     render! {
         view {
             style: "padding: 4px 20px 0; display: flex; flex-direction: row; \
                     flex-wrap: wrap; justify-content: space-between;",
-            {grid_tile(0, "Chill Mix",   "#667eea", "#764ba2")}
-            {grid_tile(1, "Happy Mix",   "#f093fb", "#f5576c")}
-            {grid_tile(2, "Focus Mix",   "#4facfe", "#00f2fe")}
-            {grid_tile(3, "Workout Mix", "#43e97b", "#38f9d7")}
-            {grid_tile(4, "Sleep Mix",   "#fa709a", "#fee140")}
-            {grid_tile(5, "Indie Mix",   "#30cfd0", "#330867")}
+            {grid_tile(0, "Chill Mix",   "#667eea", "#764ba2", state)}
+            {grid_tile(1, "Happy Mix",   "#f093fb", "#f5576c", state)}
+            {grid_tile(2, "Focus Mix",   "#4facfe", "#00f2fe", state)}
+            {grid_tile(3, "Workout Mix", "#43e97b", "#38f9d7", state)}
+            {grid_tile(4, "Sleep Mix",   "#fa709a", "#fee140", state)}
+            {grid_tile(5, "Indie Mix",   "#30cfd0", "#330867", state)}
         }
     }
 }
@@ -445,7 +463,7 @@ fn activity_feed() -> ElementHandle {
 }
 
 #[component]
-fn scroll_body() -> ElementHandle {
+fn scroll_body(state: AppState) -> ElementHandle {
     let style = format!(
         "flex-grow: 1; flex-shrink: 1; width: 100%; background-color: {BG}; \
          display: flex; flex-direction: column;"
@@ -460,7 +478,7 @@ fn scroll_body() -> ElementHandle {
             {section_header("Made For You")}
             {featured()}
             {section_header("Your Top Mixes")}
-            {grid()}
+            {grid(state)}
             {section_header("Activity")}
             {activity_feed()}
             view { style: "height: 160px;" }
@@ -472,14 +490,10 @@ fn scroll_body() -> ElementHandle {
 
 #[whisker::main]
 fn app() -> ElementHandle {
-    // Pre-touch the signals so their thread-local OnceCells are populated
-    // under the bootstrap-time detached owner before any reactive read
-    // tries to use them. Without this, the first call inside an effect
-    // would init the signal under that effect's owner and tie its
-    // lifetime to a transient scope.
-    let _ = selected_tab();
-    let _ = liked_mixes();
-    let _ = is_playing();
+    // Allocate every app-wide signal in the bootstrap owner. `AppState`
+    // is `Copy`, so threading it through `#[component]` props below
+    // doesn't introduce any `move ||` boilerplate.
+    let state = AppState::new();
 
     let page_style = format!(
         "width: 100vw; height: 100vh; background-color: {BG}; \
@@ -489,9 +503,9 @@ fn app() -> ElementHandle {
         page {
             style: page_style,
             {header()}
-            {scroll_body()}
-            {now_playing()}
-            {tab_bar()}
+            {scroll_body(state)}
+            {now_playing(state)}
+            {tab_bar(state)}
         }
     }
 }

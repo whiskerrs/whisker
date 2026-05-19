@@ -1,16 +1,21 @@
 //! Derived memoised values.
 //!
 //! [`memo`] is the "effect that caches its return value" primitive.
-//! Other reactive nodes can read a memo just like a signal — calling
-//! `m.get()` registers them as subscribers, and writes to the memo's
-//! sources trigger re-computation, which (if the value changed)
-//! notifies the memo's subscribers in turn.
+//! Conceptually it's a compute-driven [`ReadSignal`]: subscribers read
+//! through `r.get()` (and friends) exactly the way they would a signal,
+//! but the value is produced by the compute closure rather than written
+//! externally. The closure re-runs when its tracked sources change,
+//! and subscribers are only notified when the recomputed value differs
+//! from the cached one (`T: PartialEq`) — the typical "stable identity"
+//! optimisation.
 //!
-//! Equality check: a memo only marks subscribers dirty when its new
-//! return value differs from the cached one (`T: PartialEq`). This is
-//! the typical "stable identity" optimisation — re-running upstream
-//! work shouldn't cascade further unless the user-observable result
-//! actually changed.
+//! [`memo`] returns a [`ReadSignal<T>`], not a separate `Memo<T>`
+//! type. This is the canonical "readable reactive value" handle in
+//! Whisker; component props that expect a dynamic value should take a
+//! `ReadSignal<T>` (or `WriteSignal<T>` / `RwSignal<T>` for write
+//! capabilities) regardless of whether the source is a primitive
+//! signal or a memoised computation. See `docs/reactivity-design.md`
+//! for the rationale.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -19,57 +24,35 @@ use std::rc::Rc;
 
 use super::runtime::{NodeData, NodeId, Owner, ReactiveNode};
 use super::scheduler;
+use super::signal::ReadSignal;
 use super::with_runtime;
 
-/// Read-only handle to a memoised value. `Copy`; works like a
-/// `ReadSignal<T>` in every observable way.
-pub struct Memo<T: 'static> {
-    id: NodeId,
-    _ty: PhantomData<fn() -> T>,
-}
-
-impl<T: 'static> Clone for Memo<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T: 'static> Copy for Memo<T> {}
-
-impl<T: 'static> Memo<T> {
-    pub fn with<R>(self, f: impl FnOnce(&T) -> R) -> R {
-        let value = track_and_fetch(self.id);
-        let borrow = value.borrow();
-        let typed = borrow
-            .downcast_ref::<T>()
-            .expect("Memo::with: type mismatch — memo storage corrupted");
-        f(typed)
-    }
-
-    pub fn with_untracked<R>(self, f: impl FnOnce(&T) -> R) -> R {
-        let value = fetch_value(self.id);
-        let borrow = value.borrow();
-        let typed = borrow
-            .downcast_ref::<T>()
-            .expect("Memo::with_untracked: type mismatch — memo storage corrupted");
-        f(typed)
-    }
-}
-
-impl<T: 'static + Clone> Memo<T> {
-    pub fn get(self) -> T {
-        self.with(|v| v.clone())
-    }
-
-    pub fn get_untracked(self) -> T {
-        self.with_untracked(|v| v.clone())
-    }
-}
+/// Back-compat alias. `memo()` now returns [`ReadSignal<T>`] directly;
+/// `Memo<T>` is kept as a type alias so existing code (`fn foo(m:
+/// Memo<i32>)`) keeps compiling. New code should write `ReadSignal<T>`.
+#[deprecated(
+    since = "0.2.0",
+    note = "memo() now returns ReadSignal<T>. Use ReadSignal<T> in type signatures instead."
+)]
+pub type Memo<T> = ReadSignal<T>;
 
 /// Create a memoised computation. `f` is run once immediately to seed
-/// the cache, then re-run whenever a tracked source changes. Memo
-/// subscribers are only notified when the recomputed value differs
-/// from the cached one (`T: PartialEq`).
-pub fn memo<T: 'static + Clone + PartialEq>(mut f: impl FnMut() -> T + 'static) -> Memo<T> {
+/// the cache, then re-run whenever a tracked source changes.
+///
+/// The returned [`ReadSignal<T>`] reads the cached value via `.get()`
+/// / `.with()` / `.get_untracked()` / `.with_untracked()` — exactly
+/// the same surface as a primitive signal. Subscribers (downstream
+/// effects, memos, `{expr}` interpolations) are only notified when the
+/// recomputed value differs from the previously-cached one
+/// (`T: PartialEq`), so a memo whose result is unchanged costs nothing
+/// downstream.
+///
+/// ```ignore
+/// let (count, _set) = signal(0_i32);
+/// let doubled: ReadSignal<i32> = memo(move || count.get() * 2);
+/// assert_eq!(doubled.get(), 0);
+/// ```
+pub fn memo<T: 'static + Clone + PartialEq>(mut f: impl FnMut() -> T + 'static) -> ReadSignal<T> {
     // We need access to the node id inside the compute closure so it
     // can write back to its own value slot. Allocate the node first
     // with a placeholder value of the right type, then replace the
@@ -161,41 +144,8 @@ pub fn memo<T: 'static + Clone + PartialEq>(mut f: impl FnMut() -> T + 'static) 
     scheduler::schedule(node_id);
     scheduler::flush();
 
-    Memo {
+    ReadSignal {
         id: node_id,
         _ty: PhantomData,
     }
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers — duplicated from signal.rs for now; refactor when the
-// API stabilises.
-// ---------------------------------------------------------------------------
-
-fn track_and_fetch(id: NodeId) -> Rc<RefCell<dyn Any>> {
-    with_runtime(|rt| {
-        if let Some(tracker) = rt.current_tracker {
-            if tracker != id {
-                if let Some(node) = rt.nodes.get_mut(id) {
-                    node.subscribers.insert(tracker);
-                }
-                if let Some(track_node) = rt.nodes.get_mut(tracker) {
-                    track_node.sources.insert(id);
-                }
-            }
-        }
-        rt.nodes
-            .get(id)
-            .and_then(|n| n.data.value().cloned())
-            .expect("Memo: node disposed or not a value-bearing node")
-    })
-}
-
-fn fetch_value(id: NodeId) -> Rc<RefCell<dyn Any>> {
-    with_runtime(|rt| {
-        rt.nodes
-            .get(id)
-            .and_then(|n| n.data.value().cloned())
-            .expect("Memo: node disposed or not a value-bearing node")
-    })
 }

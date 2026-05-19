@@ -11,7 +11,7 @@
 //! - [`signal`] — [`signal`] / [`RwSignal`] / [`ReadSignal`] /
 //!   [`WriteSignal`].
 //! - [`effect`] — [`effect`] + dependency tracking.
-//! - [`memo`] — [`memo`] / [`Memo`].
+//! - [`memo`] — [`memo`] (returns [`ReadSignal<T>`]).
 //! - [`scheduler`] — batching / flush.
 //!
 //! All operations are single-threaded — reactive UI runs on the Lynx
@@ -49,7 +49,9 @@ pub use component::{
 };
 pub use context::{provide_context, use_context, with_context};
 pub use effect::effect;
-pub use memo::{memo, Memo};
+pub use memo::memo;
+#[allow(deprecated)]
+pub use memo::Memo;
 pub use owner::{create_owner, dispose_owner, on_cleanup, with_owner};
 pub use runtime::{NodeId, OwnerId};
 pub use scheduler::flush;

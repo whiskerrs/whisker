@@ -41,14 +41,16 @@ count.update(|n| *n += 1);
 let (read, write) = count.split();   // any time
 ```
 
-All four types (`ReadSignal<T>`, `WriteSignal<T>`, `RwSignal<T>`,
-`Memo<T>`) are `Copy` arena handles — clone is free, `'static`,
-moves into closures without lifetime annotations.
+All three types (`ReadSignal<T>`, `WriteSignal<T>`, `RwSignal<T>`)
+are `Copy` arena handles — clone is free, `'static`, moves into
+closures without lifetime annotations. `memo()` also returns
+`ReadSignal<T>` (it's a compute-driven signal); there is no separate
+`Memo<T>` type.
 
 API surface:
 
 ```rust
-// ReadSignal<T> (and Memo<T>, which derefs to ReadSignal)
+// ReadSignal<T> (also what memo() returns)
 fn get(&self) -> T where T: Clone;
 fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R;
 fn get_untracked(&self) -> T where T: Clone;        // no dep registration
@@ -87,18 +89,21 @@ effect(|prev: Option<i32>| {
 });
 ```
 
-### Memo
+### Memo — a compute-driven `ReadSignal`
 
 ```rust
-let doubled = memo(move || count.get() * 2);
+let doubled: ReadSignal<i32> = memo(move || count.get() * 2);
 log::info!("{}", doubled.get());           // 0
 set_count.set(5);
 log::info!("{}", doubled.get());           // 10
 ```
 
-Like an effect that caches its return value. Other reactive nodes read
-it through `get` / `with` as if it were a signal. **Lazy**: re-runs only
-when dependencies change *and* it has at least one subscriber.
+Like an effect that caches its return value. The returned handle is a
+`ReadSignal<T>` — exactly the same type a primitive signal hands out —
+so component props that take a "readable reactive value" use
+`ReadSignal<T>` regardless of whether the source is `signal()` or
+`memo()`. **Lazy**: re-runs only when dependencies change *and* it has
+at least one subscriber.
 
 ### Resource (Phase A4)
 

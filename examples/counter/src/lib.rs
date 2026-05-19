@@ -25,8 +25,9 @@
 use whisker::prelude::*;
 
 /// App-wide state. A single signal is enough for the demo; bigger
-/// apps would group several signals (or derived `Memo`s) into a
-/// struct like this and pass it by `Copy` into child components.
+/// apps would group several signals (or derived `ReadSignal`s built
+/// with `memo()`) into a struct like this and pass it by `Copy` into
+/// child components.
 #[derive(Copy, Clone)]
 pub struct AppState {
     pub count: RwSignal<i32>,
