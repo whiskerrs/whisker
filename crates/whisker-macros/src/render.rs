@@ -178,14 +178,39 @@ impl TagBody {
         let mut kwargs = Vec::new();
         let mut children = Vec::new();
 
-        // kwargs: while we see `IDENT :`, parse name : expr.
-        while body.peek(Ident) && body.peek2(Token![:]) {
-            let name: Ident = body.parse()?;
-            body.parse::<Token![:]>()?;
-            let value: Expr = body.parse()?;
-            kwargs.push(AttrEntry { name, value });
-            if body.peek(Token![,]) {
-                body.parse::<Token![,]>()?;
+        // kwargs: `IDENT : expr` pairs in a loop. We also accept a
+        // **partial** `IDENT` with no following `:` so the macro
+        // doesn't bail out mid-keystroke when the user is typing
+        // (e.g. cursor at `view { s| }`). On partial input we
+        // synthesize a `()` placeholder value so the expansion
+        // still emits `.#name(…)` at the user's span — that's what
+        // drives rust-analyzer's method-completion lookup against
+        // the builder's method list. Without this tolerance, RA
+        // sees a parse error, can't expand, and offers nothing.
+        while body.peek(Ident) {
+            if body.peek2(Token![:]) {
+                // Complete kwarg.
+                let name: Ident = body.parse()?;
+                body.parse::<Token![:]>()?;
+                let value: Expr = body.parse()?;
+                kwargs.push(AttrEntry { name, value });
+                if body.peek(Token![,]) {
+                    body.parse::<Token![,]>()?;
+                }
+            } else if body.peek2(token::Brace) {
+                // `IDENT { … }` — child node. Hand off to the
+                // children loop.
+                break;
+            } else {
+                // Partial `IDENT` with no `:` and no `{` — treat as
+                // an in-flight kwarg. Push it with a `()` value so
+                // the macro expansion still references the name.
+                let name: Ident = body.parse()?;
+                let value: Expr = syn::parse_quote_spanned!(name.span()=> ());
+                kwargs.push(AttrEntry { name, value });
+                if body.peek(Token![,]) {
+                    body.parse::<Token![,]>()?;
+                }
             }
         }
 
