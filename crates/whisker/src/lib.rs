@@ -43,6 +43,18 @@ pub use whisker_runtime::reactive::{
 pub use whisker_runtime::reactive::Memo;
 // Control-flow components used by the `render!` macro.
 pub use whisker_runtime::view::{for_each, show};
+// `Children` is the conventional prop type for components that wrap
+// non-kwarg child nodes in their `render!` invocation.
+pub use whisker_runtime::view::Children;
+
+// Re-export `typed_builder` so the `#[component]` macro's expansion
+// can resolve `::whisker::__typed_builder::TypedBuilder` without
+// requiring user crates to add `typed-builder` to their own
+// dependencies. Internal — not part of the stable public surface.
+#[doc(hidden)]
+pub mod __typed_builder {
+    pub use ::typed_builder::TypedBuilder;
+}
 
 // Worker-thread → main-thread marshaling. The typical use case is
 // "fetch on a worker thread, update signal on the main thread":
@@ -135,6 +147,7 @@ pub mod prelude {
     #[allow(deprecated)]
     pub use crate::Memo;
     pub use crate::{component, main, render};
+    pub use crate::Children;
     pub use crate::{
         effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
         signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,

@@ -32,7 +32,7 @@ mod tests;
 
 pub use control_flow::{for_each, show};
 pub use handle::ElementHandle;
-pub use into_view::{IntoView, View};
+pub use into_view::{Children, IntoView, View};
 #[doc(hidden)]
 pub use renderer::__reset_children_mirror_for_tests;
 pub use renderer::{
