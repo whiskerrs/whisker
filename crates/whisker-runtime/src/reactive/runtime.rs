@@ -6,10 +6,12 @@
 //! pending-effects queue.
 //!
 //! All public reactive primitives (`ReadSignal`, `WriteSignal`,
-//! `RwSignal`, `Memo`) are `Copy` newtypes around a `NodeId`. They look
-//! their value up through the runtime on every operation. Cloning a
-//! handle is just an integer copy; the lifetime of the underlying state
-//! is bounded by its owning `Owner`, not by the handle.
+//! `RwSignal`) are `Copy` newtypes around a `NodeId`. They look their
+//! value up through the runtime on every operation. Cloning a handle
+//! is just an integer copy; the lifetime of the underlying state is
+//! bounded by its owning `Owner`, not by the handle. `memo()` returns
+//! a `ReadSignal<T>` that happens to be backed by a `NodeData::Memo`
+//! node — externally indistinguishable from a primitive signal.
 //!
 //! This module defines the types only. The thread-local instance and
 //! the orchestration logic live in `mod.rs` and the sibling files.

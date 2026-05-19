@@ -46,8 +46,8 @@ count.update(|n| *n += 1);
 let (read, write) = count.split();
 ```
 
-All four types (`ReadSignal<T>`, `WriteSignal<T>`, `RwSignal<T>`,
-`Memo<T>`) are `Copy`. Hand them to closures freely:
+All three types (`ReadSignal<T>`, `WriteSignal<T>`, `RwSignal<T>`)
+are `Copy`. Hand them to closures freely:
 
 ```rust
 let (count, set_count) = signal(0);
@@ -139,23 +139,29 @@ This is **microtask batching** in Solid / Leptos terminology.
 
 ---
 
-## Memos
+## Memos — derived signals
 
-A memo is an effect with a cached return value. Other reactive code
-reads it like a signal:
+`memo` is a compute-driven [`ReadSignal`]: the value is produced by
+a closure that re-runs when its tracked sources change, but the
+public handle is exactly the same `ReadSignal<T>` you get from
+`signal()`. Component props that take a "dynamic readable value"
+write `ReadSignal<T>` and don't care whether the source is a
+primitive signal or a memo — that's the whole point of the
+unification.
 
 ```rust
 let (count, set_count) = signal(0);
-let doubled = memo(move || count.get() * 2);
+let doubled: ReadSignal<i32> = memo(move || count.get() * 2);
 
 doubled.get();                // 0
 set_count.set(7);
 doubled.get();                // 14
 ```
 
-Memos are **lazy** (recompute only when a subscriber is reading)
-and **value-stable** (don't notify subscribers if the new computed
-value equals the previous one). The latter is what makes:
+Memos are **value-stable** — they don't notify subscribers if the
+new computed value equals the previous one (`T: PartialEq` is
+required for this). The downstream fan-out suppression is what
+makes:
 
 ```rust
 let bucket = memo(move || count.get() / 10);
@@ -165,6 +171,33 @@ effect(move || log::info!("bucket = {}", bucket.get()));
 …log just twice when `count` goes `0 → 5 → 12` rather than three
 times — because the bucket value didn't change on the `0 → 5`
 transition.
+
+### `memo` instead of `move ||` in component props
+
+Whisker's convention is: **components accept reactive values only as
+`ReadSignal<T>` / `WriteSignal<T>` / `RwSignal<T>`, never as
+closures**. When you want to pass a derived value, build it with
+`memo` and pass the resulting `ReadSignal`:
+
+```rust
+#[component]
+fn display(value: ReadSignal<i32>) -> ElementHandle {
+    render! { text { {format!("{}", value.get())} } }
+}
+
+let (count, _) = signal(0);
+display(count);                              // primitive signal
+display(memo(move || count.get() * 2));      // derived signal
+```
+
+This keeps `move ||` out of component signatures, makes prop types
+self-documenting ("is this reactive?"), and survives hot-reload
+better than `impl Fn() + 'static` closures (whose anonymous type
+changes between rebuilds).
+
+A leftover `Memo<T>` type alias points at `ReadSignal<T>` for
+backward compatibility but is deprecated — use `ReadSignal<T>` in
+new code.
 
 ---
 
