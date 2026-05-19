@@ -310,6 +310,15 @@ impl Node {
 
 impl ElementNode {
     fn to_tokens(&self) -> TokenStream2 {
+        // `view` is the prototype tag for the builder-chain lowering
+        // path. The other built-ins (`text`, `page`, …) still go
+        // through the legacy imperative codegen below until the
+        // approach is validated end-to-end. Roll the rest out once
+        // RA completion is confirmed working for `view`.
+        if self.tag == "view" {
+            return self.to_tokens_builder_chain();
+        }
+
         let tag_path = match tag_to_element_tag(&self.tag) {
             Ok(t) => t,
             Err(err) => return err,
@@ -425,11 +434,8 @@ impl ElementNode {
             }
         }
 
-        let ra_hint = self.emit_ra_hint();
-
         quote! {
             {
-                #ra_hint
                 let __h = ::whisker::runtime::view::create_element(#tag_path);
                 #(#stmts)*
                 __h
@@ -437,60 +443,144 @@ impl ElementNode {
         }
     }
 
-    /// Emit a `if false { … }` "hint block" so rust-analyzer can
-    /// resolve the tag identifier (jump-to-definition) and offer
-    /// field-name completion on prop kwargs. Only built-in tags with
-    /// a corresponding `::whisker::__tags::<tag>` struct produce a
-    /// hint; everything else gets an empty block.
+    /// Lower a `view { … }` element to a builder method chain on
+    /// `::whisker::__tags::view`. Each prop kwarg becomes a method
+    /// call (`.style(…)`, `.on_tap(…)`, …) with the method-name
+    /// token at the user's source span — that's what lets
+    /// rust-analyzer offer method completion when the user types
+    /// `view { sty|`.
     ///
-    /// The user's prop value expressions are **not** duplicated into
-    /// the hint — doing so would break `move ||` closures and
-    /// double-move owned values (the borrow checker analyses inside
-    /// `if false` regardless of run-time reachability). The hint
-    /// uses `None` placeholders for each known field; the user's
-    /// value still type-checks at the real codegen site below.
-    fn emit_ra_hint(&self) -> TokenStream2 {
-        let tag_name = self.tag.to_string();
-        let tag_span = self.tag.span();
-        let hint_path = match tag_name.as_str() {
-            "view" => quote_spanned!(tag_span=> ::whisker::__tags::view),
-            _ => return quote! {},
-        };
-
-        // Only emit fields the hint struct knows about; pass-through
-        // attribute names are skipped from the hint (the real
-        // codegen below still handles them).
-        let known_fields: &[&str] = match tag_name.as_str() {
-            "view" => &["style", "on_tap", "class"],
-            _ => &[],
-        };
-        let fields: Vec<TokenStream2> = self
+    /// Children stay on the legacy imperative path (append_child /
+    /// effect-based interpolation) after the chain finalises with
+    /// `.__h()` because the builder API doesn't yet model `{expr}`
+    /// remount logic in a chainable shape.
+    fn to_tokens_builder_chain(&self) -> TokenStream2 {
+        // Build one `.method(value)` token group per attr. The whole
+        // group sits at the kwarg name's source span so the user's
+        // cursor on `style|` maps to the expansion's `.style(…)`
+        // method call.
+        let setter_calls: Vec<TokenStream2> = self
             .attrs
             .iter()
-            .filter(|attr| known_fields.contains(&attr.name.to_string().as_str()))
-            .map(|attr| {
+            .filter_map(|attr| {
                 let name = &attr.name;
-                // Field name keeps the user's span (interpolated
-                // as-is); the colon, value, and trailing comma use
-                // macro-internal call-site spans so RA isn't
-                // confused about which source position corresponds
-                // to which part of the struct-init.
-                quote! {
-                    #name : ::std::option::Option::None ,
+                let value = &attr.value;
+                let name_str = name.to_string();
+                let span = name.span();
+
+                if name_str == "key" {
+                    // `key:` is a `For` reconciliation hint only —
+                    // silently swallow on direct elements to match
+                    // legacy behaviour.
+                    return None;
                 }
+
+                // Known attribute-shaped methods on `__tags::view`
+                // are `style` and `class` — both take a closure
+                // returning `impl ToString` so signal-reading
+                // expressions stay reactive across effect re-runs.
+                // The event method `on_tap` takes the user's handler
+                // directly (it's already a closure).
+                //
+                // Other event-shaped kwargs (`onTap`, `on_swipe`, …)
+                // route through the generic `.on(event, handler)`.
+                // Anything else falls through to `.attr(kebab, move
+                // || value)`.
+                let call = match name_str.as_str() {
+                    "style" | "class" => {
+                        // Wrap the value in a closure that borrows
+                        // the captured binding (via `ToString::to_string`
+                        // on `&value`) and returns an owned String —
+                        // matches the legacy imperative emission's
+                        // borrow-only re-read pattern. Lets the
+                        // effect re-run for signal updates and
+                        // sidesteps the "non-Copy capture moved twice"
+                        // problem.
+                        quote_spanned! {span=>
+                            .#name(move || ::std::string::ToString::to_string(&(#value)))
+                        }
+                    }
+                    "on_tap" => {
+                        // Handler is already a closure — pass through.
+                        quote_spanned! {span=> .#name(#value) }
+                    }
+                    _ if strip_on_prefix(&name_str).is_some() => {
+                        let event = strip_on_prefix(&name_str).unwrap();
+                        let event_lit = LitStr::new(&event, span);
+                        quote_spanned! {span=> .on(#event_lit, #value) }
+                    }
+                    _ => {
+                        let kebab = name_str.replace('_', "-");
+                        let kebab_lit = LitStr::new(&kebab, span);
+                        quote_spanned! {span=>
+                            .attr(#kebab_lit, move || ::std::string::ToString::to_string(&(#value)))
+                        }
+                    }
+                };
+                Some(call)
             })
             .collect();
 
-        quote! {
-            // Hint to rust-analyzer. Never executed.
-            #[allow(unreachable_code, unused, dead_code, clippy::all)]
-            {
-                if false {
-                    let _: #hint_path = #hint_path {
-                        #(#fields)*
-                        ..::std::default::Default::default()
-                    };
+        // Children: reuse the same lowering the legacy path uses, so
+        // text children, nested elements, user components, and
+        // `{expr}` interpolation all behave identically.
+        let mut child_stmts: Vec<TokenStream2> = Vec::new();
+        for child in &self.children {
+            match child {
+                Node::Expr(expr) => {
+                    child_stmts.push(quote! {
+                        {
+                            let __interp_parent = __h;
+                            let __interp_last:
+                                ::std::rc::Rc<::std::cell::RefCell<
+                                    ::std::vec::Vec<
+                                        ::whisker::runtime::view::ElementHandle,
+                                    >,
+                                >> = ::std::rc::Rc::new(
+                                    ::std::cell::RefCell::new(
+                                        ::std::vec::Vec::new(),
+                                    ),
+                                );
+                            ::whisker::effect(move || {
+                                for __h_prev in __interp_last.borrow_mut().drain(..) {
+                                    ::whisker::runtime::view::remove_child(
+                                        __interp_parent, __h_prev,
+                                    );
+                                }
+                                let __view = ::whisker::runtime::view::IntoView::into_view(#expr);
+                                let __new = __view.attach_to(__interp_parent);
+                                *__interp_last.borrow_mut() = __new;
+                            });
+                        }
+                    });
                 }
+                _ => {
+                    let child_code = child.to_tokens_returning_handle();
+                    child_stmts.push(quote! {
+                        {
+                            let __child = #child_code;
+                            ::whisker::runtime::view::append_child(__h, __child);
+                        }
+                    });
+                }
+            }
+        }
+
+        // Builder constructor `::whisker::__tags::view()` carries
+        // the user's `view` tag-name span so RA jump-to-definition
+        // and hover docs hit the right token.
+        let view_ctor = {
+            let span = self.tag.span();
+            quote_spanned! {span=> ::whisker::__tags::view() }
+        };
+
+        quote! {
+            {
+                let __h = #view_ctor
+                    #(#setter_calls)*
+                    .__h();
+                #(#child_stmts)*
+                __h
             }
         }
     }
@@ -884,46 +974,76 @@ mod tests {
     // ---- RA hint emission ----------------------------------------
 
     #[test]
-    fn view_emission_includes_ra_hint() {
-        // The macro's output for `render! { view { style: "x" } }`
-        // must include a reference to `::whisker::__tags::view` so
-        // rust-analyzer can resolve the tag identifier for
-        // jump-to-definition.
+    fn view_emission_uses_builder_chain() {
+        // `render! { view { style: "x" } }` must lower to a builder
+        // chain `::whisker::__tags::view().style("x").__h()`. The
+        // method-call shape (not struct-init) is what drives
+        // rust-analyzer's prop-name completion.
         let input: TokenStream2 = quote::quote! { view { style: "x" } };
         let output = super::expand_test(input).to_string();
         assert!(
-            output.contains("__tags") && output.contains(":: view"),
-            "view emission must reference ::whisker::__tags::view; \
+            output.contains("__tags :: view ()") || output.contains("__tags::view()"),
+            "view emission must call `::whisker::__tags::view()`; \
              output was: {output}"
         );
-        // The user's prop name must appear inside the hint struct
-        // init (drives RA's field-name completion).
         assert!(
-            output.contains("style :"),
-            "hint should include `style:` field; output was: {output}"
+            output.contains(". style"),
+            "view emission must call `.style(value)`; \
+             output was: {output}"
+        );
+        assert!(
+            output.contains(". __h ()"),
+            "builder chain must finalise with `.__h()`; \
+             output was: {output}"
         );
     }
 
     #[test]
-    fn non_view_tag_skips_ra_hint() {
-        // Other built-ins don't yet have hint structs — make sure we
-        // emit nothing rather than blow up.
+    fn view_emission_falls_through_unknown_attrs_to_attr_method() {
+        // Attributes the builder doesn't have a method for go
+        // through `.attr("kebab-name", value)`.
+        let input: TokenStream2 = quote::quote! {
+            view { scroll_orientation: "horizontal" }
+        };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains(". attr ("),
+            "unknown attrs should fall through to `.attr(…)`; \
+             output was: {output}"
+        );
+        assert!(
+            output.contains("\"scroll-orientation\""),
+            "snake_case must be kebab-cased for `.attr(…)`; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn non_view_tag_uses_legacy_imperative_path() {
+        // Other built-ins haven't been migrated to the builder
+        // chain yet — they keep the imperative `create_element +
+        // set_attribute` emission.
         let input: TokenStream2 = quote::quote! { text { "hello" } };
         let output = super::expand_test(input).to_string();
         assert!(
             !output.contains("__tags"),
-            "text emission must not reference __tags yet; \
+            "text emission must not touch __tags yet; \
+             output was: {output}"
+        );
+        assert!(
+            output.contains("create_element"),
+            "non-view built-ins keep the imperative path; \
              output was: {output}"
         );
     }
 
     #[test]
-    fn user_component_skips_ra_hint() {
+    fn user_component_does_not_use_builtin_tags_module() {
         let input: TokenStream2 = quote::quote! { my_card { title: "x" } };
         let output = super::expand_test(input).to_string();
         assert!(
             !output.contains("__tags"),
-            "user components must not emit built-in tag hints; \
+            "user components must not touch the built-in tags module; \
              output was: {output}"
         );
     }

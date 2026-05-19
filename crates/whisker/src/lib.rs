@@ -56,48 +56,128 @@ pub mod __typed_builder {
     pub use ::typed_builder::TypedBuilder;
 }
 
-/// Type hints the `render!` macro emits so rust-analyzer can offer
-/// jump-to-definition, hover docs, and field-name completion on
-/// built-in tags. These structs are never instantiated at runtime —
-/// the macro wraps each hint in an `if false {}` block whose only
-/// purpose is to expose RA-readable token positions.
+/// Built-in tag builders. The `render!` macro lowers each built-in
+/// element invocation (`view { style: "x", on_tap: || {} }`) into a
+/// builder method chain on one of these types
+/// (`__tags::view().style("x").on_tap(|| {}).__h()`). Methods
+/// internally invoke the imperative runtime primitives
+/// (`create_element`, `set_inline_styles`, …).
 ///
-/// Internal. Not part of the public surface.
+/// **Why a builder chain instead of struct-init or imperative
+/// codegen:** rust-analyzer's auto-completion picks up methods on
+/// known receiver types far more reliably than field names inside a
+/// proc-macro-emitted struct-init expression. So when the user
+/// types `view { sty|` inside `render! { … }`, RA expands the
+/// macro, sees `view().style|(…)` at the same source span, infers
+/// `view` as the receiver type, and offers method completion
+/// (`style`, `class`, `on_tap`, `attr`). Same mechanism Leptos
+/// relies on for its `view!` macro DX.
+///
+/// Internal. Not part of the public surface — users go through
+/// `render!`.
 #[doc(hidden)]
 pub mod __tags {
+    use crate::ElementTag;
+    use whisker_runtime::reactive::effect;
+    use whisker_runtime::view::{
+        append_child, create_element, set_attribute, set_event_listener,
+        set_inline_styles, ElementHandle,
+    };
+
     /// `<view>` — Lynx's flex container.
     ///
     /// The most basic layout primitive in Whisker: a rectangular
     /// box that lays out its children with CSS flexbox. Equivalent
     /// to `<View>` in React Native or `<div>` in the web.
-    ///
-    /// ## Common props
-    ///
-    /// - `style:` — CSS-string. Static (`"padding: 16px;"`) or
-    ///   reactive (`format!("color: {}", color.get())`).
-    /// - `on_tap:` — `Fn()` callback invoked when the user taps the
-    ///   view's bounds.
-    /// - `class:` — Lynx class name (rarely used; inline `style:`
-    ///   is the idiomatic choice).
-    ///
-    /// Any other attribute name is forwarded to Lynx's
-    /// `set_attribute` (snake_case → kebab-case translation). The
-    /// fields listed here are the ones rust-analyzer offers in
-    /// auto-completion; pass-through attributes still work, they
-    /// just don't show up in the IDE prompts.
     #[allow(non_camel_case_types)]
-    #[derive(Default)]
     pub struct view {
-        /// Inline CSS string. Anything that converts to `String`
-        /// via `ToString` (static `&str`, owned `String`,
-        /// `format!()` interpolating signal reads, …).
-        pub style: ::std::option::Option<::std::string::String>,
-        /// Tap handler — invoked once per tap on the view's bounds.
-        pub on_tap: ::std::option::Option<
-            ::std::boxed::Box<dyn ::std::ops::Fn()>,
-        >,
-        /// Lynx class name applied to the element.
-        pub class: ::std::option::Option<::std::string::String>,
+        handle: ElementHandle,
+    }
+
+    /// Construct a fresh `view` and return its builder. Each builder
+    /// method (`.style(…)`, `.on_tap(…)`, …) registers the
+    /// corresponding side effect (`effect(|| set_inline_styles(…))`,
+    /// `set_event_listener(…)`, …) and returns `self` for chaining.
+    pub fn view() -> view {
+        view { handle: create_element(ElementTag::View) }
+    }
+
+    impl view {
+        /// Inline CSS — value is wrapped in a closure by the macro
+        /// so a signal-reading expression
+        /// (`format!("color: {}", color.get())`) re-applies on every
+        /// dep change. The closure body is re-evaluated on each
+        /// effect run, picking up the latest signal values.
+        pub fn style<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_inline_styles(h, &f().to_string()));
+            self
+        }
+
+        /// Tap handler. Registers via `set_event_listener("tap", …)`;
+        /// fires once per tap and lives until the owner is disposed.
+        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
+            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
+            self
+        }
+
+        /// Generic event handler. Used by the macro for events the
+        /// builder doesn't have a dedicated method for (e.g. when
+        /// the user writes camelCase `onSwipe:` or any non-`tap`
+        /// snake_case event). The event name is the part of the
+        /// kwarg after `on_` / `on`, lowercased.
+        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
+            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
+            self
+        }
+
+        /// Lynx class name. Value-via-closure for the same reactive
+        /// reason as `style`.
+        pub fn class<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, "class", &f().to_string()));
+            self
+        }
+
+        /// Catch-all for attribute names the builder doesn't have a
+        /// dedicated method for (Lynx forwards them as-is). The
+        /// macro emits `.attr("kebab-name", move || value)` for any
+        /// kwarg not in the explicit method list. Snake → kebab
+        /// translation happens at the macro side.
+        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, name, &f().to_string()));
+            self
+        }
+
+        /// Append a previously-built child element. Used for nested
+        /// tags (`view { text { … } }`) — the macro lowers each
+        /// child to its own builder chain ending in `.__h()`, then
+        /// hands the resulting handle to this method.
+        pub fn child(self, child: ElementHandle) -> Self {
+            append_child(self.handle, child);
+            self
+        }
+
+        /// Finish building and return the underlying handle. Named
+        /// with double underscores so it doesn't collide with any
+        /// Lynx attribute name a user might want to set via `.attr`.
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> ElementHandle {
+            self.handle
+        }
     }
 }
 
