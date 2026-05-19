@@ -32,12 +32,39 @@ use quote::{quote, quote_spanned};
 use syn::{
     braced,
     parse::{Parse, ParseStream, Result},
-    parse_macro_input, token, Expr, Ident, LitStr, Token,
+    token, Expr, Ident, LitStr, Token,
 };
 
 pub fn expand(input: TokenStream) -> TokenStream {
-    let root = parse_macro_input!(input as Root);
-    root.to_tokens().into()
+    let tokens: TokenStream2 = input.into();
+    match syn::parse2::<Root>(tokens) {
+        Ok(root) => root.to_tokens().into(),
+        Err(err) => {
+            // Don't just emit `compile_error!(…)` — that expands to
+            // nothing of `ElementHandle` type, so the surrounding
+            // code (`let h: ElementHandle = render! { … };`) gets a
+            // cascading "expected ElementHandle, found ()" error
+            // for every line that touches the variable. Pair the
+            // error message with a placeholder `create_element` so
+            // the macro's return type stays `ElementHandle` and
+            // diagnostics stay confined to the actual syntax error
+            // — same approach Leptos uses for its `view!` macro.
+            //
+            // The placeholder never runs: `compile_error!` aborts
+            // `cargo build`, and the placeholder exists only to
+            // keep rust-analyzer's type-checker happy.
+            let err_tokens = err.to_compile_error();
+            quote! {
+                {
+                    #err_tokens
+                    ::whisker::runtime::view::create_element(
+                        ::whisker::ElementTag::View,
+                    )
+                }
+            }
+            .into()
+        }
+    }
 }
 
 /// Test-only hook: same parse + lowering as `expand` but works on
