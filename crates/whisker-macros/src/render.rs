@@ -548,19 +548,37 @@ impl ElementNode {
                 // route through the generic `.on(event, handler)`.
                 // Anything else falls through to `.attr(kebab, move
                 // || value)`.
-                // Partial-input case: emit `.#name(())` so RA sees
-                // a method call at the user's `name|` span and can
-                // offer the builder's matching method names as
-                // completion candidates. This emission is **not
-                // expected to compile** — the partial kwarg
-                // typically doesn't match a real method — but RA's
-                // completion runs on the type-error result too,
-                // suggesting methods of the receiver type whose
-                // names share the user's prefix.
+                // Partial-input case. Two emission shapes available:
+                //
+                //   - `.#name(())` → method call. RA does
+                //     METHOD completion against the builder type.
+                //     Surfaces `style`, `on_tap`, etc.
+                //   - (handled below as a child fall-through)
+                //     `#name()` → function call. RA does
+                //     IDENTIFIER completion against scope. Surfaces
+                //     `view`, `page`, user components, etc.
+                //
+                // Decide based on whether the partial prefix could
+                // plausibly be a kwarg name on this tag. We look at
+                // the static known-method list per built-in tag
+                // (`style`, `class`, `on_tap`, `on`, `attr`,
+                // `child`, `__h` + tag-specific ones) and treat any
+                // prefix that matches a method as a kwarg, falling
+                // through to identifier completion for the rest.
+                // That gets `view { v|` to suggest `view` (child)
+                // while keeping `view { sty|` suggesting `style`
+                // (kwarg).
+                let tag_name_str = self.tag.to_string();
                 if attr.partial {
-                    return Some(quote_spanned! {span=>
-                        .#name(())
-                    });
+                    if builder_method_prefix_matches(&tag_name_str, &name_str) {
+                        return Some(quote_spanned! {span=>
+                            .#name(())
+                        });
+                    }
+                    // Fall through to the child-emission path
+                    // below — represented as `None` here so the
+                    // setter chain doesn't include this entry.
+                    return None;
                 }
 
                 let tag_name = self.tag.to_string();
@@ -649,16 +667,87 @@ impl ElementNode {
             quote_spanned! {span=> ::whisker::__tags::#tag_ident() }
         };
 
+        // Partial-kwarg identifiers that didn't match any builder
+        // method get re-emitted as bare identifier references so
+        // rust-analyzer's IDENTIFIER completion can fire — picks up
+        // built-in tag names (`view`, `text`, …) and user components
+        // from the surrounding scope. Without this, e.g.
+        // `view { v|` had no expansion site at `v|` and RA gave no
+        // suggestions; now `v` appears in a value-expression
+        // position and RA offers tag/component candidates starting
+        // with the typed prefix.
+        let tag_name_str = self.tag.to_string();
+        let ident_refs: Vec<TokenStream2> = self
+            .attrs
+            .iter()
+            .filter_map(|attr| {
+                if !attr.partial {
+                    return None;
+                }
+                if builder_method_prefix_matches(&tag_name_str, &attr.name.to_string()) {
+                    // Handled by the setter chain — no extra
+                    // ident-ref needed.
+                    return None;
+                }
+                let name = &attr.name;
+                let span = name.span();
+                Some(quote_spanned! {span=>
+                    let _ = #name;
+                })
+            })
+            .collect();
+
         quote! {
             {
                 let __h = #ctor
                     #(#setter_calls)*
                     .__h();
+                #[allow(dead_code, unused_variables, path_statements)]
+                {
+                    #(#ident_refs)*
+                }
                 #(#child_stmts)*
                 __h
             }
         }
     }
+}
+
+/// Static list of builder method names for a given built-in tag.
+/// The macro uses this for the partial-input heuristic: a kwarg
+/// prefix that matches one of these is treated as a kwarg (method
+/// completion); otherwise it's re-emitted as a bare identifier so
+/// rust-analyzer offers tag/component completion instead.
+///
+/// Keep in sync with the impl blocks in
+/// `crates/whisker/src/lib.rs::__tags`.
+fn builder_methods_for_tag(tag: &str) -> &'static [&'static str] {
+    match tag {
+        "view" | "page" | "text" => &[
+            "style", "class", "on_tap", "on", "attr", "child", "__h",
+        ],
+        "image" => &[
+            "style", "class", "on_tap", "on", "attr", "child", "__h", "src",
+        ],
+        "scroll_view" => &[
+            "style", "class", "on_tap", "on", "attr", "child", "__h",
+            "scroll_orientation",
+        ],
+        "raw_text" => &[
+            "style", "class", "on_tap", "on", "attr", "child", "__h", "text",
+        ],
+        _ => &[],
+    }
+}
+
+/// Does any builder method on `tag` start with `prefix`? Used by the
+/// partial-input emitter to decide whether to emit a method call
+/// (for method completion) or a bare identifier reference (for
+/// scope completion).
+fn builder_method_prefix_matches(tag: &str, prefix: &str) -> bool {
+    builder_methods_for_tag(tag)
+        .iter()
+        .any(|m| m.starts_with(prefix))
 }
 
 /// String-attribute-shaped methods on the builder for a given tag.
