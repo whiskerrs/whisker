@@ -341,12 +341,16 @@ impl Node {
 
 impl ElementNode {
     fn to_tokens(&self) -> TokenStream2 {
-        // `view` is the prototype tag for the builder-chain lowering
-        // path. The other built-ins (`text`, `page`, …) still go
-        // through the legacy imperative codegen below until the
-        // approach is validated end-to-end. Roll the rest out once
-        // RA completion is confirmed working for `view`.
-        if self.tag == "view" {
+        // All built-in tags lower to a `__tags::<tag>().…__h()`
+        // builder method chain. This is the path rust-analyzer's
+        // method-completion engine knows how to drive: the user
+        // typing `view { sty|` (or `image { sr|`, etc.) ends up on a
+        // method-name slot in the expansion, RA infers the receiver
+        // type, and offers the builder's methods as completion
+        // candidates. The legacy imperative codegen below is now
+        // dead for built-in tags; it stays as a defensive fallback
+        // in case a future tag forgets to register a builder.
+        if is_builtin_tag(&self.tag.to_string()) {
             return self.to_tokens_builder_chain();
         }
 
@@ -474,12 +478,13 @@ impl ElementNode {
         }
     }
 
-    /// Lower a `view { … }` element to a builder method chain on
-    /// `::whisker::__tags::view`. Each prop kwarg becomes a method
-    /// call (`.style(…)`, `.on_tap(…)`, …) with the method-name
-    /// token at the user's source span — that's what lets
-    /// rust-analyzer offer method completion when the user types
-    /// `view { sty|`.
+    /// Lower a built-in element (`view`, `page`, `text`, `image`,
+    /// `scroll_view`, `raw_text`) to a builder method chain on the
+    /// corresponding `::whisker::__tags::<tag>` type. Each prop
+    /// kwarg becomes a method call (`.style(…)`, `.on_tap(…)`, …)
+    /// with the method-name token at the user's source span —
+    /// that's what lets rust-analyzer offer method completion when
+    /// the user types `image { sr|` etc.
     ///
     /// Children stay on the legacy imperative path (append_child /
     /// effect-based interpolation) after the chain finalises with
@@ -532,35 +537,32 @@ impl ElementNode {
                     });
                 }
 
-                let call = match name_str.as_str() {
-                    "style" | "class" => {
-                        // Wrap the value in a closure that borrows
-                        // the captured binding (via `ToString::to_string`
-                        // on `&value`) and returns an owned String —
-                        // matches the legacy imperative emission's
-                        // borrow-only re-read pattern. Lets the
-                        // effect re-run for signal updates and
-                        // sidesteps the "non-Copy capture moved twice"
-                        // problem.
-                        quote_spanned! {span=>
-                            .#name(move || ::std::string::ToString::to_string(&(#value)))
-                        }
+                let tag_name = self.tag.to_string();
+                let call = if is_string_attr_method(&tag_name, &name_str) {
+                    // String-shaped attr method (`style`, `class`,
+                    // plus tag-specific ones like `image::src`,
+                    // `scroll_view::scroll_orientation`,
+                    // `raw_text::text`). Wrap the value in a closure
+                    // that borrows the captured binding via
+                    // `ToString::to_string(&value)` — matches the
+                    // legacy imperative emission's borrow-only
+                    // re-read pattern, so effect re-runs see the
+                    // current binding without moving non-`Copy`
+                    // values twice.
+                    quote_spanned! {span=>
+                        .#name(move || ::std::string::ToString::to_string(&(#value)))
                     }
-                    "on_tap" => {
-                        // Handler is already a closure — pass through.
-                        quote_spanned! {span=> .#name(#value) }
-                    }
-                    _ if strip_on_prefix(&name_str).is_some() => {
-                        let event = strip_on_prefix(&name_str).unwrap();
-                        let event_lit = LitStr::new(&event, span);
-                        quote_spanned! {span=> .on(#event_lit, #value) }
-                    }
-                    _ => {
-                        let kebab = name_str.replace('_', "-");
-                        let kebab_lit = LitStr::new(&kebab, span);
-                        quote_spanned! {span=>
-                            .attr(#kebab_lit, move || ::std::string::ToString::to_string(&(#value)))
-                        }
+                } else if name_str == "on_tap" {
+                    // Handler is already a closure — pass through.
+                    quote_spanned! {span=> .#name(#value) }
+                } else if let Some(event) = strip_on_prefix(&name_str) {
+                    let event_lit = LitStr::new(&event, span);
+                    quote_spanned! {span=> .on(#event_lit, #value) }
+                } else {
+                    let kebab = name_str.replace('_', "-");
+                    let kebab_lit = LitStr::new(&kebab, span);
+                    quote_spanned! {span=>
+                        .attr(#kebab_lit, move || ::std::string::ToString::to_string(&(#value)))
                     }
                 };
                 Some(call)
@@ -612,17 +614,18 @@ impl ElementNode {
             }
         }
 
-        // Builder constructor `::whisker::__tags::view()` carries
-        // the user's `view` tag-name span so RA jump-to-definition
-        // and hover docs hit the right token.
-        let view_ctor = {
+        // Builder constructor (`::whisker::__tags::<tag>()`). The
+        // tag-name token preserves the user's source span so RA
+        // jump-to-definition and hover docs hit the right thing.
+        let tag_ident = &self.tag;
+        let ctor = {
             let span = self.tag.span();
-            quote_spanned! {span=> ::whisker::__tags::view() }
+            quote_spanned! {span=> ::whisker::__tags::#tag_ident() }
         };
 
         quote! {
             {
-                let __h = #view_ctor
+                let __h = #ctor
                     #(#setter_calls)*
                     .__h();
                 #(#child_stmts)*
@@ -630,6 +633,26 @@ impl ElementNode {
             }
         }
     }
+}
+
+/// String-attribute-shaped methods on the builder for a given tag.
+/// These are the methods that take a closure returning
+/// `impl ToString` (`style`, `class`, plus tag-specific ones). The
+/// macro routes a matching kwarg through `.#name(move || …)`;
+/// non-matches go through `.attr(kebab, …)` (catch-all) or
+/// `.on(…)` (events).
+fn is_string_attr_method(tag: &str, attr: &str) -> bool {
+    // Common to every built-in builder.
+    if matches!(attr, "style" | "class") {
+        return true;
+    }
+    // Tag-specific methods that live on individual builders.
+    matches!(
+        (tag, attr),
+        ("image", "src")
+            | ("scroll_view", "scroll_orientation")
+            | ("raw_text", "text")
+    )
 }
 
 // ---- Control-flow codegen (Show / For) -----------------------------------
@@ -1065,20 +1088,45 @@ mod tests {
     }
 
     #[test]
-    fn non_view_tag_uses_legacy_imperative_path() {
-        // Other built-ins haven't been migrated to the builder
-        // chain yet — they keep the imperative `create_element +
-        // set_attribute` emission.
-        let input: TokenStream2 = quote::quote! { text { "hello" } };
+    fn all_builtin_tags_use_builder_chain() {
+        // Every built-in lowers to `__tags::<tag>().…__h()`. Spot-
+        // check a few representative ones.
+        for tag in &["page", "view", "text", "image", "scroll_view"] {
+            let input: TokenStream2 = match *tag {
+                "image" => quote::quote! { image { src: "x" } },
+                "scroll_view" => quote::quote! { scroll_view { scroll_orientation: "vertical" } },
+                _ => {
+                    let ident = syn::Ident::new(tag, proc_macro2::Span::call_site());
+                    quote::quote! { #ident { style: "x" } }
+                }
+            };
+            let output = super::expand_test(input).to_string();
+            assert!(
+                output.contains("__tags") && output.contains(". __h ()"),
+                "tag `{tag}` should use the builder chain; output was: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn image_src_lowers_to_dedicated_method() {
+        let input: TokenStream2 = quote::quote! { image { src: "https://x" } };
         let output = super::expand_test(input).to_string();
         assert!(
-            !output.contains("__tags"),
-            "text emission must not touch __tags yet; \
+            output.contains(". src"),
+            "image.src should lower to the `.src` builder method, not `.attr`; \
              output was: {output}"
         );
+    }
+
+    #[test]
+    fn scroll_view_orientation_lowers_to_dedicated_method() {
+        let input: TokenStream2 =
+            quote::quote! { scroll_view { scroll_orientation: "horizontal" } };
+        let output = super::expand_test(input).to_string();
         assert!(
-            output.contains("create_element"),
-            "non-view built-ins keep the imperative path; \
+            output.contains(". scroll_orientation"),
+            "scroll_view.scroll_orientation should lower to the dedicated method; \
              output was: {output}"
         );
     }
