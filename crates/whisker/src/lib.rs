@@ -84,95 +84,15 @@ pub mod __tags {
         set_inline_styles, ElementHandle,
     };
 
-    // Each built-in tag is a struct + inherent `impl` block written
-    // out explicitly (no `macro_rules!`, no traits). The shared
-    // method bodies are duplicated across the six tags, but that's
-    // worth the simpler shape: rust-analyzer's method-completion
-    // engine resolves inherent methods on a typed receiver
-    // directly, without having to walk `impl<T> Trait for T` blocks
-    // or expand a `macro_rules!`-generated `impl` template — both
-    // of which we've seen RA fail to follow for built-in tags
-    // (custom components used typed-builder's `#[derive]`-generated
-    // inherent methods and worked fine).
-    //
-    // A small `impl_common_builtin_methods!` macro_rules! emits the
-    // shared `style` / `class` / `on_tap` / `on` / `attr` / `child`
-    // / `__h` block per tag, then each tag's `impl` is opened a
-    // second time for its tag-specific methods (`image::src`,
-    // `scroll_view::scroll_orientation`, `raw_text::text`).
-    //
-    // Yes, this is the same `macro_rules!` shape as the previous
-    // `define_builtin_builder!`. The difference is the granularity:
-    // we hand-write each `pub struct` / `pub fn` / opening `impl
-    // tag {` so RA can index the type and the constructor without
-    // needing to expand a macro that produces them — only the
-    // METHOD BODIES come from `macro_rules!`, and those don't
-    // appear at completion-name lookup time.
-    macro_rules! impl_common_builtin_methods {
-        () => {
-            /// Inline CSS — value-via-closure so signal-reading
-            /// expressions re-apply on each dep change.
-            pub fn style<F, T>(self, f: F) -> Self
-            where
-                F: ::std::ops::Fn() -> T + 'static,
-                T: ::std::string::ToString,
-            {
-                let h = self.handle;
-                effect(move || set_inline_styles(h, &f().to_string()));
-                self
-            }
-
-            /// Tap handler (Lynx `tap` event).
-            pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
-                set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
-                self
-            }
-
-            /// Generic event handler.
-            pub fn on<F: ::std::ops::Fn() + 'static>(
-                self,
-                event: &'static str,
-                f: F,
-            ) -> Self {
-                set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
-                self
-            }
-
-            /// Lynx class name.
-            pub fn class<F, T>(self, f: F) -> Self
-            where
-                F: ::std::ops::Fn() -> T + 'static,
-                T: ::std::string::ToString,
-            {
-                let h = self.handle;
-                effect(move || set_attribute(h, "class", &f().to_string()));
-                self
-            }
-
-            /// Catch-all for any other Lynx attribute.
-            pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
-            where
-                F: ::std::ops::Fn() -> T + 'static,
-                T: ::std::string::ToString,
-            {
-                let h = self.handle;
-                effect(move || set_attribute(h, name, &f().to_string()));
-                self
-            }
-
-            /// Append a child handle.
-            pub fn child(self, child: ElementHandle) -> Self {
-                append_child(self.handle, child);
-                self
-            }
-
-            /// Finish building and return the underlying handle.
-            #[allow(non_snake_case)]
-            pub fn __h(self) -> ElementHandle {
-                self.handle
-            }
-        };
-    }
+    // Each built-in tag is a struct + a hand-written inherent
+    // `impl` block listing every method explicitly. **No
+    // `macro_rules!` is used to emit methods.** The spike under
+    // `crates/ra-spike` showed that rust-analyzer's
+    // method-completion engine doesn't surface methods that came
+    // from a `macro_rules!` expansion inside an `impl` block —
+    // even though the same methods compile and pass type-check
+    // fine. Inline definitions fix the completion path; the
+    // duplication across six tags is the cost.
 
     /// `<page>` — top-level container Lynx mounts as the root of
     /// an app. Holds the screen-level `style=` (background, flex
@@ -184,7 +104,57 @@ pub mod __tags {
         page { handle: create_element(ElementTag::Page) }
     }
     impl page {
-        impl_common_builtin_methods!();
+        /// Inline CSS — value-via-closure so signal-reading
+        /// expressions re-apply on each dep change.
+        pub fn style<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_inline_styles(h, &f().to_string()));
+            self
+        }
+        /// Tap handler (Lynx `tap` event).
+        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
+            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
+            self
+        }
+        /// Generic event handler.
+        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
+            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
+            self
+        }
+        /// Lynx class name.
+        pub fn class<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, "class", &f().to_string()));
+            self
+        }
+        /// Catch-all for any other Lynx attribute.
+        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, name, &f().to_string()));
+            self
+        }
+        /// Append a child handle.
+        pub fn child(self, child: ElementHandle) -> Self {
+            append_child(self.handle, child);
+            self
+        }
+        /// Finish building and return the underlying handle.
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> ElementHandle {
+            self.handle
+        }
     }
 
     /// `<view>` — Lynx's flex container. The most basic layout
@@ -198,7 +168,57 @@ pub mod __tags {
         view { handle: create_element(ElementTag::View) }
     }
     impl view {
-        impl_common_builtin_methods!();
+        /// Inline CSS — value-via-closure so signal-reading
+        /// expressions re-apply on each dep change.
+        pub fn style<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_inline_styles(h, &f().to_string()));
+            self
+        }
+        /// Tap handler (Lynx `tap` event).
+        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
+            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
+            self
+        }
+        /// Generic event handler.
+        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
+            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
+            self
+        }
+        /// Lynx class name.
+        pub fn class<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, "class", &f().to_string()));
+            self
+        }
+        /// Catch-all for any other Lynx attribute.
+        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, name, &f().to_string()));
+            self
+        }
+        /// Append a child handle.
+        pub fn child(self, child: ElementHandle) -> Self {
+            append_child(self.handle, child);
+            self
+        }
+        /// Finish building and return the underlying handle.
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> ElementHandle {
+            self.handle
+        }
     }
 
     /// `<text>` — text container. The actual glyphs live in
@@ -211,7 +231,49 @@ pub mod __tags {
         text { handle: create_element(ElementTag::Text) }
     }
     impl text {
-        impl_common_builtin_methods!();
+        pub fn style<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_inline_styles(h, &f().to_string()));
+            self
+        }
+        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
+            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
+            self
+        }
+        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
+            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
+            self
+        }
+        pub fn class<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, "class", &f().to_string()));
+            self
+        }
+        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, name, &f().to_string()));
+            self
+        }
+        pub fn child(self, child: ElementHandle) -> Self {
+            append_child(self.handle, child);
+            self
+        }
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> ElementHandle {
+            self.handle
+        }
     }
 
     /// `<raw_text>` — leaf text node with a `text` attribute.
@@ -224,7 +286,49 @@ pub mod __tags {
         raw_text { handle: create_element(ElementTag::RawText) }
     }
     impl raw_text {
-        impl_common_builtin_methods!();
+        pub fn style<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_inline_styles(h, &f().to_string()));
+            self
+        }
+        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
+            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
+            self
+        }
+        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
+            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
+            self
+        }
+        pub fn class<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, "class", &f().to_string()));
+            self
+        }
+        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, name, &f().to_string()));
+            self
+        }
+        pub fn child(self, child: ElementHandle) -> Self {
+            append_child(self.handle, child);
+            self
+        }
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> ElementHandle {
+            self.handle
+        }
 
         /// The literal text content. Lynx's `text` attribute.
         pub fn text<F, T>(self, f: F) -> Self
@@ -247,7 +351,49 @@ pub mod __tags {
         image { handle: create_element(ElementTag::Image) }
     }
     impl image {
-        impl_common_builtin_methods!();
+        pub fn style<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_inline_styles(h, &f().to_string()));
+            self
+        }
+        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
+            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
+            self
+        }
+        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
+            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
+            self
+        }
+        pub fn class<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, "class", &f().to_string()));
+            self
+        }
+        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, name, &f().to_string()));
+            self
+        }
+        pub fn child(self, child: ElementHandle) -> Self {
+            append_child(self.handle, child);
+            self
+        }
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> ElementHandle {
+            self.handle
+        }
 
         /// Image source URL — Lynx's `src` attribute.
         pub fn src<F, T>(self, f: F) -> Self
@@ -270,7 +416,49 @@ pub mod __tags {
         scroll_view { handle: create_element(ElementTag::ScrollView) }
     }
     impl scroll_view {
-        impl_common_builtin_methods!();
+        pub fn style<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_inline_styles(h, &f().to_string()));
+            self
+        }
+        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
+            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
+            self
+        }
+        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
+            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
+            self
+        }
+        pub fn class<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, "class", &f().to_string()));
+            self
+        }
+        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, name, &f().to_string()));
+            self
+        }
+        pub fn child(self, child: ElementHandle) -> Self {
+            append_child(self.handle, child);
+            self
+        }
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> ElementHandle {
+            self.handle
+        }
 
         /// Scroll direction — `"vertical"` (default) or
         /// `"horizontal"`. Maps to Lynx's `scroll-orientation`
