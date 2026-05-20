@@ -1,19 +1,19 @@
 //! Rust-analyzer completion experiments.
 //!
-//! Open this file in VS Code (with rust-analyzer enabled). At each
-//! marker ↓ position the cursor where indicated and try Ctrl+Space
-//! (or trigger completion however your editor does). Note in the
-//! adjacent comment which kind of completion fires.
+//! **This file is NOT expected to compile.** The partial-input
+//! cases below intentionally invoke methods that don't exist
+//! (`.sty` etc.) — they're there so rust-analyzer can index them
+//! and surface what completions it offers at the cursor position.
+//! Run completion checks in VS Code; ignore `cargo check`'s errors.
 //!
-//! Build once first so RA has resolved the proc-macros:
+//! Setup:
 //!
-//!     cargo check -p ra-spike
+//!     cargo check -p ra-spike   # may fail — expected
 //!
-//! Then restart rust-analyzer in VS Code if needed.
-//!
-//! Partial-input cases live under `#[cfg(any())]` (never compiled,
-//! always indexed by RA) so this example builds cleanly while still
-//! exposing the test sites to the analyzer.
+//! Then open this file in VS Code, restart rust-analyzer if needed,
+//! and try Ctrl+Space at each marker.
+
+#![allow(dead_code, unused_imports, unused_variables, unused_must_use)]
 
 use ra_spike::{compose_a, compose_b, compose_c};
 
@@ -21,61 +21,57 @@ fn main() {}
 
 // ---- Baseline (no macro) -------------------------------------------------
 
-// Sanity check: completion on a plain method chain should always
-// work. If even this doesn't show `style`, the issue is rust-analyzer
-// itself, not our macro.
-#[cfg(any())]
-fn _baseline() {
+// Sanity check: completion on a plain method chain on the same
+// builder type. If even this doesn't surface `style`, the issue is
+// the rust-analyzer setup / extension, not our macro.
+fn baseline() {
     let _ = ra_spike::__tags::__view_ctor()
-        // ← TEST 0: type `.s` here and trigger completion.
-        //   Expected: `style`, `class` … (whatever starts with `s`).
+        .sty // ← TEST 0: cursor right after `sty`. Expected: `style`.
         ;
 }
 
 // ---- Variant A: inline chain ---------------------------------------------
 
 // `compose_a!` emits `__tags::__view_ctor().sty(()).__h()`.
-fn _variant_a_full() {
-    let _ = compose_a! { view(style: "x") };
-}
 
-#[cfg(any())]
-fn _variant_a_partial() {
-    // ← TEST A1: cursor at `sty` (no `:` yet). Does RA suggest `style`?
+fn variant_a_partial() {
+    // ← TEST A1: cursor right after `sty` (no `:` yet).
     let _ = compose_a! { view(sty) };
 }
 
-#[cfg(any())]
-fn _variant_a_single_char() {
-    // ← TEST A2: cursor at `s` alone.
+fn variant_a_single_char() {
+    // ← TEST A2: cursor right after `s` alone.
     let _ = compose_a! { view(s) };
+}
+
+// Reference (compiles): full kwarg.
+fn variant_a_full() {
+    let _ = compose_a! { view(style: "x") };
 }
 
 // ---- Variant B: typed-local-binding chain --------------------------------
 
 // `compose_b!` emits `let __b: __tags::view = … ; __b.sty(()).__h()`.
-fn _variant_b_full() {
-    let _ = compose_b! { view(style: "x") };
+
+fn variant_b_partial() {
+    // ← TEST B1: cursor right after `sty`, routed via `let __b: view`.
+    let _ = compose_b! { view(sty) };
 }
 
-#[cfg(any())]
-fn _variant_b_partial() {
-    // ← TEST B1: same prompt as A1 but routed through `let __b: view`.
-    let _ = compose_b! { view(sty) };
+fn variant_b_full() {
+    let _ = compose_b! { view(style: "x") };
 }
 
 // ---- Variant C: typed-builder shape (matches user-component path) --------
 
 // `compose_c!` emits `view(ViewProps::builder().sty(()).build())` —
-// same shape #[component]-generated code uses, which IS known to
-// support completion.
-fn _variant_c_full() {
-    let _ = compose_c! { view(style: "x") };
+// same shape #[component]-generated code uses.
+
+fn variant_c_partial() {
+    // ← TEST C1: cursor right after `sty`.
+    let _ = compose_c! { view(sty) };
 }
 
-#[cfg(any())]
-fn _variant_c_partial() {
-    // ← TEST C1: cursor at `sty`. Closest analogue to the (working)
-    // custom-component path.
-    let _ = compose_c! { view(sty) };
+fn variant_c_full() {
+    let _ = compose_c! { view(style: "x") };
 }
