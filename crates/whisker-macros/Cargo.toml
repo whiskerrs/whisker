@@ -15,3 +15,11 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
+# JSX-like syntax parser for `render!`'s element grammar
+# (`<view attr="x">…</view>`). Used because rust-analyzer's
+# completion inside `IDENT(...)`-shaped macro args eagerly treats
+# them as Rust function calls and never falls back to macro
+# expansion; a JSX shape doesn't match any Rust expression so RA
+# defers to the macro's expansion for completion. Same crate
+# Leptos uses for the same reason.
+rstml = "0.12"
