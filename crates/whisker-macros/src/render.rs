@@ -740,10 +740,17 @@ impl ElementNode {
             }
         };
 
+        // Inline chain (no intermediate `let __b`). This mirrors
+        // the shape user-component emission uses
+        // (`chip(ChipProps::builder().lab(()).build())`) — RA's
+        // method-completion engine seems to follow inline chains
+        // more reliably than chains through an explicitly-annotated
+        // local binding for our built-in tag types.
+        let _ = builder_ty; // currently unused; kept in case we
+                            // need the explicit annotation back.
         quote! {
             {
-                let __b: #builder_ty = #ctor;
-                let __h = __b #(#setter_calls)* .__h();
+                let __h = #ctor #(#setter_calls)* .__h();
                 #ident_refs_block
                 #(#child_stmts)*
                 __h
