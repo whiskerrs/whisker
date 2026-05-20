@@ -740,14 +740,24 @@ impl ElementNode {
             }
         };
 
-        // Inline chain (no intermediate `let __b`). This mirrors
-        // the shape user-component emission uses
-        // (`chip(ChipProps::builder().lab(()).build())`) — RA's
-        // method-completion engine seems to follow inline chains
-        // more reliably than chains through an explicitly-annotated
-        // local binding for our built-in tag types.
-        let _ = builder_ty; // currently unused; kept in case we
-                            // need the explicit annotation back.
+        let _ = builder_ty; // currently unused
+        // When the element has no children and no ident-refs to
+        // emit, drop the `let __h = …; __h` wrapping and produce
+        // a bare expression. This matches the ra-spike's working
+        // shape exactly — `{ ctor().sty(()).__h() }` — and seems
+        // to be the form rust-analyzer can follow for method
+        // completion at the partial-kwarg slot. The `let __h` form
+        // we used before turned out to be the difference between
+        // spike (worked) and whisker built-in (didn't): RA appears
+        // not to thread the receiver type through a chain that's
+        // immediately bound and re-returned.
+        if child_stmts.is_empty() && ident_refs.is_empty() {
+            return quote! {
+                {
+                    #ctor #(#setter_calls)* .__h()
+                }
+            };
+        }
         quote! {
             {
                 let __h = #ctor #(#setter_calls)* .__h();
