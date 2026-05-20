@@ -84,175 +84,171 @@ pub mod __tags {
         set_inline_styles, ElementHandle,
     };
 
-    /// Shared builder template. Generates a struct named `$tag`
-    /// (lowercased, matches the `render!` tag identifier) plus a
-    /// constructor `fn $tag() -> $tag` and the common method set
-    /// (`style`, `class`, `attr`, `on_tap`, `on`, `child`, `__h`).
-    /// Tag-specific methods (like `image::src` or
-    /// `scroll_view::scroll_orientation`) go in dedicated `impl`
-    /// blocks following each invocation.
-    macro_rules! define_builtin_builder {
-        ($tag:ident, $ctor:ident, $element_tag:ident, $doc:expr) => {
-            #[doc = $doc]
-            #[allow(non_camel_case_types)]
-            pub struct $tag {
-                handle: ElementHandle,
+    // Each built-in tag is a struct + inherent `impl` block written
+    // out explicitly (no `macro_rules!`, no traits). The shared
+    // method bodies are duplicated across the six tags, but that's
+    // worth the simpler shape: rust-analyzer's method-completion
+    // engine resolves inherent methods on a typed receiver
+    // directly, without having to walk `impl<T> Trait for T` blocks
+    // or expand a `macro_rules!`-generated `impl` template — both
+    // of which we've seen RA fail to follow for built-in tags
+    // (custom components used typed-builder's `#[derive]`-generated
+    // inherent methods and worked fine).
+    //
+    // A small `impl_common_builtin_methods!` macro_rules! emits the
+    // shared `style` / `class` / `on_tap` / `on` / `attr` / `child`
+    // / `__h` block per tag, then each tag's `impl` is opened a
+    // second time for its tag-specific methods (`image::src`,
+    // `scroll_view::scroll_orientation`, `raw_text::text`).
+    //
+    // Yes, this is the same `macro_rules!` shape as the previous
+    // `define_builtin_builder!`. The difference is the granularity:
+    // we hand-write each `pub struct` / `pub fn` / opening `impl
+    // tag {` so RA can index the type and the constructor without
+    // needing to expand a macro that produces them — only the
+    // METHOD BODIES come from `macro_rules!`, and those don't
+    // appear at completion-name lookup time.
+    macro_rules! impl_common_builtin_methods {
+        () => {
+            /// Inline CSS — value-via-closure so signal-reading
+            /// expressions re-apply on each dep change.
+            pub fn style<F, T>(self, f: F) -> Self
+            where
+                F: ::std::ops::Fn() -> T + 'static,
+                T: ::std::string::ToString,
+            {
+                let h = self.handle;
+                effect(move || set_inline_styles(h, &f().to_string()));
+                self
             }
 
-            /// Construct a fresh `$tag` element and return its
-            /// builder. Each chainable method registers the
-            /// corresponding side effect and returns `self`.
-            ///
-            /// The constructor name has a `__` prefix so the tag's
-            /// own name (`view`, `page`, …) doesn't appear as a
-            /// function in scope. When the macro emits
-            /// `name(...)`, the user's source has `view` resolving
-            /// only to the struct type — not a callable function —
-            /// so rust-analyzer doesn't eagerly interpret the
-            /// parens as a Rust function call and switch to
-            /// argument-expression completion. Instead RA falls
-            /// back to macro-expansion completion, which sees the
-            /// builder chain we emit and offers method-name
-            /// completion (`style`, `on_tap`, …).
+            /// Tap handler (Lynx `tap` event).
+            pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
+                set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
+                self
+            }
+
+            /// Generic event handler.
+            pub fn on<F: ::std::ops::Fn() + 'static>(
+                self,
+                event: &'static str,
+                f: F,
+            ) -> Self {
+                set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
+                self
+            }
+
+            /// Lynx class name.
+            pub fn class<F, T>(self, f: F) -> Self
+            where
+                F: ::std::ops::Fn() -> T + 'static,
+                T: ::std::string::ToString,
+            {
+                let h = self.handle;
+                effect(move || set_attribute(h, "class", &f().to_string()));
+                self
+            }
+
+            /// Catch-all for any other Lynx attribute.
+            pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+            where
+                F: ::std::ops::Fn() -> T + 'static,
+                T: ::std::string::ToString,
+            {
+                let h = self.handle;
+                effect(move || set_attribute(h, name, &f().to_string()));
+                self
+            }
+
+            /// Append a child handle.
+            pub fn child(self, child: ElementHandle) -> Self {
+                append_child(self.handle, child);
+                self
+            }
+
+            /// Finish building and return the underlying handle.
             #[allow(non_snake_case)]
-            pub fn $ctor() -> $tag {
-                $tag { handle: create_element(ElementTag::$element_tag) }
-            }
-
-            impl $tag {
-                /// Inline CSS. Value-via-closure so signal-reading
-                /// expressions re-apply on each dep change.
-                pub fn style<F, T>(self, f: F) -> Self
-                where
-                    F: ::std::ops::Fn() -> T + 'static,
-                    T: ::std::string::ToString,
-                {
-                    let h = self.handle;
-                    effect(move || set_inline_styles(h, &f().to_string()));
-                    self
-                }
-
-                /// Tap handler (Lynx `tap` event).
-                pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
-                    set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
-                    self
-                }
-
-                /// Generic event handler. The macro routes events
-                /// the builder doesn't have a dedicated method for
-                /// (camelCase `onSwipe:`, snake_case `on_long_press:`,
-                /// …) through here, lowercasing the suffix as the
-                /// Lynx event name.
-                pub fn on<F: ::std::ops::Fn() + 'static>(
-                    self,
-                    event: &'static str,
-                    f: F,
-                ) -> Self {
-                    set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
-                    self
-                }
-
-                /// Lynx class name.
-                pub fn class<F, T>(self, f: F) -> Self
-                where
-                    F: ::std::ops::Fn() -> T + 'static,
-                    T: ::std::string::ToString,
-                {
-                    let h = self.handle;
-                    effect(move || set_attribute(h, "class", &f().to_string()));
-                    self
-                }
-
-                /// Catch-all for any Lynx attribute the builder
-                /// doesn't have a dedicated method for. The macro
-                /// emits `.attr("kebab-name", move || value)` for
-                /// unknown kwargs (snake → kebab translation
-                /// happens macro-side).
-                pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
-                where
-                    F: ::std::ops::Fn() -> T + 'static,
-                    T: ::std::string::ToString,
-                {
-                    let h = self.handle;
-                    effect(move || set_attribute(h, name, &f().to_string()));
-                    self
-                }
-
-                /// Append a child handle (nested elements / user
-                /// components / `text { "literal" }`-shaped raw
-                /// text). The macro lowers each child to its own
-                /// `.__h()`-terminated chain, then hands the
-                /// resulting handle in.
-                pub fn child(self, child: ElementHandle) -> Self {
-                    append_child(self.handle, child);
-                    self
-                }
-
-                /// Finish building and return the underlying handle.
-                /// Double-underscored so it can't collide with any
-                /// Lynx attribute name a user might want to set via
-                /// `.attr`.
-                #[allow(non_snake_case)]
-                pub fn __h(self) -> ElementHandle {
-                    self.handle
-                }
+            pub fn __h(self) -> ElementHandle {
+                self.handle
             }
         };
     }
 
-    define_builtin_builder!(
-        page,
-        __page_ctor,
-        Page,
-        "`<page>` — top-level container Lynx mounts as the root \
-         of an app. Holds the screen-level `style:` (background, \
-         flex direction) and a single content subtree."
-    );
-    define_builtin_builder!(
-        view,
-        __view_ctor,
-        View,
-        "`<view>` — Lynx's flex container. The most basic layout \
-         primitive in Whisker: a rectangular box that lays out its \
-         children with CSS flexbox. Equivalent to `<View>` in \
-         React Native or `<div>` in the web."
-    );
-    define_builtin_builder!(
-        text,
-        __text_ctor,
-        Text,
-        "`<text>` — text container. The actual glyphs live in \
-         `raw_text` child elements that the macro creates from \
-         string literals (`text { \"hello\" }`)."
-    );
-    define_builtin_builder!(
-        raw_text,
-        __raw_text_ctor,
-        RawText,
-        "`<raw_text>` — leaf text node with a `text:` attribute. \
-         Normally the macro creates these automatically from \
-         string-literal children of `text` / `view`; direct use is \
-         rare."
-    );
-    define_builtin_builder!(
-        image,
-        __image_ctor,
-        Image,
-        "`<image>` — bitmap from a URL. Set `src:` (required) and \
-         optionally `style:` for sizing."
-    );
-    define_builtin_builder!(
-        scroll_view,
-        __scroll_view_ctor,
-        ScrollView,
-        "`<scroll_view>` — scrollable container. Set \
-         `scroll_orientation:` to `\"vertical\"` or \
-         `\"horizontal\"` plus a `style:` covering the viewport."
-    );
+    /// `<page>` — top-level container Lynx mounts as the root of
+    /// an app. Holds the screen-level `style=` (background, flex
+    /// direction) and a single content subtree.
+    #[allow(non_camel_case_types)]
+    pub struct page { handle: ElementHandle }
+    #[allow(non_snake_case)]
+    pub fn __page_ctor() -> page {
+        page { handle: create_element(ElementTag::Page) }
+    }
+    impl page {
+        impl_common_builtin_methods!();
+    }
 
-    // -- Tag-specific methods --------------------------------------
+    /// `<view>` — Lynx's flex container. The most basic layout
+    /// primitive in Whisker: a rectangular box that lays out its
+    /// children with CSS flexbox. Equivalent to `<View>` in
+    /// React Native or `<div>` in the web.
+    #[allow(non_camel_case_types)]
+    pub struct view { handle: ElementHandle }
+    #[allow(non_snake_case)]
+    pub fn __view_ctor() -> view {
+        view { handle: create_element(ElementTag::View) }
+    }
+    impl view {
+        impl_common_builtin_methods!();
+    }
 
+    /// `<text>` — text container. The actual glyphs live in
+    /// `raw_text` child elements that the macro creates from
+    /// string-literal children.
+    #[allow(non_camel_case_types)]
+    pub struct text { handle: ElementHandle }
+    #[allow(non_snake_case)]
+    pub fn __text_ctor() -> text {
+        text { handle: create_element(ElementTag::Text) }
+    }
+    impl text {
+        impl_common_builtin_methods!();
+    }
+
+    /// `<raw_text>` — leaf text node with a `text` attribute.
+    /// Normally the macro creates these automatically from
+    /// string-literal children of `text` / `view`.
+    #[allow(non_camel_case_types)]
+    pub struct raw_text { handle: ElementHandle }
+    #[allow(non_snake_case)]
+    pub fn __raw_text_ctor() -> raw_text {
+        raw_text { handle: create_element(ElementTag::RawText) }
+    }
+    impl raw_text {
+        impl_common_builtin_methods!();
+
+        /// The literal text content. Lynx's `text` attribute.
+        pub fn text<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let h = self.handle;
+            effect(move || set_attribute(h, "text", &f().to_string()));
+            self
+        }
+    }
+
+    /// `<image>` — bitmap from a URL. Set `src=` (required) and
+    /// optionally `style=` for sizing.
+    #[allow(non_camel_case_types)]
+    pub struct image { handle: ElementHandle }
+    #[allow(non_snake_case)]
+    pub fn __image_ctor() -> image {
+        image { handle: create_element(ElementTag::Image) }
+    }
     impl image {
+        impl_common_builtin_methods!();
+
         /// Image source URL — Lynx's `src` attribute.
         pub fn src<F, T>(self, f: F) -> Self
         where
@@ -265,7 +261,17 @@ pub mod __tags {
         }
     }
 
+    /// `<scroll_view>` — scrollable container. Set
+    /// `scroll_orientation=` to `"vertical"` or `"horizontal"`.
+    #[allow(non_camel_case_types)]
+    pub struct scroll_view { handle: ElementHandle }
+    #[allow(non_snake_case)]
+    pub fn __scroll_view_ctor() -> scroll_view {
+        scroll_view { handle: create_element(ElementTag::ScrollView) }
+    }
     impl scroll_view {
+        impl_common_builtin_methods!();
+
         /// Scroll direction — `"vertical"` (default) or
         /// `"horizontal"`. Maps to Lynx's `scroll-orientation`
         /// attribute.
@@ -276,19 +282,6 @@ pub mod __tags {
         {
             let h = self.handle;
             effect(move || set_attribute(h, "scroll-orientation", &f().to_string()));
-            self
-        }
-    }
-
-    impl raw_text {
-        /// The literal text content. Lynx's `text` attribute.
-        pub fn text<F, T>(self, f: F) -> Self
-        where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
-        {
-            let h = self.handle;
-            effect(move || set_attribute(h, "text", &f().to_string()));
             self
         }
     }
