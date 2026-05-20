@@ -28,7 +28,7 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{quote, quote_spanned};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{
     braced, parenthesized,
     parse::{Parse, ParseStream, Result},
@@ -694,20 +694,27 @@ impl ElementNode {
             }
         }
 
-        // Builder constructor (`::whisker::__tags::<tag>()`). The
-        // tag-name token preserves the user's source span so RA
-        // jump-to-definition and hover docs hit the right thing.
+        // Builder constructor. We use a `__<tag>_ctor` name instead
+        // of `<tag>()` so the tag's bare name doesn't appear as a
+        // function in scope. Otherwise rust-analyzer parses the
+        // user's source `view(s)` as a Rust function call (because
+        // `view` is a callable value via the prelude), pegs the
+        // cursor at argument-expression position, and offers
+        // local-variable completion instead of falling through to
+        // macro-expansion completion. By emitting `__view_ctor()`,
+        // the `view` identifier in the user's source has no
+        // resolved value form, the function-call interpretation
+        // fails, and RA uses the builder chain we expand into for
+        // method completion.
         let tag_ident = &self.tag;
         let tag_span = self.tag.span();
-        let ctor = quote_spanned! {tag_span=> ::whisker::__tags::#tag_ident() };
-        // Explicit type annotation on the builder binding. Helps
-        // rust-analyzer's method completion on partial input: when
-        // the user types `view { s|`, the macro emission is
-        // `__b.s(())` where `__b: ::whisker::__tags::view`. With the
-        // type annotated up front, RA doesn't need to re-resolve
-        // the builder's type through the (possibly invalid) chain
-        // — it knows the receiver is `view` and offers `view`'s
-        // methods (`style`, `class`, …) as completion candidates.
+        let ctor_ident = format_ident!("__{}_ctor", tag_ident, span = tag_span);
+        let ctor = quote_spanned! {tag_span=> ::whisker::__tags::#ctor_ident() };
+        // Explicit type annotation on the builder binding. The
+        // type `__tags::<tag>` is the struct returned by the
+        // constructor; RA uses this to know the receiver's methods
+        // (`style`, `class`, …) without having to chase the chain
+        // through any maybe-invalid `.kwarg(())` call.
         let builder_ty = quote_spanned! {tag_span=> ::whisker::__tags::#tag_ident };
 
         // Partial-kwarg identifiers that didn't match any builder
@@ -1216,8 +1223,8 @@ mod tests {
         let input: TokenStream2 = quote::quote! { view(style: "x") };
         let output = super::expand_test(input).to_string();
         assert!(
-            output.contains("__tags :: view ()") || output.contains("__tags::view()"),
-            "view emission must call `::whisker::__tags::view()`; \
+            output.contains("__tags :: __view_ctor ()") || output.contains("__tags::__view_ctor()"),
+            "view emission must call `::whisker::__tags::__view_ctor()`; \
              output was: {output}"
         );
         assert!(

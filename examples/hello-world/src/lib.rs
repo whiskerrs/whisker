@@ -29,7 +29,7 @@
 //!   shadows, `position: absolute`.
 
 use whisker::prelude::*;
-use whisker::runtime::view::ElementHandle;
+use whisker::runtime::view::{self, ElementHandle};
 
 // ---- App state --------------------------------------------------------------
 

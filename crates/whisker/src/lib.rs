@@ -92,7 +92,7 @@ pub mod __tags {
     /// `scroll_view::scroll_orientation`) go in dedicated `impl`
     /// blocks following each invocation.
     macro_rules! define_builtin_builder {
-        ($tag:ident, $element_tag:ident, $doc:expr) => {
+        ($tag:ident, $ctor:ident, $element_tag:ident, $doc:expr) => {
             #[doc = $doc]
             #[allow(non_camel_case_types)]
             pub struct $tag {
@@ -102,7 +102,20 @@ pub mod __tags {
             /// Construct a fresh `$tag` element and return its
             /// builder. Each chainable method registers the
             /// corresponding side effect and returns `self`.
-            pub fn $tag() -> $tag {
+            ///
+            /// The constructor name has a `__` prefix so the tag's
+            /// own name (`view`, `page`, …) doesn't appear as a
+            /// function in scope. When the macro emits
+            /// `name(...)`, the user's source has `view` resolving
+            /// only to the struct type — not a callable function —
+            /// so rust-analyzer doesn't eagerly interpret the
+            /// parens as a Rust function call and switch to
+            /// argument-expression completion. Instead RA falls
+            /// back to macro-expansion completion, which sees the
+            /// builder chain we emit and offers method-name
+            /// completion (`style`, `on_tap`, …).
+            #[allow(non_snake_case)]
+            pub fn $ctor() -> $tag {
                 $tag { handle: create_element(ElementTag::$element_tag) }
             }
 
@@ -189,6 +202,7 @@ pub mod __tags {
 
     define_builtin_builder!(
         page,
+        __page_ctor,
         Page,
         "`<page>` — top-level container Lynx mounts as the root \
          of an app. Holds the screen-level `style:` (background, \
@@ -196,6 +210,7 @@ pub mod __tags {
     );
     define_builtin_builder!(
         view,
+        __view_ctor,
         View,
         "`<view>` — Lynx's flex container. The most basic layout \
          primitive in Whisker: a rectangular box that lays out its \
@@ -204,6 +219,7 @@ pub mod __tags {
     );
     define_builtin_builder!(
         text,
+        __text_ctor,
         Text,
         "`<text>` — text container. The actual glyphs live in \
          `raw_text` child elements that the macro creates from \
@@ -211,6 +227,7 @@ pub mod __tags {
     );
     define_builtin_builder!(
         raw_text,
+        __raw_text_ctor,
         RawText,
         "`<raw_text>` — leaf text node with a `text:` attribute. \
          Normally the macro creates these automatically from \
@@ -219,12 +236,14 @@ pub mod __tags {
     );
     define_builtin_builder!(
         image,
+        __image_ctor,
         Image,
         "`<image>` — bitmap from a URL. Set `src:` (required) and \
          optionally `style:` for sizing."
     );
     define_builtin_builder!(
         scroll_view,
+        __scroll_view_ctor,
         ScrollView,
         "`<scroll_view>` — scrollable container. Set \
          `scroll_orientation:` to `\"vertical\"` or \
