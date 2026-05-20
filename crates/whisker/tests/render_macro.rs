@@ -182,9 +182,7 @@ fn nested_view_with_text_child() {
 fn style_attribute_emits_set_inline_styles() {
     with_recorder(|log| {
         let _ = render! {
-            view {
-                style: "padding: 16px;",
-            }
+            view(style: "padding: 16px;")
         };
         let ops = log.borrow();
         assert_eq!(
@@ -208,10 +206,10 @@ fn style_attribute_emits_set_inline_styles() {
 fn arbitrary_attribute_emits_set_attribute() {
     with_recorder(|log| {
         let _ = render! {
-            image {
+            image(
                 src: "https://example.com/x.png",
                 alt: "example",
-            }
+            )
         };
         let ops = log.borrow();
         assert_eq!(
@@ -240,9 +238,7 @@ fn on_tap_emits_set_event_listener() {
         let fired = Rc::new(RefCell::new(false));
         let f = fired.clone();
         let _ = render! {
-            view {
-                on_tap: move || *f.borrow_mut() = true,
-            }
+            view(on_tap: move || *f.borrow_mut() = true)
         };
         let ops = log.borrow();
         assert!(ops
@@ -258,9 +254,7 @@ fn on_tap_emits_set_event_listener() {
 fn camel_case_event_handler_lowercased() {
     with_recorder(|log| {
         let _ = render! {
-            view {
-                onTap: || {},
-            }
+            view(onTap: || {})
         };
         let ops = log.borrow();
         assert!(ops
@@ -351,9 +345,7 @@ fn dynamic_style_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
         let (color, set_color) = signal("red".to_string());
         let _h = render! {
-            view {
-                style: format!("color: {};", color.get()),
-            }
+            view(style: format!("color: {};", color.get()))
         };
         set_color.set("blue".into());
         flush();
@@ -375,9 +367,7 @@ fn dynamic_attribute_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
         let (src, set_src) = signal("a.png".to_string());
         let _h = render! {
-            image {
-                src: src.get(),
-            }
+            image(src: src.get())
         };
         set_src.set("b.png".into());
         flush();
@@ -472,8 +462,7 @@ fn show_renders_children_when_true() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(true);
         let _h = render! {
-            Show {
-                when: move || cond.get(),
+            Show(when: move || cond.get()) {
                 text { "main" }
             }
         };
@@ -495,9 +484,10 @@ fn show_renders_fallback_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false);
         let _h = render! {
-            Show {
+            Show(
                 when: move || cond.get(),
                 fallback: || render! { text { "fallback" } },
+            ) {
                 text { "main" }
             }
         };
@@ -518,9 +508,10 @@ fn show_swaps_on_condition_flip() {
     with_recorder_and_owner(|log| {
         let (cond, set_cond) = signal(true);
         let _h = render! {
-            Show {
+            Show(
                 when: move || cond.get(),
                 fallback: || render! { text { "fb" } },
+            ) {
                 text { "main" }
             }
         };
@@ -546,8 +537,7 @@ fn show_without_fallback_renders_nothing_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false);
         let _h = render! {
-            Show {
-                when: move || cond.get(),
+            Show(when: move || cond.get()) {
                 text { "only" }
             }
         };
@@ -580,11 +570,11 @@ fn for_renders_initial_items() {
             Item { id: 3, name: "c" },
         ]);
         let _h = render! {
-            For {
+            For(
                 each: move || items.get(),
                 key: |i: &Item| i.id,
                 children: move |i: Item| render! { text { {i.name} } },
-            }
+            )
         };
 
         let texts: Vec<_> = log
@@ -607,11 +597,11 @@ fn for_adds_new_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2]);
         let _h = render! {
-            For {
+            For(
                 each: move || items.get(),
                 key: |x: &u32| *x,
                 children: move |x: u32| render! { text { {x.to_string()} } },
-            }
+            )
         };
         log.borrow_mut().clear();
 
@@ -651,11 +641,11 @@ fn for_reorders_existing_items_visually() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]);
         let _h = render! {
-            For {
+            For(
                 each: move || items.get(),
                 key: |x: &u32| *x,
                 children: move |x: u32| render! { text { {x.to_string()} } },
-            }
+            )
         };
         log.borrow_mut().clear();
 
@@ -688,11 +678,11 @@ fn for_removes_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]);
         let _h = render! {
-            For {
+            For(
                 each: move || items.get(),
                 key: |x: &u32| *x,
                 children: move |x: u32| render! { text { {x.to_string()} } },
-            }
+            )
         };
         log.borrow_mut().clear();
 

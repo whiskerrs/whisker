@@ -109,19 +109,19 @@ fn push_capture(s: impl Into<String>) {
 #[component]
 fn no_props_component() -> ElementHandle {
     push_capture("no_props_component:invoked");
-    render! { view {} }
+    render! { view() }
 }
 
 #[component]
 fn one_string_prop(label: String) -> ElementHandle {
     push_capture(format!("one_string_prop:label={label}"));
-    render! { view {} }
+    render! { view() }
 }
 
 #[component]
 fn two_props(title: String, count: i32) -> ElementHandle {
     push_capture(format!("two_props:title={title},count={count}"));
-    render! { view {} }
+    render! { view() }
 }
 
 #[component]
@@ -135,13 +135,13 @@ fn option_prop(alt: Option<String>) -> ElementHandle {
         .map(str::to_owned)
         .unwrap_or_else(|| "default".to_string());
     push_capture(format!("option_prop:alt={v}"));
-    render! { view {} }
+    render! { view() }
 }
 
 #[component]
 fn with_default_prop(#[prop(default = 5)] count: i32) -> ElementHandle {
     push_capture(format!("with_default_prop:count={count}"));
-    render! { view {} }
+    render! { view() }
 }
 
 #[component]
@@ -165,7 +165,7 @@ fn with_children(label: String, children: Children) -> ElementHandle {
 #[component]
 fn generic_label<T: std::fmt::Display + Clone + 'static>(value: T) -> ElementHandle {
     push_capture(format!("generic_label:value={value}"));
-    render! { view {} }
+    render! { view() }
 }
 
 // ----- Tests -----------------------------------------------------------------
@@ -173,7 +173,7 @@ fn generic_label<T: std::fmt::Display + Clone + 'static>(value: T) -> ElementHan
 #[test]
 fn component_with_no_props_invokable_via_braces() {
     with_test_env(|log| {
-        let _h = render! { no_props_component {} };
+        let _h = render! { no_props_component() };
 
         // Side-channel: body ran.
         assert_eq!(captures(), vec!["no_props_component:invoked"]);
@@ -193,7 +193,7 @@ fn component_with_string_prop_accepts_str_literal_via_into_coercion() {
     with_test_env(|_log| {
         // `label: "hello"` — typed-builder `setter(into)` should
         // convert the `&'static str` to `String`.
-        let _h = render! { one_string_prop { label: "hello" } };
+        let _h = render! { one_string_prop(label: "hello") };
         assert_eq!(captures(), vec!["one_string_prop:label=hello"]);
     });
 }
@@ -202,7 +202,7 @@ fn component_with_string_prop_accepts_str_literal_via_into_coercion() {
 fn component_with_string_prop_accepts_owned_string() {
     with_test_env(|_log| {
         let owned = String::from("owned");
-        let _h = render! { one_string_prop { label: owned } };
+        let _h = render! { one_string_prop(label: owned) };
         assert_eq!(captures(), vec!["one_string_prop:label=owned"]);
     });
 }
@@ -211,10 +211,10 @@ fn component_with_string_prop_accepts_owned_string() {
 fn component_with_two_props_uses_named_setters() {
     with_test_env(|_log| {
         let _h = render! {
-            two_props {
+            two_props(
                 title: "Greeting",
                 count: 42_i32,
-            }
+            )
         };
         assert_eq!(captures(), vec!["two_props:title=Greeting,count=42"]);
     });
@@ -224,7 +224,7 @@ fn component_with_two_props_uses_named_setters() {
 fn option_prop_can_be_omitted() {
     with_test_env(|_log| {
         // No `alt:` kwarg — typed-builder's `default` kicks in → None.
-        let _h = render! { option_prop {} };
+        let _h = render! { option_prop() };
         assert_eq!(captures(), vec!["option_prop:alt=default"]);
     });
 }
@@ -234,7 +234,7 @@ fn option_prop_accepts_inner_via_strip_option_into() {
     with_test_env(|_log| {
         // `strip_option + into` lets the user pass `&str` directly
         // (no `Some(...)` wrapping needed).
-        let _h = render! { option_prop { alt: "custom" } };
+        let _h = render! { option_prop(alt: "custom") };
         assert_eq!(captures(), vec!["option_prop:alt=custom"]);
     });
 }
@@ -242,7 +242,7 @@ fn option_prop_accepts_inner_via_strip_option_into() {
 #[test]
 fn prop_default_attribute_supplies_value_when_omitted() {
     with_test_env(|_log| {
-        let _h = render! { with_default_prop {} };
+        let _h = render! { with_default_prop() };
         assert_eq!(captures(), vec!["with_default_prop:count=5"]);
     });
 }
@@ -250,7 +250,7 @@ fn prop_default_attribute_supplies_value_when_omitted() {
 #[test]
 fn prop_default_attribute_overridable_at_call_site() {
     with_test_env(|_log| {
-        let _h = render! { with_default_prop { count: 99 } };
+        let _h = render! { with_default_prop(count: 99) };
         assert_eq!(captures(), vec!["with_default_prop:count=99"]);
     });
 }
@@ -263,8 +263,7 @@ fn children_prop_receives_wrapped_closure() {
         // body emits one outer `view`; the children closure emits
         // two `text` elements inside it.
         let _h = render! {
-            with_children {
-                label: "wrapper",
+            with_children(label: "wrapper") {
                 text { "child-1" }
                 text { "child-2" }
             }
@@ -292,7 +291,7 @@ fn children_prop_receives_wrapped_closure() {
 fn children_prop_defaults_to_empty_view_when_omitted() {
     with_test_env(|log| {
         let _h = render! {
-            with_children { label: "only label" }
+            with_children(label: "only label")
         };
 
         assert_eq!(captures(), vec!["with_children:label=only label"]);
@@ -310,7 +309,7 @@ fn children_prop_defaults_to_empty_view_when_omitted() {
 #[test]
 fn generic_component_with_i32_arg() {
     with_test_env(|_log| {
-        let _h = render! { generic_label { value: 7_i32 } };
+        let _h = render! { generic_label(value: 7_i32) };
         assert_eq!(captures(), vec!["generic_label:value=7"]);
     });
 }
@@ -319,7 +318,7 @@ fn generic_component_with_i32_arg() {
 fn generic_component_with_string_arg() {
     with_test_env(|_log| {
         let _h = render! {
-            generic_label { value: String::from("stringly typed") }
+            generic_label(value: String::from("stringly typed"))
         };
         assert_eq!(captures(), vec!["generic_label:value=stringly typed"]);
     });
@@ -331,9 +330,8 @@ fn nested_component_invocations() {
         // Component inside a component, both via the new brace syntax.
         // Outer's children closure invokes the inner component.
         let _h = render! {
-            with_children {
-                label: "outer",
-                one_string_prop { label: "inner" }
+            with_children(label: "outer") {
+                one_string_prop(label: "inner")
             }
         };
 

@@ -30,7 +30,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::{
-    braced,
+    braced, parenthesized,
     parse::{Parse, ParseStream, Result},
     token, Expr, Ident, LitStr, Token,
 };
@@ -195,9 +195,20 @@ fn pascal_to_snake_hint(pascal: &str) -> String {
     out
 }
 
-/// Shared parse result for both element and component nodes: an
-/// identifier followed by a brace-delimited block of `name: expr`
-/// kwargs and then nested `Node` children.
+/// Shared parse result for both element and component nodes:
+/// `IDENT (kwargs)? {children}?`. Kotlin-Compose-shaped syntax:
+///
+/// - `view(style: "x", on_tap: || {}) { text { "hi" } }` — both
+/// - `view(style: "x")` — props only (no children-block needed)
+/// - `view { text { "hi" } }` — children only
+/// - `view()` / `view {}` / `view` — neither (the bare-`view` form
+///   exists for in-flight RA tag-name completion)
+///
+/// The split into `()` for props and `{}` for children removes the
+/// ambiguity the old brace-only syntax had — RA can tell whether
+/// the user is typing a kwarg name (method completion on the
+/// builder) or a child name (identifier completion in scope)
+/// purely from the syntactic delimiter, no heuristics.
 struct TagBody {
     tag: Ident,
     kwargs: Vec<AttrEntry>,
@@ -207,79 +218,77 @@ struct TagBody {
 impl TagBody {
     fn parse(input: ParseStream) -> Result<Self> {
         let tag: Ident = input.parse()?;
-
-        // Tolerate the partial-input shape `IDENT` with no following
-        // `{ … }`. When the user is mid-typing (`render! { v|`) the
-        // macro should still produce *some* expansion so
-        // rust-analyzer can perform tag-name completion at the
-        // identifier's source span. We return an empty body and let
-        // the codegen path emit a bare builder-call shape; if the
-        // tag identifier is incomplete the resulting code won't
-        // compile, but its only purpose is to expose the cursor
-        // position to RA.
-        if !input.peek(token::Brace) {
-            return Ok(Self {
-                tag,
-                kwargs: Vec::new(),
-                children: Vec::new(),
-            });
-        }
-
-        let body;
-        braced!(body in input);
-
         let mut kwargs = Vec::new();
         let mut children = Vec::new();
 
-        // kwargs: `IDENT : expr` pairs in a loop. We also accept a
-        // **partial** `IDENT` with no following `:` so the macro
-        // doesn't bail out mid-keystroke when the user is typing
-        // (e.g. cursor at `view { s| }`). On partial input we
-        // synthesize a `()` placeholder value so the expansion
-        // still emits `.#name(…)` at the user's span — that's what
-        // drives rust-analyzer's method-completion lookup against
-        // the builder's method list. Without this tolerance, RA
-        // sees a parse error, can't expand, and offers nothing.
-        while body.peek(Ident) {
-            if body.peek2(Token![:]) {
-                // Complete kwarg.
-                let name: Ident = body.parse()?;
-                body.parse::<Token![:]>()?;
-                let value: Expr = body.parse()?;
-                kwargs.push(AttrEntry { name, value, partial: false });
-                if body.peek(Token![,]) {
-                    body.parse::<Token![,]>()?;
-                }
-            } else if body.peek2(token::Brace) {
-                // `IDENT { … }` — child node. Hand off to the
-                // children loop.
-                break;
-            } else {
-                // Partial `IDENT` with no `:` and no `{` — treat as
-                // an in-flight kwarg. Push it with a `()` value so
-                // the macro expansion still references the name.
-                let name: Ident = body.parse()?;
-                let value: Expr = syn::parse_quote_spanned!(name.span()=> ());
-                kwargs.push(AttrEntry { name, value, partial: true });
-                if body.peek(Token![,]) {
-                    body.parse::<Token![,]>()?;
+        // Optional `(name: expr, name: expr, …)` props block.
+        if input.peek(token::Paren) {
+            let props_buf;
+            parenthesized!(props_buf in input);
+            Self::parse_kwargs(&props_buf, &mut kwargs)?;
+        }
+
+        // Optional `{ child, child, … }` children block.
+        if input.peek(token::Brace) {
+            let body_buf;
+            braced!(body_buf in input);
+            while !body_buf.is_empty() {
+                children.push(body_buf.parse()?);
+                if body_buf.peek(Token![,]) {
+                    body_buf.parse::<Token![,]>()?;
                 }
             }
         }
 
-        // Children: nested nodes until the closing brace.
-        while !body.is_empty() {
-            children.push(body.parse()?);
-            if body.peek(Token![,]) {
-                body.parse::<Token![,]>()?;
-            }
-        }
+        // Both blocks absent → tolerate as an in-flight typing state
+        // (`render! { v|`). The codegen path emits a bare builder
+        // call so RA can offer tag-name completion at the
+        // identifier's source span.
 
         Ok(Self {
             tag,
             kwargs,
             children,
         })
+    }
+
+    /// Parse the body of a `(…)` props block: a comma-separated
+    /// list of `name: expr` pairs, with tolerance for an in-flight
+    /// `IDENT` without `:` / value.
+    fn parse_kwargs(
+        input: ParseStream,
+        kwargs: &mut Vec<AttrEntry>,
+    ) -> Result<()> {
+        while !input.is_empty() {
+            if input.peek(Ident) && input.peek2(Token![:]) {
+                // Complete kwarg.
+                let name: Ident = input.parse()?;
+                input.parse::<Token![:]>()?;
+                let value: Expr = input.parse()?;
+                kwargs.push(AttrEntry { name, value, partial: false });
+            } else if input.peek(Ident) {
+                // Partial input: `IDENT` with no following `:` /
+                // expression. Synthesize a `()` placeholder so the
+                // codegen still emits `.#name(…)` at the user's
+                // source span — that's what RA's method-completion
+                // engine reads.
+                let name: Ident = input.parse()?;
+                let value: Expr = syn::parse_quote_spanned!(name.span()=> ());
+                kwargs.push(AttrEntry { name, value, partial: true });
+            } else {
+                // Token we don't understand — give up cleanly.
+                // Returning Err here would prevent RA from
+                // expanding the rest of the macro; the `expand`
+                // entry point catches the error and emits a
+                // fallback ElementHandle so the user's editor
+                // doesn't cascade.
+                return Err(input.error("expected `name: value` kwarg"));
+            }
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1204,7 +1213,7 @@ mod tests {
         // chain `::whisker::__tags::view().style("x").__h()`. The
         // method-call shape (not struct-init) is what drives
         // rust-analyzer's prop-name completion.
-        let input: TokenStream2 = quote::quote! { view { style: "x" } };
+        let input: TokenStream2 = quote::quote! { view(style: "x") };
         let output = super::expand_test(input).to_string();
         assert!(
             output.contains("__tags :: view ()") || output.contains("__tags::view()"),
@@ -1228,7 +1237,7 @@ mod tests {
         // Attributes the builder doesn't have a method for go
         // through `.attr("kebab-name", value)`.
         let input: TokenStream2 = quote::quote! {
-            view { scroll_orientation: "horizontal" }
+            view(scroll_orientation: "horizontal")
         };
         let output = super::expand_test(input).to_string();
         assert!(
@@ -1249,11 +1258,11 @@ mod tests {
         // check a few representative ones.
         for tag in &["page", "view", "text", "image", "scroll_view"] {
             let input: TokenStream2 = match *tag {
-                "image" => quote::quote! { image { src: "x" } },
-                "scroll_view" => quote::quote! { scroll_view { scroll_orientation: "vertical" } },
+                "image" => quote::quote! { image(src: "x") },
+                "scroll_view" => quote::quote! { scroll_view(scroll_orientation: "vertical") },
                 _ => {
                     let ident = syn::Ident::new(tag, proc_macro2::Span::call_site());
-                    quote::quote! { #ident { style: "x" } }
+                    quote::quote! { #ident(style: "x") }
                 }
             };
             let output = super::expand_test(input).to_string();
@@ -1266,7 +1275,7 @@ mod tests {
 
     #[test]
     fn image_src_lowers_to_dedicated_method() {
-        let input: TokenStream2 = quote::quote! { image { src: "https://x" } };
+        let input: TokenStream2 = quote::quote! { image(src: "https://x") };
         let output = super::expand_test(input).to_string();
         assert!(
             output.contains(". src"),
@@ -1278,7 +1287,7 @@ mod tests {
     #[test]
     fn scroll_view_orientation_lowers_to_dedicated_method() {
         let input: TokenStream2 =
-            quote::quote! { scroll_view { scroll_orientation: "horizontal" } };
+            quote::quote! { scroll_view(scroll_orientation: "horizontal") };
         let output = super::expand_test(input).to_string();
         assert!(
             output.contains(". scroll_orientation"),
@@ -1292,7 +1301,7 @@ mod tests {
         // `view { sty|` mid-typing: parser produces partial kwarg
         // `sty`, codegen should still emit `.sty(())` so RA can do
         // method completion against `view`'s builder.
-        let input: TokenStream2 = quote::quote! { view { sty } };
+        let input: TokenStream2 = quote::quote! { view(sty) };
         let output = super::expand_test(input).to_string();
         eprintln!("DUMP partial-sty: {output}");
         assert!(
@@ -1304,7 +1313,7 @@ mod tests {
 
     #[test]
     fn single_char_partial_kwarg_emits_method_call() {
-        let input: TokenStream2 = quote::quote! { view { s } };
+        let input: TokenStream2 = quote::quote! { view(s) };
         let output = super::expand_test(input).to_string();
         eprintln!("DUMP partial-s: {output}");
         assert!(
@@ -1314,22 +1323,19 @@ mod tests {
     }
 
     #[test]
-    fn partial_kwarg_followed_by_child_still_emits_method_call() {
-        // The real-world failing case: user typed `s` inside a
-        // `view {}` that already has another child below it, e.g.
-        // `view { s\n text {...} }`.
+    fn partial_kwarg_with_children_block_still_emits_method_call() {
+        // Compose syntax: props in `()`, children separately in
+        // `{}`. Partial kwarg in `()` is unambiguous now.
         let input: TokenStream2 = quote::quote! {
-            view {
-                s
+            view(s) {
                 text { "hi" }
             }
         };
         let output = super::expand_test(input).to_string();
-        eprintln!("DUMP partial-s-with-child: {output}");
         assert!(
             output.contains(". s ("),
-            "partial `s` followed by child should still emit `.s(())`; \
-             output was: {output}"
+            "partial `s` in props block should still emit `.s(())` \
+             alongside the children-block; output was: {output}"
         );
     }
 
@@ -1339,7 +1345,7 @@ mod tests {
         // builder methods (`style`, `class`, `on_tap`, …), so the
         // emitter falls through to a bare `let _ = v;` reference
         // for identifier completion.
-        let input: TokenStream2 = quote::quote! { view { v } };
+        let input: TokenStream2 = quote::quote! { view(v) };
         let output = super::expand_test(input).to_string();
         eprintln!("DUMP partial-v: {output}");
         assert!(
@@ -1351,7 +1357,7 @@ mod tests {
 
     #[test]
     fn user_component_does_not_use_builtin_tags_module() {
-        let input: TokenStream2 = quote::quote! { my_card { title: "x" } };
+        let input: TokenStream2 = quote::quote! { my_card(title: "x") };
         let output = super::expand_test(input).to_string();
         assert!(
             !output.contains("__tags"),
