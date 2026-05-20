@@ -137,16 +137,16 @@ fn story_row(story: Story) -> ElementHandle {
     let sub_style = format!("font-size: 12px; color: {TEXT_SECONDARY}; margin-top: 4px;");
 
     render! {
-        view(style: row_style) {
-            view(style: body_inner_style) {
-                text(style: title_style) {
+        <view style={row_style}>
+            <view style={body_inner_style}>
+                <text style={title_style}>
                     {title.clone()}
-                }
-                text(style: sub_style) {
+                </text>
+                <text style={sub_style}>
                     {meta_text.clone()}
-                }
-            }
-        }
+                </text>
+            </view>
+        </view>
     }
 }
 
@@ -160,11 +160,11 @@ fn header() -> ElementHandle {
     );
     let title_style = format!("font-size: 18px; font-weight: 700; color: {HEADER_FG};");
     render! {
-        view(style: bar_style) {
-            text(style: title_style) {
+        <view style={bar_style}>
+            <text style={title_style}>
                 "Hacker News"
-            }
-        }
+            </text>
+        </view>
     }
 }
 
@@ -186,9 +186,9 @@ fn status_banner(state: RwSignal<LoadState>) -> ElementHandle {
     );
 
     render! {
-        view(style: style) {
-            text { {status_text()} }
-        }
+        <view style={style}>
+            <text>{status_text()}</text>
+        </view>
     }
 }
 
@@ -229,17 +229,17 @@ pub fn hn_reader() -> ElementHandle {
         "flex-grow: 1; flex-shrink: 1; width: 100%; display: flex; flex-direction: column;"
             .to_string();
     render! {
-        view(style: body_style) {
-            header()
-            status_banner(state: state)
-            scroll_view(scroll_orientation: "vertical", style: list_style) {
-                For(
-                    each: move || state.get().stories(),
-                    key: |s: &Story| s.object_id.clone(),
-                    children: |s: Story| render! { story_row(story: s) },
-                )
-            }
-        }
+        <view style={body_style}>
+            <header />
+            <status_banner state={state} />
+            <scroll_view scroll_orientation="vertical" style={list_style}>
+                <For
+                    each={move || state.get().stories()}
+                    key={|s: &Story| s.object_id.clone()}
+                    children={|s: Story| render! { <story_row story={s} /> }}
+                />
+            </scroll_view>
+        </view>
     }
 }
 
@@ -256,8 +256,8 @@ fn app() -> ElementHandle {
          display: flex; flex-direction: column;"
     );
     render! {
-        page(style: page_style) {
-            hn_reader()
-        }
+        <page style={page_style}>
+            <hn_reader />
+        </page>
     }
 }

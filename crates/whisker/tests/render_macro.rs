@@ -103,7 +103,7 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 #[test]
 fn single_view_emits_create_and_returns_handle() {
     with_recorder(|log| {
-        let h = render! { view {} };
+        let h = render! { <view /> };
         assert_eq!(h.id(), 0);
         assert_eq!(
             *log.borrow(),
@@ -119,9 +119,9 @@ fn single_view_emits_create_and_returns_handle() {
 fn nested_view_with_text_child() {
     with_recorder(|log| {
         let _h = render! {
-            view {
-                text { "Hello" }
-            }
+            <view>
+                <text>"Hello"</text>
+            </view>
         };
         // Expected ops:
         //  Create view (0)
@@ -182,7 +182,7 @@ fn nested_view_with_text_child() {
 fn style_attribute_emits_set_inline_styles() {
     with_recorder(|log| {
         let _ = render! {
-            view(style: "padding: 16px;")
+            <view style="padding: 16px;" />
         };
         let ops = log.borrow();
         assert_eq!(
@@ -206,10 +206,10 @@ fn style_attribute_emits_set_inline_styles() {
 fn arbitrary_attribute_emits_set_attribute() {
     with_recorder(|log| {
         let _ = render! {
-            image(
-                src: "https://example.com/x.png",
-                alt: "example",
-            )
+            <image
+                src="https://example.com/x.png"
+                alt="example"
+            />
         };
         let ops = log.borrow();
         assert_eq!(
@@ -238,7 +238,7 @@ fn on_tap_emits_set_event_listener() {
         let fired = Rc::new(RefCell::new(false));
         let f = fired.clone();
         let _ = render! {
-            view(on_tap: move || *f.borrow_mut() = true)
+            <view on_tap={move || *f.borrow_mut() = true} />
         };
         let ops = log.borrow();
         assert!(ops
@@ -254,7 +254,7 @@ fn on_tap_emits_set_event_listener() {
 fn camel_case_event_handler_lowercased() {
     with_recorder(|log| {
         let _ = render! {
-            view(onTap: || {})
+            <view onTap={|| {}} />
         };
         let ops = log.borrow();
         assert!(ops
@@ -267,11 +267,11 @@ fn camel_case_event_handler_lowercased() {
 fn multiple_children_append_in_order() {
     with_recorder(|log| {
         let _ = render! {
-            view {
-                text { "A" }
-                text { "B" }
-                text { "C" }
-            }
+            <view>
+                <text>"A"</text>
+                <text>"B"</text>
+                <text>"C"</text>
+            </view>
         };
         let appends: Vec<_> = log
             .borrow()
@@ -296,7 +296,7 @@ fn expr_in_text_renders_initial_value_via_effect() {
     with_recorder_and_owner(|log| {
         let (count, _set_count) = signal(0_i32);
         let _h = render! {
-            text { {count.get()} }
+            <text>{count.get()}</text>
         };
         // Expected ops:
         //  Create text (0)
@@ -320,7 +320,7 @@ fn expr_in_text_updates_on_signal_write() {
     with_recorder_and_owner(|log| {
         let (count, set_count) = signal(0_i32);
         let _h = render! {
-            text { {count.get()} }
+            <text>{count.get()}</text>
         };
         // Trigger updates.
         set_count.set(5);
@@ -345,7 +345,7 @@ fn dynamic_style_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
         let (color, set_color) = signal("red".to_string());
         let _h = render! {
-            view(style: format!("color: {};", color.get()))
+            <view style={format!("color: {};", color.get())} />
         };
         set_color.set("blue".into());
         flush();
@@ -367,7 +367,7 @@ fn dynamic_attribute_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
         let (src, set_src) = signal("a.png".to_string());
         let _h = render! {
-            image(src: src.get())
+            <image src={src.get()} />
         };
         set_src.set("b.png".into());
         flush();
@@ -388,7 +388,7 @@ fn dynamic_attribute_re_runs_on_dep_change() {
 fn static_text_does_not_create_effect_path() {
     with_recorder_and_owner(|log| {
         let _h = render! {
-            text { "static" }
+            <text>"static"</text>
         };
         // Only one SetAttr text="static", emitted by the non-effect
         // path (since the child is a string literal, not `{expr}`).
@@ -409,10 +409,10 @@ fn mixed_static_and_dynamic_children() {
     with_recorder_and_owner(|log| {
         let (count, _set) = signal(7_i32);
         let _h = render! {
-            text {
+            <text>
                 "count="
                 {count.get()}
-            }
+            </text>
         };
         // Should produce two SetAttr text= calls: one for "count="
         // and one for "7" (the effect's initial run for {count.get()}).
@@ -434,10 +434,10 @@ fn signal_only_updates_elements_that_read_it() {
         let (a, set_a) = signal(0_i32);
         let (b, _set_b) = signal(100_i32);
         let _h = render! {
-            view {
-                text { {a.get()} }
-                text { {b.get()} }
-            }
+            <view>
+                <text>{a.get()}</text>
+                <text>{b.get()}</text>
+            </view>
         };
         log.borrow_mut().clear(); // ignore initial ops
         set_a.set(1);
@@ -462,9 +462,9 @@ fn show_renders_children_when_true() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(true);
         let _h = render! {
-            Show(when: move || cond.get()) {
-                text { "main" }
-            }
+            <Show when={move || cond.get()}>
+                <text>"main"</text>
+            </Show>
         };
         // Look for the raw_text "main" being created and its attr set.
         let texts: Vec<_> = log
@@ -484,12 +484,12 @@ fn show_renders_fallback_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false);
         let _h = render! {
-            Show(
-                when: move || cond.get(),
-                fallback: || render! { text { "fallback" } },
-            ) {
-                text { "main" }
-            }
+            <Show
+                when={move || cond.get()}
+                fallback={|| render! { <text>"fallback"</text> }}
+            >
+                <text>"main"</text>
+            </Show>
         };
         let texts: Vec<_> = log
             .borrow()
@@ -508,12 +508,12 @@ fn show_swaps_on_condition_flip() {
     with_recorder_and_owner(|log| {
         let (cond, set_cond) = signal(true);
         let _h = render! {
-            Show(
-                when: move || cond.get(),
-                fallback: || render! { text { "fb" } },
-            ) {
-                text { "main" }
-            }
+            <Show
+                when={move || cond.get()}
+                fallback={|| render! { <text>"fb"</text> }}
+            >
+                <text>"main"</text>
+            </Show>
         };
         log.borrow_mut().clear();
         set_cond.set(false);
@@ -537,9 +537,9 @@ fn show_without_fallback_renders_nothing_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false);
         let _h = render! {
-            Show(when: move || cond.get()) {
-                text { "only" }
-            }
+            <Show when={move || cond.get()}>
+                <text>"only"</text>
+            </Show>
         };
         let texts: Vec<_> = log
             .borrow()
@@ -570,11 +570,11 @@ fn for_renders_initial_items() {
             Item { id: 3, name: "c" },
         ]);
         let _h = render! {
-            For(
-                each: move || items.get(),
-                key: |i: &Item| i.id,
-                children: move |i: Item| render! { text { {i.name} } },
-            )
+            <For
+                each={move || items.get()}
+                key={|i: &Item| i.id}
+                children={move |i: Item| render! { <text>{i.name}</text> }}
+            />
         };
 
         let texts: Vec<_> = log
@@ -597,11 +597,11 @@ fn for_adds_new_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2]);
         let _h = render! {
-            For(
-                each: move || items.get(),
-                key: |x: &u32| *x,
-                children: move |x: u32| render! { text { {x.to_string()} } },
-            )
+            <For
+                each={move || items.get()}
+                key={|x: &u32| *x}
+                children={move |x: u32| render! { <text>{x.to_string()}</text> }}
+            />
         };
         log.borrow_mut().clear();
 
@@ -641,11 +641,11 @@ fn for_reorders_existing_items_visually() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]);
         let _h = render! {
-            For(
-                each: move || items.get(),
-                key: |x: &u32| *x,
-                children: move |x: u32| render! { text { {x.to_string()} } },
-            )
+            <For
+                each={move || items.get()}
+                key={|x: &u32| *x}
+                children={move |x: u32| render! { <text>{x.to_string()}</text> }}
+            />
         };
         log.borrow_mut().clear();
 
@@ -678,11 +678,11 @@ fn for_removes_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]);
         let _h = render! {
-            For(
-                each: move || items.get(),
-                key: |x: &u32| *x,
-                children: move |x: u32| render! { text { {x.to_string()} } },
-            )
+            <For
+                each={move || items.get()}
+                key={|x: &u32| *x}
+                children={move |x: u32| render! { <text>{x.to_string()}</text> }}
+            />
         };
         log.borrow_mut().clear();
 
@@ -708,11 +708,11 @@ fn for_removes_items_on_update() {
 fn page_view_image_scroll_view_tags_supported() {
     with_recorder(|log| {
         let _ = render! {
-            page {
-                scroll_view {
-                    image {}
-                }
-            }
+            <page>
+                <scroll_view>
+                    <image />
+                </scroll_view>
+            </page>
         };
         let creates: Vec<_> = log
             .borrow()

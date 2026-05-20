@@ -97,7 +97,7 @@ fn counter_initial_render() {
     let state = AppState {
         count: RwSignal::new(0),
     };
-    let _root = with_owner(owner, || render! { counter(state: state) });
+    let _root = with_owner(owner, || render! { <counter state={state} /> });
 
     let ts = texts(&log.borrow());
     // Static label parts + button labels + initial count.
@@ -122,7 +122,7 @@ fn counter_updates_on_signal_write() {
     let state = AppState {
         count: RwSignal::new(0),
     };
-    let _root = with_owner(owner, || render! { counter(state: state) });
+    let _root = with_owner(owner, || render! { <counter state={state} /> });
 
     // Reset log to focus on update behaviour.
     log.borrow_mut().clear();
@@ -150,7 +150,7 @@ fn show_swaps_back_when_predicate_flips() {
     let state = AppState {
         count: RwSignal::new(15),
     };
-    let _root = with_owner(owner, || render! { counter(state: state) });
+    let _root = with_owner(owner, || render! { <counter state={state} /> });
 
     // Bring it back below threshold.
     log.borrow_mut().clear();
