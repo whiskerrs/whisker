@@ -371,15 +371,11 @@ pub mod prelude {
         effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
         signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,
     };
-    // Note: we deliberately do NOT re-export the built-in tag
-    // names (`view`, `page`, etc.) from the prelude. The user's
-    // `view(s)` inside `render! { … }` is opaque macro input, but
-    // when `view` is a value in scope, rust-analyzer eagerly
-    // interprets the parens as a Rust function call and offers
-    // *argument-position* completion (variables that could be
-    // passed in) instead of macro-expansion-based method
-    // completion. Keeping the tag names accessible only via
-    // `whisker::__tags::view` avoids that confusion — the macro
-    // expansion's builder chain is the only place RA sees `view`
-    // as a typed receiver.
+    // Built-in tag builder constructors re-exported so RA's
+    // identifier completion (`v|` → `view`, `pa|` → `page`, …)
+    // works in source positions outside `render!`. The macro
+    // emits these as fully-qualified path expressions; user code
+    // rarely calls them directly.
+    #[doc(hidden)]
+    pub use crate::__tags::{image, page, raw_text, scroll_view, text, view};
 }
