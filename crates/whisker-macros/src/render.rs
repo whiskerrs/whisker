@@ -30,7 +30,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
 use syn::{
-    braced, parenthesized,
+    braced,
     parse::{Parse, ParseStream, Result},
     token, Expr, Ident, LitStr, Token,
 };
@@ -117,58 +117,143 @@ impl Parse for Node {
             let expr: Expr = content.parse()?;
             return Ok(Node::Expr(expr));
         }
-        // IDENT { ... } dispatch:
-        //
-        //   - lowercase + in built-in whitelist → Element
-        //   - lowercase + NOT in whitelist     → UserComponent
-        //   - "Show" / "For"                   → ControlFlow
-        //   - other uppercase                  → compile error
-        //
-        // The case split mirrors Leptos: only built-in primitives
-        // and control-flow keywords are special-cased; everything
-        // else is a user component invocation.
-        let body = TagBody::parse(input)?;
-        let name = body.tag.to_string();
-        if is_builtin_tag(&name) {
-            Ok(Node::Element(ElementNode {
-                tag: body.tag,
-                attrs: body.kwargs,
-                children: body.children,
-            }))
-        } else if name == "Show" || name == "For" {
-            Ok(Node::ControlFlow(ControlFlowNode {
-                name: body.tag,
-                kwargs: body.kwargs,
-                children: body.children,
-            }))
-        } else if starts_uppercase(&body.tag)
-            && (!body.kwargs.is_empty() || !body.children.is_empty())
-        {
-            // PascalCase with a non-empty body is an explicit user
-            // mistake — give a snake_case hint. We skip the
-            // rejection when the body is empty (no kwargs and no
-            // children) because that's overwhelmingly an
-            // in-flight typing state (`render! { Sh| `) where RA
-            // wants identifier completion at the tag span.
-            Err(syn::Error::new(
-                body.tag.span(),
-                format!(
-                    "unknown PascalCase identifier `{name}` in render!. \
-                     Only built-in control flow (`Show`, `For`) uses \
-                     PascalCase. User components are snake_case — \
-                     invoke as `{}{}` instead.",
-                    pascal_to_snake_hint(&name),
-                    " { … }",
-                ),
-            ))
-        } else {
-            Ok(Node::UserComponent(UserComponentNode {
-                fn_name: body.tag,
-                kwargs: body.kwargs,
-                children: body.children,
-            }))
+        // JSX-style element: `<tag attrs… />` or `<tag attrs…>children</tag>`.
+        if input.peek(Token![<]) {
+            return parse_jsx_element(input);
         }
+        Err(input.error(
+            "expected `<tag … />`, `<tag …>…</tag>`, a string literal, or `{expr}`",
+        ))
     }
+}
+
+/// Parse one JSX-style element. Handles both self-closing
+/// (`<tag attrs… />`) and open-close (`<tag attrs…>children</tag>`)
+/// forms. Attributes are `name="string"` or `name={expr}` (with
+/// `name` alone tolerated for in-flight typing — emitted as
+/// partial). The closing tag's name must match the opening tag.
+fn parse_jsx_element(input: ParseStream) -> Result<Node> {
+    input.parse::<Token![<]>()?;
+    let tag: Ident = input.parse()?;
+    let mut attrs: Vec<AttrEntry> = Vec::new();
+
+    // Attribute loop. Stop when we hit `>` (open-tag end) or `/>`
+    // (self-close). Everything else is a kwarg.
+    while !input.peek(Token![>]) && !(input.peek(Token![/]) && input.peek2(Token![>])) {
+        if input.is_empty() {
+            return Err(input.error("unexpected end of input inside `<tag …`; \
+                                    expected `>` or `/>` to close the open tag"));
+        }
+        attrs.push(parse_jsx_attr(input)?);
+    }
+
+    // Self-closing path.
+    if input.peek(Token![/]) {
+        input.parse::<Token![/]>()?;
+        input.parse::<Token![>]>()?;
+        return Ok(make_node(tag, attrs, Vec::new()));
+    }
+
+    // Open-tag end, then children, then `</tag>`.
+    input.parse::<Token![>]>()?;
+    let mut children: Vec<Node> = Vec::new();
+    while !is_close_tag_start(input) {
+        if input.is_empty() {
+            return Err(input.error(format!(
+                "unexpected end of input inside `<{tag}>…`; \
+                 expected closing `</{tag}>`",
+            )));
+        }
+        children.push(input.parse()?);
+    }
+    // Consume the closing `</tag>`.
+    input.parse::<Token![<]>()?;
+    input.parse::<Token![/]>()?;
+    let close_tag: Ident = input.parse()?;
+    if close_tag != tag {
+        return Err(syn::Error::new(
+            close_tag.span(),
+            format!(
+                "mismatched closing tag: expected `</{tag}>`, found `</{close_tag}>`",
+            ),
+        ));
+    }
+    input.parse::<Token![>]>()?;
+
+    Ok(make_node(tag, attrs, children))
+}
+
+fn make_node(tag: Ident, attrs: Vec<AttrEntry>, children: Vec<Node>) -> Node {
+    let name = tag.to_string();
+    if is_builtin_tag(&name) {
+        Node::Element(ElementNode {
+            tag,
+            attrs,
+            children,
+        })
+    } else if name == "Show" || name == "For" {
+        Node::ControlFlow(ControlFlowNode {
+            name: tag,
+            kwargs: attrs,
+            children,
+        })
+    } else {
+        // snake_case or anything else → user component.
+        // PascalCase user components are accepted here too; if the
+        // referenced identifier doesn't resolve, rustc/RA reports
+        // the missing-fn error at the call site, which is more
+        // localised than a macro-side compile_error.
+        Node::UserComponent(UserComponentNode {
+            fn_name: tag,
+            kwargs: attrs,
+            children,
+        })
+    }
+}
+
+/// Parse a single JSX attribute. Three accepted shapes:
+///
+/// - `name="literal"` — string literal value
+/// - `name={expr}` — Rust expression value (closures, format!, …)
+/// - `name` alone — in-flight typing; emitted as a **partial**
+///   AttrEntry with a `()` placeholder so the codegen can still
+///   surface the name at its source span for RA completion
+fn parse_jsx_attr(input: ParseStream) -> Result<AttrEntry> {
+    let name: Ident = input.parse()?;
+    if !input.peek(Token![=]) {
+        // Partial — no `=` yet. Cursor likely sits at the end of
+        // the attribute name.
+        let value: Expr = syn::parse_quote_spanned!(name.span()=> ());
+        return Ok(AttrEntry {
+            name,
+            value,
+            partial: true,
+        });
+    }
+    input.parse::<Token![=]>()?;
+    let value = if input.peek(token::Brace) {
+        let content;
+        braced!(content in input);
+        content.parse::<Expr>()?
+    } else if input.peek(LitStr) {
+        let lit: LitStr = input.parse()?;
+        syn::parse_quote!(#lit)
+    } else {
+        return Err(input.error(
+            "attribute value must be a string literal (`name=\"…\"`) \
+             or a braced expression (`name={…}`)",
+        ));
+    };
+    Ok(AttrEntry {
+        name,
+        value,
+        partial: false,
+    })
+}
+
+/// Peek two tokens to detect the start of a closing tag (`</`).
+fn is_close_tag_start(input: ParseStream) -> bool {
+    input.peek(Token![<]) && input.peek2(Token![/])
 }
 
 /// Lowercase identifiers that lower to `view::create_element` calls
@@ -179,20 +264,6 @@ fn is_builtin_tag(name: &str) -> bool {
         name,
         "page" | "view" | "text" | "raw_text" | "image" | "scroll_view"
     )
-}
-
-/// PascalCase → snake_case hint for the "unknown PascalCase" error.
-/// `MyComponent` → `my_component`. Best-effort, only used in an
-/// error message so it doesn't need to be perfect.
-fn pascal_to_snake_hint(pascal: &str) -> String {
-    let mut out = String::with_capacity(pascal.len() + 4);
-    for (i, c) in pascal.chars().enumerate() {
-        if c.is_uppercase() && i != 0 {
-            out.push('_');
-        }
-        out.extend(c.to_lowercase());
-    }
-    out
 }
 
 /// Shared parse result for both element and component nodes:
@@ -209,97 +280,8 @@ fn pascal_to_snake_hint(pascal: &str) -> String {
 /// the user is typing a kwarg name (method completion on the
 /// builder) or a child name (identifier completion in scope)
 /// purely from the syntactic delimiter, no heuristics.
-struct TagBody {
-    tag: Ident,
-    kwargs: Vec<AttrEntry>,
-    children: Vec<Node>,
-}
-
-impl TagBody {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let tag: Ident = input.parse()?;
-        let mut kwargs = Vec::new();
-        let mut children = Vec::new();
-
-        // Optional `(name: expr, name: expr, …)` props block.
-        if input.peek(token::Paren) {
-            let props_buf;
-            parenthesized!(props_buf in input);
-            Self::parse_kwargs(&props_buf, &mut kwargs)?;
-        }
-
-        // Optional `{ child, child, … }` children block.
-        if input.peek(token::Brace) {
-            let body_buf;
-            braced!(body_buf in input);
-            while !body_buf.is_empty() {
-                children.push(body_buf.parse()?);
-                if body_buf.peek(Token![,]) {
-                    body_buf.parse::<Token![,]>()?;
-                }
-            }
-        }
-
-        // Both blocks absent → tolerate as an in-flight typing state
-        // (`render! { v|`). The codegen path emits a bare builder
-        // call so RA can offer tag-name completion at the
-        // identifier's source span.
-
-        Ok(Self {
-            tag,
-            kwargs,
-            children,
-        })
-    }
-
-    /// Parse the body of a `(…)` props block: a comma-separated
-    /// list of `name: expr` pairs, with tolerance for an in-flight
-    /// `IDENT` without `:` / value.
-    fn parse_kwargs(
-        input: ParseStream,
-        kwargs: &mut Vec<AttrEntry>,
-    ) -> Result<()> {
-        while !input.is_empty() {
-            if input.peek(Ident) && input.peek2(Token![:]) {
-                // Complete kwarg.
-                let name: Ident = input.parse()?;
-                input.parse::<Token![:]>()?;
-                let value: Expr = input.parse()?;
-                kwargs.push(AttrEntry { name, value, partial: false });
-            } else if input.peek(Ident) {
-                // Partial input: `IDENT` with no following `:` /
-                // expression. Synthesize a `()` placeholder so the
-                // codegen still emits `.#name(…)` at the user's
-                // source span — that's what RA's method-completion
-                // engine reads.
-                let name: Ident = input.parse()?;
-                let value: Expr = syn::parse_quote_spanned!(name.span()=> ());
-                kwargs.push(AttrEntry { name, value, partial: true });
-            } else {
-                // Token we don't understand — give up cleanly.
-                // Returning Err here would prevent RA from
-                // expanding the rest of the macro; the `expand`
-                // entry point catches the error and emits a
-                // fallback ElementHandle so the user's editor
-                // doesn't cascade.
-                return Err(input.error("expected `name: value` kwarg"));
-            }
-            if input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-            }
-        }
-        Ok(())
-    }
-}
-
-fn starts_uppercase(ident: &Ident) -> bool {
-    ident
-        .to_string()
-        .chars()
-        .next()
-        .map(|c| c.is_uppercase())
-        .unwrap_or(false)
-}
+// `TagBody` and the Compose-syntax parser path are gone; JSX
+// parsing happens in `parse_jsx_element` above.
 
 struct ElementNode {
     tag: Ident,
@@ -1125,9 +1107,7 @@ fn strip_on_prefix(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        is_builtin_tag, pascal_to_snake_hint, snake_to_props_ident, strip_on_prefix,
-    };
+    use super::{is_builtin_tag, snake_to_props_ident, strip_on_prefix};
     use proc_macro2::{Span, TokenStream as TokenStream2};
     use syn::Ident;
 
@@ -1182,22 +1162,6 @@ mod tests {
         assert!(!is_builtin_tag("my_view"));
     }
 
-    // ---- Pascal→snake error hint --------------------------------
-
-    #[test]
-    fn pascal_to_snake_hint_basic() {
-        assert_eq!(pascal_to_snake_hint("MyComponent"), "my_component");
-        assert_eq!(pascal_to_snake_hint("Card"), "card");
-        assert_eq!(pascal_to_snake_hint("TabItem"), "tab_item");
-    }
-
-    #[test]
-    fn pascal_to_snake_hint_starts_with_lowercase() {
-        // Defensive: even if it accidentally gets called on a
-        // lowercase ident, no panic, no leading underscore.
-        assert_eq!(pascal_to_snake_hint("foo"), "foo");
-    }
-
     // ---- snake→Props ident -------------------------------------
 
     #[test]
@@ -1220,7 +1184,7 @@ mod tests {
         // chain `::whisker::__tags::view().style("x").__h()`. The
         // method-call shape (not struct-init) is what drives
         // rust-analyzer's prop-name completion.
-        let input: TokenStream2 = quote::quote! { view(style: "x") };
+        let input: TokenStream2 = quote::quote! { <view style="x" /> };
         let output = super::expand_test(input).to_string();
         assert!(
             output.contains("__tags :: __view_ctor ()") || output.contains("__tags::__view_ctor()"),
@@ -1244,7 +1208,7 @@ mod tests {
         // Attributes the builder doesn't have a method for go
         // through `.attr("kebab-name", value)`.
         let input: TokenStream2 = quote::quote! {
-            view(scroll_orientation: "horizontal")
+            <view scroll_orientation="horizontal" />
         };
         let output = super::expand_test(input).to_string();
         assert!(
@@ -1265,11 +1229,11 @@ mod tests {
         // check a few representative ones.
         for tag in &["page", "view", "text", "image", "scroll_view"] {
             let input: TokenStream2 = match *tag {
-                "image" => quote::quote! { image(src: "x") },
-                "scroll_view" => quote::quote! { scroll_view(scroll_orientation: "vertical") },
+                "image" => quote::quote! { <image src="x" /> },
+                "scroll_view" => quote::quote! { <scroll_view scroll_orientation="vertical" /> },
                 _ => {
                     let ident = syn::Ident::new(tag, proc_macro2::Span::call_site());
-                    quote::quote! { #ident(style: "x") }
+                    quote::quote! { <#ident style="x" /> }
                 }
             };
             let output = super::expand_test(input).to_string();
@@ -1282,7 +1246,7 @@ mod tests {
 
     #[test]
     fn image_src_lowers_to_dedicated_method() {
-        let input: TokenStream2 = quote::quote! { image(src: "https://x") };
+        let input: TokenStream2 = quote::quote! { <image src="https://x" /> };
         let output = super::expand_test(input).to_string();
         assert!(
             output.contains(". src"),
@@ -1294,7 +1258,7 @@ mod tests {
     #[test]
     fn scroll_view_orientation_lowers_to_dedicated_method() {
         let input: TokenStream2 =
-            quote::quote! { scroll_view(scroll_orientation: "horizontal") };
+            quote::quote! { <scroll_view scroll_orientation="horizontal" /> };
         let output = super::expand_test(input).to_string();
         assert!(
             output.contains(". scroll_orientation"),
@@ -1308,7 +1272,7 @@ mod tests {
         // `view { sty|` mid-typing: parser produces partial kwarg
         // `sty`, codegen should still emit `.sty(())` so RA can do
         // method completion against `view`'s builder.
-        let input: TokenStream2 = quote::quote! { view(sty) };
+        let input: TokenStream2 = quote::quote! { <view sty /> };
         let output = super::expand_test(input).to_string();
         eprintln!("DUMP partial-sty: {output}");
         assert!(
@@ -1320,7 +1284,7 @@ mod tests {
 
     #[test]
     fn single_char_partial_kwarg_emits_method_call() {
-        let input: TokenStream2 = quote::quote! { view(s) };
+        let input: TokenStream2 = quote::quote! { <view s /> };
         let output = super::expand_test(input).to_string();
         eprintln!("DUMP partial-s: {output}");
         assert!(
@@ -1334,9 +1298,9 @@ mod tests {
         // Compose syntax: props in `()`, children separately in
         // `{}`. Partial kwarg in `()` is unambiguous now.
         let input: TokenStream2 = quote::quote! {
-            view(s) {
-                text { "hi" }
-            }
+            <view s>
+                <text>"hi"</text>
+            </view>
         };
         let output = super::expand_test(input).to_string();
         assert!(
@@ -1352,7 +1316,7 @@ mod tests {
         // builder methods (`style`, `class`, `on_tap`, …), so the
         // emitter falls through to a bare `let _ = v;` reference
         // for identifier completion.
-        let input: TokenStream2 = quote::quote! { view(v) };
+        let input: TokenStream2 = quote::quote! { <view v /> };
         let output = super::expand_test(input).to_string();
         eprintln!("DUMP partial-v: {output}");
         assert!(
@@ -1364,7 +1328,7 @@ mod tests {
 
     #[test]
     fn user_component_does_not_use_builtin_tags_module() {
-        let input: TokenStream2 = quote::quote! { my_card(title: "x") };
+        let input: TokenStream2 = quote::quote! { <my_card title="x" /> };
         let output = super::expand_test(input).to_string();
         assert!(
             !output.contains("__tags"),
