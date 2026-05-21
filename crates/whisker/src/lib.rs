@@ -270,6 +270,24 @@ pub mod __tags {
             append_child(self.handle, child);
             self
         }
+        /// Text content. Creates a `raw_text` child element under
+        /// the hood and reactively keeps its `text` attribute in
+        /// sync with the closure's return value. This is the
+        /// kwarg-styled replacement for the old bare-`"hi"`
+        /// string-literal child support — see render.rs for why
+        /// (rust-analyzer fixup needs every children item to be
+        /// kwarg-shape).
+        pub fn value<F, T>(self, f: F) -> Self
+        where
+            F: ::std::ops::Fn() -> T + 'static,
+            T: ::std::string::ToString,
+        {
+            let parent = self.handle;
+            let raw = create_element(ElementTag::RawText);
+            append_child(parent, raw);
+            effect(move || set_attribute(raw, "text", &f().to_string()));
+            self
+        }
         #[allow(non_snake_case)]
         pub fn __h(self) -> ElementHandle {
             self.handle
