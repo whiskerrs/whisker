@@ -257,6 +257,13 @@ async fn ios_install_and_launch(
         .join(package);
 
     let xc_step = whisker_build::ui::step("xcodebuild", p.scheme.clone());
+    // Pin the build to the host arch. `generic/platform=iOS Simulator`
+    // would otherwise emit a universal binary needing both arm64 +
+    // x86_64 simulator slices in the xcframework — but the dev-loop
+    // xcframework is single-slice (`IosSlices::SimulatorHost`). With
+    // `-arch <host>` xcodebuild only links the matching slice and
+    // the build stays single-arch end-to-end.
+    let host_arch = whisker_build::ios::host_simulator_arch();
     let mut xc_cmd = Command::new("xcodebuild");
     xc_cmd
         .arg("-project")
@@ -264,6 +271,7 @@ async fn ios_install_and_launch(
         .args(["-scheme", &p.scheme])
         .args(["-configuration", "Debug"])
         .args(["-destination", "generic/platform=iOS Simulator"])
+        .args(["-arch", host_arch])
         .arg("-derivedDataPath")
         .arg(&derived)
         .args(["-quiet", "build"]);

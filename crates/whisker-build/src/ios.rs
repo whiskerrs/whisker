@@ -74,10 +74,11 @@ const BRIDGE_EXPORTS: &[&str] = &[
 /// passes `None` (prod has no Tier 1).
 /// Which iOS slice(s) to put in the resulting xcframework.
 ///
-/// `whisker run --target ios-sim` only ever loads the simulator
-/// slice; building the device + x86 slices wastes 60+ seconds of
-/// dev-loop time. Production `whisker build` keeps the universal
-/// shape so the resulting artifact runs on real hardware too.
+/// `whisker run --target ios-sim` only ever loads the host-arch
+/// simulator slice; building the device + cross-arch slices wastes
+/// 60+ seconds of dev-loop time. Production `whisker build` keeps
+/// the universal shape so the resulting artifact runs on real
+/// hardware too.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum IosSlices {
     /// arm64 device + arm64 sim + x86_64 sim. Required for shipping;
@@ -85,9 +86,35 @@ pub enum IosSlices {
     /// / linker caches keyed on the simulator triple, which lands
     /// last in the build order).
     Universal,
-    /// arm64 sim only. Right choice for `whisker run --target ios-sim`
-    /// on an Apple Silicon Mac.
-    SimulatorArm64,
+    /// One simulator slice matching the host architecture
+    /// (`aarch64-apple-ios-sim` on Apple Silicon Macs, `x86_64-apple-ios`
+    /// on Intel). Right choice for `whisker run --target ios-sim` —
+    /// xcodebuild's `-arch <host>` pin in the dev-server's app link
+    /// keeps the link line single-arch so this lone slice resolves
+    /// every reference.
+    SimulatorHost,
+}
+
+/// The single iOS-sim triple matching the current host. Used by the
+/// dev-server's `SimulatorHost` xcframework build + by the matching
+/// `-arch <host>` constraint the dev-server adds to xcodebuild.
+pub fn host_simulator_triple() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "aarch64-apple-ios-sim"
+    } else {
+        "x86_64-apple-ios"
+    }
+}
+
+/// The Mach-O arch name for the current host (`arm64` / `x86_64`).
+/// xcodebuild's `-arch` flag wants this form, not the rustc triple
+/// form.
+pub fn host_simulator_arch() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    }
 }
 
 pub fn build_xcframework(
@@ -149,13 +176,15 @@ pub fn build_xcframework_with(
     // typical Apple-Silicon dev machine runs the arm64 simulator).
     // For `SimulatorArm64` there's nothing to order — it's the
     // only triple compiled.
+    let host_sim = host_simulator_triple();
+    let host_only: [&str; 1] = [host_sim];
     let triples: &[&str] = match slices {
         IosSlices::Universal => &[
             "aarch64-apple-ios",
             "x86_64-apple-ios",
             "aarch64-apple-ios-sim",
         ],
-        IosSlices::SimulatorArm64 => &["aarch64-apple-ios-sim"],
+        IosSlices::SimulatorHost => &host_only,
     };
     for triple in triples {
         let s = crate::ui::step("compile", format!("{package} ({triple})"));
@@ -164,6 +193,9 @@ pub fn build_xcframework_with(
     }
 
     let target_dir = workspace_root.join("target");
+    // For `SimulatorHost`, this is the lone slice we just built. For
+    // `Universal`, this is the arm64 simulator slice that gets
+    // lipo'd together with the x86 one further down.
     let sim_arm64_dylib = target_dir
         .join("aarch64-apple-ios-sim/release")
         .join(&cargo_dylib_name);
@@ -225,20 +257,25 @@ pub fn build_xcframework_with(
         )?;
         staged_fws.push(sim_fw);
     } else {
-        if !sim_arm64_dylib.is_file() {
+        // SimulatorHost: one slice matching the host architecture.
+        // The dev-server's app xcodebuild line pins `-arch <host>`,
+        // so a single-slice xcframework is sufficient — the linker
+        // won't reach for the other arch.
+        let host_sim_dylib = target_dir
+            .join(host_sim)
+            .join("release")
+            .join(&cargo_dylib_name);
+        if !host_sim_dylib.is_file() {
             return Err(anyhow!(
                 "expected dylib not built: {}",
-                sim_arm64_dylib.display()
+                host_sim_dylib.display(),
             ));
         }
-        // Single-slice xcframework — the arm64-sim dylib is the only
-        // input and lands at `target/whisker-driver/sim/<dylib>`.
         let sim_parent = out.join("sim");
         std::fs::create_dir_all(&sim_parent)?;
         let staged = sim_parent.join(&cargo_dylib_name);
-        std::fs::copy(&sim_arm64_dylib, &staged).with_context(|| {
-            format!("copy {} → {}", sim_arm64_dylib.display(), staged.display())
-        })?;
+        std::fs::copy(&host_sim_dylib, &staged)
+            .with_context(|| format!("copy {} → {}", host_sim_dylib.display(), staged.display()))?;
         let sim_fw =
             build_framework_dir(&sim_parent, &staged, &rust_headers_src, &bridge_headers_src)?;
         staged_fws.push(sim_fw);
