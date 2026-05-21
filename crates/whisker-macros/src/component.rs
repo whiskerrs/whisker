@@ -161,18 +161,53 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         quote! { #fn_name :: < #(#ty_generics_for_turbofish),* > as *const () }
     };
 
-    // Props struct. Generics + where clause come straight from the
-    // function — typed-builder threads them through to the generated
-    // `XxxPropsBuilder<...>`.
-    // The Props struct mirrors the user's fn visibility. A `pub fn`
-    // produces `pub struct XxxProps` (so external callers can write
-    // `render! { xxx { ... } }` and the macro-expansion can resolve
-    // `XxxProps::builder()`). A bare `fn` keeps the struct module-
-    // private, matching the original encapsulation.
+    // Props struct lives inside a `#[doc(hidden)]` private module
+    // so the per-field type-state builder helpers typed-builder
+    // generates (`XxxPropsBuilder<((),(),(),)>` and the per-field
+    // empty/filled marker types) don't pollute rust-analyzer's
+    // identifier completion at the user's call sites. Only the
+    // top-level `XxxProps` is re-exported; the builder type is
+    // returned by `XxxProps::builder()` and reached via method
+    // chains, so it doesn't need to be in scope by name.
+    //
+    // Generics + where clause come straight from the function —
+    // typed-builder threads them through to the generated builder.
+    let internal_mod = format_ident!("__{}_props_internal", fn_name);
     let props_struct = quote! {
-        #[derive(::whisker::__typed_builder::TypedBuilder)]
-        #vis struct #props_name #impl_generics #where_clause {
-            #(#props_fields),*
+        #[doc(hidden)]
+        #vis mod #internal_mod {
+            // Pull in everything from the outer scope so prop types
+            // referenced in fields (`Children`, user types, etc.)
+            // resolve. `use super::*` is safe here because the
+            // module is hidden and only re-exports the Props struct.
+            use super::*;
+            #[derive(::whisker::__typed_builder::TypedBuilder)]
+            pub struct #props_name #impl_generics #where_clause {
+                #(#props_fields),*
+            }
+        }
+        #vis use #internal_mod::#props_name;
+    };
+
+    // PascalCase alias so rust-analyzer's identifier completion
+    // can find the component by its render!-call-site name
+    // (`Art|` → `ArtTile`). Without this, only the snake_case fn
+    // is in scope and `Art…` matches nothing.
+    //
+    // The alias is `non_snake_case` (it's a fn re-export named
+    // PascalCase) — opt-out the lint locally.
+    let alias_str = props_name.to_string();
+    let alias_str = alias_str.trim_end_matches("Props");
+    let fn_name_str = fn_name.to_string();
+    let pascal_alias = if alias_str == fn_name_str {
+        // Defensive: a fn named in PascalCase already (`fn MyCard`)
+        // would alias to itself. Skip in that case.
+        quote! {}
+    } else {
+        let alias_ident = format_ident!("{}", alias_str);
+        quote! {
+            #[allow(non_snake_case)]
+            #vis use #fn_name as #alias_ident;
         }
     };
 
@@ -210,6 +245,7 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
 
     quote! {
         #props_struct
+        #pascal_alias
         #new_fn
     }
 }

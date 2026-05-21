@@ -127,6 +127,76 @@ fn probe() -> Element {
 }
 
 #[test]
+fn props_builder_helper_types_are_hidden_from_completion() {
+    // typed-builder generates a handful of marker types per Props
+    // (`<Name>PropsBuilder<((),(),()...)>` and friends). They're
+    // technically `pub` but pure plumbing — RA shouldn't surface
+    // them at user call sites because they pollute the candidate
+    // list with `ArtTilePropsBuilder_*` entries on every keystroke.
+    // The `#[component]` macro tucks the Props struct behind a
+    // `#[doc(hidden)] pub mod __<name>_props_internal` to gate
+    // those helpers off; only `ArtTileProps` itself re-exports
+    // outward.
+    let source = r#"
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
+
+#[component]
+fn art_tile(label: &'static str) -> Element {
+    render! { text(value: label) }
+}
+
+fn probe() -> Element {
+    render! {
+        view() {
+            ArtTile|
+        }
+    }
+}
+"#;
+    let labels = run_probe("hidden_builder_helpers", source);
+    let leaked: Vec<&String> = labels
+        .iter()
+        .filter(|l| l.starts_with("ArtTilePropsBuilder"))
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "ArtTilePropsBuilder* types should be hidden behind \
+         `#[doc(hidden)]`; saw: {leaked:?}",
+    );
+}
+
+#[test]
+fn partial_user_component_completes_to_pascal_case_alias() {
+    // `Art|` in a render! children block should surface the
+    // `ArtTile` PascalCase alias the `#[component]` macro emits
+    // for `fn art_tile`. Without that alias, only `art_tile` is
+    // in scope and `Art…` matches nothing.
+    let source = r#"
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
+
+#[component]
+fn art_tile(label: &'static str) -> Element {
+    render! { text(value: label) }
+}
+
+fn probe() -> Element {
+    render! {
+        view() {
+            Art|
+        }
+    }
+}
+"#;
+    let labels = run_probe("partial_user_component", source);
+    assert!(
+        labels.iter().any(|l| l == "ArtTile"),
+        "expected `ArtTile` PascalCase alias for `fn art_tile`; got {labels:?}"
+    );
+}
+
+#[test]
 fn partial_tag_name_in_children_block_completes_to_builtin_view() {
     let source = r#"
 use whisker::prelude::*;
