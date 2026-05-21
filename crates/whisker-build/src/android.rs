@@ -233,14 +233,11 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         }
     }
 
-    eprintln!(
-        "[whisker-build] cargo rustc --crate-type dylib --target {triple} -p {pkg} ({profile:?})",
-        pkg = b.package,
-        profile = b.profile,
-    );
-    let status = cmd
-        .status()
+    let cargo_step = crate::ui::step("compile", format!("{} ({triple})", b.package));
+    let status = cargo_step
+        .pipe(&mut cmd)
         .with_context(|| format!("spawn cargo for {triple}"))?;
+    cargo_step.done("");
     if !status.success() {
         return Err(anyhow!("cargo build failed ({status}) for {triple}"));
     }
@@ -286,10 +283,10 @@ pub fn stage_jni_libs(
     std::fs::copy(&libcxx, &dst_libcxx)
         .with_context(|| format!("copy {} → {}", libcxx.display(), dst_libcxx.display()))?;
 
-    eprintln!(
-        "[whisker-build] staged jniLibs: {} + libc++_shared.so",
+    crate::ui::info(format!(
+        "stage jniLibs ({} + libc++_shared.so)",
         so_name.to_string_lossy(),
-    );
+    ));
     Ok(())
 }
 
@@ -328,7 +325,7 @@ pub fn run_gradle_assemble(gen_android: &Path, profile: Profile) -> Result<PathB
         Profile::Release => ":app:assembleRelease",
         Profile::Debug => ":app:assembleDebug",
     };
-    eprintln!("[whisker-build] gradle {task}");
+    let _gradle_step = crate::ui::step("gradle", task.to_string());
     let java_home = resolve_java_home()?;
     let gradlew = gen_android.join("gradlew");
     if !gradlew.is_file() {

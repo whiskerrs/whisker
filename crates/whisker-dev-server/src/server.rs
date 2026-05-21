@@ -173,7 +173,7 @@ pub async fn serve(
 
     let handle = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
-            eprintln!("[whisker-dev-server] axum serve error: {e}");
+            whisker_build::ui::error(format!("axum serve error: {e}"));
         }
     });
 
@@ -189,10 +189,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let (mut tx_ws, mut rx_ws) = socket.split();
     let mut bcast_rx = state.tx.subscribe();
-    eprintln!(
-        "[whisker-dev-server] client connected (total: {})",
-        state.tx.receiver_count(),
-    );
+    whisker_build::ui::set_status(format!("{} client(s) connected", state.tx.receiver_count(),));
+    // `aslr_reference` is internal handshake plumbing; emit at debug
+    // grade so the steady-state UI stays clean.
     if let Some(cb) = &state.on_event {
         cb(Event::ClientConnected);
     }
@@ -209,7 +208,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 let frame = match encode_patch_frame(&patch) {
                     Ok(b) => b,
                     Err(e) => {
-                        eprintln!("[whisker-dev-server] encode patch frame: {e}");
+                        whisker_build::ui::warn(format!("encode patch frame: {e}"));
                         continue;
                     }
                 };
@@ -227,9 +226,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     Some(Err(_)) => break,
                     Some(Ok(Message::Text(t))) => {
                         if let Some(aslr) = parse_client_aslr_reference(&t) {
-                            eprintln!(
-                                "[whisker-dev-server] client hello: aslr_reference={aslr:#x}"
-                            );
+                            whisker_build::ui::debug(format!(
+                                "client hello · aslr_reference={aslr:#x}"
+                            ));
                             if let Ok(mut g) = state.aslr_reference.lock() {
                                 *g = Some(aslr);
                             }

@@ -98,6 +98,15 @@ pub fn build_obj_plan(captured: &CapturedRustcInvocation, output_dir: &Path) -> 
     set_out_dir(&mut args, output_dir);
     let object_path = output_dir.join(object_filename(&captured.crate_name));
     set_emit_obj(&mut args, &object_path);
+    // cargo's captured args include `--json=artifacts,…` +
+    // `--error-format=json` so its build pipeline can parse rustc's
+    // structured output. We just spawn rustc and inspect exit status;
+    // leaving the JSON flags in produces a noisy
+    // `{"$message_type":"artifact",…}` line on stdout for every
+    // patch, which clutters the dev terminal. Strip them so rustc
+    // falls back to human-readable output (errors still surface on
+    // stderr in plain text).
+    strip_json_flags(&mut args);
     // Reuse rustc's incremental cache across thin rebuilds. rustc
     // fingerprints source files + query results into this dir; the
     // next invocation skips re-typechecking + re-codegenning anything
@@ -174,6 +183,29 @@ fn set_incremental(args: &mut Vec<String>, incremental_dir: &Path) {
     }
     args.push("-C".into());
     args.push(format!("incremental={}", incremental_dir.display()));
+}
+
+/// Remove `--json=…` and `--error-format=json` from the captured
+/// rustc args so the thin rebuild emits plain human text instead of
+/// the structured JSON channel cargo would have parsed. Both forms
+/// (separated and `=`) are stripped; we don't restore a default
+/// because rustc's default is already human output.
+fn strip_json_flags(args: &mut Vec<String>) {
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        // `--json <list>` or `--error-format <fmt>` (separated forms)
+        if (arg == "--json" || arg == "--error-format") && i + 1 < args.len() {
+            args.drain(i..=i + 1);
+            continue;
+        }
+        // `--json=...` or `--error-format=...` (equals forms)
+        if arg.starts_with("--json=") || arg.starts_with("--error-format=") {
+            args.remove(i);
+            continue;
+        }
+        i += 1;
+    }
 }
 
 /// Force `--emit` to exactly one directive: `obj=<path>`. Strips
