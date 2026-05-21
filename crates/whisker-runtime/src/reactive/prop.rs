@@ -71,8 +71,6 @@
 //! [`effect`]: super::effect
 //! [`Memo<T>`]: super::computed
 
-use std::marker::PhantomData;
-
 use super::signal::{ReadSignal, RwSignal};
 
 /// Prop value: either a static `T` or a reactive [`ReadSignal<T>`].
@@ -163,6 +161,16 @@ impl<T: 'static + Clone> From<RwSignal<T>> for Signal<T> {
         // by reconstituting the read-only handle. Direct field
         // access is fine within the same crate.
         Signal::Dynamic(s.read_only())
+    }
+}
+
+// Convenience: `&str` literal → `Signal<String>::Static`. Without
+// this specific impl users would have to write `.style("foo".to_string())`
+// because `&str` doesn't directly impl `Into<Signal<String>>` (only
+// `Into<Signal<&str>>` via the blanket `From<T> for Signal<T>`).
+impl From<&str> for Signal<String> {
+    fn from(s: &str) -> Self {
+        Signal::Static(s.to_string())
     }
 }
 

@@ -34,7 +34,7 @@ pub use whisker_macros::{component, main, render};
 pub use whisker_runtime::reactive::{
     computed, create_owner, dispose_owner, effect, flush, flush_mounts, mount_component,
     on_cleanup, on_mount, provide_context, resource, resource_sync, signal, unmount_component,
-    use_context, with_context, with_owner, ReadSignal, Resource, ResourceState, RwSignal,
+    use_context, with_context, with_owner, ReadSignal, Resource, ResourceState, RwSignal, Signal,
     StoredValue, WriteSignal,
 };
 // Async task host. `resource()` uses these internally, but they're
@@ -70,7 +70,7 @@ pub use whisker_runtime::view::Children;
 #[doc(hidden)]
 pub mod __tags {
     use crate::ElementTag;
-    use whisker_runtime::reactive::effect;
+    use whisker_runtime::reactive::{effect, Signal};
     use whisker_runtime::view::{
         append_child, create_element, set_attribute, set_event_listener, set_inline_styles, Element,
     };
@@ -86,6 +86,48 @@ pub mod __tags {
     // compile and pass type-check fine. Inline definitions fix
     // the completion path; the duplication across six tags is
     // the cost.
+    //
+    // **Body dispatch via free functions.** Each `.style(v)` /
+    // `.attr(name, v)` / etc. delegates to a free helper that
+    // matches on `Signal<T>` and either calls the underlying
+    // `set_attribute` / `set_inline_styles` once (Static) or
+    // wraps the call in `effect(move || …)` (Dynamic). Helpers
+    // are free fns, not associated methods, so the inline impl
+    // blocks stay terse without macro-rules expansion getting
+    // in the way of RA.
+
+    /// Apply an inline-styles value to `h`, picking a static vs
+    /// reactive code path based on the [`Signal<T>`] variant. The
+    /// `Dynamic` case wraps the read in an `effect` so the
+    /// returned [`ReadSignal<T>::get`] call registers the source
+    /// as a dependency.
+    fn apply_styles<V, T>(h: Element, v: V)
+    where
+        V: ::std::convert::Into<Signal<T>>,
+        T: ::std::string::ToString + ::std::clone::Clone + 'static,
+    {
+        match v.into() {
+            Signal::Static(t) => set_inline_styles(h, &t.to_string()),
+            Signal::Dynamic(sig) => {
+                effect(move || set_inline_styles(h, &sig.get().to_string()));
+            }
+        }
+    }
+
+    /// Apply a named attribute value to `h`. Same Static / Dynamic
+    /// dispatch as [`apply_styles`].
+    fn apply_attr<V, T>(h: Element, name: &'static str, v: V)
+    where
+        V: ::std::convert::Into<Signal<T>>,
+        T: ::std::string::ToString + ::std::clone::Clone + 'static,
+    {
+        match v.into() {
+            Signal::Static(t) => set_attribute(h, name, &t.to_string()),
+            Signal::Dynamic(sig) => {
+                effect(move || set_attribute(h, name, &sig.get().to_string()));
+            }
+        }
+    }
 
     /// `<page>` — top-level container Lynx mounts as the root of
     /// an app. Holds the screen-level `style=` (background, flex
@@ -103,13 +145,25 @@ pub mod __tags {
     impl page {
         /// Inline CSS — value-via-closure so signal-reading
         /// expressions re-apply on each dep change.
-        pub fn style<F, T>(self, f: F) -> Self
+        /// Inline CSS. Accepts a static value (`String`),
+        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
+        /// reactive updates, or any other `Into<Signal<String>>`
+        /// source.
+        ///
+        /// `T` is fixed to `String` (rather than a generic
+        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
+        /// path unambiguous: with a generic T, `ReadSignal<String>`
+        /// could match both `From<T>` (with T=ReadSignal<String>)
+        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
+        /// the call site removes the ambiguity entirely.
+        ///
+        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
+        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
+        pub fn style<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_inline_styles(h, &f().to_string()));
+            apply_styles(self.handle, v);
             self
         }
         /// Tap handler (Lynx `tap` event).
@@ -123,23 +177,23 @@ pub mod __tags {
             self
         }
         /// Lynx class name.
-        pub fn class<F, T>(self, f: F) -> Self
+        /// Lynx `class` attribute. Same Signal<String> contract as
+        /// [`style`](Self::style).
+        pub fn class<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, "class", &f().to_string()));
+            apply_attr(self.handle, "class", v);
             self
         }
         /// Catch-all for any other Lynx attribute.
-        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        /// Catch-all for any other Lynx attribute. Same Signal<String>
+        /// contract as [`style`](Self::style).
+        pub fn attr<V>(self, name: &'static str, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, name, &f().to_string()));
+            apply_attr(self.handle, name, v);
             self
         }
         /// Append a child handle.
@@ -171,13 +225,25 @@ pub mod __tags {
     impl view {
         /// Inline CSS — value-via-closure so signal-reading
         /// expressions re-apply on each dep change.
-        pub fn style<F, T>(self, f: F) -> Self
+        /// Inline CSS. Accepts a static value (`String`),
+        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
+        /// reactive updates, or any other `Into<Signal<String>>`
+        /// source.
+        ///
+        /// `T` is fixed to `String` (rather than a generic
+        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
+        /// path unambiguous: with a generic T, `ReadSignal<String>`
+        /// could match both `From<T>` (with T=ReadSignal<String>)
+        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
+        /// the call site removes the ambiguity entirely.
+        ///
+        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
+        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
+        pub fn style<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_inline_styles(h, &f().to_string()));
+            apply_styles(self.handle, v);
             self
         }
         /// Tap handler (Lynx `tap` event).
@@ -191,23 +257,23 @@ pub mod __tags {
             self
         }
         /// Lynx class name.
-        pub fn class<F, T>(self, f: F) -> Self
+        /// Lynx `class` attribute. Same Signal<String> contract as
+        /// [`style`](Self::style).
+        pub fn class<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, "class", &f().to_string()));
+            apply_attr(self.handle, "class", v);
             self
         }
         /// Catch-all for any other Lynx attribute.
-        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        /// Catch-all for any other Lynx attribute. Same Signal<String>
+        /// contract as [`style`](Self::style).
+        pub fn attr<V>(self, name: &'static str, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, name, &f().to_string()));
+            apply_attr(self.handle, name, v);
             self
         }
         /// Append a child handle.
@@ -236,13 +302,25 @@ pub mod __tags {
         }
     }
     impl text {
-        pub fn style<F, T>(self, f: F) -> Self
+        /// Inline CSS. Accepts a static value (`String`),
+        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
+        /// reactive updates, or any other `Into<Signal<String>>`
+        /// source.
+        ///
+        /// `T` is fixed to `String` (rather than a generic
+        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
+        /// path unambiguous: with a generic T, `ReadSignal<String>`
+        /// could match both `From<T>` (with T=ReadSignal<String>)
+        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
+        /// the call site removes the ambiguity entirely.
+        ///
+        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
+        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
+        pub fn style<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_inline_styles(h, &f().to_string()));
+            apply_styles(self.handle, v);
             self
         }
         pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
@@ -253,22 +331,22 @@ pub mod __tags {
             set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
             self
         }
-        pub fn class<F, T>(self, f: F) -> Self
+        /// Lynx `class` attribute. Same Signal<String> contract as
+        /// [`style`](Self::style).
+        pub fn class<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, "class", &f().to_string()));
+            apply_attr(self.handle, "class", v);
             self
         }
-        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        /// Catch-all for any other Lynx attribute. Same Signal<String>
+        /// contract as [`style`](Self::style).
+        pub fn attr<V>(self, name: &'static str, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, name, &f().to_string()));
+            apply_attr(self.handle, name, v);
             self
         }
         pub fn child(self, child: Element) -> Self {
@@ -282,15 +360,16 @@ pub mod __tags {
         /// string-literal child support — see render.rs for why
         /// (rust-analyzer fixup needs every children item to be
         /// kwarg-shape).
-        pub fn value<F, T>(self, f: F) -> Self
+        /// Text content. Creates a `raw_text` child element under
+        /// the hood and applies its `text` attribute via the
+        /// [`Signal<String>`] machinery.
+        pub fn value<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let parent = self.handle;
             let raw = create_element(ElementTag::RawText);
-            append_child(parent, raw);
-            effect(move || set_attribute(raw, "text", &f().to_string()));
+            append_child(self.handle, raw);
+            apply_attr(raw, "text", v);
             self
         }
         #[allow(non_snake_case)]
@@ -313,13 +392,25 @@ pub mod __tags {
         }
     }
     impl raw_text {
-        pub fn style<F, T>(self, f: F) -> Self
+        /// Inline CSS. Accepts a static value (`String`),
+        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
+        /// reactive updates, or any other `Into<Signal<String>>`
+        /// source.
+        ///
+        /// `T` is fixed to `String` (rather than a generic
+        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
+        /// path unambiguous: with a generic T, `ReadSignal<String>`
+        /// could match both `From<T>` (with T=ReadSignal<String>)
+        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
+        /// the call site removes the ambiguity entirely.
+        ///
+        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
+        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
+        pub fn style<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_inline_styles(h, &f().to_string()));
+            apply_styles(self.handle, v);
             self
         }
         pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
@@ -330,22 +421,22 @@ pub mod __tags {
             set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
             self
         }
-        pub fn class<F, T>(self, f: F) -> Self
+        /// Lynx `class` attribute. Same Signal<String> contract as
+        /// [`style`](Self::style).
+        pub fn class<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, "class", &f().to_string()));
+            apply_attr(self.handle, "class", v);
             self
         }
-        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        /// Catch-all for any other Lynx attribute. Same Signal<String>
+        /// contract as [`style`](Self::style).
+        pub fn attr<V>(self, name: &'static str, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, name, &f().to_string()));
+            apply_attr(self.handle, name, v);
             self
         }
         pub fn child(self, child: Element) -> Self {
@@ -358,13 +449,11 @@ pub mod __tags {
         }
 
         /// The literal text content. Lynx's `text` attribute.
-        pub fn text<F, T>(self, f: F) -> Self
+        pub fn text<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, "text", &f().to_string()));
+            apply_attr(self.handle, "text", v);
             self
         }
     }
@@ -382,13 +471,25 @@ pub mod __tags {
         }
     }
     impl image {
-        pub fn style<F, T>(self, f: F) -> Self
+        /// Inline CSS. Accepts a static value (`String`),
+        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
+        /// reactive updates, or any other `Into<Signal<String>>`
+        /// source.
+        ///
+        /// `T` is fixed to `String` (rather than a generic
+        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
+        /// path unambiguous: with a generic T, `ReadSignal<String>`
+        /// could match both `From<T>` (with T=ReadSignal<String>)
+        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
+        /// the call site removes the ambiguity entirely.
+        ///
+        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
+        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
+        pub fn style<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_inline_styles(h, &f().to_string()));
+            apply_styles(self.handle, v);
             self
         }
         pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
@@ -399,22 +500,22 @@ pub mod __tags {
             set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
             self
         }
-        pub fn class<F, T>(self, f: F) -> Self
+        /// Lynx `class` attribute. Same Signal<String> contract as
+        /// [`style`](Self::style).
+        pub fn class<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, "class", &f().to_string()));
+            apply_attr(self.handle, "class", v);
             self
         }
-        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        /// Catch-all for any other Lynx attribute. Same Signal<String>
+        /// contract as [`style`](Self::style).
+        pub fn attr<V>(self, name: &'static str, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, name, &f().to_string()));
+            apply_attr(self.handle, name, v);
             self
         }
         pub fn child(self, child: Element) -> Self {
@@ -427,13 +528,11 @@ pub mod __tags {
         }
 
         /// Image source URL — Lynx's `src` attribute.
-        pub fn src<F, T>(self, f: F) -> Self
+        pub fn src<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, "src", &f().to_string()));
+            apply_attr(self.handle, "src", v);
             self
         }
     }
@@ -451,13 +550,25 @@ pub mod __tags {
         }
     }
     impl scroll_view {
-        pub fn style<F, T>(self, f: F) -> Self
+        /// Inline CSS. Accepts a static value (`String`),
+        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
+        /// reactive updates, or any other `Into<Signal<String>>`
+        /// source.
+        ///
+        /// `T` is fixed to `String` (rather than a generic
+        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
+        /// path unambiguous: with a generic T, `ReadSignal<String>`
+        /// could match both `From<T>` (with T=ReadSignal<String>)
+        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
+        /// the call site removes the ambiguity entirely.
+        ///
+        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
+        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
+        pub fn style<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_inline_styles(h, &f().to_string()));
+            apply_styles(self.handle, v);
             self
         }
         pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
@@ -468,22 +579,22 @@ pub mod __tags {
             set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
             self
         }
-        pub fn class<F, T>(self, f: F) -> Self
+        /// Lynx `class` attribute. Same Signal<String> contract as
+        /// [`style`](Self::style).
+        pub fn class<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, "class", &f().to_string()));
+            apply_attr(self.handle, "class", v);
             self
         }
-        pub fn attr<F, T>(self, name: &'static str, f: F) -> Self
+        /// Catch-all for any other Lynx attribute. Same Signal<String>
+        /// contract as [`style`](Self::style).
+        pub fn attr<V>(self, name: &'static str, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, name, &f().to_string()));
+            apply_attr(self.handle, name, v);
             self
         }
         pub fn child(self, child: Element) -> Self {
@@ -498,13 +609,13 @@ pub mod __tags {
         /// Scroll direction — `"vertical"` (default) or
         /// `"horizontal"`. Maps to Lynx's `scroll-orientation`
         /// attribute.
-        pub fn scroll_orientation<F, T>(self, f: F) -> Self
+        /// Scroll direction — `"vertical"` (default) or
+        /// `"horizontal"`. Lynx's `scroll-orientation` attribute.
+        pub fn scroll_orientation<V>(self, v: V) -> Self
         where
-            F: ::std::ops::Fn() -> T + 'static,
-            T: ::std::string::ToString,
+            V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            let h = self.handle;
-            effect(move || set_attribute(h, "scroll-orientation", &f().to_string()));
+            apply_attr(self.handle, "scroll-orientation", v);
             self
         }
     }
@@ -603,7 +714,7 @@ pub mod prelude {
     pub use crate::{
         computed, effect, for_each, on_cleanup, on_mount, provide_context, resource, resource_sync,
         run_blocking, run_on_main_thread, show, signal, spawn_local, use_context, with_context,
-        ReadSignal, Resource, ResourceState, RwSignal, StoredValue, WriteSignal,
+        ReadSignal, Resource, ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
     };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
