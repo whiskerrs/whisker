@@ -8,7 +8,7 @@
 //! in VS Code, restart rust-analyzer if needed, and try the
 //! completion-trigger positions marked with `// ← TEST: …`.
 
-pub use ra_spike_macros::{compose_a, compose_b, compose_c};
+pub use ra_spike_macros::{compose_a, compose_b, compose_c, render};
 
 pub struct ElementHandle(pub u32);
 

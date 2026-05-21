@@ -15,7 +15,7 @@
 
 #![allow(dead_code, unused_imports, unused_variables, unused_must_use)]
 
-use ra_spike::{compose_a, compose_b, compose_c};
+use ra_spike::{compose_a, compose_b, compose_c, render};
 
 fn main() {}
 
@@ -74,4 +74,59 @@ fn variant_c_partial() {
 
 fn variant_c_full() {
     let _ = compose_c! { view(style: "x") };
+}
+
+// ---- Variant D: render! with children block ------------------------------
+
+// `render! { view(prop: value) { view(...) } }` — full compose with
+// nested children. Same inline-chain shape as A, no `let __h = …`
+// binding at any level.
+
+fn variant_d_outer_partial() {
+    // ← TEST D1: outer kwarg completion, with an empty child block.
+    let _ = render! { view(sty) { } };
+}
+
+fn variant_d_outer_partial_with_child() {
+    // ← TEST D2: outer kwarg completion, with a real child present.
+    // Tests whether the `.child({…})` tail call confuses RA.
+    let _ = render! { view(sty) { view(class: "y") } };
+}
+
+fn variant_d_inner_partial() {
+    // ← TEST D3: completion on a kwarg INSIDE the children block.
+    // This is the case hello-world hits and currently fails.
+    let _ = render! { view(style: "x") { view(sty) } };
+}
+
+fn variant_d_deep_inner_partial() {
+    // ← TEST D4: completion two levels deep.
+    let _ = render! {
+        view(style: "outer") {
+            view(class: "mid") {
+                view(sty)
+            }
+        }
+    };
+}
+
+fn variant_d_sibling_partial() {
+    // ← TEST D5: completion on a sibling after a complete sibling.
+    let _ = render! {
+        view(style: "outer") {
+            view(class: "sib1")
+            view(sty)
+        }
+    };
+}
+
+// Reference (compiles): full kwargs, all levels.
+fn variant_d_full() {
+    let _ = render! {
+        view(style: "outer") {
+            view(class: "mid") {
+                view(style: "inner")
+            }
+        }
+    };
 }
