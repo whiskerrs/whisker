@@ -106,68 +106,64 @@ fn is_tty() -> bool {
     *TTY.get_or_init(|| std::io::stderr().is_terminal())
 }
 
-// ---- Persistent dev-server status bar --------------------------------
+// ---- Dev-server status (printed-line model) -------------------------
+//
+// An earlier iteration anchored a persistent indicatif `ProgressBar`
+// at the bottom and updated it via `set_message`. In practice
+// `MultiProgress::println` (called every time a section header / step
+// transition fired) preserved the bar's then-current frame in the
+// scrollback above each printed line — the user saw the same
+// `◍ dev-server …` line stacked 3-4 times.
+//
+// The simpler model below skips the persistent bar entirely:
+//
+// - `ensure_status` emits a single info-style line on first call
+//   ("dev-server starting" or similar). Subsequent calls are no-ops.
+// - `set_status` deduplicates: it tracks the most-recently-emitted
+//   status string and only prints when the new value differs. That
+//   way startup events (`starting…` → `ws://… · 0 client(s)`) only
+//   produce a line per *state change*, not per call.
+// - `finish_status` prints a final line on shutdown.
+//
+// Trade-off: no live spinner. Dev-server state changes are rare
+// (bind, client connect, patch sent) so a static line per state is
+// clearer than an animated bottom anchor that has rendering bugs.
 
-/// Initialise the persistent status bar (anchored at the bottom of
-/// the rendered area). Subsequent calls update the same bar — only
-/// the first call decides the bar's label / prefix.
-///
-/// Safe to call before any [`step`] starts; the bar slots into the
-/// shared [`multi`] and every subsequent step bar inserts above it.
-pub fn ensure_status(label: impl Into<String>) {
-    if !matches!(mode(), Mode::Curated) || !is_tty() {
-        // Verbose / non-TTY: no spinner-style bottom bar; status
-        // changes go through `set_status` which falls back to
-        // `info()`-style lines.
-        return;
+/// Last status string we printed. Used to dedupe rapid-fire
+/// `set_status` calls.
+static LAST_STATUS: Mutex<Option<String>> = Mutex::new(None);
+
+/// Mark the dev-server's status surface as "active". Currently a
+/// no-op recorder — kept as part of the public API because callers
+/// in `whisker-dev-server` use it as a sentinel that says "you're
+/// allowed to call `set_status` after this point".
+pub fn ensure_status(_label: impl Into<String>) {
+    if let Ok(mut guard) = LAST_STATUS.lock() {
+        *guard = Some(String::new());
     }
-    let mut guard = STATUS_BAR.lock().expect("status mutex");
-    if guard.is_some() {
-        return;
-    }
-    let bar = ProgressBar::new_spinner();
-    bar.set_style(
-        ProgressStyle::with_template("  \x1b[35m◍\x1b[0m {prefix:<12} {msg}")
-            .expect("status template is valid"),
-    );
-    bar.set_prefix(label.into());
-    bar.set_message("");
-    bar.enable_steady_tick(Duration::from_millis(200));
-    *guard = Some(multi().add(bar));
 }
 
-/// Update the persistent status bar's message in place. No-op when
-/// no bar is active (verbose / non-TTY / before `ensure_status`).
+/// Emit a dev-server status line. Deduplicates against the last
+/// emission so back-to-back `set_status("X")` calls don't double-
+/// print the same content. The line goes through `info()` so it
+/// shares the `· <msg>` visual style with other one-shot lines.
 pub fn set_status(msg: impl Into<String>) {
     let m = msg.into();
-    match mode() {
-        Mode::Verbose => eprintln!("[whisker] status: {m}"),
-        Mode::Curated => {
-            if let Ok(guard) = STATUS_BAR.lock() {
-                if let Some(bar) = guard.as_ref() {
-                    bar.set_message(m);
-                    return;
-                }
-            }
-            // No bar yet (non-TTY or pre-`ensure_status`): fall back
-            // to a regular info line so the message isn't lost.
-            info(m);
+    let m_for_dedupe = m.clone();
+    if let Ok(mut guard) = LAST_STATUS.lock() {
+        if guard.as_ref() == Some(&m_for_dedupe) {
+            return;
         }
+        *guard = Some(m_for_dedupe);
     }
+    info(format!("dev-server · {m}"));
 }
 
-/// Tear down the status bar at the end of a run. Leaves a final
-/// rendered line in scrollback (via `finish_with_message` + the
-/// `{msg}` template swap the steps use).
+/// Emit a final dev-server status line on shutdown. Same code path
+/// as `set_status` minus the dedupe (we want the goodbye visible
+/// even if it matches the previous status).
 pub fn finish_status(final_msg: impl Into<String>) {
-    if let Ok(mut guard) = STATUS_BAR.lock() {
-        if let Some(bar) = guard.take() {
-            bar.set_style(
-                ProgressStyle::with_template("{msg}").expect("template literal is valid"),
-            );
-            bar.finish_with_message(final_msg.into());
-        }
-    }
+    info(format!("dev-server · {}", final_msg.into()));
 }
 
 // ---- Section headers --------------------------------------------------
