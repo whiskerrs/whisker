@@ -31,8 +31,6 @@
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
-use crate::__art_tile_props_internal::ArtTilePropsBuilder;
-
 // ---- App state --------------------------------------------------------------
 
 /// App-wide reactive state. All fields are `RwSignal<T>` (i.e. `Copy`

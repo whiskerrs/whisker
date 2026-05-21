@@ -217,10 +217,17 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
             // field's declared type, with the appropriate
             // default / panic-on-missing for required fields.
             //
-            // `#[doc(hidden)]` on the struct itself so RA's auto-
-            // import doesn't surface it at the user's call site.
-            // The builder is purely the return type of `.builder()`
-            // — users never need to write its name.
+            // The struct stays `pub` (with `#[doc(hidden)]`) because
+            // a `pub` struct's `pub fn` methods are only callable
+            // from outside if the struct itself is reachable. A
+            // truly-private builder breaks `XxxProps::builder()
+            // .setter(…).build()` from outside the mod — Rust's
+            // method-resolution sees the methods as private when
+            // the type is private, even though the value is held
+            // by the caller. So the builder's name is necessarily
+            // visible at the user's call site; `#[doc(hidden)]` is
+            // the best signal we can give RA. Newer RA versions
+            // honour it for auto-import filtering.
             #[doc(hidden)]
             pub struct #builder_name #impl_generics #where_clause {
                 #(#builder_fields),*
