@@ -380,7 +380,10 @@ fn props_struct_is_constructable_directly() {
     let rec = Recorder::default();
     let prev = install_renderer(Box::new(rec));
     with_owner(owner, || {
-        let _h = one_string_prop(
+        // Direct (non-render!) call must go through the PascalCase
+        // alias the `#[component]` macro emits — the snake_case fn
+        // is private inside the `__one_string_prop_inner` module.
+        let _h = OneStringProp(
             OneStringPropProps::builder()
                 .label("direct construction")
                 .build(),

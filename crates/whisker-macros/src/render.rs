@@ -117,11 +117,14 @@ struct ControlFlowNode {
 }
 
 struct UserComponentNode {
-    /// snake_case fn identifier the call site resolves to. Derived
-    /// from the PascalCase render! token via `pascal_to_snake`.
-    fn_ident: Ident,
-    /// PascalCase Props struct ident (`<name>Props`). Same span as
-    /// the render! token so RA's go-to-definition lands here.
+    /// PascalCase ident the call site resolves to. `#[component]`
+    /// emits a `pub use __<name>_inner::<fn> as <PascalCase>;`
+    /// alias under this name; the snake_case fn itself lives
+    /// inside the inner module and isn't reachable from outer
+    /// scope, so the emission MUST go through this alias.
+    alias_ident: Ident,
+    /// PascalCase Props struct ident (`<name>Props`). Same span
+    /// as the render! token so RA's go-to-definition lands here.
     props_ident: Ident,
     kwargs: Vec<Kwarg>,
     children: Vec<Node>,
@@ -237,21 +240,24 @@ impl Parse for Node {
                 children,
             }))
         } else {
-            // User component. Derive `fn_ident` (snake_case) and
-            // `props_ident` (PascalCase + "Props") from whichever
-            // form the user wrote. Both carry the original tag's
-            // span so RA jumps to the right call site from the
-            // render! source.
+            // User component. Derive `alias_ident` (PascalCase —
+            // the public re-exported name) and `props_ident`
+            // (PascalCase + "Props") from whichever form the user
+            // wrote. The snake_case fn itself stays inside the
+            // inner module and we never reference it directly
+            // from the lowering.
             let span = tag.span();
-            let (fn_str, props_str) = if is_pascal_case(&name) {
-                (pascal_to_snake(&name), format!("{name}Props"))
+            let (alias_str, props_str) = if is_pascal_case(&name) {
+                (name.clone(), format!("{name}Props"))
             } else {
-                (name.clone(), snake_to_pascal_props(&name))
+                let pascal = snake_to_pascal(&name);
+                let props = format!("{pascal}Props");
+                (pascal, props)
             };
-            let fn_ident = Ident::new(&fn_str, span);
+            let alias_ident = Ident::new(&alias_str, span);
             let props_ident = Ident::new(&props_str, span);
             Ok(Node::UserComponent(UserComponentNode {
-                fn_ident,
+                alias_ident,
                 props_ident,
                 kwargs,
                 children,
@@ -260,11 +266,10 @@ impl Parse for Node {
     }
 }
 
-/// `my_card` → `MyCardProps`. Snake-case fallback for the props
-/// ident derivation (kept for back-compat with snake_case user
-/// components in `render!`).
-fn snake_to_pascal_props(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 5);
+/// `my_card` → `MyCard`. Snake-to-PascalCase for the back-compat
+/// snake_case path of user components in `render!`.
+fn snake_to_pascal(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
     let mut upper_next = true;
     for c in name.chars() {
         if c == '_' {
@@ -280,7 +285,6 @@ fn snake_to_pascal_props(name: &str) -> String {
             out.push(c);
         }
     }
-    out.push_str("Props");
     out
 }
 
@@ -299,28 +303,6 @@ fn is_builtin_tag(name: &str) -> bool {
 /// from the snake_case-only Element path.
 fn is_pascal_case(name: &str) -> bool {
     name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
-}
-
-/// `MyCard` → `my_card`, `HTTPClient` → `h_t_t_p_client` (the
-/// acronym case is intentionally treated as a sequence of single
-/// uppercase letters; users following standard Rust naming
-/// conventions (`http_client`) won't hit this edge case from
-/// render!'s side because they'd write `HttpClient`).
-fn pascal_to_snake(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 4);
-    for (i, c) in name.chars().enumerate() {
-        if c.is_ascii_uppercase() {
-            if i > 0 {
-                out.push('_');
-            }
-            for lower in c.to_lowercase() {
-                out.push(lower);
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 // ---- Codegen ------------------------------------------------------------
@@ -650,7 +632,7 @@ impl ControlFlowNode {
 
 impl UserComponentNode {
     fn to_tokens(&self) -> TokenStream2 {
-        let fn_ident = &self.fn_ident;
+        let fn_ident = &self.alias_ident;
         let props_ident = &self.props_ident;
 
         let setter_calls: Vec<TokenStream2> = self
@@ -735,7 +717,7 @@ fn strip_on_prefix(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_builtin_tag, pascal_to_snake, strip_on_prefix};
+    use super::{is_builtin_tag, snake_to_pascal, strip_on_prefix};
     use proc_macro2::TokenStream as TokenStream2;
 
     #[test]
@@ -769,10 +751,10 @@ mod tests {
     }
 
     #[test]
-    fn pascal_to_snake_basic() {
-        assert_eq!(pascal_to_snake("MyComponent"), "my_component");
-        assert_eq!(pascal_to_snake("Card"), "card");
-        assert_eq!(pascal_to_snake("TabItem"), "tab_item");
+    fn snake_to_pascal_basic() {
+        assert_eq!(snake_to_pascal("my_card"), "MyCard");
+        assert_eq!(snake_to_pascal("card"), "Card");
+        assert_eq!(snake_to_pascal("tab_item"), "TabItem");
     }
 
     // ---- Compose-syntax parser & emission --------------------------------
@@ -899,29 +881,27 @@ mod tests {
             "user components must not touch the built-in tags module; \
              output was: {output}"
         );
+        // Emission goes through the PascalCase alias the `#[component]`
+        // macro emits — that's how we keep snake_case `my_card` hidden
+        // in the inner module from user-call-site completion.
         assert!(
-            output.contains("MyCardProps"),
-            "user component must build via `MyCardProps::builder()`; \
-             output was: {output}"
-        );
-        assert!(
-            output.contains("my_card"),
-            "user component fn ref must lower to snake_case `my_card`; \
-             output was: {output}"
+            output.contains("MyCard") && output.contains("MyCardProps"),
+            "user component must lower to `MyCard(MyCardProps::builder()…)` \
+             — the PascalCase alias is the public call surface; \
+             output was: {output}",
         );
     }
 
     #[test]
     fn snake_case_non_builtin_is_back_compat_user_component() {
-        // Snake-case still works as a user-component call site (for
-        // partial-typing during completion and for back-compat).
-        // The canonical form is PascalCase, but the macro accepts
-        // both.
+        // Snake-case still parses (so mid-typing partials like `my_c|`
+        // don't blow up the macro), but the emission still goes
+        // through the PascalCase alias derived from the input.
         let input: TokenStream2 = quote::quote! { my_card(title: "x") };
         let output = super::expand_test(input).to_string();
         assert!(
-            output.contains("my_card") && output.contains("MyCardProps"),
-            "snake_case input should lower to snake fn + PascalCase Props; \
+            output.contains("MyCard") && output.contains("MyCardProps"),
+            "snake_case input should lower to the PascalCase alias call site; \
              output was: {output}",
         );
     }

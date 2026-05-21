@@ -200,66 +200,86 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
     // render! syntax — surfacing it in completion is the whole
     // point. `non_snake_case` opt-out for the fn-as-PascalCase
     // alias.
-    let alias_str = props_name.to_string();
-    let alias_str = alias_str.trim_end_matches("Props");
+    // `props_name` is `<PascalCase fn>Props`. Strip the suffix
+    // exactly once to recover the alias name — `trim_end_matches`
+    // is the wrong tool here because it greedily strips repeats
+    // (`TwoPropsProps` → `Two`, dropping the user's actual name).
+    let props_name_str = props_name.to_string();
+    let alias_str = props_name_str
+        .strip_suffix("Props")
+        .unwrap_or(&props_name_str);
     let fn_name_str = fn_name.to_string();
-    let (alias_ident, pascal_alias) = if alias_str == fn_name_str {
-        // Defensive: a fn named in PascalCase already (`fn MyCard`)
-        // would alias to itself. Skip in that case.
-        (fn_name.clone(), quote! {})
-    } else {
-        let alias_ident = format_ident!("{}", alias_str);
-        let alias = quote! {
-            #[allow(non_snake_case)]
-            #vis use #fn_name as #alias_ident;
-        };
-        (alias_ident, alias)
-    };
-    let _ = alias_ident; // render! still emits via the snake fn for now
 
     // Rewritten function: same signature except parameters are
     // collapsed into a single `__props: XxxProps<...>` arg. Body
     // destructures and runs the existing remount machinery.
     //
-    // `#[doc(hidden)]` on the snake_case fn so it's de-prioritised
-    // in RA's identifier completion. Users always call via the
-    // PascalCase alias (above) or through `render!`; the snake_case
-    // fn is internal plumbing the macro lowering targets — same
-    // status as the `__xxx_props_internal` mod above.
+    // The fn lives inside a PRIVATE inner module so its
+    // snake_case name (`art_tile`) doesn't pollute outer-scope
+    // completion candidates. Only the PascalCase alias (declared
+    // below) re-exports it outward. `#[doc(hidden)]` is
+    // redundant given the private module, but kept as belt-and-
+    // suspenders for tools that filter by doc-attribute.
+    let inner_mod = format_ident!("__{}_inner", fn_name);
     let new_fn = quote! {
         #[doc(hidden)]
-        #(#attrs)*
-        #vis fn #fn_name #impl_generics (
-            __props: #props_name #ty_generics
-        ) #output #where_clause {
-            let #props_name { #(#prop_idents),* } = __props;
-            #(#captures)*
+        mod #inner_mod {
+            use super::*;
+            #[doc(hidden)]
+            #(#attrs)*
+            pub fn #fn_name #impl_generics (
+                __props: #props_name #ty_generics
+            ) #output #where_clause {
+                let #props_name { #(#prop_idents),* } = __props;
+                #(#captures)*
 
-            // Mirrors the pre-rewrite #[component] body shape — see
-            // `crates/whisker-macros/src/lib.rs`'s history for the
-            // rationale on the two-closure layering (outer keeps
-            // re-clone bookkeeping out of the subsecond-dispatched
-            // inner, which has to live at the user crate's source
-            // position for hot reload to find it).
-            let __body: ::std::boxed::Box<
-                dyn ::std::ops::Fn() -> ::whisker::runtime::view::Element + 'static,
-            > = ::std::boxed::Box::new(move || {
-                #(#restores)*
-                ::whisker::__hot::call(move || {
-                    #block
-                })
-            });
-            ::whisker::runtime::reactive::mount_component_remountable(
-                #fn_ptr_expr,
-                __body,
-            )
+                // Mirrors the pre-rewrite #[component] body shape
+                // — see `crates/whisker-macros/src/lib.rs`'s
+                // history for the rationale on the two-closure
+                // layering (outer keeps re-clone bookkeeping out
+                // of the subsecond-dispatched inner, which has to
+                // live at the user crate's source position for
+                // hot reload to find it).
+                let __body: ::std::boxed::Box<
+                    dyn ::std::ops::Fn() -> ::whisker::runtime::view::Element + 'static,
+                > = ::std::boxed::Box::new(move || {
+                    #(#restores)*
+                    ::whisker::__hot::call(move || {
+                        #block
+                    })
+                });
+                ::whisker::runtime::reactive::mount_component_remountable(
+                    #fn_ptr_expr,
+                    __body,
+                )
+            }
+        }
+    };
+
+    // PascalCase alias re-exports the fn from the inner module.
+    // This (and only this) is the user-facing call-site name.
+    //
+    // `#[component]` is expected at module level (not nested
+    // inside fn bodies) — both because `pub use` only works at
+    // module level and because components benefit from being
+    // visible to their crate's `render!` callers.
+    let pascal_alias = if alias_str == fn_name_str {
+        quote! {
+            #[doc(hidden)]
+            #vis use #inner_mod::#fn_name;
+        }
+    } else {
+        let alias_ident = format_ident!("{}", alias_str);
+        quote! {
+            #[allow(non_snake_case)]
+            #vis use #inner_mod::#fn_name as #alias_ident;
         }
     };
 
     quote! {
         #props_struct
-        #pascal_alias
         #new_fn
+        #pascal_alias
     }
 }
 

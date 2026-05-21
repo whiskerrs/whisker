@@ -11,7 +11,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use hn_reader::{hn_reader, HnReaderProps};
+use hn_reader::{HnReader, HnReaderProps};
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, create_owner, with_owner};
 use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element};

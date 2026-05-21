@@ -155,14 +155,30 @@ fn probe() -> Element {
 }
 "#;
     let labels = run_probe("hidden_builder_helpers", source);
-    let leaked: Vec<&String> = labels
+    // Candidates whose name overlaps the component should be ONLY
+    // the PascalCase alias and the Props struct. The snake_case
+    // `art_tile` (hidden in `mod __art_tile_inner`) and every
+    // typed-builder marker (`ArtTilePropsBuilder<_>`, hidden in
+    // `mod __art_tile_props_internal`) should NOT surface.
+    let art_prefixed: Vec<String> = labels
+        .iter()
+        .filter(|l| l.to_lowercase().starts_with("art"))
+        .cloned()
+        .collect();
+
+    assert!(
+        !art_prefixed.iter().any(|l| l == "art_tile"),
+        "snake_case `art_tile` should be hidden inside the inner module; \
+         got: {art_prefixed:?}",
+    );
+    let leaked: Vec<&String> = art_prefixed
         .iter()
         .filter(|l| l.starts_with("ArtTilePropsBuilder"))
         .collect();
     assert!(
         leaked.is_empty(),
-        "ArtTilePropsBuilder* types should be hidden behind \
-         `#[doc(hidden)]`; saw: {leaked:?}",
+        "ArtTilePropsBuilder* types should be hidden inside the \
+         internal props module; saw: {leaked:?}",
     );
 }
 

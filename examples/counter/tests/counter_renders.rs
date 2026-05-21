@@ -11,7 +11,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use counter::{counter, AppState, CounterProps};
+use counter::{AppState, Counter, CounterProps};
 use whisker::flush;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, create_owner, with_owner};
