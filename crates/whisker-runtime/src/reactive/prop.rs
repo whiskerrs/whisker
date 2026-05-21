@@ -83,6 +83,15 @@ use super::signal::{ReadSignal, RwSignal};
 ///
 /// [`Static`]: Signal::Static
 /// [`Dynamic`]: Signal::Dynamic
+///
+/// Cloneable when `T: Clone` — the `Static` arm clones the inner
+/// value, the `Dynamic` arm just `Copy`-clones the `ReadSignal`
+/// handle (which is internally a [`NodeId`]). Components routinely
+/// pass the same prop into multiple `computed` / `effect` closures,
+/// so cheap cloning is important.
+///
+/// [`NodeId`]: super::NodeId
+#[derive(Clone)]
 pub enum Signal<T: 'static> {
     /// Plain value. The builder method that consumes this calls
     /// `set_attribute` / `set_inline_styles` / etc. exactly once
