@@ -14,3 +14,13 @@ description = "Core runtime for Whisker: reactive primitives, element tree, Lynx
 # at the same index — critical for `Copy` signal handles that may
 # outlive their owner.
 slotmap = "1"
+# Single-threaded futures executor (LocalPool) driven by Whisker's
+# tick callback. Used by the `tasks` module to host async work
+# (resource fetchers, user-spawned futures) on the TASM thread
+# without pulling in tokio's full IO/scheduler infrastructure.
+futures-executor = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# `oneshot` channel for `run_blocking` — closes the gap between a
+# worker thread completing sync work and the main-thread future
+# awaiting the result.
+futures-channel = "0.3"
