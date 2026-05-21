@@ -395,6 +395,145 @@ pub fn render_i(input: TokenStream) -> TokenStream {
     emit_element_i(&root).into()
 }
 
+/// Variant J: text/expr children must be wrapped in `text(EXPR)`
+/// or `expr(EXPR)` — function-call-shaped — so the children block
+/// becomes a sequence of function-call statements RA's input
+/// fixup can interpret. Hypothesis: when the children block
+/// contains only function-call-shaped tokens, RA treats the whole
+/// thing as a parseable Rust block and threads type info through.
+#[proc_macro]
+pub fn render_j(input: TokenStream) -> TokenStream {
+    let root = parse_macro_input!(input as ElementJ);
+    emit_element_j(&root).into()
+}
+
+struct ElementJ {
+    tag: Ident,
+    attrs: Vec<(Ident, Option<Expr>)>,
+    children: Vec<ChildJ>,
+}
+
+enum ChildJ {
+    Element(ElementJ),
+    /// `text(EXPR)` — text content.
+    Text(Expr),
+    /// `expr(EXPR)` — interpolated dynamic value.
+    Expr(Expr),
+}
+
+impl Parse for ElementJ {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let tag: Ident = input.parse()?;
+        let mut attrs = Vec::new();
+        if input.peek(token::Paren) {
+            let body;
+            parenthesized!(body in input);
+            while !body.is_empty() {
+                if !body.peek(Ident) {
+                    return Err(body.error("expected `name: value` kwarg"));
+                }
+                let name: Ident = body.parse()?;
+                let value = if body.peek(Token![:]) {
+                    body.parse::<Token![:]>()?;
+                    Some(body.parse::<Expr>()?)
+                } else {
+                    None
+                };
+                attrs.push((name, value));
+                if body.peek(Token![,]) {
+                    body.parse::<Token![,]>()?;
+                }
+            }
+        }
+        let mut children = Vec::new();
+        if input.peek(token::Brace) {
+            let body;
+            braced!(body in input);
+            while !body.is_empty() {
+                children.push(body.parse::<ChildJ>()?);
+            }
+        }
+        Ok(Self {
+            tag,
+            attrs,
+            children,
+        })
+    }
+}
+
+impl Parse for ChildJ {
+    fn parse(input: ParseStream) -> Result<Self> {
+        // Peek at tag name to decide if this is `text(...)` /
+        // `expr(...)` (special positional-arg child) or a regular
+        // element with kwargs.
+        let fork = input.fork();
+        if let Ok(name) = fork.parse::<Ident>() {
+            let name_str = name.to_string();
+            if (name_str == "text" || name_str == "expr") && fork.peek(token::Paren) {
+                let _: Ident = input.parse()?;
+                let body;
+                parenthesized!(body in input);
+                let value: Expr = body.parse()?;
+                return Ok(if name_str == "text" {
+                    ChildJ::Text(value)
+                } else {
+                    ChildJ::Expr(value)
+                });
+            }
+        }
+        Ok(ChildJ::Element(input.parse()?))
+    }
+}
+
+fn emit_element_j(e: &ElementJ) -> TokenStream2 {
+    let tag_span = e.tag.span();
+    let ctor = format_ident!("__{}_ctor", e.tag, span = tag_span);
+    let attr_calls: Vec<TokenStream2> = e
+        .attrs
+        .iter()
+        .map(|(name, value)| {
+            let span = name.span();
+            let value_tokens = match value {
+                Some(v) => quote!(#v),
+                None => quote!(()),
+            };
+            quote_spanned! {span=> .#name(#value_tokens) }
+        })
+        .collect();
+    let child_calls: Vec<TokenStream2> = e
+        .children
+        .iter()
+        .map(|c| match c {
+            ChildJ::Element(child_el) => {
+                let inner = emit_element_j(child_el);
+                quote! { .child(#inner) }
+            }
+            ChildJ::Text(value) => quote! {
+                .child({
+                    ::ra_spike::__tags::__text_ctor()
+                        .text(#value)
+                        .__h()
+                })
+            },
+            ChildJ::Expr(value) => quote! {
+                .child({
+                    ::ra_spike::__tags::__text_ctor()
+                        .text(::std::format!("{}", #value))
+                        .__h()
+                })
+            },
+        })
+        .collect();
+    quote! {
+        {
+            ::ra_spike::__tags::#ctor()
+                #(#attr_calls)*
+                #(#child_calls)*
+                .__h()
+        }
+    }
+}
+
 fn emit_element_i(e: &Element) -> TokenStream2 {
     let tag_span = e.tag.span();
     let ctor = format_ident!("__{}_ctor", e.tag, span = tag_span);

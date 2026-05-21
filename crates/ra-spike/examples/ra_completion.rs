@@ -15,7 +15,7 @@
 
 #![allow(dead_code, unused_imports, unused_variables, unused_must_use)]
 
-use ra_spike::{compose_a, compose_b, compose_c, render, render_g, render_h, render_i};
+use ra_spike::{compose_a, compose_b, compose_c, render, render_g, render_h, render_i, render_j};
 
 fn main() {}
 
@@ -335,6 +335,61 @@ fn variant_i_with_expr_sibling() {
 fn variant_i_full() {
     let _ = render_i! {
         view(style: "outer") {
+            view(class: "mid")
+        }
+    };
+}
+
+// ---- Variant J: text/expr children wrapped as `text(EXPR)` / `expr(EXPR)` -
+
+// I confirmed the issue is upstream of emission — RA's input
+// fixup gives up on a children block that contains bare LitStrs
+// or `{expr}` blocks at top level. F worked because its closure
+// kwargs sit inside `()` which RA already parses as a function
+// argument list.
+//
+// J's bet: if EVERY top-level item in the children block is
+// function-call-shaped (`view(...)`, `text("…")`, `expr(val)`),
+// the whole block looks like Rust statements and RA's fixup
+// stays on its happy path.
+
+fn variant_j_with_text_sibling() {
+    // ← TEST J1: partial kwarg next to a `text(...)` child.
+    let _ = render_j! {
+        view(sty) {
+            text("hello world")
+        }
+    };
+}
+
+fn variant_j_with_expr_sibling() {
+    let greeting = "hi";
+    // ← TEST J2: partial kwarg next to an `expr(...)` child.
+    let _ = render_j! {
+        view(sty) {
+            expr(greeting)
+        }
+    };
+}
+
+fn variant_j_mixed_partial_inside() {
+    // ← TEST J3: partial kwarg on an inner element next to text/expr.
+    let count = 0;
+    let _ = render_j! {
+        view(style: "outer") {
+            text("before")
+            expr(count)
+            view(sty)
+        }
+    };
+}
+
+fn variant_j_full() {
+    let count = 0;
+    let _ = render_j! {
+        view(style: "outer") {
+            text("before")
+            expr(count)
             view(class: "mid")
         }
     };
