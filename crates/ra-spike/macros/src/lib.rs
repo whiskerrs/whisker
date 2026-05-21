@@ -169,6 +169,90 @@ fn emit_child(c: &Child) -> TokenStream2 {
     }
 }
 
+/// G-variant emission: text/expr children become a single free
+/// function call `__text_make(value)`, eliminating the nested
+/// `.child({ chain })` shape entirely.
+fn emit_child_g(c: &Child) -> TokenStream2 {
+    match c {
+        Child::Element(e) => {
+            let inner = emit_element_g(e);
+            quote! { .child(#inner) }
+        }
+        Child::Text(lit) => quote! {
+            .child(::ra_spike::__tags::__text_make(#lit))
+        },
+        Child::Expr(expr) => quote! {
+            .child(::ra_spike::__tags::__text_make(::std::format!("{}", #expr)))
+        },
+    }
+}
+
+fn emit_element_g(e: &Element) -> TokenStream2 {
+    let tag_span = e.tag.span();
+    let ctor = format_ident!("__{}_ctor", e.tag, span = tag_span);
+    let attr_calls: Vec<TokenStream2> = e
+        .attrs
+        .iter()
+        .map(|(name, value)| {
+            let span = name.span();
+            let value_tokens = match value {
+                Some(v) => quote!(#v),
+                None => quote!(()),
+            };
+            quote_spanned! {span=> .#name(#value_tokens) }
+        })
+        .collect();
+    let child_calls: Vec<TokenStream2> = e.children.iter().map(emit_child_g).collect();
+    quote! {
+        {
+            ::ra_spike::__tags::#ctor()
+                #(#attr_calls)*
+                #(#child_calls)*
+                .__h()
+        }
+    }
+}
+
+/// H-variant emission: text/expr children become a direct method
+/// on the parent builder (`.text_child(value)`), eliminating the
+/// `.child(…)` indirection.
+fn emit_element_h(e: &Element) -> TokenStream2 {
+    let tag_span = e.tag.span();
+    let ctor = format_ident!("__{}_ctor", e.tag, span = tag_span);
+    let attr_calls: Vec<TokenStream2> = e
+        .attrs
+        .iter()
+        .map(|(name, value)| {
+            let span = name.span();
+            let value_tokens = match value {
+                Some(v) => quote!(#v),
+                None => quote!(()),
+            };
+            quote_spanned! {span=> .#name(#value_tokens) }
+        })
+        .collect();
+    let child_calls: Vec<TokenStream2> = e
+        .children
+        .iter()
+        .map(|c| match c {
+            Child::Element(child_el) => {
+                let inner = emit_element_h(child_el);
+                quote! { .child(#inner) }
+            }
+            Child::Text(lit) => quote! { .text_child(#lit) },
+            Child::Expr(expr) => quote! { .text_child(::std::format!("{}", #expr)) },
+        })
+        .collect();
+    quote! {
+        {
+            ::ra_spike::__tags::#ctor()
+                #(#attr_calls)*
+                #(#child_calls)*
+                .__h()
+        }
+    }
+}
+
 /// Variant A: emit an inline method chain on a constructor named
 /// `__<tag>_ctor`. This is what whisker's current built-in path
 /// uses.
@@ -281,4 +365,20 @@ pub fn compose_c(input: TokenStream) -> TokenStream {
 pub fn render(input: TokenStream) -> TokenStream {
     let root = parse_macro_input!(input as Element);
     emit_element(&root).into()
+}
+
+/// Variant G: text/expr children emitted as a free function call
+/// `__text_make(value)` instead of a nested `.child({ chain })`.
+#[proc_macro]
+pub fn render_g(input: TokenStream) -> TokenStream {
+    let root = parse_macro_input!(input as Element);
+    emit_element_g(&root).into()
+}
+
+/// Variant H: text/expr children emitted as a direct method on
+/// the parent builder (`.text_child(value)`).
+#[proc_macro]
+pub fn render_h(input: TokenStream) -> TokenStream {
+    let root = parse_macro_input!(input as Element);
+    emit_element_h(&root).into()
 }

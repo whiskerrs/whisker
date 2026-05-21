@@ -15,7 +15,7 @@
 
 #![allow(dead_code, unused_imports, unused_variables, unused_must_use)]
 
-use ra_spike::{compose_a, compose_b, compose_c, render};
+use ra_spike::{compose_a, compose_b, compose_c, render, render_g, render_h};
 
 fn main() {}
 
@@ -220,6 +220,80 @@ fn variant_f_full() {
     let _ = render! {
         view(style: "x", on_tap: || println!("hi")) {
             "tap me"
+        }
+    };
+}
+
+// ---- Variant G: text/expr children as `__text_make(value)` ---------------
+
+// E1–E3 failed (text/expr children inside `.child({ chain })`
+// blocked completion on the parent's kwarg). G replaces that
+// emission with a free function call `__text_make(value)`,
+// dropping the nested chain entirely.
+
+fn variant_g_with_text_sibling() {
+    // ← TEST G1: same shape as E1 with the G emission.
+    let _ = render_g! {
+        view(sty) {
+            "hello world"
+        }
+    };
+}
+
+fn variant_g_with_expr_sibling() {
+    let greeting = "hi";
+    // ← TEST G2: same shape as E2 with the G emission.
+    let _ = render_g! {
+        view(sty) {
+            { greeting }
+        }
+    };
+}
+
+fn variant_g_full() {
+    let count = 0;
+    let _ = render_g! {
+        view(style: "outer") {
+            "before"
+            { count }
+            "between"
+            view(class: "mid")
+        }
+    };
+}
+
+// ---- Variant H: text/expr children as `.text_child(value)` ---------------
+
+// H lifts the text child up onto the parent builder as a direct
+// method, eliminating `.child(…)` entirely for text/expr cases.
+
+fn variant_h_with_text_sibling() {
+    // ← TEST H1: same shape as E1 with the H emission.
+    let _ = render_h! {
+        view(sty) {
+            "hello world"
+        }
+    };
+}
+
+fn variant_h_with_expr_sibling() {
+    let greeting = "hi";
+    // ← TEST H2: same shape as E2 with the H emission.
+    let _ = render_h! {
+        view(sty) {
+            { greeting }
+        }
+    };
+}
+
+fn variant_h_full() {
+    let count = 0;
+    let _ = render_h! {
+        view(style: "outer") {
+            "before"
+            { count }
+            "between"
+            view(class: "mid")
         }
     };
 }

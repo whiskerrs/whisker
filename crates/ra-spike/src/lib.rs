@@ -8,7 +8,7 @@
 //! in VS Code, restart rust-analyzer if needed, and try the
 //! completion-trigger positions marked with `// ← TEST: …`.
 
-pub use ra_spike_macros::{compose_a, compose_b, compose_c, render};
+pub use ra_spike_macros::{compose_a, compose_b, compose_c, render, render_g, render_h};
 
 pub struct ElementHandle(pub u32);
 
@@ -61,11 +61,25 @@ pub mod __tags {
         pub fn child(self, _child: ElementHandle) -> Self {
             self
         }
+        /// H-variant: text child added directly to the parent
+        /// builder, NO nested `.child({ chain })`.
+        pub fn text_child(self, _value: impl ::std::string::ToString + 'static) -> Self {
+            self
+        }
         /// Finish building.
         #[allow(non_snake_case)]
         pub fn __h(self) -> ElementHandle {
             self.handle
         }
+    }
+
+    /// G-variant: builds a text element as a single free function
+    /// call. Used to test whether the nested method chain inside
+    /// `.child({ … })` is what disrupts completion on the parent's
+    /// kwarg position.
+    #[allow(non_snake_case)]
+    pub fn __text_make(_value: impl ::std::string::ToString + 'static) -> ElementHandle {
+        ElementHandle(0)
     }
 
     #[allow(non_camel_case_types)]
