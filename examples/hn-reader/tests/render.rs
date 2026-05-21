@@ -93,7 +93,7 @@ fn initial_render_shows_loading_banner() {
     let _prev = install_renderer(Box::new(rec));
     let owner = create_owner(None);
 
-    let _root = with_owner(owner, || render! { hn_reader() });
+    let _root = with_owner(owner, || render! { HnReader() });
 
     let ts = texts(&log.borrow());
     assert!(

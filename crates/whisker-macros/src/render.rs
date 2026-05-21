@@ -117,7 +117,12 @@ struct ControlFlowNode {
 }
 
 struct UserComponentNode {
-    fn_name: Ident,
+    /// snake_case fn identifier the call site resolves to. Derived
+    /// from the PascalCase render! token via `pascal_to_snake`.
+    fn_ident: Ident,
+    /// PascalCase Props struct ident (`<name>Props`). Same span as
+    /// the render! token so RA's go-to-definition lands here.
+    props_ident: Ident,
     kwargs: Vec<Kwarg>,
     children: Vec<Node>,
 }
@@ -202,24 +207,58 @@ impl Parse for Node {
         }
 
         let name = tag.to_string();
+        // Classification by casing + whitelist:
+        //
+        //   snake_case + in built-in whitelist  → Element (Lynx tag)
+        //   PascalCase, name ∈ {"Show", "For"}  → ControlFlow
+        //   PascalCase (other)                   → UserComponent
+        //   snake_case + not in whitelist        → ERROR
+        //
+        // The casing rule keeps three categories visually distinct in
+        // user code: lowercase = Lynx tag, PascalCase = component-
+        // shaped (control-flow or user). User components are still
+        // *defined* as snake_case Rust fns (`fn my_card(...)`), but
+        // *called* via PascalCase (`MyCard(...)`) in render! — the
+        // emitter converts PascalCase → snake_case for the fn ref.
         if is_builtin_tag(&name) {
             Ok(Node::Element(ElementNode {
                 tag,
                 kwargs,
                 children,
             }))
-        } else if name == "Show" || name == "For" {
-            Ok(Node::ControlFlow(ControlFlowNode {
-                name: tag,
-                kwargs,
-                children,
-            }))
+        } else if is_pascal_case(&name) {
+            if name == "Show" || name == "For" {
+                Ok(Node::ControlFlow(ControlFlowNode {
+                    name: tag,
+                    kwargs,
+                    children,
+                }))
+            } else {
+                // PascalCase user component. Derive the fn ident
+                // (snake_case) and the Props ident (PascalCase +
+                // "Props") here so codegen has both ready. Each
+                // carries the original tag's span so RA jumps to
+                // the right place from the render! call site.
+                let span = tag.span();
+                let fn_ident = Ident::new(&pascal_to_snake(&name), span);
+                let props_ident = Ident::new(&format!("{name}Props"), span);
+                Ok(Node::UserComponent(UserComponentNode {
+                    fn_ident,
+                    props_ident,
+                    kwargs,
+                    children,
+                }))
+            }
         } else {
-            Ok(Node::UserComponent(UserComponentNode {
-                fn_name: tag,
-                kwargs,
-                children,
-            }))
+            Err(syn::Error::new(
+                tag.span(),
+                format!(
+                    "`{name}` is not a built-in tag and isn't UpperCamelCase. \
+                     User components are called via PascalCase in render! \
+                     (e.g. `MyCard(...)` for `#[component] fn my_card`); \
+                     reserve snake_case for built-in tags (view, text, …)",
+                ),
+            ))
         }
     }
 }
@@ -232,6 +271,35 @@ fn is_builtin_tag(name: &str) -> bool {
         name,
         "page" | "view" | "text" | "raw_text" | "image" | "scroll_view"
     )
+}
+
+/// `true` if `name`'s first character is ASCII uppercase. Used to
+/// route PascalCase idents (user components / control flow) away
+/// from the snake_case-only Element path.
+fn is_pascal_case(name: &str) -> bool {
+    name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+}
+
+/// `MyCard` → `my_card`, `HTTPClient` → `h_t_t_p_client` (the
+/// acronym case is intentionally treated as a sequence of single
+/// uppercase letters; users following standard Rust naming
+/// conventions (`http_client`) won't hit this edge case from
+/// render!'s side because they'd write `HttpClient`).
+fn pascal_to_snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, c) in name.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            for lower in c.to_lowercase() {
+                out.push(lower);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 // ---- Codegen ------------------------------------------------------------
@@ -561,8 +629,8 @@ impl ControlFlowNode {
 
 impl UserComponentNode {
     fn to_tokens(&self) -> TokenStream2 {
-        let props_ident = snake_to_props_ident(&self.fn_name);
-        let fn_ident = &self.fn_name;
+        let fn_ident = &self.fn_ident;
+        let props_ident = &self.props_ident;
 
         let setter_calls: Vec<TokenStream2> = self
             .kwargs
@@ -627,29 +695,6 @@ impl UserComponentNode {
     }
 }
 
-/// `my_component` → `MyComponentProps`. Mirror of the same helper
-/// in `component.rs`; kept duplicated to avoid a cross-module dep
-/// within the proc-macro crate.
-fn snake_to_props_ident(fn_name: &Ident) -> Ident {
-    let snake = fn_name.to_string();
-    let mut camel = String::with_capacity(snake.len() + 5);
-    let mut upper_next = true;
-    for c in snake.chars() {
-        if c == '_' {
-            upper_next = true;
-            continue;
-        }
-        if upper_next {
-            camel.extend(c.to_uppercase());
-            upper_next = false;
-        } else {
-            camel.push(c);
-        }
-    }
-    camel.push_str("Props");
-    Ident::new(&camel, fn_name.span())
-}
-
 fn strip_on_prefix(name: &str) -> Option<String> {
     if let Some(rest) = name.strip_prefix("on_") {
         Some(rest.to_string())
@@ -669,9 +714,8 @@ fn strip_on_prefix(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_builtin_tag, snake_to_props_ident, strip_on_prefix};
-    use proc_macro2::{Span, TokenStream as TokenStream2};
-    use syn::Ident;
+    use super::{is_builtin_tag, pascal_to_snake, strip_on_prefix};
+    use proc_macro2::TokenStream as TokenStream2;
 
     #[test]
     fn strips_snake_case() {
@@ -704,11 +748,10 @@ mod tests {
     }
 
     #[test]
-    fn snake_to_props_ident_basic() {
-        let id = Ident::new("my_component", Span::call_site());
-        assert_eq!(snake_to_props_ident(&id).to_string(), "MyComponentProps");
-        let id = Ident::new("card", Span::call_site());
-        assert_eq!(snake_to_props_ident(&id).to_string(), "CardProps");
+    fn pascal_to_snake_basic() {
+        assert_eq!(pascal_to_snake("MyComponent"), "my_component");
+        assert_eq!(pascal_to_snake("Card"), "card");
+        assert_eq!(pascal_to_snake("TabItem"), "tab_item");
     }
 
     // ---- Compose-syntax parser & emission --------------------------------
@@ -828,7 +871,7 @@ mod tests {
 
     #[test]
     fn user_component_does_not_use_builtin_tags_module() {
-        let input: TokenStream2 = quote::quote! { my_card(title: "x") };
+        let input: TokenStream2 = quote::quote! { MyCard(title: "x") };
         let output = super::expand_test(input).to_string();
         assert!(
             !output.contains("__tags"),
@@ -840,6 +883,26 @@ mod tests {
             "user component must build via `MyCardProps::builder()`; \
              output was: {output}"
         );
+        assert!(
+            output.contains("my_card"),
+            "user component fn ref must lower to snake_case `my_card`; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn snake_case_non_builtin_is_a_parse_error() {
+        // `my_card` (lowercase, not in the built-in whitelist) must
+        // be rejected — user components have to use PascalCase.
+        let input: TokenStream2 = quote::quote! { my_card(title: "x") };
+        let result = syn::parse2::<super::Root>(input);
+        match result {
+            Err(e) => assert!(
+                e.to_string().contains("PascalCase"),
+                "expected hint about PascalCase; got: {e}",
+            ),
+            Ok(_) => panic!("snake_case non-builtin should be a parse error"),
+        }
     }
 
     #[test]

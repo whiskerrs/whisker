@@ -126,7 +126,7 @@ fn recent_card(
     let sub_style = format!("font-size: 12px; color: {TEXT_SECONDARY}; margin-top: 2px;");
     render! {
         view(style: "width: 140px; margin-right: 14px; display: flex; flex-direction: column;") {
-            art_tile(c1: c1, c2: c2, w: "140px", radius: "12px")
+            ArtTile(c1: c1, c2: c2, w: "140px", radius: "12px")
             text(style: title_style, value: title)
             text(style: sub_style, value: sub)
         }
@@ -175,7 +175,7 @@ fn grid_tile(
                      padding: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.25); \
                      display: flex; flex-direction: column;") {
             view(style: "position: relative; width: 100%;") {
-                art_tile(c1: c1, c2: c2, w: "100%", radius: "10px")
+                ArtTile(c1: c1, c2: c2, w: "100%", radius: "10px")
                 text(style: heart_style(), on_tap: on_heart, value: heart_glyph())
             }
             text(style: title_style, value: title)
@@ -262,10 +262,10 @@ fn tab_bar(state: AppState) -> Element {
     );
     render! {
         view(style: style) {
-            tab_item(index: 0_usize, label: "Home",    glyph: "⌂", state: state)
-            tab_item(index: 1_usize, label: "Search",  glyph: "⌕", state: state)
-            tab_item(index: 2_usize, label: "Library", glyph: "♫", state: state)
-            tab_item(index: 3_usize, label: "Profile", glyph: "○", state: state)
+            TabItem(index: 0_usize, label: "Home",    glyph: "⌂", state: state)
+            TabItem(index: 1_usize, label: "Search",  glyph: "⌕", state: state)
+            TabItem(index: 2_usize, label: "Library", glyph: "♫", state: state)
+            TabItem(index: 3_usize, label: "Profile", glyph: "○", state: state)
         }
     }
 }
@@ -297,7 +297,7 @@ fn now_playing(state: AppState) -> Element {
     );
     render! {
         view(style: container_style) {
-            art_tile(c1: "#ff7e5f", c2: "#feb47b", w: "48px", radius: "8px")
+            ArtTile(c1: "#ff7e5f", c2: "#feb47b", w: "48px", radius: "8px")
             view(style: "flex: 1; padding: 0 12px; display: flex; flex-direction: column;") {
                 text(style: title_style, value: "Sunset Drive")
                 text(style: sub_style, value: status())
@@ -349,10 +349,10 @@ fn header() -> Element {
 fn chips() -> Element {
     render! {
         view(style: "display: flex; flex-direction: row; padding: 0 20px 8px; flex-wrap: nowrap;") {
-            chip(label: "All",        accented: true)
-            chip(label: "Music",      accented: false)
-            chip(label: "Podcasts",   accented: false)
-            chip(label: "Audiobooks", accented: false)
+            Chip(label: "All",        accented: true)
+            Chip(label: "Music",      accented: false)
+            Chip(label: "Podcasts",   accented: false)
+            Chip(label: "Audiobooks", accented: false)
         }
     }
 }
@@ -364,11 +364,11 @@ fn recents() -> Element {
             scroll_orientation: "horizontal",
             style: "padding: 4px 20px 8px; height: 200px;",
         ) {
-            recent_card(title: "Sunset Drive",  sub: "Lo-Fi Beats", c1: "#ff7e5f", c2: "#feb47b")
-            recent_card(title: "Deep Focus",    sub: "Ambient",     c1: "#4facfe", c2: "#00f2fe")
-            recent_card(title: "Late Night",    sub: "Synthwave",   c1: "#9b6bff", c2: "#ff5e9b")
-            recent_card(title: "Coffee House",  sub: "Acoustic",    c1: "#fcb69f", c2: "#ffecd2")
-            recent_card(title: "Energy Boost",  sub: "Workout",     c1: "#11998e", c2: "#38ef7d")
+            RecentCard(title: "Sunset Drive",  sub: "Lo-Fi Beats", c1: "#ff7e5f", c2: "#feb47b")
+            RecentCard(title: "Deep Focus",    sub: "Ambient",     c1: "#4facfe", c2: "#00f2fe")
+            RecentCard(title: "Late Night",    sub: "Synthwave",   c1: "#9b6bff", c2: "#ff5e9b")
+            RecentCard(title: "Coffee House",  sub: "Acoustic",    c1: "#fcb69f", c2: "#ffecd2")
+            RecentCard(title: "Energy Boost",  sub: "Workout",     c1: "#11998e", c2: "#38ef7d")
         }
     }
 }
@@ -400,12 +400,12 @@ fn grid(state: AppState) -> Element {
     render! {
         view(style: "padding: 4px 20px 0; display: flex; flex-direction: row; \
                      flex-wrap: wrap; justify-content: space-between;") {
-            grid_tile(index: 0_usize, title: "Chill Mix",   c1: "#667eea", c2: "#764ba2", state: state)
-            grid_tile(index: 1_usize, title: "Happy Mix",   c1: "#f093fb", c2: "#f5576c", state: state)
-            grid_tile(index: 2_usize, title: "Focus Mix",   c1: "#4facfe", c2: "#00f2fe", state: state)
-            grid_tile(index: 3_usize, title: "Workout Mix", c1: "#43e97b", c2: "#38f9d7", state: state)
-            grid_tile(index: 4_usize, title: "Sleep Mix",   c1: "#fa709a", c2: "#fee140", state: state)
-            grid_tile(index: 5_usize, title: "Indie Mix",   c1: "#30cfd0", c2: "#330867", state: state)
+            GridTile(index: 0_usize, title: "Chill Mix",   c1: "#667eea", c2: "#764ba2", state: state)
+            GridTile(index: 1_usize, title: "Happy Mix",   c1: "#f093fb", c2: "#f5576c", state: state)
+            GridTile(index: 2_usize, title: "Focus Mix",   c1: "#4facfe", c2: "#00f2fe", state: state)
+            GridTile(index: 3_usize, title: "Workout Mix", c1: "#43e97b", c2: "#38f9d7", state: state)
+            GridTile(index: 4_usize, title: "Sleep Mix",   c1: "#fa709a", c2: "#fee140", state: state)
+            GridTile(index: 5_usize, title: "Indie Mix",   c1: "#30cfd0", c2: "#330867", state: state)
         }
     }
 }
@@ -414,11 +414,11 @@ fn grid(state: AppState) -> Element {
 fn activity_feed() -> Element {
     render! {
         view(style: "display: flex; flex-direction: column; padding: 0 0 8px;") {
-            activity_row(initial: "A", c1: "#ff7e5f", c2: "#feb47b", title: "Alice", sub: "Started following you",            when: "2m")
-            activity_row(initial: "R", c1: "#667eea", c2: "#764ba2", title: "Riku",  sub: "Liked your playlist 'Late Night'", when: "1h")
-            activity_row(initial: "M", c1: "#43e97b", c2: "#38f9d7", title: "Mio",   sub: "Shared 'Sunset Drive' with you",   when: "3h")
-            activity_row(initial: "K", c1: "#fa709a", c2: "#fee140", title: "Ken",   sub: "Added 5 songs to 'Workout'",       when: "yesterday")
-            activity_row(initial: "S", c1: "#4facfe", c2: "#00f2fe", title: "Sora",  sub: "Created a new playlist 'Focus'",   when: "2d")
+            ActivityRow(initial: "A", c1: "#ff7e5f", c2: "#feb47b", title: "Alice", sub: "Started following you",            when: "2m")
+            ActivityRow(initial: "R", c1: "#667eea", c2: "#764ba2", title: "Riku",  sub: "Liked your playlist 'Late Night'", when: "1h")
+            ActivityRow(initial: "M", c1: "#43e97b", c2: "#38f9d7", title: "Mio",   sub: "Shared 'Sunset Drive' with you",   when: "3h")
+            ActivityRow(initial: "K", c1: "#fa709a", c2: "#fee140", title: "Ken",   sub: "Added 5 songs to 'Workout'",       when: "yesterday")
+            ActivityRow(initial: "S", c1: "#4facfe", c2: "#00f2fe", title: "Sora",  sub: "Created a new playlist 'Focus'",   when: "2d")
         }
     }
 }
@@ -431,15 +431,15 @@ fn scroll_body(state: AppState) -> Element {
     );
     render! {
         scroll_view(scroll_orientation: "vertical", style: style) {
-            chips()
-            section_header(title: "Recently Played")
-            recents()
-            section_header(title: "Made For You")
-            featured()
-            section_header(title: "Your Top Mixes")
-            grid(state: state)
-            section_header(title: "Activity")
-            activity_feed()
+            Chips()
+            SectionHeader(title: "Recently Played")
+            Recents()
+            SectionHeader(title: "Made For You")
+            Featured()
+            SectionHeader(title: "Your Top Mixes")
+            Grid(state: state)
+            SectionHeader(title: "Activity")
+            ActivityFeed()
             view(style: "height: 160px;")
         }
     }
@@ -460,10 +460,10 @@ fn app() -> Element {
     );
     render! {
         page(style: page_style) {
-            header()
-            scroll_body(state: state)
-            now_playing(state: state)
-            tab_bar(state: state)
+            Header()
+            ScrollBody(state: state)
+            NowPlaying(state: state)
+            TabBar(state: state)
         }
     }
 }
