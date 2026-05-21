@@ -79,23 +79,30 @@ pub fn resolve_shim_paths(workspace_root: &Path) -> Result<ShimPaths> {
 }
 
 fn build_shims(workspace_root: &Path) -> Result<()> {
-    eprintln!(
-        "[whisker-dev-server] building shim binaries (`cargo build -p whisker-cli --bin whisker-rustc-shim --bin whisker-linker-shim`)…"
-    );
-    let status = std::process::Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            "whisker-cli",
-            "--bin",
-            "whisker-rustc-shim",
-            "--bin",
-            "whisker-linker-shim",
-        ])
-        .current_dir(workspace_root)
-        .status()
-        .context("spawn cargo")?;
-    anyhow::ensure!(status.success(), "cargo exited {status}");
+    // First-run setup: the rustc / linker capture shims are produced
+    // by `cargo build` against `whisker-cli`. Once built, they live
+    // under `target/debug/` and subsequent `whisker run` invocations
+    // skip this step. Stream the cargo output through a step so it
+    // looks like the rest of the initial-build section rather than
+    // dumping ~200 lines of `Compiling X v…` ahead of any UI chrome.
+    let step = whisker_build::ui::step("setup", "whisker-cli shims");
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.args([
+        "build",
+        "-p",
+        "whisker-cli",
+        "--bin",
+        "whisker-rustc-shim",
+        "--bin",
+        "whisker-linker-shim",
+    ])
+    .current_dir(workspace_root);
+    let status = step.pipe(&mut cmd).context("spawn cargo")?;
+    if !status.success() {
+        step.fail(format!("{status}"));
+        anyhow::bail!("cargo exited {status}");
+    }
+    step.done("");
     Ok(())
 }
 
