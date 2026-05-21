@@ -117,7 +117,6 @@ fn variant_d_sibling_partial() {
     let _ = render! {
         view(style: "outer") {
             view(class: "sib1")
-            view(sty)
         }
     };
 }
@@ -449,6 +448,39 @@ fn variant_k_full() {
         view(style: "outer") {
             view(class: "first")
             text { "second" }
+        }
+    };
+}
+
+// ---- Variant L: narrow probes to pin down the actual rule ----------------
+
+// L1–L3 isolate WHICH children-shape RA tolerates. Empty in each
+// probe so no LitStr / expr / args appear ANYWHERE in the input
+// — the only difference is the structural shape of the child.
+
+fn variant_l1_text_empty_block() {
+    // ← TEST L1: `text {}` — IDENT + empty block, no LitStr anywhere.
+    let _ = render! {
+        view(sty) {
+            text {}
+        }
+    };
+}
+
+fn variant_l2_view_empty_block() {
+    // ← TEST L2: `view {}` — IDENT + empty block, using `view` ident.
+    let _ = render! {
+        view(sty) {
+            view {}
+        }
+    };
+}
+
+fn variant_l3_text_empty_parens() {
+    // ← TEST L3: `text()` — IDENT + empty parens, no block.
+    let _ = render! {
+        view(sty) {
+            text()
         }
     };
 }
