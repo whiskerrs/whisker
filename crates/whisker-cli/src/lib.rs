@@ -44,6 +44,14 @@ pub mod rustc_shim;
     version
 )]
 struct Cli {
+    /// Show every step's full underlying output (raw cargo /
+    /// xcodebuild / simctl streams + the internal debug logs the
+    /// curated UI hides by default). Plumbed into `whisker-build::ui`
+    /// via the `WHISKER_VERBOSE` env var so subprocesses
+    /// (`whisker-dev-server`, the shim binaries, etc.) inherit it.
+    #[arg(long, short = 'v', global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -70,6 +78,12 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Ok(c) => c,
         Err(e) => e.exit(),
     };
+    // `--verbose` and `WHISKER_VERBOSE=1` are the same switch. Setting
+    // the env var means any subprocess we spawn (dev-server, shim
+    // binaries) sees the same mode without further plumbing.
+    if cli.verbose {
+        std::env::set_var("WHISKER_VERBOSE", "1");
+    }
     match cli.command {
         Command::Doctor(a) => doctor::run(a),
         Command::Run(a) => run::run(a),

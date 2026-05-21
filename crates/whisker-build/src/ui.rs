@@ -60,15 +60,22 @@ enum Mode {
 fn mode() -> Mode {
     static MODE: OnceLock<Mode> = OnceLock::new();
     *MODE.get_or_init(|| {
-        if std::env::var("WHISKER_VERBOSE")
-            .map(|v| !v.is_empty() && v != "0")
-            .unwrap_or(false)
-        {
+        if is_verbose() {
             Mode::Verbose
         } else {
             Mode::Curated
         }
     })
+}
+
+/// `true` when `WHISKER_VERBOSE=1` is set in the environment. Same
+/// switch the `--verbose` CLI flag toggles. Public so the
+/// dev-server's noise filters (e.g. xcodebuild warning suppression)
+/// can opt out under verbose mode and let everything through.
+pub fn is_verbose() -> bool {
+    std::env::var("WHISKER_VERBOSE")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
 }
 
 /// `true` when stderr is connected to an interactive terminal and we
@@ -178,7 +185,15 @@ impl Step {
         let glyph = kind.glyph();
         let line = render_step_line(glyph, &self.name, &self.detail, &summary, kind);
         if let Some(bar) = self.bar {
-            bar.finish_with_message(line.clone());
+            // Swap the spinner template for a plain `{msg}` so the
+            // final line is *exactly* the formatted text we built —
+            // without the leftover `{spinner}` glyph + `{prefix}`
+            // duplication + trailing `…` that the live template
+            // would otherwise re-render around it.
+            bar.set_style(
+                ProgressStyle::with_template("{msg}").expect("template literal is valid"),
+            );
+            bar.finish_with_message(line);
         } else {
             eprintln!("{line}");
         }

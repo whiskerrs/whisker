@@ -145,6 +145,14 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
 /// Real errors are preserved: lines containing `error:` /
 /// `fatal error:` / `** BUILD FAILED **` always fall through.
 fn is_benign_xcodebuild_line(raw: &str) -> bool {
+    // Under `--verbose` / `WHISKER_VERBOSE=1`, let every line
+    // through — that's the explicit "I want to see the full
+    // underlying tool output" mode, including the deprecation
+    // chain we'd otherwise suppress.
+    if whisker_build::ui::is_verbose() {
+        return false;
+    }
+
     let line = raw.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '·');
 
     // Always surface real errors. Check this first so we don't
