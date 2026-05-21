@@ -43,6 +43,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -161,6 +162,19 @@ fn probe() -> ElementHandle {
 /// supported (RA releases are `.zip` there; the user can set
 /// `$RA_BINARY` explicitly).
 fn ensure_ra_binary() -> Result<PathBuf, String> {
+    // Memoise across tests in the same process — cargo test runs
+    // each test on a thread, all four would otherwise race and
+    // step on each other (one curl finishes, another gzip fails
+    // because the .gz disappeared mid-decompress; or an exec
+    // races a still-writing rename and gets "Text file busy").
+    // Serialising via OnceLock means the first thread provisions
+    // and the rest reuse the cached PathBuf without touching the
+    // filesystem.
+    static CACHED: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+    CACHED.get_or_init(provision_ra_binary).clone()
+}
+
+fn provision_ra_binary() -> Result<PathBuf, String> {
     if let Ok(p) = std::env::var("RA_BINARY") {
         return Ok(PathBuf::from(p));
     }
@@ -184,7 +198,16 @@ fn ensure_ra_binary() -> Result<PathBuf, String> {
 
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| format!("create {}: {e}", cache_dir.display()))?;
-    let gz_path = cache_dir.join("rust-analyzer.gz");
+
+    // Download to a temp filename, gunzip it, then atomically
+    // rename into place. If a concurrent run (different process,
+    // or some other tool) wins the rename race, the second
+    // rename returns AlreadyExists and we just reuse what's
+    // there. This makes the function safe to call from multiple
+    // processes hitting the same `target/` cache.
+    let pid = std::process::id();
+    let gz_path = cache_dir.join(format!("rust-analyzer.{pid}.gz"));
+    let staged_path = cache_dir.join(format!("rust-analyzer.{pid}"));
 
     eprintln!("[ra_completion] downloading {url}");
     let status = Command::new("curl")
@@ -200,38 +223,54 @@ fn ensure_ra_binary() -> Result<PathBuf, String> {
         .status()
         .map_err(|e| format!("spawn curl: {e}"))?;
     if !status.success() {
+        let _ = std::fs::remove_file(&gz_path);
         return Err(format!(
             "curl failed (exit {status:?}) — check that `{RA_VERSION}` is \
              a real rust-analyzer release tag and your network is reachable"
         ));
     }
 
-    // gunzip writes the decompressed file next to the .gz and
-    // removes the original. `-f` overwrites any leftover from a
-    // failed run.
+    // `gzip -d` writes the decompressed file next to the .gz
+    // (stripping `.gz`) and removes the original. We named the
+    // input `rust-analyzer.<pid>.gz` so the output is
+    // `rust-analyzer.<pid>` (`staged_path`) — keeps concurrent
+    // provisioning from clobbering each other.
     let status = Command::new("gzip")
         .arg("-df")
         .arg(&gz_path)
         .status()
         .map_err(|e| format!("spawn gzip: {e}"))?;
     if !status.success() {
+        let _ = std::fs::remove_file(&gz_path);
+        let _ = std::fs::remove_file(&staged_path);
         return Err(format!("gzip -d failed (exit {status:?})"));
     }
 
-    // Linux/macOS releases drop the `.gz` extension to give the
-    // raw binary. Make it executable.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&binary_path)
-            .map_err(|e| format!("stat {}: {e}", binary_path.display()))?
+        let mut perms = std::fs::metadata(&staged_path)
+            .map_err(|e| format!("stat {}: {e}", staged_path.display()))?
             .permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(&binary_path, perms)
-            .map_err(|e| format!("chmod {}: {e}", binary_path.display()))?;
+        std::fs::set_permissions(&staged_path, perms)
+            .map_err(|e| format!("chmod {}: {e}", staged_path.display()))?;
     }
 
-    Ok(binary_path)
+    // Atomic publish. If another process already published a
+    // binary, treat that as success and drop our staged copy.
+    match std::fs::rename(&staged_path, &binary_path) {
+        Ok(()) => Ok(binary_path),
+        Err(_) if binary_path.is_file() => {
+            let _ = std::fs::remove_file(&staged_path);
+            Ok(binary_path)
+        }
+        Err(e) => Err(format!(
+            "rename {} → {}: {e}",
+            staged_path.display(),
+            binary_path.display()
+        )),
+    }
 }
 
 /// Map the host's (arch, os) to the rust-analyzer release asset

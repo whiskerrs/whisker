@@ -17,7 +17,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
-use whisker::runtime::reactive::{__reset_for_tests, __reset_pending_mount_for_tests, create_owner};
+use whisker::runtime::reactive::{
+    __reset_for_tests, __reset_pending_mount_for_tests, create_owner,
+};
 use whisker::runtime::view::{
     install_renderer, uninstall_renderer, DynRenderer, ElementHandle, View,
 };
@@ -67,7 +69,8 @@ impl DynRenderer for Recorder {
         });
     }
     fn remove_child(&mut self, _p: ElementHandle, _c: ElementHandle) {}
-    fn set_event_listener(&mut self, _h: ElementHandle, _name: &str, _cb: Box<dyn Fn() + 'static>) {}
+    fn set_event_listener(&mut self, _h: ElementHandle, _name: &str, _cb: Box<dyn Fn() + 'static>) {
+    }
     fn set_root(&mut self, _p: ElementHandle) {}
     fn flush(&mut self) {}
 }
@@ -93,7 +96,7 @@ fn with_test_env<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 // stringified values of the props they received here; tests read it
 // back to assert what made it through the builder.
 thread_local! {
-    static PROP_CAPTURES: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    static PROP_CAPTURES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 fn captures() -> Vec<String> {
@@ -182,7 +185,15 @@ fn component_with_no_props_invokable_via_braces() {
         let view_creates = log
             .borrow()
             .iter()
-            .filter(|op| matches!(op, Op::Create { tag: ElementTag::View, .. }))
+            .filter(|op| {
+                matches!(
+                    op,
+                    Op::Create {
+                        tag: ElementTag::View,
+                        ..
+                    }
+                )
+            })
             .count();
         assert!(view_creates >= 1);
     });
@@ -300,9 +311,20 @@ fn children_prop_defaults_to_empty_view_when_omitted() {
         let raw_text_creates = log
             .borrow()
             .iter()
-            .filter(|op| matches!(op, Op::Create { tag: ElementTag::RawText, .. }))
+            .filter(|op| {
+                matches!(
+                    op,
+                    Op::Create {
+                        tag: ElementTag::RawText,
+                        ..
+                    }
+                )
+            })
             .count();
-        assert_eq!(raw_text_creates, 0, "no raw_text expected when children omitted");
+        assert_eq!(
+            raw_text_creates, 0,
+            "no raw_text expected when children omitted"
+        );
     });
 }
 
@@ -369,7 +391,10 @@ fn props_struct_is_constructable_directly() {
     });
     uninstall_renderer(prev);
 
-    assert_eq!(captures(), vec!["one_string_prop:label=direct construction"]);
+    assert_eq!(
+        captures(),
+        vec!["one_string_prop:label=direct construction"]
+    );
 }
 
 #[test]

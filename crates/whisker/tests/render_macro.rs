@@ -155,12 +155,20 @@ fn nested_view_with_text_child() {
         assert!(ops.iter().any(|op| matches!(op, Op::SetAttr {
             id: 2, key, value
         } if key == "text" && value == "Hello")));
-        assert!(ops.iter().any(|op| matches!(op, Op::Append {
-            parent: 1, child: 2
-        })));
-        assert!(ops.iter().any(|op| matches!(op, Op::Append {
-            parent: 0, child: 1
-        })));
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            Op::Append {
+                parent: 1,
+                child: 2
+            }
+        )));
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            Op::Append {
+                parent: 0,
+                child: 1
+            }
+        )));
     });
 }
 

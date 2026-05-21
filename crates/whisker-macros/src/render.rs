@@ -178,8 +178,7 @@ impl Parse for Node {
                     // Partial — synthesize `()` as a placeholder so
                     // the emitter can still place the method-name
                     // token at the user's source span.
-                    let placeholder: Expr =
-                        syn::parse_quote_spanned!(name.span()=> ());
+                    let placeholder: Expr = syn::parse_quote_spanned!(name.span()=> ());
                     (placeholder, true)
                 };
                 kwargs.push(Kwarg {
@@ -568,19 +567,18 @@ impl UserComponentNode {
         let setter_calls: Vec<TokenStream2> = self
             .kwargs
             .iter()
-            .filter_map(|kw| {
+            .map(|kw| {
+                let name = &kw.name;
+                let span = name.span();
                 if kw.partial {
                     // Partial kwarg on a user component → emit
                     // `.name(())` so typed-builder's per-field
                     // setter shows up under RA's method completion.
-                    let name = &kw.name;
-                    let span = name.span();
-                    return Some(quote_spanned! {span=> .#name(()) });
+                    quote_spanned! {span=> .#name(()) }
+                } else {
+                    let value = &kw.value;
+                    quote_spanned! {span=> .#name(#value) }
                 }
-                let name = &kw.name;
-                let value = &kw.value;
-                let span = name.span();
-                Some(quote_spanned! {span=> .#name(#value) })
             })
             .collect();
 
@@ -598,8 +596,11 @@ impl UserComponentNode {
         let children_call = if self.children.is_empty() {
             quote! {}
         } else {
-            let child_views: Vec<TokenStream2> =
-                self.children.iter().map(|c| c.to_tokens_as_view()).collect();
+            let child_views: Vec<TokenStream2> = self
+                .children
+                .iter()
+                .map(|c| c.to_tokens_as_view())
+                .collect();
             let body = if child_views.len() == 1 {
                 let only = &child_views[0];
                 quote! { #only }

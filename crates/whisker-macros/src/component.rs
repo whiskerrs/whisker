@@ -277,11 +277,7 @@ fn parse_prop_attr(attrs: &[syn::Attribute]) -> syn::Result<PropAttr> {
 /// 5. Otherwise → `#[builder(setter(into))]`. Required prop; `Into`
 ///    coercion lets `&str` flow into `String` props, `i32` into
 ///    `f64`, etc.
-fn builder_annotation(
-    ty: &Type,
-    attr: &PropAttr,
-    generic_type_params: &[Ident],
-) -> TokenStream2 {
+fn builder_annotation(ty: &Type, attr: &PropAttr, generic_type_params: &[Ident]) -> TokenStream2 {
     let is_generic = is_generic_type_param(ty, generic_type_params);
     let into_or_none = if is_generic {
         // Bare generic param — emit `setter()` without `into`.
@@ -341,7 +337,7 @@ fn is_generic_type_param(ty: &Type, generic_type_params: &[Ident]) -> bool {
         if tp.qself.is_none() && tp.path.segments.len() == 1 {
             let seg = &tp.path.segments[0];
             if seg.arguments.is_empty() {
-                return generic_type_params.iter().any(|g| *g == seg.ident);
+                return generic_type_params.contains(&seg.ident);
             }
         }
     }
@@ -381,7 +377,9 @@ fn is_option_type(ty: &Type) -> bool {
 /// alias the type or reach it through `whisker::Children`,
 /// `whisker::runtime::view::Children`, etc.
 fn is_children_type(ty: &Type) -> bool {
-    last_path_ident(ty).map(|i| i == "Children").unwrap_or(false)
+    last_path_ident(ty)
+        .map(|i| i == "Children")
+        .unwrap_or(false)
 }
 
 fn last_path_ident(ty: &Type) -> Option<Ident> {

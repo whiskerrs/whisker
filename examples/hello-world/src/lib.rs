@@ -134,6 +134,7 @@ fn recent_card(
             art_tile(c1: c1, c2: c2, w: "140px", radius: "12px")
             text(style: title_style, value: title)
             text(style: sub_style, value: sub)
+            text(style: "font-size")
         }
     }
 }
@@ -477,4 +478,3 @@ fn app() -> ElementHandle {
         }
     }
 }
-

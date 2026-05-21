@@ -80,8 +80,8 @@ pub mod __tags {
     use crate::ElementTag;
     use whisker_runtime::reactive::effect;
     use whisker_runtime::view::{
-        append_child, create_element, set_attribute, set_event_listener,
-        set_inline_styles, ElementHandle,
+        append_child, create_element, set_attribute, set_event_listener, set_inline_styles,
+        ElementHandle,
     };
 
     // Each built-in tag is a struct + a hand-written inherent
@@ -100,10 +100,14 @@ pub mod __tags {
     /// an app. Holds the screen-level `style=` (background, flex
     /// direction) and a single content subtree.
     #[allow(non_camel_case_types)]
-    pub struct page { handle: ElementHandle }
+    pub struct page {
+        handle: ElementHandle,
+    }
     #[allow(non_snake_case)]
     pub fn __page_ctor() -> page {
-        page { handle: create_element(ElementTag::Page) }
+        page {
+            handle: create_element(ElementTag::Page),
+        }
     }
     impl page {
         /// Inline CSS — value-via-closure so signal-reading
@@ -164,10 +168,14 @@ pub mod __tags {
     /// children with CSS flexbox. Equivalent to `<View>` in
     /// React Native or `<div>` in the web.
     #[allow(non_camel_case_types)]
-    pub struct view { handle: ElementHandle }
+    pub struct view {
+        handle: ElementHandle,
+    }
     #[allow(non_snake_case)]
     pub fn __view_ctor() -> view {
-        view { handle: create_element(ElementTag::View) }
+        view {
+            handle: create_element(ElementTag::View),
+        }
     }
     impl view {
         /// Inline CSS — value-via-closure so signal-reading
@@ -227,10 +235,14 @@ pub mod __tags {
     /// `raw_text` child elements that the macro creates from
     /// string-literal children.
     #[allow(non_camel_case_types)]
-    pub struct text { handle: ElementHandle }
+    pub struct text {
+        handle: ElementHandle,
+    }
     #[allow(non_snake_case)]
     pub fn __text_ctor() -> text {
-        text { handle: create_element(ElementTag::Text) }
+        text {
+            handle: create_element(ElementTag::Text),
+        }
     }
     impl text {
         pub fn style<F, T>(self, f: F) -> Self
@@ -300,10 +312,14 @@ pub mod __tags {
     /// Normally the macro creates these automatically from
     /// string-literal children of `text` / `view`.
     #[allow(non_camel_case_types)]
-    pub struct raw_text { handle: ElementHandle }
+    pub struct raw_text {
+        handle: ElementHandle,
+    }
     #[allow(non_snake_case)]
     pub fn __raw_text_ctor() -> raw_text {
-        raw_text { handle: create_element(ElementTag::RawText) }
+        raw_text {
+            handle: create_element(ElementTag::RawText),
+        }
     }
     impl raw_text {
         pub fn style<F, T>(self, f: F) -> Self
@@ -365,10 +381,14 @@ pub mod __tags {
     /// `<image>` — bitmap from a URL. Set `src=` (required) and
     /// optionally `style=` for sizing.
     #[allow(non_camel_case_types)]
-    pub struct image { handle: ElementHandle }
+    pub struct image {
+        handle: ElementHandle,
+    }
     #[allow(non_snake_case)]
     pub fn __image_ctor() -> image {
-        image { handle: create_element(ElementTag::Image) }
+        image {
+            handle: create_element(ElementTag::Image),
+        }
     }
     impl image {
         pub fn style<F, T>(self, f: F) -> Self
@@ -430,10 +450,14 @@ pub mod __tags {
     /// `<scroll_view>` — scrollable container. Set
     /// `scroll_orientation=` to `"vertical"` or `"horizontal"`.
     #[allow(non_camel_case_types)]
-    pub struct scroll_view { handle: ElementHandle }
+    pub struct scroll_view {
+        handle: ElementHandle,
+    }
     #[allow(non_snake_case)]
     pub fn __scroll_view_ctor() -> scroll_view {
-        scroll_view { handle: create_element(ElementTag::ScrollView) }
+        scroll_view {
+            handle: create_element(ElementTag::ScrollView),
+        }
     }
     impl scroll_view {
         pub fn style<F, T>(self, f: F) -> Self
@@ -582,11 +606,11 @@ pub mod __hot {
 
 /// Common imports for Whisker app code.
 pub mod prelude {
+    pub use crate::Children;
     pub use crate::ElementTag;
     #[allow(deprecated)]
     pub use crate::Memo;
     pub use crate::{component, main, render};
-    pub use crate::Children;
     pub use crate::{
         effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
         signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,
