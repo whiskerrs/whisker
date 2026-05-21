@@ -33,8 +33,9 @@
 //! ```
 //!
 //! `RA_BINARY` (env var) overrides the rust-analyzer binary
-//! path. The default points at the VS Code extension's bundled
-//! server.
+//! path. If unset, the test downloads a pinned release binary
+//! into `target/whisker-macros-ra-tests/ra-binary/<VERSION>/`
+//! and reuses it across runs. Bump `RA_VERSION` below to update.
 
 #![cfg(test)]
 
@@ -47,8 +48,14 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-const DEFAULT_RA_BINARY: &str =
-    "/Users/itome/.vscode/extensions/rust-lang.rust-analyzer-0.3.2896-darwin-arm64/server/rust-analyzer";
+/// Pinned rust-analyzer release tag. Bump to update.
+///
+/// Releases live at <https://github.com/rust-lang/rust-analyzer/releases>
+/// and use date-stamped tags (the maintainers cut one most
+/// Mondays). When bumping, delete
+/// `target/whisker-macros-ra-tests/ra-binary/` to force a
+/// fresh download — the cache key is the version string.
+const RA_VERSION: &str = "2026-05-18";
 
 // ----- Test cases ---------------------------------------------------------
 
@@ -139,6 +146,112 @@ fn probe() -> ElementHandle {
     );
 }
 
+// ----- rust-analyzer binary provisioning ---------------------------------
+
+/// Return the path to a usable `rust-analyzer` binary. Preference
+/// order:
+///
+/// 1. `$RA_BINARY` — explicit override (CI, local hacking).
+/// 2. Cached pinned download under
+///    `target/whisker-macros-ra-tests/ra-binary/<RA_VERSION>/`.
+/// 3. Fresh download from GitHub releases, gunzipped to (2).
+///
+/// Downloads use `curl` + `gzip` to avoid pulling HTTP and
+/// compression crates into the test build. Windows isn't
+/// supported (RA releases are `.zip` there; the user can set
+/// `$RA_BINARY` explicitly).
+fn ensure_ra_binary() -> Result<PathBuf, String> {
+    if let Ok(p) = std::env::var("RA_BINARY") {
+        return Ok(PathBuf::from(p));
+    }
+
+    let cache_dir = workspace_root()
+        .join("target")
+        .join("whisker-macros-ra-tests")
+        .join("ra-binary")
+        .join(RA_VERSION);
+    let binary_path = cache_dir.join("rust-analyzer");
+
+    if binary_path.is_file() {
+        return Ok(binary_path);
+    }
+
+    let target_triple = ra_release_triple()?;
+    let url = format!(
+        "https://github.com/rust-lang/rust-analyzer/releases/download/\
+         {RA_VERSION}/rust-analyzer-{target_triple}.gz",
+    );
+
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("create {}: {e}", cache_dir.display()))?;
+    let gz_path = cache_dir.join("rust-analyzer.gz");
+
+    eprintln!("[ra_completion] downloading {url}");
+    let status = Command::new("curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--output",
+        ])
+        .arg(&gz_path)
+        .arg(&url)
+        .status()
+        .map_err(|e| format!("spawn curl: {e}"))?;
+    if !status.success() {
+        return Err(format!(
+            "curl failed (exit {status:?}) — check that `{RA_VERSION}` is \
+             a real rust-analyzer release tag and your network is reachable"
+        ));
+    }
+
+    // gunzip writes the decompressed file next to the .gz and
+    // removes the original. `-f` overwrites any leftover from a
+    // failed run.
+    let status = Command::new("gzip")
+        .arg("-df")
+        .arg(&gz_path)
+        .status()
+        .map_err(|e| format!("spawn gzip: {e}"))?;
+    if !status.success() {
+        return Err(format!("gzip -d failed (exit {status:?})"));
+    }
+
+    // Linux/macOS releases drop the `.gz` extension to give the
+    // raw binary. Make it executable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&binary_path)
+            .map_err(|e| format!("stat {}: {e}", binary_path.display()))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&binary_path, perms)
+            .map_err(|e| format!("chmod {}: {e}", binary_path.display()))?;
+    }
+
+    Ok(binary_path)
+}
+
+/// Map the host's (arch, os) to the rust-analyzer release asset
+/// triple. Asset names look like `rust-analyzer-<triple>.gz`.
+fn ra_release_triple() -> Result<&'static str, String> {
+    Ok(match (std::env::consts::ARCH, std::env::consts::OS) {
+        ("aarch64", "macos") => "aarch64-apple-darwin",
+        ("x86_64", "macos") => "x86_64-apple-darwin",
+        ("aarch64", "linux") => "aarch64-unknown-linux-gnu",
+        ("x86_64", "linux") => "x86_64-unknown-linux-gnu",
+        (arch, os) => {
+            return Err(format!(
+                "unsupported host (arch={arch}, os={os}) for automated \
+                 rust-analyzer download — set $RA_BINARY to an existing \
+                 binary instead"
+            ));
+        }
+    })
+}
+
 // ----- Fixture project bootstrap -----------------------------------------
 
 fn workspace_root() -> PathBuf {
@@ -191,7 +304,8 @@ fn run_probe(test_name: &str, source_with_marker: &str) -> Vec<String> {
     // type-checks (the marker would be a parse error otherwise).
     std::fs::write(&lib_rs, &text).expect("rewrite lib.rs without marker");
 
-    let ra_binary = std::env::var("RA_BINARY").unwrap_or_else(|_| DEFAULT_RA_BINARY.to_string());
+    let ra_binary = ensure_ra_binary().expect("provision rust-analyzer");
+    let ra_binary = ra_binary.to_string_lossy().into_owned();
 
     let mut driver = LspDriver::start(&ra_binary, &project).expect("start rust-analyzer");
     driver.initialize().expect("initialize");
