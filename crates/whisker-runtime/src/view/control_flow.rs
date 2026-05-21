@@ -47,13 +47,23 @@ pub fn show(
     let mounted: Rc<RefCell<Option<crate::reactive::OwnerId>>> = Rc::new(RefCell::new(None));
 
     effect(move || {
-        // 1. Dispose whatever's currently mounted, if anything.
+        // 1. Detach every current child of the wrapper before
+        // disposing the previous branch owner — same rationale as
+        // `suspense` below. `#[component]` bodies inside the branch
+        // create detached owners that the dispose cascade doesn't
+        // reach, so their elements would otherwise stay attached
+        // through a `when` flip.
+        for child in super::children_of(wrapper) {
+            super::remove_child(wrapper, child);
+        }
+
+        // 2. Dispose whatever's currently mounted, if anything.
         let prev = mounted.borrow_mut().take();
         if let Some(o) = prev {
             dispose_owner(o);
         }
 
-        // 2. Mount the appropriate branch under a fresh owner.
+        // 3. Mount the appropriate branch under a fresh owner.
         let branch_owner = create_owner(None);
         let cond = when();
         with_owner(branch_owner, || {
@@ -211,6 +221,18 @@ where
     let mounted: Rc<RefCell<Option<crate::reactive::OwnerId>>> = Rc::new(RefCell::new(None));
 
     effect(move || {
+        // 1. Detach EVERY current child of the wrapper before
+        // disposing the previous branch owner. dispose_owner only
+        // releases elements that were created under that exact
+        // owner — but `#[component]`-bodied children create their
+        // own detached owners (`create_owner(None)` inside
+        // `mount_component_remountable`), so the dispose cascade
+        // never reaches them and their elements would otherwise
+        // stay attached. Explicit `remove_child` is the safety net.
+        for child in super::children_of(wrapper) {
+            super::remove_child(wrapper, child);
+        }
+
         let prev = mounted.borrow_mut().take();
         if let Some(o) = prev {
             dispose_owner(o);
