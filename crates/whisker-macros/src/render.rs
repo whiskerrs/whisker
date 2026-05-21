@@ -212,55 +212,76 @@ impl Parse for Node {
         //   snake_case + in built-in whitelist  → Element (Lynx tag)
         //   PascalCase, name ∈ {"Show", "For"}  → ControlFlow
         //   PascalCase (other)                   → UserComponent
-        //   snake_case + not in whitelist        → ERROR
+        //                                          (preferred: PascalCase
+        //                                          alias from #[component])
+        //   snake_case + not in whitelist        → UserComponent
+        //                                          (back-compat path:
+        //                                          fn name as-is, Props
+        //                                          derived from snake_case)
         //
-        // The casing rule keeps three categories visually distinct in
-        // user code: lowercase = Lynx tag, PascalCase = component-
-        // shaped (control-flow or user). User components are still
-        // *defined* as snake_case Rust fns (`fn my_card(...)`), but
-        // *called* via PascalCase (`MyCard(...)`) in render! — the
-        // emitter converts PascalCase → snake_case for the fn ref.
+        // The PascalCase form is the canonical convention now (matches
+        // React / Leptos / Solid). Snake_case stays parseable so:
+        //   (1) mid-typing partials (`vie|`) don't blow up the macro
+        //       — RA needs the expansion to succeed for completion,
+        //   (2) older code calling snake_case names keeps compiling.
         if is_builtin_tag(&name) {
             Ok(Node::Element(ElementNode {
                 tag,
                 kwargs,
                 children,
             }))
-        } else if is_pascal_case(&name) {
-            if name == "Show" || name == "For" {
-                Ok(Node::ControlFlow(ControlFlowNode {
-                    name: tag,
-                    kwargs,
-                    children,
-                }))
-            } else {
-                // PascalCase user component. Derive the fn ident
-                // (snake_case) and the Props ident (PascalCase +
-                // "Props") here so codegen has both ready. Each
-                // carries the original tag's span so RA jumps to
-                // the right place from the render! call site.
-                let span = tag.span();
-                let fn_ident = Ident::new(&pascal_to_snake(&name), span);
-                let props_ident = Ident::new(&format!("{name}Props"), span);
-                Ok(Node::UserComponent(UserComponentNode {
-                    fn_ident,
-                    props_ident,
-                    kwargs,
-                    children,
-                }))
-            }
+        } else if (name == "Show" || name == "For") && is_pascal_case(&name) {
+            Ok(Node::ControlFlow(ControlFlowNode {
+                name: tag,
+                kwargs,
+                children,
+            }))
         } else {
-            Err(syn::Error::new(
-                tag.span(),
-                format!(
-                    "`{name}` is not a built-in tag and isn't UpperCamelCase. \
-                     User components are called via PascalCase in render! \
-                     (e.g. `MyCard(...)` for `#[component] fn my_card`); \
-                     reserve snake_case for built-in tags (view, text, …)",
-                ),
-            ))
+            // User component. Derive `fn_ident` (snake_case) and
+            // `props_ident` (PascalCase + "Props") from whichever
+            // form the user wrote. Both carry the original tag's
+            // span so RA jumps to the right call site from the
+            // render! source.
+            let span = tag.span();
+            let (fn_str, props_str) = if is_pascal_case(&name) {
+                (pascal_to_snake(&name), format!("{name}Props"))
+            } else {
+                (name.clone(), snake_to_pascal_props(&name))
+            };
+            let fn_ident = Ident::new(&fn_str, span);
+            let props_ident = Ident::new(&props_str, span);
+            Ok(Node::UserComponent(UserComponentNode {
+                fn_ident,
+                props_ident,
+                kwargs,
+                children,
+            }))
         }
     }
+}
+
+/// `my_card` → `MyCardProps`. Snake-case fallback for the props
+/// ident derivation (kept for back-compat with snake_case user
+/// components in `render!`).
+fn snake_to_pascal_props(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 5);
+    let mut upper_next = true;
+    for c in name.chars() {
+        if c == '_' {
+            upper_next = true;
+            continue;
+        }
+        if upper_next {
+            for u in c.to_uppercase() {
+                out.push(u);
+            }
+            upper_next = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out.push_str("Props");
+    out
 }
 
 /// Lowercase identifiers that lower to `view::create_element` calls
@@ -891,18 +912,18 @@ mod tests {
     }
 
     #[test]
-    fn snake_case_non_builtin_is_a_parse_error() {
-        // `my_card` (lowercase, not in the built-in whitelist) must
-        // be rejected — user components have to use PascalCase.
+    fn snake_case_non_builtin_is_back_compat_user_component() {
+        // Snake-case still works as a user-component call site (for
+        // partial-typing during completion and for back-compat).
+        // The canonical form is PascalCase, but the macro accepts
+        // both.
         let input: TokenStream2 = quote::quote! { my_card(title: "x") };
-        let result = syn::parse2::<super::Root>(input);
-        match result {
-            Err(e) => assert!(
-                e.to_string().contains("PascalCase"),
-                "expected hint about PascalCase; got: {e}",
-            ),
-            Ok(_) => panic!("snake_case non-builtin should be a parse error"),
-        }
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains("my_card") && output.contains("MyCardProps"),
+            "snake_case input should lower to snake fn + PascalCase Props; \
+             output was: {output}",
+        );
     }
 
     #[test]

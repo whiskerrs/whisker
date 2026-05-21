@@ -161,60 +161,73 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         quote! { #fn_name :: < #(#ty_generics_for_turbofish),* > as *const () }
     };
 
-    // Props struct lives inside a `#[doc(hidden)]` private module
-    // so the per-field type-state builder helpers typed-builder
-    // generates (`XxxPropsBuilder<((),(),(),)>` and the per-field
-    // empty/filled marker types) don't pollute rust-analyzer's
-    // identifier completion at the user's call sites. Only the
-    // top-level `XxxProps` is re-exported; the builder type is
-    // returned by `XxxProps::builder()` and reached via method
-    // chains, so it doesn't need to be in scope by name.
+    // Props struct lives inside a PRIVATE module. typed-builder's
+    // per-field type-state helpers (`XxxPropsBuilder<((),(),(),)>`
+    // and per-field empty/filled marker structs) stay inside that
+    // module and can't be reached from outside by name — so RA's
+    // identifier completion at user call sites can't list them as
+    // candidates, no matter what doc-attribute filtering it does.
+    //
+    // Only `XxxProps` itself is re-exported (doc-hidden so it
+    // doesn't clutter rustdoc either). The builder type is the
+    // return value of `XxxProps::builder()` and is reached via
+    // method chains, so it doesn't need to be in scope by name.
     //
     // Generics + where clause come straight from the function —
     // typed-builder threads them through to the generated builder.
     let internal_mod = format_ident!("__{}_props_internal", fn_name);
     let props_struct = quote! {
+        // No `#vis` on the module — the visibility is deliberately
+        // tighter than the surrounding fn so helper types stay
+        // unreachable.
         #[doc(hidden)]
-        #vis mod #internal_mod {
+        mod #internal_mod {
             // Pull in everything from the outer scope so prop types
             // referenced in fields (`Children`, user types, etc.)
-            // resolve. `use super::*` is safe here because the
-            // module is hidden and only re-exports the Props struct.
+            // resolve.
             use super::*;
             #[derive(::whisker::__typed_builder::TypedBuilder)]
             pub struct #props_name #impl_generics #where_clause {
                 #(#props_fields),*
             }
         }
+        #[doc(hidden)]
         #vis use #internal_mod::#props_name;
     };
 
-    // PascalCase alias so rust-analyzer's identifier completion
-    // can find the component by its render!-call-site name
-    // (`Art|` → `ArtTile`). Without this, only the snake_case fn
-    // is in scope and `Art…` matches nothing.
-    //
-    // The alias is `non_snake_case` (it's a fn re-export named
-    // PascalCase) — opt-out the lint locally.
+    // PascalCase alias is the user-facing call-site name. Visible
+    // (NOT doc-hidden) because this is the canonical name in
+    // render! syntax — surfacing it in completion is the whole
+    // point. `non_snake_case` opt-out for the fn-as-PascalCase
+    // alias.
     let alias_str = props_name.to_string();
     let alias_str = alias_str.trim_end_matches("Props");
     let fn_name_str = fn_name.to_string();
-    let pascal_alias = if alias_str == fn_name_str {
+    let (alias_ident, pascal_alias) = if alias_str == fn_name_str {
         // Defensive: a fn named in PascalCase already (`fn MyCard`)
         // would alias to itself. Skip in that case.
-        quote! {}
+        (fn_name.clone(), quote! {})
     } else {
         let alias_ident = format_ident!("{}", alias_str);
-        quote! {
+        let alias = quote! {
             #[allow(non_snake_case)]
             #vis use #fn_name as #alias_ident;
-        }
+        };
+        (alias_ident, alias)
     };
+    let _ = alias_ident; // render! still emits via the snake fn for now
 
     // Rewritten function: same signature except parameters are
     // collapsed into a single `__props: XxxProps<...>` arg. Body
     // destructures and runs the existing remount machinery.
+    //
+    // `#[doc(hidden)]` on the snake_case fn so it's de-prioritised
+    // in RA's identifier completion. Users always call via the
+    // PascalCase alias (above) or through `render!`; the snake_case
+    // fn is internal plumbing the macro lowering targets — same
+    // status as the `__xxx_props_internal` mod above.
     let new_fn = quote! {
+        #[doc(hidden)]
         #(#attrs)*
         #vis fn #fn_name #impl_generics (
             __props: #props_name #ty_generics
