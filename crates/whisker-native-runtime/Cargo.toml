@@ -1,0 +1,21 @@
+# Phase 7 native-module / native-element runtime support.
+#
+# Houses the safe Rust wrapper for the Lynx native-module + tag-by-name
+# element C ABI, plus the helper types the `#[whisker::native_module]`
+# / `#[whisker::native_element]` proc-macros lower to.
+#
+# Skeleton-only at this revision (Phase 7-A.2). Real impl lands with
+# Phase 7-C (native module) — the crate just has to exist + compile
+# so dependents can take a dep on it now.
+
+[package]
+name = "whisker-native-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Native-module / native-element runtime support for Whisker (Phase 7)."
+
+[dependencies]

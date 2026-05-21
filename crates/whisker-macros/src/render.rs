@@ -603,14 +603,23 @@ impl CustomElementNode {
             let value = &kw.value;
             let kw_name = kw.name.to_string();
             let kw_span = kw.name.span();
+            // Mirror the built-in `__tags::*` kwarg lowering shape:
+            // - `style` / attributes: the user's expression is
+            //   placed *inside* an `effect(move || …)` so signal
+            //   reads inside the expression re-run on dep change.
+            //   The value itself must be `ToString` — closures
+            //   aren't a thing here; for dynamic styles users
+            //   embed `signal.get()` / `format!` inside the
+            //   expression and the effect handles re-evaluation.
+            // - `on_<event>`: a closure that's stored as the
+            //   element's event listener.
             if kw_name == "style" {
                 wiring.push(quote_spanned!(kw_span=> {
                     let __h = __el;
                     ::whisker::effect(move || {
-                        let __f = #value;
                         ::whisker::runtime::view::set_inline_styles(
                             __h,
-                            &::std::string::ToString::to_string(&__f()),
+                            &::std::string::ToString::to_string(&(#value)),
                         );
                     });
                 }));
@@ -624,15 +633,15 @@ impl CustomElementNode {
                     );
                 }));
             } else {
-                let attr_lit = LitStr::new(&kw_name, kw_span);
+                let attr_kebab = kw_name.replace('_', "-");
+                let attr_lit = LitStr::new(&attr_kebab, kw_span);
                 wiring.push(quote_spanned!(kw_span=> {
                     let __h = __el;
                     ::whisker::effect(move || {
-                        let __f = #value;
                         ::whisker::runtime::view::set_attribute(
                             __h,
                             #attr_lit,
-                            &::std::string::ToString::to_string(&__f()),
+                            &::std::string::ToString::to_string(&(#value)),
                         );
                     });
                 }));

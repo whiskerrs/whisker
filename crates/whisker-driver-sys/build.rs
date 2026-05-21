@@ -237,6 +237,11 @@ fn compile_ios() -> Result<()> {
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_ios.mm"))
         .file(bridge_src.join("lynx_native_renderer.cc"))
+        // Phase 7-B smoke-test custom element. Self-registers
+        // the `x-hello` tag with Lynx's behaviour registry at
+        // +load time so render! { "x-hello" {…} } can dispatch
+        // through `whisker_bridge_create_element_by_name`.
+        .file(bridge_src.join("whisker_hello_element.mm"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);
     add_lynx_includes_for_capi_impl(&mut build);

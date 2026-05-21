@@ -460,6 +460,16 @@ fn app() -> Element {
     );
     render! {
         page(style: page_style) {
+            // Phase 7-B smoke test: a native element registered via
+            // Lynx's behaviour registry (`LYNX_REGISTER_UI("x-hello")`
+            // in `whisker_hello_element.mm`) and reached from Rust
+            // through the new tag-by-name path
+            // (`render!`'s `"x-hello"` syntax →
+            // `view::create_element_by_name` →
+            // `whisker_bridge_create_element_by_name` →
+            // `lynx_create_fiber_element_by_name`). A pink bar at
+            // the top means the entire chain works end-to-end.
+            "x-hello"(style: "width: 100%; height: 8px;") {}
             Header()
             ScrollBody(state: state)
             NowPlaying(state: state)
