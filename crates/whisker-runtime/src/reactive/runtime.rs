@@ -139,7 +139,7 @@ pub struct Owner {
     /// `BridgeRenderer::elements` map from accumulating dangling
     /// `WhiskerElement*` pointers across `<Show>` flips, `<For>`
     /// item removals, and per-component remounts.
-    pub elements: Vec<crate::view::ElementHandle>,
+    pub elements: Vec<crate::view::Element>,
 }
 
 impl Owner {

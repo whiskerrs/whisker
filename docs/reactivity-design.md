@@ -335,12 +335,12 @@ scoped to one list and keyed (= efficient).
 
 ```rust
 pub trait IntoView {
-    fn into_element(self) -> ElementHandle;
+    fn into_element(self) -> Element;
 }
 ```
 
 Implementations:
-- `ElementHandle` — identity
+- `Element` — identity
 - `()` — empty fragment
 - `(A, B, C, …)` tuples — fragment of children
 - `Option<T: IntoView>` — empty when `None`
@@ -399,20 +399,20 @@ order are preserved.
 
 ### Macro-emitted body shape
 
-`#[component]` wraps the user body in a `Box<dyn Fn() -> ElementHandle>`,
+`#[component]` wraps the user body in a `Box<dyn Fn() -> Element>`,
 capturing props by move into a factory scope and re-cloning them on
 each body invocation:
 
 ```rust
 // User writes:
 #[component]
-fn screen(name: String, count: ReadSignal<i32>) -> ElementHandle { … }
+fn screen(name: String, count: ReadSignal<i32>) -> Element { … }
 
 // Macro emits (roughly):
-fn screen(name: String, count: ReadSignal<i32>) -> ElementHandle {
+fn screen(name: String, count: ReadSignal<i32>) -> Element {
     let __whisker_prop_name = name;
     let __whisker_prop_count = count;
-    let __body: Box<dyn Fn() -> ElementHandle + 'static> = Box::new(move || {
+    let __body: Box<dyn Fn() -> Element + 'static> = Box::new(move || {
         let name  = Clone::clone(&__whisker_prop_name);
         let count = Clone::clone(&__whisker_prop_count);
         // user body
@@ -463,7 +463,7 @@ because the blast radius is scoped to one component subtree.
 - `crates/whisker-runtime/src/render.rs` — **rewrite** as the renderer
   that walks `IntoView` and wires effects to FiberElement handles.
 - `crates/whisker-runtime/src/element.rs` — `Element` value-tree type
-  becomes internal-only; `ElementHandle` (the FiberElement-wrapping
+  becomes internal-only; `Element` (the FiberElement-wrapping
   Copy handle) is the new public type returned from `into_element`.
 - `crates/whisker-macros/src/rsx.rs` — **rewrite** as `render.rs` (new
   macro name).

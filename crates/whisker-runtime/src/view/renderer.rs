@@ -21,34 +21,34 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use super::handle::ElementHandle;
+use super::handle::Element;
 use crate::element::ElementTag;
 
 /// Object-safe renderer trait. The renderer owns whatever per-element
-/// state it needs and answers in `ElementHandle` IDs.
+/// state it needs and answers in `Element` IDs.
 ///
 /// Mirrors the shape of [`crate::renderer::Renderer`] but is
-/// type-erased — the handle type is always [`ElementHandle`]. Existing
+/// type-erased — the handle type is always [`Element`]. Existing
 /// `R: Renderer` implementations bridge into here via a small adapter
-/// that maintains its own `ElementHandle → R::ElementHandle` map.
+/// that maintains its own `Element → R::Element` map.
 pub trait DynRenderer {
-    fn create_element(&mut self, tag: ElementTag) -> ElementHandle;
-    fn release_element(&mut self, handle: ElementHandle);
+    fn create_element(&mut self, tag: ElementTag) -> Element;
+    fn release_element(&mut self, handle: Element);
 
-    fn set_attribute(&mut self, handle: ElementHandle, key: &str, value: &str);
-    fn set_inline_styles(&mut self, handle: ElementHandle, css: &str);
+    fn set_attribute(&mut self, handle: Element, key: &str, value: &str);
+    fn set_inline_styles(&mut self, handle: Element, css: &str);
 
-    fn append_child(&mut self, parent: ElementHandle, child: ElementHandle);
-    fn remove_child(&mut self, parent: ElementHandle, child: ElementHandle);
+    fn append_child(&mut self, parent: Element, child: Element);
+    fn remove_child(&mut self, parent: Element, child: Element);
 
     fn set_event_listener(
         &mut self,
-        handle: ElementHandle,
+        handle: Element,
         event_name: &str,
         callback: Box<dyn Fn() + 'static>,
     );
 
-    fn set_root(&mut self, page: ElementHandle);
+    fn set_root(&mut self, page: Element);
     fn flush(&mut self);
 }
 
@@ -72,7 +72,7 @@ thread_local! {
     /// effect: the mirror also enables `previous_sibling` /
     /// `next_sibling` queries for any future need (e.g. insert_after
     /// shimming when we ship the wrapper-less remount path).
-    static CHILDREN_OF: RefCell<HashMap<ElementHandle, Vec<ElementHandle>>> =
+    static CHILDREN_OF: RefCell<HashMap<Element, Vec<Element>>> =
         RefCell::new(HashMap::new());
 }
 
@@ -130,8 +130,8 @@ fn with_renderer<R>(f: impl FnOnce(&mut dyn DynRenderer) -> R, default: R) -> R 
 // effects call.
 // ---------------------------------------------------------------------------
 
-pub fn create_element(tag: ElementTag) -> ElementHandle {
-    let handle = with_renderer(|r| r.create_element(tag), ElementHandle(u32::MAX));
+pub fn create_element(tag: ElementTag) -> Element {
+    let handle = with_renderer(|r| r.create_element(tag), Element(u32::MAX));
     // Track the freshly-created element in whichever reactive owner
     // is currently active. `dispose_owner` later releases everything
     // in this list via `release_element`. This is what stops
@@ -151,19 +151,19 @@ pub fn create_element(tag: ElementTag) -> ElementHandle {
     handle
 }
 
-pub fn release_element(handle: ElementHandle) {
+pub fn release_element(handle: Element) {
     with_renderer(|r| r.release_element(handle), ())
 }
 
-pub fn set_attribute(handle: ElementHandle, key: &str, value: &str) {
+pub fn set_attribute(handle: Element, key: &str, value: &str) {
     with_renderer(|r| r.set_attribute(handle, key, value), ())
 }
 
-pub fn set_inline_styles(handle: ElementHandle, css: &str) {
+pub fn set_inline_styles(handle: Element, css: &str) {
     with_renderer(|r| r.set_inline_styles(handle, css), ())
 }
 
-pub fn append_child(parent: ElementHandle, child: ElementHandle) {
+pub fn append_child(parent: Element, child: Element) {
     with_renderer(|r| r.append_child(parent, child), ());
     CHILDREN_OF.with_borrow_mut(|map| {
         map.entry(parent).or_default().push(child);
@@ -174,7 +174,7 @@ pub fn append_child(parent: ElementHandle, child: ElementHandle) {
     crate::reactive::on_component_root_attached(parent, child);
 }
 
-pub fn remove_child(parent: ElementHandle, child: ElementHandle) {
+pub fn remove_child(parent: Element, child: Element) {
     with_renderer(|r| r.remove_child(parent, child), ());
     CHILDREN_OF.with_borrow_mut(|map| {
         if let Some(children) = map.get_mut(&parent) {
@@ -193,8 +193,8 @@ pub fn remove_child(parent: ElementHandle, child: ElementHandle) {
 /// O(N) cost is fine for `<For>` reorders and #[component] remounts
 /// where N is the parent's current child count. Replace with a
 /// direct Lynx API once the bridge gains one.
-pub fn insert_child_at(parent: ElementHandle, child: ElementHandle, index: usize) {
-    let to_re_append: Vec<ElementHandle> = CHILDREN_OF.with_borrow(|map| {
+pub fn insert_child_at(parent: Element, child: Element, index: usize) {
+    let to_re_append: Vec<Element> = CHILDREN_OF.with_borrow(|map| {
         map.get(&parent)
             .map(|children| {
                 if index >= children.len() {
@@ -217,7 +217,7 @@ pub fn insert_child_at(parent: ElementHandle, child: ElementHandle, index: usize
 /// Return the element handle that appears immediately before `child`
 /// in `parent`'s child list, or `None` if `child` is the first child
 /// or `parent` has no recorded children.
-pub fn previous_sibling(parent: ElementHandle, child: ElementHandle) -> Option<ElementHandle> {
+pub fn previous_sibling(parent: Element, child: Element) -> Option<Element> {
     CHILDREN_OF.with_borrow(|map| {
         let children = map.get(&parent)?;
         let idx = children.iter().position(|c| *c == child)?;
@@ -232,7 +232,7 @@ pub fn previous_sibling(parent: ElementHandle, child: ElementHandle) -> Option<E
 /// Index of `child` in `parent`'s ordered child list, or `None` if
 /// not tracked. Used by the wrapper-less remount path to re-insert
 /// the new body root at the same position as the old one.
-pub fn child_index(parent: ElementHandle, child: ElementHandle) -> Option<usize> {
+pub fn child_index(parent: Element, child: Element) -> Option<usize> {
     CHILDREN_OF.with_borrow(|map| {
         let children = map.get(&parent)?;
         children.iter().position(|c| *c == child)
@@ -243,7 +243,7 @@ pub fn child_index(parent: ElementHandle, child: ElementHandle) -> Option<usize>
 /// the parent has no tracked children. Used by the batched
 /// `remount_components_for` so it can compute the final desired
 /// child order before any mutation churns the indices.
-pub fn children_of(parent: ElementHandle) -> Vec<ElementHandle> {
+pub fn children_of(parent: Element) -> Vec<Element> {
     CHILDREN_OF.with_borrow(|map| map.get(&parent).cloned().unwrap_or_default())
 }
 
@@ -255,15 +255,11 @@ pub fn __reset_children_mirror_for_tests() {
     CHILDREN_OF.with_borrow_mut(|map| map.clear());
 }
 
-pub fn set_event_listener(
-    handle: ElementHandle,
-    event_name: &str,
-    callback: Box<dyn Fn() + 'static>,
-) {
+pub fn set_event_listener(handle: Element, event_name: &str, callback: Box<dyn Fn() + 'static>) {
     with_renderer(|r| r.set_event_listener(handle, event_name, callback), ())
 }
 
-pub fn set_root(page: ElementHandle) {
+pub fn set_root(page: Element) {
     with_renderer(|r| r.set_root(page), ())
 }
 

@@ -2,7 +2,7 @@
 //!
 //! - [`main`] — designates the user's app entry. Generates the
 //!   `whisker_app_main` and `whisker_tick` FFI exports the native
-//!   host calls into; the user writes `fn app() -> ElementHandle`.
+//!   host calls into; the user writes `fn app() -> Element`.
 //! - [`render!`] — fine-grained renderer macro. Emits imperative
 //!   `view::*` dispatch + `effect`s for dynamic parts. See
 //!   `crates/whisker-macros/src/render.rs` for the grammar.
@@ -74,7 +74,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // on) or just invokes `#fn_name()` directly (release) is
         // decided by `whisker`'s own `hot-reload` feature flag — the
         // user crate doesn't need a matching feature of its own.
-        fn __whisker_app_dispatch() -> ::whisker::runtime::view::ElementHandle {
+        fn __whisker_app_dispatch() -> ::whisker::runtime::view::Element {
             ::whisker::__main_runtime::call_user_app(#fn_name)
         }
 
@@ -129,7 +129,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Phase 6.5a fine-grained renderer macro. Emits imperative
 /// element-creation code that calls into
 /// [`whisker::runtime::view`] through the thread-local installed
-/// renderer, and returns an [`ElementHandle`].
+/// renderer, and returns an [`Element`].
 ///
 /// ```ignore
 /// use whisker::prelude::*;
@@ -154,7 +154,7 @@ pub fn render(input: TokenStream) -> TokenStream {
 
 /// Mark a function as a Whisker reactive component.
 ///
-/// The macro takes the user's `fn xxx(a: A, b: B) -> ElementHandle`
+/// The macro takes the user's `fn xxx(a: A, b: B) -> Element`
 /// and emits both:
 ///
 /// 1. A `XxxProps` struct (Pascal-cased function name + `Props`)
@@ -168,7 +168,7 @@ pub fn render(input: TokenStream) -> TokenStream {
 ///    `#[prop(default = expr)]` attribute on a parameter is forwarded
 ///    to typed-builder as the field's default.
 ///
-/// 2. A rewritten `fn xxx(__props: XxxProps) -> ElementHandle` whose
+/// 2. A rewritten `fn xxx(__props: XxxProps) -> Element` whose
 ///    body destructures the props back into local variables and runs
 ///    the user's original `#block` inside the existing
 ///    `mount_component_remountable` machinery (per-component
@@ -185,7 +185,7 @@ pub fn render(input: TokenStream) -> TokenStream {
 /// use whisker::prelude::*;
 ///
 /// #[component]
-/// fn counter(initial: i32) -> ElementHandle {
+/// fn counter(initial: i32) -> Element {
 ///     let (count, set_count) = signal(initial);
 ///     render! { /* ... */ }
 /// }

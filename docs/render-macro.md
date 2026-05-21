@@ -21,7 +21,7 @@ render! {
 }
 ```
 
-The macro returns an `ElementHandle` — the root of the produced
+The macro returns an `Element` — the root of the produced
 tree. For component invocations and `{expr}` it returns whatever
 the inner code returns.
 
@@ -133,7 +133,7 @@ text {
 
 ```rust
 view {
-    {header()}         // ElementHandle: insert as child
+    {header()}         // Element: insert as child
     {count.get()}      // i32: render as text
     {name.clone()}     // String: render as text
     {tuple_of_three}   // (A, B, C): each child inserted in order
@@ -147,7 +147,7 @@ it lives inside `{…}` (never inside `(…)` which is for kwargs).
 The expression is dispatched through `IntoView`. Built-in impls
 cover:
 
-- `ElementHandle` — attached as a child.
+- `Element` — attached as a child.
 - `View` — attached as-is (Element / Fragment / Text / Empty).
 - `&str`, `String`, `&String` — rendered as a `raw_text` element.
 - All numeric primitives + `bool` / `char` — same, via `Display`.

@@ -24,7 +24,7 @@ use whisker::runtime::reactive::{
 };
 use whisker::runtime::view::{
     __reset_children_mirror_for_tests, append_child, create_element, install_renderer,
-    uninstall_renderer, DynRenderer, ElementHandle,
+    uninstall_renderer, DynRenderer, Element,
 };
 use whisker::{flush, ElementTag};
 
@@ -54,47 +54,47 @@ impl Recorder {
 }
 
 impl DynRenderer for Recorder {
-    fn create_element(&mut self, tag: ElementTag) -> ElementHandle {
+    fn create_element(&mut self, tag: ElementTag) -> Element {
         let id = self.next;
         self.next += 1;
         self.log.borrow_mut().push(Op::Create { id, tag });
-        ElementHandle::from_raw(id)
+        Element::from_raw(id)
     }
-    fn release_element(&mut self, h: ElementHandle) {
+    fn release_element(&mut self, h: Element) {
         self.log.borrow_mut().push(Op::Release { id: h.id() });
     }
-    fn set_attribute(&mut self, h: ElementHandle, k: &str, v: &str) {
+    fn set_attribute(&mut self, h: Element, k: &str, v: &str) {
         self.log.borrow_mut().push(Op::SetAttr {
             id: h.id(),
             key: k.into(),
             value: v.into(),
         });
     }
-    fn set_inline_styles(&mut self, h: ElementHandle, css: &str) {
+    fn set_inline_styles(&mut self, h: Element, css: &str) {
         self.log.borrow_mut().push(Op::SetStyles {
             id: h.id(),
             css: css.into(),
         });
     }
-    fn append_child(&mut self, p: ElementHandle, c: ElementHandle) {
+    fn append_child(&mut self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
             parent: p.id(),
             child: c.id(),
         });
     }
-    fn remove_child(&mut self, p: ElementHandle, c: ElementHandle) {
+    fn remove_child(&mut self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Remove {
             parent: p.id(),
             child: c.id(),
         });
     }
-    fn set_event_listener(&mut self, h: ElementHandle, name: &str, _cb: Box<dyn Fn() + 'static>) {
+    fn set_event_listener(&mut self, h: Element, name: &str, _cb: Box<dyn Fn() + 'static>) {
         self.log.borrow_mut().push(Op::Event {
             id: h.id(),
             name: name.into(),
         });
     }
-    fn set_root(&mut self, _p: ElementHandle) {}
+    fn set_root(&mut self, _p: Element) {}
     fn flush(&mut self) {}
 }
 
@@ -123,7 +123,7 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 // ----------------------------------------------------------------------------
 
 #[component]
-fn leaf(label: &'static str) -> ElementHandle {
+fn leaf(label: &'static str) -> Element {
     render! {
         view {
             text(value: label)
@@ -136,7 +136,7 @@ fn leaf(label: &'static str) -> ElementHandle {
 /// `render!` would have appended the component to in real code; the
 /// MountSite's `parent` / `anchor` get bound the moment we
 /// `append_child` here.
-fn mount_under_test_parent(make: impl FnOnce() -> ElementHandle) -> (ElementHandle, ElementHandle) {
+fn mount_under_test_parent(make: impl FnOnce() -> Element) -> (Element, Element) {
     let parent = create_element(ElementTag::View);
     let root = make();
     append_child(parent, root);
@@ -327,7 +327,7 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
     use whisker::runtime::reactive::owners_for_fn;
 
     #[component]
-    fn inner() -> ElementHandle {
+    fn inner() -> Element {
         render! {
             view {
                 text(value: "x")
@@ -336,7 +336,7 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
     }
 
     #[component]
-    fn outer() -> ElementHandle {
+    fn outer() -> Element {
         render! {
             view {
                 inner()
@@ -386,7 +386,7 @@ fn batch_with_parent_and_child_skips_descendant() {
     use whisker::runtime::reactive::owners_for_fn;
 
     #[component]
-    fn child() -> ElementHandle {
+    fn child() -> Element {
         render! {
             view {
                 text(value: "c")
@@ -395,7 +395,7 @@ fn batch_with_parent_and_child_skips_descendant() {
     }
 
     #[component]
-    fn parent_of_child() -> ElementHandle {
+    fn parent_of_child() -> Element {
         render! {
             view {
                 child()
@@ -456,7 +456,7 @@ fn remount_preserves_signal_held_above_in_context() {
     }
 
     #[component]
-    fn inner_screen() -> ElementHandle {
+    fn inner_screen() -> Element {
         let state = use_context::<AppState>().unwrap();
         let local = signal(99_i32);
         render! {

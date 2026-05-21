@@ -12,7 +12,7 @@
 //! use whisker::runtime::main_thread::run_on_main_thread;
 //!
 //! #[component]
-//! fn list_view() -> ElementHandle {
+//! fn list_view() -> Element {
 //!     let data = RwSignal::new(None);
 //!
 //!     on_mount(move || {

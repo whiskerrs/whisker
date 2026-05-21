@@ -27,7 +27,7 @@ use std::rc::Rc;
 use super::owner::{create_owner, dispose_owner, with_owner};
 use super::runtime::OwnerId;
 use super::with_runtime;
-use crate::view::ElementHandle;
+use crate::view::Element;
 
 /// Mount a component: create a fresh child owner, register `fn_ptr`
 /// against it for hot reload, run `body` inside that owner, and
@@ -163,7 +163,7 @@ thread_local! {
     /// nested component mounts handle themselves because the body's
     /// inner `view::append_child` calls drain the inner pending
     /// mounts before this function's own value is stashed.
-    static PENDING_MOUNT: Cell<Option<(MountId, ElementHandle)>> = const { Cell::new(None) };
+    static PENDING_MOUNT: Cell<Option<(MountId, Element)>> = const { Cell::new(None) };
 }
 
 /// Stable identifier for a remountable mount site. Generationless on
@@ -181,23 +181,23 @@ pub(crate) struct MountSite {
     /// handle out of the runtime borrow before invoking it (the body
     /// re-enters the runtime via `view::*` / `signal()` / etc., so
     /// holding the runtime borrow across the call would deadlock).
-    pub body: Rc<dyn Fn() -> ElementHandle + 'static>,
+    pub body: Rc<dyn Fn() -> Element + 'static>,
     /// Current owner — `Some` between mounts, `None` during the
     /// dispose-then-remount window.
     pub owner: Option<OwnerId>,
     /// Element handle the body returned for its outermost element.
     /// Detached from the parent at the start of each remount, then
     /// replaced by the new body's root inserted at the same slot.
-    pub body_root: Option<ElementHandle>,
+    pub body_root: Option<Element>,
     /// Parent element this component is attached to. `None` until
     /// `view::append_child` fires for the body_root for the first
     /// time. `Some(_)` thereafter, kept up to date across remounts.
-    pub parent: Option<ElementHandle>,
+    pub parent: Option<Element>,
     /// Element handle that was the body_root's immediate predecessor
     /// in `parent`'s child list at attach time. `None` if the body
     /// was the first child of parent. Stable across remounts unless
     /// the anchor itself is removed by some other code path.
-    pub anchor: Option<ElementHandle>,
+    pub anchor: Option<Element>,
 }
 
 /// Called by `view::append_child` after every successful attach.
@@ -208,7 +208,7 @@ pub(crate) struct MountSite {
 /// No-op if no mount is pending or the pending body_root doesn't
 /// match — in that case the pending entry is restored so a later
 /// matching attach can still claim it.
-pub fn on_component_root_attached(parent: ElementHandle, child: ElementHandle) {
+pub fn on_component_root_attached(parent: Element, child: Element) {
     let pending = PENDING_MOUNT.with(|cell| cell.take());
     let Some((mount_id, root)) = pending else {
         return;
@@ -256,11 +256,11 @@ pub fn __reset_pending_mount_for_tests() {
 /// re-invokes `body` in a new owner, removes the old body_root
 /// from its parent, and inserts the new body_root at the same slot
 /// (using the recorded anchor).
-pub fn mount_component_remountable<F>(fn_ptr: *const (), body: F) -> ElementHandle
+pub fn mount_component_remountable<F>(fn_ptr: *const (), body: F) -> Element
 where
-    F: Fn() -> ElementHandle + 'static,
+    F: Fn() -> Element + 'static,
 {
-    let body: Rc<dyn Fn() -> ElementHandle + 'static> = Rc::new(body);
+    let body: Rc<dyn Fn() -> Element + 'static> = Rc::new(body);
 
     // Initial mount: fresh owner, run body, capture root.
     let body_for_first = body.clone();
@@ -401,9 +401,9 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
 
     struct RemountInfo {
         mount_id: MountId,
-        parent: ElementHandle,
-        old_body_root: ElementHandle,
-        body: Rc<dyn Fn() -> ElementHandle + 'static>,
+        parent: Element,
+        old_body_root: Element,
+        body: Rc<dyn Fn() -> Element + 'static>,
         fn_ptr: *const (),
     }
 
@@ -427,7 +427,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
     }
 
     // 1. Snapshot each unique parent's child list.
-    let mut parent_snapshot: std::collections::HashMap<ElementHandle, Vec<ElementHandle>> =
+    let mut parent_snapshot: std::collections::HashMap<Element, Vec<Element>> =
         std::collections::HashMap::new();
     for info in &infos {
         parent_snapshot
@@ -442,10 +442,8 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
     //    no-op against Lynx — visible as "stale subtree still on
     //    screen" after hot reload. Doing the remove first keeps the
     //    handle live.
-    let mut by_parent: std::collections::HashMap<
-        ElementHandle,
-        Vec<(ElementHandle, Option<ElementHandle>)>,
-    > = std::collections::HashMap::new();
+    let mut by_parent: std::collections::HashMap<Element, Vec<(Element, Option<Element>)>> =
+        std::collections::HashMap::new();
     for info in &infos {
         crate::view::remove_child(info.parent, info.old_body_root);
         by_parent
@@ -456,13 +454,8 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
 
     // 3. Dispose old owners + run new bodies, collecting (mount_id,
     //    parent, old_root, new_root, new_owner).
-    let mut results: Vec<(
-        MountId,
-        ElementHandle,
-        ElementHandle,
-        ElementHandle,
-        OwnerId,
-    )> = Vec::with_capacity(infos.len());
+    let mut results: Vec<(MountId, Element, Element, Element, OwnerId)> =
+        Vec::with_capacity(infos.len());
     for info in infos {
         let old_owner = with_runtime(|rt| {
             let site = rt.mount_sites.get_mut(&info.mount_id)?;
@@ -515,14 +508,14 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
     //    step 2 — the live-handle requirement.)
     for (parent, pairs) in &by_parent {
         let snapshot = parent_snapshot.get(parent).cloned().unwrap_or_default();
-        let old_to_new: std::collections::HashMap<ElementHandle, ElementHandle> = pairs
+        let old_to_new: std::collections::HashMap<Element, Element> = pairs
             .iter()
             .filter_map(|(o, n)| n.map(|new_root| (*o, new_root)))
             .collect();
 
         // Desired final list = snapshot with each old replaced by its
         // matching new (leaving non-replaced siblings untouched).
-        let desired: Vec<ElementHandle> = snapshot
+        let desired: Vec<Element> = snapshot
             .iter()
             .map(|c| old_to_new.get(c).copied().unwrap_or(*c))
             .collect();
@@ -531,7 +524,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
         // order. Non-replaced siblings remain in place; inserting at
         // index `i` only shifts elements from `i` onwards by one slot,
         // which is exactly the semantics we want.
-        let new_set: std::collections::HashSet<ElementHandle> =
+        let new_set: std::collections::HashSet<Element> =
             pairs.iter().filter_map(|(_, n)| *n).collect();
         for (idx, child) in desired.iter().enumerate() {
             if new_set.contains(child) {

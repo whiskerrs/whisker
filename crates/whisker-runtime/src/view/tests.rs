@@ -35,52 +35,47 @@ impl RecordingRenderer {
 }
 
 impl DynRenderer for RecordingRenderer {
-    fn create_element(&mut self, tag: ElementTag) -> ElementHandle {
+    fn create_element(&mut self, tag: ElementTag) -> Element {
         let id = self.next_id;
         self.next_id += 1;
         self.ops.borrow_mut().push(Op::Create { id, tag });
-        ElementHandle::from_raw(id)
+        Element::from_raw(id)
     }
-    fn release_element(&mut self, h: ElementHandle) {
+    fn release_element(&mut self, h: Element) {
         self.ops.borrow_mut().push(Op::Release { id: h.id() });
     }
-    fn set_attribute(&mut self, h: ElementHandle, key: &str, value: &str) {
+    fn set_attribute(&mut self, h: Element, key: &str, value: &str) {
         self.ops.borrow_mut().push(Op::SetAttr {
             id: h.id(),
             key: key.into(),
             value: value.into(),
         });
     }
-    fn set_inline_styles(&mut self, h: ElementHandle, css: &str) {
+    fn set_inline_styles(&mut self, h: Element, css: &str) {
         self.ops.borrow_mut().push(Op::SetStyles {
             id: h.id(),
             css: css.into(),
         });
     }
-    fn append_child(&mut self, parent: ElementHandle, child: ElementHandle) {
+    fn append_child(&mut self, parent: Element, child: Element) {
         self.ops.borrow_mut().push(Op::Append {
             parent: parent.id(),
             child: child.id(),
         });
     }
-    fn remove_child(&mut self, parent: ElementHandle, child: ElementHandle) {
+    fn remove_child(&mut self, parent: Element, child: Element) {
         self.ops.borrow_mut().push(Op::Remove {
             parent: parent.id(),
             child: child.id(),
         });
     }
-    fn set_event_listener(
-        &mut self,
-        h: ElementHandle,
-        name: &str,
-        _callback: Box<dyn Fn() + 'static>,
-    ) {
+    fn set_event_listener(&mut self, h: Element, name: &str, _callback: Box<dyn Fn() + 'static>) {
         self.ops.borrow_mut().push(Op::Event {
             id: h.id(),
             name: name.into(),
         });
     }
-    fn set_root(&mut self, page: ElementHandle) {
+    fn set_root(&mut self, page: Element) {
         self.ops.borrow_mut().push(Op::SetRoot { id: page.id() });
     }
     fn flush(&mut self) {
@@ -146,7 +141,7 @@ fn install_returns_previous_renderer() {
 
 #[test]
 fn element_handle_into_view() {
-    let h = ElementHandle::from_raw(7);
+    let h = Element::from_raw(7);
     let v = h.into_view();
     match v {
         View::Element(e) => assert_eq!(e.id(), 7),
@@ -163,29 +158,26 @@ fn unit_into_empty() {
 
 #[test]
 fn option_some_and_none() {
-    let some_h = Some(ElementHandle::from_raw(3));
-    let none_h: Option<ElementHandle> = None;
-    assert_eq!(
-        some_h.into_view().elements(),
-        vec![ElementHandle::from_raw(3)]
-    );
-    assert_eq!(none_h.into_view().elements(), Vec::<ElementHandle>::new());
+    let some_h = Some(Element::from_raw(3));
+    let none_h: Option<Element> = None;
+    assert_eq!(some_h.into_view().elements(), vec![Element::from_raw(3)]);
+    assert_eq!(none_h.into_view().elements(), Vec::<Element>::new());
 }
 
 #[test]
 fn tuple_into_fragment_preserves_order() {
     let v = (
-        ElementHandle::from_raw(10),
-        ElementHandle::from_raw(20),
-        ElementHandle::from_raw(30),
+        Element::from_raw(10),
+        Element::from_raw(20),
+        Element::from_raw(30),
     )
         .into_view();
     assert_eq!(
         v.elements(),
         vec![
-            ElementHandle::from_raw(10),
-            ElementHandle::from_raw(20),
-            ElementHandle::from_raw(30),
+            Element::from_raw(10),
+            Element::from_raw(20),
+            Element::from_raw(30),
         ]
     );
 }
@@ -193,18 +185,18 @@ fn tuple_into_fragment_preserves_order() {
 #[test]
 fn nested_tuples_flatten_in_order() {
     let v = (
-        ElementHandle::from_raw(1),
-        (ElementHandle::from_raw(2), ElementHandle::from_raw(3)),
-        ElementHandle::from_raw(4),
+        Element::from_raw(1),
+        (Element::from_raw(2), Element::from_raw(3)),
+        Element::from_raw(4),
     )
         .into_view();
     assert_eq!(
         v.elements(),
         vec![
-            ElementHandle::from_raw(1),
-            ElementHandle::from_raw(2),
-            ElementHandle::from_raw(3),
-            ElementHandle::from_raw(4),
+            Element::from_raw(1),
+            Element::from_raw(2),
+            Element::from_raw(3),
+            Element::from_raw(4),
         ]
     );
 }
@@ -215,10 +207,10 @@ fn view_attach_appends_each_leaf() {
     with_installed_renderer(Box::new(renderer), || {
         let parent = create_element(ElementTag::View);
         let frag = View::Fragment(vec![
-            View::Element(ElementHandle::from_raw(100)),
-            View::Element(ElementHandle::from_raw(200)),
+            View::Element(Element::from_raw(100)),
+            View::Element(Element::from_raw(200)),
             View::Empty,
-            View::Element(ElementHandle::from_raw(300)),
+            View::Element(Element::from_raw(300)),
         ]);
         frag.attach_to(parent);
     });

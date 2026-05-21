@@ -1,4 +1,4 @@
-//! [`ElementHandle`] — opaque, `Copy`, backend-agnostic identifier.
+//! [`Element`] — opaque, `Copy`, backend-agnostic identifier.
 //!
 //! IDs are allocated by the renderer's [`create_element`] call and
 //! are valid until [`release_element`] (or the renderer being
@@ -12,9 +12,9 @@
 /// Backend-agnostic element handle. `Copy` so it threads through
 /// reactive closures without lifetime gymnastics.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ElementHandle(pub(crate) u32);
+pub struct Element(pub(crate) u32);
 
-impl ElementHandle {
+impl Element {
     /// The numeric id this handle wraps. Mostly useful for renderers
     /// that store per-element state in side maps.
     pub fn id(self) -> u32 {

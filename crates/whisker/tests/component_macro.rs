@@ -2,7 +2,7 @@
 //!
 //! Originally tested `#[component]` decorated functions with various
 //! return types. After the True per-component remount change
-//! (`#[component]` now always returns `ElementHandle` via the
+//! (`#[component]` now always returns `Element` via the
 //! remountable mount path), this file exercises the underlying
 //! `mount_component` API directly to verify owner cascade /
 //! cleanup semantics that the proc-macro is built on. The macro's
@@ -17,7 +17,7 @@ use whisker::runtime::reactive::{
 };
 
 // Stable fn pointers for the tests. Using these instead of
-// component fns since the macro now forces an `ElementHandle`
+// component fns since the macro now forces an `Element`
 // return type and the owner-mechanic tests don't render anything.
 fn dummy_outer() {}
 fn dummy_inner() {}

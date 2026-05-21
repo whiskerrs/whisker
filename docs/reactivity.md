@@ -181,7 +181,7 @@ closures**. When you want to pass a derived value, build it with
 
 ```rust
 #[component]
-fn display(value: ReadSignal<i32>) -> ElementHandle {
+fn display(value: ReadSignal<i32>) -> Element {
     render! { text { {format!("{}", value.get())} } }
 }
 
@@ -210,10 +210,10 @@ C).
 
 ```rust
 use whisker::prelude::*;
-use whisker::runtime::view::ElementHandle;
+use whisker::runtime::view::Element;
 
 #[component]
-fn counter(initial: i32) -> ElementHandle {
+fn counter(initial: i32) -> Element {
     let count = RwSignal::new(initial);
 
     effect(move || log::info!("count is {}", count.get()));
@@ -243,7 +243,7 @@ calls.
 
 ```rust
 #[component]
-fn greeting(name: String, count: ReadSignal<i32>) -> ElementHandle {
+fn greeting(name: String, count: ReadSignal<i32>) -> Element {
     render! {
         text { "Hello, " {name.clone()} " ×" {count.get()} }
     }
@@ -276,7 +276,7 @@ fn badge(
     label: String,
     color: Option<String>,                  // omittable, or pass &str
     #[prop(default = 12)] padding: i32,     // omittable; default 12
-) -> ElementHandle { /* … */ }
+) -> Element { /* … */ }
 
 render! { badge(label: "new") }                          // both defaults
 render! { badge(label: "new", color: "red", padding: 8) }
@@ -290,7 +290,7 @@ call's `{…}` block:
 
 ```rust
 #[component]
-fn card(title: String, children: Children) -> ElementHandle {
+fn card(title: String, children: Children) -> Element {
     render! {
         view {
             text { {title.clone()} }
@@ -314,7 +314,7 @@ must implement `Clone` (or `Copy`, which implies it).
 
 ```rust
 #[component]
-fn user_card(user: User, badges: Vec<Badge>) -> ElementHandle { /* ... */ }
+fn user_card(user: User, badges: Vec<Badge>) -> Element { /* ... */ }
 
 #[derive(Clone)]                    // ← required
 struct User { name: String, id: u64 }
@@ -353,7 +353,7 @@ want to put in a prop is already `Clone`:
 ```rust
 // `Box<dyn Fn() + 'static>` is not Clone, but Rc<dyn Fn() + 'static> is.
 #[component]
-fn button(label: &'static str, on_click: Rc<dyn Fn() + 'static>) -> ElementHandle {
+fn button(label: &'static str, on_click: Rc<dyn Fn() + 'static>) -> Element {
     render! {
         view(on_tap: move || on_click()) {
             text { {label} }
@@ -397,13 +397,13 @@ Pass values down through the owner tree without prop-drilling:
 
 ```rust
 #[component]
-fn app() -> ElementHandle {
+fn app() -> Element {
     provide_context(Theme::Dark);
     render! { my_inner_component() }
 }
 
 #[component]
-fn my_inner_component() -> ElementHandle {
+fn my_inner_component() -> Element {
     let theme = use_context::<Theme>().unwrap_or(Theme::Light);
     /* ... */
 }
@@ -489,7 +489,7 @@ is cheap:
 
 ```rust
 #[component]
-fn parent() -> ElementHandle {
+fn parent() -> Element {
     let count = RwSignal::new(0);
     render! {
         view {
@@ -500,12 +500,12 @@ fn parent() -> ElementHandle {
 }
 
 #[component]
-fn display(count: RwSignal<i32>) -> ElementHandle {
+fn display(count: RwSignal<i32>) -> Element {
     render! { text { {count.get()} } }
 }
 
 #[component]
-fn controls(count: RwSignal<i32>) -> ElementHandle {
+fn controls(count: RwSignal<i32>) -> Element {
     render! {
         view(on_tap: move || count.update(|n| *n += 1)) {
             text { "+1" }
@@ -527,7 +527,7 @@ struct AppState {
 }
 
 #[component]
-fn app() -> ElementHandle {
+fn app() -> Element {
     provide_context(AppState {
         count: RwSignal::new(0),
         theme: RwSignal::new(Theme::Dark),
@@ -536,7 +536,7 @@ fn app() -> ElementHandle {
 }
 
 #[component]
-fn some_deep_descendant() -> ElementHandle {
+fn some_deep_descendant() -> Element {
     let state = use_context::<AppState>().unwrap();
     render! { text { {state.count.get()} } }
 }

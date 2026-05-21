@@ -20,7 +20,7 @@ use std::rc::Rc;
 use crate::element::ElementTag;
 use crate::reactive::{create_owner, dispose_owner, effect, with_owner};
 
-use super::handle::ElementHandle;
+use super::handle::Element;
 use super::into_view::{IntoView, View};
 use super::renderer::create_element;
 
@@ -33,13 +33,13 @@ use super::renderer::create_element;
 /// instantiated, so state from the previous branch is not
 /// accidentally retained.
 ///
-/// Returns the wrapper [`ElementHandle`] — the parent attaches this
+/// Returns the wrapper [`Element`] — the parent attaches this
 /// once and the inner content swaps in place.
 pub fn show(
     when: impl Fn() -> bool + 'static,
     children: impl Fn() -> View + 'static,
     fallback: Option<Box<dyn Fn() -> View + 'static>>,
-) -> ElementHandle {
+) -> Element {
     let wrapper = create_element(ElementTag::View);
     // Track the currently-mounted owner so we can dispose it on the
     // next flip. `Rc<RefCell>` because the effect closure runs many
@@ -89,7 +89,7 @@ pub fn for_each<T, K, V, EachFn, KeyFn, ChildFn>(
     each: EachFn,
     key: KeyFn,
     children: ChildFn,
-) -> ElementHandle
+) -> Element
 where
     T: 'static,
     K: Eq + Hash + Clone + 'static,
@@ -108,7 +108,7 @@ where
     // re-attach in the new order during a reorder.
     struct Entry {
         owner: crate::reactive::OwnerId,
-        handles: Vec<ElementHandle>,
+        handles: Vec<Element>,
     }
     let entries: Rc<RefCell<HashMap<K, Entry>>> = Rc::new(RefCell::new(HashMap::new()));
 

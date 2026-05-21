@@ -20,7 +20,7 @@
 //!
 //! Exercises a wide slice of the Whisker surface:
 //!
-//! - `#[whisker::main]` returning `ElementHandle`.
+//! - `#[whisker::main]` returning `Element`.
 //! - `RwSignal<T>` shared by passing a `Copy` `AppState` through
 //!   the component tree.
 //! - `render!` with `text(value: …)` kwargs, `style:` and other
@@ -29,7 +29,7 @@
 //!   shadows, `position: absolute`.
 
 use whisker::prelude::*;
-use whisker::runtime::view::ElementHandle;
+use whisker::runtime::view::Element;
 
 // ---- App state --------------------------------------------------------------
 
@@ -71,12 +71,7 @@ const ACCENT_2: &str = "#ff5e9b";
 // ---- Building blocks --------------------------------------------------------
 
 #[component]
-fn art_tile(
-    c1: &'static str,
-    c2: &'static str,
-    w: &'static str,
-    radius: &'static str,
-) -> ElementHandle {
+fn art_tile(c1: &'static str, c2: &'static str, w: &'static str, radius: &'static str) -> Element {
     let style = format!(
         "width: {w}; aspect-ratio: 1; border-radius: {radius}; \
          background-image: linear-gradient(135deg, {c1} 0%, {c2} 100%);"
@@ -87,7 +82,7 @@ fn art_tile(
 }
 
 #[component]
-fn chip(label: &'static str, accented: bool) -> ElementHandle {
+fn chip(label: &'static str, accented: bool) -> Element {
     let (bg, fg) = if accented {
         (ACCENT, TEXT_PRIMARY)
     } else {
@@ -104,7 +99,7 @@ fn chip(label: &'static str, accented: bool) -> ElementHandle {
 }
 
 #[component]
-fn section_header(title: &'static str) -> ElementHandle {
+fn section_header(title: &'static str) -> Element {
     render! {
         view {
             text(
@@ -125,7 +120,7 @@ fn recent_card(
     sub: &'static str,
     c1: &'static str,
     c2: &'static str,
-) -> ElementHandle {
+) -> Element {
     let title_style =
         format!("font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; margin-top: 8px;");
     let sub_style = format!("font-size: 12px; color: {TEXT_SECONDARY}; margin-top: 2px;");
@@ -145,7 +140,7 @@ fn grid_tile(
     c1: &'static str,
     c2: &'static str,
     state: AppState,
-) -> ElementHandle {
+) -> Element {
     let bitmask = state.liked_mixes;
     let liked_bit = 1u8 << index;
     let on_heart = move || bitmask.update(|b| *b ^= liked_bit);
@@ -197,7 +192,7 @@ fn activity_row(
     title: &'static str,
     sub: &'static str,
     when: &'static str,
-) -> ElementHandle {
+) -> Element {
     let avatar_style = format!(
         "width: 44px; height: 44px; border-radius: 22px; \
          background-image: linear-gradient(135deg, {c1} 0%, {c2} 100%); \
@@ -227,12 +222,7 @@ fn activity_row(
 }
 
 #[component]
-fn tab_item(
-    index: usize,
-    label: &'static str,
-    glyph: &'static str,
-    state: AppState,
-) -> ElementHandle {
+fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppState) -> Element {
     let tab = state.selected_tab;
     let on_pick = move || tab.set(index);
     let glyph_style = move || {
@@ -262,7 +252,7 @@ fn tab_item(
 }
 
 #[component]
-fn tab_bar(state: AppState) -> ElementHandle {
+fn tab_bar(state: AppState) -> Element {
     let style = format!(
         "position: absolute; left: 0; right: 0; bottom: 0; \
          display: flex; flex-direction: row; justify-content: space-around; \
@@ -281,7 +271,7 @@ fn tab_bar(state: AppState) -> ElementHandle {
 }
 
 #[component]
-fn now_playing(state: AppState) -> ElementHandle {
+fn now_playing(state: AppState) -> Element {
     let playing = state.is_playing;
     let toggle = move || playing.update(|p| *p = !*p);
     let glyph = move || if playing.get() { "▌▌" } else { "▶" };
@@ -318,7 +308,7 @@ fn now_playing(state: AppState) -> ElementHandle {
 }
 
 #[component]
-fn header() -> ElementHandle {
+fn header() -> Element {
     let bg_style = format!(
         "width: 100%; padding: 60px 20px 18px; \
          background-image: linear-gradient(180deg, #2c1860 0%, {BG} 100%); \
@@ -356,7 +346,7 @@ fn header() -> ElementHandle {
 }
 
 #[component]
-fn chips() -> ElementHandle {
+fn chips() -> Element {
     render! {
         view(style: "display: flex; flex-direction: row; padding: 0 20px 8px; flex-wrap: nowrap;") {
             chip(label: "All",        accented: true)
@@ -368,7 +358,7 @@ fn chips() -> ElementHandle {
 }
 
 #[component]
-fn recents() -> ElementHandle {
+fn recents() -> Element {
     render! {
         scroll_view(
             scroll_orientation: "horizontal",
@@ -384,7 +374,7 @@ fn recents() -> ElementHandle {
 }
 
 #[component]
-fn featured() -> ElementHandle {
+fn featured() -> Element {
     let cap = format!(
         "font-size: 12px; color: {TEXT_SECONDARY}; \
          text-transform: uppercase; letter-spacing: 1.5px;"
@@ -406,7 +396,7 @@ fn featured() -> ElementHandle {
 }
 
 #[component]
-fn grid(state: AppState) -> ElementHandle {
+fn grid(state: AppState) -> Element {
     render! {
         view(style: "padding: 4px 20px 0; display: flex; flex-direction: row; \
                      flex-wrap: wrap; justify-content: space-between;") {
@@ -421,7 +411,7 @@ fn grid(state: AppState) -> ElementHandle {
 }
 
 #[component]
-fn activity_feed() -> ElementHandle {
+fn activity_feed() -> Element {
     render! {
         view(style: "display: flex; flex-direction: column; padding: 0 0 8px;") {
             activity_row(initial: "A", c1: "#ff7e5f", c2: "#feb47b", title: "Alice", sub: "Started following you",            when: "2m")
@@ -434,7 +424,7 @@ fn activity_feed() -> ElementHandle {
 }
 
 #[component]
-fn scroll_body(state: AppState) -> ElementHandle {
+fn scroll_body(state: AppState) -> Element {
     let style = format!(
         "flex-grow: 1; flex-shrink: 1; width: 100%; background-color: {BG}; \
          display: flex; flex-direction: column;"
@@ -458,7 +448,7 @@ fn scroll_body(state: AppState) -> ElementHandle {
 // ---- Main app ---------------------------------------------------------------
 
 #[whisker::main]
-fn app() -> ElementHandle {
+fn app() -> Element {
     // Allocate every app-wide signal in the bootstrap owner. `AppState`
     // is `Copy`, so threading it through `#[component]` props below
     // doesn't introduce any `move ||` boilerplate.

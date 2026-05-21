@@ -59,7 +59,7 @@ pub fn expand(input: TokenStream) -> TokenStream {
         Ok(root) => root.to_tokens().into(),
         Err(err) => {
             // Pair the compile_error with a same-typed placeholder
-            // so the surrounding code (`let h: ElementHandle = render!
+            // so the surrounding code (`let h: Element = render!
             // { … };`) keeps type-checking and diagnostics stay
             // confined to the actual syntax error. Same approach
             // leptos uses for its `view!` macro.

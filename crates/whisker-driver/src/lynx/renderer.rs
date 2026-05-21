@@ -6,7 +6,7 @@
 //! invoking the user's `render!`-bearing fn, so the macro's
 //! `create_element` / `set_attribute` / etc. calls land here.
 //!
-//! Translation layer: the public `ElementHandle` is a `u32` index
+//! Translation layer: the public `Element` is a `u32` index
 //! assigned by [`BridgeRenderer::create_element`]. Internally a
 //! `Vec<Option<NonNull<WhiskerElement>>>` maps each index back to the
 //! raw C pointer the bridge gave us. Released slots become `None`;
@@ -18,13 +18,13 @@ use std::ptr::NonNull;
 
 use whisker_driver_sys::{self as ffi, WhiskerElement, WhiskerElementTag, WhiskerEngine};
 use whisker_runtime::element::ElementTag;
-use whisker_runtime::view::{DynRenderer, ElementHandle};
+use whisker_runtime::view::{DynRenderer, Element};
 
 pub struct BridgeRenderer {
     engine: NonNull<WhiskerEngine>,
     /// Index → raw C element pointer. `None` means the slot has been
     /// released. Index assigned at `create_element` time, returned in
-    /// the public `ElementHandle`.
+    /// the public `Element`.
     elements: Vec<Option<NonNull<WhiskerElement>>>,
     /// Owned per-event listener closures. See the type-shape comment
     /// on the old `Renderer` impl for the double-box rationale —
@@ -51,7 +51,7 @@ impl BridgeRenderer {
         self.engine.as_ptr()
     }
 
-    fn lookup(&self, handle: ElementHandle) -> Option<NonNull<WhiskerElement>> {
+    fn lookup(&self, handle: Element) -> Option<NonNull<WhiskerElement>> {
         self.elements
             .get(handle.id() as usize)
             .and_then(|slot| *slot)
@@ -70,18 +70,18 @@ fn map_tag(tag: ElementTag) -> WhiskerElementTag {
 }
 
 impl DynRenderer for BridgeRenderer {
-    fn create_element(&mut self, tag: ElementTag) -> ElementHandle {
+    fn create_element(&mut self, tag: ElementTag) -> Element {
         let raw = unsafe { ffi::whisker_bridge_create_element(self.engine_ptr(), map_tag(tag)) };
         let ptr = match NonNull::new(raw) {
             Some(p) => p,
-            None => return ElementHandle::from_raw(u32::MAX),
+            None => return Element::from_raw(u32::MAX),
         };
         let id = self.elements.len() as u32;
         self.elements.push(Some(ptr));
-        ElementHandle::from_raw(id)
+        Element::from_raw(id)
     }
 
-    fn release_element(&mut self, handle: ElementHandle) {
+    fn release_element(&mut self, handle: Element) {
         if let Some(slot) = self.elements.get_mut(handle.id() as usize) {
             if let Some(ptr) = slot.take() {
                 unsafe { ffi::whisker_bridge_release_element(ptr.as_ptr()) };
@@ -89,7 +89,7 @@ impl DynRenderer for BridgeRenderer {
         }
     }
 
-    fn set_attribute(&mut self, handle: ElementHandle, key: &str, value: &str) {
+    fn set_attribute(&mut self, handle: Element, key: &str, value: &str) {
         let Some(ptr) = self.lookup(handle) else {
             return;
         };
@@ -102,7 +102,7 @@ impl DynRenderer for BridgeRenderer {
         };
     }
 
-    fn set_inline_styles(&mut self, handle: ElementHandle, css: &str) {
+    fn set_inline_styles(&mut self, handle: Element, css: &str) {
         let Some(ptr) = self.lookup(handle) else {
             return;
         };
@@ -110,13 +110,13 @@ impl DynRenderer for BridgeRenderer {
         unsafe { ffi::whisker_bridge_set_inline_styles(ptr.as_ptr(), css_c.as_ptr()) };
     }
 
-    fn append_child(&mut self, parent: ElementHandle, child: ElementHandle) {
+    fn append_child(&mut self, parent: Element, child: Element) {
         let Some(p) = self.lookup(parent) else { return };
         let Some(c) = self.lookup(child) else { return };
         unsafe { ffi::whisker_bridge_append_child(p.as_ptr(), c.as_ptr()) };
     }
 
-    fn remove_child(&mut self, parent: ElementHandle, child: ElementHandle) {
+    fn remove_child(&mut self, parent: Element, child: Element) {
         let Some(p) = self.lookup(parent) else { return };
         let Some(c) = self.lookup(child) else { return };
         unsafe { ffi::whisker_bridge_remove_child(p.as_ptr(), c.as_ptr()) };
@@ -124,7 +124,7 @@ impl DynRenderer for BridgeRenderer {
 
     fn set_event_listener(
         &mut self,
-        handle: ElementHandle,
+        handle: Element,
         event_name: &str,
         callback: Box<dyn Fn() + 'static>,
     ) {
@@ -147,7 +147,7 @@ impl DynRenderer for BridgeRenderer {
         };
     }
 
-    fn set_root(&mut self, page: ElementHandle) {
+    fn set_root(&mut self, page: Element) {
         let Some(ptr) = self.lookup(page) else { return };
         unsafe { ffi::whisker_bridge_set_root(self.engine_ptr(), ptr.as_ptr()) };
     }

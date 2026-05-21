@@ -14,7 +14,7 @@ use std::rc::Rc;
 use hn_reader::{hn_reader, HnReaderProps};
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, create_owner, with_owner};
-use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, ElementHandle};
+use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
@@ -40,40 +40,40 @@ impl Recorder {
 }
 
 impl DynRenderer for Recorder {
-    fn create_element(&mut self, tag: ElementTag) -> ElementHandle {
+    fn create_element(&mut self, tag: ElementTag) -> Element {
         let id = self.next;
         self.next += 1;
         self.log.borrow_mut().push(Op::Create { id, tag });
-        ElementHandle::from_raw(id)
+        Element::from_raw(id)
     }
-    fn release_element(&mut self, _h: ElementHandle) {}
-    fn set_attribute(&mut self, h: ElementHandle, k: &str, v: &str) {
+    fn release_element(&mut self, _h: Element) {}
+    fn set_attribute(&mut self, h: Element, k: &str, v: &str) {
         self.log.borrow_mut().push(Op::SetAttr {
             id: h.id(),
             key: k.into(),
             value: v.into(),
         });
     }
-    fn set_inline_styles(&mut self, h: ElementHandle, css: &str) {
+    fn set_inline_styles(&mut self, h: Element, css: &str) {
         self.log.borrow_mut().push(Op::SetStyles {
             id: h.id(),
             css: css.into(),
         });
     }
-    fn append_child(&mut self, p: ElementHandle, c: ElementHandle) {
+    fn append_child(&mut self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
             parent: p.id(),
             child: c.id(),
         });
     }
-    fn remove_child(&mut self, _p: ElementHandle, _c: ElementHandle) {}
-    fn set_event_listener(&mut self, h: ElementHandle, name: &str, _cb: Box<dyn Fn() + 'static>) {
+    fn remove_child(&mut self, _p: Element, _c: Element) {}
+    fn set_event_listener(&mut self, h: Element, name: &str, _cb: Box<dyn Fn() + 'static>) {
         self.log.borrow_mut().push(Op::Event {
             id: h.id(),
             name: name.into(),
         });
     }
-    fn set_root(&mut self, _p: ElementHandle) {}
+    fn set_root(&mut self, _p: Element) {}
     fn flush(&mut self) {}
 }
 
