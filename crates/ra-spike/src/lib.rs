@@ -146,3 +146,21 @@ impl ViewPropsBuilder {
 pub fn view(_props: ViewProps) -> ElementHandle {
     ElementHandle(0)
 }
+
+// ---- J-variant top-level helpers ---------------------------------
+//
+// `view()` works as a child in D because `view` is *also* a real
+// `pub fn` at this crate's root (the compose_c path uses it). When
+// RA's input fixup tries to resolve the children-block tokens, it
+// can name-resolve `view` → that `fn`. For J's `text("…")` and
+// `expr(x)` to enjoy the same treatment, the idents must also
+// name-resolve. These free functions are otherwise unused — only
+// here so the macro INPUT looks like calls to real functions.
+
+pub fn text(_value: impl ::std::string::ToString) -> ElementHandle {
+    ElementHandle(0)
+}
+
+pub fn expr<T: ::std::fmt::Display>(_value: T) -> ElementHandle {
+    ElementHandle(0)
+}

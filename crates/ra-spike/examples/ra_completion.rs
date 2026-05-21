@@ -15,7 +15,9 @@
 
 #![allow(dead_code, unused_imports, unused_variables, unused_must_use)]
 
-use ra_spike::{compose_a, compose_b, compose_c, render, render_g, render_h, render_i, render_j};
+use ra_spike::{
+    compose_a, compose_b, compose_c, expr, render, render_g, render_h, render_i, render_j, text,
+};
 
 fn main() {}
 
