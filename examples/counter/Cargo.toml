@@ -9,7 +9,7 @@ description = "Minimal Whisker counter — canonical Phase 6.5a render! / signal
 # and the macro expansion behaves as documented. Mobile deployment
 # (the `whisker_app_main` FFI path) wires up only once Step 5b
 # rebuilds the production bootstrap against the new `render!` /
-# `ElementHandle` return type — see #11.
+# `Element` return type — see #11.
 [lib]
 crate-type = ["rlib"]
 

@@ -6,7 +6,7 @@
 //! use whisker::prelude::*;
 //!
 //! #[whisker::main]
-//! fn app() -> ElementHandle {
+//! fn app() -> Element {
 //!     render! { page { text { "Hello" } } }
 //! }
 //! ```
@@ -20,7 +20,7 @@
 //!    `DynRenderer` so `view::create_element` / `set_attribute` / …
 //!    inside the user's `render!` macro route through the bridge.
 //! 3. We invoke `app()`. The user's body runs `render!`, which
-//!    populates the Lynx element tree and returns an `ElementHandle`
+//!    populates the Lynx element tree and returns an `Element`
 //!    for the root.
 //! 4. We call `view::set_root(root)` and `view::flush()` to commit
 //!    the initial frame.
@@ -51,7 +51,7 @@ use whisker_runtime::reactive::{
     flush as reactive_flush, flush_mounts as reactive_flush_mounts, remount_components_for,
 };
 use whisker_runtime::view::{
-    flush as renderer_flush, install_renderer, set_root, DynRenderer, ElementHandle,
+    flush as renderer_flush, install_renderer, set_root, DynRenderer, Element,
 };
 
 thread_local! {
@@ -77,7 +77,7 @@ pub fn run<F>(
     request_frame_data: *mut c_void,
     app_fn: F,
 ) where
-    F: FnOnce() -> ElementHandle + 'static,
+    F: FnOnce() -> Element + 'static,
 {
     if engine_raw.is_null() {
         return;
@@ -85,7 +85,7 @@ pub fn run<F>(
     // Boxed init context, handed across the C ABI via raw pointer.
     let ctx = Box::new(InitCtx {
         engine: engine_raw as *mut WhiskerEngine,
-        app_fn: Some(Box::new(app_fn) as Box<dyn FnOnce() -> ElementHandle + 'static>),
+        app_fn: Some(Box::new(app_fn) as Box<dyn FnOnce() -> Element + 'static>),
         request_frame,
         request_frame_data,
     });
@@ -99,7 +99,7 @@ struct InitCtx {
     /// to call it. `FnOnce` because the user fn is invoked once at
     /// mount; subsequent re-renders happen incrementally through the
     /// reactive runtime, not by re-calling this fn.
-    app_fn: Option<Box<dyn FnOnce() -> ElementHandle + 'static>>,
+    app_fn: Option<Box<dyn FnOnce() -> Element + 'static>>,
     request_frame: Option<extern "C" fn(*mut c_void)>,
     request_frame_data: *mut c_void,
 }

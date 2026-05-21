@@ -10,10 +10,10 @@ Whisker lets you build native iOS and Android apps in Rust with a Leptos-style *
 
 ```rust
 use whisker::prelude::*;
-use whisker::runtime::view::ElementHandle;
+use whisker::runtime::view::Element;
 
 #[whisker::main]
-fn app() -> ElementHandle {
+fn app() -> Element {
     let count = RwSignal::new(0);
     render! {
         page {

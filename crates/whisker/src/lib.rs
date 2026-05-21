@@ -80,8 +80,7 @@ pub mod __tags {
     use crate::ElementTag;
     use whisker_runtime::reactive::effect;
     use whisker_runtime::view::{
-        append_child, create_element, set_attribute, set_event_listener, set_inline_styles,
-        ElementHandle,
+        append_child, create_element, set_attribute, set_event_listener, set_inline_styles, Element,
     };
 
     // Each built-in tag is a struct + a hand-written inherent
@@ -101,7 +100,7 @@ pub mod __tags {
     /// direction) and a single content subtree.
     #[allow(non_camel_case_types)]
     pub struct page {
-        handle: ElementHandle,
+        handle: Element,
     }
     #[allow(non_snake_case)]
     pub fn __page_ctor() -> page {
@@ -152,13 +151,13 @@ pub mod __tags {
             self
         }
         /// Append a child handle.
-        pub fn child(self, child: ElementHandle) -> Self {
+        pub fn child(self, child: Element) -> Self {
             append_child(self.handle, child);
             self
         }
         /// Finish building and return the underlying handle.
         #[allow(non_snake_case)]
-        pub fn __h(self) -> ElementHandle {
+        pub fn __h(self) -> Element {
             self.handle
         }
     }
@@ -169,7 +168,7 @@ pub mod __tags {
     /// React Native or `<div>` in the web.
     #[allow(non_camel_case_types)]
     pub struct view {
-        handle: ElementHandle,
+        handle: Element,
     }
     #[allow(non_snake_case)]
     pub fn __view_ctor() -> view {
@@ -220,13 +219,13 @@ pub mod __tags {
             self
         }
         /// Append a child handle.
-        pub fn child(self, child: ElementHandle) -> Self {
+        pub fn child(self, child: Element) -> Self {
             append_child(self.handle, child);
             self
         }
         /// Finish building and return the underlying handle.
         #[allow(non_snake_case)]
-        pub fn __h(self) -> ElementHandle {
+        pub fn __h(self) -> Element {
             self.handle
         }
     }
@@ -236,7 +235,7 @@ pub mod __tags {
     /// string-literal children.
     #[allow(non_camel_case_types)]
     pub struct text {
-        handle: ElementHandle,
+        handle: Element,
     }
     #[allow(non_snake_case)]
     pub fn __text_ctor() -> text {
@@ -280,7 +279,7 @@ pub mod __tags {
             effect(move || set_attribute(h, name, &f().to_string()));
             self
         }
-        pub fn child(self, child: ElementHandle) -> Self {
+        pub fn child(self, child: Element) -> Self {
             append_child(self.handle, child);
             self
         }
@@ -303,7 +302,7 @@ pub mod __tags {
             self
         }
         #[allow(non_snake_case)]
-        pub fn __h(self) -> ElementHandle {
+        pub fn __h(self) -> Element {
             self.handle
         }
     }
@@ -313,7 +312,7 @@ pub mod __tags {
     /// string-literal children of `text` / `view`.
     #[allow(non_camel_case_types)]
     pub struct raw_text {
-        handle: ElementHandle,
+        handle: Element,
     }
     #[allow(non_snake_case)]
     pub fn __raw_text_ctor() -> raw_text {
@@ -357,12 +356,12 @@ pub mod __tags {
             effect(move || set_attribute(h, name, &f().to_string()));
             self
         }
-        pub fn child(self, child: ElementHandle) -> Self {
+        pub fn child(self, child: Element) -> Self {
             append_child(self.handle, child);
             self
         }
         #[allow(non_snake_case)]
-        pub fn __h(self) -> ElementHandle {
+        pub fn __h(self) -> Element {
             self.handle
         }
 
@@ -382,7 +381,7 @@ pub mod __tags {
     /// optionally `style=` for sizing.
     #[allow(non_camel_case_types)]
     pub struct image {
-        handle: ElementHandle,
+        handle: Element,
     }
     #[allow(non_snake_case)]
     pub fn __image_ctor() -> image {
@@ -426,12 +425,12 @@ pub mod __tags {
             effect(move || set_attribute(h, name, &f().to_string()));
             self
         }
-        pub fn child(self, child: ElementHandle) -> Self {
+        pub fn child(self, child: Element) -> Self {
             append_child(self.handle, child);
             self
         }
         #[allow(non_snake_case)]
-        pub fn __h(self) -> ElementHandle {
+        pub fn __h(self) -> Element {
             self.handle
         }
 
@@ -451,7 +450,7 @@ pub mod __tags {
     /// `scroll_orientation=` to `"vertical"` or `"horizontal"`.
     #[allow(non_camel_case_types)]
     pub struct scroll_view {
-        handle: ElementHandle,
+        handle: Element,
     }
     #[allow(non_snake_case)]
     pub fn __scroll_view_ctor() -> scroll_view {
@@ -495,12 +494,12 @@ pub mod __tags {
             effect(move || set_attribute(h, name, &f().to_string()));
             self
         }
-        pub fn child(self, child: ElementHandle) -> Self {
+        pub fn child(self, child: Element) -> Self {
             append_child(self.handle, child);
             self
         }
         #[allow(non_snake_case)]
-        pub fn __h(self) -> ElementHandle {
+        pub fn __h(self) -> Element {
             self.handle
         }
 
@@ -553,11 +552,11 @@ pub mod __main_runtime {
     ///   screen keeps showing pre-edit content.
     /// - **off** (release): body collapses to `f()`, `subsecond` is
     ///   not pulled in at all.
-    use whisker_runtime::view::ElementHandle;
+    use whisker_runtime::view::Element;
 
     #[cfg(feature = "hot-reload")]
     #[inline(always)]
-    pub fn call_user_app(f: fn() -> ElementHandle) -> ElementHandle {
+    pub fn call_user_app(f: fn() -> Element) -> Element {
         // `move` is load-bearing: without it, `|| f()` captures `f` by
         // *reference* (the body only reads `f`, and `f`'s `Copy`-ness is
         // not enough to flip Rust to by-value capture). Subsecond's
@@ -572,7 +571,7 @@ pub mod __main_runtime {
 
     #[cfg(not(feature = "hot-reload"))]
     #[inline(always)]
-    pub fn call_user_app(f: fn() -> ElementHandle) -> ElementHandle {
+    pub fn call_user_app(f: fn() -> Element) -> Element {
         f()
     }
 }

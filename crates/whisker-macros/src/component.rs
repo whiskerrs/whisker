@@ -9,7 +9,7 @@
 //!    type (string-ish primitives + `Option<T>` get `into` /
 //!    `strip_option`, `Children` gets a default) and any `#[prop(...)]`
 //!    attributes the user wrote.
-//! 2. A rewritten `fn xxx(__props: XxxProps) -> ElementHandle { … }`
+//! 2. A rewritten `fn xxx(__props: XxxProps) -> Element { … }`
 //!    that destructures the props back into local variables and runs
 //!    the user's original body inside the existing
 //!    `mount_component_remountable` hot-reload machinery.
@@ -194,7 +194,7 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
             // inner, which has to live at the user crate's source
             // position for hot reload to find it).
             let __body: ::std::boxed::Box<
-                dyn ::std::ops::Fn() -> ::whisker::runtime::view::ElementHandle + 'static,
+                dyn ::std::ops::Fn() -> ::whisker::runtime::view::Element + 'static,
             > = ::std::boxed::Box::new(move || {
                 #(#restores)*
                 ::whisker::__hot::call(move || {
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn expand_emits_props_struct_and_rewritten_fn() {
         let input: TokenStream2 = quote! {
-            fn card(title: String) -> ElementHandle {
+            fn card(title: String) -> Element {
                 render! { view { text { {title.clone()} } } }
             }
         };
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn expand_handles_no_param_component() {
         let input: TokenStream2 = quote! {
-            fn header() -> ElementHandle {
+            fn header() -> Element {
                 render! { view { text { "Hi" } } }
             }
         };
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn expand_handles_option_param() {
         let input: TokenStream2 = quote! {
-            fn x(label: Option<String>) -> ElementHandle {
+            fn x(label: Option<String>) -> Element {
                 render! { view {} }
             }
         };
@@ -576,7 +576,7 @@ mod tests {
     #[test]
     fn expand_handles_generic_component() {
         let input: TokenStream2 = quote! {
-            fn typed<T: Clone + 'static>(value: T) -> ElementHandle {
+            fn typed<T: Clone + 'static>(value: T) -> Element {
                 render! { view {} }
             }
         };
@@ -595,7 +595,7 @@ mod tests {
         // `setter(into)`, otherwise `Into<T>` with unconstrained `T`
         // breaks call-site inference. Concrete fields keep `into`.
         let input: TokenStream2 = quote! {
-            fn typed<T: Clone + 'static>(value: T, label: String) -> ElementHandle {
+            fn typed<T: Clone + 'static>(value: T, label: String) -> Element {
                 render! { view {} }
             }
         };
@@ -623,7 +623,7 @@ mod tests {
         // `Option<T>` where T is generic: still need strip_option,
         // but `into` would need a known target type → must be skipped.
         let input: TokenStream2 = quote! {
-            fn typed<T: Clone + 'static>(value: Option<T>) -> ElementHandle {
+            fn typed<T: Clone + 'static>(value: Option<T>) -> Element {
                 render! { view {} }
             }
         };

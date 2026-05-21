@@ -47,7 +47,7 @@ pub struct AppState {
 /// - `Show` toggles a celebratory message in/out depending on a
 ///   memo that derives from the same signal.
 #[component]
-pub fn counter(state: AppState) -> whisker::runtime::view::ElementHandle {
+pub fn counter(state: AppState) -> whisker::runtime::view::Element {
     let big_enough = memo(move || state.count.get() > 10);
 
     render! {
@@ -91,7 +91,7 @@ pub fn counter(state: AppState) -> whisker::runtime::view::ElementHandle {
 /// Mount the root component. Creates the shared state and invokes
 /// the counter component. The returned handle is what a host would
 /// hand to `set_root(...)` once deployed.
-pub fn render_app() -> whisker::runtime::view::ElementHandle {
+pub fn render_app() -> whisker::runtime::view::Element {
     let state = AppState {
         count: RwSignal::new(0),
     };

@@ -64,9 +64,9 @@ const RA_VERSION: &str = "2026-05-18";
 fn partial_kwarg_in_render_completes_builder_methods() {
     let source = r#"
 use whisker::prelude::*;
-use whisker::runtime::view::ElementHandle;
+use whisker::runtime::view::Element;
 
-fn probe() -> ElementHandle {
+fn probe() -> Element {
     render! {
         view(sty|)
     }
@@ -89,10 +89,10 @@ fn partial_kwarg_inside_component_body_completes_builder_methods() {
     // body, which the proc-macro rewrites into nested closures.
     let source = r#"
 use whisker::prelude::*;
-use whisker::runtime::view::ElementHandle;
+use whisker::runtime::view::Element;
 
 #[component]
-fn probe() -> ElementHandle {
+fn probe() -> Element {
     render! {
         view(sty|)
     }
@@ -111,9 +111,9 @@ fn partial_tag_name_at_root_completes_to_builtin_view() {
     // root of a render! should surface `view` (built-in tag).
     let source = r#"
 use whisker::prelude::*;
-use whisker::runtime::view::ElementHandle;
+use whisker::runtime::view::Element;
 
-fn probe() -> ElementHandle {
+fn probe() -> Element {
     render! {
         vie|
     }
@@ -130,9 +130,9 @@ fn probe() -> ElementHandle {
 fn partial_tag_name_in_children_block_completes_to_builtin_view() {
     let source = r#"
 use whisker::prelude::*;
-use whisker::runtime::view::ElementHandle;
+use whisker::runtime::view::Element;
 
-fn probe() -> ElementHandle {
+fn probe() -> Element {
     render! {
         view() {
             vie|

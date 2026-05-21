@@ -20,9 +20,7 @@ use whisker::prelude::*;
 use whisker::runtime::reactive::{
     __reset_for_tests, __reset_pending_mount_for_tests, create_owner,
 };
-use whisker::runtime::view::{
-    install_renderer, uninstall_renderer, DynRenderer, ElementHandle, View,
-};
+use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element, View};
 use whisker::with_owner;
 
 // ----- Recording renderer ----------------------------------------------------
@@ -42,36 +40,35 @@ struct Recorder {
 }
 
 impl DynRenderer for Recorder {
-    fn create_element(&mut self, tag: ElementTag) -> ElementHandle {
+    fn create_element(&mut self, tag: ElementTag) -> Element {
         let id = self.next;
         self.next += 1;
         self.log.borrow_mut().push(Op::Create { id, tag });
-        ElementHandle::from_raw(id)
+        Element::from_raw(id)
     }
-    fn release_element(&mut self, _h: ElementHandle) {}
-    fn set_attribute(&mut self, h: ElementHandle, k: &str, v: &str) {
+    fn release_element(&mut self, _h: Element) {}
+    fn set_attribute(&mut self, h: Element, k: &str, v: &str) {
         self.log.borrow_mut().push(Op::SetAttr {
             id: h.id(),
             key: k.into(),
             value: v.into(),
         });
     }
-    fn set_inline_styles(&mut self, h: ElementHandle, css: &str) {
+    fn set_inline_styles(&mut self, h: Element, css: &str) {
         self.log.borrow_mut().push(Op::SetStyles {
             id: h.id(),
             css: css.into(),
         });
     }
-    fn append_child(&mut self, p: ElementHandle, c: ElementHandle) {
+    fn append_child(&mut self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
             parent: p.id(),
             child: c.id(),
         });
     }
-    fn remove_child(&mut self, _p: ElementHandle, _c: ElementHandle) {}
-    fn set_event_listener(&mut self, _h: ElementHandle, _name: &str, _cb: Box<dyn Fn() + 'static>) {
-    }
-    fn set_root(&mut self, _p: ElementHandle) {}
+    fn remove_child(&mut self, _p: Element, _c: Element) {}
+    fn set_event_listener(&mut self, _h: Element, _name: &str, _cb: Box<dyn Fn() + 'static>) {}
+    fn set_root(&mut self, _p: Element) {}
     fn flush(&mut self) {}
 }
 
@@ -110,25 +107,25 @@ fn push_capture(s: impl Into<String>) {
 // ----- Test components -------------------------------------------------------
 
 #[component]
-fn no_props_component() -> ElementHandle {
+fn no_props_component() -> Element {
     push_capture("no_props_component:invoked");
     render! { view() }
 }
 
 #[component]
-fn one_string_prop(label: String) -> ElementHandle {
+fn one_string_prop(label: String) -> Element {
     push_capture(format!("one_string_prop:label={label}"));
     render! { view() }
 }
 
 #[component]
-fn two_props(title: String, count: i32) -> ElementHandle {
+fn two_props(title: String, count: i32) -> Element {
     push_capture(format!("two_props:title={title},count={count}"));
     render! { view() }
 }
 
 #[component]
-fn option_prop(alt: Option<String>) -> ElementHandle {
+fn option_prop(alt: Option<String>) -> Element {
     // `.as_deref()` borrows the inner str so the FnMut closure
     // surrounding this body can be invoked more than once (per-
     // component remount). Calling `.unwrap_or_else(...)` directly
@@ -142,13 +139,13 @@ fn option_prop(alt: Option<String>) -> ElementHandle {
 }
 
 #[component]
-fn with_default_prop(#[prop(default = 5)] count: i32) -> ElementHandle {
+fn with_default_prop(#[prop(default = 5)] count: i32) -> Element {
     push_capture(format!("with_default_prop:count={count}"));
     render! { view() }
 }
 
 #[component]
-fn with_children(label: String, children: Children) -> ElementHandle {
+fn with_children(label: String, children: Children) -> Element {
     push_capture(format!("with_children:label={label}"));
     // Materialise the children imperatively. We can't write the
     // ergonomic `view { {children()} }` here because `render!`'s
@@ -166,7 +163,7 @@ fn with_children(label: String, children: Children) -> ElementHandle {
 }
 
 #[component]
-fn generic_label<T: std::fmt::Display + Clone + 'static>(value: T) -> ElementHandle {
+fn generic_label<T: std::fmt::Display + Clone + 'static>(value: T) -> Element {
     push_capture(format!("generic_label:value={value}"));
     render! { view() }
 }

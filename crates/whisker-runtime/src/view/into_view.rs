@@ -1,7 +1,7 @@
 //! [`IntoView`] — uniform return type for components.
 //!
 //! A component fn returns `impl IntoView`. The renderer or parent
-//! component calls `.into_view()` to get either an [`ElementHandle`]
+//! component calls `.into_view()` to get either an [`Element`]
 //! (for "this is one element") or a `View` (for fragments, tuples,
 //! components nested inside `render!`).
 //!
@@ -10,7 +10,7 @@
 //! children, or a "marker" view (used by `Show`/`For` to mark
 //! reactive boundaries — Phase 6.5a A3 Step 4).
 
-use super::handle::ElementHandle;
+use super::handle::Element;
 
 /// A renderable. Components return `impl IntoView`; the renderer
 /// (called by the macro at mount time, or by the parent's
@@ -40,7 +40,7 @@ pub type Children = ::std::rc::Rc<dyn ::std::ops::Fn() -> View + 'static>;
 #[derive(Debug, Clone)]
 pub enum View {
     /// A single element handle the caller has already created.
-    Element(ElementHandle),
+    Element(Element),
     /// A text snippet — `materialize` creates a `raw_text` element
     /// with `text=<value>`. The `IntoView` impls for `&str` /
     /// `String` / primitive numeric types route through here so
@@ -64,13 +64,13 @@ impl View {
     /// returned list is what the `{expr}` macro path stashes so the
     /// next effect re-run can detach the previous children before
     /// attaching the new ones.
-    pub fn attach_to(self, parent: ElementHandle) -> Vec<ElementHandle> {
+    pub fn attach_to(self, parent: Element) -> Vec<Element> {
         let mut out = Vec::new();
         self.materialise_into(parent, &mut out);
         out
     }
 
-    fn materialise_into(self, parent: ElementHandle, out: &mut Vec<ElementHandle>) {
+    fn materialise_into(self, parent: Element, out: &mut Vec<Element>) {
         match self {
             View::Element(h) => {
                 super::append_child(parent, h);
@@ -95,13 +95,13 @@ impl View {
     /// contributes, in child-order. **Only `Element` and `Fragment`
     /// contribute.** `Text` returns nothing here because its element
     /// only exists once `attach_to` has run.
-    pub fn elements(&self) -> Vec<ElementHandle> {
+    pub fn elements(&self) -> Vec<Element> {
         let mut out = Vec::new();
         self.collect_into(&mut out);
         out
     }
 
-    fn collect_into(&self, out: &mut Vec<ElementHandle>) {
+    fn collect_into(&self, out: &mut Vec<Element>) {
         match self {
             View::Element(h) => out.push(*h),
             View::Fragment(children) => {
@@ -124,7 +124,7 @@ impl IntoView for View {
     }
 }
 
-impl IntoView for ElementHandle {
+impl IntoView for Element {
     fn into_view(self) -> View {
         View::Element(self)
     }

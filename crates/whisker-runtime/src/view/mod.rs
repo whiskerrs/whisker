@@ -5,7 +5,7 @@
 //! but with two key differences:
 //!
 //! 1. **Type-erased handle**. The new system uses a single
-//!    [`ElementHandle`] (a `Copy` newtype around a `u32` ID) regardless
+//!    [`Element`] (a `Copy` newtype around a `u32` ID) regardless
 //!    of which backend is mounted. The renderer maps these IDs to
 //!    whatever concrete types it needs internally — `MockRenderer`
 //!    keeps a `HashMap<u32, MockOp>`, the production bridge maps each
@@ -31,7 +31,7 @@ pub mod renderer;
 mod tests;
 
 pub use control_flow::{for_each, show};
-pub use handle::ElementHandle;
+pub use handle::Element;
 pub use into_view::{Children, IntoView, View};
 #[doc(hidden)]
 pub use renderer::__reset_children_mirror_for_tests;

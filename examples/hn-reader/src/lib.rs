@@ -31,7 +31,7 @@
 
 use serde::Deserialize;
 use whisker::prelude::*;
-use whisker::runtime::view::ElementHandle;
+use whisker::runtime::view::Element;
 
 // ---- Data model -------------------------------------------------------------
 
@@ -105,7 +105,7 @@ fn fetch_blocking() -> Result<Vec<Story>, String> {
 /// via per-component remount on hot reload (issue #17 made
 /// `#[component]` layout-transparent).
 #[component]
-fn story_row(story: Story) -> ElementHandle {
+fn story_row(story: Story) -> Element {
     let title = story
         .title
         .clone()
@@ -148,7 +148,7 @@ fn story_row(story: Story) -> ElementHandle {
 
 /// HN-style orange header bar.
 #[component]
-fn header() -> ElementHandle {
+fn header() -> Element {
     let bar_style = format!(
         "width: 100%; padding: 16px; \
          display: flex; flex-direction: row; \
@@ -166,7 +166,7 @@ fn header() -> ElementHandle {
 /// we can read the signal reactively without owned-String capture
 /// issues. Empty string when there's nothing to say (loaded state).
 #[component]
-fn status_banner(state: RwSignal<LoadState>) -> ElementHandle {
+fn status_banner(state: RwSignal<LoadState>) -> Element {
     let status_text = move || match state.get() {
         LoadState::Loading => "Loading top stories…",
         LoadState::Loaded(_) => "",
@@ -189,7 +189,7 @@ fn status_banner(state: RwSignal<LoadState>) -> ElementHandle {
 /// Root of the app. Owns the load-state signal and kicks off the
 /// background fetch on mount.
 #[component]
-pub fn hn_reader() -> ElementHandle {
+pub fn hn_reader() -> Element {
     let state = RwSignal::new(LoadState::Loading);
 
     on_mount(move || {
@@ -240,7 +240,7 @@ pub fn hn_reader() -> ElementHandle {
 // ---- Main app ---------------------------------------------------------------
 
 #[whisker::main]
-fn app() -> ElementHandle {
+fn app() -> Element {
     // The `page` element needs explicit dimensions + background +
     // flex direction. Without `width: 100vw; height: 100vh;` it
     // collapses to 0 px on iOS and the whole screen renders as the
