@@ -100,12 +100,27 @@ impl Parse for Root {
 
 enum Node {
     Element(ElementNode),
+    /// String-literal tagged element (`"x-input" { … }`). Lowered to
+    /// `view::create_element_by_name("x-input")` + inline
+    /// attribute / event / child wiring. Used for native elements
+    /// registered through Lynx's behaviour registry (xelement-style
+    /// `x-*` tags + future Whisker-author elements). No `__tags::*`
+    /// helper struct exists for these — the lowering inlines the
+    /// `effect(move || set_*)` pattern the built-in tag methods
+    /// would otherwise apply.
+    CustomElement(CustomElementNode),
     ControlFlow(ControlFlowNode),
     UserComponent(UserComponentNode),
 }
 
 struct ElementNode {
     tag: Ident,
+    kwargs: Vec<Kwarg>,
+    children: Vec<Node>,
+}
+
+struct CustomElementNode {
+    tag_lit: LitStr,
     kwargs: Vec<Kwarg>,
     children: Vec<Node>,
 }
@@ -146,6 +161,56 @@ impl Parse for Node {
         // this position with a targeted error message — that's the
         // only way to give a useful hint when the user writes bare
         // `"hi"` or `{ count }` as a child.
+        // String-literal tag for custom / native elements: `"x-input" {…}`.
+        // Distinguished from bare child strings by what follows — a
+        // `(` (kwargs) or `{` (children) means the user is using the
+        // string as a tag name. A bare `"hi"` with no body is still
+        // an error pointing at `text(value: "hi")`.
+        if input.peek(LitStr) && (input.peek2(token::Paren) || input.peek2(token::Brace)) {
+            let tag_lit: LitStr = input.parse()?;
+            let mut kwargs = Vec::new();
+            if input.peek(token::Paren) {
+                let body;
+                parenthesized!(body in input);
+                while !body.is_empty() {
+                    if !body.peek(Ident) {
+                        return Err(body.error(
+                            "kwargs must be `name: expr` — positional arguments \
+                             not allowed",
+                        ));
+                    }
+                    let name: Ident = body.parse()?;
+                    let (value, partial) = if body.peek(Token![:]) {
+                        body.parse::<Token![:]>()?;
+                        (body.parse::<Expr>()?, false)
+                    } else {
+                        let placeholder: Expr = syn::parse_quote_spanned!(name.span()=> ());
+                        (placeholder, true)
+                    };
+                    kwargs.push(Kwarg {
+                        name,
+                        value,
+                        partial,
+                    });
+                    if body.peek(Token![,]) {
+                        body.parse::<Token![,]>()?;
+                    }
+                }
+            }
+            let mut children = Vec::new();
+            if input.peek(token::Brace) {
+                let body;
+                braced!(body in input);
+                while !body.is_empty() {
+                    children.push(body.parse::<Node>()?);
+                }
+            }
+            return Ok(Node::CustomElement(CustomElementNode {
+                tag_lit,
+                kwargs,
+                children,
+            }));
+        }
         if input.peek(LitStr) {
             let lit: LitStr = input.parse()?;
             return Err(syn::Error::new(
@@ -317,6 +382,7 @@ impl Node {
     fn to_tokens_returning_handle(&self) -> TokenStream2 {
         match self {
             Node::Element(el) => el.to_tokens(),
+            Node::CustomElement(c) => c.to_tokens(),
             Node::ControlFlow(c) => c.to_tokens(),
             Node::UserComponent(u) => u.to_tokens(),
         }
@@ -503,6 +569,95 @@ fn is_string_attr_method(tag: &str, attr: &str) -> bool {
             | ("raw_text", "text")
             | ("text", "value")
     )
+}
+
+// ---- Custom (string-literal tag) elements -------------------------------
+
+impl CustomElementNode {
+    /// Lower `"x-input" { … }` to an inline create + wire-up block:
+    ///
+    /// ```ignore
+    /// {
+    ///     let __el = view::create_element_by_name("x-input");
+    ///     // For each kwarg: style → reactive set_inline_styles,
+    ///     //                 on_* → set_event_listener,
+    ///     //                 *    → reactive set_attribute.
+    ///     // For each child: append_child(__el, child_handle).
+    ///     __el
+    /// }
+    /// ```
+    ///
+    /// No typed builder methods (unlike `__tags::<view>`-style
+    /// built-ins): custom elements are string-keyed at the bridge
+    /// boundary, so we inline the same `effect(move || …)` reactive
+    /// wiring the built-in tag methods would emit internally.
+    fn to_tokens(&self) -> TokenStream2 {
+        let tag_str = self.tag_lit.value();
+        let tag_span = self.tag_lit.span();
+
+        let mut wiring = Vec::new();
+        for kw in &self.kwargs {
+            if kw.partial {
+                continue;
+            }
+            let value = &kw.value;
+            let kw_name = kw.name.to_string();
+            let kw_span = kw.name.span();
+            if kw_name == "style" {
+                wiring.push(quote_spanned!(kw_span=> {
+                    let __h = __el;
+                    ::whisker::effect(move || {
+                        let __f = #value;
+                        ::whisker::runtime::view::set_inline_styles(
+                            __h,
+                            &::std::string::ToString::to_string(&__f()),
+                        );
+                    });
+                }));
+            } else if let Some(event) = kw_name.strip_prefix("on_") {
+                let event_lit = LitStr::new(event, kw_span);
+                wiring.push(quote_spanned!(kw_span=> {
+                    ::whisker::runtime::view::set_event_listener(
+                        __el,
+                        #event_lit,
+                        ::std::boxed::Box::new(#value),
+                    );
+                }));
+            } else {
+                let attr_lit = LitStr::new(&kw_name, kw_span);
+                wiring.push(quote_spanned!(kw_span=> {
+                    let __h = __el;
+                    ::whisker::effect(move || {
+                        let __f = #value;
+                        ::whisker::runtime::view::set_attribute(
+                            __h,
+                            #attr_lit,
+                            &::std::string::ToString::to_string(&__f()),
+                        );
+                    });
+                }));
+            }
+        }
+
+        let child_tokens: Vec<TokenStream2> = self
+            .children
+            .iter()
+            .map(|child| {
+                let handle = child.to_tokens_returning_handle();
+                quote! {
+                    ::whisker::runtime::view::append_child(__el, #handle);
+                }
+            })
+            .collect();
+
+        let tag_lit_str = LitStr::new(&tag_str, tag_span);
+        quote_spanned!(tag_span=> {
+            let __el = ::whisker::runtime::view::create_element_by_name(#tag_lit_str);
+            #(#wiring)*
+            #(#child_tokens)*
+            __el
+        })
+    }
 }
 
 // ---- Control-flow (Show / For) ------------------------------------------

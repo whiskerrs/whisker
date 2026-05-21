@@ -10,6 +10,7 @@ use crate::element::ElementTag;
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
     Create { id: u32, tag: ElementTag },
+    CreateByName { id: u32, tag_name: String },
     Release { id: u32 },
     SetAttr { id: u32, key: String, value: String },
     SetStyles { id: u32, css: String },
@@ -39,6 +40,15 @@ impl DynRenderer for RecordingRenderer {
         let id = self.next_id;
         self.next_id += 1;
         self.ops.borrow_mut().push(Op::Create { id, tag });
+        Element::from_raw(id)
+    }
+    fn create_element_by_name(&mut self, tag_name: &str) -> Element {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.ops.borrow_mut().push(Op::CreateByName {
+            id,
+            tag_name: tag_name.into(),
+        });
         Element::from_raw(id)
     }
     fn release_element(&mut self, h: Element) {
