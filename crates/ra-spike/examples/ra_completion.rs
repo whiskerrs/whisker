@@ -396,3 +396,59 @@ fn variant_j_full() {
         }
     };
 }
+
+// ---- Variant K: text/expr nested as `text { "…" }` element ---------------
+
+// Final attempt. Hypothesis: the rule isn't about emission, name
+// resolution, or function-call shape — it's that the OUTER
+// children block's top-level items must all be Element-shaped
+// (`Ident(args)` or `Ident(args) { … }`). LitStrs / `{expr}` at
+// the *outer's* children top level are what break RA.
+//
+// If we wrap text inside its own element block — `text { "hello" }`
+// — the outer children block sees only Element-shaped items
+// (`text { … }`, `view(...)`, …). The literal moves one level
+// deeper, inside `text`'s own children block. K hypothesizes
+// that completion ON THE OUTER element will then work, even if
+// completion on `text`'s own kwargs (which it has none of) would
+// still fail.
+
+fn variant_k_text_as_nested_element() {
+    // ← TEST K1: text wrapped as `text { "…" }` nested element.
+    // Cursor at outer `view(sty|)`.
+    let _ = render! {
+        view(sty) {
+            text { "hello world" }
+        }
+    };
+}
+
+fn variant_k_expr_as_nested_element() {
+    let count = 0;
+    // ← TEST K2: expr wrapped inside `text { … }` nested element.
+    let _ = render! {
+        view(sty) {
+            text { { count } }
+        }
+    };
+}
+
+fn variant_k_mixed_nested() {
+    // ← TEST K3: outer kwarg completion when outer has both an
+    // element sibling and a text-element sibling.
+    let _ = render! {
+        view(sty) {
+            view(class: "first")
+            text { "second" }
+        }
+    };
+}
+
+fn variant_k_full() {
+    let _ = render! {
+        view(style: "outer") {
+            view(class: "first")
+            text { "second" }
+        }
+    };
+}

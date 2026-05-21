@@ -99,6 +99,9 @@ pub mod __tags {
         pub fn text(self, _value: impl ::std::string::ToString + 'static) -> Self {
             self
         }
+        pub fn child(self, _child: ElementHandle) -> Self {
+            self
+        }
         #[allow(non_snake_case)]
         pub fn __h(self) -> ElementHandle {
             self.handle
