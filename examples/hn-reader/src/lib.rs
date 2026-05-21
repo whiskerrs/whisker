@@ -64,10 +64,9 @@ const TEXT_SECONDARY: &str = "#828282";
 
 // ---- Fetch ------------------------------------------------------------------
 
-/// Blocking HTTPS GET + JSON parse. Returns the stories on success
-/// or a human-readable error string on failure. Runs on a worker
-/// thread; never call from the main thread (it'd block the render
-/// loop for the duration of the network round-trip).
+/// Blocking HTTPS GET + JSON parse. Runs synchronously — must be
+/// called from inside a `run_blocking(...)` so it lands on a worker
+/// thread instead of stalling the main TASM thread.
 fn fetch_blocking() -> Result<Vec<Story>, String> {
     let url = "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=30";
     let body = ureq::get(url)
@@ -77,6 +76,13 @@ fn fetch_blocking() -> Result<Vec<Story>, String> {
         .map_err(|e| format!("read: {e}"))?;
     let parsed: HnResponse = serde_json::from_str(&body).map_err(|e| format!("parse: {e}"))?;
     Ok(parsed.hits)
+}
+
+/// Async wrapper around `fetch_blocking`. `resource()` polls this on
+/// the main thread; `run_blocking` hops the blocking HTTP call to a
+/// worker thread and resumes here once the bytes are back.
+async fn fetch_stories() -> Result<Vec<Story>, String> {
+    whisker::runtime::tasks::run_blocking(fetch_blocking).await
 }
 
 // ---- Components -------------------------------------------------------------
@@ -172,7 +178,7 @@ pub fn hn_reader() -> Element {
     // Error(String) through a Copy handle. The old hand-rolled
     // `signal + thread::spawn + run_on_main_thread + LoadState`
     // boilerplate collapses into this one call.
-    let stories = resource(fetch_blocking);
+    let stories = resource(fetch_stories);
 
     let list_style: &'static str =
         "flex-grow: 1; flex-shrink: 1; width: 100%; display: flex; flex-direction: column;";

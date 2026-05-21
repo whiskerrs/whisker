@@ -37,6 +37,11 @@ pub use whisker_runtime::reactive::{
     use_context, with_context, with_owner, ReadSignal, Resource, ResourceState, RwSignal,
     StoredValue, WriteSignal,
 };
+// Async task host. `resource()` uses these internally, but they're
+// also part of the user surface: components spawn ad-hoc async work
+// through `spawn_local`, and `run_blocking` is the standard escape
+// hatch for sync IO inside `async fn` bodies.
+pub use whisker_runtime::tasks::{run_blocking, run_until_stalled, spawn_local};
 // Control-flow components used by the `render!` macro.
 pub use whisker_runtime::view::{for_each, show};
 // `Children` is the conventional prop type for components that wrap
@@ -606,8 +611,8 @@ pub mod prelude {
     pub use crate::{component, main, render};
     pub use crate::{
         computed, effect, for_each, on_cleanup, on_mount, provide_context, resource, resource_sync,
-        run_on_main_thread, show, signal, use_context, with_context, ReadSignal, Resource,
-        ResourceState, RwSignal, StoredValue, WriteSignal,
+        run_blocking, run_on_main_thread, show, signal, spawn_local, use_context, with_context,
+        ReadSignal, Resource, ResourceState, RwSignal, StoredValue, WriteSignal,
     };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is

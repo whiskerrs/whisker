@@ -1,30 +1,37 @@
-//! Async-data primitive — fetches a value off the main thread,
-//! marshals the result back through [`run_on_main_thread`], and
-//! exposes the loading / ready / error state through a
-//! [`ReadSignal`]-shaped handle.
+//! Async-data primitive — runs an `async` fetcher on Whisker's
+//! single-threaded task pool ([`crate::tasks`]) and exposes the
+//! loading / ready / error state through a [`ReadSignal`]-shaped
+//! handle.
 //!
-//! Mirrors the "fetch on worker, dispatch back to TASM thread" pattern
-//! every Whisker app needs for HTTP / disk / DB calls — see
-//! `examples/hn-reader` for a real use case. The primitive replaces
-//! the hand-rolled `signal + thread::spawn + run_on_main_thread`
-//! boilerplate apps were carrying.
-//!
-//! Pair with [`crate::view::suspense`] to render `fallback` while a
-//! resource is loading and switch to its `children` view once the
-//! value lands.
+//! The fetcher runs on the TASM thread under
+//! [`futures_executor::LocalPool`]. For blocking sync IO (`ureq`,
+//! `std::fs`, …) inside the fetcher, wrap the call in
+//! [`crate::tasks::run_blocking`] which offloads to a fresh worker
+//! thread and marshals the result back via [`run_on_main_thread`]:
 //!
 //! ```ignore
-//! let stories = resource(|| fetch_top_stories());
-//! render! {
-//!     Suspense(
-//!         resource: stories,
-//!         fallback: || render! { text(value: "Loading…") },
-//!         children: |list: Vec<Story>| render! { /* render list */ },
-//!     )
-//! }
+//! use whisker::runtime::tasks::run_blocking;
+//!
+//! let stories = resource(|| async {
+//!     run_blocking(|| {
+//!         ureq::get("https://hn.algolia.com/...")
+//!             .call()
+//!             .map_err(|e| e.to_string())?
+//!             .into_string()
+//!             .map_err(|e| e.to_string())
+//!     })
+//!     .await
+//!     .and_then(|body| parse(&body))
+//! });
 //! ```
+//!
+//! For purely-async fetchers (a non-blocking HTTP client, a
+//! pre-computed value, etc.) you can just write `async move { ... }`
+//! and skip the `run_blocking` step.
 
-use crate::main_thread::run_on_main_thread;
+use std::future::Future;
+
+use crate::tasks::spawn_local;
 
 use super::signal::RwSignal;
 
@@ -119,36 +126,43 @@ impl<T: Clone + 'static> Resource<T> {
     }
 }
 
-/// Fire-and-forget async fetch. Spawns a worker thread that runs
-/// `fetcher`, then marshals the result back to the main thread via
-/// [`run_on_main_thread`] and writes it into the returned
-/// [`Resource`]'s underlying signal.
+/// Fire-and-forget async fetch. Drives `fetcher` (an `async fn` or
+/// `async move {…}` block) on Whisker's task pool and writes the
+/// resolved [`Result`] into the returned [`Resource`]'s signal.
 ///
-/// `fetcher` may block (HTTP, disk, etc.) — that's the whole point of
-/// running it off the main thread. Returns immediately with a
-/// `Resource<T>` in the [`ResourceState::Loading`] state.
+/// `fetcher` is called once on the TASM thread to obtain the
+/// `Future`, which is then spawned onto [`crate::tasks::spawn_local`]
+/// and polled by every tick. The future runs cooperatively — `await`
+/// points yield back to the runtime so the UI stays responsive.
+///
+/// For blocking sync work inside the fetcher (e.g. `ureq::get(...)`,
+/// `std::fs::read(...)`), wrap the call in
+/// [`crate::tasks::run_blocking`] which moves it to a worker thread
+/// and resumes the awaiting task on the main thread once the result
+/// is back.
+///
+/// Returns immediately with a `Resource<T>` in
+/// [`ResourceState::Loading`].
 ///
 /// Owner discipline: the underlying [`RwSignal`] is registered with
 /// whatever owner is current at call time. If that owner is disposed
-/// before the worker finishes, the eventual main-thread write is a
-/// no-op (the signal node is gone), so no stale write hits a re-mounted
-/// owner.
+/// before the future completes, the eventual write is a no-op (the
+/// signal node is gone), so no stale write hits a re-mounted owner.
 ///
 /// For tests, prefer [`resource_sync`] — it runs the fetcher inline
-/// and doesn't require an active main-thread dispatcher.
-pub fn resource<T, F>(fetcher: F) -> Resource<T>
+/// and doesn't depend on the executor having been ticked.
+pub fn resource<T, F, Fut>(fetcher: F) -> Resource<T>
 where
-    T: Clone + Send + 'static,
-    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Clone + 'static,
+    F: FnOnce() -> Fut + 'static,
+    Fut: Future<Output = Result<T, String>> + 'static,
 {
     let state = RwSignal::new(ResourceState::Loading);
-    std::thread::spawn(move || {
-        let result = fetcher();
-        run_on_main_thread(move || {
-            state.set(match result {
-                Ok(v) => ResourceState::Ready(v),
-                Err(e) => ResourceState::Error(e),
-            });
+    spawn_local(async move {
+        let result = fetcher().await;
+        state.set(match result {
+            Ok(v) => ResourceState::Ready(v),
+            Err(e) => ResourceState::Error(e),
         });
     });
     Resource { state }
