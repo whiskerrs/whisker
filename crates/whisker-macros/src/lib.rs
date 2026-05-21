@@ -15,6 +15,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, ItemFn};
 
+mod component;
 mod render;
 
 /// Annotates the user's app function (returning `whisker::Element`) and
@@ -153,160 +154,46 @@ pub fn render(input: TokenStream) -> TokenStream {
 
 /// Mark a function as a Whisker reactive component.
 ///
-/// Wraps the body so it runs inside a fresh reactive owner. The
-/// owner is created on every call (each invocation = a new mount)
-/// and is registered against the function's fn-pointer in the
-/// runtime's `component_owners` map — that's what the hot-reload
-/// path (Strategy C — Phase 6.5a A6) uses to find the live owners
-/// that came from a function whose body subsecond just patched.
+/// The macro takes the user's `fn xxx(a: A, b: B) -> ElementHandle`
+/// and emits both:
+///
+/// 1. A `XxxProps` struct (Pascal-cased function name + `Props`)
+///    derived from the parameter list, with
+///    `#[derive(::typed_builder::TypedBuilder)]` so callers can
+///    construct it via `XxxProps::builder().a(...).b(...).build()`.
+///    Each field gets `#[builder(setter(into))]` for `Into` coercion
+///    on the call side (`&str` → `String`, `i32` → `f64`, …).
+///    `Option<T>` props get `strip_option` + `default` so callers may
+///    omit them. `Children` props get a default empty closure. A
+///    `#[prop(default = expr)]` attribute on a parameter is forwarded
+///    to typed-builder as the field's default.
+///
+/// 2. A rewritten `fn xxx(__props: XxxProps) -> ElementHandle` whose
+///    body destructures the props back into local variables and runs
+///    the user's original `#block` inside the existing
+///    `mount_component_remountable` machinery (per-component
+///    remount + subsecond hot-reload integration).
+///
+/// The signature change is deliberate: positional `xxx(a, b)`
+/// invocations no longer compile. User components are now invoked
+/// exclusively through `render!`'s `xxx { a: …, b: … }` syntax,
+/// which the `render!` macro lowers to
+/// `xxx(XxxProps::builder().a(…).b(…).build())`. This unifies the
+/// call-site shape with built-in elements (`view { … }`).
 ///
 /// ```ignore
 /// use whisker::prelude::*;
 ///
 /// #[component]
-/// fn counter(initial: i32) -> impl IntoView {
-///     let count = signal(initial);
-///     let doubled = memo(move || count.0.get() * 2);
+/// fn counter(initial: i32) -> ElementHandle {
+///     let (count, set_count) = signal(initial);
 ///     render! { /* ... */ }
 /// }
+///
+/// // Call site (always through `render!`):
+/// render! { counter { initial: 0 } }
 /// ```
-///
-/// Expansion (roughly):
-///
-/// ```ignore
-/// fn counter(initial: i32) -> impl IntoView {
-///     let (_owner, __result) = ::whisker::runtime::reactive::mount_component(
-///         counter as *const (),
-///         move || { /* user body */ },
-///     );
-///     __result
-/// }
-/// ```
-///
-/// Notes:
-///
-/// - Props become positional function parameters as written; no
-///   props struct is generated. Pass them in by value.
-/// - The owner stays alive after the component fn returns. Parent
-///   ownership / disposal is the renderer's responsibility (A3 + A6).
-/// - For the `_owner` variable to drop cleanly inside a tracking
-///   parent we don't unmount here — `unmount_component` is called
-///   from the parent when this component is removed from its view.
-/// - Calling `#[component]` on a function with no body (declaration
-///   only) is a compile error from `syn::parse` — same behaviour as
-///   `#[whisker::main]`.
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemFn);
-
-    let attrs = &input.attrs;
-    let vis = &input.vis;
-    let sig = &input.sig;
-    let block = &input.block;
-    let fn_name = &sig.ident;
-
-    // Per-prop capture + per-invocation clone. Each prop's value is
-    // captured by-move into the body closure factory, then re-cloned
-    // on every body invocation so re-mount runs (hot-reload) hand
-    // the user code a fresh owned value.
-    //
-    // Limitations: this requires every prop to implement `Clone`.
-    // For Copy types (numbers, signal handles), `.clone()` is the
-    // same as a copy — no cost. For Clone-not-Copy (`String`,
-    // `Vec`, etc.) the clone happens once per remount, never during
-    // normal operation. For non-Clone non-Copy types the
-    // resulting code fails to compile with a clear bound error —
-    // user can wrap in `Rc<T>` / `Arc<T>` if Clone is genuinely
-    // impossible.
-    let prop_idents: Vec<syn::Ident> = sig
-        .inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Typed(pat_type) => {
-                if let syn::Pat::Ident(pi) = &*pat_type.pat {
-                    Some(pi.ident.clone())
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        })
-        .collect();
-
-    let captures: Vec<proc_macro2::TokenStream> = prop_idents
-        .iter()
-        .map(|ident| {
-            let cap = quote::format_ident!("__whisker_prop_{}", ident);
-            quote! { let #cap = #ident; }
-        })
-        .collect();
-
-    let restores: Vec<proc_macro2::TokenStream> = prop_idents
-        .iter()
-        .map(|ident| {
-            let cap = quote::format_ident!("__whisker_prop_{}", ident);
-            // `.clone()` is sufficient: for Copy types this is the
-            // same as a copy; for Clone types it gives an owned
-            // value matching the function's parameter type. Calling
-            // `Clone::clone` via the trait path (rather than method
-            // syntax) gives a clearer error message when the type
-            // does not implement Clone.
-            quote! {
-                let #ident = ::std::clone::Clone::clone(&#cap);
-            }
-        })
-        .collect();
-
-    let expanded = quote! {
-        #(#attrs)*
-        #vis #sig {
-            #(#captures)*
-
-            // The body closure has two layers:
-            //
-            // 1. Outer: re-clones the captured props on every
-            //    invocation (`#restores`), then dispatches the user
-            //    body through subsecond. Sits in `Box<dyn Fn>` so the
-            //    runtime can hold it via `Rc` and re-invoke on remount.
-            //
-            // 2. Inner: the user's actual `#block`. `::whisker::__hot::call`
-            //    is `::subsecond::call` (or a no-op shim when the
-            //    `hot-reload` feature is off). The crucial detail is
-            //    that the closure literal `move || { #block }`
-            //    appears here in the macro expansion — which lives
-            //    at the user crate's source position, not whisker's.
-            //    `<F as HotFunction>::call_it`'s mangled name
-            //    therefore lives at the user crate's path, and
-            //    JumpTable entries from `apply_patch` (which
-            //    enumerate user crate symbols) can target it.
-            //    Going through a wrapper closure defined inside
-            //    whisker would put `call_it` at a whisker-side path
-            //    that no user-crate patch touches, and hot reload
-            //    would silently fail.
-            let __body: ::std::boxed::Box<
-                dyn ::std::ops::Fn() -> ::whisker::runtime::view::ElementHandle + 'static,
-            > = ::std::boxed::Box::new(move || {
-                #(#restores)*
-                ::whisker::__hot::call(move || {
-                    #block
-                })
-            });
-            // True per-component remount: the runtime wraps `__body`
-            // in a permanent `view` element, stores the body Rc in
-            // a side table, and on each subsecond patch re-invokes
-            // the body inside a fresh owner. The wrapper element
-            // returned here is what the parent's `render!` attaches.
-            // Wrapper survives across remounts → parent's element
-            // tree is untouched → navigation / scroll position /
-            // sibling order all preserved.
-            let __wrapper =
-                ::whisker::runtime::reactive::mount_component_remountable(
-                    #fn_name as *const (),
-                    __body,
-                );
-            __wrapper
-        }
-    };
-
-    expanded.into()
+    component::expand(item.into()).into()
 }

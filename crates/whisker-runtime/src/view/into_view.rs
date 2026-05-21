@@ -20,6 +20,22 @@ pub trait IntoView {
     fn into_view(self) -> View;
 }
 
+/// Type used by `#[component]` for the conventional `children` prop.
+/// The `render!` macro routes a component invocation's non-kwarg
+/// children into a `move || View::Fragment(…)` closure of this type;
+/// the component body invokes it to materialise the children at the
+/// point in the tree where they should appear.
+///
+/// Two design points:
+///
+/// - `Fn` (not `FnOnce`) so the closure can be re-invoked across
+///   hot-reload remounts and similar "re-run the body" paths.
+/// - `Rc` (not `Box`) so `Children` itself implements `Clone`. The
+///   `#[component]` macro re-clones every prop on every body
+///   invocation, so a `Children` prop has to be a cheaply-cloneable
+///   handle — `Rc<dyn Fn>` is one machine word.
+pub type Children = ::std::rc::Rc<dyn ::std::ops::Fn() -> View + 'static>;
+
 /// A rendered (or about-to-be-rendered) tree fragment.
 #[derive(Debug, Clone)]
 pub enum View {

@@ -11,7 +11,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use counter::{counter, AppState};
+use counter::{counter, AppState, CounterProps};
 use whisker::flush;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, create_owner, with_owner};
@@ -97,12 +97,11 @@ fn counter_initial_render() {
     let state = AppState {
         count: RwSignal::new(0),
     };
-    let _root = with_owner(owner, || counter(state));
+    let _root = with_owner(owner, || render! { counter(state: state) });
 
     let ts = texts(&log.borrow());
-    // Static label parts + button labels + initial count.
-    assert!(ts.contains(&"Count: ".to_string()));
-    assert!(ts.contains(&"0".to_string()));
+    // Counter label (combined static + count via format!) + button labels.
+    assert!(ts.contains(&"Count: 0".to_string()));
     assert!(ts.contains(&"-1".to_string()));
     assert!(ts.contains(&"reset".to_string()));
     assert!(ts.contains(&"+1".to_string()));
@@ -122,7 +121,7 @@ fn counter_updates_on_signal_write() {
     let state = AppState {
         count: RwSignal::new(0),
     };
-    let _root = with_owner(owner, || counter(state));
+    let _root = with_owner(owner, || render! { counter(state: state) });
 
     // Reset log to focus on update behaviour.
     log.borrow_mut().clear();
@@ -131,8 +130,8 @@ fn counter_updates_on_signal_write() {
     flush();
 
     let ts = texts(&log.borrow());
-    // The dynamic `{count.get()}` element re-rendered with "11".
-    assert!(ts.contains(&"11".to_string()));
+    // The dynamic count label re-rendered with "Count: 11".
+    assert!(ts.contains(&"Count: 11".to_string()));
     // Show flipped true → the "over 10" branch mounted, adding its
     // text. (The element ID is freshly allocated by Show on flip.)
     assert!(ts.contains(&"You went over 10!".to_string()));
@@ -150,7 +149,7 @@ fn show_swaps_back_when_predicate_flips() {
     let state = AppState {
         count: RwSignal::new(15),
     };
-    let _root = with_owner(owner, || counter(state));
+    let _root = with_owner(owner, || render! { counter(state: state) });
 
     // Bring it back below threshold.
     log.borrow_mut().clear();
@@ -158,8 +157,8 @@ fn show_swaps_back_when_predicate_flips() {
     flush();
 
     let ts = texts(&log.borrow());
-    // The dynamic count text becomes "3".
-    assert!(ts.contains(&"3".to_string()));
+    // The dynamic count label becomes "Count: 3".
+    assert!(ts.contains(&"Count: 3".to_string()));
     // The "over 10" branch is unmounted; no new SetAttr emits its
     // text (the prior owner was disposed).
     assert!(!ts.contains(&"You went over 10!".to_string()));

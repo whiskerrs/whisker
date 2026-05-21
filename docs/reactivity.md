@@ -186,8 +186,8 @@ fn display(value: ReadSignal<i32>) -> ElementHandle {
 }
 
 let (count, _) = signal(0);
-display(count);                              // primitive signal
-display(memo(move || count.get() * 2));      // derived signal
+render! { display(value: count) }                              // primitive signal
+render! { display(value: memo(move || count.get() * 2)) }      // derived signal
 ```
 
 This keeps `move ||` out of component signatures, makes prop types
@@ -221,8 +221,7 @@ fn counter(initial: i32) -> ElementHandle {
     render! {
         view {
             text { "Count: " {count.get()} }
-            view {
-                on_tap: move || count.update(|n| *n += 1),
+            view(on_tap: move || count.update(|n| *n += 1)) {
                 text { "+1" }
             }
         }
@@ -235,20 +234,78 @@ provided by the signals + effects you create inside.
 
 ### Props
 
-Props are positional arguments. There's no separate "props struct";
-just write the function:
+Component parameters become *keyword* args at the call site. The
+`#[component]` macro reads the parameter list and auto-generates a
+companion `XxxProps` struct (PascalCase of the fn name, plus
+`Props`); the `render!` macro lowers `xxx(kwarg: value, …)` into
+`xxx(XxxProps::builder().kwarg(value)….build())`. No positional
+calls.
 
 ```rust
 #[component]
-fn greeting(name: &'static str, count: ReadSignal<i32>) -> ElementHandle {
+fn greeting(name: String, count: ReadSignal<i32>) -> ElementHandle {
     render! {
-        text { "Hello, " {name} " ×" {count.get()} }
+        text { "Hello, " {name.clone()} " ×" {count.get()} }
     }
 }
+
+// Call site:
+render! { greeting(name: "Itome", count: my_signal) }
 ```
+
+Behind the scenes the macro adds `setter(into)` to every required
+prop, so `&str` flows into a `String` parameter (and `i32` into
+`f64`, etc.) without an explicit `.to_string()`.
 
 To share writable state with a child, pass `WriteSignal<T>` (or the
 whole `RwSignal<T>` if both halves are needed).
+
+#### Optional / default-valued props
+
+- `Option<T>` parameters get typed-builder's `default + setter(into,
+  strip_option)`. Callers may omit the prop entirely, or pass the
+  inner `T` directly without wrapping in `Some(...)`.
+- `#[prop(default = expr)]` on a parameter provides a callable
+  default. Caller-side omission falls back to `expr`; a kwarg
+  passed at the call site overrides it.
+- `children: Children` (see below) gets an empty-fragment default.
+
+```rust
+#[component]
+fn badge(
+    label: String,
+    color: Option<String>,                  // omittable, or pass &str
+    #[prop(default = 12)] padding: i32,     // omittable; default 12
+) -> ElementHandle { /* … */ }
+
+render! { badge(label: "new") }                          // both defaults
+render! { badge(label: "new", color: "red", padding: 8) }
+```
+
+#### Children
+
+A `children: Children` parameter receives a closure of type
+`Rc<dyn Fn() -> View>` produced from the child nodes inside the
+call's `{…}` block:
+
+```rust
+#[component]
+fn card(title: String, children: Children) -> ElementHandle {
+    render! {
+        view {
+            text { {title.clone()} }
+            {children()}
+        }
+    }
+}
+
+render! {
+    card(title: "About") {
+        text { "Body text" }
+        text { "More body" }
+    }
+}
+```
 
 #### Each prop type must be `Clone`
 
@@ -298,8 +355,7 @@ want to put in a prop is already `Clone`:
 #[component]
 fn button(label: &'static str, on_click: Rc<dyn Fn() + 'static>) -> ElementHandle {
     render! {
-        view {
-            on_tap: move || on_click(),
+        view(on_tap: move || on_click()) {
             text { {label} }
         }
     }
@@ -343,7 +399,7 @@ Pass values down through the owner tree without prop-drilling:
 #[component]
 fn app() -> ElementHandle {
     provide_context(Theme::Dark);
-    render! { my_inner_component {} }
+    render! { my_inner_component() }
 }
 
 #[component]
@@ -374,9 +430,10 @@ else) and `For` (keyed list).
 
 ```rust
 render! {
-    Show {
+    Show(
         when: move || count.get() > 5,
         fallback: || render! { text { "small" } },
+    ) {
         text { "big!" }
     }
 }
@@ -393,11 +450,11 @@ nothing.
 
 ```rust
 render! {
-    For {
+    For(
         each: move || items.get(),
         key: |item: &Item| item.id,
         children: move |item: Item| render! { text { {item.name} } },
-    }
+    )
 }
 ```
 
@@ -436,8 +493,8 @@ fn parent() -> ElementHandle {
     let count = RwSignal::new(0);
     render! {
         view {
-            display(count)
-            controls(count)
+            display(count: count)
+            controls(count: count)
         }
     }
 }
@@ -450,8 +507,7 @@ fn display(count: RwSignal<i32>) -> ElementHandle {
 #[component]
 fn controls(count: RwSignal<i32>) -> ElementHandle {
     render! {
-        view {
-            on_tap: move || count.update(|n| *n += 1),
+        view(on_tap: move || count.update(|n| *n += 1)) {
             text { "+1" }
         }
     }

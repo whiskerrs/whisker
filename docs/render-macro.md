@@ -29,15 +29,18 @@ the inner code returns.
 
 ## Element nodes
 
+Compose-shaped syntax: props go in `()`, children in `{}`. Either
+block can be omitted.
+
 ```rust
 render! {
-    view {
-        // attributes (key: value, …)
+    view(
+        // attributes go inside the parens, comma-separated.
         style: "color: red;",
         on_tap: || println!("hi"),
-
-        // children: more elements, components, text literals,
-        // or `{expr}` blocks.
+    ) {
+        // children inside the braces — more elements, components,
+        // text literals, or `{expr}` blocks.
         text { "Hello" }
         text { {count.get()} }
     }
@@ -45,26 +48,29 @@ render! {
 ```
 
 Recognised tag names: `page`, `view`, `text`, `raw_text`, `image`,
-`scroll_view`. Anything else is a compile error. (Custom / x-* tags
-are a Phase 7 add.)
+`scroll_view`. Anything else is dispatched as a user component.
+
+```rust
+// Forms:
+view(style: "x")           // props only — no children, drop the `{…}`
+view { text { "hi" } }     // children only — no props, drop the `(…)`
+view(style: "x") { text { "hi" } }  // both
+view()                     // neither (also: `view {}`, `view`)
+```
 
 ### Attributes
 
 ```rust
-view {
+view(
     // Reserved: `style:` → set_inline_styles.
     style: "padding: 16px;",
     // Reserved: `on_*` → event listener (one-shot registration).
-    on_tap: move |_| count.update(|n| *n += 1),
-    // Reserved: `key:` → silently accepted (used by `For`
-    // reconciliation — see below). Macro emits no code.
-    key: item.id,
+    on_tap: move || count.update(|n| *n += 1),
     // Anything else → set_attribute(name, value.to_string()).
     src: "https://example.com/a.png",
     alt: "example",
-    "scroll-orientation": "horizontal",  // raw string key
-    scroll_orientation: "vertical",       // identifier key
-}
+    scroll_orientation: "vertical",  // snake_case → kebab-case
+)
 ```
 
 All attribute values flow through `to_string()`. They're wrapped in
@@ -72,10 +78,10 @@ an `effect` so signal reads inside the expression re-fire the
 attribute set on every dep change:
 
 ```rust
-view {
+view(
     // re-runs whenever `color` changes
     style: format!("color: {};", color.get()),
-}
+)
 ```
 
 Static values (string literals, constant expressions) just run
@@ -135,6 +141,9 @@ view {
 }
 ```
 
+`{expr}` interpolation only makes sense in the children block, so
+it lives inside `{…}` (never inside `(…)` which is for kwargs).
+
 The expression is dispatched through `IntoView`. Built-in impls
 cover:
 
@@ -167,8 +176,7 @@ let color = move || if playing.get() { ACCENT } else { TEXT_MUTED };
 let btn_style = move || format!("color: {};", color());
 
 render! {
-    view {
-        style: { btn_style() },
+    view(style: { btn_style() }) {
         text { {glyph()} }
     }
 }
@@ -183,28 +191,73 @@ update.
 
 ## Components
 
-Capitalised tag names dispatch to component constructors. Phase
-6.5a v1 supports two built-in components: `Show` and `For`.
-User-defined `#[component]` functions are invoked as plain function
-calls outside `render!` (and their return value can be embedded via
-`{...}`):
+User-defined `#[component]` functions are invoked with the same
+Compose-shaped syntax as built-in elements:
 
 ```rust
 render! {
     view {
-        {my_component(props)}       // user component
-        Show { /* … */ }            // built-in
-        For { /* … */ }             // built-in
+        my_component(src: "https://…", alt: "logo")        // user component
+        Show(when: …) { /* children */ }                    // built-in
+        For(each: …, key: …, children: |i| …)               // built-in
     }
 }
 ```
 
+The kwarg block in `(…)` maps name-by-name onto fields of the
+`XxxProps` struct that `#[component]` auto-generates from the
+function's parameter list (see `docs/reactivity.md`). At expansion
+the call above lowers to:
+
+```rust
+my_component(
+    MyComponentProps::builder()
+        .src("https://…")
+        .alt("logo")
+        .build(),
+)
+```
+
+`typed-builder`'s `setter(into)` handles common coercions at the
+call site — `&'static str` → `String`, `i32` → `f64`, etc. — so
+callers write the natural value and the macro takes care of the
+rest.
+
+Children passed inside `{…}` (not the `(…)` kwarg block) are
+bundled into a `children:` closure of type
+[`whisker::Children`](../crates/whisker-runtime/src/view/into_view.rs):
+
+```rust
+render! {
+    card(title: "About") {
+        // routed into the card's `children: Children` prop.
+        text { "First child" }
+        text { "Second child" }
+    }
+}
+```
+
+Components that don't declare a `children` prop compile-error when
+called with positional children, telling the user which props the
+component does accept.
+
+> **Positional calls no longer compile.** A `#[component]` function
+> always takes a single Props argument; bare `my_component("…", "…")`
+> at the call site is a type error. Components must be invoked
+> through `render!`'s brace syntax (or, in the rare case the user
+> needs to bypass the macro, by constructing the Props struct
+> explicitly).
+
+Two component names are reserved as built-ins and must use the
+capitalised form: `Show` and `For`.
+
 ### `Show`
 
 ```rust
-Show {
+Show(
     when: move || cond.get(),                       // Fn() -> bool, required
     fallback: || render! { text { "loading…" } },   // optional
+) {
     /* one or more children — the "true" branch */
     text { "ready" }
 }
@@ -222,15 +275,15 @@ only accepted ones.
 ### `For`
 
 ```rust
-For {
+For(
     each: move || items.get(),                  // Fn() -> Vec<T>, required
     key: |item: &Item| item.id,                 // Fn(&T) -> K, required
     children: move |item: Item| render! { /* ... */ },  // Fn(T) -> impl IntoView, required
-}
+)
 ```
 
-For takes **no positional children** — the template is the
-`children:` kwarg.
+For takes **no children block** — the per-item template is the
+`children:` kwarg closure.
 
 Reconciliation rules:
 
@@ -251,22 +304,28 @@ are accepted.
 The macro tries hard to give specific compile errors:
 
 ```rust
-// "unknown render! tag `foo`"
-render! { foo {} }
+// `foo` resolves to a user component. If `foo` isn't in scope you
+// get the normal Rust "cannot find function `foo`" error. The
+// macro does NOT treat lowercase identifiers as built-in tags
+// (the whitelist is `page`, `view`, `text`, `raw_text`, `image`,
+// `scroll_view`).
+render! { foo() }
 
 // "Show requires `when:` kwarg"
 render! { Show { text { "x" } } }
 
 // "unknown kwarg `bar` on Show; allowed: when, fallback"
-render! { Show { when: || true, bar: 1, text { "x" } } }
+render! { Show(when: || true, bar: 1) { text { "x" } } }
 
 // "For requires `each:` kwarg"
-render! { For { key: |x| x, children: |x| x } }
+render! { For(key: |x| x, children: |x| x) }
 
-// "For takes no positional children; pass them via `children:`"
-render! { For { each: || vec![], key: |x| 0, text { "stray" } } }
+// "For takes no children block; pass per-item template via `children:`"
+render! { For(each: || vec![], key: |x| 0) { text { "stray" } } }
 
-// "unknown component `Foo` in render!"
+// PascalCase is reserved for built-in components only. Writing
+// `Foo { ... }` for a user component is a macro error suggesting
+// the snake_case spelling.
 render! { Foo { text { "x" } } }
 ```
 
@@ -283,10 +342,11 @@ render! { Foo { text { "x" } } }
   }
   ```
   …but the macro itself doesn't parse `if`/`match` as macro syntax.
-- **Iterator-spreading via `for` / `while`.** Use `For { ... }`.
+- **Iterator-spreading via `for` / `while`.** Use `For(…)`.
 - **Slot-style composition (named children).** Phase 7+ if needed.
-- **Custom component invocation in macro position.** Use a function
-  call wrapped in `{...}`.
+- **Positional component invocation.** Components only accept the
+  Compose-shaped kwarg syntax (`my_component(src: "…")`).
+  Positional function calls don't compile.
 
 ---
 
@@ -295,9 +355,10 @@ render! { Foo { text { "x" } } }
 For
 ```rust
 render! {
-    view {
+    view(
         style: "padding: 16px;",
         on_tap: || count.update(|n| *n += 1),
+    ) {
         text { "Count: " {count.get()} }
     }
 }
@@ -306,12 +367,15 @@ render! {
 the macro emits roughly
 ```rust
 {
-    let __h = view::create_element(ElementTag::View);
-    effect(move || view::set_inline_styles(__h, "padding: 16px;"));
-    view::set_event_listener(__h, "tap", Box::new(|| count.update(|n| *n += 1)));
+    let __b: __tags::view = __tags::view();
+    let __h = __b
+        .style(move || "padding: 16px;".to_string())
+        .on_tap(|| count.update(|n| *n += 1))
+        .__h();
     {
         let __child = {
-            let __h = view::create_element(ElementTag::Text);
+            let __b: __tags::text = __tags::text();
+            let __h = __b.__h();
             // static "Count: "
             {
                 let __child = {
@@ -336,5 +400,11 @@ the macro emits roughly
     __h
 }
 ```
+
+The builder-chain shape (`__tags::view().style(…).on_tap(…).__h()`)
+is what enables rust-analyzer's method completion on prop kwargs:
+the chain's receiver type is known, so `view(s|`'s method-name
+slot resolves to `view`'s methods (`style`, `class`, `on_tap`, …)
+as completion candidates.
 
 For the gory details, see `crates/whisker-macros/src/render.rs`.

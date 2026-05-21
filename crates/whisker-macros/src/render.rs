@@ -1,46 +1,90 @@
-//! `render!` macro — Phase 6.5a (A3) replacement for `rsx!`.
-//!
-//! Grammar matches `rsx!` (so users migrate by renaming the macro):
+//! `render!` macro — compose-style, kwarg-only DSL.
 //!
 //! ```text
-//! render_root := node
-//! node        := IDENT "{" attr_list child_list "}" | LIT_STR | "{" expr "}"
-//! attr_list   := (IDENT ":" expr ",")*
-//! child_list  := node*
+//! root      := node
+//! node      := IDENT ( '(' kwargs ')' )? ( '{' children '}' )?
+//! kwargs    := IDENT ':' expr ( ',' IDENT ':' expr )* ','?
+//!            | IDENT                           # partial (mid-typing)
+//! children  := node*
 //! ```
 //!
-//! What changed from `rsx!`:
+//! Each `node` is classified by its leading ident:
 //!
-//! - **Emit**. `rsx!` produces an `Element` value tree via builder
-//!   calls; `render!` produces an imperative block that calls
-//!   [`whisker::view`] dispatch functions to construct elements
-//!   directly through the installed `DynRenderer`, and returns an
-//!   [`ElementHandle`].
-//! - **`{expr}` interpolation is not yet supported.** Step 3 of A3
-//!   will wrap it in an `effect` for reactivity; until then, using
-//!   it is a compile error.
-//! - **Event handler closures must be `Fn() + 'static`** (no event
-//!   payload). The payload work is a separate stream tracked
-//!   outside Phase 6.5a.
+//! - Built-in tag (`view`, `page`, `text`, `raw_text`, `image`,
+//!   `scroll_view`) → lowered to a builder chain
+//!   `::whisker::__tags::__<tag>_ctor().style(…).…__h()`.
+//! - `Show` / `For` → lowered to the matching `whisker::show` /
+//!   `whisker::for_each` helper.
+//! - Anything else → user `#[component]` invocation; lowered to
+//!   `name(<Name>Props::builder().k(v)…build())`.
 //!
-//! [`whisker::view`]: ../../../whisker_runtime/view/index.html
-//! [`ElementHandle`]: ../../../whisker_runtime/view/struct.ElementHandle.html
+//! ## Children-block restriction
+//!
+//! Every item in a `{ … }` children block MUST be node-shaped
+//! (`IDENT(kwargs?) { … }?`). Bare string literals and bare
+//! `{expr}` blocks are rejected with a hard parser error.
+//!
+//! Why: RA experiments (kept as integration tests in
+//! `tests/ra_completion.rs`) showed that
+//! rust-analyzer's input fixup gives up on children blocks that
+//! contain anything other than `IDENT(name: value, …)` shapes at
+//! their top level. With a bare `"hi"` or `{count}` present, the
+//! sibling element's kwarg-position completion stops working — no
+//! emission-side workaround helped. The fix is to forbid those
+//! shapes at the DSL level so the block stays on RA's happy path.
+//!
+//! For text content, use a kwarg-styled element:
+//!
+//! ```ignore
+//! render! {
+//!     view(style: "...") {
+//!         text(value: "Hello")
+//!         text(value: format!("count: {}", c.get()))
+//!     }
+//! }
+//! ```
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{format_ident, quote, quote_spanned};
 use syn::{
-    braced,
+    braced, parenthesized,
     parse::{Parse, ParseStream, Result},
-    parse_macro_input, token, Expr, Ident, LitStr, Token,
+    token, Expr, Ident, LitStr, Token,
 };
 
 pub fn expand(input: TokenStream) -> TokenStream {
-    let root = parse_macro_input!(input as Root);
-    root.to_tokens().into()
+    let tokens: TokenStream2 = input.into();
+    match syn::parse2::<Root>(tokens) {
+        Ok(root) => root.to_tokens().into(),
+        Err(err) => {
+            // Pair the compile_error with a same-typed placeholder
+            // so the surrounding code (`let h: ElementHandle = render!
+            // { … };`) keeps type-checking and diagnostics stay
+            // confined to the actual syntax error. Same approach
+            // leptos uses for its `view!` macro.
+            let err_tokens = err.to_compile_error();
+            quote! {
+                {
+                    #err_tokens
+                    ::whisker::runtime::view::create_element(
+                        ::whisker::ElementTag::View,
+                    )
+                }
+            }
+            .into()
+        }
+    }
 }
 
-// ---- AST ------------------------------------------------------------------
+/// Test-only hook for the unit tests at the bottom of this file.
+#[cfg(test)]
+fn expand_test(input: TokenStream2) -> TokenStream2 {
+    let root: Root = syn::parse2(input).expect("test input must parse");
+    root.to_tokens()
+}
+
+// ---- AST ----------------------------------------------------------------
 
 struct Root {
     node: Node,
@@ -56,332 +100,355 @@ impl Parse for Root {
 
 enum Node {
     Element(ElementNode),
-    Component(ComponentNode),
-    Text(LitStr),
-    /// Reserved for Step 3 — currently emits a `compile_error!`.
-    Expr(Expr),
-}
-
-impl Parse for Node {
-    fn parse(input: ParseStream) -> Result<Self> {
-        if input.peek(LitStr) {
-            return Ok(Node::Text(input.parse()?));
-        }
-        if input.peek(token::Brace) {
-            let content;
-            braced!(content in input);
-            let expr: Expr = content.parse()?;
-            return Ok(Node::Expr(expr));
-        }
-        // IDENT { ... } — element or component depending on case of
-        // the first character of the identifier.
-        let body = TagBody::parse(input)?;
-        if starts_uppercase(&body.tag) {
-            Ok(Node::Component(ComponentNode {
-                name: body.tag,
-                kwargs: body.kwargs,
-                children: body.children,
-            }))
-        } else {
-            Ok(Node::Element(ElementNode {
-                tag: body.tag,
-                attrs: body.kwargs,
-                children: body.children,
-            }))
-        }
-    }
-}
-
-/// Shared parse result for both element and component nodes: an
-/// identifier followed by a brace-delimited block of `name: expr`
-/// kwargs and then nested `Node` children.
-struct TagBody {
-    tag: Ident,
-    kwargs: Vec<AttrEntry>,
-    children: Vec<Node>,
-}
-
-impl TagBody {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let tag: Ident = input.parse()?;
-        let body;
-        braced!(body in input);
-
-        let mut kwargs = Vec::new();
-        let mut children = Vec::new();
-
-        // kwargs: while we see `IDENT :`, parse name : expr.
-        while body.peek(Ident) && body.peek2(Token![:]) {
-            let name: Ident = body.parse()?;
-            body.parse::<Token![:]>()?;
-            let value: Expr = body.parse()?;
-            kwargs.push(AttrEntry { name, value });
-            if body.peek(Token![,]) {
-                body.parse::<Token![,]>()?;
-            }
-        }
-
-        // Children: nested nodes until the closing brace.
-        while !body.is_empty() {
-            children.push(body.parse()?);
-            if body.peek(Token![,]) {
-                body.parse::<Token![,]>()?;
-            }
-        }
-
-        Ok(Self {
-            tag,
-            kwargs,
-            children,
-        })
-    }
-}
-
-fn starts_uppercase(ident: &Ident) -> bool {
-    ident
-        .to_string()
-        .chars()
-        .next()
-        .map(|c| c.is_uppercase())
-        .unwrap_or(false)
+    ControlFlow(ControlFlowNode),
+    UserComponent(UserComponentNode),
 }
 
 struct ElementNode {
     tag: Ident,
-    attrs: Vec<AttrEntry>,
+    kwargs: Vec<Kwarg>,
     children: Vec<Node>,
 }
 
-struct ComponentNode {
+struct ControlFlowNode {
     name: Ident,
-    kwargs: Vec<AttrEntry>,
+    kwargs: Vec<Kwarg>,
     children: Vec<Node>,
 }
 
-struct AttrEntry {
+struct UserComponentNode {
+    fn_name: Ident,
+    kwargs: Vec<Kwarg>,
+    children: Vec<Node>,
+}
+
+struct Kwarg {
     name: Ident,
     value: Expr,
+    /// `true` when the user hasn't typed `:` + an expression yet
+    /// (cursor sits at the end of the kwarg name). The builder-
+    /// chain emitter routes these through `.#name(())` so RA's
+    /// method completion can fire on the partial prefix.
+    partial: bool,
 }
 
-// ---- Codegen --------------------------------------------------------------
+impl Parse for Node {
+    fn parse(input: ParseStream) -> Result<Self> {
+        // Every node starts with an ident. Reject anything else at
+        // this position with a targeted error message — that's the
+        // only way to give a useful hint when the user writes bare
+        // `"hi"` or `{ count }` as a child.
+        if input.peek(LitStr) {
+            let lit: LitStr = input.parse()?;
+            return Err(syn::Error::new(
+                lit.span(),
+                "bare string literals are not allowed in render!; \
+                 use `text(value: \"…\")` to render text content",
+            ));
+        }
+        if input.peek(token::Brace) {
+            // Take the span from the brace itself for a clean
+            // arrow in the diagnostic.
+            let body;
+            let _ = braced!(body in input);
+            let _ = body; // discard contents — we're erroring out
+            return Err(input.error(
+                "bare `{expr}` blocks are not allowed in render!; \
+                 use `text(value: <expr>)` to render dynamic text",
+            ));
+        }
+
+        let tag: Ident = input.parse()?;
+        let mut kwargs = Vec::new();
+        if input.peek(token::Paren) {
+            let body;
+            parenthesized!(body in input);
+            while !body.is_empty() {
+                if !body.peek(Ident) {
+                    return Err(body.error(
+                        "kwargs must be `name: expr` — positional arguments \
+                         not allowed",
+                    ));
+                }
+                let name: Ident = body.parse()?;
+                let (value, partial) = if body.peek(Token![:]) {
+                    body.parse::<Token![:]>()?;
+                    (body.parse::<Expr>()?, false)
+                } else {
+                    // Partial — synthesize `()` as a placeholder so
+                    // the emitter can still place the method-name
+                    // token at the user's source span.
+                    let placeholder: Expr = syn::parse_quote_spanned!(name.span()=> ());
+                    (placeholder, true)
+                };
+                kwargs.push(Kwarg {
+                    name,
+                    value,
+                    partial,
+                });
+                if body.peek(Token![,]) {
+                    body.parse::<Token![,]>()?;
+                }
+            }
+        }
+
+        let mut children = Vec::new();
+        if input.peek(token::Brace) {
+            let body;
+            braced!(body in input);
+            while !body.is_empty() {
+                children.push(body.parse::<Node>()?);
+            }
+        }
+
+        let name = tag.to_string();
+        if is_builtin_tag(&name) {
+            Ok(Node::Element(ElementNode {
+                tag,
+                kwargs,
+                children,
+            }))
+        } else if name == "Show" || name == "For" {
+            Ok(Node::ControlFlow(ControlFlowNode {
+                name: tag,
+                kwargs,
+                children,
+            }))
+        } else {
+            Ok(Node::UserComponent(UserComponentNode {
+                fn_name: tag,
+                kwargs,
+                children,
+            }))
+        }
+    }
+}
+
+/// Lowercase identifiers that lower to `view::create_element` calls
+/// rather than user component invocations. Matches the `ElementTag`
+/// enum + the C bridge's `whisker_bridge_create_element` switch.
+fn is_builtin_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "page" | "view" | "text" | "raw_text" | "image" | "scroll_view"
+    )
+}
+
+// ---- Codegen ------------------------------------------------------------
 
 impl Root {
     fn to_tokens(&self) -> TokenStream2 {
-        match &self.node {
-            // A bare `{expr}` at the root just evaluates to that
-            // expression's value — render! returns whatever it does
-            // (typically an `ElementHandle` from a helper). The
-            // surrounding scope, not the macro, is responsible for
-            // anything else.
-            Node::Expr(expr) => quote! { #expr },
-            other => other.to_tokens_returning_handle(),
-        }
+        self.node.to_tokens_returning_handle()
     }
 }
 
 impl Node {
-    /// Variant of `to_tokens` for the cases that produce a value the
-    /// surrounding code can `append_child` directly: elements,
-    /// components, and text-literal children. `Node::Expr` does NOT
-    /// support this entry point — it's handled specially by
-    /// `ElementNode::to_tokens` (where the parent `__h` is in
-    /// scope) and by `Root::to_tokens` (where the expression's
-    /// value becomes the macro output).
     fn to_tokens_returning_handle(&self) -> TokenStream2 {
         match self {
-            Node::Component(c) => c.to_tokens(),
             Node::Element(el) => el.to_tokens(),
-            Node::Text(lit) => quote! {
-                {
-                    let __h = ::whisker::runtime::view::create_element(
-                        ::whisker::ElementTag::RawText,
-                    );
-                    ::whisker::runtime::view::set_attribute(__h, "text", #lit);
-                    __h
-                }
-            },
-            Node::Expr(_) => unreachable!(
-                "Node::Expr is handled at ElementNode / Root layer; \
-                 should never reach to_tokens_returning_handle"
-            ),
+            Node::ControlFlow(c) => c.to_tokens(),
+            Node::UserComponent(u) => u.to_tokens(),
         }
     }
 
-    /// Emit a `View`-shaped expression. Used by `Show` (and any
-    /// future control-flow component that wraps its body in an
-    /// `IntoView`-bearing closure). For element / component / text
-    /// children we wrap their handle in `IntoView::into_view(...)`;
-    /// for `{expr}` children we trust the user's expression to
-    /// implement `IntoView` (which all the supported primitive +
-    /// element types do).
+    /// Emit a `View`-shaped expression. Used by `Show` and
+    /// `For`'s children-callback case; each child needs to be
+    /// wrapped via `IntoView::into_view(…)` for the helper's
+    /// signature.
     fn to_tokens_as_view(&self) -> TokenStream2 {
-        match self {
-            Node::Expr(expr) => quote! {
-                ::whisker::runtime::view::IntoView::into_view(#expr)
-            },
-            other => {
-                let h = other.to_tokens_returning_handle();
-                quote! {
-                    ::whisker::runtime::view::IntoView::into_view(#h)
-                }
-            }
+        let h = self.to_tokens_returning_handle();
+        quote! {
+            ::whisker::runtime::view::IntoView::into_view(#h)
         }
     }
 }
 
 impl ElementNode {
+    /// Lower a built-in element to a builder chain on
+    /// `::whisker::__tags::<tag>`. Inline-chain form matches the
+    /// earlier-experiment-verified `__tags::__view_ctor().style(…).…__h()`
+    /// shape — no intermediate `let __h = …; __h` binding when the
+    /// element has no children (the let-binding form broke RA's
+    /// receiver-type threading; see `tests/ra_completion.rs`).
     fn to_tokens(&self) -> TokenStream2 {
-        let tag_path = match tag_to_element_tag(&self.tag) {
-            Ok(t) => t,
-            Err(err) => return err,
+        let tag_ident = &self.tag;
+        let tag_name = tag_ident.to_string();
+        let tag_span = tag_ident.span();
+        let ctor_ident = format_ident!("__{}_ctor", tag_ident, span = tag_span);
+        // Inline the entire `::whisker::__tags::__<tag>_ctor()` path
+        // directly into the outer `quote!`s below — same layout as
+        // earlier-experiment compose_a. Storing it into an intermediate
+        // TokenStream and interpolating may capture span/grouping
+        // info differently, which we suspect is why kwarg completion
+        // worked for compose_a but not for render! (same shape on
+        // the surface, different behaviour in practice).
+
+        // One `.kwarg(value)` token group per attr, span-anchored
+        // at the user's kwarg-name source position so RA's
+        // method-name completion lands on the right token.
+        let setter_calls: Vec<TokenStream2> = self
+            .kwargs
+            .iter()
+            .filter_map(|kw| self.kwarg_to_setter(kw))
+            .collect();
+
+        // No more ident-ref side block. Every partial kwarg now
+        // routes through the setter chain as a method call — see
+        // the long comment in `kwarg_to_setter` for the
+        // ra-fixup-vs-prefix-match rationale.
+        let ident_refs: Vec<TokenStream2> = Vec::new();
+        let _ = tag_name;
+
+        // Children: each child becomes a `.child({ inner_chain })`
+        // method call on the builder. Same shape verified by the
+        // earlier RA experiments.
+        let child_calls: Vec<TokenStream2> = self
+            .children
+            .iter()
+            .map(|c| {
+                let inner = c.to_tokens_returning_handle();
+                quote! { .child(#inner) }
+            })
+            .collect();
+
+        // No children AND no ident-refs to emit → bare expression
+        // form. Matches the earlier-experiment-verified completion shape
+        // for the partial-kwarg case.
+        if child_calls.is_empty() && ident_refs.is_empty() {
+            return quote! {
+                {
+                    ::whisker::__tags::#ctor_ident() #(#setter_calls)* .__h()
+                }
+            };
+        }
+
+        // Has children or ident-refs → still keep chain inline (no
+        // `let __h = … ; __h` binding around it), but add the
+        // ident-refs in a side block. The chain itself stays
+        // a single expression so RA can thread its receiver type.
+        let ident_refs_block = if ident_refs.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                #[allow(dead_code, unused_variables, path_statements)]
+                {
+                    #(#ident_refs)*
+                }
+            }
         };
 
-        let mut stmts: Vec<TokenStream2> = Vec::new();
-
-        for attr in &self.attrs {
-            let value = &attr.value;
-            let name_str = attr.name.to_string();
-
-            if name_str == "style" {
-                // Wrap the style setter in an effect. A signal-reading
-                // expression (e.g. `format!("color: {}", color.get())`)
-                // re-runs and re-applies the style on every dep change;
-                // a static value just runs the effect once at
-                // registration and never re-fires.
-                stmts.push(quote! {
-                    ::whisker::effect(move || {
-                        ::whisker::runtime::view::set_inline_styles(
-                            __h, &::std::string::ToString::to_string(&(#value)),
-                        );
-                    });
-                });
-            } else if let Some(event) = strip_on_prefix(&name_str) {
-                // Event handlers register once and stay until the
-                // owner is disposed. Re-registering on every signal
-                // change would lose the previous registration — not
-                // what users want.
-                let event_lit = LitStr::new(&event, attr.name.span());
-                stmts.push(quote! {
-                    ::whisker::runtime::view::set_event_listener(
-                        __h, #event_lit, ::std::boxed::Box::new(#value),
-                    );
-                });
-            } else if name_str == "key" {
-                // Keys are a `For` reconciliation hint; Step 4 wires
-                // them through. For now silently accept but ignore so
-                // existing rsx! callers can rename to render! without
-                // touching their templates.
-                let _ = value;
-            } else {
-                // All other attributes are routed through an effect
-                // — same uniform-treatment rationale as `style:`
-                // above.
-                //
-                // Rust identifiers can't contain `-`, but Lynx (and
-                // HTML / Web Components in general) uses
-                // hyphen-separated attribute names like
-                // `scroll-orientation`, `enable-scroll`,
-                // `safe-area-insets`. Translate `_` → `-` here so
-                // users write `scroll_orientation: "horizontal"` and
-                // Lynx sees `scroll-orientation`. JSX / Solid /
-                // Leptos do equivalent rewrites; the alternative
-                // (string-key syntax) is uglier and the choice of
-                // separator is locked by the underlying engine.
-                let lynx_name: String = name_str.replace('_', "-");
-                let attr_name = LitStr::new(&lynx_name, attr.name.span());
-                stmts.push(quote! {
-                    ::whisker::effect(move || {
-                        ::whisker::runtime::view::set_attribute(
-                            __h, #attr_name,
-                            &::std::string::ToString::to_string(&(#value)),
-                        );
-                    });
-                });
-            }
-        }
-
-        for child in &self.children {
-            match child {
-                // `{expr}` children attach themselves through their
-                // own effect (which references the enclosing `__h`);
-                // we inline the statement and skip the
-                // wrap-in-append-child path that other child kinds
-                // use.
-                Node::Expr(expr) => {
-                    stmts.push(quote! {
-                        {
-                            let __interp_parent = __h;
-                            let __interp_last:
-                                ::std::rc::Rc<::std::cell::RefCell<
-                                    ::std::vec::Vec<
-                                        ::whisker::runtime::view::ElementHandle,
-                                    >,
-                                >> = ::std::rc::Rc::new(
-                                    ::std::cell::RefCell::new(
-                                        ::std::vec::Vec::new(),
-                                    ),
-                                );
-                            ::whisker::effect(move || {
-                                for __h_prev in __interp_last.borrow_mut().drain(..) {
-                                    ::whisker::runtime::view::remove_child(
-                                        __interp_parent, __h_prev,
-                                    );
-                                }
-                                let __view = ::whisker::runtime::view::IntoView::into_view(#expr);
-                                let __new = __view.attach_to(__interp_parent);
-                                *__interp_last.borrow_mut() = __new;
-                            });
-                        }
-                    });
-                }
-                _ => {
-                    let child_code = child.to_tokens_returning_handle();
-                    stmts.push(quote! {
-                        {
-                            let __child = #child_code;
-                            ::whisker::runtime::view::append_child(__h, __child);
-                        }
-                    });
+        if ident_refs.is_empty() {
+            quote! {
+                {
+                    ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
                 }
             }
-        }
-
-        quote! {
-            {
-                let __h = ::whisker::runtime::view::create_element(#tag_path);
-                #(#stmts)*
-                __h
+        } else {
+            quote! {
+                {
+                    #ident_refs_block
+                    ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
+                }
             }
         }
     }
+
+    /// Lower one kwarg to a `.method(value)` token group, or
+    /// `None` if this kwarg is partial-with-no-method-match (the
+    /// emitter handles those via ident-refs instead).
+    fn kwarg_to_setter(&self, kw: &Kwarg) -> Option<TokenStream2> {
+        let name = &kw.name;
+        let value = &kw.value;
+        let name_str = name.to_string();
+        let span = name.span();
+        let tag_name = self.tag.to_string();
+
+        if name_str == "key" {
+            // `key:` is a For-reconciliation hint. Silently ignore
+            // on direct elements — matches legacy behaviour.
+            return None;
+        }
+
+        if kw.partial {
+            // ALWAYS emit a method call for partial kwargs. We
+            // used to gate this behind a prefix-match heuristic
+            // (only emit `.sty(())` if some method name on the
+            // builder started with `sty`), falling through to a
+            // `let _ = name;` ident-ref otherwise so RA could do
+            // identifier completion in the surrounding scope.
+            //
+            // The heuristic broke RA's macro completion when the
+            // partial prefix wasn't a real prefix on its own.
+            // Concretely, RA injects a sentinel suffix at the
+            // cursor (`sty` becomes `stysomething` during the
+            // expansion-for-completion pass) — the prefix check
+            // then resolves to `false` and we fall through to
+            // the ident-ref path, robbing RA of the method-call
+            // shape it needed for kwarg completion. The earlier experiment
+            // proves this: `compose_a!` always emits the method
+            // call and completes correctly; `render!` used the
+            // heuristic and didn't.
+            return Some(quote_spanned! {span=> .#name(()) });
+        }
+
+        let call = if is_string_attr_method(&tag_name, &name_str) {
+            // String-shaped attr (`style`, `class`, plus tag-
+            // specific ones like `image::src`,
+            // `scroll_view::scroll_orientation`,
+            // `raw_text::text`, `text::value`). Wrap in a closure
+            // so the value re-runs on signal-dep changes.
+            quote_spanned! {span=>
+                .#name(move || ::std::string::ToString::to_string(&(#value)))
+            }
+        } else if name_str == "on_tap" {
+            // Handler closure passed through.
+            quote_spanned! {span=> .#name(#value) }
+        } else if let Some(event) = strip_on_prefix(&name_str) {
+            let event_lit = LitStr::new(&event, span);
+            quote_spanned! {span=> .on(#event_lit, #value) }
+        } else {
+            // Catch-all → `.attr("kebab-name", move || value)`.
+            let kebab = name_str.replace('_', "-");
+            let kebab_lit = LitStr::new(&kebab, span);
+            quote_spanned! {span=>
+                .attr(#kebab_lit, move || ::std::string::ToString::to_string(&(#value)))
+            }
+        };
+        Some(call)
+    }
 }
 
-// ---- Component codegen ----------------------------------------------------
+/// String-attribute methods on the builder (take `Fn() -> impl
+/// ToString`). The catch-all `.attr(name, …)` path uses the same
+/// shape for unknown attrs.
+fn is_string_attr_method(tag: &str, attr: &str) -> bool {
+    if matches!(attr, "style" | "class") {
+        return true;
+    }
+    matches!(
+        (tag, attr),
+        ("image", "src")
+            | ("scroll_view", "scroll_orientation")
+            | ("raw_text", "text")
+            | ("text", "value")
+    )
+}
 
-impl ComponentNode {
+// ---- Control-flow (Show / For) ------------------------------------------
+
+impl ControlFlowNode {
     fn to_tokens(&self) -> TokenStream2 {
         match self.name.to_string().as_str() {
             "Show" => self.emit_show(),
             "For" => self.emit_for(),
-            other => {
-                let span = self.name.span();
-                let err = LitStr::new(
-                    &format!(
-                        "unknown component `{other}` in render!. Phase 6.5a v1 \
-                         supports `Show` and `For`; user-defined components \
-                         are invoked as plain function calls outside the macro."
-                    ),
-                    span,
-                );
-                quote! { ::std::compile_error!(#err) }
-            }
+            other => unreachable!("ControlFlowNode constructed with name `{other}`"),
         }
     }
 
     fn kwarg(&self, name: &str) -> Option<&Expr> {
         self.kwargs
             .iter()
-            .find(|k| k.name == name)
+            .find(|k| !k.partial && k.name == name)
             .map(|k| &k.value)
     }
 
@@ -391,7 +458,6 @@ impl ComponentNode {
             return quote! { ::std::compile_error!(#err) };
         };
 
-        // Validate the kwarg set so typos surface at compile time.
         for k in &self.kwargs {
             let n = k.name.to_string();
             if n != "when" && n != "fallback" {
@@ -409,8 +475,6 @@ impl ComponentNode {
             .map(|c| c.to_tokens_as_view())
             .collect();
 
-        // Single-child shortcut: avoid wrapping in a Fragment Vec
-        // when the user has exactly one child element.
         let children_body = if children_views.len() == 1 {
             let only = &children_views[0];
             quote! { #only }
@@ -425,10 +489,6 @@ impl ComponentNode {
         let fallback_arg = match self.kwarg("fallback") {
             Some(expr) => quote! {
                 ::std::option::Option::Some(::std::boxed::Box::new({
-                    // Hold the user's closure in a local so the wrapper
-                    // below captures it by move into a Fn() — the user's
-                    // closure is already Fn() (re-callable each branch
-                    // flip), we just adapt its return type to `View`.
                     let __whisker_user_fallback = #expr;
                     move || ::whisker::runtime::view::IntoView::into_view(
                         __whisker_user_fallback()
@@ -497,28 +557,97 @@ impl ComponentNode {
     }
 }
 
-// ---- Element codegen helpers ---------------------------------------------
+// ---- User-component codegen ---------------------------------------------
 
-fn tag_to_element_tag(tag: &Ident) -> std::result::Result<TokenStream2, TokenStream2> {
-    let name = tag.to_string();
-    let path = match name.as_str() {
-        "page" => quote! { ::whisker::ElementTag::Page },
-        "view" => quote! { ::whisker::ElementTag::View },
-        "text" => quote! { ::whisker::ElementTag::Text },
-        "raw_text" => quote! { ::whisker::ElementTag::RawText },
-        "image" => quote! { ::whisker::ElementTag::Image },
-        "scroll_view" => quote! { ::whisker::ElementTag::ScrollView },
-        _ => {
-            // Reject everything else for now. List + frame coming
-            // when the bridge / ElementTag enum gains the variants;
-            // x-* and custom components come when the macro learns
-            // the `Component { … }` invocation form (Step 4).
-            let span = tag.span();
-            let err = LitStr::new(&format!("unknown render! tag `{name}`"), span);
-            return Err(quote! { ::std::compile_error!(#err) });
+impl UserComponentNode {
+    fn to_tokens(&self) -> TokenStream2 {
+        let props_ident = snake_to_props_ident(&self.fn_name);
+        let fn_ident = &self.fn_name;
+
+        let setter_calls: Vec<TokenStream2> = self
+            .kwargs
+            .iter()
+            .map(|kw| {
+                let name = &kw.name;
+                let span = name.span();
+                if kw.partial {
+                    // Partial kwarg on a user component → emit
+                    // `.name(())` so typed-builder's per-field
+                    // setter shows up under RA's method completion.
+                    quote_spanned! {span=> .#name(()) }
+                } else {
+                    let value = &kw.value;
+                    quote_spanned! {span=> .#name(#value) }
+                }
+            })
+            .collect();
+
+        for kw in &self.kwargs {
+            if kw.name == "key" {
+                let err = LitStr::new(
+                    "`key` is only valid on direct children of `For`, \
+                     not on user components",
+                    kw.name.span(),
+                );
+                return quote! { ::std::compile_error!(#err) };
+            }
         }
-    };
-    Ok(path)
+
+        let children_call = if self.children.is_empty() {
+            quote! {}
+        } else {
+            let child_views: Vec<TokenStream2> = self
+                .children
+                .iter()
+                .map(|c| c.to_tokens_as_view())
+                .collect();
+            let body = if child_views.len() == 1 {
+                let only = &child_views[0];
+                quote! { #only }
+            } else {
+                quote! {
+                    ::whisker::runtime::view::View::Fragment(
+                        ::std::vec![#(#child_views),*]
+                    )
+                }
+            };
+            quote! {
+                .children(::std::rc::Rc::new(move || { #body }))
+            }
+        };
+
+        quote! {
+            #fn_ident(
+                #props_ident::builder()
+                    #(#setter_calls)*
+                    #children_call
+                    .build()
+            )
+        }
+    }
+}
+
+/// `my_component` → `MyComponentProps`. Mirror of the same helper
+/// in `component.rs`; kept duplicated to avoid a cross-module dep
+/// within the proc-macro crate.
+fn snake_to_props_ident(fn_name: &Ident) -> Ident {
+    let snake = fn_name.to_string();
+    let mut camel = String::with_capacity(snake.len() + 5);
+    let mut upper_next = true;
+    for c in snake.chars() {
+        if c == '_' {
+            upper_next = true;
+            continue;
+        }
+        if upper_next {
+            camel.extend(c.to_uppercase());
+            upper_next = false;
+        } else {
+            camel.push(c);
+        }
+    }
+    camel.push_str("Props");
+    Ident::new(&camel, fn_name.span())
 }
 
 fn strip_on_prefix(name: &str) -> Option<String> {
@@ -540,7 +669,9 @@ fn strip_on_prefix(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_on_prefix;
+    use super::{is_builtin_tag, snake_to_props_ident, strip_on_prefix};
+    use proc_macro2::{Span, TokenStream as TokenStream2};
+    use syn::Ident;
 
     #[test]
     fn strips_snake_case() {
@@ -556,5 +687,189 @@ mod tests {
     fn rejects_non_event_prefixes() {
         assert_eq!(strip_on_prefix("tap"), None);
         assert_eq!(strip_on_prefix("ontap"), None);
+    }
+
+    #[test]
+    fn builtin_tags_recognised() {
+        for t in ["page", "view", "text", "raw_text", "image", "scroll_view"] {
+            assert!(is_builtin_tag(t));
+        }
+    }
+
+    #[test]
+    fn non_builtin_lowercase_is_not_builtin() {
+        for t in ["card", "my_component", "tab_item", "header"] {
+            assert!(!is_builtin_tag(t));
+        }
+    }
+
+    #[test]
+    fn snake_to_props_ident_basic() {
+        let id = Ident::new("my_component", Span::call_site());
+        assert_eq!(snake_to_props_ident(&id).to_string(), "MyComponentProps");
+        let id = Ident::new("card", Span::call_site());
+        assert_eq!(snake_to_props_ident(&id).to_string(), "CardProps");
+    }
+
+    // ---- Compose-syntax parser & emission --------------------------------
+
+    #[test]
+    fn view_emission_uses_builder_chain() {
+        let input: TokenStream2 = quote::quote! { view(style: "x") };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains("__view_ctor"),
+            "view emission must call `__view_ctor()`; output was: {output}"
+        );
+        assert!(
+            output.contains(". style"),
+            "view emission must call `.style(value)`; output was: {output}"
+        );
+        assert!(
+            output.contains(". __h ()"),
+            "builder chain must finalise with `.__h()`; output was: {output}"
+        );
+    }
+
+    #[test]
+    fn no_children_emits_bare_chain_expression() {
+        // Verifies the earlier-experiment-verified "no `let __h =` binding"
+        // shape for the no-children case.
+        let input: TokenStream2 = quote::quote! { view(style: "x") };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            !output.contains("let __h"),
+            "no-children emission must NOT use `let __h = …; __h` binding; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn partial_kwarg_emits_method_call_for_method_prefix() {
+        let input: TokenStream2 = quote::quote! { view(sty) };
+        let output = super::expand_test(input).to_string();
+        eprintln!("EMISSION: {output}");
+        assert!(
+            output.contains(". sty"),
+            "partial kwarg matching method prefix must emit `.sty(())`; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn every_partial_kwarg_emits_method_call() {
+        // All partial kwargs route through `.name(())` now —
+        // even prefixes that don't match any builder method.
+        // (RA injects a sentinel suffix during completion, which
+        // makes a "does this prefix match a method" heuristic
+        // unreliable; always emitting the method-call shape is
+        // what the earlier-experiment compose_a does.)
+        let input: TokenStream2 = quote::quote! { view(v) };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains(". v ("),
+            "non-method-matching partial should still emit `.v(())`; \
+             output was: {output}"
+        );
+        assert!(
+            !output.contains("let _ = v"),
+            "ident-ref side block was dropped — no `let _ = v;` expected; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn bare_string_literal_child_is_rejected() {
+        let input: TokenStream2 = quote::quote! { view { "hi" } };
+        let result = syn::parse2::<super::Root>(input);
+        match result {
+            Err(e) => assert!(
+                e.to_string().contains("string literals are not allowed"),
+                "expected hint about `text(value: \"…\")`; got: {e}"
+            ),
+            Ok(_) => panic!("bare LitStr child should be a parse error"),
+        }
+    }
+
+    #[test]
+    fn bare_brace_expr_child_is_rejected() {
+        let input: TokenStream2 = quote::quote! { view { { count } } };
+        let result = syn::parse2::<super::Root>(input);
+        match result {
+            Err(e) => assert!(
+                e.to_string().contains("`{expr}` blocks are not allowed")
+                    || e.to_string().contains("text(value:"),
+                "expected hint about `text(value: <expr>)`; got: {e}"
+            ),
+            Ok(_) => panic!("bare `{{expr}}` child should be a parse error"),
+        }
+    }
+
+    #[test]
+    fn positional_arg_is_rejected() {
+        let input: TokenStream2 = quote::quote! { text("hi") };
+        let result = syn::parse2::<super::Root>(input);
+        assert!(result.is_err(), "positional arg should be a parse error");
+    }
+
+    #[test]
+    fn text_value_kwarg_lowers_to_value_method() {
+        let input: TokenStream2 = quote::quote! { text(value: "Hello") };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains("__text_ctor"),
+            "text must use the text builder; output was: {output}"
+        );
+        assert!(
+            output.contains(". value"),
+            "text(value: …) must lower to `.value(…)`; output was: {output}"
+        );
+    }
+
+    #[test]
+    fn user_component_does_not_use_builtin_tags_module() {
+        let input: TokenStream2 = quote::quote! { my_card(title: "x") };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            !output.contains("__tags"),
+            "user components must not touch the built-in tags module; \
+             output was: {output}"
+        );
+        assert!(
+            output.contains("MyCardProps"),
+            "user component must build via `MyCardProps::builder()`; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn children_block_emits_child_method() {
+        let input: TokenStream2 = quote::quote! {
+            view(style: "x") {
+                view(class: "y")
+            }
+        };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains(". child"),
+            "children must lower to `.child({{…}})`; output was: {output}"
+        );
+    }
+
+    #[test]
+    fn nested_children_use_inline_chain() {
+        // Verify the chain stays a single expression even with
+        // children — no `let __h = …; __h` wrapper.
+        let input: TokenStream2 = quote::quote! {
+            view(style: "outer") {
+                view(class: "inner")
+            }
+        };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            !output.contains("let __h"),
+            "children-bearing emission should stay inline-chain; \
+             output was: {output}"
+        );
     }
 }
