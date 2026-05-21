@@ -484,3 +484,48 @@ fn variant_l3_text_empty_parens() {
         }
     };
 }
+
+// ---- Variant M: confirm kwarg-only shape is what RA tolerates ------------
+
+// L1–L3 all worked (empty containers). D5 worked (kwarg with
+// LitStr value inside a child). J1 didn't (positional LitStr).
+//
+// Hypothesis to confirm: the rule is that every child in the
+// outer children block must be `Ident(name: value, ...)` shape
+// (kwargs only) or empty / block. POSITIONAL arguments inside
+// `()` are what break RA's fixup, not LitStrs in general.
+//
+// If M1 works (kwarg) and M2 doesn't (positional), the rule
+// is confirmed. Then whisker text content must use a kwarg:
+// `text(content: "hello")` instead of `text("hello")` or
+// bare `"hello"`.
+
+fn variant_m1_text_with_kwarg() {
+    // ← TEST M1: `text(value: "hello")` — kwarg-shape with LitStr.
+    let _ = render! {
+        view(sty) {
+            text(value: "hello")
+        }
+    };
+}
+
+fn variant_m2_text_with_kwarg_expr() {
+    let count = 0;
+    // ← TEST M2: kwarg with `{expr}` value (dynamic text via kwarg).
+    let _ = render! {
+        view(sty) {
+            text(value: { count })
+        }
+    };
+}
+
+fn variant_m3_text_with_kwarg_format() {
+    let count = 0;
+    // ← TEST M3: kwarg whose value is a format!() invocation —
+    // the common dynamic-text case in real code.
+    let _ = render! {
+        view(sty) {
+            text(value: format!("count: {}", count))
+        }
+    };
+}
