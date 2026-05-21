@@ -418,45 +418,6 @@ impl ElementNode {
     }
 }
 
-/// Static list of builder method names for a given built-in tag.
-/// Used by the partial-input heuristic to decide between method
-/// completion (`.sty(())` shape) and identifier completion (bare
-/// `let _ = sty;` shape).
-///
-/// Keep in sync with the impl blocks in
-/// `crates/whisker/src/lib.rs::__tags`.
-fn builder_methods_for_tag(tag: &str) -> &'static [&'static str] {
-    match tag {
-        "view" | "page" => &["style", "class", "on_tap", "on", "attr", "child", "__h"],
-        "text" => &[
-            "style", "class", "on_tap", "on", "attr", "child", "__h", "value",
-        ],
-        "image" => &[
-            "style", "class", "on_tap", "on", "attr", "child", "__h", "src",
-        ],
-        "scroll_view" => &[
-            "style",
-            "class",
-            "on_tap",
-            "on",
-            "attr",
-            "child",
-            "__h",
-            "scroll_orientation",
-        ],
-        "raw_text" => &[
-            "style", "class", "on_tap", "on", "attr", "child", "__h", "text",
-        ],
-        _ => &[],
-    }
-}
-
-fn builder_method_prefix_matches(tag: &str, prefix: &str) -> bool {
-    builder_methods_for_tag(tag)
-        .iter()
-        .any(|m| m.starts_with(prefix))
-}
-
 /// String-attribute methods on the builder (take `Fn() -> impl
 /// ToString`). The catch-all `.attr(name, …)` path uses the same
 /// shape for unknown attrs.

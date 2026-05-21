@@ -589,11 +589,20 @@ pub mod prelude {
         effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
         signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,
     };
-    // Built-in tag struct names are NOT re-exported here. Pulling
-    // them into the user's scope makes RA resolve `view(sty)` (etc.)
-    // in render!'s input as a tuple-struct construction call —
-    // RA stops at that syntactic interpretation and never falls
-    // through to the macro's expansion for kwarg-name completion.
-    // The macro emits `::whisker::__tags::__<tag>_ctor()` directly
-    // so user code never needs `view` etc. in scope.
+    // Re-export the `__tags` struct names so RA can complete
+    // `vie|` → `view`, `te|` → `text`, etc. when the user is
+    // typing a tag name inside render! (the macro source position
+    // is a value-expression context to RA; it does identifier
+    // completion against the surrounding scope). Without these
+    // in scope nothing matches `vie...` and no candidates appear.
+    //
+    // This is safe to mix with kwarg completion (`view(sty|)`)
+    // because the macro now unconditionally emits `.name(())` for
+    // every partial kwarg — RA's macro-expansion completion path
+    // sees the method-call shape and ignores whatever else `view`
+    // resolves to in source. (Previous breakage where re-exporting
+    // these blocked kwarg completion was a separate bug — the
+    // prefix-match heuristic that's since been removed.)
+    #[doc(hidden)]
+    pub use crate::__tags::{image, page, raw_text, scroll_view, text, view};
 }
