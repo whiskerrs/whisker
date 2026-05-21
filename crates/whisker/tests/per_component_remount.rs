@@ -125,9 +125,9 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 #[component]
 fn leaf(label: &'static str) -> ElementHandle {
     render! {
-        <view>
-            <text>{label}</text>
-        </view>
+        view {
+            text(value: label)
+        }
     }
 }
 
@@ -150,7 +150,7 @@ fn mount_under_test_parent(make: impl FnOnce() -> ElementHandle) -> (ElementHand
 #[test]
 fn component_returns_body_root_directly() {
     with_recorder_and_owner(|log| {
-        let _root = render! { <leaf label="hello" /> };
+        let _root = render! { leaf(label: "hello") };
         let creates: Vec<_> = log
             .borrow()
             .iter()
@@ -174,7 +174,7 @@ fn component_returns_body_root_directly() {
 #[test]
 fn remount_replaces_root_at_same_parent_slot() {
     with_recorder_and_owner(|log| {
-        let (parent, root_initial) = mount_under_test_parent(|| render! { <leaf label="v1" /> });
+        let (parent, root_initial) = mount_under_test_parent(|| render! { leaf(label: "v1") });
         log.borrow_mut().clear();
 
         // Simulate a subsecond patch on `leaf`'s fn pointer.
@@ -220,7 +220,7 @@ fn remount_replaces_root_at_same_parent_slot() {
 #[test]
 fn remount_disposes_old_owner_and_registers_new() {
     with_recorder_and_owner(|_log| {
-        let (_parent, _root) = mount_under_test_parent(|| render! { <leaf label="first" /> });
+        let (_parent, _root) = mount_under_test_parent(|| render! { leaf(label: "first") });
         let initial_owners = owners_for_fn(leaf as *const ());
         assert_eq!(initial_owners.len(), 1);
         let first_owner_id = initial_owners[0];
@@ -243,7 +243,7 @@ fn remount_disposes_old_owner_and_registers_new() {
 #[test]
 fn remount_releases_old_body_elements() {
     with_recorder_and_owner(|log| {
-        let (_parent, _root) = mount_under_test_parent(|| render! { <leaf label="v1" /> });
+        let (_parent, _root) = mount_under_test_parent(|| render! { leaf(label: "v1") });
         // Count elements created by the component itself (everything
         // the test parent's setup added is also in the log; we just
         // count Creates from after our parent's creation).
@@ -285,7 +285,7 @@ fn dispose_owner_releases_owned_elements() {
 
     let root_owner = create_owner(None);
     // Mount the component inside the root owner.
-    let _root = with_owner(root_owner, || render! { <leaf label="hi" /> });
+    let _root = with_owner(root_owner, || render! { leaf(label: "hi") });
 
     let creates_initial = log
         .borrow()
@@ -329,23 +329,25 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
     #[component]
     fn inner() -> ElementHandle {
         render! {
-            <view><text>"x"</text></view>
+            view {
+                text(value: "x")
+            }
         }
     }
 
     #[component]
     fn outer() -> ElementHandle {
         render! {
-            <view>
-                <inner />
-                <inner />
-                <inner />
-            </view>
+            view {
+                inner()
+                inner()
+                inner()
+            }
         }
     }
 
     with_recorder_and_owner(|_log| {
-        let (_parent, _root) = mount_under_test_parent(|| render! { <outer /> });
+        let (_parent, _root) = mount_under_test_parent(|| render! { outer() });
 
         // After initial mount: 1 outer + 3 inner owners.
         assert_eq!(owners_for_fn(outer as *const ()).len(), 1);
@@ -386,22 +388,24 @@ fn batch_with_parent_and_child_skips_descendant() {
     #[component]
     fn child() -> ElementHandle {
         render! {
-            <view><text>"c"</text></view>
+            view {
+                text(value: "c")
+            }
         }
     }
 
     #[component]
     fn parent_of_child() -> ElementHandle {
         render! {
-            <view>
-                <child />
-                <child />
-            </view>
+            view {
+                child()
+                child()
+            }
         }
     }
 
     with_recorder_and_owner(|_log| {
-        let (_p, _r) = mount_under_test_parent(|| render! { <parent_of_child /> });
+        let (_p, _r) = mount_under_test_parent(|| render! { parent_of_child() });
         assert_eq!(owners_for_fn(parent_of_child as *const ()).len(), 1);
         assert_eq!(owners_for_fn(child as *const ()).len(), 2);
 
@@ -456,10 +460,10 @@ fn remount_preserves_signal_held_above_in_context() {
         let state = use_context::<AppState>().unwrap();
         let local = signal(99_i32);
         render! {
-            <view>
-                <text>{state.counter.get()}</text>
-                <text>{local.0.get()}</text>
-            </view>
+            view {
+                text(value: state.counter.get())
+                text(value: local.0.get())
+            }
         }
     }
 
@@ -467,7 +471,7 @@ fn remount_preserves_signal_held_above_in_context() {
         provide_context(AppState {
             counter: RwSignal::new(42),
         });
-        let (_parent, _root) = mount_under_test_parent(|| render! { <inner_screen /> });
+        let (_parent, _root) = mount_under_test_parent(|| render! { inner_screen() });
         log.borrow_mut().clear();
 
         // Mutate the outer state, then remount.

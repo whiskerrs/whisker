@@ -23,13 +23,13 @@
 //! - `#[whisker::main]` returning `ElementHandle`.
 //! - `RwSignal<T>` shared by passing a `Copy` `AppState` through
 //!   the component tree.
-//! - `render!` with `{expr}` interpolation, `style:` and other
+//! - `render!` with `text(value: …)` kwargs, `style:` and other
 //!   attributes, `on_tap:` handlers.
 //! - Lynx CSS: flex, gradient backgrounds, rounded corners,
 //!   shadows, `position: absolute`.
 
 use whisker::prelude::*;
-use whisker::runtime::view::{self, ElementHandle};
+use whisker::runtime::view::ElementHandle;
 
 // ---- App state --------------------------------------------------------------
 
@@ -82,7 +82,7 @@ fn art_tile(
          background-image: linear-gradient(135deg, {c1} 0%, {c2} 100%);"
     );
     render! {
-        <view style={style} />
+        view(style: style)
     }
 }
 
@@ -99,23 +99,23 @@ fn chip(label: &'static str, accented: bool) -> ElementHandle {
          border-radius: 999px; margin-right: 8px;"
     );
     render! {
-        <text style={style}>
-            {label}
-        </text>
+        text(style: style, value: label)
     }
 }
 
 #[component]
 fn section_header(title: &'static str) -> ElementHandle {
     render! {
-        <view>
-            <text style="font-size: 20px; font-weight: 700; color: white;">
-                {title}
-            </text>
-            <text style="font-size: 13px; color: rgba(255,255,255,0.5);">
-                "See all ›"
-            </text>
-        </view>
+        view {
+            text(
+                style: "font-size: 20px; font-weight: 700; color: white;",
+                value: title,
+            )
+            text(
+                style: "font-size: 13px; color: rgba(255,255,255,0.5);",
+                value: "See all ›",
+            )
+        }
     }
 }
 
@@ -130,11 +130,11 @@ fn recent_card(
         format!("font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; margin-top: 8px;");
     let sub_style = format!("font-size: 12px; color: {TEXT_SECONDARY}; margin-top: 2px;");
     render! {
-        <view style="width: 140px; margin-right: 14px; display: flex; flex-direction: column;">
-            <art_tile c1={c1} c2={c2} w="140px" radius="12px" />
-            <text style={title_style}>{title}</text>
-            <text style={sub_style}>{sub}</text>
-        </view>
+        view(style: "width: 140px; margin-right: 14px; display: flex; flex-direction: column;") {
+            art_tile(c1: c1, c2: c2, w: "140px", radius: "12px")
+            text(style: title_style, value: title)
+            text(style: sub_style, value: sub)
+        }
     }
 }
 
@@ -175,19 +175,17 @@ fn grid_tile(
         format!("font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; margin-top: 10px;");
     let sub_style = format!("font-size: 11px; color: {TEXT_SECONDARY}; margin-top: 2px;");
     render! {
-        <view style="width: 48%; margin-bottom: 16px; \
+        view(style: "width: 48%; margin-bottom: 16px; \
                      background-color: #1a1330; border-radius: 14px; \
                      padding: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.25); \
-                     display: flex; flex-direction: column;">
-            <view style="position: relative; width: 100%;">
-                <art_tile c1={c1} c2={c2} w="100%" radius="10px" />
-                <text style={heart_style()} on_tap={on_heart}>
-                    {heart_glyph()}
-                </text>
-            </view>
-            <text style={title_style}>{title}</text>
-            <text style={sub_style}>"Daily Mix"</text>
-        </view>
+                     display: flex; flex-direction: column;") {
+            view(style: "position: relative; width: 100%;") {
+                art_tile(c1: c1, c2: c2, w: "100%", radius: "10px")
+                text(style: heart_style(), on_tap: on_heart, value: heart_glyph())
+            }
+            text(style: title_style, value: title)
+            text(style: sub_style, value: "Daily Mix")
+        }
     }
 }
 
@@ -210,20 +208,21 @@ fn activity_row(
     let sub_style = format!("font-size: 12px; color: {TEXT_SECONDARY}; margin-top: 2px;");
     let stamp_style = format!("font-size: 11px; color: {TEXT_MUTED};");
     render! {
-        <view style="width: 100%; display: flex; flex-direction: row; align-items: center; \
+        view(style: "width: 100%; display: flex; flex-direction: row; align-items: center; \
                      padding: 14px 20px; border-bottom-width: 1px; border-bottom-style: solid; \
-                     border-bottom-color: rgba(255,255,255,0.06);">
-            <view style={avatar_style}>
-                <text style="font-size: 18px; color: white; font-weight: 700;">
-                    {initial}
-                </text>
-            </view>
-            <view style="flex-grow: 1; flex-shrink: 1; display: flex; flex-direction: column;">
-                <text style={title_style}>{title}</text>
-                <text style={sub_style}>{sub}</text>
-            </view>
-            <text style={stamp_style}>{when}</text>
-        </view>
+                     border-bottom-color: rgba(255,255,255,0.06);") {
+            view(style: avatar_style) {
+                text(
+                    style: "font-size: 18px; color: white; font-weight: 700;",
+                    value: initial,
+                )
+            }
+            view(style: "flex-grow: 1; flex-shrink: 1; display: flex; flex-direction: column;") {
+                text(style: title_style, value: title)
+                text(style: sub_style, value: sub)
+            }
+            text(style: stamp_style, value: when)
+        }
     }
 }
 
@@ -251,14 +250,14 @@ fn tab_item(
         format!("font-size: 11px; color: {color}; font-weight: {weight};")
     };
     render! {
-        <view
-            style="display: flex; flex-direction: column; align-items: center; \
-                   gap: 4px; padding: 4px 12px;"
-            on_tap={on_pick}
-        >
-            <text style={glyph_style()}>{glyph}</text>
-            <text style={label_style()}>{label}</text>
-        </view>
+        view(
+            style: "display: flex; flex-direction: column; align-items: center; \
+                    gap: 4px; padding: 4px 12px;",
+            on_tap: on_pick,
+        ) {
+            text(style: glyph_style(), value: glyph)
+            text(style: label_style(), value: label)
+        }
     }
 }
 
@@ -272,12 +271,12 @@ fn tab_bar(state: AppState) -> ElementHandle {
          border-top-color: rgba(255,255,255,0.06);"
     );
     render! {
-        <view style={style}>
-            <tab_item index={0_usize} label="Home"    glyph="⌂" state={state} />
-            <tab_item index={1_usize} label="Search"  glyph="⌕" state={state} />
-            <tab_item index={2_usize} label="Library" glyph="♫" state={state} />
-            <tab_item index={3_usize} label="Profile" glyph="○" state={state} />
-        </view>
+        view(style: style) {
+            tab_item(index: 0_usize, label: "Home",    glyph: "⌂", state: state)
+            tab_item(index: 1_usize, label: "Search",  glyph: "⌕", state: state)
+            tab_item(index: 2_usize, label: "Library", glyph: "♫", state: state)
+            tab_item(index: 3_usize, label: "Profile", glyph: "○", state: state)
+        }
     }
 }
 
@@ -307,16 +306,14 @@ fn now_playing(state: AppState) -> ElementHandle {
          font-size: 14px; text-align: center; line-height: 40px;"
     );
     render! {
-        <view style={container_style}>
-            <art_tile c1="#ff7e5f" c2="#feb47b" w="48px" radius="8px" />
-            <view style="flex: 1; padding: 0 12px; display: flex; flex-direction: column;">
-                <text style={title_style}>"Sunset Drive"</text>
-                <text style={sub_style}>{status()}</text>
-            </view>
-            <text style={btn_style} on_tap={toggle}>
-                {glyph()}
-            </text>
-        </view>
+        view(style: container_style) {
+            art_tile(c1: "#ff7e5f", c2: "#feb47b", w: "48px", radius: "8px")
+            view(style: "flex: 1; padding: 0 12px; display: flex; flex-direction: column;") {
+                text(style: title_style, value: "Sunset Drive")
+                text(style: sub_style, value: status())
+            }
+            text(style: btn_style, on_tap: toggle, value: glyph())
+        }
     }
 }
 
@@ -334,52 +331,55 @@ fn header() -> ElementHandle {
                 background-color: rgba(255,255,255,0.10); \
                 color: white; font-size: 16px; text-align: center; line-height: 40px;";
     render! {
-        <view style={bg_style}>
-            <view style="display: flex; flex-direction: row; align-items: center;">
-                <view style="width: 44px; height: 44px; border-radius: 22px; \
+        view(style: bg_style) {
+            view(style: "display: flex; flex-direction: row; align-items: center;") {
+                view(style: "width: 44px; height: 44px; border-radius: 22px; \
                              background-image: linear-gradient(135deg, #ff7e5f 0%, #feb47b 100%); \
                              display: flex; align-items: center; justify-content: center; \
-                             margin-right: 12px;">
-                    <text style="font-size: 18px; color: white; font-weight: 700;">"I"</text>
-                </view>
-                <view style="display: flex; flex-direction: column;">
-                    <text style={small}>"Welcome back"</text>
-                    <text style={big}>"Itome"</text>
-                </view>
-            </view>
-            <view style="display: flex; flex-direction: row;">
-                <text style={format!("{icon} margin-right: 8px;")}>"♡"</text>
-                <text style={icon}>"⚙"</text>
-            </view>
-        </view>
+                             margin-right: 12px;") {
+                    text(
+                        style: "font-size: 18px; color: white; font-weight: 700;",
+                        value: "I",
+                    )
+                }
+                view(style: "display: flex; flex-direction: column;") {
+                    text(style: small, value: "Welcome back")
+                    text(style: big, value: "Itome")
+                }
+            }
+            view(style: "display: flex; flex-direction: row;") {
+                text(style: format!("{icon} margin-right: 8px;"), value: "♡")
+                text(style: icon, value: "⚙")
+            }
+        }
     }
 }
 
 #[component]
 fn chips() -> ElementHandle {
     render! {
-        <view style="display: flex; flex-direction: row; padding: 0 20px 8px; flex-wrap: nowrap;">
-            <chip label="All"        accented={true}  />
-            <chip label="Music"      accented={false} />
-            <chip label="Podcasts"   accented={false} />
-            <chip label="Audiobooks" accented={false} />
-        </view>
+        view(style: "display: flex; flex-direction: row; padding: 0 20px 8px; flex-wrap: nowrap;") {
+            chip(label: "All",        accented: true)
+            chip(label: "Music",      accented: false)
+            chip(label: "Podcasts",   accented: false)
+            chip(label: "Audiobooks", accented: false)
+        }
     }
 }
 
 #[component]
 fn recents() -> ElementHandle {
     render! {
-        <scroll_view
-            scroll_orientation="horizontal"
-            style="padding: 4px 20px 8px; height: 200px;"
-        >
-            <recent_card title="Sunset Drive"  sub="Lo-Fi Beats" c1="#ff7e5f" c2="#feb47b" />
-            <recent_card title="Deep Focus"    sub="Ambient"     c1="#4facfe" c2="#00f2fe" />
-            <recent_card title="Late Night"    sub="Synthwave"   c1="#9b6bff" c2="#ff5e9b" />
-            <recent_card title="Coffee House"  sub="Acoustic"    c1="#fcb69f" c2="#ffecd2" />
-            <recent_card title="Energy Boost"  sub="Workout"     c1="#11998e" c2="#38ef7d" />
-        </scroll_view>
+        scroll_view(
+            scroll_orientation: "horizontal",
+            style: "padding: 4px 20px 8px; height: 200px;",
+        ) {
+            recent_card(title: "Sunset Drive",  sub: "Lo-Fi Beats", c1: "#ff7e5f", c2: "#feb47b")
+            recent_card(title: "Deep Focus",    sub: "Ambient",     c1: "#4facfe", c2: "#00f2fe")
+            recent_card(title: "Late Night",    sub: "Synthwave",   c1: "#9b6bff", c2: "#ff5e9b")
+            recent_card(title: "Coffee House",  sub: "Acoustic",    c1: "#fcb69f", c2: "#ffecd2")
+            recent_card(title: "Energy Boost",  sub: "Workout",     c1: "#11998e", c2: "#38ef7d")
+        }
     }
 }
 
@@ -393,43 +393,43 @@ fn featured() -> ElementHandle {
         format!("font-size: 26px; font-weight: 700; color: {TEXT_PRIMARY}; margin-top: 6px;");
     let sub = format!("font-size: 13px; color: {TEXT_SECONDARY}; margin-top: 4px;");
     render! {
-        <view style="margin: 0 20px; height: 180px; border-radius: 18px; \
+        view(style: "margin: 0 20px; height: 180px; border-radius: 18px; \
                      background-image: linear-gradient(135deg, #4a00e0 0%, #8e2de2 100%); \
                      padding: 20px; \
                      display: flex; flex-direction: column; justify-content: flex-end; \
-                     box-shadow: 0 10px 24px rgba(74, 0, 224, 0.4);">
-            <text style={cap}>"Made For You"</text>
-            <text style={title}>"Discover Weekly"</text>
-            <text style={sub}>"30 new songs picked just for you"</text>
-        </view>
+                     box-shadow: 0 10px 24px rgba(74, 0, 224, 0.4);") {
+            text(style: cap, value: "Made For You")
+            text(style: title, value: "Discover Weekly")
+            text(style: sub, value: "30 new songs picked just for you")
+        }
     }
 }
 
 #[component]
 fn grid(state: AppState) -> ElementHandle {
     render! {
-        <view style="padding: 4px 20px 0; display: flex; flex-direction: row; \
-                     flex-wrap: wrap; justify-content: space-between;">
-            <grid_tile index={0_usize} title="Chill Mix"   c1="#667eea" c2="#764ba2" state={state} />
-            <grid_tile index={1_usize} title="Happy Mix"   c1="#f093fb" c2="#f5576c" state={state} />
-            <grid_tile index={2_usize} title="Focus Mix"   c1="#4facfe" c2="#00f2fe" state={state} />
-            <grid_tile index={3_usize} title="Workout Mix" c1="#43e97b" c2="#38f9d7" state={state} />
-            <grid_tile index={4_usize} title="Sleep Mix"   c1="#fa709a" c2="#fee140" state={state} />
-            <grid_tile index={5_usize} title="Indie Mix"   c1="#30cfd0" c2="#330867" state={state} />
-        </view>
+        view(style: "padding: 4px 20px 0; display: flex; flex-direction: row; \
+                     flex-wrap: wrap; justify-content: space-between;") {
+            grid_tile(index: 0_usize, title: "Chill Mix",   c1: "#667eea", c2: "#764ba2", state: state)
+            grid_tile(index: 1_usize, title: "Happy Mix",   c1: "#f093fb", c2: "#f5576c", state: state)
+            grid_tile(index: 2_usize, title: "Focus Mix",   c1: "#4facfe", c2: "#00f2fe", state: state)
+            grid_tile(index: 3_usize, title: "Workout Mix", c1: "#43e97b", c2: "#38f9d7", state: state)
+            grid_tile(index: 4_usize, title: "Sleep Mix",   c1: "#fa709a", c2: "#fee140", state: state)
+            grid_tile(index: 5_usize, title: "Indie Mix",   c1: "#30cfd0", c2: "#330867", state: state)
+        }
     }
 }
 
 #[component]
 fn activity_feed() -> ElementHandle {
     render! {
-        <view style="display: flex; flex-direction: column; padding: 0 0 8px;">
-            <activity_row initial="A" c1="#ff7e5f" c2="#feb47b" title="Alice" sub="Started following you"            when="2m"        />
-            <activity_row initial="R" c1="#667eea" c2="#764ba2" title="Riku"  sub="Liked your playlist 'Late Night'" when="1h"        />
-            <activity_row initial="M" c1="#43e97b" c2="#38f9d7" title="Mio"   sub="Shared 'Sunset Drive' with you"   when="3h"        />
-            <activity_row initial="K" c1="#fa709a" c2="#fee140" title="Ken"   sub="Added 5 songs to 'Workout'"       when="yesterday" />
-            <activity_row initial="S" c1="#4facfe" c2="#00f2fe" title="Sora"  sub="Created a new playlist 'Focus'"   when="2d"        />
-        </view>
+        view(style: "display: flex; flex-direction: column; padding: 0 0 8px;") {
+            activity_row(initial: "A", c1: "#ff7e5f", c2: "#feb47b", title: "Alice", sub: "Started following you",            when: "2m")
+            activity_row(initial: "R", c1: "#667eea", c2: "#764ba2", title: "Riku",  sub: "Liked your playlist 'Late Night'", when: "1h")
+            activity_row(initial: "M", c1: "#43e97b", c2: "#38f9d7", title: "Mio",   sub: "Shared 'Sunset Drive' with you",   when: "3h")
+            activity_row(initial: "K", c1: "#fa709a", c2: "#fee140", title: "Ken",   sub: "Added 5 songs to 'Workout'",       when: "yesterday")
+            activity_row(initial: "S", c1: "#4facfe", c2: "#00f2fe", title: "Sora",  sub: "Created a new playlist 'Focus'",   when: "2d")
+        }
     }
 }
 
@@ -440,18 +440,18 @@ fn scroll_body(state: AppState) -> ElementHandle {
          display: flex; flex-direction: column;"
     );
     render! {
-        <scroll_view scroll_orientation="vertical" style={style}>
-            <chips />
-            <section_header title="Recently Played" />
-            <recents />
-            <section_header title="Made For You" />
-            <featured />
-            <section_header title="Your Top Mixes" />
-            <grid state={state} />
-            <section_header title="Activity" />
-            <activity_feed />
-            <view style="height: 160px;" />
-        </scroll_view>
+        scroll_view(scroll_orientation: "vertical", style: style) {
+            chips()
+            section_header(title: "Recently Played")
+            recents()
+            section_header(title: "Made For You")
+            featured()
+            section_header(title: "Your Top Mixes")
+            grid(state: state)
+            section_header(title: "Activity")
+            activity_feed()
+            view(style: "height: 160px;")
+        }
     }
 }
 
@@ -469,11 +469,11 @@ fn app() -> ElementHandle {
          display: flex; flex-direction: column; position: relative;"
     );
     render! {
-        <page style={page_style}>
-            <header />
-            <scroll_body state={state} />
-            <now_playing state={state} />
-            <tab_bar state={state} />
-        </page>
+        page(style: page_style) {
+            header()
+            scroll_body(state: state)
+            now_playing(state: state)
+            tab_bar(state: state)
+        }
     }
 }

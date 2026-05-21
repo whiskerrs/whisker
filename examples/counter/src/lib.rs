@@ -51,41 +51,40 @@ pub fn counter(state: AppState) -> whisker::runtime::view::ElementHandle {
     let big_enough = memo(move || state.count.get() > 10);
 
     render! {
-        <view style="display: flex; flex-direction: column; gap: 12px; padding: 20px;">
-            <text style="font-size: 32px; font-weight: 700;">
-                "Count: "
-                {state.count.get()}
-            </text>
+        view(style: "display: flex; flex-direction: column; gap: 12px; padding: 20px;") {
+            text(style: "font-size: 32px; font-weight: 700;") {
+                text(value: format!("Count: {}", state.count.get()))
+            }
 
-            <view style="display: flex; flex-direction: row; gap: 8px;">
-                <view
-                    style="padding: 8px 16px; background: #e5e7eb; border-radius: 6px;"
-                    on_tap={move || state.count.update(|n| *n -= 1)}
-                >
-                    <text>"-1"</text>
-                </view>
+            view(style: "display: flex; flex-direction: row; gap: 8px;") {
+                view(
+                    style: "padding: 8px 16px; background: #e5e7eb; border-radius: 6px;",
+                    on_tap: move || state.count.update(|n| *n -= 1),
+                ) {
+                    text(value: "-1")
+                }
 
-                <view
-                    style="padding: 8px 16px; background: #e5e7eb; border-radius: 6px;"
-                    on_tap={move || state.count.set(0)}
-                >
-                    <text>"reset"</text>
-                </view>
+                view(
+                    style: "padding: 8px 16px; background: #e5e7eb; border-radius: 6px;",
+                    on_tap: move || state.count.set(0),
+                ) {
+                    text(value: "reset")
+                }
 
-                <view
-                    style="padding: 8px 16px; background: #3b82f6; color: white; border-radius: 6px;"
-                    on_tap={move || state.count.update(|n| *n += 1)}
-                >
-                    <text>"+1"</text>
-                </view>
-            </view>
+                view(
+                    style: "padding: 8px 16px; background: #3b82f6; color: white; border-radius: 6px;",
+                    on_tap: move || state.count.update(|n| *n += 1),
+                ) {
+                    text(value: "+1")
+                }
+            }
 
-            <Show when={move || big_enough.get()}>
-                <text style="color: #16a34a; font-weight: 600;">
-                    "You went over 10!"
-                </text>
-            </Show>
-        </view>
+            Show(when: move || big_enough.get()) {
+                text(style: "color: #16a34a; font-weight: 600;") {
+                    text(value: "You went over 10!")
+                }
+            }
+        }
     }
 }
 
@@ -96,5 +95,5 @@ pub fn render_app() -> whisker::runtime::view::ElementHandle {
     let state = AppState {
         count: RwSignal::new(0),
     };
-    render! { <counter state={state} /> }
+    render! { counter(state: state) }
 }
