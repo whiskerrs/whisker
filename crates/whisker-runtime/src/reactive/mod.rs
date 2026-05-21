@@ -33,6 +33,7 @@ pub mod computed;
 pub mod context;
 pub mod effect;
 pub mod owner;
+pub mod resource;
 pub mod runtime;
 pub mod scheduler;
 pub mod signal;
@@ -40,6 +41,8 @@ pub mod stored;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_resource;
 
 #[doc(hidden)]
 pub use component::__reset_pending_mount_for_tests;
@@ -51,6 +54,7 @@ pub use computed::computed;
 pub use context::{provide_context, use_context, with_context};
 pub use effect::effect;
 pub use owner::{create_owner, dispose_owner, on_cleanup, with_owner};
+pub use resource::{resource, resource_sync, Resource, ResourceState};
 pub use runtime::{NodeId, OwnerId};
 pub use scheduler::flush;
 pub use signal::{signal, ReadSignal, RwSignal, WriteSignal};

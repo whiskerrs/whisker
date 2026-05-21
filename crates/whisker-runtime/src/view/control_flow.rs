@@ -18,7 +18,7 @@ use std::hash::Hash;
 use std::rc::Rc;
 
 use crate::element::ElementTag;
-use crate::reactive::{create_owner, dispose_owner, effect, with_owner};
+use crate::reactive::{create_owner, dispose_owner, effect, with_owner, Resource, ResourceState};
 
 use super::handle::Element;
 use super::into_view::{IntoView, View};
@@ -177,6 +177,55 @@ where
         }
 
         *entries.borrow_mut() = new_entries;
+    });
+
+    wrapper
+}
+
+/// Render a fallback view while a [`Resource`] is loading, and the
+/// `children` view (passed the resolved value) once it's ready.
+///
+/// On state flips — `Loading` → `Ready(v)` / `Error(_)` and any
+/// future transitions — the previously-mounted owner is disposed
+/// (cleanups fire, reactive nodes are freed, owned elements get
+/// released) before the new branch is built. Same disposal pattern
+/// `show` and `for_each` use.
+///
+/// Error handling: an `Error(msg)` state is treated like `Loading`
+/// for routing purposes — the `fallback` view is shown. Callers
+/// that need to differentiate can read [`Resource::error`] inside
+/// `fallback` and branch on it (or skip Suspense entirely and use
+/// `Show` + manual state-machine matching).
+///
+/// The `render!` macro recognises `Suspense { ... }` call sites and
+/// emits a call here.
+pub fn suspense<T, FF, CF, FFV, CFV>(resource: Resource<T>, fallback: FF, children: CF) -> Element
+where
+    T: Clone + 'static,
+    FF: Fn() -> FFV + 'static,
+    CF: Fn(T) -> CFV + 'static,
+    FFV: IntoView,
+    CFV: IntoView,
+{
+    let wrapper = create_element(ElementTag::View);
+    let mounted: Rc<RefCell<Option<crate::reactive::OwnerId>>> = Rc::new(RefCell::new(None));
+
+    effect(move || {
+        let prev = mounted.borrow_mut().take();
+        if let Some(o) = prev {
+            dispose_owner(o);
+        }
+
+        let branch_owner = create_owner(None);
+        let state = resource.state();
+        with_owner(branch_owner, || {
+            let view: View = match state {
+                ResourceState::Ready(v) => children(v).into_view(),
+                ResourceState::Loading | ResourceState::Error(_) => fallback().into_view(),
+            };
+            view.attach_to(wrapper);
+        });
+        *mounted.borrow_mut() = Some(branch_owner);
     });
 
     wrapper

@@ -208,7 +208,7 @@ impl Parse for Node {
                 kwargs,
                 children,
             }))
-        } else if name == "Show" || name == "For" {
+        } else if name == "Show" || name == "For" || name == "Suspense" {
             Ok(Node::ControlFlow(ControlFlowNode {
                 name: tag,
                 kwargs,
@@ -441,6 +441,7 @@ impl ControlFlowNode {
         match self.name.to_string().as_str() {
             "Show" => self.emit_show(),
             "For" => self.emit_for(),
+            "Suspense" => self.emit_suspense(),
             other => unreachable!("ControlFlowNode constructed with name `{other}`"),
         }
     }
@@ -550,6 +551,60 @@ impl ControlFlowNode {
                     let __whisker_user_children = #children_expr;
                     move |__item| ::whisker::runtime::view::IntoView::into_view(
                         __whisker_user_children(__item)
+                    )
+                },
+            )
+        }
+    }
+
+    fn emit_suspense(&self) -> TokenStream2 {
+        let Some(resource_expr) = self.kwarg("resource") else {
+            let err = LitStr::new("Suspense requires `resource:` kwarg", self.name.span());
+            return quote! { ::std::compile_error!(#err) };
+        };
+        let Some(fallback_expr) = self.kwarg("fallback") else {
+            let err = LitStr::new("Suspense requires `fallback:` kwarg", self.name.span());
+            return quote! { ::std::compile_error!(#err) };
+        };
+        let Some(children_expr) = self.kwarg("children") else {
+            let err = LitStr::new("Suspense requires `children:` kwarg", self.name.span());
+            return quote! { ::std::compile_error!(#err) };
+        };
+
+        for k in &self.kwargs {
+            let n = k.name.to_string();
+            if n != "resource" && n != "fallback" && n != "children" {
+                let err = LitStr::new(
+                    &format!(
+                        "unknown kwarg `{n}` on Suspense; allowed: resource, fallback, children"
+                    ),
+                    k.name.span(),
+                );
+                return quote! { ::std::compile_error!(#err) };
+            }
+        }
+
+        if !self.children.is_empty() {
+            let err = LitStr::new(
+                "Suspense takes no positional children; pass them via `children:`",
+                self.name.span(),
+            );
+            return quote! { ::std::compile_error!(#err) };
+        }
+
+        quote! {
+            ::whisker::suspense(
+                #resource_expr,
+                {
+                    let __whisker_user_fallback = #fallback_expr;
+                    move || ::whisker::runtime::view::IntoView::into_view(
+                        __whisker_user_fallback()
+                    )
+                },
+                {
+                    let __whisker_user_children = #children_expr;
+                    move |__data| ::whisker::runtime::view::IntoView::into_view(
+                        __whisker_user_children(__data)
                     )
                 },
             )

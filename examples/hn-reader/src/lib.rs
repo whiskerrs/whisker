@@ -54,23 +54,6 @@ struct HnResponse {
     hits: Vec<Story>,
 }
 
-/// Three-state machine for the fetch lifecycle.
-#[derive(Debug, Clone)]
-pub enum LoadState {
-    Loading,
-    Loaded(Vec<Story>),
-    Error(String),
-}
-
-impl LoadState {
-    fn stories(&self) -> Vec<Story> {
-        match self {
-            LoadState::Loaded(s) => s.clone(),
-            _ => Vec::new(),
-        }
-    }
-}
-
 // ---- Palette (HN orange + cream, like the real site) -----------------------
 
 const BG: &str = "#f6f6ef";
@@ -162,17 +145,10 @@ fn header() -> Element {
     }
 }
 
-/// Status banner — uses a closure that returns `&'static str` so
-/// we can read the signal reactively without owned-String capture
-/// issues. Empty string when there's nothing to say (loaded state).
+/// Status banner shown while the resource is loading or has
+/// errored. The Resource's own state drives the message.
 #[component]
-fn status_banner(state: RwSignal<LoadState>) -> Element {
-    let status_text = move || match state.get() {
-        LoadState::Loading => "Loading top stories…",
-        LoadState::Loaded(_) => "",
-        LoadState::Error(_) => "Failed to load — check your connection",
-    };
-
+fn status_banner(message: &'static str) -> Element {
     let style = format!(
         "width: 100%; padding: 16px; \
          display: flex; flex-direction: row; \
@@ -181,33 +157,44 @@ fn status_banner(state: RwSignal<LoadState>) -> Element {
 
     render! {
         view(style: style) {
-            text(value: status_text())
+            text(value: message)
         }
     }
 }
 
-/// Root of the app. Owns the load-state signal and kicks off the
-/// background fetch on mount.
+/// Stories list — the `Ready` branch of the Suspense.
+#[component]
+fn stories_list(stories: Vec<Story>) -> Element {
+    // The component body is an FnMut so `For`'s `each:` closure
+    // (which is `Fn() -> Vec<T>`) can't move `stories` out — clone
+    // each invocation. The list doesn't change after first mount,
+    // so this clones once at attach time and the For owns the
+    // returned vec from then on.
+    let stories_for_each = stories.clone();
+    let list_style =
+        "flex-grow: 1; flex-shrink: 1; width: 100%; display: flex; flex-direction: column;"
+            .to_string();
+    render! {
+        scroll_view(scroll_orientation: "vertical", style: list_style) {
+            For(
+                each: move || stories_for_each.clone(),
+                key: |s: &Story| s.object_id.clone(),
+                children: |s: Story| render! { story_row(story: s) },
+            )
+        }
+    }
+}
+
+/// Root of the app. Kicks off the fetch via `resource()` and lets
+/// `Suspense` drive the Loading → Ready transition.
 #[component]
 pub fn hn_reader() -> Element {
-    let state = RwSignal::new(LoadState::Loading);
-
-    on_mount(move || {
-        // Worker thread: do the blocking HTTPS call.
-        std::thread::spawn(move || {
-            let result = fetch_blocking();
-
-            // Hop back to the main thread before touching the signal.
-            // Inside this closure we're on the TASM thread, so signal
-            // writes + dependent effect scheduling all behave the
-            // same as if we were inside an event handler or a
-            // `#[component]` body.
-            run_on_main_thread(move || match result {
-                Ok(stories) => state.set(LoadState::Loaded(stories)),
-                Err(msg) => state.set(LoadState::Error(msg)),
-            });
-        });
-    });
+    // `resource(...)` spawns a worker thread, marshals the result
+    // back to the main thread, and exposes Loading / Ready(Vec<Story>) /
+    // Error(String) through a Copy handle. The old hand-rolled
+    // `signal + thread::spawn + run_on_main_thread + LoadState`
+    // boilerplate collapses into this one call.
+    let stories = resource(fetch_blocking);
 
     // The body view is the only direct child of `page`. We match
     // hello-world's pattern: explicit `width: 100%` + flex-grow +
@@ -219,20 +206,21 @@ pub fn hn_reader() -> Element {
                       display: flex; flex-direction: column;"
         .to_string();
 
-    let list_style =
-        "flex-grow: 1; flex-shrink: 1; width: 100%; display: flex; flex-direction: column;"
-            .to_string();
     render! {
         view(style: body_style) {
             header()
-            status_banner(state: state)
-            scroll_view(scroll_orientation: "vertical", style: list_style) {
-                For(
-                    each: move || state.get().stories(),
-                    key: |s: &Story| s.object_id.clone(),
-                    children: |s: Story| render! { story_row(story: s) },
-                )
-            }
+            Suspense(
+                resource: stories,
+                fallback: move || {
+                    let msg = if stories.error().is_some() {
+                        "Failed to load — check your connection"
+                    } else {
+                        "Loading top stories…"
+                    };
+                    render! { status_banner(message: msg) }
+                },
+                children: |list: Vec<Story>| render! { stories_list(stories: list) },
+            )
         }
     }
 }

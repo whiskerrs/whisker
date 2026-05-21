@@ -30,7 +30,7 @@ pub mod renderer;
 #[cfg(test)]
 mod tests;
 
-pub use control_flow::{for_each, show};
+pub use control_flow::{for_each, show, suspense};
 pub use handle::Element;
 pub use into_view::{Children, IntoView, View};
 #[doc(hidden)]

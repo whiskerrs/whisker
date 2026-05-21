@@ -33,11 +33,12 @@ pub use whisker_macros::{component, main, render};
 // for callers that prefer the long path.
 pub use whisker_runtime::reactive::{
     computed, create_owner, dispose_owner, effect, flush, flush_mounts, mount_component,
-    on_cleanup, on_mount, provide_context, signal, unmount_component, use_context, with_context,
-    with_owner, ReadSignal, RwSignal, StoredValue, WriteSignal,
+    on_cleanup, on_mount, provide_context, resource, resource_sync, signal, unmount_component,
+    use_context, with_context, with_owner, ReadSignal, Resource, ResourceState, RwSignal,
+    StoredValue, WriteSignal,
 };
 // Control-flow components used by the `render!` macro.
-pub use whisker_runtime::view::{for_each, show};
+pub use whisker_runtime::view::{for_each, show, suspense};
 // `Children` is the conventional prop type for components that wrap
 // non-kwarg child nodes in their `render!` invocation.
 pub use whisker_runtime::view::Children;
@@ -604,8 +605,9 @@ pub mod prelude {
     pub use crate::ElementTag;
     pub use crate::{component, main, render};
     pub use crate::{
-        computed, effect, for_each, on_cleanup, on_mount, provide_context, run_on_main_thread,
-        show, signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,
+        computed, effect, for_each, on_cleanup, on_mount, provide_context, resource, resource_sync,
+        run_on_main_thread, show, signal, use_context, with_context, ReadSignal, Resource,
+        ResourceState, RwSignal, StoredValue, WriteSignal,
     };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
