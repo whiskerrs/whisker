@@ -32,3 +32,9 @@ flate2 = "1"
 # SHA-256 verification of downloaded tarballs against the constants
 # hard-coded in src/lynx.rs.
 sha2 = "0.10"
+# Curated terminal output for `whisker run` / `whisker build`. Used by
+# the `ui` module to replace ad-hoc `eprintln!` calls scattered across
+# whisker-build / whisker-dev-server / whisker-cli with structured
+# step + status events. Stays a single shared crate so the three
+# orchestration layers all hit the same look + feel.
+indicatif = "0.17"

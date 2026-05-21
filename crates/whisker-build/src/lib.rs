@@ -28,6 +28,7 @@ pub mod android;
 pub mod capture;
 pub mod ios;
 pub mod lynx;
+pub mod ui;
 
 pub use capture::{
     capture_env_vars, target_linker_env_var, target_rustflags_env_var, CaptureShims,

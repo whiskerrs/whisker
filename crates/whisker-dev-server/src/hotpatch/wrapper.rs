@@ -139,14 +139,14 @@ pub fn load_captured_args(cache_dir: &Path) -> Result<HashMap<String, CapturedRu
         let body = match std::fs::read_to_string(&path) {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("[whisker-dev] skip {}: {e}", path.display());
+                whisker_build::ui::warn(format!("skip {}: {e}", path.display()));
                 continue;
             }
         };
         let inv: CapturedRustcInvocation = match serde_json::from_str(&body) {
             Ok(i) => i,
             Err(e) => {
-                eprintln!("[whisker-dev] skip {}: malformed json: {e}", path.display());
+                whisker_build::ui::warn(format!("skip {}: malformed json: {e}", path.display()));
                 continue;
             }
         };
@@ -200,14 +200,14 @@ pub fn load_captured_linker_args(
         let body = match std::fs::read_to_string(&path) {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("[whisker-dev] skip {}: {e}", path.display());
+                whisker_build::ui::warn(format!("skip {}: {e}", path.display()));
                 continue;
             }
         };
         let inv: CapturedLinkerInvocation = match serde_json::from_str(&body) {
             Ok(i) => i,
             Err(e) => {
-                eprintln!("[whisker-dev] skip {}: malformed json: {e}", path.display());
+                whisker_build::ui::warn(format!("skip {}: malformed json: {e}", path.display()));
                 continue;
             }
         };

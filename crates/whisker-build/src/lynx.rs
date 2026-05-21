@@ -178,8 +178,9 @@ fn ensure_lynx(platform: LynxPlatform) -> Result<PathBuf> {
     }
 
     let url = download_url(platform);
-    eprintln!("[whisker-build::lynx] downloading {url}");
+    let dl_step = crate::ui::step("download", url.clone());
     let bytes = http_get(&url).with_context(|| format!("download {url}"))?;
+    dl_step.done(format!("{} KB", bytes.len() / 1024));
     verify_sha256(&bytes, expected_sha).with_context(|| {
         format!(
             "checksum mismatch for {url}; \
@@ -199,7 +200,7 @@ fn ensure_lynx(platform: LynxPlatform) -> Result<PathBuf> {
             cache.display(),
         );
     }
-    eprintln!("[whisker-build::lynx] cached at {}", cache.display(),);
+    crate::ui::info(format!("cached lynx at {}", cache.display()));
     Ok(cache)
 }
 

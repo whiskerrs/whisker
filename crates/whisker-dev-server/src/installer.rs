@@ -62,10 +62,135 @@ impl Installer {
     }
 
     fn host_skip(&self) -> Result<()> {
-        eprintln!(
-            "[whisker-dev-server] host target: install/launch is the user's job (run the binary yourself)"
+        whisker_build::ui::info(
+            "host target: install/launch is the user's job — run the binary manually",
         );
         Ok(())
+    }
+}
+
+/// Run a `tokio::process::Command` to completion, capture its stderr,
+/// and filter known-benign lines (`already booted`, `found nothing to
+/// terminate`, xcodebuild's IDE noise). The actual exit status is
+/// returned verbatim; the caller decides what counts as failure. Used
+/// for `xcrun simctl ...` invocations where the stderr signal is
+/// ~70 % noise.
+async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::process::ExitStatus> {
+    use tokio::io::AsyncReadExt;
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().context("spawn child")?;
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+
+    let (out_buf, err_buf) = tokio::join!(
+        async {
+            let mut s = Vec::new();
+            if let Some(mut h) = stdout.take() {
+                let _ = h.read_to_end(&mut s).await;
+            }
+            s
+        },
+        async {
+            let mut s = Vec::new();
+            if let Some(mut h) = stderr.take() {
+                let _ = h.read_to_end(&mut s).await;
+            }
+            s
+        }
+    );
+    let status = child.wait().await.context("wait for child")?;
+
+    let stderr_str = String::from_utf8_lossy(&err_buf);
+    for line in stderr_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if kind.is_benign(trimmed) {
+            continue;
+        }
+        // Anything that survived the filter is real output — surface
+        // it as a warning so the user notices but the curated layout
+        // isn't drowned.
+        whisker_build::ui::warn(trimmed);
+    }
+    // Stdout from these tools is usually empty or low-noise (e.g.
+    // `simctl launch` prints `<bundle_id>: <pid>`); echo it through
+    // info() at debug-grade.
+    let stdout_str = String::from_utf8_lossy(&out_buf);
+    for line in stdout_str.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !kind.is_benign_stdout(trimmed) {
+            whisker_build::ui::info(trimmed);
+        }
+    }
+    Ok(status)
+}
+
+/// Classifies which sub-command produced the stderr — we tune the
+/// "benign noise" set per tool because the false-positive shape
+/// differs (simctl emits NSPOSIX error preambles, xcodebuild emits
+/// `IDERunDestination` etc.).
+#[derive(Copy, Clone)]
+enum SimctlNoise {
+    /// `xcrun simctl boot` — "Unable to boot device in current state: Booted"
+    /// fires when the sim is already up, which is the normal case
+    /// after the first `whisker run`.
+    Boot,
+    /// `xcrun simctl terminate` — "found nothing to terminate" fires
+    /// on the very first run before the app exists in the sim.
+    Terminate,
+    /// `xcrun simctl install` / `launch` — generally low-noise but
+    /// can emit POSIX prefixes; treat anything matching the known
+    /// boilerplate as suppressed.
+    Other,
+    /// `xcodebuild` — `[MT] IDERunDestination`, the date-time
+    /// preamble lines, and the post-build "xcframework written"
+    /// confirmation all belong here.
+    Xcodebuild,
+}
+
+impl SimctlNoise {
+    fn is_benign(&self, line: &str) -> bool {
+        // Lines common to several Apple tools.
+        if line.contains("An error was encountered processing the command")
+            || line.contains("Underlying error (domain=")
+            || line.starts_with("    The request to terminate")
+        {
+            return true;
+        }
+        match self {
+            SimctlNoise::Boot => {
+                line.contains("Unable to boot device in current state: Booted")
+                    || line.starts_with("(code=405)")
+            }
+            SimctlNoise::Terminate => {
+                line.contains("found nothing to terminate")
+                    || line.contains("(domain=NSPOSIXErrorDomain, code=3)")
+            }
+            SimctlNoise::Other => false,
+            SimctlNoise::Xcodebuild => {
+                // `2026-05-21 18:21:52.770 xcodebuild[54160:34595363]
+                //  [MT] IDERunDestination: …`
+                (line.starts_with("20")
+                    && line.contains("xcodebuild[")
+                    && line.contains("] [MT] "))
+                    // The xcframework command echoes a single
+                    // confirmation we already cover via our own step.
+                    || line.starts_with("xcframework successfully written out to:")
+            }
+        }
+    }
+
+    fn is_benign_stdout(&self, line: &str) -> bool {
+        match self {
+            // `simctl launch` always reports `<bundle_id>: <pid>` on
+            // success; it duplicates info our `step.done(...)`
+            // already covers.
+            SimctlNoise::Other => line.contains(": ") && line.chars().any(|c| c.is_ascii_digit()),
+            _ => false,
+        }
     }
 }
 
@@ -131,8 +256,9 @@ async fn ios_install_and_launch(
         .join("target/.whisker/ios-derived")
         .join(package);
 
-    eprintln!("[whisker-dev-server] xcodebuild building app for Simulator");
-    let xc_status = Command::new("xcodebuild")
+    let xc_step = whisker_build::ui::step("xcodebuild", p.scheme.clone());
+    let mut xc_cmd = Command::new("xcodebuild");
+    xc_cmd
         .arg("-project")
         .arg(&xcode_project)
         .args(["-scheme", &p.scheme])
@@ -140,13 +266,15 @@ async fn ios_install_and_launch(
         .args(["-destination", "generic/platform=iOS Simulator"])
         .arg("-derivedDataPath")
         .arg(&derived)
-        .args(["-quiet", "build"])
-        .status()
+        .args(["-quiet", "build"]);
+    let xc_status = run_filtered(xc_cmd, SimctlNoise::Xcodebuild)
         .await
         .context("spawn xcodebuild")?;
     if !xc_status.success() {
+        xc_step.fail(format!("{xc_status}"));
         anyhow::bail!("xcodebuild build failed ({xc_status})");
     }
+    xc_step.done("");
 
     let app_path = derived
         .join("Build/Products/Debug-iphonesimulator")
@@ -160,46 +288,55 @@ async fn ios_install_and_launch(
     }
 
     // Best-effort boot of either the caller's override or the first
-    // available iPhone simctl knows about.
+    // available iPhone simctl knows about. "Already booted" stderr
+    // is filtered as a benign noise pattern.
     let device = p
         .device_override
         .clone()
         .or_else(pick_available_iphone)
         .unwrap_or_else(|| "iPhone 17 Pro".into());
-    let _ = Command::new("xcrun")
-        .args(["simctl", "boot", &device])
-        .status()
-        .await;
+    let boot_step = whisker_build::ui::step("boot", device.clone());
+    let mut boot_cmd = Command::new("xcrun");
+    boot_cmd.args(["simctl", "boot", &device]);
+    let _ = run_filtered(boot_cmd, SimctlNoise::Boot).await;
+    boot_step.done("");
 
-    eprintln!("[whisker-dev-server] simctl install {}", app_path.display());
-    let install = Command::new("xcrun")
+    let install_step = whisker_build::ui::step("install", format!("{}.app", p.scheme));
+    let mut install_cmd = Command::new("xcrun");
+    install_cmd
         .args(["simctl", "install", "booted"])
-        .arg(&app_path)
-        .status()
+        .arg(&app_path);
+    let install = run_filtered(install_cmd, SimctlNoise::Other)
         .await
         .context("spawn simctl install")?;
     if !install.success() {
+        install_step.fail(format!("{install}"));
         anyhow::bail!("simctl install {} failed ({install})", app_path.display());
     }
+    install_step.done("");
 
     // Force the previous run to die so the relaunch re-bootstraps the
-    // runtime + reconnects the dev WebSocket.
-    let _ = Command::new("xcrun")
-        .args(["simctl", "terminate", "booted", &p.bundle_id])
-        .status()
-        .await;
+    // runtime + reconnects the dev WebSocket. Errors here are benign
+    // (first launch — nothing running yet).
+    let mut term_cmd = Command::new("xcrun");
+    term_cmd.args(["simctl", "terminate", "booted", &p.bundle_id]);
+    let _ = run_filtered(term_cmd, SimctlNoise::Terminate).await;
 
     // `SIMCTL_CHILD_<NAME>` shows up as `<NAME>` inside the launched
     // app's env — that's how the dev-runtime finds us.
-    let launch = Command::new("xcrun")
+    let launch_step = whisker_build::ui::step("launch", p.bundle_id.clone());
+    let mut launch_cmd = Command::new("xcrun");
+    launch_cmd
         .args(["simctl", "launch", "booted", &p.bundle_id])
-        .env("SIMCTL_CHILD_WHISKER_DEV_ADDR", "127.0.0.1:9876")
-        .status()
+        .env("SIMCTL_CHILD_WHISKER_DEV_ADDR", "127.0.0.1:9876");
+    let launch = run_filtered(launch_cmd, SimctlNoise::Other)
         .await
         .context("spawn simctl launch")?;
     if !launch.success() {
+        launch_step.fail(format!("{launch}"));
         anyhow::bail!("simctl launch {} failed ({launch})", p.bundle_id);
     }
+    launch_step.done("");
     Ok(())
 }
 

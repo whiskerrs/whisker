@@ -245,19 +245,17 @@ impl DevServer {
     /// `ChangeKind::RustCode` events. Patcher initialisation or
     /// `build_patch` failure falls back to Tier 2 silently.
     pub async fn run(self) -> Result<()> {
-        eprintln!(
-            "[whisker-dev-server] starting (target={:?}, package={}, addr={}, mode={:?})",
-            self.config.target,
-            self.config.package,
-            self.config.bind_addr,
-            self.config.hot_patch_mode,
-        );
+        whisker_build::ui::section("whisker run");
+        whisker_build::ui::info(format!(
+            "target={:?} · package={} · mode={:?}",
+            self.config.target, self.config.package, self.config.hot_patch_mode,
+        ));
 
         let (sender, bound, _server_handle) =
             server::serve(self.config.bind_addr, self.on_event.clone()).await?;
-        eprintln!(
-            "[whisker-dev-server] ws://{bound}/whisker-dev (waiting for clients; Ctrl-C to quit)"
-        );
+        whisker_build::ui::info(format!(
+            "ws://{bound}/whisker-dev (waiting for clients; Ctrl-C to quit)"
+        ));
 
         // Watch the user crate's `src/`. `crate_dir` is whatever the
         // cli resolved (`Cargo.toml` parent) — for in-workspace
@@ -270,7 +268,7 @@ impl DevServer {
             std::time::Duration::from_millis(200),
             tx,
         )?;
-        eprintln!("[whisker-dev-server] watching {}", watch_root.display());
+        whisker_build::ui::info(format!("watching {}", watch_root.display()));
         emit(&self.on_event, Event::Started);
 
         // Configure the initial build. For Tier 1 it doubles as the
@@ -295,10 +293,9 @@ impl DevServer {
                     Some(prep)
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[whisker-dev-server] Tier 1 capture setup failed: {e:#} — \
-                         falling back to Tier 2 cold rebuilds",
-                    );
+                    whisker_build::ui::warn(format!(
+                        "Tier 1 capture setup failed ({e:#}); falling back to Tier 2 cold rebuilds",
+                    ));
                     None
                 }
             }
@@ -319,7 +316,7 @@ impl DevServer {
         // unfriendly when you've started an emulator and want the app
         // up immediately. A failure here doesn't abort: the loop
         // still enters, so fixing the source and saving recovers.
-        eprintln!("[whisker-dev-server] initial build");
+        whisker_build::ui::section("Initial build");
         run_build_cycle(&builder, &installer, &self.on_event, &sender, "initial").await;
 
         // After the fat build has happened, Patcher::initialize can
@@ -328,14 +325,13 @@ impl DevServer {
         let patcher = match tier1_init {
             Some(prep) => match init_patcher_for(&self.config, &prep) {
                 Ok(p) => {
-                    eprintln!("[whisker-dev-server] Tier 1 patcher ready");
+                    whisker_build::ui::info("Tier 1 patcher ready");
                     Some(p)
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[whisker-dev-server] Tier 1 patcher init failed: {e:#} — \
-                         falling back to Tier 2 cold rebuilds",
-                    );
+                    whisker_build::ui::warn(format!(
+                        "Tier 1 patcher init failed ({e:#}); falling back to Tier 2 cold rebuilds",
+                    ));
                     None
                 }
             },
@@ -349,15 +345,16 @@ impl DevServer {
         // the dev loop from being killed by a transient build
         // glitch.
         while let Some(change) = rx.recv().await {
-            eprintln!(
-                "[whisker-dev-server] change ({:?}) — {} path(s)",
+            whisker_build::ui::section("Change");
+            whisker_build::ui::info(format!(
+                "{:?} — {} path(s)",
                 change.kind,
                 change.paths.len(),
-            );
+            ));
             let action = decide_action(change.kind, patcher.is_some());
             match action {
                 LoopAction::Ignore => {
-                    eprintln!("[whisker-dev-server] ignored ({:?})", change.kind);
+                    whisker_build::ui::info(format!("ignored ({:?})", change.kind));
                 }
                 LoopAction::Tier1Patch => {
                     let p = patcher.as_ref().expect("decide_action guarantees Some");
@@ -366,10 +363,8 @@ impl DevServer {
                         // (handshake hasn't completed, or never connected).
                         // Without that value we can't build a stub-asm-style
                         // patch — fall back to Tier 2 cold rebuild.
-                        eprintln!(
-                            "[whisker-dev-server] tier1 patch skipped: \
-                             no client `aslr_reference` reported yet — \
-                             falling back to Tier 2 cold rebuild",
+                        whisker_build::ui::warn(
+                            "tier1 skipped: no client aslr_reference yet; using Tier 2",
                         );
                         run_build_cycle(
                             &builder,
@@ -389,12 +384,10 @@ impl DevServer {
                             let dylib_bytes = match read_lib_bytes(&plan.table.lib) {
                                 Ok(b) => Arc::new(b),
                                 Err(e) => {
-                                    eprintln!(
-                                        "[whisker-dev-server] tier1 patch built but \
-                                         could not read dylib bytes ({}): {e:#} — \
-                                         falling back to Tier 2",
+                                    whisker_build::ui::warn(format!(
+                                        "tier1 patch built but could not read dylib bytes ({}): {e:#}; using Tier 2",
                                         plan.table.lib.display(),
-                                    );
+                                    ));
                                     run_build_cycle(
                                         &builder,
                                         &installer,
@@ -411,20 +404,18 @@ impl DevServer {
                                 table: plan.table,
                                 dylib_bytes,
                             });
-                            eprintln!(
-                                "[whisker-dev-server] tier1 patch sent to {n} client(s) \
-                                 (built in {built_in:?}, queued for send in {:?}, \
-                                 total edit→send: {:?})",
+                            let patch_step = whisker_build::ui::step("patch", "tier 1");
+                            patch_step.done(format!(
+                                "{n} client(s) · built {built_in:?} · queued {:?} · total {:?}",
                                 send_started.elapsed(),
                                 started.elapsed(),
-                            );
+                            ));
                             emit(&self.on_event, Event::PatchSent);
                         }
                         Err(e) => {
-                            eprintln!(
-                                "[whisker-dev-server] tier1 patch failed: {e:#} — \
-                                 falling back to Tier 2 cold rebuild",
-                            );
+                            whisker_build::ui::warn(format!(
+                                "tier1 patch failed ({e:#}); using Tier 2 cold rebuild",
+                            ));
                             run_build_cycle(
                                 &builder,
                                 &installer,
@@ -483,19 +474,18 @@ fn log_patch_diff(report: &hotpatch::DiffReport) {
         return;
     }
     if !report.added.is_empty() {
-        eprintln!(
-            "[whisker-dev-server] patch added {} symbol(s): {:?}",
+        whisker_build::ui::info(format!(
+            "patch added {} symbol(s): {:?}",
             report.added.len(),
             report.added.iter().take(5).collect::<Vec<_>>(),
-        );
+        ));
     }
     if !report.removed.is_empty() {
-        eprintln!(
-            "[whisker-dev-server] patch removed {} symbol(s) — \
-             host shell may crash on stale callers: {:?}",
+        whisker_build::ui::warn(format!(
+            "patch removed {} symbol(s) — host shell may crash on stale callers: {:?}",
             report.removed.len(),
             report.removed.iter().take(5).collect::<Vec<_>>(),
-        );
+        ));
     }
 }
 
@@ -723,16 +713,16 @@ async fn run_build_cycle(
         Ok(()) => {
             emit(on_event, Event::BuildSucceeded);
             if let Err(e) = installer.install_and_launch().await {
-                eprintln!("[whisker-dev-server] {label} install failed: {e}");
+                whisker_build::ui::error(format!("{label} install failed: {e}"));
             }
-            eprintln!(
-                "[whisker-dev-server] {label} done; {} client(s) connected",
+            whisker_build::ui::info(format!(
+                "{label} done · {} client(s) connected",
                 sender.client_count()
-            );
+            ));
         }
         Err(e) => {
             let msg = format!("{e:#}");
-            eprintln!("[whisker-dev-server] {label} build failed: {msg}");
+            whisker_build::ui::error(format!("{label} build failed: {msg}"));
             emit(on_event, Event::BuildFailed(msg));
         }
     }

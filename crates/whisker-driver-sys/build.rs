@@ -76,6 +76,29 @@ fn add_lynx_includes_for_capi_impl(build: &mut cc::Build) {
         .include(primjs.join("napi/jsc"));
 }
 
+/// Silence diagnostics that fire on every Lynx public header rather
+/// than our own code. `cargo build` otherwise prints ~300 lines of
+/// `-Wunused-parameter` cargo-warning messages per build of the
+/// bridge, drowning out anything that's actually actionable.
+///
+/// We don't want to mask warnings on OUR sources, but cc-rs has no
+/// per-file warning override — the `Build` instance compiles both
+/// `whisker_bridge_*.cc` (ours) and the Lynx headers transitively.
+/// Lynx's own GN build silences these too (see Lynx's
+/// `BUILD.gn`'s `default_warning_flags`), so suppressing here just
+/// matches the upstream stance.
+///
+/// Kept as a single named call so the future "split this Build into
+/// our-sources + lynx-headers builds" refactor has an obvious anchor
+/// to replace.
+fn silence_upstream_lynx_warnings(build: &mut cc::Build) {
+    // Source of the bulk of the noise: Lynx's many `virtual` interface
+    // methods accept context parameters they ignore in their default
+    // impl. `-Wno-unused-parameter` is the precise switch; broader
+    // `-w` would also hide actionable warnings in our own code.
+    build.flag_if_supported("-Wno-unused-parameter");
+}
+
 // --- Android ---------------------------------------------------------
 
 fn compile_android() -> Result<()> {
@@ -125,6 +148,7 @@ fn compile_android() -> Result<()> {
     // via `.cargo/config.toml` target-feature flags.
     build.flag("-march=armv8.1-a");
     build.flag("-mno-outline-atomics");
+    silence_upstream_lynx_warnings(&mut build);
     build.compile("whisker_bridge_static");
 
     // --- Link-line emission -----------------------------------------
@@ -233,6 +257,7 @@ fn compile_ios() -> Result<()> {
     // cc::Build picks Obj-C++ semantics for `.mm` files automatically
     // (it appends `-x objective-c++`), so no extra flag is needed for
     // `whisker_bridge_ios.mm`.
+    silence_upstream_lynx_warnings(&mut build);
     build.compile("whisker_bridge_static");
 
     // --- Link-line emission for the parent dylib --------------------

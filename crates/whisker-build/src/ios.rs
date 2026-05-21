@@ -100,10 +100,11 @@ pub fn build_xcframework(
         ));
     }
 
-    eprintln!("[whisker-build] cleaning {}", out.display());
+    let clean_step = crate::ui::step("clean", out.display().to_string());
     if out.exists() {
         std::fs::remove_dir_all(&out).with_context(|| format!("rm -rf {}", out.display()))?;
     }
+    clean_step.done("");
     std::fs::create_dir_all(&out).with_context(|| format!("mkdir -p {}", out.display()))?;
 
     // Order matters: the last triple's rustc / linker capture wins in
@@ -115,10 +116,10 @@ pub fn build_xcframework(
         "x86_64-apple-ios",
         "aarch64-apple-ios-sim",
     ];
-    eprintln!("[whisker-build] cargo rustc per iOS triple (package: {package})");
     for triple in triples {
-        eprintln!("    -- {triple}");
+        let s = crate::ui::step("compile", format!("{package} ({triple})"));
         cargo_build_ios_dylib(workspace_root, package, triple, features, capture)?;
+        s.done("");
     }
 
     let target_dir = workspace_root.join("target");
@@ -150,10 +151,7 @@ pub fn build_xcframework(
     let sim_fat_parent = out.join("sim");
     std::fs::create_dir_all(&sim_fat_parent)?;
     let sim_fat = sim_fat_parent.join(&cargo_dylib_name);
-    eprintln!(
-        "[whisker-build] lipo simulator slices → {}",
-        sim_fat.display()
-    );
+    crate::ui::info(format!("lipo {}", sim_fat.display()));
     let status = Command::new("lipo")
         .args(["-create"])
         .arg(&sim_arm64_dylib)
@@ -173,7 +171,7 @@ pub fn build_xcframework(
     )?;
 
     let xcf = out.join(format!("{FRAMEWORK_NAME}.xcframework"));
-    eprintln!("[whisker-build] xcodebuild -create-xcframework");
+    let xcf_step = crate::ui::step("xcframework", FRAMEWORK_NAME.to_string());
     let status = Command::new("xcodebuild")
         .arg("-create-xcframework")
         .args(["-framework"])
@@ -187,7 +185,7 @@ pub fn build_xcframework(
     if !status.success() {
         return Err(anyhow!("xcodebuild -create-xcframework failed ({status})"));
     }
-    eprintln!("[whisker-build] xcframework: {}", xcf.display());
+    xcf_step.done("");
     Ok(xcf)
 }
 
@@ -267,7 +265,7 @@ fn build_framework_dir(
     bridge_headers_src: &Path,
 ) -> Result<PathBuf> {
     let fw_dir = parent.join(format!("{FRAMEWORK_NAME}.framework"));
-    eprintln!("[whisker-build] staging {}", fw_dir.display());
+    crate::ui::info(format!("stage {}", fw_dir.display()));
     if fw_dir.exists() {
         std::fs::remove_dir_all(&fw_dir)?;
     }
@@ -403,10 +401,7 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
         ));
     }
 
-    eprintln!(
-        "[whisker-build] xcodebuild -configuration {} -sdk {}",
-        args.configuration, args.sdk,
-    );
+    let _xc_step = crate::ui::step("xcodebuild", args.xcodeproj_name.to_string());
     let destination = match args.sdk {
         "iphonesimulator" => "generic/platform=iOS Simulator".to_string(),
         "iphoneos" => "generic/platform=iOS".to_string(),
