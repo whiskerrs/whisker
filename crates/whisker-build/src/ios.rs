@@ -74,47 +74,24 @@ const BRIDGE_EXPORTS: &[&str] = &[
 /// passes `None` (prod has no Tier 1).
 /// Which iOS slice(s) to put in the resulting xcframework.
 ///
-/// `whisker run --target ios-sim` only ever loads the host-arch
-/// simulator slice; building the device + cross-arch slices wastes
-/// 60+ seconds of dev-loop time. Production `whisker build` keeps
-/// the universal shape so the resulting artifact runs on real
-/// hardware too.
+/// `whisker run --target ios-sim` doesn't need the device slice —
+/// skipping it cuts the dev-loop's initial build by one cargo
+/// triple (~20–60s warm cache). The simulator pair (arm64 + x86_64)
+/// stays as a fat slice because `xcodebuild
+/// -destination 'generic/platform=iOS Simulator'` insists on
+/// linking against a universal binary; pinning `-arch <host>`
+/// alongside the destination is rejected by xcodebuild.
+///
+/// Production `whisker build` keeps the universal shape so the
+/// resulting artifact runs on real hardware too.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum IosSlices {
-    /// arm64 device + arm64 sim + x86_64 sim. Required for shipping;
-    /// also used by Tier 1 capture (the dev-server populates rustc
-    /// / linker caches keyed on the simulator triple, which lands
-    /// last in the build order).
+    /// arm64 device + arm64 sim + x86_64 sim. Required for shipping.
     Universal,
-    /// One simulator slice matching the host architecture
-    /// (`aarch64-apple-ios-sim` on Apple Silicon Macs, `x86_64-apple-ios`
-    /// on Intel). Right choice for `whisker run --target ios-sim` —
-    /// xcodebuild's `-arch <host>` pin in the dev-server's app link
-    /// keeps the link line single-arch so this lone slice resolves
-    /// every reference.
-    SimulatorHost,
-}
-
-/// The single iOS-sim triple matching the current host. Used by the
-/// dev-server's `SimulatorHost` xcframework build + by the matching
-/// `-arch <host>` constraint the dev-server adds to xcodebuild.
-pub fn host_simulator_triple() -> &'static str {
-    if cfg!(target_arch = "aarch64") {
-        "aarch64-apple-ios-sim"
-    } else {
-        "x86_64-apple-ios"
-    }
-}
-
-/// The Mach-O arch name for the current host (`arm64` / `x86_64`).
-/// xcodebuild's `-arch` flag wants this form, not the rustc triple
-/// form.
-pub fn host_simulator_arch() -> &'static str {
-    if cfg!(target_arch = "aarch64") {
-        "arm64"
-    } else {
-        "x86_64"
-    }
+    /// arm64 sim + x86_64 sim (lipo'd into one fat slice). Right
+    /// choice for `whisker run --target ios-sim` — both sim archs
+    /// are needed at link time, but the device slice isn't.
+    SimulatorFat,
 }
 
 pub fn build_xcframework(
@@ -170,21 +147,17 @@ pub fn build_xcframework_with(
     }
     std::fs::create_dir_all(&out).with_context(|| format!("mkdir -p {}", out.display()))?;
 
-    // Pick the triple set + their order based on `slices`. For
-    // `Universal`, arm64-sim lands last so its rustc + linker
-    // capture wins the dev-server's last-write-wins cache (the
-    // typical Apple-Silicon dev machine runs the arm64 simulator).
-    // For `SimulatorArm64` there's nothing to order — it's the
-    // only triple compiled.
-    let host_sim = host_simulator_triple();
-    let host_only: [&str; 1] = [host_sim];
+    // Triple set + order driven by `slices`. arm64-sim lands last in
+    // both variants so its rustc + linker capture wins the
+    // dev-server's last-write-wins cache (Apple-Silicon dev machines
+    // run the arm64 simulator natively).
     let triples: &[&str] = match slices {
         IosSlices::Universal => &[
             "aarch64-apple-ios",
             "x86_64-apple-ios",
             "aarch64-apple-ios-sim",
         ],
-        IosSlices::SimulatorHost => &host_only,
+        IosSlices::SimulatorFat => &["x86_64-apple-ios", "aarch64-apple-ios-sim"],
     };
     for triple in triples {
         let s = crate::ui::step("compile", format!("{package} ({triple})"));
@@ -210,19 +183,26 @@ pub fn build_xcframework_with(
     // tree before handing the lot to xcodebuild.
     let mut staged_fws: Vec<PathBuf> = Vec::new();
 
+    let sim_x86_dylib = target_dir
+        .join("x86_64-apple-ios/release")
+        .join(&cargo_dylib_name);
+    for p in [&sim_arm64_dylib, &sim_x86_dylib] {
+        if !p.is_file() {
+            return Err(anyhow!("expected dylib not built: {}", p.display()));
+        }
+    }
+
+    // Device slice — only for Universal.
     if matches!(slices, IosSlices::Universal) {
         let device_dylib = target_dir
             .join("aarch64-apple-ios/release")
             .join(&cargo_dylib_name);
-        let sim_x86_dylib = target_dir
-            .join("x86_64-apple-ios/release")
-            .join(&cargo_dylib_name);
-        for p in [&device_dylib, &sim_arm64_dylib, &sim_x86_dylib] {
-            if !p.is_file() {
-                return Err(anyhow!("expected dylib not built: {}", p.display()));
-            }
+        if !device_dylib.is_file() {
+            return Err(anyhow!(
+                "expected dylib not built: {}",
+                device_dylib.display()
+            ));
         }
-        // Device slice framework.
         let device_fw_parent = out.join("device");
         let device_fw = build_framework_dir(
             &device_fw_parent,
@@ -231,55 +211,35 @@ pub fn build_xcframework_with(
             &bridge_headers_src,
         )?;
         staged_fws.push(device_fw);
-
-        // Lipo arm64 + x86 sim dylibs into a fat sim binary.
-        let sim_fat_parent = out.join("sim");
-        std::fs::create_dir_all(&sim_fat_parent)?;
-        let sim_fat = sim_fat_parent.join(&cargo_dylib_name);
-        crate::ui::debug(format!("lipo {}", sim_fat.display()));
-        let status = Command::new("lipo")
-            .args(["-create"])
-            .arg(&sim_arm64_dylib)
-            .arg(&sim_x86_dylib)
-            .args(["-output"])
-            .arg(&sim_fat)
-            .status()
-            .context("spawn lipo")?;
-        if !status.success() {
-            xcf_step.fail(format!("lipo {status}"));
-            return Err(anyhow!("lipo failed ({status})"));
-        }
-        let sim_fw = build_framework_dir(
-            &sim_fat_parent,
-            &sim_fat,
-            &rust_headers_src,
-            &bridge_headers_src,
-        )?;
-        staged_fws.push(sim_fw);
-    } else {
-        // SimulatorHost: one slice matching the host architecture.
-        // The dev-server's app xcodebuild line pins `-arch <host>`,
-        // so a single-slice xcframework is sufficient — the linker
-        // won't reach for the other arch.
-        let host_sim_dylib = target_dir
-            .join(host_sim)
-            .join("release")
-            .join(&cargo_dylib_name);
-        if !host_sim_dylib.is_file() {
-            return Err(anyhow!(
-                "expected dylib not built: {}",
-                host_sim_dylib.display(),
-            ));
-        }
-        let sim_parent = out.join("sim");
-        std::fs::create_dir_all(&sim_parent)?;
-        let staged = sim_parent.join(&cargo_dylib_name);
-        std::fs::copy(&host_sim_dylib, &staged)
-            .with_context(|| format!("copy {} → {}", host_sim_dylib.display(), staged.display()))?;
-        let sim_fw =
-            build_framework_dir(&sim_parent, &staged, &rust_headers_src, &bridge_headers_src)?;
-        staged_fws.push(sim_fw);
     }
+
+    // Lipo arm64 + x86 sim dylibs into a fat sim binary. Both
+    // `Universal` and `SimulatorFat` need this — xcodebuild's
+    // `-destination 'generic/platform=iOS Simulator'` link demands
+    // a universal simulator slice.
+    let sim_fat_parent = out.join("sim");
+    std::fs::create_dir_all(&sim_fat_parent)?;
+    let sim_fat = sim_fat_parent.join(&cargo_dylib_name);
+    crate::ui::debug(format!("lipo {}", sim_fat.display()));
+    let status = Command::new("lipo")
+        .args(["-create"])
+        .arg(&sim_arm64_dylib)
+        .arg(&sim_x86_dylib)
+        .args(["-output"])
+        .arg(&sim_fat)
+        .status()
+        .context("spawn lipo")?;
+    if !status.success() {
+        xcf_step.fail(format!("lipo {status}"));
+        return Err(anyhow!("lipo failed ({status})"));
+    }
+    let sim_fw = build_framework_dir(
+        &sim_fat_parent,
+        &sim_fat,
+        &rust_headers_src,
+        &bridge_headers_src,
+    )?;
+    staged_fws.push(sim_fw);
 
     for fw in &staged_fws {
         xcframework_cmd.args(["-framework"]).arg(fw);
@@ -321,8 +281,15 @@ fn cargo_build_ios_dylib(
     capture: Option<&CaptureShims>,
 ) -> Result<()> {
     let mut cmd = Command::new("cargo");
+    // `--quiet` suppresses cargo's `Compiling X` / `Finished` lines
+    // that otherwise interleave with our compile-step spinner. The
+    // spinner already shows the same info (`compile  hello-world
+    // (triple) …` → `✓ 6.7s`); cargo's prefix-aligned variant just
+    // produces visual stutter as the spinner redraws around it.
+    // Errors still surface via stderr passthrough.
     cmd.args([
         "rustc",
+        "--quiet",
         "--release",
         "-p",
         package,

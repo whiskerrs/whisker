@@ -151,7 +151,7 @@ impl Builder {
                 &pkg,
                 &features,
                 capture.as_ref(),
-                whisker_build::ios::IosSlices::SimulatorHost,
+                whisker_build::ios::IosSlices::SimulatorFat,
             )?;
             Ok(())
         })
