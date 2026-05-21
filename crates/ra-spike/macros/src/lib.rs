@@ -382,3 +382,51 @@ pub fn render_h(input: TokenStream) -> TokenStream {
     let root = parse_macro_input!(input as Element);
     emit_element_h(&root).into()
 }
+
+/// Variant I: text/expr children dropped from emission entirely.
+/// If completion works under this shape but not under E/G/H, the
+/// problem is the emission's handling of literal/expr tokens; if
+/// it still fails, the problem is upstream — RA's interpretation
+/// of the macro *input* once it contains a `LitStr` or `{expr}`
+/// among the children.
+#[proc_macro]
+pub fn render_i(input: TokenStream) -> TokenStream {
+    let root = parse_macro_input!(input as Element);
+    emit_element_i(&root).into()
+}
+
+fn emit_element_i(e: &Element) -> TokenStream2 {
+    let tag_span = e.tag.span();
+    let ctor = format_ident!("__{}_ctor", e.tag, span = tag_span);
+    let attr_calls: Vec<TokenStream2> = e
+        .attrs
+        .iter()
+        .map(|(name, value)| {
+            let span = name.span();
+            let value_tokens = match value {
+                Some(v) => quote!(#v),
+                None => quote!(()),
+            };
+            quote_spanned! {span=> .#name(#value_tokens) }
+        })
+        .collect();
+    let child_calls: Vec<TokenStream2> = e
+        .children
+        .iter()
+        .filter_map(|c| match c {
+            Child::Element(child_el) => {
+                let inner = emit_element_i(child_el);
+                Some(quote! { .child(#inner) })
+            }
+            Child::Text(_) | Child::Expr(_) => None,
+        })
+        .collect();
+    quote! {
+        {
+            ::ra_spike::__tags::#ctor()
+                #(#attr_calls)*
+                #(#child_calls)*
+                .__h()
+        }
+    }
+}

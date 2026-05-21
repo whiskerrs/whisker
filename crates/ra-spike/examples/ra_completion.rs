@@ -15,7 +15,7 @@
 
 #![allow(dead_code, unused_imports, unused_variables, unused_must_use)]
 
-use ra_spike::{compose_a, compose_b, compose_c, render, render_g, render_h};
+use ra_spike::{compose_a, compose_b, compose_c, render, render_g, render_h, render_i};
 
 fn main() {}
 
@@ -293,6 +293,48 @@ fn variant_h_full() {
             "before"
             { count }
             "between"
+            view(class: "mid")
+        }
+    };
+}
+
+// ---- Variant I: text/expr children dropped from emission ----------------
+
+// G and H both failed: even with the nested chain removed (G) and
+// even with `.child(…)` removed (H), text/expr siblings still
+// blocked completion. The remaining hypothesis is that it's not
+// about the emission at all — it's about RA's handling of the
+// macro *input* once it contains a LitStr or `{expr}` child.
+//
+// Variant I drops text/expr children from emission entirely (just
+// keeps element children). If I works but E/G/H don't, the
+// problem is in our emission for literal/expr tokens (e.g., span
+// duplication). If I ALSO doesn't work, the problem is upstream
+// — the macro input shape alone is enough to break RA's mapping,
+// and we can't fix it from inside the proc-macro.
+
+fn variant_i_with_text_sibling() {
+    // ← TEST I1: same shape as E1, text child dropped at emission.
+    let _ = render_i! {
+        view(sty) {
+            "hello world"
+        }
+    };
+}
+
+fn variant_i_with_expr_sibling() {
+    let greeting = "hi";
+    // ← TEST I2: same shape as E2, expr child dropped at emission.
+    let _ = render_i! {
+        view(sty) {
+            { greeting }
+        }
+    };
+}
+
+fn variant_i_full() {
+    let _ = render_i! {
+        view(style: "outer") {
             view(class: "mid")
         }
     };
