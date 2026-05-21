@@ -8,7 +8,7 @@
 //! original — closer to the sub-second budget.
 //!
 //! Apart from the symbols, we also capture the static virtual
-//! address of `whisker_aslr_anchor` (emitted by `#[whisker::main]`)
+//! address of `whisker_aslr_anchor` (exported by `whisker-driver`)
 //! in the host binary. That becomes `JumpTable::aslr_reference`,
 //! and our vendored subsecond's `apply_patch` uses it as
 //!

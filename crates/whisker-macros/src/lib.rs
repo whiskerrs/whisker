@@ -99,28 +99,12 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ::whisker::__main_runtime::tick(engine)
         }
 
-        // Anchor symbol used by Whisker's vendored subsecond fork to
-        // compute the ASLR slide between this dylib's static layout
-        // (cached server-side) and its runtime load address. Both the
-        // host dylib and every patch dylib must export this so
-        // `dlsym(RTLD_DEFAULT, "whisker_aslr_anchor")` resolves
-        // unambiguously inside the user's `.so`.
-        //
-        // Why a unique name instead of `main` (upstream subsecond's
-        // sentinel): on Android, Whisker is loaded via
-        // `System.loadLibrary` into a process whose linker namespace
-        // already contains several `main` symbols
-        // (`app_process64`'s, plus any prior memfd patches), so a
-        // dlsym for `main` returns the wrong one and the slide math
-        // computes garbage. A unique name only exists in the user's
-        // `.so`, so the lookup is collision-free regardless of
-        // namespace order.
-        //
-        // The stub never runs — Whisker is JNI-loaded, never executed
-        // as a process entry point. It only needs to exist in the
-        // export list at a known static address.
-        #[no_mangle]
-        pub extern "C" fn whisker_aslr_anchor() -> ::std::ffi::c_int { 0 }
+        // Note: the ASLR anchor symbol (`whisker_aslr_anchor`) used
+        // to be injected here. It now lives in `whisker-driver` as a
+        // plain `#[no_mangle]` fn — every Whisker user dylib links
+        // that crate, so the symbol auto-exports without needing
+        // macro plumbing. Patch dylibs explicitly retain it via
+        // `--require-defined` in the dev-server linker plan.
     };
 
     expanded.into()

@@ -530,9 +530,10 @@ pub unsafe fn apply_patch(mut table: JumpTable) -> Result<Vec<*const ()>, PatchE
         // memfds', etc.) — `dlsym(RTLD_DEFAULT, "main")` then returns the
         // wrong one and the computed ASLR slide is garbage.
         //
-        // `whisker_aslr_anchor` is synthesised by `#[whisker::main]` and
-        // is unique to the user's `.so`, so the dlsym lookup is
-        // unambiguous regardless of namespace order.
+        // `whisker_aslr_anchor` is exported by `whisker-driver`
+        // (statically linked into every Whisker dylib) and is unique
+        // to the user's `.so`, so the dlsym lookup is unambiguous
+        // regardless of namespace order.
         let old_offset = aslr_reference() - table.aslr_reference as usize;
 
         let new_offset = unsafe {
