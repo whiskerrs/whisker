@@ -1,7 +1,7 @@
 //! Owner (scope) lifecycle: create, dispose, enter/exit.
 //!
 //! Owners form a tree. Every reactive primitive (signal / effect /
-//! memo) belongs to exactly one owner. Disposing an owner cascades
+//! computed) belongs to exactly one owner. Disposing an owner cascades
 //! into its children, then frees every node it allocated, then runs
 //! its cleanup callbacks in LIFO order.
 //!
@@ -138,7 +138,7 @@ pub fn dispose_owner(owner: OwnerId) {
     }
 
     // Step 4: free every node this owner allocated. For effects /
-    // memos, also detach them from any subscriber list they were on,
+    // computed values, also detach them from any subscriber list they were on,
     // so other live nodes don't try to notify a freed slot later.
     with_runtime(|rt| {
         for node_id in &nodes {

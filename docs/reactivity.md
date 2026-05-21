@@ -4,7 +4,7 @@ Whisker uses Leptos-style fine-grained reactivity. The mental model
 is simple once you accept its single non-obvious rule:
 
 > **A component function runs exactly once.** The reactive primitives
-> it creates — signals, effects, memos — form a graph that lives on
+> it creates — signals, effects, computed values — form a graph that lives on
 > after the function returns, and that graph is what makes the UI
 > respond to state changes.
 
@@ -20,7 +20,7 @@ For the architecture rationale behind this design, see
 ## Signals
 
 A signal is a reactive value. Reading it inside a tracked context
-(an effect, memo, or `render!` interpolation) registers a
+(an effect, computed, or `render!` interpolation) registers a
 subscription; writing it schedules every subscriber to re-run.
 
 Two equivalent ways to create one:
@@ -67,7 +67,7 @@ let len = names.with(|v| v.len());
 
 ### Untracked reads
 
-By default reads inside an effect / memo / `{expr}` register a
+By default reads inside an effect / computed / `{expr}` register a
 dependency. Sometimes you want to read a signal without subscribing
 — `get_untracked` / `with_untracked` skip the tracking step:
 
@@ -111,7 +111,7 @@ set_count.set(8);   // logs "count is now 8"
 
 Effects are the bridge from reactive state to "the outside world" —
 logging, persistence, animations, opening a connection. They never
-return a value other subscribers can read; for that, use `memo`.
+return a value other subscribers can read; for that, use `computed`.
 
 ### Effects and ownership
 
@@ -141,17 +141,17 @@ This is **microtask batching** in Solid / Leptos terminology.
 
 ## Memos — derived signals
 
-`memo` is a compute-driven [`ReadSignal`]: the value is produced by
+`computed` is a compute-driven [`ReadSignal`]: the value is produced by
 a closure that re-runs when its tracked sources change, but the
 public handle is exactly the same `ReadSignal<T>` you get from
 `signal()`. Component props that take a "dynamic readable value"
 write `ReadSignal<T>` and don't care whether the source is a
-primitive signal or a memo — that's the whole point of the
+primitive signal or a computed value — that's the whole point of the
 unification.
 
 ```rust
 let (count, set_count) = signal(0);
-let doubled: ReadSignal<i32> = memo(move || count.get() * 2);
+let doubled: ReadSignal<i32> = computed(move || count.get() * 2);
 
 doubled.get();                // 0
 set_count.set(7);
@@ -164,7 +164,7 @@ required for this). The downstream fan-out suppression is what
 makes:
 
 ```rust
-let bucket = memo(move || count.get() / 10);
+let bucket = computed(move || count.get() / 10);
 effect(move || log::info!("bucket = {}", bucket.get()));
 ```
 
@@ -172,12 +172,12 @@ effect(move || log::info!("bucket = {}", bucket.get()));
 times — because the bucket value didn't change on the `0 → 5`
 transition.
 
-### `memo` instead of `move ||` in component props
+### `computed` instead of `move ||` in component props
 
 Whisker's convention is: **components accept reactive values only as
 `ReadSignal<T>` / `WriteSignal<T>` / `RwSignal<T>`, never as
 closures**. When you want to pass a derived value, build it with
-`memo` and pass the resulting `ReadSignal`:
+`computed` and pass the resulting `ReadSignal`:
 
 ```rust
 #[component]
@@ -187,7 +187,7 @@ fn display(value: ReadSignal<i32>) -> Element {
 
 let (count, _) = signal(0);
 render! { display(value: count) }                              // primitive signal
-render! { display(value: memo(move || count.get() * 2)) }      // derived signal
+render! { display(value: computed(move || count.get() * 2)) }      // derived signal
 ```
 
 This keeps `move ||` out of component signatures, makes prop types
@@ -195,7 +195,7 @@ self-documenting ("is this reactive?"), and survives hot-reload
 better than `impl Fn() + 'static` closures (whose anonymous type
 changes between rebuilds).
 
-A leftover `Memo<T>` type alias points at `ReadSignal<T>` for
+A leftover `Computed<T>` (gone — use `ReadSignal<T>`) type alias points at `ReadSignal<T>` for
 backward compatibility but is deprecated — use `ReadSignal<T>` in
 new code.
 
@@ -557,7 +557,7 @@ render! { text { {banner_text} } }
 
 ## Rules and gotchas
 
-- **`signal()` / `effect()` / `memo()` must be called inside a
+- **`signal()` / `effect()` / `computed()` must be called inside a
   component or other reactive owner.** Calling them outside emits a
   debug-build warning and falls back to a detached owner that
   doesn't clean up cleanly.

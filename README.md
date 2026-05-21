@@ -73,7 +73,7 @@ Major decisions made so far:
 - **Hybrid CLI** — `whisker` (primary) and `cargo whisker` (alias).
 - **Hot reload** — Tier 1 (subsecond function-body patch, ~1s) + Tier 2 (dylib swap, 5–30s).
 - **Leptos-style fine-grained reactivity** — components run once,
-  `signal` + `effect` + `memo` form a dependency graph, the
+  `signal` + `effect` + `computed` form a dependency graph, the
   `render!` macro wires up per-property effects so a signal write
   updates only the affected element attribute. No virtual DOM, no
   diff pass.
