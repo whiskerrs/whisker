@@ -248,6 +248,12 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
         remount_components_for(&patched);
     }
     reactive_flush();
+    // Drive any async tasks (resource() fetchers, user-spawned
+    // futures) until they stall. Tasks that resolve here may write
+    // signals; we run another reactive_flush below to surface those
+    // writes in the same frame.
+    whisker_runtime::tasks::run_until_stalled();
+    reactive_flush();
     // Drain on_mount queue *after* the reactive flush — effects that
     // ran this tick may have mounted new components (via `<Show>`
     // flipping true, `<For>` adding an item, etc.), and those

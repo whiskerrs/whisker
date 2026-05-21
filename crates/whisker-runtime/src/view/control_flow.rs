@@ -47,13 +47,25 @@ pub fn show(
     let mounted: Rc<RefCell<Option<crate::reactive::OwnerId>>> = Rc::new(RefCell::new(None));
 
     effect(move || {
-        // 1. Dispose whatever's currently mounted, if anything.
+        // 1. Detach every current child of the wrapper before
+        // disposing the previous branch owner. `#[component]`
+        // bodies inside the branch register their own detached
+        // owners (`mount_component_remountable` uses
+        // `create_owner(None)`), so `dispose_owner(branch_owner)`'s
+        // cascade can't reach them and their elements would stay
+        // attached to the wrapper through the `when` flip. Explicit
+        // `remove_child` is the safety net.
+        for child in super::children_of(wrapper) {
+            super::remove_child(wrapper, child);
+        }
+
+        // 2. Dispose whatever's currently mounted, if anything.
         let prev = mounted.borrow_mut().take();
         if let Some(o) = prev {
             dispose_owner(o);
         }
 
-        // 2. Mount the appropriate branch under a fresh owner.
+        // 3. Mount the appropriate branch under a fresh owner.
         let branch_owner = create_owner(None);
         let cond = when();
         with_owner(branch_owner, || {
