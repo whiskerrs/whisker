@@ -190,16 +190,17 @@ fn is_benign_xcodebuild_line(raw: &str) -> bool {
     }
 
     // Source-line listings rendered alongside the warning chain:
-    //   `217 | #import "LynxBackground..."`
-    //   `    |         ^`
-    // These look like `<digits> |` or `<whitespace> |` (caret line).
-    let trimmed = line.trim_start();
-    if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit() || c == ' ') {
-        if rest.trim_start().starts_with("| ") || rest.trim_start() == "|" {
-            return true;
-        }
-    }
-    if trimmed.starts_with("| ") || trimmed == "|" {
+    //   `217 | #import "LynxBackgroundInfo.h"`
+    //   `    | ^`
+    //   `56 |`        (empty source line for context)
+    // After trimming leading whitespace + all leading digits, the
+    // remainder always starts with `|` (with or without trailing
+    // content). Multi-digit line numbers were the gap that earlier
+    // single-char `strip_prefix` filters missed.
+    let after_digits = line
+        .trim_start()
+        .trim_start_matches(|c: char| c.is_ascii_digit() || c.is_ascii_whitespace());
+    if after_digits.starts_with('|') {
         return true;
     }
 
