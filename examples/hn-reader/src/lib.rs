@@ -162,31 +162,9 @@ fn status_banner(message: &'static str) -> Element {
     }
 }
 
-/// Stories list — the `Ready` branch of the Suspense.
-#[component]
-fn stories_list(stories: Vec<Story>) -> Element {
-    // The component body is an FnMut so `For`'s `each:` closure
-    // (which is `Fn() -> Vec<T>`) can't move `stories` out — clone
-    // each invocation. The list doesn't change after first mount,
-    // so this clones once at attach time and the For owns the
-    // returned vec from then on.
-    let stories_for_each = stories.clone();
-    let list_style =
-        "flex-grow: 1; flex-shrink: 1; width: 100%; display: flex; flex-direction: column;"
-            .to_string();
-    render! {
-        scroll_view(scroll_orientation: "vertical", style: list_style) {
-            For(
-                each: move || stories_for_each.clone(),
-                key: |s: &Story| s.object_id.clone(),
-                children: |s: Story| render! { story_row(story: s) },
-            )
-        }
-    }
-}
-
-/// Root of the app. Kicks off the fetch via `resource()` and lets
-/// `Suspense` drive the Loading → Ready transition.
+/// Root of the app. Kicks off the fetch via `resource()` and
+/// switches between the loading/error banner and the loaded list
+/// with `Show` + a manual state-match on the resource.
 #[component]
 pub fn hn_reader() -> Element {
     // `resource(...)` spawns a worker thread, marshals the result
@@ -195,6 +173,9 @@ pub fn hn_reader() -> Element {
     // `signal + thread::spawn + run_on_main_thread + LoadState`
     // boilerplate collapses into this one call.
     let stories = resource(fetch_blocking);
+
+    let list_style: &'static str =
+        "flex-grow: 1; flex-shrink: 1; width: 100%; display: flex; flex-direction: column;";
 
     // The body view is the only direct child of `page`. We match
     // hello-world's pattern: explicit `width: 100%` + flex-grow +
@@ -209,8 +190,8 @@ pub fn hn_reader() -> Element {
     render! {
         view(style: body_style) {
             header()
-            Suspense(
-                resource: stories,
+            Show(
+                when: move || stories.get().is_some(),
                 fallback: move || {
                     let msg = if stories.error().is_some() {
                         "Failed to load — check your connection"
@@ -219,8 +200,20 @@ pub fn hn_reader() -> Element {
                     };
                     render! { status_banner(message: msg) }
                 },
-                children: |list: Vec<Story>| render! { stories_list(stories: list) },
-            )
+            ) {
+                scroll_view(scroll_orientation: "vertical", style: list_style) {
+                    For(
+                        // `stories` is a Copy Resource handle, so the
+                        // closure can re-read on each effect run.
+                        // Once Ready, the underlying signal value is
+                        // stable — For receives the same Vec every
+                        // call and reuses item owners.
+                        each: move || stories.get().unwrap_or_default(),
+                        key: |s: &Story| s.object_id.clone(),
+                        children: |s: Story| render! { story_row(story: s) },
+                    )
+                }
+            }
         }
     }
 }

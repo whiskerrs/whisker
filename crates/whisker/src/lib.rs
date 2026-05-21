@@ -38,7 +38,7 @@ pub use whisker_runtime::reactive::{
     StoredValue, WriteSignal,
 };
 // Control-flow components used by the `render!` macro.
-pub use whisker_runtime::view::{for_each, show, suspense};
+pub use whisker_runtime::view::{for_each, show};
 // `Children` is the conventional prop type for components that wrap
 // non-kwarg child nodes in their `render!` invocation.
 pub use whisker_runtime::view::Children;
