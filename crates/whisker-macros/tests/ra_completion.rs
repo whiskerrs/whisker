@@ -155,16 +155,12 @@ fn probe() -> Element {
 }
 "#;
     let labels = run_probe("hidden_builder_helpers", source);
-    // Candidates whose name overlaps the component should be ONLY
-    // the PascalCase alias and the Props struct. The snake_case
-    // `art_tile` (hidden in `mod __art_tile_inner`) and every
-    // typed-builder marker (`ArtTilePropsBuilder<_>`, hidden in
-    // `mod __art_tile_props_internal`) should NOT surface.
     let art_prefixed: Vec<String> = labels
         .iter()
         .filter(|l| l.to_lowercase().starts_with("art"))
         .cloned()
         .collect();
+    eprintln!("[hidden_builder_helpers] full Art* candidates: {art_prefixed:?}");
 
     assert!(
         !art_prefixed.iter().any(|l| l == "art_tile"),
