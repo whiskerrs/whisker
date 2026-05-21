@@ -61,10 +61,8 @@ fn multi() -> &'static MultiProgress {
     M.get_or_init(MultiProgress::new)
 }
 
-/// The current persistent dev-server status bar, if any. `Some` once
-/// [`ensure_status`] has run; otherwise no status anchor exists and
-/// new step bars just append to the multi-progress in arrival order.
-static STATUS_BAR: Mutex<Option<ProgressBar>> = Mutex::new(None);
+// (Removed: a persistent indicatif bar for dev-server status. See
+// the `set_status` impl below for the simpler printed-line model.)
 
 // ---- Configuration ----------------------------------------------------
 
@@ -197,14 +195,22 @@ pub fn section(name: &str) {
 /// `eprintln!` when nothing's animated.
 fn emit_above_bars(line: &str) {
     // `multi.println` panics with a "no bars in multi" check? Actually
-    // it just no-ops when there are no bars. Either way it's the safe
-    // primitive — fall back to eprintln only when we know we're
-    // non-TTY (in which case no multi anyway).
-    if is_tty() {
-        let _ = multi().println(line);
-    } else {
+    // `multi.suspend` is the indicatif-blessed primitive for
+    // interleaving arbitrary output with bars: it clears the bars,
+    // runs the closure (which writes via eprintln!), and redraws
+    // the bars cleanly. Earlier attempts used `multi.println`,
+    // which left the bar's then-current spinner frame stuck in
+    // scrollback every time it pushed a line above the bars —
+    // that's what produced the "`⠁ compile …` then `✓ compile …`
+    // on two separate lines" duplication users reported.
+    if !is_tty() {
         eprintln!("{line}");
+        return;
     }
+    let line_owned = line.to_string();
+    multi().suspend(|| {
+        eprintln!("{line_owned}");
+    });
 }
 
 // ---- Steps (durable progress lines) ----------------------------------
@@ -310,6 +316,9 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
         if let Some(progress) = cargo_progress_text(&line) {
             if let Some(bar) = &bar {
                 bar.set_message(progress.to_string());
+                // No steady_tick anymore (see step() docs) so we
+                // tick manually to repaint the new {msg}.
+                bar.tick();
             }
             // No bar (non-TTY / verbose): emit verbatim. Without
             // this branch the progress lines would be silently
@@ -319,10 +328,15 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
             }
         } else if !line.is_empty() {
             // Diagnostics / errors / unrecognised tool output:
-            // persist in scrollback. `println` writes a line above
-            // the spinner, the bar redraws below.
-            if let Some(bar) = &bar {
-                bar.println(&line);
+            // persist in scrollback. Use multi.suspend (not
+            // bar.println) so the bar is properly cleared before
+            // the line lands and redrawn afterwards — same fix as
+            // `emit_above_bars`.
+            if bar.is_some() {
+                let line_owned = line.clone();
+                multi().suspend(|| {
+                    eprintln!("{line_owned}");
+                });
             } else {
                 eprintln!("{line}");
             }
@@ -433,24 +447,24 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             // across steps (`compile     hello-world …`,
             // `stage       xcframework …`). 18 chars covers the
             // longest verb we use (`xcodebuild`) plus padding.
+            //
+            // No `enable_steady_tick`: combined with multi.suspend
+            // (which clears/redraws bars around external writes),
+            // an async tick raced with the suspend cycle and could
+            // briefly redraw the bar at a stale position. The
+            // {msg} column updates whenever cargo emits a new
+            // progress line — that's the actual "still working"
+            // signal, animation isn't needed on top.
             bar.set_style(
                 ProgressStyle::with_template("  {spinner:.cyan} {prefix:<12} {msg:<24} …")
                     .expect("template literal is valid"),
             );
             bar.set_prefix(name.clone());
             bar.set_message(detail.clone());
-            bar.enable_steady_tick(Duration::from_millis(80));
-            // Join the shared MultiProgress so step bars and the
-            // dev-server status bar coordinate redraws. When a
-            // status bar exists, new step bars insert *above* it so
-            // status stays anchored at the bottom.
-            let bar = {
-                let guard = STATUS_BAR.lock().expect("status mutex");
-                match guard.as_ref() {
-                    Some(status) => multi().insert_before(status, bar),
-                    None => multi().add(bar),
-                }
-            };
+            let bar = multi().add(bar);
+            // Manual tick so the bar shows up immediately rather
+            // than waiting for the first `set_message` update.
+            bar.tick();
             Step {
                 bar: Some(bar),
                 started_at,
