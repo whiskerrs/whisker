@@ -208,6 +208,60 @@ fn rw_signal_prop_tracks_underlying_signal() {
     });
 }
 
+// ----- Show + Resource-like state flip (the hn-reader pattern) ----------
+
+#[test]
+fn show_flips_when_signal_holding_option_transitions() {
+    // Reproduces the hn-reader pattern: a `Show` whose `when` reads
+    // a signal that goes from `None` (fallback shown) to `Some(_)`
+    // (children shown). Catches any reactivity regression in the
+    // Show + signal-read chain that the simpler `text(value: …)`
+    // tests don't exercise.
+    with_recorder_and_owner(|log| {
+        let (state, set_state) = signal::<Option<&'static str>>(None);
+        let _h = render! {
+            Show(
+                when: move || state.get().is_some(),
+                fallback: move || render! { ColoredTile(color: "loading") },
+            ) {
+                ColoredTile(color: "loaded")
+            }
+        };
+        // Initial: fallback mounted → "loading" attribute set.
+        let initial_styles: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetStyles { css, .. } => Some(css.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            initial_styles.iter().any(|s| s == "background: loading;"),
+            "initial render must mount the fallback branch (got styles {initial_styles:?})"
+        );
+
+        // Flip the signal — Show effect should re-run and swap to
+        // the children branch.
+        set_state.set(Some("done"));
+        flush();
+        let after_styles: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetStyles { css, .. } => Some(css.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            after_styles.iter().any(|s| s == "background: loaded;"),
+            "after set_state to Some, the children branch must be mounted \
+             (this is the regression hn-reader hit: Loading banner never \
+             swapped because Show's reactivity broke). styles seen: {after_styles:?}"
+        );
+    });
+}
+
 #[test]
 fn computed_prop_tracks_chain_of_signals() {
     with_recorder_and_owner(|log| {
