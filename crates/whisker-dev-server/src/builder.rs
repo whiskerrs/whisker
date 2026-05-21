@@ -141,7 +141,18 @@ impl Builder {
         let capture = self.capture.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
-            whisker_build::ios::build_xcframework(&ws, &pkg, &features, capture.as_ref())?;
+            // Dev loop only ever loads the arm64-sim slice on an
+            // Apple Silicon Mac. Building the device + x86 slices
+            // adds ~60s per initial `whisker run` for no benefit
+            // here; production `whisker build` still goes through
+            // the universal path via `whisker-cli::build`.
+            whisker_build::ios::build_xcframework_with(
+                &ws,
+                &pkg,
+                &features,
+                capture.as_ref(),
+                whisker_build::ios::IosSlices::SimulatorArm64,
+            )?;
             Ok(())
         })
         .await

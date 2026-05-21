@@ -294,6 +294,21 @@ pub fn warn(msg: impl AsRef<str>) {
     }
 }
 
+/// Verbose-only diagnostic. Same shape as [`info`] but hidden by
+/// default — only printed when `WHISKER_VERBOSE=1`. Use for internal
+/// state that's useful when debugging the dev-server itself
+/// (ASLR references, intermediate file paths, patcher symbol diffs)
+/// but distracting noise during normal `whisker run`.
+pub fn debug(msg: impl AsRef<str>) {
+    match mode() {
+        Mode::Verbose => {
+            let m = msg.as_ref();
+            eprintln!("[whisker] debug: {m}");
+        }
+        Mode::Curated => {}
+    }
+}
+
 /// Hard failure indicator. Use after a [`Step::fail`] or stand-alone
 /// when the failure isn't tied to a specific step. Doesn't exit the
 /// process — that's the caller's call (typical pattern: `error(...)

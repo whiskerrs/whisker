@@ -247,15 +247,14 @@ impl DevServer {
     pub async fn run(self) -> Result<()> {
         whisker_build::ui::section("whisker run");
         whisker_build::ui::info(format!(
-            "target={:?} · package={} · mode={:?}",
-            self.config.target, self.config.package, self.config.hot_patch_mode,
+            "{} · {:?}",
+            self.config.package, self.config.target,
         ));
+        whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
         let (sender, bound, _server_handle) =
             server::serve(self.config.bind_addr, self.on_event.clone()).await?;
-        whisker_build::ui::info(format!(
-            "ws://{bound}/whisker-dev (waiting for clients; Ctrl-C to quit)"
-        ));
+        whisker_build::ui::debug(format!("ws://{bound}/whisker-dev"));
 
         // Watch the user crate's `src/`. `crate_dir` is whatever the
         // cli resolved (`Cargo.toml` parent) — for in-workspace
@@ -268,7 +267,7 @@ impl DevServer {
             std::time::Duration::from_millis(200),
             tx,
         )?;
-        whisker_build::ui::info(format!("watching {}", watch_root.display()));
+        whisker_build::ui::debug(format!("watching {}", watch_root.display()));
         emit(&self.on_event, Event::Started);
 
         // Configure the initial build. For Tier 1 it doubles as the
@@ -325,7 +324,7 @@ impl DevServer {
         let patcher = match tier1_init {
             Some(prep) => match init_patcher_for(&self.config, &prep) {
                 Ok(p) => {
-                    whisker_build::ui::info("Tier 1 patcher ready");
+                    whisker_build::ui::debug("Tier 1 patcher ready");
                     Some(p)
                 }
                 Err(e) => {
@@ -346,7 +345,7 @@ impl DevServer {
         // glitch.
         while let Some(change) = rx.recv().await {
             whisker_build::ui::section("Change");
-            whisker_build::ui::info(format!(
+            whisker_build::ui::debug(format!(
                 "{:?} — {} path(s)",
                 change.kind,
                 change.paths.len(),
@@ -354,18 +353,21 @@ impl DevServer {
             let action = decide_action(change.kind, patcher.is_some());
             match action {
                 LoopAction::Ignore => {
-                    whisker_build::ui::info(format!("ignored ({:?})", change.kind));
+                    whisker_build::ui::debug(format!("ignored ({:?})", change.kind));
                 }
                 LoopAction::Tier1Patch => {
                     let p = patcher.as_ref().expect("decide_action guarantees Some");
+                    // Open the step as soon as we know we're patching;
+                    // the spinner runs across both the build + the
+                    // wire-up so the user sees a single elapsed
+                    // duration for "edit → app updated".
+                    let patch_step = whisker_build::ui::step("patch", "tier 1");
                     let Some(aslr_reference) = sender.latest_aslr_reference() else {
                         // No client has reported its `aslr_reference` yet
                         // (handshake hasn't completed, or never connected).
                         // Without that value we can't build a stub-asm-style
                         // patch — fall back to Tier 2 cold rebuild.
-                        whisker_build::ui::warn(
-                            "tier1 skipped: no client aslr_reference yet; using Tier 2",
-                        );
+                        patch_step.fail("no client aslr_reference yet; using Tier 2");
                         run_build_cycle(
                             &builder,
                             &installer,
@@ -384,8 +386,8 @@ impl DevServer {
                             let dylib_bytes = match read_lib_bytes(&plan.table.lib) {
                                 Ok(b) => Arc::new(b),
                                 Err(e) => {
-                                    whisker_build::ui::warn(format!(
-                                        "tier1 patch built but could not read dylib bytes ({}): {e:#}; using Tier 2",
+                                    patch_step.fail(format!(
+                                        "could not read dylib bytes ({}): {e:#}; using Tier 2",
                                         plan.table.lib.display(),
                                     ));
                                     run_build_cycle(
@@ -404,18 +406,15 @@ impl DevServer {
                                 table: plan.table,
                                 dylib_bytes,
                             });
-                            let patch_step = whisker_build::ui::step("patch", "tier 1");
-                            patch_step.done(format!(
-                                "{n} client(s) · built {built_in:?} · queued {:?} · total {:?}",
-                                send_started.elapsed(),
-                                started.elapsed(),
+                            whisker_build::ui::debug(format!(
+                                "built {built_in:?} · queued {:?}",
+                                send_started.elapsed()
                             ));
+                            patch_step.done(format!("{n} client(s)"));
                             emit(&self.on_event, Event::PatchSent);
                         }
                         Err(e) => {
-                            whisker_build::ui::warn(format!(
-                                "tier1 patch failed ({e:#}); using Tier 2 cold rebuild",
-                            ));
+                            patch_step.fail(format!("{e:#}; using Tier 2 cold rebuild"));
                             run_build_cycle(
                                 &builder,
                                 &installer,
@@ -474,15 +473,19 @@ fn log_patch_diff(report: &hotpatch::DiffReport) {
         return;
     }
     if !report.added.is_empty() {
-        whisker_build::ui::info(format!(
+        whisker_build::ui::debug(format!(
             "patch added {} symbol(s): {:?}",
             report.added.len(),
             report.added.iter().take(5).collect::<Vec<_>>(),
         ));
     }
     if !report.removed.is_empty() {
-        whisker_build::ui::warn(format!(
-            "patch removed {} symbol(s) — host shell may crash on stale callers: {:?}",
+        // Removed-symbol counts are noisy on every patch (typically
+        // thousands of `GCC_except_table*` entries that compiled
+        // away). Surface only in verbose mode; the "host shell may
+        // crash" warning was alarmist for the normal case.
+        whisker_build::ui::debug(format!(
+            "patch removed {} symbol(s): {:?}",
             report.removed.len(),
             report.removed.iter().take(5).collect::<Vec<_>>(),
         ));

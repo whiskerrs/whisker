@@ -193,6 +193,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         "client connected (total: {})",
         state.tx.receiver_count(),
     ));
+    // `aslr_reference` is internal handshake plumbing; emit at debug
+    // grade so the steady-state UI stays clean.
     if let Some(cb) = &state.on_event {
         cb(Event::ClientConnected);
     }
@@ -227,7 +229,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     Some(Err(_)) => break,
                     Some(Ok(Message::Text(t))) => {
                         if let Some(aslr) = parse_client_aslr_reference(&t) {
-                            whisker_build::ui::info(format!(
+                            whisker_build::ui::debug(format!(
                                 "client hello · aslr_reference={aslr:#x}"
                             ));
                             if let Ok(mut g) = state.aslr_reference.lock() {
