@@ -131,6 +131,70 @@ fn leaf(label: &'static str) -> Element {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Module-level components for tests that exercise mount-site behaviour.
+// `#[component]` emits a `mod __<name>_inner` + `pub use` pair which is
+// only legal at module level (not inside fn bodies), so test fixtures
+// that used to be nested are pulled up here and given prefixed names
+// to avoid collisions.
+// ----------------------------------------------------------------------------
+
+#[component]
+fn nested_inner() -> Element {
+    render! {
+        view {
+            text(value: "x")
+        }
+    }
+}
+
+#[component]
+fn nested_outer() -> Element {
+    render! {
+        view {
+            NestedInner()
+            NestedInner()
+            NestedInner()
+        }
+    }
+}
+
+#[component]
+fn batch_child() -> Element {
+    render! {
+        view {
+            text(value: "c")
+        }
+    }
+}
+
+#[component]
+fn batch_parent() -> Element {
+    render! {
+        view {
+            BatchChild()
+            BatchChild()
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+struct PreservedState {
+    counter: RwSignal<i32>,
+}
+
+#[component]
+fn context_inner_screen() -> Element {
+    let state = use_context::<PreservedState>().unwrap();
+    let local = signal(99_i32);
+    render! {
+        view {
+            text(value: state.counter.get())
+            text(value: local.0.get())
+        }
+    }
+}
+
 /// Attach a component to a fresh test parent element and return both
 /// handles. The "parent" stands in for whatever element the user's
 /// `render!` would have appended the component to in real code; the
@@ -150,7 +214,7 @@ fn mount_under_test_parent(make: impl FnOnce() -> Element) -> (Element, Element)
 #[test]
 fn component_returns_body_root_directly() {
     with_recorder_and_owner(|log| {
-        let _root = render! { leaf(label: "hello") };
+        let _root = render! { Leaf(label: "hello") };
         let creates: Vec<_> = log
             .borrow()
             .iter()
@@ -174,11 +238,11 @@ fn component_returns_body_root_directly() {
 #[test]
 fn remount_replaces_root_at_same_parent_slot() {
     with_recorder_and_owner(|log| {
-        let (parent, root_initial) = mount_under_test_parent(|| render! { leaf(label: "v1") });
+        let (parent, root_initial) = mount_under_test_parent(|| render! { Leaf(label: "v1") });
         log.borrow_mut().clear();
 
         // Simulate a subsecond patch on `leaf`'s fn pointer.
-        remount_components_for(&[leaf as *const ()]);
+        remount_components_for(&[Leaf as *const ()]);
 
         let ops = log.borrow();
         // The old body root was removed from the test parent.
@@ -220,14 +284,14 @@ fn remount_replaces_root_at_same_parent_slot() {
 #[test]
 fn remount_disposes_old_owner_and_registers_new() {
     with_recorder_and_owner(|_log| {
-        let (_parent, _root) = mount_under_test_parent(|| render! { leaf(label: "first") });
-        let initial_owners = owners_for_fn(leaf as *const ());
+        let (_parent, _root) = mount_under_test_parent(|| render! { Leaf(label: "first") });
+        let initial_owners = owners_for_fn(Leaf as *const ());
         assert_eq!(initial_owners.len(), 1);
         let first_owner_id = initial_owners[0];
 
-        remount_components_for(&[leaf as *const ()]);
+        remount_components_for(&[Leaf as *const ()]);
 
-        let after_owners = owners_for_fn(leaf as *const ());
+        let after_owners = owners_for_fn(Leaf as *const ());
         assert_eq!(after_owners.len(), 1);
         assert_ne!(
             after_owners[0], first_owner_id,
@@ -243,7 +307,7 @@ fn remount_disposes_old_owner_and_registers_new() {
 #[test]
 fn remount_releases_old_body_elements() {
     with_recorder_and_owner(|log| {
-        let (_parent, _root) = mount_under_test_parent(|| render! { leaf(label: "v1") });
+        let (_parent, _root) = mount_under_test_parent(|| render! { Leaf(label: "v1") });
         // Count elements created by the component itself (everything
         // the test parent's setup added is also in the log; we just
         // count Creates from after our parent's creation).
@@ -257,7 +321,7 @@ fn remount_releases_old_body_elements() {
         let component_elements = creates_initial_total - 1;
 
         log.borrow_mut().clear();
-        remount_components_for(&[leaf as *const ()]);
+        remount_components_for(&[Leaf as *const ()]);
 
         let releases = log
             .borrow()
@@ -285,7 +349,7 @@ fn dispose_owner_releases_owned_elements() {
 
     let root_owner = create_owner(None);
     // Mount the component inside the root owner.
-    let _root = with_owner(root_owner, || render! { leaf(label: "hi") });
+    let _root = with_owner(root_owner, || render! { Leaf(label: "hi") });
 
     let creates_initial = log
         .borrow()
@@ -326,33 +390,13 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
     // invocations, not double up with the pre-remount entries.
     use whisker::runtime::reactive::owners_for_fn;
 
-    #[component]
-    fn inner() -> Element {
-        render! {
-            view {
-                text(value: "x")
-            }
-        }
-    }
-
-    #[component]
-    fn outer() -> Element {
-        render! {
-            view {
-                inner()
-                inner()
-                inner()
-            }
-        }
-    }
-
     with_recorder_and_owner(|_log| {
-        let (_parent, _root) = mount_under_test_parent(|| render! { outer() });
+        let (_parent, _root) = mount_under_test_parent(|| render! { NestedOuter() });
 
         // After initial mount: 1 outer + 3 inner owners.
-        assert_eq!(owners_for_fn(outer as *const ()).len(), 1);
+        assert_eq!(owners_for_fn(NestedOuter as *const ()).len(), 1);
         assert_eq!(
-            owners_for_fn(inner as *const ()).len(),
+            owners_for_fn(NestedInner as *const ()).len(),
             3,
             "three inner invocations expected after initial mount",
         );
@@ -360,11 +404,11 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
         // Remount outer (simulates subsecond patching outer's body).
         // This should dispose the 3 old inner owners + their
         // MountSites, then create 3 fresh inner invocations.
-        remount_components_for(&[outer as *const ()]);
+        remount_components_for(&[NestedOuter as *const ()]);
 
         // The count must stay at 3 — not balloon to 6.
         assert_eq!(
-            owners_for_fn(inner as *const ()).len(),
+            owners_for_fn(NestedInner as *const ()).len(),
             3,
             "after parent remount, child owners should be exactly the new 3, \
              not the old 3 + new 3 (orphan MountSites must be scrubbed)",
@@ -385,40 +429,21 @@ fn batch_with_parent_and_child_skips_descendant() {
     // brand-new owner, corrupting the visible tree.
     use whisker::runtime::reactive::owners_for_fn;
 
-    #[component]
-    fn child() -> Element {
-        render! {
-            view {
-                text(value: "c")
-            }
-        }
-    }
-
-    #[component]
-    fn parent_of_child() -> Element {
-        render! {
-            view {
-                child()
-                child()
-            }
-        }
-    }
-
     with_recorder_and_owner(|_log| {
-        let (_p, _r) = mount_under_test_parent(|| render! { parent_of_child() });
-        assert_eq!(owners_for_fn(parent_of_child as *const ()).len(), 1);
-        assert_eq!(owners_for_fn(child as *const ()).len(), 2);
+        let (_p, _r) = mount_under_test_parent(|| render! { BatchParent() });
+        assert_eq!(owners_for_fn(BatchParent as *const ()).len(), 1);
+        assert_eq!(owners_for_fn(BatchChild as *const ()).len(), 2);
 
-        let initial_parent_owner = owners_for_fn(parent_of_child as *const ())[0];
-        let initial_child_owners = owners_for_fn(child as *const ());
+        let initial_parent_owner = owners_for_fn(BatchParent as *const ())[0];
+        let initial_child_owners = owners_for_fn(BatchChild as *const ());
 
         // Worst-case ordering: child listed FIRST in the patch
         // batch. Filter must skip the children because their
-        // ancestor `parent_of_child` is also in the batch.
-        remount_components_for(&[child as *const (), parent_of_child as *const ()]);
+        // ancestor `batch_parent` is also in the batch.
+        remount_components_for(&[BatchChild as *const (), BatchParent as *const ()]);
 
         // Parent was remounted (new owner).
-        let new_parent_owners = owners_for_fn(parent_of_child as *const ());
+        let new_parent_owners = owners_for_fn(BatchParent as *const ());
         assert_eq!(new_parent_owners.len(), 1);
         assert_ne!(
             new_parent_owners[0], initial_parent_owner,
@@ -428,8 +453,8 @@ fn batch_with_parent_and_child_skips_descendant() {
         // Children should have been replaced by the parent's
         // remount, NOT remounted independently. Concretely: the
         // new child owners are different from the initial ones
-        // (because parent's body re-ran and called child() fresh).
-        let new_child_owners = owners_for_fn(child as *const ());
+        // (because parent's body re-ran and called BatchChild() fresh).
+        let new_child_owners = owners_for_fn(BatchChild as *const ());
         assert_eq!(
             new_child_owners.len(),
             2,
@@ -449,35 +474,23 @@ fn remount_preserves_signal_held_above_in_context() {
     // Demonstrates the recommended state-survival pattern: state
     // held in an outer signal/context survives remount, while
     // state local to the remounted component is lost.
-
-    #[derive(Copy, Clone)]
-    struct AppState {
-        counter: RwSignal<i32>,
-    }
-
-    #[component]
-    fn inner_screen() -> Element {
-        let state = use_context::<AppState>().unwrap();
-        let local = signal(99_i32);
-        render! {
-            view {
-                text(value: state.counter.get())
-                text(value: local.0.get())
-            }
-        }
-    }
+    //
+    // The component used here (`context_inner_screen`) and its
+    // shared `PreservedState` struct live at module scope above
+    // — `#[component]` emits a `mod __<name>_inner` + `pub use`
+    // pair that's only legal at module level.
 
     with_recorder_and_owner(|log| {
-        provide_context(AppState {
+        provide_context(PreservedState {
             counter: RwSignal::new(42),
         });
-        let (_parent, _root) = mount_under_test_parent(|| render! { inner_screen() });
+        let (_parent, _root) = mount_under_test_parent(|| render! { ContextInnerScreen() });
         log.borrow_mut().clear();
 
         // Mutate the outer state, then remount.
-        let state = use_context::<AppState>().unwrap();
+        let state = use_context::<PreservedState>().unwrap();
         state.counter.set(100);
-        remount_components_for(&[inner_screen as *const ()]);
+        remount_components_for(&[ContextInnerScreen as *const ()]);
         flush();
 
         let texts: Vec<_> = log

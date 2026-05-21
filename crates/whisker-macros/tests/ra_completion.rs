@@ -127,6 +127,189 @@ fn probe() -> Element {
 }
 
 #[test]
+fn props_builder_helper_types_are_hidden_from_completion() {
+    // typed-builder generates a handful of marker types per Props
+    // (`<Name>PropsBuilder<((),(),()...)>` and friends). They're
+    // technically `pub` but pure plumbing — RA shouldn't surface
+    // them at user call sites because they pollute the candidate
+    // list with `ArtTilePropsBuilder_*` entries on every keystroke.
+    // The `#[component]` macro tucks the Props struct behind a
+    // `#[doc(hidden)] pub mod __<name>_props_internal` to gate
+    // those helpers off; only `ArtTileProps` itself re-exports
+    // outward.
+    let source = r#"
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
+
+#[component]
+fn art_tile(label: &'static str) -> Element {
+    render! { text(value: label) }
+}
+
+fn probe() -> Element {
+    render! {
+        view() {
+            ArtTile|
+        }
+    }
+}
+"#;
+    let labels = run_probe("hidden_builder_helpers", source);
+    eprintln!(
+        "[hidden_builder_helpers] full label set ({} items): {labels:?}",
+        labels.len()
+    );
+    let art_prefixed: Vec<String> = labels
+        .iter()
+        .filter(|l| l.to_lowercase().starts_with("art"))
+        .cloned()
+        .collect();
+    eprintln!("[hidden_builder_helpers] Art* candidates: {art_prefixed:?}");
+
+    assert!(
+        !art_prefixed.iter().any(|l| l == "art_tile"),
+        "snake_case `art_tile` should be hidden inside the inner module; \
+         got: {art_prefixed:?}",
+    );
+    let leaked: Vec<&String> = art_prefixed
+        .iter()
+        .filter(|l| l.starts_with("ArtTilePropsBuilder"))
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "ArtTilePropsBuilder* types should be hidden inside the \
+         internal props module; saw: {leaked:?}",
+    );
+}
+
+#[test]
+fn longer_prefix_does_not_surface_builder_via_autoimport() {
+    // RA's auto-import path may surface `pub` items inside private
+    // modules when the user has typed enough characters to uniquely
+    // identify the target. Probe at `ArtTilePropsBu|` — if Builder
+    // is properly `#[doc(hidden)]` and inside a `#[doc(hidden)]`
+    // private mod, RA must not offer to auto-import it.
+    let source = r#"
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
+
+#[component]
+fn art_tile(label: &'static str) -> Element {
+    render! { text(value: label) }
+}
+
+fn probe() -> Element {
+    render! {
+        view() {
+            ArtTilePropsBu|
+        }
+    }
+}
+"#;
+    let labels = run_probe("longer_prefix_builder_leak", source);
+    eprintln!(
+        "[longer_prefix_builder_leak] {} candidates: {labels:?}",
+        labels.len()
+    );
+    let leaked: Vec<&String> = labels
+        .iter()
+        .filter(|l| l.contains("ArtTilePropsBuilder") || l.contains("PropsBuilder"))
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "Builder must stay hidden even at long matching prefixes; \
+         leaked: {leaked:?}",
+    );
+}
+
+#[test]
+fn short_prefix_user_component_does_not_leak_builder_helpers() {
+    // VS Code users typically start typing with just a few chars
+    // (`Art|`). RA's fuzzy-match may include items the strict
+    // prefix path filters out — let's verify the leak set stays
+    // empty at 3 chars too.
+    let source = r#"
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
+
+#[component]
+fn art_tile(label: &'static str) -> Element {
+    render! { text(value: label) }
+}
+
+fn probe() -> Element {
+    render! {
+        view() {
+            Art|
+        }
+    }
+}
+"#;
+    let labels = run_probe("short_prefix_leak", source);
+    eprintln!(
+        "[short_prefix_leak] {} candidates returned: {labels:?}",
+        labels.len()
+    );
+    // The critical items that MUST stay hidden:
+    //
+    // 1. snake_case fn `art_tile` — user calls via PascalCase alias.
+    // 2. builder struct `ArtTilePropsBuilder` — reached only via
+    //    `ArtTileProps::builder()`, never by name.
+    // 3. typed-builder-style markers (`ArtTilePropsBuilder_Error_*`,
+    //    `ArtTilePropsBuilder_Repeated_*`) — must stay completely
+    //    gone after the hand-rolled builder migration.
+    //
+    // The inner module *paths* (`__art_tile_inner::`,
+    // `__art_tile_props_internal::`) DO still appear as path
+    // completion entries because they're the names of (private)
+    // submodules of the user's crate. The items inside them are
+    // properly unreachable as bare identifiers.
+    let leaked: Vec<&String> = labels
+        .iter()
+        .filter(|l| {
+            l.as_str() == "art_tile"
+                || l.as_str() == "ArtTilePropsBuilder"
+                || l.starts_with("ArtTilePropsBuilder_")
+        })
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "user-facing builder + snake_case fn + typed-builder helpers \
+         must stay hidden even at short prefixes; leaked: {leaked:?}",
+    );
+}
+
+#[test]
+fn partial_user_component_completes_to_pascal_case_alias() {
+    // `Art|` in a render! children block should surface the
+    // `ArtTile` PascalCase alias the `#[component]` macro emits
+    // for `fn art_tile`. Without that alias, only `art_tile` is
+    // in scope and `Art…` matches nothing.
+    let source = r#"
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
+
+#[component]
+fn art_tile(label: &'static str) -> Element {
+    render! { text(value: label) }
+}
+
+fn probe() -> Element {
+    render! {
+        view() {
+            Art|
+        }
+    }
+}
+"#;
+    let labels = run_probe("partial_user_component", source);
+    assert!(
+        labels.iter().any(|l| l == "ArtTile"),
+        "expected `ArtTile` PascalCase alias for `fn art_tile`; got {labels:?}"
+    );
+}
+
+#[test]
 fn partial_tag_name_in_children_block_completes_to_builtin_view() {
     let source = r#"
 use whisker::prelude::*;

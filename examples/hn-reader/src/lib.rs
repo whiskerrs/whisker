@@ -224,13 +224,13 @@ pub fn hn_reader() -> Element {
             .to_string();
     render! {
         view(style: body_style) {
-            header()
-            status_banner(state: state)
+            Header()
+            StatusBanner(state: state)
             scroll_view(scroll_orientation: "vertical", style: list_style) {
                 For(
                     each: move || state.get().stories(),
                     key: |s: &Story| s.object_id.clone(),
-                    children: |s: Story| render! { story_row(story: s) },
+                    children: |s: Story| render! { StoryRow(story: s) },
                 )
             }
         }
@@ -251,7 +251,7 @@ fn app() -> Element {
     );
     render! {
         page(style: page_style) {
-            hn_reader()
+            HnReader()
         }
     }
 }

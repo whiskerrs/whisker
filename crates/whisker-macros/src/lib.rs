@@ -158,15 +158,17 @@ pub fn render(input: TokenStream) -> TokenStream {
 /// and emits both:
 ///
 /// 1. A `XxxProps` struct (Pascal-cased function name + `Props`)
-///    derived from the parameter list, with
-///    `#[derive(::typed_builder::TypedBuilder)]` so callers can
-///    construct it via `XxxProps::builder().a(...).b(...).build()`.
-///    Each field gets `#[builder(setter(into))]` for `Into` coercion
-///    on the call side (`&str` → `String`, `i32` → `f64`, …).
-///    `Option<T>` props get `strip_option` + `default` so callers may
-///    omit them. `Children` props get a default empty closure. A
-///    `#[prop(default = expr)]` attribute on a parameter is forwarded
-///    to typed-builder as the field's default.
+///    derived from the parameter list, plus a hand-rolled
+///    `XxxPropsBuilder` so callers can construct Props via
+///    `XxxProps::builder().a(...).b(...).build()`.
+///    Each setter accepts `impl Into<T>` for `Into` coercion on the
+///    call side (`&str` → `String`, `i32` → `f64`, …).
+///    `Option<T>` props get a strip-option setter (accept the inner
+///    `T`) and default to `None` when omitted. `Children` props get
+///    a default empty closure. A `#[prop(default = expr)]` attribute
+///    on a parameter inserts `expr` as the field's default at `.build()`.
+///    Required fields that the user didn't set panic at `.build()` with
+///    `"required field `xxx` was not set"`.
 ///
 /// 2. A rewritten `fn xxx(__props: XxxProps) -> Element` whose
 ///    body destructures the props back into local variables and runs

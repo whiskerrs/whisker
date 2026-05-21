@@ -42,15 +42,6 @@ pub use whisker_runtime::view::{for_each, show};
 // non-kwarg child nodes in their `render!` invocation.
 pub use whisker_runtime::view::Children;
 
-// Re-export `typed_builder` so the `#[component]` macro's expansion
-// can resolve `::whisker::__typed_builder::TypedBuilder` without
-// requiring user crates to add `typed-builder` to their own
-// dependencies. Internal — not part of the stable public surface.
-#[doc(hidden)]
-pub mod __typed_builder {
-    pub use ::typed_builder::TypedBuilder;
-}
-
 /// Built-in tag builders. The `render!` macro lowers each built-in
 /// element invocation (`view { style: "x", on_tap: || {} }`) into a
 /// builder method chain on one of these types

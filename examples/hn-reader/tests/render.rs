@@ -11,7 +11,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use hn_reader::{hn_reader, HnReaderProps};
+use hn_reader::{HnReader, HnReaderProps};
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, create_owner, with_owner};
 use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element};
@@ -93,7 +93,7 @@ fn initial_render_shows_loading_banner() {
     let _prev = install_renderer(Box::new(rec));
     let owner = create_owner(None);
 
-    let _root = with_owner(owner, || render! { hn_reader() });
+    let _root = with_owner(owner, || render! { HnReader() });
 
     let ts = texts(&log.borrow());
     assert!(
