@@ -27,9 +27,3 @@ whisker-macros = { workspace = true }
 whisker-driver = { workspace = true }
 whisker-app-config = { workspace = true }
 subsecond = { workspace = true, optional = true }
-# Builder-pattern derive for `#[component]`-generated `Props` structs.
-# The `#[component]` proc macro emits `#[derive(TypedBuilder)]` on the
-# auto-generated `XxxProps` struct, and the `render!` macro emits
-# `XxxProps::builder().field(value)...build()` at call sites. Matches
-# the Leptos approach (which uses the same crate for the same reason).
-typed-builder = "0.21"

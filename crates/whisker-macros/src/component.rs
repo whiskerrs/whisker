@@ -1,24 +1,37 @@
 //! `#[component]` proc-macro implementation.
 //!
 //! Walks the user's function signature, extracts the parameter list,
-//! and emits two items:
+//! and emits:
 //!
-//! 1. A `#[derive(::whisker::__typed_builder::TypedBuilder)]` `XxxProps` struct
-//!    whose fields mirror the function parameters. Per-field
-//!    `#[builder(...)]` annotations are derived from the parameter's
-//!    type (string-ish primitives + `Option<T>` get `into` /
-//!    `strip_option`, `Children` gets a default) and any `#[prop(...)]`
-//!    attributes the user wrote.
-//! 2. A rewritten `fn xxx(__props: XxxProps) -> Element { … }`
-//!    that destructures the props back into local variables and runs
-//!    the user's original body inside the existing
+//! 1. A `XxxProps` struct whose fields mirror the function parameters.
+//! 2. A hand-rolled `XxxPropsBuilder` with one setter per parameter.
+//!    Required fields panic at `.build()` if unset; `Option<T>` and
+//!    `Children` props default to `None`/empty; `#[prop(default = …)]`
+//!    fills in the user-supplied default.
+//! 3. A rewritten `fn xxx(__props: XxxProps) -> Element { … }` that
+//!    destructures the props back into local variables and runs the
+//!    user's original body inside the existing
 //!    `mount_component_remountable` hot-reload machinery.
+//! 4. A PascalCase alias (`pub use … as XxxName`) over a private inner
+//!    module — that's what render! calls and what RA surfaces in
+//!    identifier completion.
+//!
+//! Why hand-roll the builder instead of `#[derive(TypedBuilder)]`:
+//! typed-builder generates per-field type-state markers
+//! (`<Name>PropsBuilder_Error_Missing_required_field_<field>` etc.)
+//! that, while marked `pub`, are pulled into RA's auto-import
+//! completion at the user's call site as noise even when nested in a
+//! private module. The hand-rolled builder emits exactly two types:
+//! the `Props` struct and one builder struct. Required-field validation
+//! moves from compile-time (typed-builder's type-state) to runtime
+//! (`.expect(...)` at `.build()`); the panic fires at component-mount
+//! time with a clear "required field `xxx` was not set" message.
 //!
 //! The function signature change (positional args → single Props arg)
 //! deliberately breaks the old `xxx(arg1, arg2)` calling convention
 //! (issue #18 Q4): user components must be invoked through `render!`'s
-//! `xxx { kwarg: value }` syntax, which expands to
-//! `xxx(XxxProps::builder().kwarg(value).build())`.
+//! `XxxName(kwarg: value)` syntax, which expands to
+//! `XxxName(XxxProps::builder().kwarg(value).build())`.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
@@ -63,12 +76,11 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         })
         .collect();
 
-    // Walk the parameter list. For each `Typed` arg, collect:
-    //   - `ident` (the binding name, used for destructuring + capture)
-    //   - `ty` (the parameter's type — used to decide builder annotations)
-    //   - `attrs` (`#[prop(...)]` attributes the user wrote on the param)
-    let mut props_fields: Vec<TokenStream2> = Vec::new();
-    let mut prop_idents: Vec<Ident> = Vec::new();
+    // Walk the parameter list. For each `Typed` arg, collect a
+    // `Prop` (binding name + type + classification) so the emission
+    // step can generate per-field tokens for the Props struct, the
+    // Builder struct, the setters, and the `.build()` body.
+    let mut props: Vec<Prop> = Vec::new();
     for arg in &sig.inputs {
         let pat_type = match arg {
             FnArg::Typed(t) => t,
@@ -98,23 +110,33 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
             Err(e) => return e.to_compile_error(),
         };
 
-        let annotation = builder_annotation(&pat_type.ty, &prop_attr, &generic_type_params);
-        let ty = &pat_type.ty;
-        // Strip the param's `#[prop(...)]` attribute from the Props
-        // field — it's a `#[component]` directive, not something the
-        // emitted struct should carry forward.
-        let other_attrs: Vec<&syn::Attribute> = pat_type
+        // Strip the param's `#[prop(...)]` attribute from forwarding
+        // attrs — it's a `#[component]` directive, not something the
+        // emitted Props struct should carry forward. Other attrs
+        // (`#[allow(...)]`, doc comments) ride along on the Props
+        // field unchanged.
+        let other_attrs: Vec<syn::Attribute> = pat_type
             .attrs
             .iter()
             .filter(|a| !a.path().is_ident("prop"))
+            .cloned()
             .collect();
-        props_fields.push(quote! {
-            #(#other_attrs)*
-            #annotation
-            pub #ident: #ty
+        let kind = classify_prop(&pat_type.ty, &prop_attr, &generic_type_params);
+        props.push(Prop {
+            ident,
+            ty: (*pat_type.ty).clone(),
+            kind,
+            forward_attrs: other_attrs,
         });
-        prop_idents.push(ident);
     }
+    let prop_idents: Vec<Ident> = props.iter().map(|p| p.ident.clone()).collect();
+
+    // ---- Generate per-field tokens for the Props struct + Builder ----
+    let props_fields: Vec<TokenStream2> = props.iter().map(prop_struct_field).collect();
+    let builder_fields: Vec<TokenStream2> = props.iter().map(prop_builder_field).collect();
+    let builder_init: Vec<TokenStream2> = props.iter().map(prop_builder_init).collect();
+    let setter_methods: Vec<TokenStream2> = props.iter().map(prop_setter_method).collect();
+    let build_assignments: Vec<TokenStream2> = props.iter().map(prop_build_assignment).collect();
 
     let props_name = props_struct_name(fn_name);
 
@@ -161,34 +183,63 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         quote! { #fn_name :: < #(#ty_generics_for_turbofish),* > as *const () }
     };
 
-    // Props struct lives inside a PRIVATE module. typed-builder's
-    // per-field type-state helpers (`XxxPropsBuilder<((),(),(),)>`
-    // and per-field empty/filled marker structs) stay inside that
-    // module and can't be reached from outside by name — so RA's
-    // identifier completion at user call sites can't list them as
-    // candidates, no matter what doc-attribute filtering it does.
+    // Props struct + hand-rolled Builder live inside a PRIVATE
+    // module so the builder type's name doesn't surface as
+    // identifier-completion noise at the user's call sites. Only
+    // `XxxProps` is re-exported outward (doc-hidden); the builder
+    // is reached via the `.builder()` method chain and never needs
+    // to be in scope by name.
     //
-    // Only `XxxProps` itself is re-exported (doc-hidden so it
-    // doesn't clutter rustdoc either). The builder type is the
-    // return value of `XxxProps::builder()` and is reached via
-    // method chains, so it doesn't need to be in scope by name.
-    //
-    // Generics + where clause come straight from the function —
-    // typed-builder threads them through to the generated builder.
+    // Generics + where clause carry through from the user's fn so
+    // a `#[component] fn xxx<T>(value: T)` gets a `XxxProps<T>` and
+    // a `XxxPropsBuilder<T>`.
     let internal_mod = format_ident!("__{}_props_internal", fn_name);
+    let builder_name = format_ident!("{}Builder", props_name);
     let props_struct = quote! {
-        // No `#vis` on the module — the visibility is deliberately
-        // tighter than the surrounding fn so helper types stay
-        // unreachable.
+        // No `#vis` on the module — visibility is deliberately
+        // tighter than the surrounding fn so the builder type
+        // stays unreachable as a bare identifier from outside.
         #[doc(hidden)]
         mod #internal_mod {
             // Pull in everything from the outer scope so prop types
             // referenced in fields (`Children`, user types, etc.)
             // resolve.
             use super::*;
-            #[derive(::whisker::__typed_builder::TypedBuilder)]
+
             pub struct #props_name #impl_generics #where_clause {
                 #(#props_fields),*
+            }
+
+            // Builder: every field becomes `Option<T>` (or, for
+            // already-`Option<T>` props, `Option<Option<T>>`) so we
+            // can tell "user hasn't set this" from "user set it to
+            // None". `.build()` collapses each Option back into the
+            // field's declared type, with the appropriate
+            // default / panic-on-missing for required fields.
+            pub struct #builder_name #impl_generics #where_clause {
+                #(#builder_fields),*
+            }
+
+            impl #impl_generics #props_name #ty_generics #where_clause {
+                /// Open a builder chain. `XxxProps::builder().a(…).b(…).build()`.
+                pub fn builder() -> #builder_name #ty_generics {
+                    #builder_name {
+                        #(#builder_init),*
+                    }
+                }
+            }
+
+            impl #impl_generics #builder_name #ty_generics #where_clause {
+                #(#setter_methods)*
+
+                /// Materialise the Props. Required fields that the
+                /// user didn't set fire a `required field `<name>` was
+                /// not set` panic at mount time.
+                pub fn build(self) -> #props_name #ty_generics {
+                    #props_name {
+                        #(#build_assignments),*
+                    }
+                }
             }
         }
         #[doc(hidden)]
@@ -285,7 +336,7 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
 
 /// Information parsed from a `#[prop(...)]` attribute on a single
 /// `#[component]` parameter.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct PropAttr {
     /// `#[prop(default = expr)]` — emit `#[builder(default = expr)]`
     /// so callers may omit this prop and the builder fills in
@@ -327,75 +378,289 @@ fn parse_prop_attr(attrs: &[syn::Attribute]) -> syn::Result<PropAttr> {
     Ok(out)
 }
 
-/// Compute the `#[builder(...)]` annotation for one prop, given its
-/// type and any `#[prop(...)]` directives. Decision table:
+/// One parsed `#[component]` parameter, ready to be turned into
+/// Props-field, Builder-field, setter, and build()-body tokens.
+struct Prop {
+    /// User's parameter name. Used verbatim everywhere (field name,
+    /// setter name, build()-assignment LHS, fn-body destructure ident).
+    ident: Ident,
+    /// User-written type — kept exactly as the user wrote it so the
+    /// emitted Props struct preserves their lifetime / generic
+    /// references. Builder field / setter signature are derived from
+    /// this + `kind`.
+    ty: Type,
+    /// Per-prop emission strategy. See `PropKind` for the decision
+    /// table.
+    kind: PropKind,
+    /// Non-`#[prop]` attributes the user wrote on this parameter
+    /// (`#[allow(...)]`, doc comments). Forwarded onto the Props
+    /// struct field.
+    forward_attrs: Vec<syn::Attribute>,
+}
+
+/// How one Prop is wired through Props / Builder / setter / build.
+enum PropKind {
+    /// Required, has a concrete enough type for `Into<T>` coercion.
+    /// Setter: `pub fn x(self, v: impl Into<T>) -> Self`.
+    /// Build:  `self.x.expect("required field `x` was not set")`.
+    Required,
+    /// Required, but the type is a bare generic param (`value: T`).
+    /// Setter accepts `T` directly — `Into<T>` with unconstrained
+    /// `T` blows up at the call site.
+    /// Setter: `pub fn x(self, v: T) -> Self`.
+    /// Build:  `self.x.expect(...)`.
+    RequiredGeneric,
+    /// `Option<U>` prop. Builder stores `Option<Option<U>>` so we
+    /// can tell "user didn't set it" (outer None) apart from "user
+    /// set it to None" (outer Some, inner None — currently
+    /// unreachable in render! but kept for direct construction).
+    /// Setter takes the inner `U` (or `impl Into<U>` when U isn't
+    /// generic) and wraps to `Some(Some(...))`. Build collapses
+    /// the outer `Option` with `.unwrap_or(None)` so missing props
+    /// become None.
+    Optional {
+        /// The inner `U` extracted from `Option<U>`.
+        inner: Type,
+        /// `true` when `U` is a bare generic param — drops the
+        /// `Into<…>` on the setter (same reason as `RequiredGeneric`).
+        inner_is_generic: bool,
+    },
+    /// `Children` prop. Builder field is `Option<Children>`. Setter
+    /// takes `Children` directly (the type is already a wrapped
+    /// `Rc<dyn Fn>` — there's no useful `Into` story). Build
+    /// defaults a missing children prop to a closure returning
+    /// `View::Empty`, matching the typed-builder behaviour from
+    /// before.
+    Children,
+    /// `#[prop(default = expr)]`. Behaves like Required for the
+    /// setter and like `unwrap_or_else(|| expr)` at build time.
+    /// The expr is held in `default` rather than inlined into the
+    /// kind variant so the variant stays Copy-ish.
+    Default {
+        default: Expr,
+        /// Whether the type is a bare generic param (controls
+        /// `Into<T>` on the setter, same as for Required).
+        is_generic: bool,
+    },
+}
+
+/// Decide the [`PropKind`] for a given type + user `#[prop(...)]`
+/// directive. The precedence (mirrors what `typed_builder` did for us
+/// before):
 ///
-/// 1. `#[prop(default = expr)]` → `#[builder(default = expr)]` plus
-///    the type-default annotation below (so callers can still omit
-///    or supply the prop).
-/// 2. `Children` (last path segment) → `#[builder(default = …empty
-///    closure…)]` so a component can declare `children: Children`
-///    without forcing every call site to pass one.
-/// 3. `Option<T>` (last path segment) → `#[builder(default,
-///    setter(into, strip_option))]`. Callers may omit the prop or
-///    pass the inner `T` directly (typed-builder auto-wraps with
-///    `Some`).
-/// 4. Bare generic-type param (e.g. `value: T`) → `#[builder()]` (no
-///    `setter(into)`). With unconstrained `T`, `Into<T>` inference
-///    fails at the call site (multiple `From<...>` candidates).
-/// 5. Otherwise → `#[builder(setter(into))]`. Required prop; `Into`
-///    coercion lets `&str` flow into `String` props, `i32` into
-///    `f64`, etc.
-fn builder_annotation(ty: &Type, attr: &PropAttr, generic_type_params: &[Ident]) -> TokenStream2 {
+/// 1. `#[prop(default = expr)]` wins regardless of type.
+/// 2. `#[prop(optional)]` on a non-`Option<T>` type → upgrade to
+///    `Optional { inner: T, ... }` so the user can omit. (Currently
+///    user code uses `Option<T>` directly; this branch is reserved
+///    for future opt-in.)
+/// 3. `Children` (last path segment) → `Children` kind.
+/// 4. `Option<U>` (last path segment) → `Optional { inner: U, ... }`.
+/// 5. Bare generic param → `RequiredGeneric`.
+/// 6. Otherwise → `Required`.
+fn classify_prop(ty: &Type, attr: &PropAttr, generic_type_params: &[Ident]) -> PropKind {
     let is_generic = is_generic_type_param(ty, generic_type_params);
-    let into_or_none = if is_generic {
-        // Bare generic param — emit `setter()` without `into`.
-        quote! {}
-    } else {
-        quote! { setter(into) }
-    };
-    if let Some(default_expr) = &attr.default {
-        // User-supplied default. Pass `setter(into)` only when not
-        // generic.
-        if is_generic {
-            return quote! { #[builder(default = #default_expr)] };
-        }
-        return quote! { #[builder(default = #default_expr, #into_or_none)] };
+    if let Some(default_expr) = attr.default.clone() {
+        return PropKind::Default {
+            default: default_expr,
+            is_generic,
+        };
     }
     if attr.optional {
-        if is_generic {
-            return quote! { #[builder(default, setter(strip_option))] };
+        if let Some(inner) = option_inner_type(ty).cloned() {
+            let inner_is_generic = is_generic_type_param(&inner, generic_type_params);
+            return PropKind::Optional {
+                inner,
+                inner_is_generic,
+            };
         }
-        return quote! {
-            #[builder(default, setter(into, strip_option))]
+        // `#[prop(optional)]` on a non-`Option<T>` — wrap the user's
+        // type into an Optional with the same inner so the
+        // setter/build still typecheck. typed-builder's
+        // `strip_option` did the same.
+        return PropKind::Optional {
+            inner: ty.clone(),
+            inner_is_generic: is_generic,
         };
     }
     if is_children_type(ty) {
-        return quote! {
-            #[builder(default = ::std::rc::Rc::new(
-                || ::whisker::runtime::view::View::Empty
-            ))]
-        };
+        return PropKind::Children;
     }
-    if is_option_type(ty) {
-        // `Option<T>` where T is generic — still need strip_option,
-        // but no `into` since the inner T isn't known.
-        if is_option_of_generic(ty, generic_type_params) {
-            return quote! {
-                #[builder(default, setter(strip_option))]
-            };
-        }
-        return quote! {
-            #[builder(default, setter(into, strip_option))]
+    if let Some(inner) = option_inner_type(ty).cloned() {
+        let inner_is_generic = is_generic_type_param(&inner, generic_type_params);
+        return PropKind::Optional {
+            inner,
+            inner_is_generic,
         };
     }
     if is_generic {
-        // No annotation at all. typed-builder accepts an unannotated
-        // field; emitting `#[builder()]` errors with "Expected
-        // builder(…)".
-        return quote! {};
+        return PropKind::RequiredGeneric;
     }
-    quote! { #[builder(setter(into))] }
+    PropKind::Required
+}
+
+/// One field in the public `XxxProps` struct. Types stay exactly as
+/// the user wrote them — Props is the user-visible struct.
+fn prop_struct_field(prop: &Prop) -> TokenStream2 {
+    let ident = &prop.ident;
+    let ty = &prop.ty;
+    let attrs = &prop.forward_attrs;
+    quote! {
+        #(#attrs)*
+        pub #ident: #ty
+    }
+}
+
+/// One field in the internal builder struct. Every field becomes an
+/// `Option<…>` so we can distinguish "set" from "not set"; `Option<T>`
+/// props become `Option<Option<T>>` (outer Option = builder presence,
+/// inner = the user's Option semantics).
+fn prop_builder_field(prop: &Prop) -> TokenStream2 {
+    let ident = &prop.ident;
+    let ty = &prop.ty;
+    match &prop.kind {
+        PropKind::Required | PropKind::RequiredGeneric | PropKind::Children => {
+            quote! { #ident: ::std::option::Option<#ty> }
+        }
+        PropKind::Optional { inner, .. } => {
+            quote! { #ident: ::std::option::Option<::std::option::Option<#inner>> }
+        }
+        PropKind::Default { .. } => {
+            quote! { #ident: ::std::option::Option<#ty> }
+        }
+    }
+}
+
+/// `field: None` literal in the builder constructor (`Props::builder()`).
+fn prop_builder_init(prop: &Prop) -> TokenStream2 {
+    let ident = &prop.ident;
+    quote! { #ident: ::std::option::Option::None }
+}
+
+/// The setter method emitted on the builder. Signature depends on
+/// the prop kind — see PropKind doc for the exact rules.
+fn prop_setter_method(prop: &Prop) -> TokenStream2 {
+    let ident = &prop.ident;
+    let ty = &prop.ty;
+    match &prop.kind {
+        PropKind::Required => quote! {
+            #[allow(unused_mut)]
+            pub fn #ident(mut self, value: impl ::std::convert::Into<#ty>) -> Self {
+                self.#ident = ::std::option::Option::Some(value.into());
+                self
+            }
+        },
+        PropKind::RequiredGeneric => quote! {
+            #[allow(unused_mut)]
+            pub fn #ident(mut self, value: #ty) -> Self {
+                self.#ident = ::std::option::Option::Some(value);
+                self
+            }
+        },
+        PropKind::Optional {
+            inner,
+            inner_is_generic,
+        } => {
+            // Setter takes the inner (unwrapped) T — same surface
+            // typed-builder's `strip_option` gave us. Stored as
+            // `Some(Some(v))` to record both "set" and "set to a
+            // Some-value".
+            if *inner_is_generic {
+                quote! {
+                    #[allow(unused_mut)]
+                    pub fn #ident(mut self, value: #inner) -> Self {
+                        self.#ident = ::std::option::Option::Some(
+                            ::std::option::Option::Some(value)
+                        );
+                        self
+                    }
+                }
+            } else {
+                quote! {
+                    #[allow(unused_mut)]
+                    pub fn #ident(mut self, value: impl ::std::convert::Into<#inner>) -> Self {
+                        self.#ident = ::std::option::Option::Some(
+                            ::std::option::Option::Some(value.into())
+                        );
+                        self
+                    }
+                }
+            }
+        }
+        PropKind::Children => quote! {
+            #[allow(unused_mut)]
+            pub fn #ident(mut self, value: #ty) -> Self {
+                self.#ident = ::std::option::Option::Some(value);
+                self
+            }
+        },
+        PropKind::Default { is_generic, .. } => {
+            if *is_generic {
+                quote! {
+                    #[allow(unused_mut)]
+                    pub fn #ident(mut self, value: #ty) -> Self {
+                        self.#ident = ::std::option::Option::Some(value);
+                        self
+                    }
+                }
+            } else {
+                quote! {
+                    #[allow(unused_mut)]
+                    pub fn #ident(mut self, value: impl ::std::convert::Into<#ty>) -> Self {
+                        self.#ident = ::std::option::Option::Some(value.into());
+                        self
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One `field: <unwrap-expression>` line inside `.build()`'s
+/// `XxxProps { … }` construction.
+fn prop_build_assignment(prop: &Prop) -> TokenStream2 {
+    let ident = &prop.ident;
+    let missing_msg = format!("required field `{ident}` was not set");
+    match &prop.kind {
+        PropKind::Required | PropKind::RequiredGeneric => quote! {
+            #ident: self.#ident.expect(#missing_msg)
+        },
+        PropKind::Optional { .. } => quote! {
+            // Outer Option = "did the user call .ident(…)?"
+            // — collapse missing → None so the public `Option<T>`
+            // field is the user's chosen value or None.
+            #ident: self.#ident.unwrap_or(::std::option::Option::None)
+        },
+        PropKind::Children => quote! {
+            #ident: self.#ident.unwrap_or_else(|| {
+                ::std::rc::Rc::new(|| ::whisker::runtime::view::View::Empty)
+            })
+        },
+        PropKind::Default { default, .. } => {
+            quote! {
+                #ident: self.#ident.unwrap_or_else(|| #default)
+            }
+        }
+    }
+}
+
+/// Extract `U` from `Option<U>` (in any of the path forms the user
+/// might write — bare, `std::option::Option`, fully-qualified).
+/// Returns `None` if the type isn't an `Option`.
+fn option_inner_type(ty: &Type) -> Option<&Type> {
+    let Type::Path(tp) = ty else { return None };
+    let last = tp.path.segments.last()?;
+    if last.ident != "Option" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    for arg in &args.args {
+        if let syn::GenericArgument::Type(inner) = arg {
+            return Some(inner);
+        }
+    }
+    None
 }
 
 /// Is this type one of the fn's generic type parameters? Only
@@ -411,34 +676,6 @@ fn is_generic_type_param(ty: &Type, generic_type_params: &[Ident]) -> bool {
         }
     }
     false
-}
-
-/// Is this type `Option<T>` where the T is a generic type param?
-fn is_option_of_generic(ty: &Type, generic_type_params: &[Ident]) -> bool {
-    let Type::Path(tp) = ty else { return false };
-    let Some(last) = tp.path.segments.last() else {
-        return false;
-    };
-    if last.ident != "Option" {
-        return false;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
-        return false;
-    };
-    for arg in &args.args {
-        if let syn::GenericArgument::Type(inner) = arg {
-            if is_generic_type_param(inner, generic_type_params) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Heuristic: is this type `Option<T>` (in any of the path forms the
-/// user might write — bare, `std::option::Option`, fully-qualified)?
-fn is_option_type(ty: &Type) -> bool {
-    last_path_ident(ty).map(|i| i == "Option").unwrap_or(false)
 }
 
 /// Heuristic: is this type `Children` (or a path ending in
@@ -504,6 +741,8 @@ mod tests {
     use super::*;
     use syn::parse_quote;
 
+    // -- Naming + helpers ---------------------------------------------------
+
     #[test]
     fn props_struct_name_pascal_case_conversion() {
         let id: Ident = parse_quote!(card);
@@ -517,24 +756,6 @@ mod tests {
 
         let id: Ident = parse_quote!(x);
         assert_eq!(props_struct_name(&id).to_string(), "XProps");
-    }
-
-    #[test]
-    fn option_type_detected_across_path_shapes() {
-        let bare: Type = parse_quote!(Option<String>);
-        assert!(is_option_type(&bare));
-
-        let std_path: Type = parse_quote!(std::option::Option<String>);
-        assert!(is_option_type(&std_path));
-
-        let fq_path: Type = parse_quote!(::std::option::Option<i32>);
-        assert!(is_option_type(&fq_path));
-
-        let not_option: Type = parse_quote!(String);
-        assert!(!is_option_type(&not_option));
-
-        let custom_with_option_substring: Type = parse_quote!(MyOptional);
-        assert!(!is_option_type(&custom_with_option_substring));
     }
 
     #[test]
@@ -553,12 +774,65 @@ mod tests {
     }
 
     #[test]
+    fn option_inner_type_unwraps_across_path_shapes() {
+        let bare: Type = parse_quote!(Option<String>);
+        let inner = option_inner_type(&bare).unwrap();
+        assert!(matches!(inner, Type::Path(_)));
+
+        let std_path: Type = parse_quote!(std::option::Option<String>);
+        assert!(option_inner_type(&std_path).is_some());
+
+        let fq_path: Type = parse_quote!(::std::option::Option<i32>);
+        assert!(option_inner_type(&fq_path).is_some());
+
+        let not_option: Type = parse_quote!(String);
+        assert!(option_inner_type(&not_option).is_none());
+
+        // `MyOptional` ends in `al` not `Option`. Not an Option.
+        let custom: Type = parse_quote!(MyOptional);
+        assert!(option_inner_type(&custom).is_none());
+
+        // `Option` without generic args → not a valid Option<T> for us.
+        let bare_option: Type = parse_quote!(Option);
+        assert!(option_inner_type(&bare_option).is_none());
+
+        // Non-path type (tuple).
+        let tup: Type = parse_quote!((u8, u8));
+        assert!(option_inner_type(&tup).is_none());
+    }
+
+    #[test]
     fn ty_generics_turbofish_extracts_only_type_params() {
         let g: syn::Generics = parse_quote!(<'a, T: Clone, const N: usize>);
         let turbofish = ty_generics_to_turbofish(&g);
         assert_eq!(turbofish.len(), 1, "lifetime and const generic skipped");
         assert_eq!(turbofish[0].to_string(), "T");
     }
+
+    #[test]
+    fn is_generic_type_param_detects_bare_t() {
+        let t_param: Ident = parse_quote!(T);
+        let u_param: Ident = parse_quote!(U);
+        let generics = vec![t_param, u_param];
+
+        assert!(is_generic_type_param(&parse_quote!(T), &generics));
+        assert!(is_generic_type_param(&parse_quote!(U), &generics));
+
+        // `Option<T>` — the outer type is `Option`, not bare T.
+        assert!(!is_generic_type_param(&parse_quote!(Option<T>), &generics));
+        // Multi-segment path with same final ident does NOT match.
+        assert!(!is_generic_type_param(&parse_quote!(crate::T), &generics));
+        // Concrete non-generic type.
+        assert!(!is_generic_type_param(&parse_quote!(String), &generics));
+        // Generic-shaped (T<X>) doesn't match.
+        let t_with_args: Type = parse_quote!(T<i32>);
+        assert!(!is_generic_type_param(&t_with_args, &generics));
+        // Non-path type (reference) doesn't match.
+        let reference: Type = parse_quote!(&'a str);
+        assert!(!is_generic_type_param(&reference, &generics));
+    }
+
+    // -- #[prop(...)] attribute parser -------------------------------------
 
     #[test]
     fn parse_prop_default_attribute() {
@@ -591,11 +865,378 @@ mod tests {
         }
     }
 
-    /// Sanity check on the overall expansion shape — we don't try to
-    /// re-parse the output (the function calls into runtime symbols
-    /// the macro crate doesn't have access to), but we confirm the
-    /// Props struct + rewritten fn both come out and the fn body has
-    /// the destructure.
+    #[test]
+    fn parse_prop_ignores_other_attrs() {
+        // #[allow(...)] etc. must not interfere with #[prop(...)] parsing.
+        let attrs: Vec<syn::Attribute> = parse_quote! {
+            #[allow(dead_code)]
+            #[doc = "ignored"]
+        };
+        let parsed = parse_prop_attr(&attrs).unwrap();
+        assert!(parsed.default.is_none());
+        assert!(!parsed.optional);
+    }
+
+    // -- classify_prop decision table --------------------------------------
+
+    fn classify(ty: Type, attr: PropAttr, generics: &[Ident]) -> PropKind {
+        classify_prop(&ty, &attr, generics)
+    }
+
+    #[test]
+    fn classify_required_for_plain_type() {
+        let k = classify(parse_quote!(String), PropAttr::default(), &[]);
+        assert!(matches!(k, PropKind::Required));
+    }
+
+    #[test]
+    fn classify_required_generic_for_bare_t() {
+        let generics = vec![parse_quote!(T)];
+        let k = classify(parse_quote!(T), PropAttr::default(), &generics);
+        assert!(matches!(k, PropKind::RequiredGeneric));
+    }
+
+    #[test]
+    fn classify_optional_for_option_of_concrete() {
+        let k = classify(parse_quote!(Option<String>), PropAttr::default(), &[]);
+        match k {
+            PropKind::Optional {
+                inner_is_generic, ..
+            } => assert!(!inner_is_generic, "concrete inner shouldn't be generic"),
+            other => panic!(
+                "expected Optional, got {other:?}",
+                other = kind_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn classify_optional_for_option_of_generic() {
+        let generics = vec![parse_quote!(T)];
+        let k = classify(parse_quote!(Option<T>), PropAttr::default(), &generics);
+        match k {
+            PropKind::Optional {
+                inner_is_generic, ..
+            } => assert!(
+                inner_is_generic,
+                "Option<T> inner T must be flagged generic"
+            ),
+            other => panic!(
+                "expected Optional, got {other:?}",
+                other = kind_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn classify_children_for_children_type() {
+        let k = classify(parse_quote!(Children), PropAttr::default(), &[]);
+        assert!(matches!(k, PropKind::Children));
+        // Qualified path also matches.
+        let k = classify(parse_quote!(whisker::Children), PropAttr::default(), &[]);
+        assert!(matches!(k, PropKind::Children));
+    }
+
+    #[test]
+    fn classify_default_wins_over_other_kinds() {
+        // #[prop(default = …)] takes precedence — even when the type
+        // is Option<T> or Children.
+        let attr = PropAttr {
+            default: Some(parse_quote!(42)),
+            ..PropAttr::default()
+        };
+        let k = classify(parse_quote!(Option<i32>), attr.clone(), &[]);
+        assert!(matches!(
+            k,
+            PropKind::Default {
+                is_generic: false,
+                ..
+            }
+        ));
+
+        let k = classify(parse_quote!(Children), attr, &[]);
+        assert!(matches!(
+            k,
+            PropKind::Default {
+                is_generic: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn classify_default_with_generic_t() {
+        let generics = vec![parse_quote!(T)];
+        let attr = PropAttr {
+            default: Some(parse_quote!(Default::default())),
+            ..PropAttr::default()
+        };
+        let k = classify(parse_quote!(T), attr, &generics);
+        assert!(matches!(
+            k,
+            PropKind::Default {
+                is_generic: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn classify_optional_attribute_wraps_non_option_type() {
+        // `#[prop(optional)]` on `String` should treat the field as
+        // Optional<String>.
+        let attr = PropAttr {
+            optional: true,
+            ..PropAttr::default()
+        };
+        let k = classify(parse_quote!(String), attr, &[]);
+        match k {
+            PropKind::Optional {
+                inner_is_generic, ..
+            } => assert!(!inner_is_generic),
+            other => panic!(
+                "expected Optional, got {other:?}",
+                other = kind_name(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn classify_optional_attribute_on_option_uses_inner() {
+        // `#[prop(optional)]` on `Option<String>` extracts the inner
+        // String — same as a plain Option<String>.
+        let attr = PropAttr {
+            optional: true,
+            ..PropAttr::default()
+        };
+        let k = classify(parse_quote!(Option<String>), attr, &[]);
+        assert!(matches!(k, PropKind::Optional { .. }));
+    }
+
+    // -- Per-prop emission helpers (struct field / builder field / setter / build assignment) -----
+
+    fn make_prop(ident: &str, ty: Type, kind: PropKind) -> Prop {
+        Prop {
+            ident: format_ident!("{}", ident),
+            ty,
+            kind,
+            forward_attrs: vec![],
+        }
+    }
+
+    #[test]
+    fn prop_struct_field_keeps_user_type() {
+        let p = make_prop("label", parse_quote!(String), PropKind::Required);
+        let out = prop_struct_field(&p).to_string();
+        assert!(
+            out.contains("pub label : String"),
+            "Props field uses the user's type verbatim; got: {out}"
+        );
+    }
+
+    #[test]
+    fn prop_struct_field_forwards_attrs() {
+        let attrs: Vec<syn::Attribute> = parse_quote! {
+            #[doc = "user doc"]
+            #[allow(dead_code)]
+        };
+        let p = Prop {
+            ident: format_ident!("label"),
+            ty: parse_quote!(String),
+            kind: PropKind::Required,
+            forward_attrs: attrs,
+        };
+        let out = prop_struct_field(&p).to_string();
+        assert!(out.contains("doc = \"user doc\""));
+        assert!(out.contains("allow (dead_code)"));
+    }
+
+    #[test]
+    fn prop_builder_field_wraps_required_in_option() {
+        let p = make_prop("a", parse_quote!(String), PropKind::Required);
+        let out = prop_builder_field(&p).to_string();
+        assert!(out.contains("a : :: std :: option :: Option < String >"));
+    }
+
+    #[test]
+    fn prop_builder_field_double_wraps_optional() {
+        let p = make_prop(
+            "b",
+            parse_quote!(Option<String>),
+            PropKind::Optional {
+                inner: parse_quote!(String),
+                inner_is_generic: false,
+            },
+        );
+        let out = prop_builder_field(&p).to_string();
+        // tokenstream display can collapse `> >` into `>>`. Accept both.
+        let normalized = out.replace(" >>", " > >");
+        assert!(
+            normalized
+                .contains(":: std :: option :: Option < :: std :: option :: Option < String > >"),
+            "Option<T> prop should be Option<Option<T>> in builder; got: {out}"
+        );
+    }
+
+    #[test]
+    fn prop_builder_field_default_uses_outer_type() {
+        let p = make_prop(
+            "c",
+            parse_quote!(i32),
+            PropKind::Default {
+                default: parse_quote!(0),
+                is_generic: false,
+            },
+        );
+        let out = prop_builder_field(&p).to_string();
+        assert!(out.contains("c : :: std :: option :: Option < i32 >"));
+    }
+
+    #[test]
+    fn prop_setter_required_uses_impl_into() {
+        let p = make_prop("a", parse_quote!(String), PropKind::Required);
+        let out = prop_setter_method(&p).to_string();
+        assert!(out.contains("pub fn a"));
+        assert!(out.contains("impl :: std :: convert :: Into < String >"));
+        assert!(out.contains("self . a = :: std :: option :: Option :: Some (value . into ())"));
+    }
+
+    #[test]
+    fn prop_setter_required_generic_takes_t_directly() {
+        let p = make_prop("v", parse_quote!(T), PropKind::RequiredGeneric);
+        let out = prop_setter_method(&p).to_string();
+        assert!(out.contains("pub fn v (mut self , value : T)"));
+        // No `impl Into<T>` on generic — would break inference.
+        assert!(!out.contains("Into < T >"));
+    }
+
+    #[test]
+    fn prop_setter_optional_strips_outer_option() {
+        let p = make_prop(
+            "alt",
+            parse_quote!(Option<String>),
+            PropKind::Optional {
+                inner: parse_quote!(String),
+                inner_is_generic: false,
+            },
+        );
+        let out = prop_setter_method(&p).to_string();
+        // Setter takes the inner String (not Option<String>).
+        assert!(out.contains("impl :: std :: convert :: Into < String >"));
+        // Stored as Some(Some(v.into())) — double wrap.
+        assert!(out.contains("Option :: Some (:: std :: option :: Option :: Some"));
+    }
+
+    #[test]
+    fn prop_setter_optional_with_generic_inner_skips_into() {
+        let p = make_prop(
+            "alt",
+            parse_quote!(Option<T>),
+            PropKind::Optional {
+                inner: parse_quote!(T),
+                inner_is_generic: true,
+            },
+        );
+        let out = prop_setter_method(&p).to_string();
+        assert!(out.contains("value : T"));
+        assert!(!out.contains("Into < T >"));
+    }
+
+    #[test]
+    fn prop_setter_children_takes_value_directly() {
+        let p = make_prop("children", parse_quote!(Children), PropKind::Children);
+        let out = prop_setter_method(&p).to_string();
+        assert!(out.contains("value : Children"));
+        // No `Into` — `Children` is already a wrapper type.
+        assert!(!out.contains("Into <"));
+    }
+
+    #[test]
+    fn prop_setter_default_uses_impl_into_for_concrete() {
+        let p = make_prop(
+            "count",
+            parse_quote!(i32),
+            PropKind::Default {
+                default: parse_quote!(5),
+                is_generic: false,
+            },
+        );
+        let out = prop_setter_method(&p).to_string();
+        assert!(out.contains("impl :: std :: convert :: Into < i32 >"));
+    }
+
+    #[test]
+    fn prop_setter_default_with_generic_takes_t_directly() {
+        let p = make_prop(
+            "v",
+            parse_quote!(T),
+            PropKind::Default {
+                default: parse_quote!(Default::default()),
+                is_generic: true,
+            },
+        );
+        let out = prop_setter_method(&p).to_string();
+        assert!(out.contains("value : T"));
+        assert!(!out.contains("Into < T >"));
+    }
+
+    #[test]
+    fn prop_build_assignment_required_expects() {
+        let p = make_prop("a", parse_quote!(String), PropKind::Required);
+        let out = prop_build_assignment(&p).to_string();
+        assert!(out.contains(". expect ("));
+        assert!(out.contains("\"required field `a` was not set\""));
+    }
+
+    #[test]
+    fn prop_build_assignment_required_generic_expects() {
+        let p = make_prop("v", parse_quote!(T), PropKind::RequiredGeneric);
+        let out = prop_build_assignment(&p).to_string();
+        assert!(out.contains("\"required field `v` was not set\""));
+    }
+
+    #[test]
+    fn prop_build_assignment_optional_defaults_to_none() {
+        let p = make_prop(
+            "alt",
+            parse_quote!(Option<String>),
+            PropKind::Optional {
+                inner: parse_quote!(String),
+                inner_is_generic: false,
+            },
+        );
+        let out = prop_build_assignment(&p).to_string();
+        // unwrap_or(None) — missing prop becomes None.
+        assert!(out.contains("unwrap_or"));
+        assert!(out.contains("Option :: None"));
+    }
+
+    #[test]
+    fn prop_build_assignment_children_defaults_to_empty_closure() {
+        let p = make_prop("children", parse_quote!(Children), PropKind::Children);
+        let out = prop_build_assignment(&p).to_string();
+        assert!(out.contains("unwrap_or_else"));
+        assert!(out.contains("Rc :: new"));
+        assert!(out.contains("View :: Empty"));
+    }
+
+    #[test]
+    fn prop_build_assignment_default_uses_user_expr() {
+        let p = make_prop(
+            "count",
+            parse_quote!(i32),
+            PropKind::Default {
+                default: parse_quote!(99),
+                is_generic: false,
+            },
+        );
+        let out = prop_build_assignment(&p).to_string();
+        assert!(out.contains("unwrap_or_else"));
+        assert!(out.contains("99"));
+    }
+
+    // -- expand() end-to-end shape ----------------------------------------
+
     #[test]
     fn expand_emits_props_struct_and_rewritten_fn() {
         let input: TokenStream2 = quote! {
@@ -604,14 +1245,18 @@ mod tests {
             }
         };
         let output = expand(input).to_string();
+        // Props struct lives inside the hidden inner mod.
         assert!(output.contains("struct CardProps"));
+        assert!(output.contains("struct CardPropsBuilder"));
         assert!(output.contains("fn card"));
         assert!(output.contains("__props : CardProps"));
         assert!(output.contains("CardProps { title }"));
+        // PascalCase alias is emitted.
+        assert!(output.contains("use __card_inner :: card as Card"));
     }
 
     #[test]
-    fn expand_handles_no_param_component() {
+    fn expand_no_param_component_emits_empty_destructure() {
         let input: TokenStream2 = quote! {
             fn header() -> Element {
                 render! { view { text { "Hi" } } }
@@ -619,31 +1264,33 @@ mod tests {
         };
         let output = expand(input).to_string();
         assert!(output.contains("struct HeaderProps"));
-        assert!(output.contains("fn header"));
-        // No-param destructure should be `HeaderProps { }` (just braces).
         assert!(
             output.contains("HeaderProps { }") || output.contains("HeaderProps {}"),
-            "no-param destructure should be empty braces, got: {output}"
+            "no-param destructure should be empty braces; got: {output}"
         );
+        // No setters for a zero-param component, just builder()+build().
+        assert!(output.contains("pub fn builder"));
+        assert!(output.contains("pub fn build"));
     }
 
     #[test]
-    fn expand_handles_option_param() {
+    fn expand_does_not_reference_typed_builder() {
+        // Regression: we replaced typed-builder with a hand-rolled
+        // builder. The emission must not reference the old crate
+        // path or its derive macro.
         let input: TokenStream2 = quote! {
-            fn x(label: Option<String>) -> Element {
+            fn card(title: String, count: i32) -> Element {
                 render! { view {} }
             }
         };
         let output = expand(input).to_string();
-        assert!(output.contains("struct XProps"));
-        assert!(
-            output.contains("strip_option"),
-            "Option<T> param should emit strip_option, got: {output}"
-        );
+        assert!(!output.contains("typed_builder"));
+        assert!(!output.contains("TypedBuilder"));
+        assert!(!output.contains("__typed_builder"));
     }
 
     #[test]
-    fn expand_handles_generic_component() {
+    fn expand_generic_component_uses_turbofish() {
         let input: TokenStream2 = quote! {
             fn typed<T: Clone + 'static>(value: T) -> Element {
                 render! { view {} }
@@ -651,109 +1298,80 @@ mod tests {
         };
         let output = expand(input).to_string();
         assert!(output.contains("struct TypedProps"));
-        // Turbofish form of the fn ptr cast inside the body
         assert!(
             output.contains("typed :: < T >") || output.contains("typed::<T>"),
-            "generic fn should use turbofish for fn-ptr cast, got: {output}"
+            "generic fn should use turbofish for fn-ptr cast; got: {output}"
         );
     }
 
     #[test]
-    fn generic_param_skips_into_setter() {
-        // Field whose type is a bare generic param must NOT get
-        // `setter(into)`, otherwise `Into<T>` with unconstrained `T`
-        // breaks call-site inference. Concrete fields keep `into`.
+    fn expand_rejects_method_receiver() {
         let input: TokenStream2 = quote! {
-            fn typed<T: Clone + 'static>(value: T, label: String) -> Element {
+            fn card(&self, title: String) -> Element {
                 render! { view {} }
             }
         };
         let output = expand(input).to_string();
-        // The String field still carries setter(into).
+        // The expansion replaces the body with a compile_error!() —
+        // detect it via the macro path.
         assert!(
-            output.contains("setter (into)") || output.contains("setter(into)"),
-            "non-generic String field should keep setter(into); got: {output}"
-        );
-        // The generic field is annotated with `#[builder()]` only —
-        // i.e. no `setter(into)` clause is attached to its declaration.
-        // (Easier to assert this through the wider shape than a regex.)
-        // We confirm by counting `setter (into)` occurrences: 1 (the
-        // String field), and crucially the `value : T` field must be
-        // preceded by a bare `#[builder ()]` annotation.
-        let n = output.matches("setter (into)").count() + output.matches("setter(into)").count();
-        assert_eq!(
-            n, 1,
-            "exactly one setter(into) expected (the non-generic field); got {n} in: {output}"
+            output.contains("compile_error"),
+            "method receiver should produce a compile error; got: {output}"
         );
     }
 
     #[test]
-    fn option_of_generic_skips_into_setter() {
-        // `Option<T>` where T is generic: still need strip_option,
-        // but `into` would need a known target type → must be skipped.
+    fn expand_rejects_destructuring_pattern() {
         let input: TokenStream2 = quote! {
-            fn typed<T: Clone + 'static>(value: Option<T>) -> Element {
+            fn card((a, b): (i32, i32)) -> Element {
+                render! { view {} }
+            }
+        };
+        let output = expand(input).to_string();
+        assert!(output.contains("compile_error"));
+    }
+
+    #[test]
+    fn expand_props_alias_strips_props_suffix_once() {
+        // Regression test for the `TwoPropsProps -> Two` greedy-trim
+        // bug. The alias derived from `TwoPropsProps` must be
+        // `TwoProps`, not `Two`.
+        let input: TokenStream2 = quote! {
+            fn two_props(title: String, count: i32) -> Element {
                 render! { view {} }
             }
         };
         let output = expand(input).to_string();
         assert!(
-            output.contains("strip_option"),
-            "Option<T> must still strip_option; got: {output}"
+            output.contains("as TwoProps"),
+            "alias should be `TwoProps`, not the over-trimmed `Two`; got: {output}"
         );
-        let n = output.matches("into").count();
-        // Should be zero `into` for the field-level setter. (We can
-        // still match "into" inside other tokens, but typed-builder
-        // setter clause uses the bare `into` ident, so the safer
-        // assertion is that the field-level annotation does not have
-        // `setter (into ,` or `setter(into,`.)
+    }
+
+    #[test]
+    fn expand_forwards_attribute_on_param_to_props_field() {
+        // Non-`#[prop]` attrs ride along on the emitted Props field.
+        let input: TokenStream2 = quote! {
+            fn card(#[allow(dead_code)] title: String) -> Element {
+                render! { view {} }
+            }
+        };
+        let output = expand(input).to_string();
         assert!(
-            !output.contains("setter (into ,") && !output.contains("setter(into,"),
-            "Option<T> with generic T must not emit setter(into,...); got: {output}"
+            output.contains("allow (dead_code)"),
+            "user attr should appear on the Props field; got: {output}"
         );
-        let _ = n;
     }
 
-    #[test]
-    fn is_generic_type_param_detects_bare_t() {
-        let t_param: Ident = parse_quote!(T);
-        let u_param: Ident = parse_quote!(U);
-        let generics = vec![t_param, u_param];
+    // -- Helper used by classify_* assertions -----------------------------
 
-        let bare_t: Type = parse_quote!(T);
-        assert!(is_generic_type_param(&bare_t, &generics));
-
-        let bare_u: Type = parse_quote!(U);
-        assert!(is_generic_type_param(&bare_u, &generics));
-
-        // `Option<T>` — the outer type is `Option`, not bare T.
-        let opt_t: Type = parse_quote!(Option<T>);
-        assert!(!is_generic_type_param(&opt_t, &generics));
-
-        // Concrete type with same name does NOT exist by definition,
-        // but a path that has multiple segments should not match.
-        let path_t: Type = parse_quote!(crate::T);
-        assert!(!is_generic_type_param(&path_t, &generics));
-
-        // Non-generic type.
-        let string_ty: Type = parse_quote!(String);
-        assert!(!is_generic_type_param(&string_ty, &generics));
-    }
-
-    #[test]
-    fn is_option_of_generic_detects_inner_t() {
-        let t_param: Ident = parse_quote!(T);
-        let generics = vec![t_param];
-
-        let opt_t: Type = parse_quote!(Option<T>);
-        assert!(is_option_of_generic(&opt_t, &generics));
-
-        // Option<String> — inner is not a generic param.
-        let opt_string: Type = parse_quote!(Option<String>);
-        assert!(!is_option_of_generic(&opt_string, &generics));
-
-        // Plain String is not an option at all.
-        let plain: Type = parse_quote!(String);
-        assert!(!is_option_of_generic(&plain, &generics));
+    fn kind_name(k: &PropKind) -> &'static str {
+        match k {
+            PropKind::Required => "Required",
+            PropKind::RequiredGeneric => "RequiredGeneric",
+            PropKind::Optional { .. } => "Optional",
+            PropKind::Children => "Children",
+            PropKind::Default { .. } => "Default",
+        }
     }
 }

@@ -155,12 +155,16 @@ fn probe() -> Element {
 }
 "#;
     let labels = run_probe("hidden_builder_helpers", source);
+    eprintln!(
+        "[hidden_builder_helpers] full label set ({} items): {labels:?}",
+        labels.len()
+    );
     let art_prefixed: Vec<String> = labels
         .iter()
         .filter(|l| l.to_lowercase().starts_with("art"))
         .cloned()
         .collect();
-    eprintln!("[hidden_builder_helpers] full Art* candidates: {art_prefixed:?}");
+    eprintln!("[hidden_builder_helpers] Art* candidates: {art_prefixed:?}");
 
     assert!(
         !art_prefixed.iter().any(|l| l == "art_tile"),
@@ -175,6 +179,63 @@ fn probe() -> Element {
         leaked.is_empty(),
         "ArtTilePropsBuilder* types should be hidden inside the \
          internal props module; saw: {leaked:?}",
+    );
+}
+
+#[test]
+fn short_prefix_user_component_does_not_leak_builder_helpers() {
+    // VS Code users typically start typing with just a few chars
+    // (`Art|`). RA's fuzzy-match may include items the strict
+    // prefix path filters out — let's verify the leak set stays
+    // empty at 3 chars too.
+    let source = r#"
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
+
+#[component]
+fn art_tile(label: &'static str) -> Element {
+    render! { text(value: label) }
+}
+
+fn probe() -> Element {
+    render! {
+        view() {
+            Art|
+        }
+    }
+}
+"#;
+    let labels = run_probe("short_prefix_leak", source);
+    eprintln!(
+        "[short_prefix_leak] {} candidates returned: {labels:?}",
+        labels.len()
+    );
+    // The critical items that MUST stay hidden:
+    //
+    // 1. snake_case fn `art_tile` — user calls via PascalCase alias.
+    // 2. builder struct `ArtTilePropsBuilder` — reached only via
+    //    `ArtTileProps::builder()`, never by name.
+    // 3. typed-builder-style markers (`ArtTilePropsBuilder_Error_*`,
+    //    `ArtTilePropsBuilder_Repeated_*`) — must stay completely
+    //    gone after the hand-rolled builder migration.
+    //
+    // The inner module *paths* (`__art_tile_inner::`,
+    // `__art_tile_props_internal::`) DO still appear as path
+    // completion entries because they're the names of (private)
+    // submodules of the user's crate. The items inside them are
+    // properly unreachable as bare identifiers.
+    let leaked: Vec<&String> = labels
+        .iter()
+        .filter(|l| {
+            l.as_str() == "art_tile"
+                || l.as_str() == "ArtTilePropsBuilder"
+                || l.starts_with("ArtTilePropsBuilder_")
+        })
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "user-facing builder + snake_case fn + typed-builder helpers \
+         must stay hidden even at short prefixes; leaked: {leaked:?}",
     );
 }
 

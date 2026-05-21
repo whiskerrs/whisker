@@ -370,6 +370,91 @@ fn nested_component_invocations() {
 }
 
 #[test]
+#[should_panic(expected = "required field `label` was not set")]
+fn build_panics_when_required_field_missing() {
+    // Regression pin for the hand-rolled builder's runtime
+    // required-field check. Pre-typed-builder migration this would
+    // have been a compile error; with the hand-rolled builder we
+    // surface the same constraint at mount time. The panic message
+    // must name the field for the user to find the offending
+    // call-site quickly.
+    fresh();
+    let _ = OneStringPropProps::builder().build();
+}
+
+#[test]
+fn build_default_field_uses_user_supplied_default() {
+    // `#[prop(default = 5)] count: i32` — omitting `.count(…)`
+    // produces 5 at build time. Verifies the build_assignment
+    // emission path for PropKind::Default { is_generic: false }.
+    fresh();
+    let props = WithDefaultPropProps::builder().build();
+    assert_eq!(props.count, 5);
+}
+
+#[test]
+fn build_default_field_override_replaces_default() {
+    fresh();
+    let props = WithDefaultPropProps::builder().count(99).build();
+    assert_eq!(props.count, 99);
+}
+
+#[test]
+fn build_option_field_defaults_to_none() {
+    fresh();
+    let props = OptionPropProps::builder().build();
+    assert_eq!(props.alt, None);
+}
+
+#[test]
+fn build_option_field_strips_outer_option_in_setter() {
+    // Setter takes `impl Into<String>`, wraps to Some(_) at build.
+    // This is the `strip_option` ergonomics the typed-builder
+    // version gave us, now hand-rolled.
+    fresh();
+    let props = OptionPropProps::builder().alt("hi").build();
+    assert_eq!(props.alt.as_deref(), Some("hi"));
+}
+
+#[test]
+fn build_children_defaults_to_empty_view_closure() {
+    // Missing `children:` should produce a closure that returns
+    // View::Empty so iterating the result of `(children)()` is a
+    // no-op.
+    fresh();
+    let props = WithChildrenProps::builder().label("x").build();
+    let v = (props.children)();
+    assert!(matches!(v, whisker::runtime::view::View::Empty));
+}
+
+#[test]
+fn build_into_setter_accepts_str_literal_for_string_field() {
+    // `setter(into)` ergonomics — `&str` flows into a `String`
+    // field through `impl Into<String>` on the setter.
+    fresh();
+    let props = OneStringPropProps::builder().label("from str").build();
+    assert_eq!(props.label, "from str");
+}
+
+#[test]
+fn build_into_setter_accepts_owned_string() {
+    fresh();
+    let owned: String = "from owned".into();
+    let props = OneStringPropProps::builder().label(owned).build();
+    assert_eq!(props.label, "from owned");
+}
+
+#[test]
+fn build_generic_setter_accepts_concrete_type() {
+    // Generic prop's setter takes `T` directly (no Into) — the
+    // call site picks T at the chain head and the setter just
+    // stores the value.
+    fresh();
+    let props = GenericLabelProps::builder().value(7_i32).build();
+    assert_eq!(props.value, 7);
+}
+
+#[test]
 fn props_struct_is_constructable_directly() {
     // Smoke test: the auto-generated builder is reachable from user
     // code as `XxxProps::builder()`. Not the recommended path (users
