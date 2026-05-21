@@ -485,6 +485,33 @@ fn variant_l3_text_empty_parens() {
     };
 }
 
+// ---- Variant N: render! nested in #[component]-shaped closures -----------
+
+// Whisker's `#[component]` rewrites the user body into roughly:
+//   let __body: Box<dyn Fn() -> ElementHandle> = Box::new(move || {
+//       ra_spike::hot_call(move || { /* user's render! HERE */ })
+//   });
+//   mount_remountable(fn_ptr, __body)
+//
+// Top-level kwarg completion (variant A, D) works in this spike,
+// but the user reports `view(sty|)` doesn't complete in
+// hello-world's #[component] bodies. N tests the same partial
+// shape but inside this exact closure nesting to confirm whether
+// closure context is what's blocking completion.
+
+fn variant_n_inside_component_wrap() -> ra_spike::ElementHandle {
+    let __body: ::std::boxed::Box<
+        dyn ::std::ops::Fn() -> ra_spike::ElementHandle + 'static,
+    > = ::std::boxed::Box::new(move || {
+        ra_spike::hot_call(move || {
+            // ← TEST N1: partial kwarg on `view` inside the
+            // exact same closure layering #[component] generates.
+            render! { view(sty) }
+        })
+    });
+    ra_spike::mount_remountable(0 as *const (), __body)
+}
+
 // ---- Variant M: confirm kwarg-only shape is what RA tolerates ------------
 
 // L1–L3 all worked (empty containers). D5 worked (kwarg with

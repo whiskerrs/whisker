@@ -167,3 +167,22 @@ pub fn text(_value: impl ::std::string::ToString) -> ElementHandle {
 pub fn expr<T: ::std::fmt::Display>(_value: T) -> ElementHandle {
     ElementHandle(0)
 }
+
+/// Mirrors whisker's `::whisker::__hot::call` shape — a generic
+/// function that takes a closure and invokes it. `#[component]`
+/// wraps the user body in `::whisker::__hot::call(move || { … })`
+/// which itself sits inside another `Box::new(move || { … })`,
+/// putting the render!-typing position inside two nested closures.
+/// Suspected as the differentiator: kwarg completion on built-in
+/// tags worked at top-level in the spike but fails in hello-world
+/// (where every render! is inside `#[component]`).
+pub fn hot_call<R>(f: impl ::std::ops::Fn() -> R + 'static) -> R {
+    f()
+}
+
+pub fn mount_remountable(
+    _f: *const (),
+    body: ::std::boxed::Box<dyn ::std::ops::Fn() -> ElementHandle + 'static>,
+) -> ElementHandle {
+    body()
+}
