@@ -589,11 +589,11 @@ pub mod prelude {
         effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
         signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,
     };
-    // Built-in tag builder constructors re-exported so RA's
-    // identifier completion (`v|` → `view`, `pa|` → `page`, …)
-    // works in source positions outside `render!`. The macro
-    // emits these as fully-qualified path expressions; user code
-    // rarely calls them directly.
-    #[doc(hidden)]
-    pub use crate::__tags::{image, page, raw_text, scroll_view, text, view};
+    // Built-in tag struct names are NOT re-exported here. Pulling
+    // them into the user's scope makes RA resolve `view(sty)` (etc.)
+    // in render!'s input as a tuple-struct construction call —
+    // RA stops at that syntactic interpretation and never falls
+    // through to the macro's expansion for kwarg-name completion.
+    // The macro emits `::whisker::__tags::__<tag>_ctor()` directly
+    // so user code never needs `view` etc. in scope.
 }
