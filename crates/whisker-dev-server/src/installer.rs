@@ -128,6 +128,76 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
     Ok(status)
 }
 
+/// `xcodebuild`'s `-quiet` flag silences progress chatter but the
+/// underlying compiler still emits diagnostics — which under Xcode
+/// with iOS 26 SDK + Lynx's pre-iOS-26 framework headers means a
+/// hundreds-of-lines deprecation cascade (`'mainScreen' is
+/// deprecated`, `'screens' is deprecated`, …) on every build. None
+/// of it is actionable by Whisker users (the headers ship from
+/// upstream Lynx), so we filter it as benign here.
+///
+/// Approach: drop anything that looks like a clang / xcodebuild
+/// warning chain — the `warning:` line, the `note:` follow-ups,
+/// the source-line listings (`  217 |`, `      |   ^`), the
+/// "in file included from" / "N warnings generated." summaries,
+/// and the `[MT] IDERunDestination` IDE chatter.
+///
+/// Real errors are preserved: lines containing `error:` /
+/// `fatal error:` / `** BUILD FAILED **` always fall through.
+fn is_benign_xcodebuild_line(raw: &str) -> bool {
+    let line = raw.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '·');
+
+    // Always surface real errors. Check this first so we don't
+    // accidentally suppress a `warning:`-prefixed error message.
+    if line.starts_with("error:")
+        || line.contains(" error:")
+        || line.starts_with("fatal error:")
+        || line.starts_with("** BUILD FAILED")
+        || line.starts_with("** BUILD INTERRUPTED")
+    {
+        return false;
+    }
+
+    // `2026-05-21 18:21:52.770 xcodebuild[54160:34595363] [MT] IDERunDestination …`
+    if raw.starts_with("20") && raw.contains("xcodebuild[") && raw.contains("] [MT] ") {
+        return true;
+    }
+
+    // The xcframework command's success line.
+    if line.starts_with("xcframework successfully written out to:") {
+        return true;
+    }
+
+    // Diagnostic chain: warnings, notes, source line listings,
+    // `N warnings generated.` summary.
+    if line.starts_with("warning:")
+        || line.contains(" warning:")
+        || line.starts_with("note:")
+        || line.contains(" note:")
+        || line.starts_with("In file included from")
+        || line.ends_with(" warnings generated.")
+        || line.ends_with(" warning generated.")
+    {
+        return true;
+    }
+
+    // Source-line listings rendered alongside the warning chain:
+    //   `217 | #import "LynxBackground..."`
+    //   `    |         ^`
+    // These look like `<digits> |` or `<whitespace> |` (caret line).
+    let trimmed = line.trim_start();
+    if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit() || c == ' ') {
+        if rest.trim_start().starts_with("| ") || rest.trim_start() == "|" {
+            return true;
+        }
+    }
+    if trimmed.starts_with("| ") || trimmed == "|" {
+        return true;
+    }
+
+    false
+}
+
 /// Classifies which sub-command produced the stderr — we tune the
 /// "benign noise" set per tool because the false-positive shape
 /// differs (simctl emits NSPOSIX error preambles, xcodebuild emits
@@ -170,20 +240,18 @@ impl SimctlNoise {
                     || line.contains("(domain=NSPOSIXErrorDomain, code=3)")
             }
             SimctlNoise::Other => false,
-            SimctlNoise::Xcodebuild => {
-                // `2026-05-21 18:21:52.770 xcodebuild[54160:34595363]
-                //  [MT] IDERunDestination: …`
-                (line.starts_with("20")
-                    && line.contains("xcodebuild[")
-                    && line.contains("] [MT] "))
-                    // The xcframework command echoes a single
-                    // confirmation we already cover via our own step.
-                    || line.starts_with("xcframework successfully written out to:")
-            }
+            SimctlNoise::Xcodebuild => is_benign_xcodebuild_line(line),
         }
     }
 
     fn is_benign_stdout(&self, line: &str) -> bool {
+        // For xcodebuild, also fold stdout through the benign filter
+        // — `-quiet` doesn't fully silence it on iOS 26 SDK + Lynx
+        // pre-iOS-26 headers, so `mainScreen` deprecations etc. land
+        // on stdout depending on Xcode version.
+        if matches!(self, SimctlNoise::Xcodebuild) && is_benign_xcodebuild_line(line) {
+            return true;
+        }
         match self {
             // `simctl launch` always reports `<bundle_id>: <pid>` on
             // success; it duplicates info our `step.done(...)`
