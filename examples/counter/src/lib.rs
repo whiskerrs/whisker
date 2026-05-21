@@ -26,7 +26,7 @@ use whisker::prelude::*;
 
 /// App-wide state. A single signal is enough for the demo; bigger
 /// apps would group several signals (or derived `ReadSignal`s built
-/// with `memo()`) into a struct like this and pass it by `Copy` into
+/// with `computed()`) into a struct like this and pass it by `Copy` into
 /// child components.
 #[derive(Copy, Clone)]
 pub struct AppState {
@@ -45,10 +45,10 @@ pub struct AppState {
 ///   are batched within each handler so multi-update handlers only
 ///   trigger one re-render.
 /// - `Show` toggles a celebratory message in/out depending on a
-///   memo that derives from the same signal.
+///   computed value that derives from the same signal.
 #[component]
 pub fn counter(state: AppState) -> whisker::runtime::view::Element {
-    let big_enough = memo(move || state.count.get() > 10);
+    let big_enough = computed(move || state.count.get() > 10);
 
     render! {
         view(style: "display: flex; flex-direction: column; gap: 12px; padding: 20px;") {

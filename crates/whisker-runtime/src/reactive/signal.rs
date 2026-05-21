@@ -98,7 +98,7 @@ impl<T: 'static> Copy for ReadSignal<T> {}
 
 impl<T: 'static + Clone> ReadSignal<T> {
     /// Read the current value, registering this signal as a dependency
-    /// of the currently-running effect / memo (if any).
+    /// of the currently-running effect / computed (if any).
     pub fn get(self) -> T {
         self.with(|v| v.clone())
     }
@@ -289,7 +289,7 @@ impl<T: 'static + Clone> RwSignal<T> {
 fn track_and_fetch(id: NodeId) -> Rc<RefCell<dyn Any>> {
     with_runtime(|rt| {
         if let Some(tracker) = rt.current_tracker {
-            // Avoid self-subscription (a memo reading its own value).
+            // Avoid self-subscription (a computed reading its own value).
             if tracker != id {
                 if let Some(node) = rt.nodes.get_mut(id) {
                     node.subscribers.insert(tracker);

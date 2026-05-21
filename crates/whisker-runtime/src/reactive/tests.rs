@@ -342,21 +342,21 @@ fn stored_value_disposed_with_owner() {
     assert!(!leftover);
 }
 
-// ----- Memo -----------------------------------------------------------------
+// ----- Computed -----------------------------------------------------------------
 
 #[test]
-fn memo_caches_initial_value() {
+fn computed_caches_initial_value() {
     fresh();
     let (count, _set) = signal(3_i32);
-    let doubled = memo(move || count.get() * 2);
+    let doubled = computed(move || count.get() * 2);
     assert_eq!(doubled.get(), 6);
 }
 
 #[test]
-fn memo_recomputes_on_source_change() {
+fn computed_recomputes_on_source_change() {
     fresh();
     let (count, set_count) = signal(0_i32);
-    let doubled = memo(move || count.get() * 2);
+    let doubled = computed(move || count.get() * 2);
     assert_eq!(doubled.get(), 0);
     set_count.set(5);
     flush();
@@ -364,10 +364,10 @@ fn memo_recomputes_on_source_change() {
 }
 
 #[test]
-fn memo_notifies_downstream_subscribers() {
+fn computed_notifies_downstream_subscribers() {
     fresh();
     let (count, set_count) = signal(0_i32);
-    let doubled = memo(move || count.get() * 2);
+    let doubled = computed(move || count.get() * 2);
     let observed: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
     let obs_clone = observed.clone();
     effect(move || obs_clone.borrow_mut().push(doubled.get()));
@@ -379,11 +379,11 @@ fn memo_notifies_downstream_subscribers() {
 }
 
 #[test]
-fn memo_does_not_notify_when_value_unchanged() {
+fn computed_does_not_notify_when_value_unchanged() {
     fresh();
     let (count, set_count) = signal(5_i32);
-    // floor-div by 10 — different `count` values yield the same memo value
-    let bucket = memo(move || count.get() / 10);
+    // floor-div by 10 — different `count` values yield the same computed value
+    let bucket = computed(move || count.get() / 10);
     let runs = Rc::new(RefCell::new(0));
     let runs_clone = runs.clone();
     effect(move || {

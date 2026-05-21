@@ -32,15 +32,10 @@ pub use whisker_macros::{component, main, render};
 // directly. The underlying impl lives in `whisker_runtime::reactive`
 // for callers that prefer the long path.
 pub use whisker_runtime::reactive::{
-    create_owner, dispose_owner, effect, flush, flush_mounts, memo, mount_component, on_cleanup,
-    on_mount, provide_context, signal, unmount_component, use_context, with_context, with_owner,
-    ReadSignal, RwSignal, StoredValue, WriteSignal,
+    computed, create_owner, dispose_owner, effect, flush, flush_mounts, mount_component,
+    on_cleanup, on_mount, provide_context, signal, unmount_component, use_context, with_context,
+    with_owner, ReadSignal, RwSignal, StoredValue, WriteSignal,
 };
-// Back-compat type alias. `memo()` now returns `ReadSignal<T>`; this
-// alias keeps `Memo<T>` in old type signatures compiling. New code
-// should write `ReadSignal<T>`.
-#[allow(deprecated)]
-pub use whisker_runtime::reactive::Memo;
 // Control-flow components used by the `render!` macro.
 pub use whisker_runtime::view::{for_each, show};
 // `Children` is the conventional prop type for components that wrap
@@ -607,12 +602,10 @@ pub mod __hot {
 pub mod prelude {
     pub use crate::Children;
     pub use crate::ElementTag;
-    #[allow(deprecated)]
-    pub use crate::Memo;
     pub use crate::{component, main, render};
     pub use crate::{
-        effect, for_each, memo, on_cleanup, on_mount, provide_context, run_on_main_thread, show,
-        signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,
+        computed, effect, for_each, on_cleanup, on_mount, provide_context, run_on_main_thread,
+        show, signal, use_context, with_context, ReadSignal, RwSignal, StoredValue, WriteSignal,
     };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is

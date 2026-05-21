@@ -43,14 +43,14 @@ let (read, write) = count.split();   // any time
 
 All three types (`ReadSignal<T>`, `WriteSignal<T>`, `RwSignal<T>`)
 are `Copy` arena handles — clone is free, `'static`, moves into
-closures without lifetime annotations. `memo()` also returns
+closures without lifetime annotations. `computed()` also returns
 `ReadSignal<T>` (it's a compute-driven signal); there is no separate
-`Memo<T>` type.
+`Computed<T>` (gone — use `ReadSignal<T>`) type.
 
 API surface:
 
 ```rust
-// ReadSignal<T> (also what memo() returns)
+// ReadSignal<T> (also what computed() returns)
 fn get(&self) -> T where T: Clone;
 fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R;
 fn get_untracked(&self) -> T where T: Clone;        // no dep registration
@@ -89,10 +89,10 @@ effect(|prev: Option<i32>| {
 });
 ```
 
-### Memo — a compute-driven `ReadSignal`
+### Computed — a compute-driven `ReadSignal`
 
 ```rust
-let doubled: ReadSignal<i32> = memo(move || count.get() * 2);
+let doubled: ReadSignal<i32> = computed(move || count.get() * 2);
 log::info!("{}", doubled.get());           // 0
 set_count.set(5);
 log::info!("{}", doubled.get());           // 10
@@ -102,7 +102,7 @@ Like an effect that caches its return value. The returned handle is a
 `ReadSignal<T>` — exactly the same type a primitive signal hands out —
 so component props that take a "readable reactive value" use
 `ReadSignal<T>` regardless of whether the source is `signal()` or
-`memo()`. **Lazy**: re-runs only when dependencies change *and* it has
+`computed()`. **Lazy**: re-runs only when dependencies change *and* it has
 at least one subscriber.
 
 ### Resource (Phase A4)
@@ -165,7 +165,7 @@ struct Owner {
 
 struct ReactiveNode {
     owner:  OwnerId,
-    kind:   NodeKind,                          // Signal | Effect | Memo
+    kind:   NodeKind,                          // Signal | Effect | Computed
     value:  Option<Box<dyn Any>>,
     sources:     HashSet<NodeId>,              // who I depend on
     subscribers: HashSet<NodeId>,              // who depends on me
@@ -429,10 +429,10 @@ types it's a compile error — wrap in `Rc<T>` / `Arc<T>` if needed.
 
 | Edit | Outcome |
 |---|---|
-| Body of an existing `effect` / `memo` / event handler | New code runs next time; state preserved |
+| Body of an existing `effect` / `computed` / event handler | New code runs next time; state preserved |
 | Body of an existing dynamic `{expr}` in `render!` | Updates next time deps change; state preserved |
 | Adding a new static element in `#[component]`'s `render!` | Component remounted; local state lost; parent attachment + sibling order preserved |
-| Adding a new `signal()` / `effect()` / `memo()` inside the component body | Component remounted; local state lost |
+| Adding a new `signal()` / `effect()` / `computed()` inside the component body | Component remounted; local state lost |
 | Editing static styles / attributes | Component remounted; local state lost |
 | Edits to a non-`#[component]` helper invoked via `{helper()}` | Effect re-fires with patched helper body; state preserved |
 | Edits to the top-level `app()` (`#[whisker::main]`) | Not currently re-invoked; needs manual restart |
@@ -467,7 +467,7 @@ because the blast radius is scoped to one component subtree.
   Copy handle) is the new public type returned from `into_element`.
 - `crates/whisker-macros/src/rsx.rs` — **rewrite** as `render.rs` (new
   macro name).
-- `crates/whisker-runtime/src/signal.rs` — extend with effect / memo /
+- `crates/whisker-runtime/src/signal.rs` — extend with effect / computed /
   owner / scheduler. The current `Signal` API survives in spirit but
   the closed `T: Add + From<i32>` constraint on `update` goes away.
 - `crates/whisker/src/prelude.rs` — re-export the new surface.

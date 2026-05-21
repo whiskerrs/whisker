@@ -50,7 +50,7 @@ pub(crate) fn schedule(node: NodeId) {
     }
 }
 
-/// Drain the pending queue, re-running effects and memos in the order
+/// Drain the pending queue, re-running effects and computeds in the order
 /// they were scheduled. Skips entries whose node has been disposed.
 ///
 /// Reentrant: a re-running effect may itself write signals, which
@@ -102,7 +102,7 @@ pub fn flush() {
     with_runtime(|rt| rt.flushing = false);
 }
 
-/// Re-run the compute closure for an effect or memo, if it's still
+/// Re-run the compute closure for an effect or computed, if it's still
 /// alive in the arena. Sets up dependency tracking and owner-stack
 /// scoping around the call.
 ///
@@ -126,7 +126,7 @@ fn run_node_if_alive(node: NodeId) {
         let owner = n.owner;
         let compute = match &n.data {
             NodeData::Effect { compute } => compute.clone(),
-            NodeData::Memo { compute, .. } => compute.clone(),
+            NodeData::Computed { compute, .. } => compute.clone(),
             NodeData::Signal { .. } => return None,
         };
         // Detach from existing sources before re-tracking.

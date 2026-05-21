@@ -9,8 +9,8 @@
 //! `RwSignal`) are `Copy` newtypes around a `NodeId`. They look their
 //! value up through the runtime on every operation. Cloning a handle
 //! is just an integer copy; the lifetime of the underlying state is
-//! bounded by its owning `Owner`, not by the handle. `memo()` returns
-//! a `ReadSignal<T>` that happens to be backed by a `NodeData::Memo`
+//! bounded by its owning `Owner`, not by the handle. `computed()` returns
+//! a `ReadSignal<T>` that happens to be backed by a `NodeData::Computed`
 //! node — externally indistinguishable from a primitive signal.
 //!
 //! This module defines the types only. The thread-local instance and
@@ -49,11 +49,11 @@ pub enum NodeKind {
     /// Derived value. Like an effect, but caches its return so
     /// downstream readers can observe it through the same dependency
     /// mechanism as a signal.
-    Memo,
+    Computed,
 }
 
 /// The mutable payload of a [`ReactiveNode`]. Signals carry a value,
-/// effects carry a compute closure, memos carry both.
+/// effects carry a compute closure, computed values carry both.
 ///
 /// The compute closure is wrapped in `Rc<RefCell<…>>` so the
 /// scheduler can grab a clone of the handle before invoking it,
@@ -66,7 +66,7 @@ pub enum NodeData {
     Effect {
         compute: Rc<RefCell<dyn FnMut()>>,
     },
-    Memo {
+    Computed {
         value: Rc<RefCell<dyn Any>>,
         compute: Rc<RefCell<dyn FnMut()>>,
     },
@@ -77,7 +77,7 @@ impl NodeData {
         match self {
             NodeData::Signal { .. } => NodeKind::Signal,
             NodeData::Effect { .. } => NodeKind::Effect,
-            NodeData::Memo { .. } => NodeKind::Memo,
+            NodeData::Computed { .. } => NodeKind::Computed,
         }
     }
 
@@ -86,7 +86,7 @@ impl NodeData {
     pub fn value(&self) -> Option<&Rc<RefCell<dyn Any>>> {
         match self {
             NodeData::Signal { value } => Some(value),
-            NodeData::Memo { value, .. } => Some(value),
+            NodeData::Computed { value, .. } => Some(value),
             NodeData::Effect { .. } => None,
         }
     }
@@ -96,7 +96,7 @@ impl NodeData {
 ///
 /// `sources` records what this node read in its last run (downstream
 /// dependencies); `subscribers` records who reads us. Both sets are
-/// kept in sync by the effect/memo runner — on each re-run, the runner
+/// kept in sync by the effect/computed runner — on each re-run, the runner
 /// re-derives `sources` by tracking signal reads during the closure,
 /// then sets `subscribers` on the new sources symmetrically.
 pub struct ReactiveNode {
@@ -164,7 +164,7 @@ impl Owner {
 ///
 /// 1. Open a short `with_borrow_mut` to read or mutate `owners` /
 ///    `nodes` / `current_*`.
-/// 2. If user code needs to run (effect / memo closure), drop the
+/// 2. If user code needs to run (effect / computed closure), drop the
 ///    borrow first by cloning the necessary handles out, then call
 ///    the closure.
 /// 3. Re-open a short borrow to restore book-keeping.
@@ -176,15 +176,15 @@ pub struct ReactiveRuntime {
     pub owners: SlotMap<OwnerId, Owner>,
     pub nodes: SlotMap<NodeId, ReactiveNode>,
     /// Owner stack: the topmost is the "current" owner — new signals,
-    /// effects, memos, and lifecycle hooks register against it. Push
+    /// effects, computed values, and lifecycle hooks register against it. Push
     /// when entering a `with_owner` (or `#[component]`) scope, pop on
     /// exit.
     pub owner_stack: Vec<OwnerId>,
-    /// The effect/memo currently being computed, if any. Signal reads
+    /// The effect/computed currently being computed, if any. Signal reads
     /// inside this effect register a `sources`/`subscribers` link
     /// against it.
     pub current_tracker: Option<NodeId>,
-    /// Queue of effect/memo nodes scheduled to re-run on the next flush.
+    /// Queue of effect/computed nodes scheduled to re-run on the next flush.
     /// Populated by signal writes; drained by [`flush_pending`].
     pub pending: Vec<NodeId>,
     /// True while [`flush_pending`] is actively draining `pending`.

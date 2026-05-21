@@ -11,7 +11,7 @@
 //! - [`signal`] — [`signal`] / [`RwSignal`] / [`ReadSignal`] /
 //!   [`WriteSignal`].
 //! - [`effect`] — [`effect`] + dependency tracking.
-//! - [`memo`] — [`memo`] (returns [`ReadSignal<T>`]).
+//! - [`computed`] — [`computed`] (returns [`ReadSignal<T>`]).
 //! - [`scheduler`] — batching / flush.
 //!
 //! All operations are single-threaded — reactive UI runs on the Lynx
@@ -29,9 +29,9 @@
 //! executes.
 
 pub mod component;
+pub mod computed;
 pub mod context;
 pub mod effect;
-pub mod memo;
 pub mod owner;
 pub mod runtime;
 pub mod scheduler;
@@ -47,11 +47,9 @@ pub use component::{
     flush_mounts, mount_component, mount_component_remountable, on_component_root_attached,
     on_mount, owners_for_fn, remount_components_for, unmount_component, MountId,
 };
+pub use computed::computed;
 pub use context::{provide_context, use_context, with_context};
 pub use effect::effect;
-pub use memo::memo;
-#[allow(deprecated)]
-pub use memo::Memo;
 pub use owner::{create_owner, dispose_owner, on_cleanup, with_owner};
 pub use runtime::{NodeId, OwnerId};
 pub use scheduler::flush;
@@ -80,7 +78,7 @@ thread_local! {
 /// closures.
 ///
 /// Crate-internal; the public surface is the typed `signal` / `effect`
-/// / `memo` / `dispose_owner` etc. functions. Exposing the raw
+/// / `computed` / `dispose_owner` etc. functions. Exposing the raw
 /// runtime would let callers violate borrow-window invariants.
 pub(crate) fn with_runtime<R>(f: impl FnOnce(&mut ReactiveRuntime) -> R) -> R {
     RUNTIME.with_borrow_mut(f)
