@@ -275,7 +275,14 @@ impl ElementNode {
         let tag_name = tag_ident.to_string();
         let tag_span = tag_ident.span();
         let ctor_ident = format_ident!("__{}_ctor", tag_ident, span = tag_span);
-        let ctor = quote_spanned! {tag_span=>
+        // Only the ctor ident carries the tag's source span; the
+        // surrounding path stays at call_site. The spike's working
+        // shape uses this exact span layout — wrapping the whole
+        // `::whisker::__tags::…` path in `quote_spanned!` (tag-span
+        // on the entire path) breaks built-in kwarg completion when
+        // the call is inside a `#[component]` body, even though it
+        // works at top-level.
+        let ctor = quote! {
             ::whisker::__tags::#ctor_ident()
         };
 
