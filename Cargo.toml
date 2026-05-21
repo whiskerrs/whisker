@@ -13,8 +13,6 @@ members = [
     "crates/whisker-macros",
     "crates/whisker-runtime",
     "crates/whisker-subsecond",
-    "crates/ra-spike",
-    "crates/ra-spike/macros",
     "examples/counter",
     "examples/hello-world",
     "examples/hn-reader",

@@ -24,7 +24,8 @@
 //! (`IDENT(kwargs?) { … }?`). Bare string literals and bare
 //! `{expr}` blocks are rejected with a hard parser error.
 //!
-//! Why: ra-spike experiments (see `crates/ra-spike`) showed that
+//! Why: RA experiments (kept as integration tests in
+//! `tests/ra_completion.rs`) showed that
 //! rust-analyzer's input fixup gives up on children blocks that
 //! contain anything other than `IDENT(name: value, …)` shapes at
 //! their top level. With a bare `"hi"` or `{count}` present, the
@@ -266,10 +267,10 @@ impl Node {
 impl ElementNode {
     /// Lower a built-in element to a builder chain on
     /// `::whisker::__tags::<tag>`. Inline-chain form matches the
-    /// ra-spike's verified `__tags::__view_ctor().style(…).…__h()`
+    /// earlier-experiment-verified `__tags::__view_ctor().style(…).…__h()`
     /// shape — no intermediate `let __h = …; __h` binding when the
     /// element has no children (the let-binding form broke RA's
-    /// receiver-type threading; see `crates/ra-spike`).
+    /// receiver-type threading; see `tests/ra_completion.rs`).
     fn to_tokens(&self) -> TokenStream2 {
         let tag_ident = &self.tag;
         let tag_name = tag_ident.to_string();
@@ -277,7 +278,7 @@ impl ElementNode {
         let ctor_ident = format_ident!("__{}_ctor", tag_ident, span = tag_span);
         // Inline the entire `::whisker::__tags::__<tag>_ctor()` path
         // directly into the outer `quote!`s below — same layout as
-        // ra-spike's compose_a. Storing it into an intermediate
+        // earlier-experiment compose_a. Storing it into an intermediate
         // TokenStream and interpolating may capture span/grouping
         // info differently, which we suspect is why kwarg completion
         // worked for compose_a but not for render! (same shape on
@@ -300,8 +301,8 @@ impl ElementNode {
         let _ = tag_name;
 
         // Children: each child becomes a `.child({ inner_chain })`
-        // method call on the builder. Same shape as the ra-spike
-        // verified.
+        // method call on the builder. Same shape verified by the
+        // earlier RA experiments.
         let child_calls: Vec<TokenStream2> = self
             .children
             .iter()
@@ -312,7 +313,7 @@ impl ElementNode {
             .collect();
 
         // No children AND no ident-refs to emit → bare expression
-        // form. Matches the ra-spike's working completion shape
+        // form. Matches the earlier-experiment-verified completion shape
         // for the partial-kwarg case.
         if child_calls.is_empty() && ident_refs.is_empty() {
             return quote! {
@@ -384,7 +385,7 @@ impl ElementNode {
             // expansion-for-completion pass) — the prefix check
             // then resolves to `false` and we fall through to
             // the ident-ref path, robbing RA of the method-call
-            // shape it needed for kwarg completion. The ra-spike
+            // shape it needed for kwarg completion. The earlier experiment
             // proves this: `compose_a!` always emits the method
             // call and completes correctly; `render!` used the
             // heuristic and didn't.
@@ -731,7 +732,7 @@ mod tests {
 
     #[test]
     fn no_children_emits_bare_chain_expression() {
-        // Verifies the ra-spike-verified "no `let __h =` binding"
+        // Verifies the earlier-experiment-verified "no `let __h =` binding"
         // shape for the no-children case.
         let input: TokenStream2 = quote::quote! { view(style: "x") };
         let output = super::expand_test(input).to_string();
@@ -761,7 +762,7 @@ mod tests {
         // (RA injects a sentinel suffix during completion, which
         // makes a "does this prefix match a method" heuristic
         // unreliable; always emitting the method-call shape is
-        // what the ra-spike's working compose_a does.)
+        // what the earlier-experiment compose_a does.)
         let input: TokenStream2 = quote::quote! { view(v) };
         let output = super::expand_test(input).to_string();
         assert!(

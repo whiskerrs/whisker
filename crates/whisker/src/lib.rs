@@ -86,13 +86,15 @@ pub mod __tags {
 
     // Each built-in tag is a struct + a hand-written inherent
     // `impl` block listing every method explicitly. **No
-    // `macro_rules!` is used to emit methods.** The spike under
-    // `crates/ra-spike` showed that rust-analyzer's
-    // method-completion engine doesn't surface methods that came
-    // from a `macro_rules!` expansion inside an `impl` block —
-    // even though the same methods compile and pass type-check
-    // fine. Inline definitions fix the completion path; the
-    // duplication across six tags is the cost.
+    // `macro_rules!` is used to emit methods.** Earlier
+    // experiments (kept as integration tests in
+    // `crates/whisker-macros/tests/ra_completion.rs`) showed
+    // that rust-analyzer's method-completion engine doesn't
+    // surface methods that came from a `macro_rules!` expansion
+    // inside an `impl` block — even though the same methods
+    // compile and pass type-check fine. Inline definitions fix
+    // the completion path; the duplication across six tags is
+    // the cost.
 
     /// `<page>` — top-level container Lynx mounts as the root of
     /// an app. Holds the screen-level `style=` (background, flex

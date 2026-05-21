@@ -970,22 +970,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
-name = "ra-spike"
-version = "0.0.0"
-dependencies = [
- "ra-spike-macros",
-]
-
-[[package]]
-name = "ra-spike-macros"
-version = "0.0.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "rand"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
