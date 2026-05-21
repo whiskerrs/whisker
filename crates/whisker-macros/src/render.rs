@@ -275,16 +275,13 @@ impl ElementNode {
         let tag_name = tag_ident.to_string();
         let tag_span = tag_ident.span();
         let ctor_ident = format_ident!("__{}_ctor", tag_ident, span = tag_span);
-        // Only the ctor ident carries the tag's source span; the
-        // surrounding path stays at call_site. The spike's working
-        // shape uses this exact span layout — wrapping the whole
-        // `::whisker::__tags::…` path in `quote_spanned!` (tag-span
-        // on the entire path) breaks built-in kwarg completion when
-        // the call is inside a `#[component]` body, even though it
-        // works at top-level.
-        let ctor = quote! {
-            ::whisker::__tags::#ctor_ident()
-        };
+        // Inline the entire `::whisker::__tags::__<tag>_ctor()` path
+        // directly into the outer `quote!`s below — same layout as
+        // ra-spike's compose_a. Storing it into an intermediate
+        // TokenStream and interpolating may capture span/grouping
+        // info differently, which we suspect is why kwarg completion
+        // worked for compose_a but not for render! (same shape on
+        // the surface, different behaviour in practice).
 
         // One `.kwarg(value)` token group per attr, span-anchored
         // at the user's kwarg-name source position so RA's
@@ -295,29 +292,12 @@ impl ElementNode {
             .filter_map(|kw| self.kwarg_to_setter(kw))
             .collect();
 
-        // Partial-kwarg idents that DON'T match any builder method
-        // get re-emitted as bare identifier references so rust-
-        // analyzer's identifier completion can fire — picks up
-        // built-in tag names / user components from the
-        // surrounding scope. Without this, e.g. `view(v|)` had
-        // nothing at `v|` to anchor completion to.
-        let ident_refs: Vec<TokenStream2> = self
-            .kwargs
-            .iter()
-            .filter_map(|kw| {
-                if !kw.partial {
-                    return None;
-                }
-                if builder_method_prefix_matches(&tag_name, &kw.name.to_string()) {
-                    return None;
-                }
-                let name = &kw.name;
-                let span = name.span();
-                Some(quote_spanned! {span=>
-                    let _ = #name;
-                })
-            })
-            .collect();
+        // No more ident-ref side block. Every partial kwarg now
+        // routes through the setter chain as a method call — see
+        // the long comment in `kwarg_to_setter` for the
+        // ra-fixup-vs-prefix-match rationale.
+        let ident_refs: Vec<TokenStream2> = Vec::new();
+        let _ = tag_name;
 
         // Children: each child becomes a `.child({ inner_chain })`
         // method call on the builder. Same shape as the ra-spike
@@ -337,7 +317,7 @@ impl ElementNode {
         if child_calls.is_empty() && ident_refs.is_empty() {
             return quote! {
                 {
-                    #ctor #(#setter_calls)* .__h()
+                    ::whisker::__tags::#ctor_ident() #(#setter_calls)* .__h()
                 }
             };
         }
@@ -358,22 +338,16 @@ impl ElementNode {
         };
 
         if ident_refs.is_empty() {
-            // Common case: children but no partial-ident-refs.
-            // Single-expression chain.
             quote! {
                 {
-                    #ctor #(#setter_calls)* #(#child_calls)* .__h()
+                    ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
                 }
             }
         } else {
-            // Rare case: partial ident refs need to be emitted as
-            // a side block. We still finish with the chain as a
-            // single expression so the chain stays receiver-type-
-            // threadable.
             quote! {
                 {
                     #ident_refs_block
-                    #ctor #(#setter_calls)* #(#child_calls)* .__h()
+                    ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
                 }
             }
         }
@@ -396,13 +370,25 @@ impl ElementNode {
         }
 
         if kw.partial {
-            if builder_method_prefix_matches(&tag_name, &name_str) {
-                return Some(quote_spanned! {span=>
-                    .#name(())
-                });
-            }
-            // Will be picked up by ident-ref path.
-            return None;
+            // ALWAYS emit a method call for partial kwargs. We
+            // used to gate this behind a prefix-match heuristic
+            // (only emit `.sty(())` if some method name on the
+            // builder started with `sty`), falling through to a
+            // `let _ = name;` ident-ref otherwise so RA could do
+            // identifier completion in the surrounding scope.
+            //
+            // The heuristic broke RA's macro completion when the
+            // partial prefix wasn't a real prefix on its own.
+            // Concretely, RA injects a sentinel suffix at the
+            // cursor (`sty` becomes `stysomething` during the
+            // expansion-for-completion pass) — the prefix check
+            // then resolves to `false` and we fall through to
+            // the ident-ref path, robbing RA of the method-call
+            // shape it needed for kwarg completion. The ra-spike
+            // proves this: `compose_a!` always emits the method
+            // call and completes correctly; `render!` used the
+            // heuristic and didn't.
+            return Some(quote_spanned! {span=> .#name(()) });
         }
 
         let call = if is_string_attr_method(&tag_name, &name_str) {
@@ -799,6 +785,7 @@ mod tests {
     fn partial_kwarg_emits_method_call_for_method_prefix() {
         let input: TokenStream2 = quote::quote! { view(sty) };
         let output = super::expand_test(input).to_string();
+        eprintln!("EMISSION: {output}");
         assert!(
             output.contains(". sty"),
             "partial kwarg matching method prefix must emit `.sty(())`; \
@@ -807,12 +794,23 @@ mod tests {
     }
 
     #[test]
-    fn partial_kwarg_emits_ident_ref_for_non_method_prefix() {
+    fn every_partial_kwarg_emits_method_call() {
+        // All partial kwargs route through `.name(())` now —
+        // even prefixes that don't match any builder method.
+        // (RA injects a sentinel suffix during completion, which
+        // makes a "does this prefix match a method" heuristic
+        // unreliable; always emitting the method-call shape is
+        // what the ra-spike's working compose_a does.)
         let input: TokenStream2 = quote::quote! { view(v) };
         let output = super::expand_test(input).to_string();
         assert!(
-            output.contains("let _ = v"),
-            "non-method-matching partial should emit `let _ = v;` ident-ref; \
+            output.contains(". v ("),
+            "non-method-matching partial should still emit `.v(())`; \
+             output was: {output}"
+        );
+        assert!(
+            !output.contains("let _ = v"),
+            "ident-ref side block was dropped — no `let _ = v;` expected; \
              output was: {output}"
         );
     }

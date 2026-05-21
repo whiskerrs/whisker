@@ -15,6 +15,7 @@ members = [
     "crates/whisker-subsecond",
     "crates/ra-spike",
     "crates/ra-spike/macros",
+    "crates/ra-completion-probe",
     "examples/counter",
     "examples/hello-world",
     "examples/hn-reader",
