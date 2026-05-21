@@ -161,7 +161,7 @@ pub fn build_xcframework_with(
     };
     for triple in triples {
         let s = crate::ui::step("compile", format!("{package} ({triple})"));
-        cargo_build_ios_dylib(workspace_root, package, triple, features, capture)?;
+        cargo_build_ios_dylib(workspace_root, package, triple, features, capture, &s)?;
         s.done("");
     }
 
@@ -279,17 +279,11 @@ fn cargo_build_ios_dylib(
     triple: &str,
     features: &[String],
     capture: Option<&CaptureShims>,
+    step: &crate::ui::Step,
 ) -> Result<()> {
     let mut cmd = Command::new("cargo");
-    // `--quiet` suppresses cargo's `Compiling X` / `Finished` lines
-    // that otherwise interleave with our compile-step spinner. The
-    // spinner already shows the same info (`compile  hello-world
-    // (triple) …` → `✓ 6.7s`); cargo's prefix-aligned variant just
-    // produces visual stutter as the spinner redraws around it.
-    // Errors still surface via stderr passthrough.
     cmd.args([
         "rustc",
-        "--quiet",
         "--release",
         "-p",
         package,
@@ -321,10 +315,8 @@ fn cargo_build_ios_dylib(
             cmd.env(k, v);
         }
     }
-    let status = cmd
-        .current_dir(workspace_root)
-        .status()
-        .context("spawn cargo")?;
+    cmd.current_dir(workspace_root);
+    let status = step.pipe(&mut cmd).context("spawn cargo")?;
     if !status.success() {
         return Err(anyhow!("cargo rustc failed for {triple} ({status})"));
     }

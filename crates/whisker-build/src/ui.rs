@@ -138,6 +138,36 @@ impl Step {
         self.finish(StepKind::Fail, &summary.into());
     }
 
+    /// Spawn `cmd`, stream its stdout + stderr line-by-line, and
+    /// return its [`ExitStatus`]. Cargo-style progress lines
+    /// (`    Compiling X v0.1.0`, `    Finished …`, `    Updating
+    /// crates.io …`) update the spinner's message in place so the
+    /// step stays a single live line; everything else — rustc
+    /// errors, linker output, warnings — is printed above the
+    /// spinner so it persists in scrollback for copy-paste triage.
+    ///
+    /// In non-TTY mode (CI, `tee` to a file, `WHISKER_VERBOSE=1`)
+    /// every line is emitted verbatim — no in-place rewriting,
+    /// because there's no spinner to anchor against.
+    pub fn pipe(
+        &self,
+        cmd: &mut std::process::Command,
+    ) -> std::io::Result<std::process::ExitStatus> {
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn()?;
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let bar_stdout = self.bar.clone();
+        let bar_stderr = self.bar.clone();
+        let t_out = std::thread::spawn(move || stream_through_bar(stdout, bar_stdout));
+        let t_err = std::thread::spawn(move || stream_through_bar(stderr, bar_stderr));
+        let status = child.wait()?;
+        let _ = t_out.join();
+        let _ = t_err.join();
+        Ok(status)
+    }
+
     fn finish(self, kind: StepKind, summary: &str) {
         let elapsed = format_elapsed(self.started_at.elapsed());
         let summary = if summary.is_empty() {
@@ -153,6 +183,99 @@ impl Step {
             eprintln!("{line}");
         }
     }
+}
+
+/// Read `stream` line-by-line; route cargo-progress lines through
+/// the spinner's `set_message`, everything else through
+/// [`ProgressBar::println`] (or `eprintln!` when there's no bar).
+fn stream_through_bar<R: std::io::Read + Send + 'static>(
+    stream: Option<R>,
+    bar: Option<ProgressBar>,
+) {
+    use std::io::{BufRead, BufReader};
+    let Some(s) = stream else { return };
+    let reader = BufReader::new(s);
+    for line in reader.lines().map_while(Result::ok) {
+        if let Some(progress) = cargo_progress_text(&line) {
+            if let Some(bar) = &bar {
+                bar.set_message(progress.to_string());
+            }
+            // No bar (non-TTY / verbose): emit verbatim. Without
+            // this branch the progress lines would be silently
+            // discarded in CI logs.
+            else if matches!(mode(), Mode::Verbose) {
+                eprintln!("[whisker] {line}");
+            }
+        } else if !line.is_empty() {
+            // Diagnostics / errors / unrecognised tool output:
+            // persist in scrollback. `println` writes a line above
+            // the spinner, the bar redraws below.
+            if let Some(bar) = &bar {
+                bar.println(&line);
+            } else {
+                eprintln!("{line}");
+            }
+        }
+    }
+}
+
+/// Recognise a cargo-style progress line (`    Compiling foo v0.1.0`,
+/// `   Compiling foo v0.1.0`, `    Finished …`) and return the
+/// trimmed text — that's what we surface inside the spinner.
+/// Returns `None` for anything that isn't progress (rustc errors,
+/// linker output, the user's `println!` output, etc.).
+///
+/// Tolerates ANSI escapes — cargo emits color codes to TTYs, and
+/// piping doesn't always strip them when cargo's `--color=always` is
+/// in effect or when the user's `.cargo/config.toml` forces it.
+fn cargo_progress_text(line: &str) -> Option<&str> {
+    let stripped = strip_leading_ansi(line.trim_start());
+    let first_word = stripped.split_whitespace().next()?;
+    // Keep this list aligned with cargo's `Status` shell glyphs. New
+    // verbs (`Generating`, etc.) can be added as cargo introduces them.
+    if matches!(
+        first_word,
+        "Compiling"
+            | "Checking"
+            | "Finished"
+            | "Updating"
+            | "Downloading"
+            | "Downloaded"
+            | "Fresh"
+            | "Locking"
+            | "Building"
+            | "Documenting"
+            | "Generating"
+            | "Installing"
+            | "Removing"
+            | "Compiled"
+    ) {
+        Some(stripped.trim_end())
+    } else {
+        None
+    }
+}
+
+/// Strip a leading sequence of ANSI escape codes — `\x1b[…m` SGR
+/// sequences cargo uses to color the status verb. Defensive: most
+/// pipe scenarios get a no-color stream from cargo, but
+/// `CARGO_TERM_COLOR=always` / `.cargo/config.toml` overrides exist.
+fn strip_leading_ansi(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() && bytes[i] == 0x1b && bytes[i + 1] == b'[' {
+        // Find the terminating letter (in range @..~ = 0x40..0x7e).
+        let mut j = i + 2;
+        while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+            j += 1;
+        }
+        if j < bytes.len() {
+            i = j + 1;
+        } else {
+            break;
+        }
+    }
+    &s[i..]
 }
 
 #[derive(Copy, Clone)]

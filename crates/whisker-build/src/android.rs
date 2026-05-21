@@ -192,11 +192,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     let triple_upper = triple_env.to_uppercase();
 
     let mut cmd = Command::new("cargo");
-    // `--quiet` suppresses cargo's `Compiling X` / `Finished` lines
-    // so they don't fight with the compile-step spinner. Same
-    // rationale as the iOS side.
     cmd.arg("rustc")
-        .arg("--quiet")
         .args(["--target", triple])
         .args(["-p", b.package])
         .args(["--crate-type", "dylib"]);
@@ -238,8 +234,8 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     }
 
     let cargo_step = crate::ui::step("compile", format!("{} ({triple})", b.package));
-    let status = cmd
-        .status()
+    let status = cargo_step
+        .pipe(&mut cmd)
         .with_context(|| format!("spawn cargo for {triple}"))?;
     cargo_step.done("");
     if !status.success() {
