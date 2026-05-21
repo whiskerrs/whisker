@@ -67,6 +67,27 @@ pub mod __tags {
             self.handle
         }
     }
+
+    #[allow(non_camel_case_types)]
+    pub struct text {
+        pub(super) handle: ElementHandle,
+    }
+
+    #[allow(non_snake_case)]
+    pub fn __text_ctor() -> text {
+        text { handle: ElementHandle(0) }
+    }
+
+    impl text {
+        /// Text content.
+        pub fn text(self, _value: impl ::std::string::ToString + 'static) -> Self {
+            self
+        }
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> ElementHandle {
+            self.handle
+        }
+    }
 }
 
 // ---- User-component shape (variant C uses these) ---------------

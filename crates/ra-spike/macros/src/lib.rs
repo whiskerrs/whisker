@@ -14,7 +14,7 @@ use quote::{format_ident, quote, quote_spanned};
 use syn::{
     braced, parenthesized,
     parse::{Parse, ParseStream, Result},
-    parse_macro_input, token, Expr, Ident, Token,
+    parse_macro_input, token, Expr, Ident, LitStr, Token,
 };
 
 struct Input {
@@ -51,12 +51,18 @@ impl Parse for Input {
 }
 
 /// Element with optional kwargs and an optional child block.
-/// Children are themselves Elements (no text / `{expr}` interp yet —
-/// adding those later if completion needs proven on them).
 struct Element {
     tag: Ident,
     attrs: Vec<(Ident, Option<Expr>)>,
-    children: Vec<Element>,
+    children: Vec<Child>,
+}
+
+enum Child {
+    Element(Element),
+    /// Bare string literal: `"hello"`.
+    Text(LitStr),
+    /// `{expr}` interpolation block.
+    Expr(Expr),
 }
 
 impl Parse for Element {
@@ -88,7 +94,7 @@ impl Parse for Element {
             let body;
             braced!(body in input);
             while !body.is_empty() {
-                children.push(body.parse::<Element>()?);
+                children.push(body.parse::<Child>()?);
             }
         }
         Ok(Self {
@@ -96,6 +102,21 @@ impl Parse for Element {
             attrs,
             children,
         })
+    }
+}
+
+impl Parse for Child {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(LitStr) {
+            return Ok(Child::Text(input.parse()?));
+        }
+        if input.peek(token::Brace) {
+            let body;
+            braced!(body in input);
+            let expr: Expr = body.parse()?;
+            return Ok(Child::Expr(expr));
+        }
+        Ok(Child::Element(input.parse()?))
     }
 }
 
@@ -114,14 +135,7 @@ fn emit_element(e: &Element) -> TokenStream2 {
             quote_spanned! {span=> .#name(#value_tokens) }
         })
         .collect();
-    let child_calls: Vec<TokenStream2> = e
-        .children
-        .iter()
-        .map(|c| {
-            let inner = emit_element(c);
-            quote! { .child(#inner) }
-        })
-        .collect();
+    let child_calls: Vec<TokenStream2> = e.children.iter().map(emit_child).collect();
     quote! {
         {
             ::ra_spike::__tags::#ctor()
@@ -129,6 +143,29 @@ fn emit_element(e: &Element) -> TokenStream2 {
                 #(#child_calls)*
                 .__h()
         }
+    }
+}
+
+fn emit_child(c: &Child) -> TokenStream2 {
+    match c {
+        Child::Element(e) => {
+            let inner = emit_element(e);
+            quote! { .child(#inner) }
+        }
+        Child::Text(lit) => quote! {
+            .child({
+                ::ra_spike::__tags::__text_ctor()
+                    .text(#lit)
+                    .__h()
+            })
+        },
+        Child::Expr(expr) => quote! {
+            .child({
+                ::ra_spike::__tags::__text_ctor()
+                    .text(::std::format!("{}", #expr))
+                    .__h()
+            })
+        },
     }
 }
 

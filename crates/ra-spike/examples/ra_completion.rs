@@ -130,3 +130,96 @@ fn variant_d_full() {
         }
     };
 }
+
+// ---- Variant E: render! with text + {expr} children ----------------------
+
+// Same shape as D, but children include string literals and
+// `{expr}` interpolation blocks. Verifies that mixing child kinds
+// doesn't break completion on adjacent kwargs.
+
+fn variant_e_with_text_sibling() {
+    // ← TEST E1: partial kwarg next to a text child.
+    let _ = render! {
+        view(sty) {
+            "hello world"
+        }
+    };
+}
+
+fn variant_e_with_expr_sibling() {
+    let greeting = "hi";
+    // ← TEST E2: partial kwarg next to a {expr} child.
+    let _ = render! {
+        view(sty) {
+            { greeting }
+        }
+    };
+}
+
+fn variant_e_partial_inside_with_text() {
+    // ← TEST E3: partial kwarg on an inner element that also has
+    // text/expr siblings.
+    //
+    // Sibling order matters: `view(...)` immediately followed by
+    // `{ … }` always binds as that element's children block (same
+    // trailing-lambda rule compose-Kotlin uses), so put the
+    // `{expr}` and text siblings BEFORE the partial element.
+    let count = 0;
+    let _ = render! {
+        view(style: "outer") {
+            "before"
+            { count }
+            "between"
+            view(sty)
+        }
+    };
+}
+
+fn variant_e_full() {
+    let count = 0;
+    let _ = render! {
+        view(style: "outer") {
+            "before"
+            { count }
+            "between"
+            view(class: "mid")
+        }
+    };
+}
+
+// ---- Variant F: closure attrs (event handlers) ---------------------------
+
+// Verifies completion when one of the sibling kwargs is a closure
+// expression (`on_tap: || …`). The closure body is regular Rust
+// code, but the surrounding macro context could in principle
+// disrupt RA's per-kwarg method resolution.
+
+fn variant_f_partial_after_closure() {
+    // ← TEST F1: partial kwarg AFTER a closure-typed kwarg.
+    let _ = render! {
+        view(on_tap: || println!("hi"), sty) {}
+    };
+}
+
+fn variant_f_partial_before_closure() {
+    // ← TEST F2: partial kwarg BEFORE a closure-typed kwarg.
+    let _ = render! {
+        view(sty, on_tap: || println!("hi")) {}
+    };
+}
+
+fn variant_f_partial_on_handler_name() {
+    // ← TEST F3: completion on the handler name itself (`on_t`).
+    // Expected: suggests `on_tap`, `on`.
+    let _ = render! {
+        view(on_t) {}
+    };
+}
+
+fn variant_f_full() {
+    let _ = render! {
+        view(style: "x", on_tap: || println!("hi")) {
+            "tap me"
+        }
+    };
+}
