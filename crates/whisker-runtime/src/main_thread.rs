@@ -152,6 +152,19 @@ extern "C" fn trampoline(user_data: *mut c_void) {
     let boxed: Box<Box<dyn FnOnce() + Send + 'static>> =
         unsafe { Box::from_raw(user_data as *mut Box<dyn FnOnce() + Send + 'static>) };
     boxed();
+    // Wake the runtime so the host schedules another tick. Without
+    // this, a worker thread that calls `run_on_main_thread(|| tx.send(v))`
+    // (the `run_blocking` path inside `resource()`) would wake the
+    // awaiting future's `Waker` via `tx.send`, which re-queues the
+    // future in `LocalPool` — but `LocalPool` only re-polls when
+    // `run_until_stalled` is invoked, which the driver only does
+    // from the tick callback, which only fires when CADisplayLink is
+    // unpaused, which only happens via `request_frame`. So unless we
+    // explicitly request a frame here, the awaiting future sleeps
+    // forever and `Resource::state` stays at `Loading` even though
+    // the worker thread finished. This was the hn-reader
+    // "Loading top stories never transitions" bug.
+    crate::host_wake::wake_runtime();
 }
 
 /// (Test only) clear the registered dispatcher.

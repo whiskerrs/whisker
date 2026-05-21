@@ -331,6 +331,48 @@ mod tests {
     }
 
     #[test]
+    fn run_on_main_thread_trampoline_wakes_runtime() {
+        // Regression for the hn-reader "Loading top stories stuck"
+        // bug: a worker thread that calls
+        // `run_on_main_thread(|| tx.send(value))` must wake the
+        // runtime after the closure runs, so the host re-enters
+        // `tick` and `run_until_stalled` polls the awaiting future.
+        //
+        // Without the wake, the receiver's Waker re-queues the task
+        // in `LocalPool`, but `LocalPool` is only polled from `tick`
+        // — which doesn't fire if `CADisplayLink` is paused. Result:
+        // future sleeps forever, `Resource::state` stays at
+        // `Loading`, screen stuck on the loading banner.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _g = lock();
+        reset_all();
+        install_sync_dispatcher();
+
+        // Install a wake callback that flips a flag.
+        static WOKE: AtomicBool = AtomicBool::new(false);
+        WOKE.store(false, Ordering::SeqCst);
+        extern "C" fn wake_cb(_: *mut c_void) {
+            WOKE.store(true, Ordering::SeqCst);
+        }
+        crate::host_wake::set_request_frame_callback(Some(wake_cb), std::ptr::null_mut());
+
+        // Schedule a no-op closure through `run_on_main_thread`.
+        // The sync dispatcher runs it inline; the trampoline must
+        // then call `wake_runtime`.
+        crate::main_thread::run_on_main_thread(|| {});
+
+        assert!(
+            WOKE.load(Ordering::SeqCst),
+            "run_on_main_thread's trampoline must wake the runtime \
+             after the closure runs — otherwise the awaiting future \
+             never gets re-polled (hn-reader Loading-stuck bug)"
+        );
+
+        crate::host_wake::__reset_for_tests();
+        crate::main_thread::__reset_for_tests();
+    }
+
+    #[test]
     fn run_blocking_future_parks_when_no_dispatcher_registered() {
         let _g = lock();
         reset_all();
