@@ -437,6 +437,7 @@ fn write_tar_gz_for_test(files: &[(&str, &[u8])]) -> Vec<u8> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
 
     fn unique_tempdir() -> PathBuf {
         static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -445,6 +446,21 @@ mod tests {
         let p = std::env::temp_dir().join(format!("whisker-build-lynx-test-{pid}-{n}"));
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    /// Serialise tests that touch process-wide env vars
+    /// (`WHISKER_LYNX_DIR`, `XDG_CACHE_HOME`). cargo test runs the
+    /// suite on multiple threads by default, and these env vars
+    /// are read by `cache_dir(…)` inside another test's window —
+    /// race observed on the coverage CI job. Acquiring this
+    /// mutex at the top of every env-touching test reorders them
+    /// onto a single thread without forcing `--test-threads=1`
+    /// globally.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     #[test]
@@ -466,9 +482,11 @@ mod tests {
 
     #[test]
     fn cache_dir_honours_override() {
+        let _guard = env_guard();
         let tmp = unique_tempdir();
-        // SAFETY: tests are single-threaded by default and we restore
-        // the env in the same scope.
+        // SAFETY: `env_guard()` serialises this test with the other
+        // env-touching ones so the `set_var`/`remove_var` pair is
+        // observed atomically by `cache_dir(...)` below.
         unsafe {
             std::env::set_var("WHISKER_LYNX_DIR", &tmp);
         }
@@ -484,6 +502,7 @@ mod tests {
 
     #[test]
     fn cache_dir_uses_xdg_when_set() {
+        let _guard = env_guard();
         let tmp = unique_tempdir();
         unsafe {
             std::env::remove_var("WHISKER_LYNX_DIR");
@@ -543,6 +562,7 @@ mod tests {
 
     #[test]
     fn ensure_lynx_uses_override_when_populated() {
+        let _guard = env_guard();
         let tmp = unique_tempdir();
         let android_dir = tmp.join("android");
         std::fs::create_dir_all(&android_dir).unwrap();
@@ -560,6 +580,7 @@ mod tests {
 
     #[test]
     fn ensure_lynx_errors_when_override_set_but_empty() {
+        let _guard = env_guard();
         let tmp = unique_tempdir();
         unsafe {
             std::env::set_var("WHISKER_LYNX_DIR", &tmp);
@@ -577,6 +598,7 @@ mod tests {
 
     #[test]
     fn ensure_lynx_errors_when_no_sha_pinned_and_no_override() {
+        let _guard = env_guard();
         // Default state of the constants is "" — we can hit this
         // branch by ensuring neither override is set and the cache
         // dir is empty. Use a clean XDG_CACHE_HOME so we don't read
@@ -679,6 +701,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn link_into_workspace_lays_out_android_symlinks() {
+        let _guard = env_guard();
         let tmp = unique_tempdir();
         let cache_root = tmp.join("cache-version");
         let android = cache_root.join("android");
