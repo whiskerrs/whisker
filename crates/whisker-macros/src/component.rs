@@ -216,6 +216,12 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
             // None". `.build()` collapses each Option back into the
             // field's declared type, with the appropriate
             // default / panic-on-missing for required fields.
+            //
+            // `#[doc(hidden)]` on the struct itself so RA's auto-
+            // import doesn't surface it at the user's call site.
+            // The builder is purely the return type of `.builder()`
+            // — users never need to write its name.
+            #[doc(hidden)]
             pub struct #builder_name #impl_generics #where_clause {
                 #(#builder_fields),*
             }

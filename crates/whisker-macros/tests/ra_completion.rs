@@ -183,6 +183,46 @@ fn probe() -> Element {
 }
 
 #[test]
+fn longer_prefix_does_not_surface_builder_via_autoimport() {
+    // RA's auto-import path may surface `pub` items inside private
+    // modules when the user has typed enough characters to uniquely
+    // identify the target. Probe at `ArtTilePropsBu|` — if Builder
+    // is properly `#[doc(hidden)]` and inside a `#[doc(hidden)]`
+    // private mod, RA must not offer to auto-import it.
+    let source = r#"
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
+
+#[component]
+fn art_tile(label: &'static str) -> Element {
+    render! { text(value: label) }
+}
+
+fn probe() -> Element {
+    render! {
+        view() {
+            ArtTilePropsBu|
+        }
+    }
+}
+"#;
+    let labels = run_probe("longer_prefix_builder_leak", source);
+    eprintln!(
+        "[longer_prefix_builder_leak] {} candidates: {labels:?}",
+        labels.len()
+    );
+    let leaked: Vec<&String> = labels
+        .iter()
+        .filter(|l| l.contains("ArtTilePropsBuilder") || l.contains("PropsBuilder"))
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "Builder must stay hidden even at long matching prefixes; \
+         leaked: {leaked:?}",
+    );
+}
+
+#[test]
 fn short_prefix_user_component_does_not_leak_builder_helpers() {
     // VS Code users typically start typing with just a few chars
     // (`Art|`). RA's fuzzy-match may include items the strict
