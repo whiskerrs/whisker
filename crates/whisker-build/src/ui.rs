@@ -42,10 +42,29 @@
 //! of a signature change.
 
 use std::io::IsTerminal;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+// ---- Shared MultiProgress + status bar -------------------------------
+//
+// Steps and the dev-server status share a single `MultiProgress` so
+// their drawing doesn't fight: the status bar is anchored at the
+// bottom, individual step bars insert above it. Without coordination,
+// indicatif's redraws and `eprintln!`s interleave and we end up with
+// the "client connected" line wedged between two spinner frames the
+// user reported.
+
+fn multi() -> &'static MultiProgress {
+    static M: OnceLock<MultiProgress> = OnceLock::new();
+    M.get_or_init(MultiProgress::new)
+}
+
+/// The current persistent dev-server status bar, if any. `Some` once
+/// [`ensure_status`] has run; otherwise no status anchor exists and
+/// new step bars just append to the multi-progress in arrival order.
+static STATUS_BAR: Mutex<Option<ProgressBar>> = Mutex::new(None);
 
 // ---- Configuration ----------------------------------------------------
 
@@ -87,6 +106,70 @@ fn is_tty() -> bool {
     *TTY.get_or_init(|| std::io::stderr().is_terminal())
 }
 
+// ---- Persistent dev-server status bar --------------------------------
+
+/// Initialise the persistent status bar (anchored at the bottom of
+/// the rendered area). Subsequent calls update the same bar — only
+/// the first call decides the bar's label / prefix.
+///
+/// Safe to call before any [`step`] starts; the bar slots into the
+/// shared [`multi`] and every subsequent step bar inserts above it.
+pub fn ensure_status(label: impl Into<String>) {
+    if !matches!(mode(), Mode::Curated) || !is_tty() {
+        // Verbose / non-TTY: no spinner-style bottom bar; status
+        // changes go through `set_status` which falls back to
+        // `info()`-style lines.
+        return;
+    }
+    let mut guard = STATUS_BAR.lock().expect("status mutex");
+    if guard.is_some() {
+        return;
+    }
+    let bar = ProgressBar::new_spinner();
+    bar.set_style(
+        ProgressStyle::with_template("  \x1b[35m◍\x1b[0m {prefix:<12} {msg}")
+            .expect("status template is valid"),
+    );
+    bar.set_prefix(label.into());
+    bar.set_message("");
+    bar.enable_steady_tick(Duration::from_millis(200));
+    *guard = Some(multi().add(bar));
+}
+
+/// Update the persistent status bar's message in place. No-op when
+/// no bar is active (verbose / non-TTY / before `ensure_status`).
+pub fn set_status(msg: impl Into<String>) {
+    let m = msg.into();
+    match mode() {
+        Mode::Verbose => eprintln!("[whisker] status: {m}"),
+        Mode::Curated => {
+            if let Ok(guard) = STATUS_BAR.lock() {
+                if let Some(bar) = guard.as_ref() {
+                    bar.set_message(m);
+                    return;
+                }
+            }
+            // No bar yet (non-TTY or pre-`ensure_status`): fall back
+            // to a regular info line so the message isn't lost.
+            info(m);
+        }
+    }
+}
+
+/// Tear down the status bar at the end of a run. Leaves a final
+/// rendered line in scrollback (via `finish_with_message` + the
+/// `{msg}` template swap the steps use).
+pub fn finish_status(final_msg: impl Into<String>) {
+    if let Ok(mut guard) = STATUS_BAR.lock() {
+        if let Some(bar) = guard.take() {
+            bar.set_style(
+                ProgressStyle::with_template("{msg}").expect("template literal is valid"),
+            );
+            bar.finish_with_message(final_msg.into());
+        }
+    }
+}
+
 // ---- Section headers --------------------------------------------------
 
 /// Print a section header. Sections group related steps together:
@@ -101,13 +184,30 @@ pub fn section(name: &str) {
             // Line drawing matches what `cargo` itself emits during
             // its "Compiling" / "Finished" phases — a single visual
             // rhythm across the whole pipeline.
-            let bar = "─".repeat(40usize.saturating_sub(name.len()));
-            if is_tty() {
-                eprintln!("\n\x1b[1;36m──── {name} {bar}\x1b[0m");
+            let bar_chars = "─".repeat(40usize.saturating_sub(name.len()));
+            let line = if is_tty() {
+                format!("\n\x1b[1;36m──── {name} {bar_chars}\x1b[0m")
             } else {
-                eprintln!("\n──── {name} {bar}");
-            }
+                format!("\n──── {name} {bar_chars}")
+            };
+            emit_above_bars(&line);
         }
+    }
+}
+
+/// Print a line, routing through the shared MultiProgress when a
+/// status bar / step bar is alive so the line lands ABOVE the bars
+/// instead of overlapping with their redraw. Falls back to plain
+/// `eprintln!` when nothing's animated.
+fn emit_above_bars(line: &str) {
+    // `multi.println` panics with a "no bars in multi" check? Actually
+    // it just no-ops when there are no bars. Either way it's the safe
+    // primitive — fall back to eprintln only when we know we're
+    // non-TTY (in which case no multi anyway).
+    if is_tty() {
+        let _ = multi().println(line);
+    } else {
+        eprintln!("{line}");
     }
 }
 
@@ -344,6 +444,17 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             bar.set_prefix(name.clone());
             bar.set_message(detail.clone());
             bar.enable_steady_tick(Duration::from_millis(80));
+            // Join the shared MultiProgress so step bars and the
+            // dev-server status bar coordinate redraws. When a
+            // status bar exists, new step bars insert *above* it so
+            // status stays anchored at the bottom.
+            let bar = {
+                let guard = STATUS_BAR.lock().expect("status mutex");
+                match guard.as_ref() {
+                    Some(status) => multi().insert_before(status, bar),
+                    None => multi().add(bar),
+                }
+            };
             Step {
                 bar: Some(bar),
                 started_at,
@@ -406,7 +517,7 @@ pub fn info(msg: impl AsRef<str>) {
         Mode::Verbose => eprintln!("[whisker] {m}"),
         Mode::Curated => {
             if is_tty() {
-                eprintln!("  \x1b[90m·\x1b[0m {m}");
+                emit_above_bars(&format!("  \x1b[90m·\x1b[0m {m}"));
             } else {
                 eprintln!("  · {m}");
             }
@@ -424,7 +535,7 @@ pub fn warn(msg: impl AsRef<str>) {
         Mode::Verbose => eprintln!("[whisker] warn: {m}"),
         Mode::Curated => {
             if is_tty() {
-                eprintln!("  \x1b[33m⚠\x1b[0m {m}");
+                emit_above_bars(&format!("  \x1b[33m⚠\x1b[0m {m}"));
             } else {
                 eprintln!("  ! {m}");
             }
@@ -457,7 +568,7 @@ pub fn error(msg: impl AsRef<str>) {
         Mode::Verbose => eprintln!("[whisker] error: {m}"),
         Mode::Curated => {
             if is_tty() {
-                eprintln!("  \x1b[31m✗\x1b[0m {m}");
+                emit_above_bars(&format!("  \x1b[31m✗\x1b[0m {m}"));
             } else {
                 eprintln!("  X {m}");
             }

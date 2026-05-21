@@ -252,8 +252,16 @@ impl DevServer {
         ));
         whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
+        // Anchor a persistent dev-server status bar at the bottom
+        // of the rendered area. Client connect / patch sent /
+        // build state updates all flow through `set_status` —
+        // they stay out of the build-step scrollback that way.
+        whisker_build::ui::ensure_status("dev-server");
+        whisker_build::ui::set_status("starting…");
+
         let (sender, bound, _server_handle) =
             server::serve(self.config.bind_addr, self.on_event.clone()).await?;
+        whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
         whisker_build::ui::debug(format!("ws://{bound}/whisker-dev"));
 
         // Watch the user crate's `src/`. `crate_dir` is whatever the
