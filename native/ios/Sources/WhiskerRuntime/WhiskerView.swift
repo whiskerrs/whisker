@@ -38,17 +38,34 @@ public final class WhiskerView: LynxView {
         }
         self.engine = engine
 
+        // IMPORTANT: create the CADisplayLink BEFORE calling
+        // `whisker_app_main`. The Rust bootstrap registers
+        // `requestFrameTrampoline` as the host-wake callback and
+        // then synchronously runs the user's `app()` — which calls
+        // `resource(fetch_stories)` → `spawn_local(future)` →
+        // `host_wake::wake_runtime()` → this trampoline.
+        //
+        // If `displayLink` is still nil at that point (because we
+        // hadn't created it yet), the `view.displayLink?.isPaused`
+        // optional-chaining no-ops and the wake is silently
+        // dropped. The future then never gets polled — no
+        // CADisplayLink → no `whisker_tick` → no
+        // `run_until_stalled` → fetch sits unscheduled — and the
+        // app is stuck on the loading banner forever.
+        //
+        // Creating the link upfront makes the trampoline's unpause
+        // actually take effect.
+        let link = CADisplayLink(target: self, selector: #selector(handleDisplayLink(_:)))
+        link.isPaused = true
+        link.add(to: .main, forMode: .common)
+        self.displayLink = link
+
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         whisker_app_main(
             UnsafeMutableRawPointer(engine),
             WhiskerView.requestFrameTrampoline,
             selfPtr
         )
-
-        let link = CADisplayLink(target: self, selector: #selector(handleDisplayLink(_:)))
-        link.isPaused = true
-        link.add(to: .main, forMode: .common)
-        self.displayLink = link
     }
 
     public required init?(coder: NSCoder) {
