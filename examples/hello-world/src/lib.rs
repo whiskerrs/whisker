@@ -457,18 +457,20 @@ fn scroll_body(state: AppState) -> Element {
 
 // ---- Main app ---------------------------------------------------------------
 
-// Phase 7-Φ.D smoke test: a `#[whisker::native_element("x-hello")]`
-// declaration. The bridge has a `WhiskerHelloElement` LynxUI subclass
-// registered under that tag (see
-// `crates/whisker-driver-sys/bridge/src/whisker_hello_element.mm`)
-// that renders as a system-pink UIView. A thin pink bar at the top
-// of the home screen confirms the full end-to-end native-element
-// path: render! → XHello() → XHelloProps::builder() → create_element_by_name
-// → whisker_bridge_create_element_by_name → lynx_create_fiber_element_by_name
-// → ElementManager::CreateFiberNode("x-hello") → LynxUI registry →
-// WhiskerHelloElement.createView.
-#[whisker::native_element("x-hello")]
-pub fn x_hello(style: Signal<String>) {}
+// Phase 7-Φ.F: the `XHello` native element is sourced from the
+// external `whisker-hello-element` module crate (see
+// `packages/whisker-hello-element/`). The Whisker module-system
+// machinery discovers the crate's `whisker.module.toml` via cargo
+// metadata and folds its `whisker_hello_element.mm` into the iOS
+// framework build — so the pink bar that appears at the top of
+// this screen has its registration code wired in via the same
+// path a third-party native-element library would use.
+// `XHello` is the call-site alias; `XHelloProps` is what
+// `render!` emits via `XHelloProps::builder()...build()` for
+// every native-element invocation. Both must be in scope at the
+// macro's emission site — wildcard import keeps the line short
+// and matches the pattern third-party module crates will follow.
+use whisker_hello_element::*;
 
 #[whisker::main]
 fn app() -> Element {

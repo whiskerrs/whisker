@@ -236,10 +236,46 @@ fn compile_ios() -> Result<()> {
         .flag("-fobjc-arc")
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_ios.mm"))
-        .file(bridge_src.join("whisker_hello_element.mm"))
         .file(bridge_src.join("lynx_native_renderer.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);
+
+    // Whisker module-system v1: external module crates (e.g.
+    // `packages/whisker-hello-element`) declare their iOS .mm sources
+    // in `whisker.module.toml`. `whisker-build` walks the consuming
+    // app's cargo dep tree, gathers each module's
+    // `[ios] native_sources` (resolved to absolute paths), and passes
+    // them through here as a colon-separated env var so they're
+    // compiled into the same bridge static archive as the core
+    // bridge code. That puts each module's `LYNX_REGISTER_UI(...)`
+    // constructor inside the host dylib's `+load` set, which is what
+    // makes the element-class registration actually fire when the
+    // app loads.
+    //
+    // Empty / missing env var is the normal cargo-only build path
+    // (no `whisker run` orchestration) — modules can still compile,
+    // but their native sources won't make it into the dylib. The
+    // user-facing diagnostic for that lives in the CLI; cargo
+    // builds alone are not expected to produce a runnable iOS app
+    // anyway.
+    println!("cargo:rerun-if-env-changed=WHISKER_IOS_MODULE_NATIVE_SOURCES");
+    if let Ok(joined) = std::env::var("WHISKER_IOS_MODULE_NATIVE_SOURCES") {
+        for entry in joined.split(':').filter(|s| !s.is_empty()) {
+            let path = std::path::PathBuf::from(entry);
+            if !path.is_file() {
+                // Don't try to be clever — `whisker-build` is the
+                // source of truth for these paths, and if it gave us
+                // something bogus we want the build to fail loudly
+                // with the offending path right here.
+                panic!(
+                    "WHISKER_IOS_MODULE_NATIVE_SOURCES references a non-existent file: {}",
+                    path.display(),
+                );
+            }
+            println!("cargo:rerun-if-changed={}", path.display());
+            build.file(&path);
+        }
+    }
     add_lynx_includes_for_capi_impl(&mut build);
     for fw in LYNX_FRAMEWORKS {
         build.flag("-F");

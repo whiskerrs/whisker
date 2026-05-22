@@ -1,0 +1,28 @@
+# Whisker module manifest (v1).
+#
+# This file declares what this cargo crate contributes to the
+# native build of a Whisker app that depends on it. The
+# `whisker run` / `whisker build` CLI walks the consuming app's
+# cargo dep tree, finds every `whisker.module.toml` next to a
+# `Cargo.toml`, parses this file, and folds each module's native
+# sources into the iOS framework / Android AAR build alongside
+# the framework's own bridge code.
+#
+# v1 schema is intentionally minimal — only the per-platform
+# native-source path list. Future extensions (link-flags, headers
+# the module wants to expose, package metadata for `whisker doctor`,
+# etc.) will land additively without breaking existing modules.
+
+[ios]
+# Paths to Objective-C / Objective-C++ source files (.m / .mm) that
+# implement the native side of this module on iOS. Paths are
+# resolved relative to the directory containing this manifest, then
+# fed to whisker-driver-sys's cc::Build so they share the same
+# Lynx-headers + iOS-SDK setup as the bridge itself.
+#
+# The first concrete user of this is `LYNX_REGISTER_UI("x-hello")`
+# inside `whisker_hello_element.mm` — its `+load`-time constructor
+# is what registers the element class against Lynx's behaviour
+# registry, so the `.mm` MUST end up linked into the host dylib
+# (not just compiled and discarded).
+native_sources = ["src/native/whisker_hello_element.mm"]
