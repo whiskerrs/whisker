@@ -49,6 +49,7 @@ const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_bridge_engine_release",
     "_whisker_bridge_dispatch",
     "_whisker_bridge_create_element",
+    "_whisker_bridge_create_element_by_name",
     "_whisker_bridge_release_element",
     "_whisker_bridge_set_attribute",
     "_whisker_bridge_set_inline_styles",

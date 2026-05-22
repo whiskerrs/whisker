@@ -88,6 +88,15 @@ WHISKER_BRIDGE_EXPORT bool whisker_bridge_dispatch(WhiskerEngine* engine,
 
 WHISKER_BRIDGE_EXPORT WhiskerElement* whisker_bridge_create_element(WhiskerEngine* engine, WhiskerElementTag tag);
 
+// Phase 7: tag-by-name element creation for custom / xelement-style
+// tags ("x-input", "x-camera-preview", …) not covered by the
+// `WhiskerElementTag` enum. Delegates to Lynx's
+// `ElementManager::CreateFiberNode(tag_name)`, which routes both
+// built-in and registered custom tags through the same factory.
+// `tag_name` must be NUL-terminated UTF-8. Returns NULL if the tag
+// isn't registered with Lynx's behaviour registry.
+WHISKER_BRIDGE_EXPORT WhiskerElement* whisker_bridge_create_element_by_name(WhiskerEngine* engine, const char* tag_name);
+
 // Decrement the element's ref count. Always safe to call multiple times
 // (idempotent on NULL).
 WHISKER_BRIDGE_EXPORT void whisker_bridge_release_element(WhiskerElement* element);

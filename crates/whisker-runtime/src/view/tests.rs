@@ -41,6 +41,15 @@ impl DynRenderer for RecordingRenderer {
         self.ops.borrow_mut().push(Op::Create { id, tag });
         Element::from_raw(id)
     }
+    fn create_element_by_name(&mut self, _tag_name: &str) -> Element {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.ops.borrow_mut().push(Op::Create {
+            id,
+            tag: ElementTag::View,
+        });
+        Element::from_raw(id)
+    }
     fn release_element(&mut self, h: Element) {
         self.ops.borrow_mut().push(Op::Release { id: h.id() });
     }

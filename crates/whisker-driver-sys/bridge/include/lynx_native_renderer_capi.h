@@ -79,6 +79,15 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT lynx_fiber_element_t* lynx_create_fiber_element
     lynx_shell_t* shell,
     lynx_element_tag_e tag);
 
+// Phase 7: tag-by-name element creation. Used for xelement / custom
+// elements registered via `@LynxBehavior(name = "x-foo")` etc. that
+// aren't in the built-in enum. Implementation delegates to
+// `ElementManager::CreateFiberNode(base::String(tag_name))`, the
+// same factory ReactLynx uses for non-built-in tags. Returns nullptr
+// if `tag_name` is null/empty or unknown.
+LYNX_NATIVE_RENDERER_CAPI_EXPORT lynx_fiber_element_t*
+lynx_create_fiber_element_by_name(lynx_shell_t* shell, const char* tag_name);
+
 LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_release(
     lynx_fiber_element_t* element);
 

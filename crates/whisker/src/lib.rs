@@ -25,7 +25,7 @@ pub use whisker_runtime as runtime;
 // the same enum.
 pub use whisker_runtime::element::ElementTag;
 
-pub use whisker_macros::{component, main, render};
+pub use whisker_macros::{component, main, native_element, render};
 
 // Phase 6.5a reactive surface, lifted to the top-level namespace so
 // user code can `use whisker::*` and reach the typical primitives
@@ -101,7 +101,12 @@ pub mod __tags {
     /// `Dynamic` case wraps the read in an `effect` so the
     /// returned [`ReadSignal<T>::get`] call registers the source
     /// as a dependency.
-    fn apply_styles<V, T>(h: Element, v: V)
+    ///
+    /// `pub` so the `#[whisker::native_element]` proc-macro can
+    /// route through the same helper from outside this module.
+    /// Not part of the stable surface — gated under `__tags` which
+    /// itself is `#[doc(hidden)]`.
+    pub fn apply_styles<V, T>(h: Element, v: V)
     where
         V: ::std::convert::Into<Signal<T>>,
         T: ::std::string::ToString + ::std::clone::Clone + 'static,
@@ -116,7 +121,10 @@ pub mod __tags {
 
     /// Apply a named attribute value to `h`. Same Static / Dynamic
     /// dispatch as [`apply_styles`].
-    fn apply_attr<V, T>(h: Element, name: &'static str, v: V)
+    ///
+    /// `pub` so the `#[whisker::native_element]` proc-macro can
+    /// route through the same helper.
+    pub fn apply_attr<V, T>(h: Element, name: &'static str, v: V)
     where
         V: ::std::convert::Into<Signal<T>>,
         T: ::std::string::ToString + ::std::clone::Clone + 'static,

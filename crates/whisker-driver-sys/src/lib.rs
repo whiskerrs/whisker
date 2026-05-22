@@ -44,6 +44,10 @@ extern "C" {
         engine: *mut WhiskerEngine,
         tag: WhiskerElementTag,
     ) -> *mut WhiskerElement;
+    pub fn whisker_bridge_create_element_by_name(
+        engine: *mut WhiskerEngine,
+        tag_name: *const c_char,
+    ) -> *mut WhiskerElement;
     pub fn whisker_bridge_release_element(element: *mut WhiskerElement);
 
     pub fn whisker_bridge_set_attribute(
