@@ -28,7 +28,13 @@
 // against silent regressions.
 
 import Foundation
-import WhiskerDriver
+// `@_exported` so module-author Swift files can `import WhiskerRuntime`
+// alone and still see the C ABI types (`WhiskerValueRaw`,
+// `WhiskerStringRef`, `whisker_bridge_register_module_dispatch`, …)
+// that the `@WhiskerModule`-emitted `@_cdecl` dispatch shim references.
+// Without re-exporting, every module .swift file would need its own
+// `import WhiskerDriver`.
+@_exported import WhiskerDriver
 
 public enum WhiskerValue: Equatable {
     case null

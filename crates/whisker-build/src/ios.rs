@@ -684,13 +684,14 @@ fn render_modules_package_swift(
     out.push_str(
         "                .product(name: \"WhiskerRuntime\", package: \"WhiskerRuntime\"),\n",
     );
-    // WhiskerDriver re-exports the bridge Obj-C `WhiskerModuleRegistry`
-    // class — the SwiftPM build plugin's generated
-    // `WhiskerModuleBehaviors.swift` imports it to call
-    // `WhiskerModuleRegistry.registerModuleClass(_:forName:)`.
-    out.push_str(
-        "                .product(name: \"WhiskerDriver\", package: \"WhiskerRuntime\"),\n",
-    );
+    // Phase 7-Φ.F: WhiskerDriver no longer needs to be an explicit
+    // dep — WhiskerRuntime now re-exports it (`@_exported import
+    // WhiskerDriver` inside WhiskerValue.swift), so the C ABI
+    // symbols (`whisker_bridge_register_module_dispatch`,
+    // `WhiskerValueRaw`, …) flow through transitively. The Obj-C
+    // `WhiskerModuleRegistry` class is gone — every module
+    // dispatch goes through the per-module `@_cdecl` shim the
+    // `@WhiskerModule` macro emits.
     out.push_str(
         "                .product(name: \"WhiskerElements\", package: \"whisker-ios-macros\"),\n",
     );

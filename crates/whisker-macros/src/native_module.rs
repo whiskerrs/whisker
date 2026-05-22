@@ -1,27 +1,62 @@
-//! `#[whisker::native_module]` — type-safe Rust proxy generator
-//! for Whisker native modules.
+//! `#[whisker::native_module]` — WhiskerValue-only `-sys` proxy
+//! generator for Whisker native modules.
 //!
-//! Input shape: a trait declaration listing one fn per method.
-//! Each method's args + return are typed Rust; the macro wraps
-//! them in [`WhiskerValue`] marshalling around a call to
-//! `whisker::native_module::invoke` (sync) or `invoke_async`
-//! (`async fn`).
+//! ## Shape contract
 //!
-//! Output: a unit struct with the same name as the trait + an
-//! `impl` block exposing each method as an associated function
-//! returning `Result<T, WhiskerModuleError>`.
+//! Input trait declares one fn per method, each with the
+//! WhiskerValue-only `-sys` signature:
 //!
-//! The trait itself is consumed — there is no `impl<T> SomeTrait
-//! for T` left over. Treating the input as a trait is purely
-//! syntactic convenience (lets the user write familiar
-//! `fn name(args)` declarations); the platform-side class is
-//! the only true implementer of the module's API contract.
+//! ```ignore
+//! #[whisker::native_module(name = "WhiskerLocalStore")]
+//! pub trait WhiskerLocalStoreRaw {
+//!     fn save(args: Vec<WhiskerValue>) -> WhiskerValue;
+//!     fn load(args: Vec<WhiskerValue>) -> WhiskerValue;
+//!     async fn fetch(args: Vec<WhiskerValue>) -> WhiskerValue;
+//! }
+//! ```
+//!
+//! Output: a unit struct + an `impl` block exposing each method
+//! as an associated function that calls
+//! `whisker::native_module::invoke(module_name, method_name, args)`
+//! and returns the raw [`WhiskerValue`] back to the caller. Error
+//! propagation is the caller's job — the proxy doesn't lift
+//! `WhiskerValue::Error` into `Result` here (the caller has full
+//! context to decide how to surface a dispatch failure).
+//!
+//! ## Why "Raw" suffix on the trait
+//!
+//! The proc-macro-emitted proxy is the `-sys` layer — a thin
+//! pass-through to the bridge with no type marshalling magic.
+//! Typed call surfaces (`fn save(key: String, value: String) ->
+//! Result<bool, _>`) live in a hand-written wrapper module
+//! authors layer on top:
+//!
+//! ```ignore
+//! pub struct WhiskerLocalStore;
+//! impl WhiskerLocalStore {
+//!     pub fn save(key: String, value: String) -> Result<bool, WhiskerModuleError> {
+//!         let raw = WhiskerLocalStoreRaw::save(vec![
+//!             WhiskerValue::String(key),
+//!             WhiskerValue::String(value),
+//!         ]);
+//!         match raw {
+//!             WhiskerValue::Bool(b) => Ok(b),
+//!             WhiskerValue::Error(msg) => Err(WhiskerModuleError(msg)),
+//!             other => Err(WhiskerModuleError(format!("expected Bool, got {other:?}"))),
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! Module authors own that wrapper — it's where pure-Rust
+//! ergonomics, validation, default values, etc. live. The macro
+//! stays simple and predictable; the wrapper carries the
+//! application-specific intent.
 
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::{
-    parse2, FnArg, GenericArgument, ItemTrait, Lit, Meta, Pat, PatType, PathArguments, ReturnType,
-    TraitItem, TraitItemFn, Type,
+    parse2, FnArg, ItemTrait, Lit, Meta, Pat, PatType, ReturnType, TraitItem, TraitItemFn,
 };
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -32,8 +67,8 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 compile_error!(concat!(
                     "`#[whisker::native_module]` expects a trait declaration, e.g.\n",
                     "    #[whisker::native_module(name = \"MyStorage\")]\n",
-                    "    pub trait MyStorage {\n",
-                    "        fn save(key: String, value: String) -> bool;\n",
+                    "    pub trait MyStorageRaw {\n",
+                    "        fn save(args: Vec<WhiskerValue>) -> WhiskerValue;\n",
                     "    }\n",
                 ));
             };
@@ -111,13 +146,15 @@ fn emit_method(module_name: &str, method: &TraitItemFn) -> syn::Result<TokenStre
     let name_str = name.to_string();
     let is_async = sig.asyncness.is_some();
 
-    // Extract positional args, skipping `self` if present (we
-    // accept but ignore it — the proxy is a unit struct).
-    let mut arg_names: Vec<syn::Ident> = Vec::new();
+    // Collect arg names + types as-written. We pass the single
+    // expected `args: Vec<WhiskerValue>` straight through to
+    // `invoke` without inspection — Rust's type checker rejects
+    // anything else when the trait body fails to typecheck.
+    let mut arg_idents: Vec<&syn::Ident> = Vec::new();
     let mut arg_decls: Vec<TokenStream> = Vec::new();
     for input in &sig.inputs {
         match input {
-            FnArg::Receiver(_) => continue,
+            FnArg::Receiver(_) => continue, // `self` is accepted but ignored
             FnArg::Typed(PatType { pat, ty, .. }) => {
                 let Pat::Ident(ident_pat) = pat.as_ref() else {
                     return Err(syn::Error::new_spanned(
@@ -125,18 +162,41 @@ fn emit_method(module_name: &str, method: &TraitItemFn) -> syn::Result<TokenStre
                         "native_module method args must be plain identifiers",
                     ));
                 };
-                let ident = ident_pat.ident.clone();
-                arg_decls.push(quote! { #ident: #ty });
-                arg_names.push(ident);
+                arg_decls.push(quote! { #ident_pat: #ty });
+                arg_idents.push(&ident_pat.ident);
             }
         }
     }
 
-    let return_type = match &sig.output {
-        ReturnType::Default => syn::parse2::<Type>(quote!(()))?,
-        ReturnType::Type(_, ty) => (**ty).clone(),
+    // The trait MUST declare exactly one positional arg — the
+    // WhiskerValue vec. Zero args means the method takes no input
+    // (still legal — we forward an empty vec). More than one
+    // means the author drifted away from the -sys shape; flag
+    // that explicitly rather than silently building a weird call.
+    if arg_idents.len() > 1 {
+        return Err(syn::Error::new_spanned(
+            &sig.inputs,
+            "native_module methods take exactly one `args: Vec<WhiskerValue>` parameter \
+             — type-safe wrappers belong in author-owned code on top of this proxy",
+        ));
+    }
+
+    let args_expr = if arg_idents.len() == 1 {
+        let id = arg_idents[0];
+        quote! { #id }
+    } else {
+        quote! { ::std::vec::Vec::<::whisker::native_module::WhiskerValue>::new() }
     };
-    let unwrap_expr = emit_return_unwrap(&return_type)?;
+
+    // Return type defaults to `WhiskerValue` if the user wrote
+    // none. Anything other than `WhiskerValue` typechecks against
+    // the macro-emitted body (a `WhiskerValue` literal) and
+    // fails — surfacing the mismatch with the user's own return
+    // type's span.
+    let return_type: TokenStream = match &sig.output {
+        ReturnType::Default => quote! { ::whisker::native_module::WhiskerValue },
+        ReturnType::Type(_, ty) => quote! { #ty },
+    };
 
     let invoke_path = if is_async {
         quote! { ::whisker::native_module::invoke_async }
@@ -148,7 +208,6 @@ fn emit_method(module_name: &str, method: &TraitItemFn) -> syn::Result<TokenStre
     } else {
         quote! {}
     };
-
     let async_kw = if is_async {
         quote! { async }
     } else {
@@ -156,195 +215,8 @@ fn emit_method(module_name: &str, method: &TraitItemFn) -> syn::Result<TokenStre
     };
 
     Ok(quote! {
-        pub #async_kw fn #name (#(#arg_decls),*)
-            -> ::core::result::Result<#return_type, ::whisker::native_module::WhiskerModuleError>
-        {
-            let __args: ::std::vec::Vec<::whisker::native_module::WhiskerValue> =
-                ::std::vec![ #( ::whisker::native_module::WhiskerValue::from(#arg_names) ),* ];
-            let __result = #invoke_path (#module_name, #name_str, __args) #dot_await;
-            #unwrap_expr
+        pub #async_kw fn #name (#(#arg_decls),*) -> #return_type {
+            #invoke_path (#module_name, #name_str, #args_expr) #dot_await
         }
     })
-}
-
-/// Build the match expression that unwraps a `WhiskerValue` into
-/// the declared return type. Each supported type gets a
-/// `match` arm; anything unrecognised falls through to
-/// `Err(WhiskerModuleError::type_mismatch(_))`.
-fn emit_return_unwrap(ty: &Type) -> syn::Result<TokenStream> {
-    // The `__result` binding is the `WhiskerValue` produced by the
-    // invoke call. The Error variant short-circuits to Err for
-    // every return type.
-
-    // Recognise the type by its surface syntax. `syn` doesn't
-    // expose "is this type bool" directly — we match on the path's
-    // last segment plus generic-args presence (for Option<T> /
-    // Vec<u8> / WhiskerValue).
-    if type_is_path(ty, &["bool"]) {
-        return Ok(quote! {
-            match __result {
-                ::whisker::native_module::WhiskerValue::Bool(v) => ::core::result::Result::Ok(v),
-                ::whisker::native_module::WhiskerValue::Error(msg) =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(msg)),
-                __other =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(
-                        ::std::format!("expected Bool, got {:?}", __other))),
-            }
-        });
-    }
-
-    if type_is_path(ty, &["i32"])
-        || type_is_path(ty, &["i64"])
-        || type_is_path(ty, &["u32"])
-        || type_is_path(ty, &["u64"])
-        || type_is_path(ty, &["isize"])
-        || type_is_path(ty, &["usize"])
-    {
-        return Ok(quote! {
-            match __result {
-                ::whisker::native_module::WhiskerValue::Int(v) =>
-                    ::core::result::Result::Ok(v as #ty),
-                ::whisker::native_module::WhiskerValue::Error(msg) =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(msg)),
-                __other =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(
-                        ::std::format!("expected Int, got {:?}", __other))),
-            }
-        });
-    }
-
-    if type_is_path(ty, &["f32"]) || type_is_path(ty, &["f64"]) {
-        return Ok(quote! {
-            match __result {
-                ::whisker::native_module::WhiskerValue::Float(v) =>
-                    ::core::result::Result::Ok(v as #ty),
-                ::whisker::native_module::WhiskerValue::Error(msg) =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(msg)),
-                __other =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(
-                        ::std::format!("expected Float, got {:?}", __other))),
-            }
-        });
-    }
-
-    if type_is_path(ty, &["String"]) || type_is_path(ty, &["std", "string", "String"]) {
-        return Ok(quote! {
-            match __result {
-                ::whisker::native_module::WhiskerValue::String(v) =>
-                    ::core::result::Result::Ok(v),
-                ::whisker::native_module::WhiskerValue::Error(msg) =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(msg)),
-                __other =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(
-                        ::std::format!("expected String, got {:?}", __other))),
-            }
-        });
-    }
-
-    // Vec<u8> → Bytes
-    if let Some(inner) = type_single_generic(ty, "Vec") {
-        if type_is_path(inner, &["u8"]) {
-            return Ok(quote! {
-                match __result {
-                    ::whisker::native_module::WhiskerValue::Bytes(v) =>
-                        ::core::result::Result::Ok(v),
-                    ::whisker::native_module::WhiskerValue::Error(msg) =>
-                        ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(msg)),
-                    __other =>
-                        ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(
-                            ::std::format!("expected Bytes, got {:?}", __other))),
-                }
-            });
-        }
-    }
-
-    // Option<T>
-    if let Some(inner) = type_single_generic(ty, "Option") {
-        let inner_unwrap = emit_return_unwrap(inner)?;
-        return Ok(quote! {
-            match __result {
-                ::whisker::native_module::WhiskerValue::Null =>
-                    ::core::result::Result::Ok(::core::option::Option::None),
-                ::whisker::native_module::WhiskerValue::Error(msg) =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(msg)),
-                __result => {
-                    let __inner: ::core::result::Result<#inner, ::whisker::native_module::WhiskerModuleError> = #inner_unwrap;
-                    __inner.map(::core::option::Option::Some)
-                }
-            }
-        });
-    }
-
-    // WhiskerValue passthrough
-    if type_is_path(ty, &["WhiskerValue"])
-        || type_is_path(ty, &["whisker", "native_module", "WhiskerValue"])
-    {
-        return Ok(quote! {
-            match __result {
-                ::whisker::native_module::WhiskerValue::Error(msg) =>
-                    ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(msg)),
-                __other => ::core::result::Result::Ok(__other),
-            }
-        });
-    }
-
-    // Unit return — accept anything (typically Null).
-    if let Type::Tuple(t) = ty {
-        if t.elems.is_empty() {
-            return Ok(quote! {
-                match __result {
-                    ::whisker::native_module::WhiskerValue::Error(msg) =>
-                        ::core::result::Result::Err(::whisker::native_module::WhiskerModuleError(msg)),
-                    _ => ::core::result::Result::Ok(()),
-                }
-            });
-        }
-    }
-
-    Err(syn::Error::new_spanned(
-        ty,
-        "unsupported return type — native_module v1 accepts \
-         bool / i32 / i64 / u32 / u64 / f32 / f64 / String / Vec<u8> / Option<T> / WhiskerValue / ()",
-    ))
-}
-
-/// Returns true when `ty` is `T1::T2::...::Tn` (a simple path
-/// without generics) matching `segments`. The check ignores
-/// leading `::` and any leading-module-path differences (e.g.
-/// `String` vs `std::string::String` both work via separate
-/// calls).
-fn type_is_path(ty: &Type, segments: &[&str]) -> bool {
-    let Type::Path(tp) = ty else {
-        return false;
-    };
-    if tp.qself.is_some() {
-        return false;
-    }
-    let path_segments: Vec<_> = tp
-        .path
-        .segments
-        .iter()
-        .map(|s| s.ident.to_string())
-        .collect();
-    path_segments == segments
-}
-
-/// If `ty` is `Outer<Inner>` (single generic arg), returns
-/// `&Inner`. Used for `Option<T>` / `Vec<u8>` recognition.
-fn type_single_generic<'a>(ty: &'a Type, outer: &str) -> Option<&'a Type> {
-    let Type::Path(tp) = ty else { return None };
-    let last = tp.path.segments.last()?;
-    if last.ident != outer {
-        return None;
-    }
-    let PathArguments::AngleBracketed(args) = &last.arguments else {
-        return None;
-    };
-    if args.args.len() != 1 {
-        return None;
-    }
-    match args.args.first()? {
-        GenericArgument::Type(inner) => Some(inner),
-        _ => None,
-    }
 }

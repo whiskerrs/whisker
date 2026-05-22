@@ -355,8 +355,8 @@ Java_rs_whisker_runtime_WhiskerView_nativeOnLynxEvent(
 
 namespace {
 
-WhiskerValue MakeAndroidBridgeError(const char* message) {
-    WhiskerValue v;
+WhiskerValueRaw MakeAndroidBridgeError(const char* message) {
+    WhiskerValueRaw v;
     std::memset(&v, 0, sizeof(v));
     v.type = WHISKER_VALUE_ERROR;
     if (message != nullptr) {
@@ -521,10 +521,10 @@ struct ScopedJNIEnv_M {
     JNIEnv* get() { return env; }
 };
 
-jobject value_to_jvalue(JNIEnv* env, const WhiskerValue* v);
-WhiskerValue jvalue_to_value(JNIEnv* env, jobject obj);
+jobject value_to_jvalue(JNIEnv* env, const WhiskerValueRaw* v);
+WhiskerValueRaw jvalue_to_value(JNIEnv* env, jobject obj);
 
-jobject value_to_jvalue(JNIEnv* env, const WhiskerValue* v) {
+jobject value_to_jvalue(JNIEnv* env, const WhiskerValueRaw* v) {
     auto& h = wvjni();
     if (v == nullptr) return env->NewLocalRef(h.null_obj);
     switch (v->type) {
@@ -608,8 +608,8 @@ char* dup_malloc(const std::string& s) {
     return buf;
 }
 
-WhiskerValue jvalue_to_value(JNIEnv* env, jobject obj) {
-    WhiskerValue v;
+WhiskerValueRaw jvalue_to_value(JNIEnv* env, jobject obj) {
+    WhiskerValueRaw v;
     std::memset(&v, 0, sizeof(v));
     auto& h = wvjni();
     if (obj == nullptr) { v.type = WHISKER_VALUE_NULL; return v; }
@@ -641,8 +641,8 @@ WhiskerValue jvalue_to_value(JNIEnv* env, jobject obj) {
     if (env->IsInstanceOf(obj, h.array_cls)) {
         jobject list = env->CallObjectMethod(obj, h.array_get);
         jint sz = env->CallIntMethod(list, h.list_size);
-        WhiskerValue* items = static_cast<WhiskerValue*>(
-            std::malloc(((size_t)sz > 0 ? (size_t)sz : 1) * sizeof(WhiskerValue)));
+        WhiskerValueRaw* items = static_cast<WhiskerValueRaw*>(
+            std::malloc(((size_t)sz > 0 ? (size_t)sz : 1) * sizeof(WhiskerValueRaw)));
         for (jint i = 0; i < sz; i++) {
             jobject elem = env->CallObjectMethod(list, h.list_get, i);
             items[i] = jvalue_to_value(env, elem);
@@ -656,13 +656,13 @@ WhiskerValue jvalue_to_value(JNIEnv* env, jobject obj) {
         jobject map = env->CallObjectMethod(obj, h.map_get);
         jobject set = env->CallObjectMethod(map, h.map_entry_set);
         jobject it  = env->CallObjectMethod(set, h.set_iterator);
-        std::vector<std::pair<std::string, WhiskerValue>> tmp;
+        std::vector<std::pair<std::string, WhiskerValueRaw>> tmp;
         while (env->CallBooleanMethod(it, h.iter_has_next)) {
             jobject entry = env->CallObjectMethod(it, h.iter_next);
             jstring ks = (jstring)env->CallObjectMethod(entry, h.map_entry_key);
             jobject vo = env->CallObjectMethod(entry, h.map_entry_val);
             std::string k = jstr_to_str(env, ks);
-            WhiskerValue val = jvalue_to_value(env, vo);
+            WhiskerValueRaw val = jvalue_to_value(env, vo);
             tmp.emplace_back(std::move(k), val);
             if (ks != nullptr) env->DeleteLocalRef(ks);
             if (vo != nullptr) env->DeleteLocalRef(vo);
@@ -670,8 +670,8 @@ WhiskerValue jvalue_to_value(JNIEnv* env, jobject obj) {
         }
         env->DeleteLocalRef(it); env->DeleteLocalRef(set); env->DeleteLocalRef(map);
         size_t n = tmp.size();
-        WhiskerKeyValue* entries = static_cast<WhiskerKeyValue*>(
-            std::malloc((n > 0 ? n : 1) * sizeof(WhiskerKeyValue)));
+        WhiskerKeyValueRaw* entries = static_cast<WhiskerKeyValueRaw*>(
+            std::malloc((n > 0 ? n : 1) * sizeof(WhiskerKeyValueRaw)));
         for (size_t i = 0; i < n; i++) {
             entries[i].key.ptr = dup_malloc(tmp[i].first);
             entries[i].key.len = tmp[i].first.size();
@@ -688,15 +688,15 @@ WhiskerValue jvalue_to_value(JNIEnv* env, jobject obj) {
         v.v.s.ptr = dup_malloc(s); v.v.s.len = s.size(); return v;
     }
     v.type = WHISKER_VALUE_ERROR;
-    const char* msg = "unknown WhiskerValue subtype";
+    const char* msg = "unknown WhiskerValueRaw subtype";
     v.v.s.ptr = dup_malloc(msg); v.v.s.len = std::strlen(msg); return v;
 }
 
 }  // namespace
 
-extern "C" WhiskerValue whisker_bridge_invoke_module(
+extern "C" WhiskerValueRaw whisker_bridge_invoke_module(
     const char* module_name, const char* method_name,
-    const WhiskerValue* args, size_t arg_count
+    const WhiskerValueRaw* args, size_t arg_count
 ) {
     if (module_name == nullptr || method_name == nullptr) {
         return MakeAndroidBridgeError("module/method name NULL");
@@ -707,7 +707,7 @@ extern "C" WhiskerValue whisker_bridge_invoke_module(
         return MakeAndroidBridgeError("JVM not initialised");
     }
     if (!init_wvjni(env)) {
-        return MakeAndroidBridgeError("WhiskerValue JNI init failed");
+        return MakeAndroidBridgeError("WhiskerValueRaw JNI init failed");
     }
     auto& h = wvjni();
     jobjectArray jargs = env->NewObjectArray((jsize)arg_count, h.base, nullptr);
@@ -723,18 +723,18 @@ extern "C" WhiskerValue whisker_bridge_invoke_module(
     env->DeleteLocalRef(jmod); env->DeleteLocalRef(jmtd); env->DeleteLocalRef(jargs);
     if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear();
         return MakeAndroidBridgeError("dispatch threw"); }
-    WhiskerValue out = jvalue_to_value(env, jres);
+    WhiskerValueRaw out = jvalue_to_value(env, jres);
     if (jres != nullptr) env->DeleteLocalRef(jres);
     return out;
 }
 
 extern "C" bool whisker_bridge_invoke_module_async(
     const char* module_name, const char* method_name,
-    const WhiskerValue* args, size_t arg_count,
+    const WhiskerValueRaw* args, size_t arg_count,
     WhiskerModuleCallback callback, void* user_data
 ) {
     if (callback == nullptr) return false;
-    WhiskerValue r = whisker_bridge_invoke_module(module_name, method_name, args, arg_count);
+    WhiskerValueRaw r = whisker_bridge_invoke_module(module_name, method_name, args, arg_count);
     callback(user_data, &r);
     whisker_bridge_value_release(&r);
     return true;

@@ -3,29 +3,21 @@
 // with `SharedPreferences` (private to the host app under the name
 // "WhiskerLocalStore").
 //
-// Activated by `@WhiskerModule("WhiskerLocalStore")` — the
-// `whisker-android-ksp` KSP processor finds the annotation at the
-// user-app's compile time and emits a
-// `WhiskerModuleRegistry.registerModuleClass(name, cls)` call into
-// the auto-generated `WhiskerModuleBehaviors.kt`. The JNI bridge
-// (`whisker_bridge_android.cc`) then looks up this class by name
-// on every `invoke_module` from Rust.
+// Phase 7-Φ.F: the contract is now WhiskerValue-only. Each method
+// takes `Array<WhiskerValue>` and returns `WhiskerValue`. The KSP
+// processor (`packages/whisker-android-ksp`) emits a
+// `WhiskerLocalStoreImpl_Dispatch` object whose
+// `dispatch(method, args)` `when`-switches on the method name and
+// calls the matching instance method; the C JNI bridge resolves
+// `WhiskerModuleRegistry.invokeDispatch` once per process and
+// every `invoke_module` from Rust routes through the registry.
 //
-// Method-shape contract (shared with iOS): one `Array<Any?>`
-// argument + an `Any?` return; the JNI dispatch (see
-// `whisker_bridge_android.cc::GetCachedMethod`) signature is
-// `([Ljava/lang/Object;)Ljava/lang/Object;`. Returning `null`
-// maps to `WhiskerValue::Null` Rust-side, which the proxy lifts
-// into `Option::None` / `()` for the matching return type.
-//
-// Per-WhiskerView Context: the bridge instantiates the registered
-// class via `cls.getDeclaredConstructor().newInstance()` — i.e.
-// zero-arg ctor. We don't have access to a `Context` at
-// construction time, so we resolve it lazily through
-// `WhiskerApplication.appContext`. The generated WhiskerApplication
-// stores a process-wide ApplicationContext reference at
-// `onCreate()`, before any module dispatch happens, so this lookup
-// is always safe by the time a method runs.
+// Per-WhiskerView Context: the KSP-generated dispatch object
+// constructs a single instance at `registerAll()` time
+// (`<Class>()` invocation), so we still need a zero-arg ctor.
+// The `Context` is resolved lazily via `WhiskerApplication.appContext`
+// — the app's `Application.onCreate()` installs it before any
+// module dispatch could reach this method.
 
 package rs.whisker.modules.localstore
 
@@ -33,6 +25,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import rs.whisker.annotations.WhiskerModule
 import rs.whisker.runtime.WhiskerApplication
+import rs.whisker.runtime.WhiskerValue
 
 @WhiskerModule("WhiskerLocalStore")
 class WhiskerLocalStoreImpl {
@@ -56,27 +49,41 @@ class WhiskerLocalStoreImpl {
         return ctx.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
     }
 
-    /** Save args[0] (String key) → args[1] (String value). Returns true on success. */
-    fun save(args: Array<Any?>): Any {
-        val key = args.getOrNull(0) as? String ?: return false
-        val value = args.getOrNull(1) as? String ?: return false
-        return prefs().edit().putString(key, value).commit()
+    /** Save args[0] (String key) → args[1] (String value). Returns Bool(true) on success. */
+    fun save(args: Array<WhiskerValue>): WhiskerValue {
+        if (args.size < 2) {
+            return WhiskerValue.Err("WhiskerLocalStore.save expects (String, String)")
+        }
+        val key = args[0] as? WhiskerValue.Str
+            ?: return WhiskerValue.Err("WhiskerLocalStore.save args[0] must be Str")
+        val value = args[1] as? WhiskerValue.Str
+            ?: return WhiskerValue.Err("WhiskerLocalStore.save args[1] must be Str")
+        val ok = prefs().edit().putString(key.value, value.value).commit()
+        return WhiskerValue.Bool(ok)
     }
 
     /**
-     * Load the value for args[0]. Returns the value String on hit,
-     * null on miss — the JNI bridge converts null → WhiskerValue::Null,
-     * which the proxy lifts into Option::None.
+     * Load the value for args[0]. Returns `Str(_)` on hit, `Null`
+     * on miss. The Rust wrapper lifts Null into `Option::None`.
      */
-    fun load(args: Array<Any?>): Any? {
-        val key = args.getOrNull(0) as? String ?: return null
-        return prefs().getString(key, null)
+    fun load(args: Array<WhiskerValue>): WhiskerValue {
+        if (args.isEmpty()) {
+            return WhiskerValue.Err("WhiskerLocalStore.load expects (String,)")
+        }
+        val key = args[0] as? WhiskerValue.Str
+            ?: return WhiskerValue.Err("WhiskerLocalStore.load args[0] must be Str")
+        val stored = prefs().getString(key.value, null)
+        return if (stored == null) WhiskerValue.Null else WhiskerValue.Str(stored)
     }
 
-    /** Drop args[0]'s entry. Returns null (→ `()` on the Rust side). */
-    fun remove(args: Array<Any?>): Any? {
-        val key = args.getOrNull(0) as? String ?: return null
-        prefs().edit().remove(key).apply()
-        return null
+    /** Drop args[0]'s entry. Returns Null (→ `()` on the Rust side). */
+    fun remove(args: Array<WhiskerValue>): WhiskerValue {
+        if (args.isEmpty()) {
+            return WhiskerValue.Err("WhiskerLocalStore.remove expects (String,)")
+        }
+        val key = args[0] as? WhiskerValue.Str
+            ?: return WhiskerValue.Err("WhiskerLocalStore.remove args[0] must be Str")
+        prefs().edit().remove(key.value).apply()
+        return WhiskerValue.Null
     }
 }

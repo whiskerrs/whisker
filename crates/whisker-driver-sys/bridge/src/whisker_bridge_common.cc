@@ -396,8 +396,8 @@ std::unordered_map<std::string, WhiskerModuleDispatchFn>& ModuleRegistry() {
     return m;
 }
 
-WhiskerValue MakeBridgeErrorValue(const char* message) {
-    WhiskerValue v;
+WhiskerValueRaw MakeBridgeErrorValue(const char* message) {
+    WhiskerValueRaw v;
     std::memset(&v, 0, sizeof(v));
     v.type = WHISKER_VALUE_ERROR;
     if (message != nullptr) {
@@ -425,10 +425,10 @@ extern "C" void whisker_bridge_register_module_dispatch(
 }
 
 #if !defined(__ANDROID__)
-extern "C" WhiskerValue whisker_bridge_invoke_module(
+extern "C" WhiskerValueRaw whisker_bridge_invoke_module(
     const char* module_name,
     const char* method_name,
-    const WhiskerValue* args,
+    const WhiskerValueRaw* args,
     size_t arg_count) {
     if (module_name == nullptr || method_name == nullptr) {
         return MakeBridgeErrorValue("module/method name is NULL");
@@ -450,7 +450,7 @@ extern "C" WhiskerValue whisker_bridge_invoke_module(
 extern "C" bool whisker_bridge_invoke_module_async(
     const char* module_name,
     const char* method_name,
-    const WhiskerValue* args,
+    const WhiskerValueRaw* args,
     size_t arg_count,
     WhiskerModuleCallback callback,
     void* user_data) {
@@ -458,7 +458,7 @@ extern "C" bool whisker_bridge_invoke_module_async(
     // Foundation: sync-forward on the calling thread. Worker-pool
     // dispatch + cancel semantics land alongside the first
     // async-API module (out of Phase F scope).
-    WhiskerValue result = whisker_bridge_invoke_module(
+    WhiskerValueRaw result = whisker_bridge_invoke_module(
         module_name, method_name, args, arg_count);
     callback(user_data, &result);
     whisker_bridge_value_release(&result);
@@ -466,7 +466,7 @@ extern "C" bool whisker_bridge_invoke_module_async(
 }
 #endif  // !__ANDROID__
 
-extern "C" void whisker_bridge_value_release(WhiskerValue* value) {
+extern "C" void whisker_bridge_value_release(WhiskerValueRaw* value) {
     if (value == nullptr) return;
     switch (value->type) {
         case WHISKER_VALUE_STRING:

@@ -1,57 +1,61 @@
 //! `#[whisker::native_module]` integration tests.
 //!
 //! We can't exercise the bridge end-to-end here — the bridge
-//! requires a registered platform-side module (Obj-C class on
+//! requires a registered platform-side module (Swift class on
 //! iOS, Kotlin class on Android). Host tests instead verify:
 //!
 //! 1. The macro expands cleanly for the documented input shapes
 //!    (compile-time only; nothing run-time-exercised).
-//! 2. Calls into the macro-emitted methods on host return
-//!    `Err(WhiskerModuleError)` rather than crashing — the
-//!    bridge's `whisker_bridge_invoke_module` stub responds
-//!    with `WhiskerValue::Error("module not registered")` when
-//!    no platform module class is in the registry.
+//! 2. Calls into the macro-emitted methods on host return a
+//!    `WhiskerValue::Error("module not registered")` value
+//!    without crashing — the bridge's
+//!    `whisker_bridge_invoke_module` stub responds that way when
+//!    no platform module is registered for the requested name.
 //!
-//! Real end-to-end verification lives in Phase 7-Φ.E.8
-//! (whisker-storage-module + hello-world integration on iOS
+//! Real end-to-end verification lives in Phase 7-Φ.F.s6
+//! (whisker-local-store + hello-world integration on iOS
 //! simulator + Android emulator).
 
-use whisker::native_module::WhiskerModuleError;
+use whisker::native_module::WhiskerValue;
 
 // ----- Sync proxy ---------------------------------------------------------
 
 #[whisker::native_module(name = "WhiskerStorage")]
-pub trait WhiskerStorage {
-    fn save(key: String, value: String) -> bool;
-    fn load(key: String) -> Option<String>;
-    fn clear(key: String) -> ();
+pub trait WhiskerStorageRaw {
+    fn save(args: Vec<WhiskerValue>) -> WhiskerValue;
+    fn load(args: Vec<WhiskerValue>) -> WhiskerValue;
+    fn clear(args: Vec<WhiskerValue>) -> WhiskerValue;
 }
 
 #[test]
-fn sync_proxy_unregistered_module_returns_err() {
+fn sync_proxy_unregistered_module_returns_err_value() {
     // No platform module registered → bridge returns an Error
-    // WhiskerValue. The proxy lifts it into Err.
-    let result = WhiskerStorage::save("k".into(), "v".into());
-    assert!(matches!(result, Err(WhiskerModuleError(_))));
+    // WhiskerValue. The proxy returns it verbatim — type-safe
+    // unwrap is the author wrapper's job, not the macro's.
+    let result = WhiskerStorageRaw::save(vec![
+        WhiskerValue::String("k".into()),
+        WhiskerValue::String("v".into()),
+    ]);
+    assert!(matches!(result, WhiskerValue::Error(_)));
 }
 
 #[test]
-fn sync_proxy_option_return_unregistered() {
-    let result = WhiskerStorage::load("k".into());
-    assert!(matches!(result, Err(WhiskerModuleError(_))));
+fn sync_proxy_single_arg_passthrough() {
+    let result = WhiskerStorageRaw::load(vec![WhiskerValue::String("k".into())]);
+    assert!(matches!(result, WhiskerValue::Error(_)));
 }
 
 #[test]
-fn sync_proxy_unit_return_unregistered() {
-    let result = WhiskerStorage::clear("k".into());
-    assert!(matches!(result, Err(WhiskerModuleError(_))));
+fn sync_proxy_empty_arg_vec() {
+    let result = WhiskerStorageRaw::clear(vec![]);
+    assert!(matches!(result, WhiskerValue::Error(_)));
 }
 
 // ----- Async proxy --------------------------------------------------------
 
 #[whisker::native_module(name = "WhiskerHttp")]
-pub trait WhiskerHttp {
-    async fn fetch(url: String) -> Vec<u8>;
+pub trait WhiskerHttpRaw {
+    async fn fetch(args: Vec<WhiskerValue>) -> WhiskerValue;
 }
 
 #[test]
@@ -59,29 +63,31 @@ fn async_proxy_compiles() {
     // We can't `await` here without an executor — just confirm
     // the macro emits a callable signature. The future itself
     // can be constructed safely (constructing doesn't dispatch).
-    let _fut = WhiskerHttp::fetch("https://example.com".into());
+    let _fut = WhiskerHttpRaw::fetch(vec![
+        WhiskerValue::String("https://example.com".into()),
+    ]);
 }
 
 // ----- Custom module name -------------------------------------------------
 
 #[whisker::native_module(name = "OverriddenName")]
-pub trait MyLocalTrait {
-    fn ping() -> bool;
+pub trait MyLocalTraitRaw {
+    fn ping(args: Vec<WhiskerValue>) -> WhiskerValue;
 }
 
 #[test]
 fn custom_module_name_compiles() {
-    let _ = MyLocalTrait::ping();
+    let _ = MyLocalTraitRaw::ping(vec![]);
 }
 
 // ----- Default name (= trait name) ----------------------------------------
 
 #[whisker::native_module]
 pub trait UnnamedModule {
-    fn echo(value: String) -> String;
+    fn echo(args: Vec<WhiskerValue>) -> WhiskerValue;
 }
 
 #[test]
 fn default_module_name_compiles() {
-    let _ = UnnamedModule::echo("x".into());
+    let _ = UnnamedModule::echo(vec![WhiskerValue::String("x".into())]);
 }

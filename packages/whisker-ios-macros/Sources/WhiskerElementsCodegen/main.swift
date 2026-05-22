@@ -2,7 +2,8 @@
 // source files for `@WhiskerElement("x-tag")` AND `@WhiskerModule(
 // "Name")` applications and emits `WhiskerModuleBehaviors.swift`
 // containing the matching `LynxComponentRegistry.registerUI(...)`
-// and `WhiskerModuleRegistry.registerModuleClass(_:forName:)` calls.
+// and `whisker_bridge_register_module_dispatch(name, dispatch_fn)`
+// calls.
 //
 // Invoked at SwiftPM build time by `WhiskerElementsCodegenPlugin`
 // (under `../../Plugins/`). The plugin passes:
@@ -17,6 +18,11 @@
 // Companion of `WhiskerElementProcessor.kt` (Android KSP). Same
 // shape — annotations in, generated registry out. Apple's
 // SwiftSyntax is the iOS equivalent of KSP's `Resolver`.
+//
+// Phase 7-Φ.F: module registrations now point at the per-module
+// `@_cdecl` C dispatch shim the macro itself emits (one top-level
+// `_whiskerDispatch_<sanitised name>` function per `@WhiskerModule`).
+// The previous Obj-C `WhiskerModuleRegistry` class is gone.
 
 import Foundation
 import SwiftSyntax
@@ -62,10 +68,10 @@ struct ElementHit {
 }
 
 /// One discovered `(name, className)` pair from a `@WhiskerModule`
-/// annotation. Same naming convention as `ElementHit`; the
-/// platform-side dispatch (`whisker_bridge_invoke_module`) goes
-/// through `WhiskerModuleRegistry` rather than Lynx's behaviour
-/// registry.
+/// annotation. Same naming convention as `ElementHit`. The
+/// platform-side dispatch (`whisker_bridge_invoke_module`) routes
+/// through the per-module `@_cdecl` shim the macro emits — we
+/// reference that fn by name in the registration call.
 struct ModuleHit {
     let name: String
     let className: String
@@ -105,6 +111,28 @@ private func firstStringArgument(of attr: AttributeSyntax) -> String? {
     return seg.content.text
 }
 
+/// Make a Swift identifier out of a module name. Replaces any
+/// non-`[A-Za-z0-9_]` byte with `_` so the dispatch fn name is
+/// always a legal Swift identifier. Must match the sanitisation
+/// `WhiskerElementMacro.swift` does at macro-emission time —
+/// otherwise the registration call would reference an undefined
+/// symbol.
+private func sanitiseIdentifier(_ raw: String) -> String {
+    var out = ""
+    out.reserveCapacity(raw.count)
+    for char in raw.unicodeScalars {
+        if (char.value >= 0x30 && char.value <= 0x39) ||  // 0-9
+           (char.value >= 0x41 && char.value <= 0x5A) ||  // A-Z
+           (char.value >= 0x61 && char.value <= 0x7A) ||  // a-z
+           char.value == 0x5F {                           // _
+            out.unicodeScalars.append(char)
+        } else {
+            out.append("_")
+        }
+    }
+    return out
+}
+
 // ---- Codegen -----------------------------------------------------------------
 
 func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
@@ -132,11 +160,19 @@ func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
 
         import Foundation
         import Lynx
-        // `WhiskerModuleRegistry` ships as an Obj-C class in the
-        // WhiskerDriver framework — `import WhiskerDriver` exposes
-        // it to Swift via the framework's bridged headers.
-        import WhiskerDriver
+        // WhiskerRuntime re-exports WhiskerDriver, which carries the
+        // C ABI declarations (`whisker_bridge_register_module_dispatch`,
+        // `WhiskerValueRaw`, …) the module registration touches.
+        import WhiskerRuntime
 
+        // Forward declarations for the per-module `@_cdecl` dispatch
+        // shims the macro emits as top-level peers of each
+        // `@WhiskerModule`-annotated class. Each shim's Swift symbol
+        // name matches its `@_cdecl` exposed name, so we can take
+        // its address by Swift identifier — the conversion to the
+        // C function-pointer type happens implicitly at the call
+        // site below.
+        \(sortedModules.isEmpty ? "// (no module dispatch shims)\n" : "")
         @objc public final class WhiskerModuleBehaviors: NSObject {
             private static var registered = false
             private static let lock = NSLock()
@@ -168,19 +204,15 @@ func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
             """
     }
     for hit in sortedModules {
-        // `WhiskerModuleRegistry` is an Obj-C class compiled into
-        // WhiskerDriver.framework (under crates/whisker-driver-sys/
-        // bridge/src/whisker_module_registry.mm). The class header
-        // is staged in the framework's Headers/ + modulemap, so
-        // Swift sees it once we `import WhiskerDriver` above.
+        // Hand `_whiskerDispatch_<sanitised name>` directly to the
+        // bridge's register fn. Swift converts the function
+        // reference to the C `WhiskerModuleDispatchFn` typedef
+        // automatically because the macro-emitted decl is
+        // `@_cdecl` (C calling convention).
+        let symbol = "_whiskerDispatch_\(sanitiseIdentifier(hit.name))"
         out += """
-                    do {
-                        let cls = NSClassFromString("WhiskerModules.\(hit.className)")
-                            ?? NSClassFromString("\(hit.className)")
-                        if let cls = cls {
-                            WhiskerModuleRegistry.registerModuleClass(cls, forName: "\(hit.name)")
-                        }
-                    }
+                    whisker_bridge_register_module_dispatch(
+                        "\(hit.name)", \(symbol))
 
             """
     }
