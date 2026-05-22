@@ -84,8 +84,15 @@ fn sync_android(
 fn sync_ios(app_config: &AppConfig, crate_dir: &Path, workspace_root: &Path) -> Result<NativeSync> {
     let whisker_runtime =
         resolve_whisker_native(workspace_root, "ios").context("resolve Whisker's native/ios")?;
-    let inputs = whisker_cng::ios::inputs_from(app_config, whisker_runtime)?;
     let gen_dir = crate_dir.join("gen/ios");
+    // `gen/ios/whisker_modules/` is populated lazily by
+    // `whisker-build::ios::stage_module_swift_sources` later in the
+    // pipeline (between cargo build and xcodebuild). The pbxproj
+    // template's `XCLocalSwiftPackageReference` for WhiskerModules
+    // needs an *absolute* path to that directory at sync time, so we
+    // pre-compute it here even though the contents will land later.
+    let whisker_modules = gen_dir.join("whisker_modules");
+    let inputs = whisker_cng::ios::inputs_from(app_config, whisker_runtime, whisker_modules)?;
     // whisker-cng renders the full Xcode project directly (pbxproj +
     // xcworkspacedata + sources). No xcodegen subprocess needed —
     // see crates/whisker-cng/src/ios.rs for the rationale.

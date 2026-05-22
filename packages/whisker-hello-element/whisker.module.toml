@@ -14,18 +14,33 @@
 # etc.) will land additively without breaking existing modules.
 
 [ios]
-# Paths to Objective-C / Objective-C++ source files (.m / .mm) that
-# implement the native side of this module on iOS. Paths are
-# resolved relative to the directory containing this manifest, then
-# fed to whisker-driver-sys's cc::Build so they share the same
-# Lynx-headers + iOS-SDK setup as the bridge itself.
+# Paths to Swift source files that get staged under
+# `gen/ios/whisker_modules/Sources/WhiskerModules/whisker-hello-element/`
+# by `whisker-build::ios::stage_module_swift_sources`. The pbxproj
+# template's `WhiskerModules` `XCLocalSwiftPackageReference` then
+# pulls the generated SwiftPM package into the user app's build.
 #
-# The first concrete user of this is `LYNX_REGISTER_UI("x-hello")`
-# inside `whisker_hello_element.mm` — its `+load`-time constructor
-# is what registers the element class against Lynx's behaviour
-# registry, so the `.mm` MUST end up linked into the host dylib
-# (not just compiled and discarded).
-native_sources = ["src/native/whisker_hello_element.mm"]
+# Migrated from the previous `native_sources = [".../whisker_hello_element.mm"]`
+# in Phase 7-Φ.D. The legacy `.mm` path with `LYNX_REGISTER_UI`
+# still works for modules that need to drop into Obj-C++ for some
+# reason, but new authors should prefer Swift.
+swift_sources = ["src/ios/WhiskerHelloElement.swift"]
+
+# `(tag, class)` registrations folded into the gen tree's
+# `WhiskerModuleBehaviors.swift` so `AppDelegate.application(_:
+# didFinishLaunchingWithOptions:)` calls
+# `LynxComponentRegistry.registerUI(WhiskerHelloElement, withName:
+# "x-hello")` once at launch.
+#
+# (The matching `@WhiskerElement("x-hello")` on the Swift class is
+# a compile-time anchor — its `__whiskerElementTag` constant lets
+# a future SwiftSyntax-parsing whisker-build pass drop this manifest
+# entry. v1 keeps both for orchestration simplicity, same as the
+# Android `[android].behaviors` entry pairs with the Kotlin
+# `@LynxBehavior` annotation.)
+behaviors = [
+    { tag = "x-hello", class = "WhiskerHelloElement" },
+]
 
 [android]
 # Paths to Kotlin source files that get staged under
