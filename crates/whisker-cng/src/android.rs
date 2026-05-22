@@ -84,6 +84,13 @@ pub struct AndroidInputs {
     /// repo in the generated `settings.gradle.kts` so whisker-runtime's
     /// `api(name="LynxAndroid", ext="aar")` style deps resolve.
     pub whisker_lynx_aar_dir: PathBuf,
+    /// Absolute path to `<workspace>/packages/whisker-android-ksp/`.
+    /// Pulled into the generated `settings.gradle.kts` via
+    /// Gradle's `includeBuild(...)` so the app's `ksp(...)` +
+    /// `implementation(...)` deps on `rs.whisker:annotations` /
+    /// `rs.whisker:ksp` resolve against the composite-build's
+    /// subprojects. Phase 7-Φ.H.2.
+    pub whisker_android_ksp_path: PathBuf,
     /// Bumped whenever the template *shape* changes (added file,
     /// renamed placeholder, …). The fingerprint mixes this in so
     /// existing `gen/` trees regenerate after an upgrade.
@@ -137,6 +144,10 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
     v.insert(
         "whisker_lynx_aar_dir",
         inputs.whisker_lynx_aar_dir.display().to_string(),
+    );
+    v.insert(
+        "whisker_android_ksp_path",
+        inputs.whisker_android_ksp_path.display().to_string(),
     );
     v
 }
@@ -352,6 +363,7 @@ pub fn inputs_from(
     rust_lib_name: String,
     whisker_runtime_path: PathBuf,
     whisker_lynx_aar_dir: PathBuf,
+    whisker_android_ksp_path: PathBuf,
 ) -> Result<AndroidInputs> {
     let app_name = app_config
         .name
@@ -382,7 +394,11 @@ pub fn inputs_from(
         rust_lib_name,
         whisker_runtime_path,
         whisker_lynx_aar_dir,
-        template_version: 2,
+        whisker_android_ksp_path,
+        // Bumped 2 → 3 alongside the KSP composite-build addition
+        // so existing fingerprints invalidate and gen trees
+        // re-render their settings.gradle.kts + app/build.gradle.kts.
+        template_version: 3,
     })
 }
 
@@ -415,7 +431,8 @@ mod tests {
             rust_lib_name: "hello_world".into(),
             whisker_runtime_path: PathBuf::from("/abs/native/android/whisker-runtime"),
             whisker_lynx_aar_dir: PathBuf::from("/abs/target/lynx-android"),
-            template_version: 2,
+            whisker_android_ksp_path: PathBuf::from("/abs/packages/whisker-android-ksp"),
+            template_version: 3,
         }
     }
 
@@ -558,7 +575,14 @@ mod tests {
             name: Some("X".into()),
             ..AppConfig::default()
         };
-        let err = inputs_from(&cfg, "x".into(), PathBuf::new(), PathBuf::new()).unwrap_err();
+        let err = inputs_from(
+            &cfg,
+            "x".into(),
+            PathBuf::new(),
+            PathBuf::new(),
+            PathBuf::new(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("application_id"), "got: {err:#}");
     }
 }

@@ -67,11 +67,18 @@ fn sync_android(
     // look once `whisker-build` has fetched the Lynx tarball + set
     // up the symlink under target/lynx-android.
     let lynx_aars = workspace_root.join("target/lynx-android");
+    // `packages/whisker-android-ksp/` is the composite-build root
+    // that ships `@WhiskerElement` + the KSP processor (Phase 7-Φ.H.2).
+    // Same convention as `whisker_runtime_path` — absolute path,
+    // referenced from the generated `settings.gradle.kts` via
+    // `includeBuild(...)`.
+    let whisker_android_ksp = workspace_root.join("packages/whisker-android-ksp");
     let inputs = whisker_cng::android::inputs_from(
         app_config,
         package.replace('-', "_"),
         whisker_runtime,
         lynx_aars,
+        whisker_android_ksp,
     )?;
     let gen_dir = crate_dir.join("gen/android");
     let regenerated = whisker_cng::sync_android(&gen_dir, &inputs).context("render gen/android")?;
