@@ -28,5 +28,10 @@ hot-reload = [
 [dependencies]
 whisker-runtime = { workspace = true }
 whisker-driver-sys = { workspace = true }
+# `module::invoke_async` bridges the Whisker bridge's C callback
+# (`whisker_bridge_invoke_module_async`) into a Rust `Future` via a
+# oneshot channel. Pulled directly rather than full `futures` to
+# keep the dep graph small (no executor, no Stream, no Sink).
+futures-channel = "0.3"
 subsecond = { workspace = true, optional = true }
 whisker-dev-runtime = { workspace = true, optional = true }

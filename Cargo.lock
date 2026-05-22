@@ -1852,6 +1852,7 @@ dependencies = [
 name = "whisker-driver"
 version = "0.1.0"
 dependencies = [
+ "futures-channel",
  "whisker-dev-runtime",
  "whisker-driver-sys",
  "whisker-runtime",

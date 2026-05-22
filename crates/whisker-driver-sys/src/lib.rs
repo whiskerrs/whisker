@@ -38,17 +38,16 @@ pub type WhiskerEventPayloadCallback =
 
 // ----- Native module invocation (Phase 7-Φ.E) ------------------------------
 //
-// Mirror of the C struct in `whisker_bridge.h`. Sizes and field
-// order MUST match exactly so by-value passing across the FFI
-// matches the C compiler's layout. The union is modeled with a
-// `[u64; 4]` storage block large enough for the largest variant
-// (`array`/`map`, each `{ptr, count}` = 16 bytes), and Rust-side
-// helpers `WhiskerValue::as_*` reinterpret the storage per `type`.
+// `#[repr(C)]` mirror of the C tagged-union in `whisker_bridge.h`.
+// Each variant has its own pure-Rust struct so the layout matches
+// the C compiler's union member layout byte-for-byte — without the
+// opaque-storage approach the E.1 draft tried (which silently
+// disagreed on total size with the C side).
 //
 // Native callers (Rust runtime, proc-macro-generated proxies)
-// never poke the storage directly — they use the `View::*` /
-// `From<T>` impls in `whisker-runtime::view::module` which do the
-// layout casts behind a typed enum API.
+// don't touch this `Raw` form directly — `whisker-runtime::view::
+// module` exposes a typed `WhiskerValue` enum with conversions in
+// both directions.
 
 /// Discriminant for [`WhiskerValueRaw::type_`]. Must stay in lock
 /// step with `enum WhiskerValueType` in `whisker_bridge.h`.
@@ -66,24 +65,78 @@ pub enum WhiskerValueType {
     Error = 8,
 }
 
-/// Raw FFI form of `WhiskerValue` — `#[repr(C)]` to match the C
-/// header byte-for-byte. The union is opaque storage Rust callers
-/// must interpret via the inspector methods in
-/// `whisker-runtime::view::module::WhiskerValue`.
+/// `struct { const char* ptr; size_t len; }` member of the C union
+/// (also used as the `key` field of `WhiskerKeyValueRaw`).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct WhiskerStringRef {
+    pub ptr: *const c_char,
+    pub len: usize,
+}
+
+/// `struct { const uint8_t* ptr; size_t len; }` member.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct WhiskerBytesRef {
+    pub ptr: *const u8,
+    pub len: usize,
+}
+
+/// `struct WhiskerValueArrayRec` — pointer to `count`
+/// `WhiskerValueRaw` items.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct WhiskerValueArray {
+    pub items: *mut WhiskerValueRaw,
+    pub count: usize,
+}
+
+/// `struct WhiskerValueMapRec` — pointer to `count`
+/// `WhiskerKeyValueRaw` entries.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct WhiskerValueMap {
+    pub entries: *mut WhiskerKeyValueRaw,
+    pub count: usize,
+}
+
+/// `#[repr(C)] union` mirroring the inner anonymous union of
+/// `WhiskerValueRec`. Field access is unsafe — discriminate on the
+/// outer struct's [`type_`](WhiskerValueRaw::type_) before reading.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union WhiskerValueUnion {
+    pub b: bool,
+    pub i: i64,
+    pub f: f64,
+    pub s: WhiskerStringRef,
+    pub bytes: WhiskerBytesRef,
+    pub array: WhiskerValueArray,
+    pub map: WhiskerValueMap,
+}
+
+/// Raw FFI form of `WhiskerValue` — byte-for-byte compatible with
+/// the C `struct WhiskerValueRec`. Total size = 24 bytes
+/// (1 discriminant + 7 padding + 16 union = 24).
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct WhiskerValueRaw {
     /// Discriminant — cast to [`WhiskerValueType`] before use.
     pub type_: u8,
-    /// Padding matching `uint8_t _pad[7]` in the C struct so the
-    /// union starts on an 8-byte boundary (matches what the C
-    /// compiler would emit for the same layout).
+    /// Padding to align the union on the natural 8-byte boundary
+    /// the C compiler picks for `{ptr, len}` members.
     pub _pad: [u8; 7],
-    /// 32 bytes of union storage — accommodates the largest
-    /// variant (`bytes` / `array` / `map`, all `{ptr: usize, len:
-    /// usize}` = 16 bytes; padded for future growth). Inspected
-    /// via the typed `as_*` helpers on the Rust wrapper.
-    pub storage: [u64; 4],
+    /// Variant payload — see [`WhiskerValueUnion`].
+    pub v: WhiskerValueUnion,
+}
+
+/// `struct WhiskerKeyValueRec` — string-keyed entry of the `map`
+/// variant.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct WhiskerKeyValueRaw {
+    pub key: WhiskerStringRef,
+    pub value: WhiskerValueRaw,
 }
 
 /// Callback type for `whisker_bridge_invoke_module_async`. The
