@@ -15,19 +15,35 @@ use whisker::runtime::view::Element;
 #[whisker::main]
 fn app() -> Element {
     let count = RwSignal::new(0);
+    let label = computed(move || format!("Count: {}", count.get()));
     render! {
-        page {
-            style: "padding: 20px; display: flex; flex-direction: column; gap: 12px;",
-            text { "Count: " {count.get()} }
-            view {
+        page(style: "padding: 20px; display: flex; flex-direction: column; gap: 12px;") {
+            text(value: label)
+            view(
                 style: "padding: 8px 16px; background: #3b82f6; border-radius: 6px;",
                 on_tap: move || count.update(|n| *n += 1),
-                text { style: "color: white;", "+1" }
+            ) {
+                text(style: "color: white;", value: "+1")
             }
         }
     }
 }
 ```
+
+The reactive contract at a glance:
+
+| Pass                                         | Behaviour                                                                   |
+|----------------------------------------------|-----------------------------------------------------------------------------|
+| `text(value: "hi")`                          | static — set the attribute once                                             |
+| `text(value: my_string)` (or `&str`)         | static — set once                                                           |
+| `text(value: my_signal)` / `my_rw_signal`    | **dynamic** — the element re-updates when the signal changes                |
+| `text(value: computed(move \|\| …))`         | **dynamic** — the `computed`'s memo re-runs, the element re-updates with it |
+| `text(value: my_signal.get())`               | static — read happens at the call site, no subscription                     |
+
+Same rule for built-in tags, `#[component]`s, and
+`#[whisker::native_element]`s. See
+[`docs/reactivity-design.md`](docs/reactivity-design.md#signalt--the-prop-value-type-phase-7-φ)
+for the full design.
 
 ## Why Whisker
 
@@ -77,6 +93,12 @@ Major decisions made so far:
   `render!` macro wires up per-property effects so a signal write
   updates only the affected element attribute. No virtual DOM, no
   diff pass.
+- **Unified prop reactivity via `Signal<T>`** (Phase 7-Φ) —
+  built-in tags, `#[component]`, and `#[whisker::native_element]`
+  all accept the same `Signal<T> = Static(T) | Dynamic(ReadSignal<T>)`
+  prop shape, so call sites have one rule across every component
+  surface (pass a signal handle → reactive; pass a value or
+  `.get()` → static snapshot).
 
 See `docs/` for design notes:
 
@@ -117,13 +139,15 @@ GitHub.
 | Component | Status |
 |---|---|
 | Workspace scaffold | ✅ |
-| Lynx prebuilt integration | ⏳ |
-| Element PAPI JNI bridge | ⏳ |
-| Reactive runtime | ⏳ |
-| `rsx!` macro | ⏳ |
+| Lynx prebuilt integration | ✅ |
+| Element PAPI Obj-C++/JNI bridge | ✅ |
+| Reactive runtime (signals, effects, computed, resource) | ✅ |
+| `render!` macro | ✅ |
+| `Signal<T>` unified prop reactivity (Phase 7-Φ) | ✅ |
+| `#[whisker::native_element]` (iOS only for now) | ✅ |
 | CNG (`whisker prebuild`) | ⏳ |
-| `whisker dev` (hot reload) | ⏳ |
-| iOS xcframework build | ⏳ |
+| `whisker run` (Tier 1 hot reload) | ✅ (iOS) / ⏳ (Android) |
+| iOS xcframework build | ✅ |
 | Android AAR build | ⏳ |
 
 ## License
