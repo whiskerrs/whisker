@@ -236,6 +236,7 @@ fn compile_ios() -> Result<()> {
         .flag("-fobjc-arc")
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_ios.mm"))
+        .file(bridge_src.join("whisker_hello_element.mm"))
         .file(bridge_src.join("lynx_native_renderer.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);

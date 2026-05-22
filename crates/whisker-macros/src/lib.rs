@@ -16,6 +16,7 @@ use quote::quote;
 use syn::{parse_macro_input, ItemFn};
 
 mod component;
+mod native_element;
 mod render;
 
 /// Annotates the user's app function (returning `whisker::Element`) and
@@ -198,4 +199,36 @@ pub fn render(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     component::expand(item.into()).into()
+}
+
+/// Declare a Whisker-side wrapper for a Lynx-registered native element.
+///
+/// ```ignore
+/// #[whisker::native_element("x-hello")]
+/// pub fn x_hello(style: Signal<String>) -> Element;
+/// ```
+///
+/// Generates the same Props + builder + PascalCase-alias surface as
+/// `#[component]`, but the function body is **auto-generated**: it
+/// calls `view::create_element_by_name(tag)` and then applies each
+/// declared prop as either an inline-style (for the `style` prop) or
+/// a SetAttribute (everything else, kebab-cased). Static vs reactive
+/// dispatch goes through the same `apply_styles` / `apply_attr`
+/// helpers built-in tags use, so a `Signal::Dynamic` prop transparently
+/// effect-wraps the attribute write.
+///
+/// Call-site shape mirrors built-in tags + user components:
+///
+/// ```ignore
+/// render! {
+///     XHello(style: "width: 100%; height: 8px;")
+/// }
+/// ```
+///
+/// See `crates/whisker-macros/src/native_element.rs` for the
+/// emission details (children + event-handler props are NOT yet
+/// supported; tracked in Phase 7-Φ follow-ups).
+#[proc_macro_attribute]
+pub fn native_element(attr: TokenStream, item: TokenStream) -> TokenStream {
+    native_element::expand(attr.into(), item.into()).into()
 }

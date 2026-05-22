@@ -447,6 +447,19 @@ fn scroll_body(state: AppState) -> Element {
 
 // ---- Main app ---------------------------------------------------------------
 
+// Phase 7-Φ.D smoke test: a `#[whisker::native_element("x-hello")]`
+// declaration. The bridge has a `WhiskerHelloElement` LynxUI subclass
+// registered under that tag (see
+// `crates/whisker-driver-sys/bridge/src/whisker_hello_element.mm`)
+// that renders as a system-pink UIView. A thin pink bar at the top
+// of the home screen confirms the full end-to-end native-element
+// path: render! → XHello() → XHelloProps::builder() → create_element_by_name
+// → whisker_bridge_create_element_by_name → lynx_create_fiber_element_by_name
+// → ElementManager::CreateFiberNode("x-hello") → LynxUI registry →
+// WhiskerHelloElement.createView.
+#[whisker::native_element("x-hello")]
+pub fn x_hello(style: Signal<String>) {}
+
 #[whisker::main]
 fn app() -> Element {
     // Allocate every app-wide signal in the bootstrap owner. `AppState`
@@ -460,6 +473,7 @@ fn app() -> Element {
     );
     render! {
         page(style: page_style) {
+            XHello(style: "width: 100%; height: 8px;")
             Header()
             ScrollBody(state: state)
             NowPlaying(state: state)
