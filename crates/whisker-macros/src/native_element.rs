@@ -267,7 +267,11 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     // PascalCase alias — same scheme as `#[component]`.
     let pascal_alias_ident = format_ident!("{}", to_pascal_case(&fn_name.to_string()));
     let fn_name_str = fn_name.to_string();
-    let alias_emission = if pascal_alias_ident.to_string() == fn_name_str {
+    // Compare `Ident == str` directly to avoid `Ident::to_string()`'s
+    // allocation (clippy::cmp_owned). `syn::Ident` impls
+    // `PartialEq<str>` / `PartialEq<&str>`; we go through the
+    // already-allocated `fn_name_str.as_str()` for clarity.
+    let alias_emission = if pascal_alias_ident == fn_name_str.as_str() {
         // snake_case name already matches PascalCase (rare for native
         // elements; their convention is `x_input` → `XInput`). Skip
         // the alias to avoid `pub use … as same_name`.
