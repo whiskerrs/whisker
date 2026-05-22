@@ -240,6 +240,33 @@ typedef struct WhiskerKeyValueRec {
     WhiskerValue value;
 } WhiskerKeyValue;
 
+// Per-module dispatch function — the platform-side Swift Macro or
+// KSP processor emits one of these per `@WhiskerModule`-annotated
+// class. The bridge stores `(module_name → dispatch_fn)` in an
+// internal lookup table; `whisker_bridge_invoke_module` then routes
+// calls through the registered function directly, without going
+// through Obj-C `NSInvocation` or JNI per-call reflection
+// (Phase 7-Φ.F).
+//
+// Args are borrowed for the duration of the call; the returned
+// `WhiskerValue` may carry heap allocations owned by the dispatch
+// function. Caller's `whisker_bridge_value_release` frees them.
+typedef WhiskerValue (*WhiskerModuleDispatchFn)(
+    const char* method_name,
+    const WhiskerValue* args,
+    size_t arg_count);
+
+// Register `dispatch` as the per-method router for `module_name`.
+// Called by the platform-side generated code at app launch (Swift
+// Macro emits a `@_cdecl` function and a matching registration
+// call; KSP emits a JNI wrapper that does the equivalent).
+//
+// Last write wins on duplicate registration. Passing `dispatch=NULL`
+// unregisters (the table entry is dropped).
+WHISKER_BRIDGE_EXPORT void whisker_bridge_register_module_dispatch(
+    const char* module_name,
+    WhiskerModuleDispatchFn dispatch);
+
 // Invoke a registered module's method synchronously.
 //
 // `module_name` and `method_name` are NUL-terminated UTF-8. `args`

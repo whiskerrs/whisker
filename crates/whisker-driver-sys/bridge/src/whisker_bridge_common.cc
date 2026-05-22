@@ -358,12 +358,147 @@ extern "C" void whisker_bridge_flush(WhiskerEngine* engine) {
     lynx_shell_flush(engine->shell);
 }
 
-// Native module invocation (`whisker_bridge_invoke_module*` +
-// `whisker_bridge_value_release`) is implemented per-platform —
-// iOS lives in `whisker_bridge_ios.mm` (NSInvocation against the
-// `WhiskerModuleRegistry`), Android in `whisker_bridge_android.cc`
-// (JNI cached-jmethodID against the Kotlin registry). The Phase
-// 7-Φ.E.1 stubs that previously lived here were removed once the
-// iOS path landed in E.2 — common.cc has no reason to provide a
-// dispatch fallback, and an empty stub would collide with the
-// platform-specific impl at link time.
+// ---- Native module invocation (Phase 7-Φ.F) -------------------------------
+//
+// Pure-C dispatch on iOS / host: a `(module_name →
+// WhiskerModuleDispatchFn)` table the platform-side generated code
+// populates at app launch. `whisker_bridge_invoke_module` resolves
+// the dispatch fn by name and calls it; `value_release` walks the
+// recursive WhiskerValue tree and frees any heap allocations the
+// dispatch produced.
+//
+// On Android, `whisker_bridge_invoke_module` is overridden in
+// `whisker_bridge_android.cc` to go through JNI into Kotlin's
+// `WhiskerModuleRegistry.invokeDispatch(...)`. That keeps the
+// per-module dispatch class in Kotlin (where KSP generates it)
+// rather than requiring per-module C thunks. Hence the
+// `#if !defined(__ANDROID__)` guard around `invoke_module` /
+// `invoke_module_async` below.
+//
+// `register_module_dispatch` and `value_release` stay shared —
+// register is used on iOS only (Android registers via Kotlin
+// side), but defining it everywhere keeps the C ABI symmetric.
+
+#include <cstring>
+#include <cstdlib>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+
+namespace {
+
+std::mutex& ModuleRegistryMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<std::string, WhiskerModuleDispatchFn>& ModuleRegistry() {
+    static std::unordered_map<std::string, WhiskerModuleDispatchFn> m;
+    return m;
+}
+
+WhiskerValue MakeBridgeErrorValue(const char* message) {
+    WhiskerValue v;
+    std::memset(&v, 0, sizeof(v));
+    v.type = WHISKER_VALUE_ERROR;
+    if (message != nullptr) {
+        size_t len = std::strlen(message);
+        char* buf = static_cast<char*>(std::malloc(len + 1));
+        std::memcpy(buf, message, len + 1);
+        v.v.s.ptr = buf;
+        v.v.s.len = len;
+    }
+    return v;
+}
+
+}  // namespace
+
+extern "C" void whisker_bridge_register_module_dispatch(
+    const char* module_name,
+    WhiskerModuleDispatchFn dispatch) {
+    if (module_name == nullptr) return;
+    std::lock_guard<std::mutex> g(ModuleRegistryMutex());
+    if (dispatch == nullptr) {
+        ModuleRegistry().erase(module_name);
+    } else {
+        ModuleRegistry()[module_name] = dispatch;
+    }
+}
+
+#if !defined(__ANDROID__)
+extern "C" WhiskerValue whisker_bridge_invoke_module(
+    const char* module_name,
+    const char* method_name,
+    const WhiskerValue* args,
+    size_t arg_count) {
+    if (module_name == nullptr || method_name == nullptr) {
+        return MakeBridgeErrorValue("module/method name is NULL");
+    }
+    WhiskerModuleDispatchFn fn = nullptr;
+    {
+        std::lock_guard<std::mutex> g(ModuleRegistryMutex());
+        auto it = ModuleRegistry().find(module_name);
+        if (it != ModuleRegistry().end()) {
+            fn = it->second;
+        }
+    }
+    if (fn == nullptr) {
+        return MakeBridgeErrorValue("module not registered");
+    }
+    return fn(method_name, args, arg_count);
+}
+
+extern "C" bool whisker_bridge_invoke_module_async(
+    const char* module_name,
+    const char* method_name,
+    const WhiskerValue* args,
+    size_t arg_count,
+    WhiskerModuleCallback callback,
+    void* user_data) {
+    if (callback == nullptr) return false;
+    // Foundation: sync-forward on the calling thread. Worker-pool
+    // dispatch + cancel semantics land alongside the first
+    // async-API module (out of Phase F scope).
+    WhiskerValue result = whisker_bridge_invoke_module(
+        module_name, method_name, args, arg_count);
+    callback(user_data, &result);
+    whisker_bridge_value_release(&result);
+    return true;
+}
+#endif  // !__ANDROID__
+
+extern "C" void whisker_bridge_value_release(WhiskerValue* value) {
+    if (value == nullptr) return;
+    switch (value->type) {
+        case WHISKER_VALUE_STRING:
+        case WHISKER_VALUE_ERROR:
+            std::free(const_cast<char*>(value->v.s.ptr));
+            value->v.s.ptr = nullptr;
+            value->v.s.len = 0;
+            break;
+        case WHISKER_VALUE_BYTES:
+            std::free(const_cast<uint8_t*>(value->v.bytes.ptr));
+            value->v.bytes.ptr = nullptr;
+            value->v.bytes.len = 0;
+            break;
+        case WHISKER_VALUE_ARRAY:
+            for (size_t i = 0; i < value->v.array.count; i++) {
+                whisker_bridge_value_release(&value->v.array.items[i]);
+            }
+            std::free(value->v.array.items);
+            value->v.array.items = nullptr;
+            value->v.array.count = 0;
+            break;
+        case WHISKER_VALUE_MAP:
+            for (size_t i = 0; i < value->v.map.count; i++) {
+                std::free(const_cast<char*>(value->v.map.entries[i].key.ptr));
+                whisker_bridge_value_release(&value->v.map.entries[i].value);
+            }
+            std::free(value->v.map.entries);
+            value->v.map.entries = nullptr;
+            value->v.map.count = 0;
+            break;
+        default:
+            break;
+    }
+    value->type = WHISKER_VALUE_NULL;
+}

@@ -20,29 +20,29 @@ fn main() -> Result<()> {
     match target_os.as_str() {
         "android" => compile_android(),
         "ios" => compile_ios(),
-        _ => compile_host_stub(),
+        _ => compile_host_common(),
     }
 }
 
-/// Compile the host-build stub on non-iOS / non-Android targets
-/// (typically a developer's macOS / Linux box running
-/// `cargo test`). Provides the C ABI surface as a tiny `.cc`
-/// returning `WHISKER_VALUE_ERROR` for every invoke — enough to
-/// link cleanly and let host tests verify the
-/// `#[whisker::native_module]` proxies dispatch + handle the
-/// Error variant. Real dispatch lives in the platform-specific
-/// .mm / .cc files.
-fn compile_host_stub() -> Result<()> {
+/// Compile only `whisker_bridge_common.cc` on non-iOS / non-Android
+/// targets. Phase 7-Φ.F moved the native_module dispatch (registry,
+/// invoke, value_release) into `common.cc` as pure C++ — no Obj-C,
+/// no JNI — so the host build no longer needs a separate stub.
+/// Host tests for the `#[whisker::native_module]` proxies still
+/// link cleanly: the bridge returns "module not registered" when
+/// nothing was wired up.
+fn compile_host_common() -> Result<()> {
     let bridge_src = bridge_root().join("src");
     let mut build = cc::Build::new();
     build
         .cpp(true)
         .flag_if_supported("-std=gnu++17")
-        .file(bridge_src.join("whisker_bridge_host_stub.cc"))
-        .include(bridge_root().join("include"));
+        .file(bridge_src.join("whisker_bridge_common.cc"))
+        .include(bridge_root().join("include"))
+        .include(&bridge_src);
     build
-        .try_compile("whisker_bridge_host_stub")
-        .map_err(|e| anyhow::anyhow!("compile whisker_bridge_host_stub.cc: {e}"))?;
+        .try_compile("whisker_bridge_host_common")
+        .map_err(|e| anyhow::anyhow!("compile whisker_bridge_common.cc (host): {e}"))?;
     Ok(())
 }
 
@@ -258,7 +258,6 @@ fn compile_ios() -> Result<()> {
         .flag("-fobjc-arc")
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_ios.mm"))
-        .file(bridge_src.join("whisker_module_registry.mm"))
         .file(bridge_src.join("lynx_native_renderer.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);

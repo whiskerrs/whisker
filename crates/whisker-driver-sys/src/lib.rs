@@ -147,6 +147,17 @@ pub struct WhiskerKeyValueRaw {
 pub type WhiskerModuleCallback =
     extern "C" fn(user_data: *mut c_void, result: *const WhiskerValueRaw);
 
+/// Per-module dispatch function — the platform-side Swift Macro or
+/// KSP processor emits one of these per `@WhiskerModule`-annotated
+/// class. The bridge stores `(module_name → dispatch_fn)` in a
+/// lookup table; `whisker_bridge_invoke_module` then routes calls
+/// through the registered function directly (Phase 7-Φ.F).
+pub type WhiskerModuleDispatchFn = extern "C" fn(
+    method_name: *const c_char,
+    args: *const WhiskerValueRaw,
+    arg_count: usize,
+) -> WhiskerValueRaw;
+
 extern "C" {
     pub fn whisker_bridge_engine_attach(lynx_view_ptr: *mut c_void) -> *mut WhiskerEngine;
     pub fn whisker_bridge_engine_release(engine: *mut WhiskerEngine);
@@ -220,4 +231,13 @@ extern "C" {
     /// caller of `whisker_bridge_invoke_module` MUST eventually
     /// call this on the returned value (no-op for scalars).
     pub fn whisker_bridge_value_release(value: *mut WhiskerValueRaw);
+
+    /// Register a dispatch function for `module_name`. Called by
+    /// the platform-side generated code at app launch (Swift Macro
+    /// emits a `@_cdecl` fn + registration call; KSP emits a JNI
+    /// wrapper that does the equivalent). Phase 7-Φ.F.
+    pub fn whisker_bridge_register_module_dispatch(
+        module_name: *const c_char,
+        dispatch: WhiskerModuleDispatchFn,
+    );
 }
