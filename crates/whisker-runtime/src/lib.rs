@@ -20,7 +20,6 @@
 //! pipeline; that retired when the macro switched to emitting
 //! imperative `view::*` calls driven by reactive effects.
 
-pub mod diag;
 pub mod element;
 pub mod host_wake;
 pub mod main_thread;
