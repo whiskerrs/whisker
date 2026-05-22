@@ -335,4 +335,74 @@ Java_rs_whisker_runtime_WhiskerView_nativeOnLynxEvent(
     return handled ? JNI_TRUE : JNI_FALSE;
 }
 
+// ---- Native module invocation stubs (Phase 7-Φ.E.2 placeholder) ----------
+//
+// The iOS path landed in E.2 (whisker_bridge_ios.mm). Android's
+// real dispatch (JNI cached jmethodID + CallObjectMethodA against
+// the `WhiskerModuleRegistry` Kotlin object) lands in E.3 — until
+// then, Android returns the same "not implemented" error shape as
+// the C ABI surfaces, so the bridge still links cleanly on the
+// Android target.
+
+#include <cstring>
+#include <cstdlib>
+
+namespace {
+
+WhiskerValue WhiskerMakeErrorValueAndroid(const char* message) {
+    WhiskerValue v;
+    std::memset(&v, 0, sizeof(v));
+    v.type = WHISKER_VALUE_ERROR;
+    if (message != nullptr) {
+        size_t len = std::strlen(message);
+        char* buf = static_cast<char*>(std::malloc(len + 1));
+        std::memcpy(buf, message, len + 1);
+        v.v.s.ptr = buf;
+        v.v.s.len = len;
+    }
+    return v;
+}
+
+}  // namespace
+
+extern "C" WhiskerValue whisker_bridge_invoke_module(
+    const char* /*module_name*/,
+    const char* /*method_name*/,
+    const WhiskerValue* /*args*/,
+    size_t /*arg_count*/) {
+    return WhiskerMakeErrorValueAndroid(
+        "whisker_bridge_invoke_module: Android dispatch not yet "
+        "implemented (lands in Phase 7-Φ.E.3)");
+}
+
+extern "C" bool whisker_bridge_invoke_module_async(
+    const char* /*module_name*/,
+    const char* /*method_name*/,
+    const WhiskerValue* /*args*/,
+    size_t /*arg_count*/,
+    WhiskerModuleCallback callback,
+    void* user_data) {
+    if (callback != nullptr) {
+        WhiskerValue err = WhiskerMakeErrorValueAndroid(
+            "whisker_bridge_invoke_module_async: Android dispatch not yet "
+            "implemented");
+        callback(user_data, &err);
+        std::free(const_cast<char*>(err.v.s.ptr));
+    }
+    return false;
+}
+
+extern "C" void whisker_bridge_value_release(WhiskerValue* value) {
+    if (value == nullptr) return;
+    // Stubs only allocate the error message — free that and zero
+    // the discriminant so a double-release is safe.
+    if (value->type == WHISKER_VALUE_STRING ||
+        value->type == WHISKER_VALUE_ERROR) {
+        std::free(const_cast<char*>(value->v.s.ptr));
+        value->v.s.ptr = nullptr;
+        value->v.s.len = 0;
+    }
+    value->type = WHISKER_VALUE_NULL;
+}
+
 #endif  // __ANDROID__
