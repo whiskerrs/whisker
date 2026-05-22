@@ -141,11 +141,30 @@ impl Builder {
         // that step needs the bundle id + scheme from `IosParams`
         // and runs after this returns.
         let ws = self.workspace_root.clone();
+        let crate_dir = self.crate_dir.clone();
         let pkg = self.package.clone();
         let features = self.features.clone();
         let capture = self.capture.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
+            // Stage Whisker modules' iOS Swift sources before cargo
+            // build so the pbxproj's WhiskerModules SwiftPM ref
+            // resolves cleanly. Empty when no module declares
+            // `[ios].swift_sources` — the staging step still writes
+            // a no-op Package.swift + WhiskerModuleBehaviors.swift
+            // so AppDelegate's `import WhiskerModules` doesn't
+            // fail to resolve.
+            let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
+            let gen_ios = crate_dir.join("gen/ios");
+            let whisker_runtime_path = ws.join("native/ios");
+            let whisker_ios_macros_path = ws.join("packages/whisker-ios-macros");
+            whisker_build::ios::stage_module_swift_sources(
+                &gen_ios,
+                &whisker_runtime_path,
+                &whisker_ios_macros_path,
+                &modules,
+            )?;
+
             // Dev loop only ever loads the arm64-sim slice on an
             // Apple Silicon Mac. Building the device + x86 slices
             // adds ~60s per initial `whisker run` for no benefit

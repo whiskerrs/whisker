@@ -173,7 +173,22 @@ fn build_ios_app(
         );
     }
 
-    // 2. xcframework wrap (cargo per-triple → lipo sim slices → wrap).
+    // 2. Discover Whisker modules and stage their iOS Swift sources
+    //    + generated WhiskerModuleBehaviors into the SwiftPM package
+    //    the pbxproj XCLocalSwiftPackageReference points at. Same
+    //    pattern as the Android pre-gradle staging step.
+    let modules = whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), &m.package)
+        .with_context(|| format!("discover modules for `{}`", m.package))?;
+    let whisker_runtime_path = workspace_root.join("native/ios");
+    let whisker_ios_macros_path = workspace_root.join("packages/whisker-ios-macros");
+    ios::stage_module_swift_sources(
+        &sync.gen_dir,
+        &whisker_runtime_path,
+        &whisker_ios_macros_path,
+        &modules,
+    )?;
+
+    // 3. xcframework wrap (cargo per-triple → lipo sim slices → wrap).
     //    Self-contained in `whisker_build::ios`.
     ios::build_xcframework(workspace_root, &m.package, &[], None)?;
 

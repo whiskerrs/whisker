@@ -56,6 +56,14 @@ pub struct IosInputs {
     /// generated project is portable regardless of where the
     /// consuming crate sits relative to the workspace root.
     pub whisker_runtime_path: PathBuf,
+    /// Path to the auto-generated `WhiskerModules` SwiftPM package
+    /// — typically `<crate_dir>/gen/ios/whisker_modules`. Same
+    /// shape as [`whisker_runtime_path`] but pointed at the
+    /// gen-tree-managed dir `whisker-build::ios::
+    /// stage_module_swift_sources` populates with each module's
+    /// `[ios].swift_sources` and the generated
+    /// `WhiskerModuleBehaviors.swift`.
+    pub whisker_modules_path: PathBuf,
     pub template_version: u32,
 }
 
@@ -92,6 +100,10 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
     v.insert(
         "whisker_runtime_ios_path",
         inputs.whisker_runtime_path.display().to_string(),
+    );
+    v.insert(
+        "whisker_modules_ios_path",
+        inputs.whisker_modules_path.display().to_string(),
     );
     v
 }
@@ -182,7 +194,11 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Pull the iOS-relevant subset of `AppConfig` into the renderer
 /// input struct. Errors out on required fields. `scheme` defaults to
 /// `name`; `bundle_id` defaults to the top-level `app.bundle_id`.
-pub fn inputs_from(app_config: &AppConfig, whisker_runtime_path: PathBuf) -> Result<IosInputs> {
+pub fn inputs_from(
+    app_config: &AppConfig,
+    whisker_runtime_path: PathBuf,
+    whisker_modules_path: PathBuf,
+) -> Result<IosInputs> {
     let app_name = app_config
         .name
         .clone()
@@ -220,9 +236,11 @@ pub fn inputs_from(app_config: &AppConfig, whisker_runtime_path: PathBuf) -> Res
         bundle_id,
         deployment_target,
         whisker_runtime_path,
-        // Bumped from 1 → 2 alongside the xcodegen-removal cutover so
-        // existing fingerprints invalidate and trigger a re-render.
-        template_version: 2,
+        whisker_modules_path,
+        // Bumped: 2 → 3 for the WhiskerModules SwiftPM ref + the
+        // `whisker_modules_ios_path` template var. Forces every
+        // consuming app to re-render its pbxproj on next sync.
+        template_version: 3,
     })
 }
 
@@ -253,7 +271,8 @@ mod tests {
             bundle_id: "rs.whisker.examples.helloWorld".into(),
             deployment_target: "13.0".into(),
             whisker_runtime_path: PathBuf::from("/abs/native/ios"),
-            template_version: 2,
+            whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
+            template_version: 3,
         }
     }
 
@@ -337,7 +356,7 @@ mod tests {
             name: Some("X".into()),
             ..AppConfig::default()
         };
-        let err = inputs_from(&cfg, PathBuf::new()).unwrap_err();
+        let err = inputs_from(&cfg, PathBuf::new(), PathBuf::new()).unwrap_err();
         assert!(err.to_string().contains("bundle_id"), "got: {err:#}");
     }
 }
