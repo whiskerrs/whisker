@@ -33,6 +33,11 @@ use crate::element::ElementTag;
 /// that maintains its own `Element → R::Element` map.
 pub trait DynRenderer {
     fn create_element(&mut self, tag: ElementTag) -> Element;
+    /// Phase 7: tag-by-name dispatch for custom / xelement-style
+    /// tags ("x-input", etc.) not in the built-in [`ElementTag`]
+    /// enum. Returns [`Element::INVALID`] when the tag is unknown
+    /// to Lynx's behaviour registry.
+    fn create_element_by_name(&mut self, tag_name: &str) -> Element;
     fn release_element(&mut self, handle: Element);
 
     fn set_attribute(&mut self, handle: Element, key: &str, value: &str);
@@ -129,6 +134,24 @@ fn with_renderer<R>(f: impl FnOnce(&mut dyn DynRenderer) -> R, default: R) -> R 
 // Free-function dispatch — what the `render!` macro and reactive
 // effects call.
 // ---------------------------------------------------------------------------
+
+/// Free-fn helper used by the `render!` macro and reactive effects to
+/// allocate an element of any tag the bridge knows. Routes both the
+/// built-in `ElementTag` enum and tag-by-name strings through the
+/// same owner-tracking + invalid-handle logic.
+pub fn create_element_by_name(tag_name: &str) -> Element {
+    let handle = with_renderer(|r| r.create_element_by_name(tag_name), Element(u32::MAX));
+    if handle.id() != u32::MAX {
+        crate::reactive::with_runtime(|rt| {
+            if let Some(owner_id) = rt.current_owner() {
+                if let Some(owner) = rt.owners.get_mut(owner_id) {
+                    owner.elements.push(handle);
+                }
+            }
+        });
+    }
+    handle
+}
 
 pub fn create_element(tag: ElementTag) -> Element {
     let handle = with_renderer(|r| r.create_element(tag), Element(u32::MAX));

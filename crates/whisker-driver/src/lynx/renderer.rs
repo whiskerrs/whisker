@@ -81,6 +81,21 @@ impl DynRenderer for BridgeRenderer {
         Element::from_raw(id)
     }
 
+    fn create_element_by_name(&mut self, tag_name: &str) -> Element {
+        let Ok(c) = CString::new(tag_name) else {
+            return Element::from_raw(u32::MAX);
+        };
+        let raw =
+            unsafe { ffi::whisker_bridge_create_element_by_name(self.engine_ptr(), c.as_ptr()) };
+        let ptr = match NonNull::new(raw) {
+            Some(p) => p,
+            None => return Element::from_raw(u32::MAX),
+        };
+        let id = self.elements.len() as u32;
+        self.elements.push(Some(ptr));
+        Element::from_raw(id)
+    }
+
     fn release_element(&mut self, handle: Element) {
         if let Some(slot) = self.elements.get_mut(handle.id() as usize) {
             if let Some(ptr) = slot.take() {

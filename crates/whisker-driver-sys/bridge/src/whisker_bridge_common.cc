@@ -198,6 +198,18 @@ extern "C" WhiskerElement* whisker_bridge_create_element(WhiskerEngine* engine,
     return new WhiskerElement{handle};
 }
 
+extern "C" WhiskerElement* whisker_bridge_create_element_by_name(
+    WhiskerEngine* engine,
+    const char* tag_name) {
+    if (engine == nullptr || engine->shell == nullptr || tag_name == nullptr) {
+        return nullptr;
+    }
+    lynx_fiber_element_t* handle =
+        lynx_create_fiber_element_by_name(engine->shell, tag_name);
+    if (handle == nullptr) return nullptr;
+    return new WhiskerElement{handle};
+}
+
 extern "C" void whisker_bridge_release_element(WhiskerElement* element) {
     if (element == nullptr) return;
     // Drop any registered native event callbacks for this element so
