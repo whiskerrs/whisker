@@ -42,7 +42,6 @@ pub(crate) fn schedule(node: NodeId) {
         }
         was_empty
     });
-    eprintln!("[scheduler] schedule(node={node:?}) was_empty={was_empty}",);
     // Only nudge the host on the leading edge of a flush wave. While
     // a flush is already in progress (or there's other pending work),
     // the host is either actively running or already poked.
@@ -62,10 +61,6 @@ pub(crate) fn schedule(node: NodeId) {
 /// written during a flush just append, and the outer flush keeps
 /// going).
 pub fn flush() {
-    let pending_count = with_runtime(|rt| rt.pending.len());
-    if pending_count > 0 {
-        eprintln!("[scheduler] flush start ({pending_count} pending)");
-    }
     let already_flushing = with_runtime(|rt| {
         let was = rt.flushing;
         if !was {
