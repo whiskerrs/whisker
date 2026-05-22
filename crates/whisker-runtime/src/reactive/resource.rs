@@ -158,9 +158,9 @@ where
     Fut: Future<Output = Result<T, String>> + 'static,
 {
     let state = RwSignal::new(ResourceState::Loading);
-    eprintln!("[resource] created (state=Loading), spawning fetcher");
+    crate::diag::log("[resource] created (state=Loading), spawning fetcher");
     spawn_local(async move {
-        eprintln!("[resource] fetcher future started polling");
+        crate::diag::log("[resource] fetcher future started polling");
         let result = fetcher().await;
         eprintln!(
             "[resource] fetcher resolved (ok={}); writing to state signal",
@@ -169,11 +169,11 @@ where
         state.set(match result {
             Ok(v) => ResourceState::Ready(v),
             Err(e) => {
-                eprintln!("[resource]   Err: {e}");
+                crate::diag::log("[resource]   Err: {e}");
                 ResourceState::Error(e)
             }
         });
-        eprintln!("[resource]   state.set returned; subscribers should be queued");
+        crate::diag::log("[resource]   state.set returned; subscribers should be queued");
     });
     Resource { state }
 }

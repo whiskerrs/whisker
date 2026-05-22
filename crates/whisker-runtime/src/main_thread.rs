@@ -90,11 +90,11 @@ static DISPATCHER: Mutex<Option<Dispatcher>> = Mutex::new(None);
 /// to clear (used in tests).
 #[doc(hidden)]
 pub fn set_main_thread_dispatcher(func: Option<DispatchFn>, engine: *mut c_void) {
-    eprintln!(
+    crate::diag::log(&format!(
         "[main_thread] set_main_thread_dispatcher(func={}, engine={:p})",
         func.is_some(),
         engine,
-    );
+    ));
     let built = func.map(|func| Dispatcher { func, engine });
     if let Ok(mut guard) = DISPATCHER.lock() {
         *guard = built;
@@ -119,15 +119,15 @@ pub fn run_on_main_thread<F>(f: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    eprintln!("[main_thread] run_on_main_thread called (worker → main hop)");
+    crate::diag::log("[main_thread] run_on_main_thread called (worker → main hop)");
     let dispatcher = match DISPATCHER.lock().ok().and_then(|g| *g) {
         Some(d) => {
-            eprintln!("[main_thread]   dispatcher found, calling .func");
+            crate::diag::log("[main_thread]   dispatcher found, calling .func");
             d
         }
         None => {
-            eprintln!(
-                "[main_thread] NO dispatcher registered — closure dropped, worker result lost"
+            crate::diag::log(
+                "[main_thread] NO dispatcher registered — closure dropped, worker result lost",
             );
             return;
         }
@@ -151,9 +151,9 @@ where
 
 /// Static C-ABI fn the dispatcher invokes on the TASM thread.
 extern "C" fn trampoline(user_data: *mut c_void) {
-    eprintln!("[main_thread] trampoline entered on TASM thread");
+    crate::diag::log("[main_thread] trampoline entered on TASM thread");
     if user_data.is_null() {
-        eprintln!("[main_thread]   user_data null — bailing");
+        crate::diag::log("[main_thread]   user_data null — bailing");
         return;
     }
     // SAFETY: `run_on_main_thread` is the only producer of
@@ -161,7 +161,7 @@ extern "C" fn trampoline(user_data: *mut c_void) {
     let boxed: Box<Box<dyn FnOnce() + Send + 'static>> =
         unsafe { Box::from_raw(user_data as *mut Box<dyn FnOnce() + Send + 'static>) };
     boxed();
-    eprintln!("[main_thread]   closure ran; calling wake_runtime");
+    crate::diag::log("[main_thread]   closure ran; calling wake_runtime");
     // Wake the runtime so the host schedules another tick. Without
     // this, a worker thread that calls `run_on_main_thread(|| tx.send(v))`
     // (the `run_blocking` path inside `resource()`) would wake the
