@@ -28,6 +28,7 @@ pub mod android;
 pub mod capture;
 pub mod ios;
 pub mod lynx;
+pub mod modules;
 pub mod ui;
 
 pub use capture::{

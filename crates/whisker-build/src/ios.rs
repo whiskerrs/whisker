@@ -161,9 +161,55 @@ pub fn build_xcframework_with(
         ],
         IosSlices::SimulatorFat => &["x86_64-apple-ios", "aarch64-apple-ios-sim"],
     };
+
+    // Module-system discovery (Phase 7-Φ.F). Walks the consuming
+    // app's cargo dep graph for any sibling `whisker.module.toml`,
+    // collects the iOS native-source paths, and passes them through
+    // `WHISKER_IOS_MODULE_NATIVE_SOURCES` to `whisker-driver-sys`'s
+    // build.rs — which then folds them into its `cc::Build` so each
+    // module's `LYNX_REGISTER_UI(...)` constructor ends up inside
+    // the host dylib's `+load` set.
+    //
+    // We do this once before the triple loop so cargo metadata
+    // runs only once and every slice sees the same module list
+    // (avoids cargo invalidating the bridge build between slices).
+    let manifest_path = workspace_root
+        .join("crates")
+        .join(package.replace('-', "_")) // best-effort default
+        .join("Cargo.toml");
+    // The above guess is only a fallback. The actual cargo manifest
+    // for `package` is whatever cargo metadata resolves — but to
+    // bootstrap the metadata call we need *some* manifest. The root
+    // workspace Cargo.toml is the right entry point: cargo_metadata
+    // accepts it and resolves `package` against the workspace.
+    let workspace_manifest = workspace_root.join("Cargo.toml");
+    let modules = crate::modules::discover(&workspace_manifest, package).with_context(|| {
+        format!(
+            "discover modules for `{package}` (workspace_manifest={}, fallback_manifest={})",
+            workspace_manifest.display(),
+            manifest_path.display(),
+        )
+    })?;
+    let modules_env = crate::modules::ios_sources_env_value(&modules);
+    if !modules_env.is_empty() {
+        let count: usize = modules.iter().map(|m| m.ios_native_sources.len()).sum();
+        crate::ui::debug(format!(
+            "discovered {count} iOS native source(s) across {} module(s)",
+            modules.len(),
+        ));
+    }
+
     for triple in triples {
         let s = crate::ui::step("compile", format!("{package} ({triple})"));
-        cargo_build_ios_dylib(workspace_root, package, triple, features, capture, &s)?;
+        cargo_build_ios_dylib(
+            workspace_root,
+            package,
+            triple,
+            features,
+            capture,
+            &modules_env,
+            &s,
+        )?;
         s.done("");
     }
 
@@ -281,6 +327,7 @@ fn cargo_build_ios_dylib(
     triple: &str,
     features: &[String],
     capture: Option<&CaptureShims>,
+    modules_env: &str,
     step: &crate::ui::Step,
 ) -> Result<()> {
     let mut cmd = Command::new("cargo");
@@ -301,6 +348,11 @@ fn cargo_build_ios_dylib(
     for sym in BRIDGE_EXPORTS {
         cmd.arg(format!("-Clink-arg=-Wl,-exported_symbol,{sym}"));
     }
+    // Hand the module-discovery output down to
+    // `whisker-driver-sys`'s build.rs. When empty, build.rs just
+    // skips the module loop — no behaviour change relative to the
+    // no-modules case.
+    cmd.env("WHISKER_IOS_MODULE_NATIVE_SOURCES", modules_env);
     if let Some(c) = capture {
         std::fs::create_dir_all(&c.rustc_cache_dir)
             .with_context(|| format!("create rustc cache dir {}", c.rustc_cache_dir.display()))?;

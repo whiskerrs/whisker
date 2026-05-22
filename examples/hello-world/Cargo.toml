@@ -19,3 +19,11 @@ crate-type = ["rlib"]
 
 [dependencies]
 whisker = { workspace = true }
+
+# Phase 7-Φ.F: the `XHello` native element lives in a separate
+# module crate now. `whisker run` walks this app's dep tree, picks
+# up the module's `whisker.module.toml`, and folds its `.mm` source
+# into the iOS framework build. Removing this dep removes the pink
+# bar from the rendered output — a useful smoke test of the
+# module-discovery pipeline.
+whisker-hello-element = { path = "../../packages/whisker-hello-element" }
