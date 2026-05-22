@@ -1,7 +1,8 @@
 // `whisker-elements-codegen` — Swift executable that scans .swift
-// source files for `@WhiskerElement("x-tag")` applications and emits
-// `WhiskerModuleBehaviors.swift` containing the matching
-// `LynxComponentRegistry.registerUI(...)` calls.
+// source files for `@WhiskerElement("x-tag")` AND `@WhiskerModule(
+// "Name")` applications and emits `WhiskerModuleBehaviors.swift`
+// containing the matching `LynxComponentRegistry.registerUI(...)`
+// and `WhiskerModuleRegistry.registerModuleClass(_:forName:)` calls.
 //
 // Invoked at SwiftPM build time by `WhiskerElementsCodegenPlugin`
 // (under `../../Plugins/`). The plugin passes:
@@ -9,12 +10,12 @@
 //   <input1.swift> <input2.swift> …
 //
 // Apple's SwiftSyntax parses each input file into an AST; we walk
-// it to find any class declaration carrying a `@WhiskerElement`
-// attribute, pull the string literal argument, and produce one
-// registration line per match.
+// it to find any class declaration carrying either annotation,
+// pull the string literal argument, and produce one registration
+// line per match.
 //
 // Companion of `WhiskerElementProcessor.kt` (Android KSP). Same
-// shape — annotation in, generated registry out. Apple's
+// shape — annotations in, generated registry out. Apple's
 // SwiftSyntax is the iOS equivalent of KSP's `Resolver`.
 
 import Foundation
@@ -49,64 +50,92 @@ func parseArgs(_ argv: [String]) -> Args? {
 
 // ---- AST walker --------------------------------------------------------------
 
-/// One discovered `(tag, className)` pair. `className` is the bare
-/// Swift class name as written; the generated registry's
-/// `NSClassFromString` lookup applies both the `WhiskerModules.`
-/// SwiftPM-target prefix AND the bare name (to support authors
-/// who add their own `@objc(BareName)`).
-struct Hit {
+/// One discovered `(tag, className)` pair from a `@WhiskerElement`
+/// annotation. `className` is the bare Swift class name as
+/// written; the generated registry's `NSClassFromString` lookup
+/// applies both the `WhiskerModules.` SwiftPM-target prefix AND
+/// the bare name (to support authors who add their own
+/// `@objc(BareName)`).
+struct ElementHit {
     let tag: String
     let className: String
 }
 
-final class WhiskerElementCollector: SyntaxVisitor {
-    var hits: [Hit] = []
+/// One discovered `(name, className)` pair from a `@WhiskerModule`
+/// annotation. Same naming convention as `ElementHit`; the
+/// platform-side dispatch (`whisker_bridge_invoke_module`) goes
+/// through `WhiskerModuleRegistry` rather than Lynx's behaviour
+/// registry.
+struct ModuleHit {
+    let name: String
+    let className: String
+}
+
+final class WhiskerAnnotationCollector: SyntaxVisitor {
+    var elements: [ElementHit] = []
+    var modules: [ModuleHit] = []
 
     override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
         for attribute in node.attributes {
             guard let attr = attribute.as(AttributeSyntax.self) else { continue }
-            // The attribute name appears as a single
-            // `IdentifierTypeSyntax` for `@WhiskerElement` —
-            // skip qualified-name spellings for now (rare).
             guard let attrName = attr.attributeName.as(IdentifierTypeSyntax.self) else { continue }
-            guard attrName.name.text == "WhiskerElement" else { continue }
-            guard let args = attr.arguments?.as(LabeledExprListSyntax.self) else { continue }
-            guard let first = args.first else { continue }
-            guard let strLit = first.expression.as(StringLiteralExprSyntax.self) else { continue }
-            guard strLit.segments.count == 1 else { continue }
-            guard let seg = strLit.segments.first?.as(StringSegmentSyntax.self) else { continue }
-            let tag = seg.content.text
+            let name = attrName.name.text
+            guard name == "WhiskerElement" || name == "WhiskerModule" else { continue }
+            guard let value = firstStringArgument(of: attr) else { continue }
             let className = node.name.text
-            hits.append(Hit(tag: tag, className: className))
+            if name == "WhiskerElement" {
+                elements.append(ElementHit(tag: value, className: className))
+            } else {
+                modules.append(ModuleHit(name: value, className: className))
+            }
         }
         return .skipChildren
     }
 }
 
+/// Extract the first positional string-literal argument from an
+/// `@Attr("...")` invocation. Returns nil for any deviation
+/// (multi-segment interpolation, missing args, non-string expr).
+private func firstStringArgument(of attr: AttributeSyntax) -> String? {
+    guard let args = attr.arguments?.as(LabeledExprListSyntax.self) else { return nil }
+    guard let first = args.first else { return nil }
+    guard let strLit = first.expression.as(StringLiteralExprSyntax.self) else { return nil }
+    guard strLit.segments.count == 1 else { return nil }
+    guard let seg = strLit.segments.first?.as(StringSegmentSyntax.self) else { return nil }
+    return seg.content.text
+}
+
 // ---- Codegen -----------------------------------------------------------------
 
-func render(hits: [Hit]) -> String {
-    // Deterministic order — sort by tag so two builds with the
-    // same input produce byte-identical output (helps SwiftPM's
-    // incremental-rebuild fingerprinting).
-    let sorted = hits.sorted { $0.tag < $1.tag }
+func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
+    // Deterministic order — sort each list independently so two
+    // builds with the same input produce byte-identical output
+    // (helps SwiftPM's incremental-rebuild fingerprinting).
+    let sortedElements = elements.sorted { $0.tag < $1.tag }
+    let sortedModules = modules.sorted { $0.name < $1.name }
 
     var out = """
         // AUTO-GENERATED by `whisker-elements-codegen` (SwiftPM build plugin).
         // DO NOT EDIT — re-runs automatically on next `swift build`.
         //
-        // Sourced from every `@WhiskerElement("x-tag")` application in
-        // the WhiskerModules SwiftPM target's source set — i.e. every
-        // module crate's `[ios].swift_sources` staged into
+        // Sourced from `@WhiskerElement("x-tag")` and `@WhiskerModule(
+        // "Name")` applications in the WhiskerModules SwiftPM target's
+        // source set — i.e. every module crate's `[ios].swift_sources`
+        // staged into
         // `gen/ios/whisker_modules/Sources/WhiskerModules/<crate>/`.
         //
         // Sibling of Android's `rs.whisker.ksp.WhiskerElementProcessor`
         // (under `packages/whisker-android-ksp/`).
         //
-        // Generated count: \(sorted.count)
+        // Element registrations: \(sortedElements.count)
+        // Module  registrations: \(sortedModules.count)
 
         import Foundation
         import Lynx
+        // `WhiskerModuleRegistry` ships as an Obj-C class in the
+        // WhiskerDriver framework — `import WhiskerDriver` exposes
+        // it to Swift via the framework's bridged headers.
+        import WhiskerDriver
 
         @objc public final class WhiskerModuleBehaviors: NSObject {
             private static var registered = false
@@ -120,20 +149,36 @@ func render(hits: [Hit]) -> String {
 
         """
 
-    if sorted.isEmpty {
-        out += "        // (no @WhiskerElement-annotated class found)\n"
+    if sortedElements.isEmpty && sortedModules.isEmpty {
+        out += "        // (no @WhiskerElement / @WhiskerModule-annotated class found)\n"
     }
-    for hit in sorted {
-        // Same dual-resolution shape the previous Rust-side
-        // generator used: prefixed name first (default SwiftPM-target
-        // mangled), bare name fallback (for authors who declare
-        // `@objc(BareName)` themselves).
+    for hit in sortedElements {
+        // Dual-resolution shape: prefixed name first
+        // (default SwiftPM-target mangled), bare name fallback
+        // (for authors who declare `@objc(BareName)` themselves).
         out += """
                     do {
                         let cls = NSClassFromString("WhiskerModules.\(hit.className)")
                             ?? NSClassFromString("\(hit.className)")
                         if let cls = cls {
                             LynxComponentRegistry.registerUI(cls, withName: "\(hit.tag)")
+                        }
+                    }
+
+            """
+    }
+    for hit in sortedModules {
+        // `WhiskerModuleRegistry` is an Obj-C class compiled into
+        // WhiskerDriver.framework (under crates/whisker-driver-sys/
+        // bridge/src/whisker_module_registry.mm). The class header
+        // is staged in the framework's Headers/ + modulemap, so
+        // Swift sees it once we `import WhiskerDriver` above.
+        out += """
+                    do {
+                        let cls = NSClassFromString("WhiskerModules.\(hit.className)")
+                            ?? NSClassFromString("\(hit.className)")
+                        if let cls = cls {
+                            WhiskerModuleRegistry.registerModuleClass(cls, forName: "\(hit.name)")
                         }
                     }
 
@@ -156,7 +201,7 @@ guard let args = parseArgs(CommandLine.arguments) else {
     exit(2)
 }
 
-let collector = WhiskerElementCollector(viewMode: .sourceAccurate)
+let collector = WhiskerAnnotationCollector(viewMode: .sourceAccurate)
 for input in args.inputs {
     let source: String
     do {
@@ -171,7 +216,7 @@ for input in args.inputs {
     collector.walk(tree)
 }
 
-let generated = render(hits: collector.hits)
+let generated = render(elements: collector.elements, modules: collector.modules)
 do {
     try generated.write(toFile: args.outputPath, atomically: true, encoding: .utf8)
 } catch {

@@ -41,6 +41,13 @@ let package = Package(
     ],
     products: [
         .library(name: "WhiskerRuntime", targets: ["WhiskerRuntime"]),
+        // Re-export the binary `WhiskerDriver` framework so external
+        // packages (specifically `gen/ios/whisker_modules` for Phase
+        // 7-Φ.E.6's auto-generated module registrations) can `import
+        // WhiskerDriver` to see the Obj-C `WhiskerModuleRegistry`
+        // class. Without this product the binary target stays scoped
+        // to WhiskerRuntime's own sources.
+        .library(name: "WhiskerDriver", targets: ["WhiskerDriver"]),
     ],
     targets: [
         // Rust runtime + C++ bridge, packaged as a dynamic xcframework

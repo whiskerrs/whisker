@@ -43,3 +43,41 @@
 @attached(memberAttribute)
 public macro WhiskerElement(_ tag: String) =
     #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerElementMacro")
+
+/// Marks an `NSObject` subclass as a Whisker native module under `name`.
+///
+/// Apply to a class implementing one or more single-`NSArray*`-arg
+/// Obj-C methods (the wire shape `whisker_bridge_invoke_module`
+/// expects on the platform side). The matching
+/// `WhiskerElementsCodegen` SwiftPM build-tool plugin discovers
+/// this annotation and emits a registration call against
+/// `WhiskerModuleRegistry` so the C bridge's by-name lookup finds
+/// the class at runtime.
+///
+/// Pairs with the Rust-side `#[whisker::native_module]` proc macro
+/// (Phase 7-Φ.E.5) — the Swift class provides the platform-side
+/// implementation, the Rust proxy provides the typed call surface.
+///
+/// ```swift
+/// @WhiskerModule("WhiskerStorage")
+/// @objc(WhiskerStorageImpl)
+/// public class WhiskerStorageImpl: NSObject {
+///     @objc public func save(_ args: NSArray) -> NSObject {
+///         guard args.count >= 2,
+///               let key = args[0] as? String,
+///               let value = args[1] as? String else {
+///             return NSNumber(value: false)
+///         }
+///         UserDefaults.standard.set(value, forKey: key)
+///         return NSNumber(value: true)
+///     }
+/// }
+/// ```
+///
+/// The macro decorates the annotated class with a
+/// `__whiskerModuleName` constant carrying the registration name,
+/// for SwiftSyntax-driven discovery at build time. Phase 7-Φ.E.6.
+@attached(member, names: arbitrary)
+@attached(memberAttribute)
+public macro WhiskerModule(_ name: String) =
+    #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerModuleMacro")

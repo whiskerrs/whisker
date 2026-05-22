@@ -437,6 +437,16 @@ fn build_framework_dir(
         bridge_headers_src.join("whisker_bridge.h"),
         hdr_dir.join("whisker_bridge.h"),
     )?;
+    // Native module registry — the Obj-C class auto-generated
+    // `WhiskerModuleBehaviors.swift` calls into via
+    // `WhiskerModuleRegistry.registerModuleClass(_:forName:)`. The
+    // class is compiled into the framework's static archive, but
+    // Swift's clang importer needs the header in the framework's
+    // Headers/ + modulemap to discover the type.
+    std::fs::copy(
+        bridge_headers_src.join("whisker_module_registry.h"),
+        hdr_dir.join("whisker_module_registry.h"),
+    )?;
 
     // Modules/module.modulemap — framework form (`framework module …`).
     // The repo-level modulemap is a plain `module …` declaration; the
@@ -450,6 +460,7 @@ fn build_framework_dir(
             "framework module {FRAMEWORK_NAME} {{\n    \
              header \"whisker.h\"\n    \
              header \"whisker_bridge.h\"\n    \
+             header \"whisker_module_registry.h\"\n    \
              export *\n\
              }}\n"
         ),
@@ -670,6 +681,13 @@ fn render_modules_package_swift(
     out.push_str("            dependencies: [\n");
     out.push_str(
         "                .product(name: \"WhiskerRuntime\", package: \"WhiskerRuntime\"),\n",
+    );
+    // WhiskerDriver re-exports the bridge Obj-C `WhiskerModuleRegistry`
+    // class — the SwiftPM build plugin's generated
+    // `WhiskerModuleBehaviors.swift` imports it to call
+    // `WhiskerModuleRegistry.registerModuleClass(_:forName:)`.
+    out.push_str(
+        "                .product(name: \"WhiskerDriver\", package: \"WhiskerRuntime\"),\n",
     );
     out.push_str(
         "                .product(name: \"WhiskerElements\", package: \"whisker-ios-macros\"),\n",
