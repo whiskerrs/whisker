@@ -59,6 +59,9 @@ const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_bridge_set_event_listener_with_payload",
     "_whisker_bridge_set_root",
     "_whisker_bridge_flush",
+    "_whisker_bridge_invoke_module",
+    "_whisker_bridge_invoke_module_async",
+    "_whisker_bridge_value_release",
     "_whisker_bridge_log_hello",
 ];
 

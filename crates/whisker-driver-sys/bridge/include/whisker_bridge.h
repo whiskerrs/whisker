@@ -21,6 +21,8 @@
 #define WHISKER_BRIDGE_H_
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 // Export attribute for bridge entry points.
 //
@@ -160,6 +162,126 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_set_root(WhiskerEngine* engine, Whiske
 // Run resolve / layout / paint and submit to the painting context.
 // Call after all element mutations for the current frame are complete.
 WHISKER_BRIDGE_EXPORT void whisker_bridge_flush(WhiskerEngine* engine);
+
+// ---- Native module invocation (Phase 7-Φ.E) ------------------------------
+//
+// Non-UI platform-API surface — module classes registered on the
+// platform side (Obj-C class on iOS, Java class on Android,
+// subclassing Lynx's `LynxModule`) callable from Rust through the
+// bridge. Conceptually parallel to React Native's NativeModules but
+// without a JS engine in the loop — args + return are passed as
+// `WhiskerValue` tagged unions (no JSON marshalling).
+//
+// Bridge expects each registered module to have a string name and
+// a set of methods identifiable by string. Dispatch is reflective
+// (Obj-C `NSInvocation` / cached `jmethodID` + `CallObjectMethodA`),
+// so registration cost is one-time per module class. Per-call
+// overhead is ~200-500ns plus method body cost — about 20-200×
+// faster than JSON for typical payloads, and effectively zero-copy
+// for `WHISKER_VALUE_BYTES` payloads (image data, file blobs).
+
+typedef enum {
+    WHISKER_VALUE_NULL = 0,
+    WHISKER_VALUE_BOOL = 1,
+    WHISKER_VALUE_INT  = 2,   // int64_t
+    WHISKER_VALUE_FLOAT = 3,  // double
+    WHISKER_VALUE_STRING = 4, // UTF-8, NOT NUL-terminated; uses `len`
+    WHISKER_VALUE_BYTES = 5,  // opaque byte sequence; uses `len`
+    WHISKER_VALUE_ARRAY = 6,  // homogeneous-or-heterogeneous list
+    WHISKER_VALUE_MAP = 7,    // string-keyed map
+    WHISKER_VALUE_ERROR = 8,  // method threw / dispatch failed; string carries the message
+} WhiskerValueType;
+
+// Forward declaration so `WhiskerValueArray`/`Map` can hold
+// `WhiskerValue`s recursively.
+struct WhiskerValueRec;
+struct WhiskerKeyValueRec;
+
+typedef struct WhiskerValueArrayRec {
+    struct WhiskerValueRec* items;  // length = count
+    size_t count;
+} WhiskerValueArray;
+
+typedef struct WhiskerValueMapRec {
+    struct WhiskerKeyValueRec* entries;  // length = count
+    size_t count;
+} WhiskerValueMap;
+
+// Tagged union — by-value passing across the C ABI. For variable-
+// size types (string/bytes/array/map) the inner pointer is borrowed
+// from the producer (Rust → C call: Rust owns; C → Rust return: C
+// owns + provides matching `whisker_bridge_value_release` so the
+// callee can free after copying).
+typedef struct WhiskerValueRec {
+    uint8_t type;  // WhiskerValueType
+    uint8_t _pad[7];
+    union {
+        bool b;
+        int64_t i;
+        double f;
+        struct {
+            const char* ptr;
+            size_t len;
+        } s;
+        struct {
+            const uint8_t* ptr;
+            size_t len;
+        } bytes;
+        WhiskerValueArray array;
+        WhiskerValueMap map;
+    } v;
+} WhiskerValue;
+
+typedef struct WhiskerKeyValueRec {
+    struct {
+        const char* ptr;
+        size_t len;
+    } key;
+    WhiskerValue value;
+} WhiskerKeyValue;
+
+// Invoke a registered module's method synchronously.
+//
+// `module_name` and `method_name` are NUL-terminated UTF-8. `args`
+// points to `arg_count` `WhiskerValue`s (caller owns the storage —
+// arg strings/bytes are borrowed for the duration of the call).
+//
+// The returned `WhiskerValue` may carry a heap allocation (string,
+// bytes, nested array/map) owned by the bridge. The caller MUST
+// invoke `whisker_bridge_value_release` on the returned value once
+// done reading it. A scalar return (`null`/`bool`/`int`/`float`)
+// is safe to drop without releasing.
+//
+// On error (unknown module, missing method, dispatch failed) the
+// return is a `WHISKER_VALUE_ERROR` whose `v.s` payload carries a
+// UTF-8 description.
+WHISKER_BRIDGE_EXPORT WhiskerValue whisker_bridge_invoke_module(
+    const char* module_name,
+    const char* method_name,
+    const WhiskerValue* args,
+    size_t arg_count);
+
+// Async variant — returns immediately, the bridge will call
+// `callback(user_data, &result)` once the method completes.
+// `result` is borrowed inside the callback only (same ownership
+// rules as the sync return — caller must inspect / copy before
+// returning). The bridge frees the result automatically once the
+// callback returns.
+typedef void (*WhiskerModuleCallback)(void* user_data,
+                                      const WhiskerValue* result);
+WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_module_async(
+    const char* module_name,
+    const char* method_name,
+    const WhiskerValue* args,
+    size_t arg_count,
+    WhiskerModuleCallback callback,
+    void* user_data);
+
+// Free any heap allocations the bridge attached to `value` (string
+// content, bytes content, recursive array/map contents). Safe to
+// call on a value whose `type` doesn't carry heap data — it's a
+// no-op for scalars. NULL pointer is also safe.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_value_release(WhiskerValue* value);
 
 // ---- Phase 0–3 leftovers (kept temporarily for compatibility) ------------
 
