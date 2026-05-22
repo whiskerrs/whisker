@@ -71,6 +71,7 @@ pub fn spawn_local<F>(future: F)
 where
     F: Future<Output = ()> + 'static,
 {
+    eprintln!("[tasks] spawn_local called");
     SPAWNER.with(|s| {
         s.borrow()
             .spawn_local(future)
@@ -88,6 +89,7 @@ where
 /// flush. Calling it from user code is OK but pointless — the
 /// runtime already drives it every tick.
 pub fn run_until_stalled() {
+    eprintln!("[tasks] run_until_stalled called — driving LocalPool");
     POOL.with(|p| {
         p.borrow_mut().run_until_stalled();
     });
@@ -123,8 +125,11 @@ where
     T: Send + 'static,
 {
     let (tx, rx) = futures_channel::oneshot::channel::<T>();
+    eprintln!("[run_blocking] spawning worker thread");
     std::thread::spawn(move || {
+        eprintln!("[run_blocking] worker thread started; running closure");
         let value = closure();
+        eprintln!("[run_blocking] worker closure returned; hopping back to main thread");
         // Hop back to the main thread before sending so the receiver
         // wakes up on the TASM thread (same thread the awaiting task
         // polls on). Without this, the receiver would wake from the
@@ -133,12 +138,21 @@ where
         // through `host_wake::wake_runtime`, which posts to the main
         // thread, but the order of operations is cleaner this way.
         crate::main_thread::run_on_main_thread(move || {
+            eprintln!("[run_blocking] on TASM thread: calling tx.send(value)");
             // `send` fails only if the awaiting half was dropped
             // (its owner was disposed mid-fetch). In that case the
             // result is simply discarded; no panic, no warning —
             // this is the documented `resource` cancel-on-dispose
             // semantics.
-            let _ = tx.send(value);
+            let send_result = tx.send(value);
+            eprintln!(
+                "[run_blocking]   tx.send {}",
+                if send_result.is_ok() {
+                    "succeeded"
+                } else {
+                    "FAILED — receiver dropped"
+                },
+            );
         });
     });
     // Map the channel error away so the user just awaits `T`.

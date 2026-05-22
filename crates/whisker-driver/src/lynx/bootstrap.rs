@@ -232,6 +232,7 @@ pub fn tick(engine_raw: *mut c_void) -> bool {
 }
 
 extern "C" fn tick_callback(_user_data: *mut c_void) {
+    eprintln!("[bootstrap] tick_callback entered");
     // Drain any pending hot-reload patch before the reactive flush so
     // any patched closures run with their new bodies when the queue
     // fires. Returns the list of host-side fn pointers that were
