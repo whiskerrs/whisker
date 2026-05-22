@@ -466,11 +466,15 @@ impl ElementNode {
             // String-shaped attr (`style`, `class`, plus tag-
             // specific ones like `image::src`,
             // `scroll_view::scroll_orientation`,
-            // `raw_text::text`, `text::value`). Wrap in a closure
-            // so the value re-runs on signal-dep changes.
-            quote_spanned! {span=>
-                .#name(move || ::std::string::ToString::to_string(&(#value)))
-            }
+            // `raw_text::text`, `text::value`). Phase 7-Φ.B
+            // pivot: the builder method now takes
+            // `impl Into<Signal<T>>` and handles Static / Dynamic
+            // dispatch internally. The macro no longer wraps in
+            // `move || …to_string()` — the value flows as-is and
+            // type inference picks the correct `From` impl
+            // (`From<T>` for static / `From<ReadSignal<T>>` etc.
+            // for reactive).
+            quote_spanned! {span=> .#name(#value) }
         } else if name_str == "on_tap" {
             // Handler closure passed through.
             quote_spanned! {span=> .#name(#value) }
@@ -478,11 +482,13 @@ impl ElementNode {
             let event_lit = LitStr::new(&event, span);
             quote_spanned! {span=> .on(#event_lit, #value) }
         } else {
-            // Catch-all → `.attr("kebab-name", move || value)`.
+            // Catch-all → `.attr("kebab-name", value)`. The builder's
+            // `.attr` accepts `impl Into<Signal<T>>` like the named
+            // attr methods; no closure wrapping here either.
             let kebab = name_str.replace('_', "-");
             let kebab_lit = LitStr::new(&kebab, span);
             quote_spanned! {span=>
-                .attr(#kebab_lit, move || ::std::string::ToString::to_string(&(#value)))
+                .attr(#kebab_lit, #value)
             }
         };
         Some(call)

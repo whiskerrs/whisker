@@ -203,6 +203,18 @@ impl<T: 'static> RwSignal<T> {
         }
     }
 
+    /// Project to a read-only handle pointing at the same underlying
+    /// value. Useful when handing the signal to consumers that
+    /// shouldn't be able to write — and the conversion path used by
+    /// `From<RwSignal<T>> for Signal<T>` to fold an RwSignal into a
+    /// `Signal::Dynamic` variant.
+    pub fn read_only(self) -> ReadSignal<T> {
+        ReadSignal {
+            id: self.id,
+            _ty: PhantomData,
+        }
+    }
+
     /// Split into separate read and write halves. The handles continue
     /// to refer to the same underlying value.
     pub fn split(self) -> (ReadSignal<T>, WriteSignal<T>) {

@@ -50,10 +50,15 @@ pub struct AppState {
 pub fn counter(state: AppState) -> whisker::runtime::view::Element {
     let big_enough = computed(move || state.count.get() > 10);
 
+    // Phase 7-Φ.B: the render! macro no longer auto-wraps kwarg
+    // expressions in `move ||`. To stay reactive, derive the label
+    // via `computed(...)` so the resulting `ReadSignal<String>`
+    // flows into `text(value: …)` as `Signal::Dynamic`.
+    let label = computed(move || format!("Count: {}", state.count.get()));
     render! {
         view(style: "display: flex; flex-direction: column; gap: 12px; padding: 20px;") {
             text(style: "font-size: 32px; font-weight: 700;") {
-                text(value: format!("Count: {}", state.count.get()))
+                text(value: label)
             }
 
             view(style: "display: flex; flex-direction: row; gap: 8px;") {

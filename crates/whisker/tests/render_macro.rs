@@ -283,8 +283,13 @@ fn multiple_children_append_in_order() {
 fn dynamic_value_renders_initial_via_effect() {
     with_recorder_and_owner(|log| {
         let (count, _set_count) = signal(0_i32);
+        // Phase 7-Φ.B: macro no longer auto-wraps kwargs. For
+        // reactive numeric → string interpolation, derive a
+        // `ReadSignal<String>` via `computed`. Passes through as
+        // `Signal::Dynamic` to the `value` builder.
+        let label = computed(move || count.get().to_string());
         let _h = render! {
-            text(value: count.get())
+            text(value: label)
         };
         let set_text: Vec<_> = log
             .borrow()
@@ -302,8 +307,9 @@ fn dynamic_value_renders_initial_via_effect() {
 fn dynamic_value_updates_on_signal_write() {
     with_recorder_and_owner(|log| {
         let (count, set_count) = signal(0_i32);
+        let label = computed(move || count.get().to_string());
         let _h = render! {
-            text(value: count.get())
+            text(value: label)
         };
         set_count.set(5);
         flush();
@@ -326,8 +332,12 @@ fn dynamic_value_updates_on_signal_write() {
 fn dynamic_style_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
         let (color, set_color) = signal("red".to_string());
+        // `format!` expression captured inside `computed` so the
+        // closure (and the underlying signal read) re-runs on
+        // change.
+        let css = computed(move || format!("color: {};", color.get()));
         let _h = render! {
-            view(style: format!("color: {};", color.get()))
+            view(style: css)
         };
         set_color.set("blue".into());
         flush();
@@ -348,8 +358,10 @@ fn dynamic_style_re_runs_on_dep_change() {
 fn dynamic_attribute_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
         let (src, set_src) = signal("a.png".to_string());
+        // Already a `ReadSignal<String>` — pass the handle directly,
+        // it converts to `Signal::Dynamic`.
         let _h = render! {
-            image(src: src.get())
+            image(src: src)
         };
         set_src.set("b.png".into());
         flush();
@@ -391,10 +403,11 @@ fn mixed_static_and_dynamic_children_via_raw_text() {
     // `<text>"count=" {count.get()}</text>` produced.
     with_recorder_and_owner(|log| {
         let (count, _set) = signal(7_i32);
+        let count_label = computed(move || count.get().to_string());
         let _h = render! {
             text {
                 raw_text(text: "count=")
-                raw_text(text: count.get())
+                raw_text(text: count_label)
             }
         };
         let set_text: Vec<_> = log
@@ -414,10 +427,12 @@ fn signal_only_updates_elements_that_read_it() {
     with_recorder_and_owner(|log| {
         let (a, set_a) = signal(0_i32);
         let (b, _set_b) = signal(100_i32);
+        let a_label = computed(move || a.get().to_string());
+        let b_label = computed(move || b.get().to_string());
         let _h = render! {
             view {
-                text(value: a.get())
-                text(value: b.get())
+                text(value: a_label)
+                text(value: b_label)
             }
         };
         log.borrow_mut().clear(); // ignore initial ops
