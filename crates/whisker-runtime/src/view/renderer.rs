@@ -53,6 +53,24 @@ pub trait DynRenderer {
         callback: Box<dyn Fn() + 'static>,
     );
 
+    /// Variant that also passes the platform-side event-detail body
+    /// (Lynx's `LynxEvent.generateEventBody` dict, serialised to a
+    /// UTF-8 JSON string) to the callback. Used by
+    /// `#[whisker::native_element]` for `on_<event>: String`
+    /// prop declarations — `on_input` on `<input>` receives the
+    /// updated text via this path.
+    ///
+    /// Renderers that don't support event payloads (in-memory test
+    /// recorders, etc.) should forward to `set_event_listener` and
+    /// invoke `callback` with an empty `String` when the event fires
+    /// — same semantic as "empty payload" from the iOS bridge.
+    fn set_event_listener_with_string_payload(
+        &mut self,
+        handle: Element,
+        event_name: &str,
+        callback: Box<dyn Fn(String) + 'static>,
+    );
+
     fn set_root(&mut self, page: Element);
     fn flush(&mut self);
 }
@@ -280,6 +298,17 @@ pub fn __reset_children_mirror_for_tests() {
 
 pub fn set_event_listener(handle: Element, event_name: &str, callback: Box<dyn Fn() + 'static>) {
     with_renderer(|r| r.set_event_listener(handle, event_name, callback), ())
+}
+
+pub fn set_event_listener_with_string_payload(
+    handle: Element,
+    event_name: &str,
+    callback: Box<dyn Fn(String) + 'static>,
+) {
+    with_renderer(
+        |r| r.set_event_listener_with_string_payload(handle, event_name, callback),
+        (),
+    )
 }
 
 pub fn set_root(page: Element) {

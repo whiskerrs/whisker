@@ -27,9 +27,17 @@ void whisker_bridge_internal_mark_event_reporter_installed(WhiskerEngine* engine
 bool whisker_bridge_internal_is_event_reporter_installed(const WhiskerEngine* engine);
 
 // Look up a registered (element_sign, event_name) callback and invoke
-// it. Returns true if a callback was found and fired (caller should
-// consume the event in the host event chain).
+// it. `payload_json` is the event body serialised as a UTF-8 JSON
+// string (or empty string when the event carries no detail); the
+// bridge does NOT take ownership and the pointer is only valid for
+// the duration of this call. Returns true if a callback was found
+// and fired (caller should consume the event in the host event chain).
+//
+// Each registered listener is either a no-payload (`WhiskerEventCallback`)
+// or string-payload (`WhiskerEventPayloadCallback`) variant; the
+// bridge routes the call to the matching arm.
 bool whisker_bridge_internal_dispatch_event(int32_t element_sign,
-                                        const char* event_name);
+                                        const char* event_name,
+                                        const char* payload_json);
 
 #endif  // WHISKER_BRIDGE_INTERNAL_H_

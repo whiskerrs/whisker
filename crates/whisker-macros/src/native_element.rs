@@ -5,18 +5,25 @@
 //! same `<Name>Props` struct, same hand-rolled builder, same
 //! PascalCase alias — but the function body is **auto-generated**
 //! rather than supplied by the user. Each declared parameter
-//! becomes an attribute on the underlying Lynx element.
+//! becomes either an attribute, an inline-style write, an event
+//! handler, or the children list on the underlying Lynx element,
+//! depending on its name + type.
 //!
 //! ## User syntax
 //!
 //! ```ignore
-//! #[whisker::native_element("x-hello")]
-//! pub fn x_hello(style: Signal<String>) {}
-//! //                                    ^^
-//! //                                    empty body — the macro replaces
-//! //                                    it with the create_element_by_name
-//! //                                    + apply_* sequence and rewrites
-//! //                                    the return type to `Element`.
+//! #[whisker::native_element("x-input")]
+//! pub fn x_input(
+//!     value: Signal<String>,                // → SetAttribute("value", …) — Static / Dynamic dispatch
+//!     placeholder: Signal<String>,          // → SetAttribute("placeholder", …)
+//!     style: Signal<String>,                // → SetRawInlineStyles(…)
+//!     checked: Signal<bool>,                // → SetAttribute("checked", "true" / "false") via ToString
+//!     on_focus: (),                         // → set_event_listener("focus", Fn())
+//!     on_input: String,                     // → set_event_listener_with_string_payload("input", Fn(String))
+//!     children: Children,                   // → child views attached to this element
+//! ) {}
+//! //  ^^
+//! //  empty body — the macro replaces it.
 //! ```
 //!
 //! Rust's grammar requires a body for top-level `fn` items (no
@@ -25,65 +32,73 @@
 //! return type and body the user supplies — the auto-generated
 //! body always returns `whisker::runtime::view::Element`.
 //!
+//! ## Prop classification
+//!
+//! The macro inspects each declared parameter and classifies it:
+//!
+//! | Name pattern | Type pattern         | Treated as                         |
+//! |--------------|----------------------|------------------------------------|
+//! | any          | `Children`           | Children block                     |
+//! | `on_*`       | `()`                 | Event handler, no payload          |
+//! | `on_*`       | `String`             | Event handler, string payload      |
+//! | `style`      | `Signal<String>` etc.| Inline-styles (SetRawInlineStyles) |
+//! | other        | `Signal<T>`          | Attribute, dispatch on Static/Dynamic |
+//! | other        | `T`                  | Attribute, static set-once         |
+//!
+//! For the value-prop rows, `T` must implement `ToString + Clone +
+//! 'static` (every primitive plus `String`/`&str`).
+//!
 //! ## What the macro emits
 //!
 //! Conceptually:
 //!
 //! ```ignore
-//! pub struct XHelloProps { style: Signal<String> }
-//! impl XHelloProps {
-//!     pub fn builder() -> XHelloPropsBuilder { … }
+//! pub struct XInputProps {
+//!     pub value: Signal<String>,
+//!     pub on_input: ::std::boxed::Box<dyn ::std::ops::Fn(String) + 'static>,
+//!     pub children: Children,
+//!     /* … */
 //! }
-//! impl XHelloPropsBuilder {
-//!     pub fn style(self, v: impl Into<Signal<String>>) -> Self { … }
-//!     pub fn build(self) -> XHelloProps { … }
+//! impl XInputProps {
+//!     pub fn builder() -> XInputPropsBuilder { … }
 //! }
-//! pub fn XHello(props: XHelloProps) -> Element {
-//!     let h = ::whisker::runtime::view::create_element_by_name("x-hello");
-//!     // For `style` specifically: route through apply_styles
-//!     // (Lynx's SetRawInlineStyles). Every other declared param
-//!     // becomes a `SetAttribute(name_kebab_case, value)`.
-//!     ::whisker::__tags::apply_styles(h, props.style);
+//! impl XInputPropsBuilder {
+//!     pub fn value(self, v: impl Into<Signal<String>>) -> Self { … }
+//!     pub fn on_input<F: Fn(String) + 'static>(self, f: F) -> Self { … }
+//!     pub fn children(self, c: Children) -> Self { … }
+//!     pub fn build(self) -> XInputProps { … }
+//! }
+//! pub fn XInput(props: XInputProps) -> Element {
+//!     let h = view::create_element_by_name("x-input");
+//!     apply_attr::<_, String>(h, "value", props.value);
+//!     set_event_listener_with_string_payload(h, "input", props.on_input);
+//!     let view: View = (props.children)();
+//!     view.attach_to(h);
 //!     h
 //! }
 //! ```
-//!
-//! The auto-generated body delegates static-vs-reactive dispatch to
-//! the same `apply_styles` / `apply_attr` helpers that built-in tags
-//! use, so a `Signal::Dynamic` prop transparently effect-wraps the
-//! underlying SetAttribute / SetRawInlineStyles call — every native
-//! element gets Whisker's reactive semantics for free.
 //!
 //! ## Call-site shape
 //!
 //! Same as user components and built-in tags. Inside `render!`:
 //!
 //! ```ignore
+//! let (text, set_text) = signal(String::new());
 //! render! {
-//!     XHello(style: "width: 100%; height: 8px;")
+//!     XInput(
+//!         value: text,
+//!         on_input: move |new_value| set_text.set(new_value),
+//!     )
 //! }
 //! ```
-//!
-//! lowers to:
-//!
-//! ```ignore
-//! XHello(XHelloProps::builder().style("width: 100%; height: 8px;").build())
-//! ```
-//!
-//! ## What's NOT supported (yet)
-//!
-//! - **Children**: native elements with sub-elements (e.g. a custom
-//!   `<x-card>{children}</x-card>`). The bridge supports
-//!   `append_child` but the macro doesn't surface it yet.
-//! - **Event handlers**: `on_<event>` props that map to
-//!   `set_event_listener`. Easy to add — same shape as
-//!   `__tags::*::on(...)`, just guarded by an attribute-name prefix
-//!   in the macro.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
-use syn::{parse2, FnArg, Ident, ItemFn, LitStr, Pat, Type};
+use syn::{
+    parse2, FnArg, GenericArgument, Ident, ItemFn, LitStr, Pat, PathArguments, Type, TypePath,
+    TypeTuple,
+};
 
 pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     // Attribute payload: a single string literal — the tag name
@@ -121,8 +136,6 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         .to_compile_error();
     }
 
-    // Walk the parameter list. Each `Typed` arg becomes a `Prop` —
-    // ident + type. We reject patterns and receivers up front.
     let mut props: Vec<Prop> = Vec::new();
     for arg in &sig.inputs {
         let pat_type = match arg {
@@ -145,35 +158,23 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                 .to_compile_error();
             }
         };
-        props.push(Prop {
-            ident,
-            ty: (*pat_type.ty).clone(),
-        });
+        let ty = (*pat_type.ty).clone();
+        let kind = match classify(&ident, &ty) {
+            Ok(k) => k,
+            Err(e) => return e.to_compile_error(),
+        };
+        props.push(Prop { ident, ty, kind });
     }
-
-    // ----- Props struct + builder ----------------------------------
 
     let props_name = format_ident!("{}", to_pascal_case(&fn_name.to_string()) + "Props");
     let builder_name = format_ident!("{}Builder", props_name);
     let internal_mod = format_ident!("__{}_props_internal", fn_name);
 
-    let props_fields: Vec<TokenStream2> = props
-        .iter()
-        .map(|p| {
-            let i = &p.ident;
-            let t = &p.ty;
-            quote! { pub #i: #t }
-        })
-        .collect();
+    // ----- Per-prop tokens -------------------------------------------
 
-    let builder_fields: Vec<TokenStream2> = props
-        .iter()
-        .map(|p| {
-            let i = &p.ident;
-            let t = &p.ty;
-            quote! { #i: ::std::option::Option<#t> }
-        })
-        .collect();
+    let props_fields: Vec<TokenStream2> = props.iter().map(prop_struct_field).collect();
+
+    let builder_fields: Vec<TokenStream2> = props.iter().map(prop_builder_field).collect();
 
     let builder_init: Vec<TokenStream2> = props
         .iter()
@@ -183,80 +184,18 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         })
         .collect();
 
-    // Each setter takes `impl Into<#ty>`. For Signal<T>-shaped types,
-    // that means String / &str / ReadSignal<T> / RwSignal<T> / Memo<T>
-    // all flow in via the existing From impls.
-    let setters: Vec<TokenStream2> = props
-        .iter()
-        .map(|p| {
-            let i = &p.ident;
-            let t = &p.ty;
-            quote! {
-                #[allow(unused_mut)]
-                pub fn #i(mut self, value: impl ::std::convert::Into<#t>) -> Self {
-                    self.#i = ::std::option::Option::Some(value.into());
-                    self
-                }
-            }
-        })
-        .collect();
+    let setters: Vec<TokenStream2> = props.iter().map(prop_setter).collect();
 
     let build_assignments: Vec<TokenStream2> = props
         .iter()
-        .map(|p| {
-            let i = &p.ident;
-            let name = i.to_string();
-            let err = format!("required prop `{name}` was not set on `{tag_name_str}`");
-            quote! {
-                #i: self.#i.expect(#err)
-            }
-        })
+        .map(|p| prop_build_assignment(p, &tag_name_str))
         .collect();
 
-    // ----- Auto-generated body --------------------------------------
-    //
-    // For each prop, decide whether it's `style` (→ apply_styles, i.e.
-    // SetRawInlineStyles) or a regular attribute (→ apply_attr with the
-    // kebab-cased prop name). Future native-element props will likely
-    // want a `#[prop(attr = "data-foo")]` escape hatch for explicit
-    // attribute-name overrides; not needed for the smoke test.
-    // `apply_styles<V, T>` and `apply_attr<V, T>` are generic over the
-    // Signal's inner T; without a hint the compiler can't pick
-    // between `T = String` (identity Into on a Signal<String>) and
-    // `T = Signal<String>` (wrap-as-Static on the whole Signal). We
-    // hard-code `T = String` via turbofish — for v1, every native
-    // element prop is `Signal<String>` and the resulting attribute /
-    // inline-styles call already serialises through ToString anyway.
-    // Future versions may extract T from a `Signal<U>` prop type
-    // when U != String; until then this rule is documented in the
-    // macro's doc-comment.
-    let apply_calls: Vec<TokenStream2> = props
-        .iter()
-        .map(|p| {
-            let i = &p.ident;
-            let name = i.to_string();
-            if name == "style" {
-                quote! {
-                    ::whisker::__tags::apply_styles::<_, ::std::string::String>(
-                        __handle, props.#i,
-                    );
-                }
-            } else {
-                let attr_name = name.replace('_', "-");
-                quote! {
-                    ::whisker::__tags::apply_attr::<_, ::std::string::String>(
-                        __handle, #attr_name, props.#i,
-                    );
-                }
-            }
-        })
-        .collect();
+    let apply_calls: Vec<TokenStream2> = props.iter().map(prop_apply_call).collect();
 
-    let prop_idents: Vec<Ident> = props.iter().map(|p| p.ident.clone()).collect();
-    let drop_unused = if prop_idents.is_empty() {
-        // Quiet `unused_variables` when the user declares no props —
-        // common for placeholder native elements like the `x-hello`
-        // smoke test.
+    // ----- Drop-unused guard for prop-less elements ------------------
+
+    let drop_unused = if props.is_empty() {
         quote! { let _ = props; }
     } else {
         quote! {}
@@ -267,14 +206,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     // PascalCase alias — same scheme as `#[component]`.
     let pascal_alias_ident = format_ident!("{}", to_pascal_case(&fn_name.to_string()));
     let fn_name_str = fn_name.to_string();
-    // Compare `Ident == str` directly to avoid `Ident::to_string()`'s
-    // allocation (clippy::cmp_owned). `syn::Ident` impls
-    // `PartialEq<str>` / `PartialEq<&str>`; we go through the
-    // already-allocated `fn_name_str.as_str()` for clarity.
     let alias_emission = if pascal_alias_ident == fn_name_str.as_str() {
-        // snake_case name already matches PascalCase (rare for native
-        // elements; their convention is `x_input` → `XInput`). Skip
-        // the alias to avoid `pub use … as same_name`.
         quote! {
             #[doc(hidden)]
             #vis use #inner_mod::#fn_name;
@@ -339,9 +271,261 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     }
 }
 
+// ----- Prop classification ------------------------------------------------
+
 struct Prop {
     ident: Ident,
     ty: Type,
+    kind: PropKind,
+}
+
+enum PropKind {
+    /// `style: Signal<String>` (or any `Signal<T>` / `T` whose name is
+    /// `style`) — routed through `apply_styles`.
+    Style { inner: Type },
+    /// Plain attribute — `Signal<T>` or `T`, name not in the special
+    /// list. Routed through `apply_attr` with the kebab-cased name.
+    Attr { inner: Type },
+    /// Children prop. Either `Children` directly (`Rc<dyn Fn() -> View>`)
+    /// or any other type the user names `children`. The macro
+    /// attaches the resulting View to the element after all attribute
+    /// writes.
+    Children,
+    /// `on_<event>: ()` — no-payload event handler. The macro
+    /// generates a `Box<dyn Fn() + 'static>` field and uses
+    /// `set_event_listener`.
+    EventNoPayload { event: String },
+    /// `on_<event>: String` — string-payload event handler. The
+    /// macro generates a `Box<dyn Fn(String) + 'static>` field and
+    /// uses `set_event_listener_with_string_payload`. The bridge
+    /// forwards Lynx's `event.detail` as a JSON-ish string to the
+    /// callback.
+    EventStringPayload { event: String },
+}
+
+fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
+    let name = ident.to_string();
+
+    // Children always wins, regardless of type.
+    if name == "children" {
+        return Ok(PropKind::Children);
+    }
+
+    // Event handler? The `on_<event>` naming convention picks these out.
+    // Payload classification comes from the declared TYPE — `()` means
+    // no payload, `String` means string payload. Anything else under
+    // this prefix is rejected for now.
+    if let Some(event) = name.strip_prefix("on_") {
+        if event.is_empty() {
+            return Err(syn::Error::new(
+                ident.span(),
+                "#[whisker::native_element]: event prop name `on_` is empty; \
+                 use e.g. `on_tap: ()` or `on_input: String`",
+            ));
+        }
+        let event = event.to_string();
+        if is_unit_type(ty) {
+            return Ok(PropKind::EventNoPayload { event });
+        }
+        if is_path_segment(ty, "String") {
+            return Ok(PropKind::EventStringPayload { event });
+        }
+        return Err(syn::Error::new(
+            ty.span(),
+            "#[whisker::native_element]: `on_<event>` props must be typed `()` \
+             (no payload) or `String` (Lynx's event-detail as a raw string). \
+             Typed-detail support is on the roadmap.",
+        ));
+    }
+
+    // Style → SetRawInlineStyles. Inner type extraction is the same
+    // as for any attribute — strip `Signal<…>` if present.
+    if name == "style" {
+        return Ok(PropKind::Style {
+            inner: signal_inner(ty).unwrap_or_else(|| ty.clone()),
+        });
+    }
+
+    // Otherwise: an attribute prop. Strip the `Signal<…>` wrapper if
+    // present so the apply_attr turbofish picks the right T (= the
+    // value's ToString-able payload, not the wrapped Signal).
+    Ok(PropKind::Attr {
+        inner: signal_inner(ty).unwrap_or_else(|| ty.clone()),
+    })
+}
+
+/// If `ty` matches `Signal<X>` (in `whisker::Signal<X>` form too),
+/// return `X`. Otherwise `None`.
+fn signal_inner(ty: &Type) -> Option<Type> {
+    let Type::Path(TypePath { path, qself: None }) = ty else {
+        return None;
+    };
+    let seg = path.segments.last()?;
+    if seg.ident != "Signal" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    args.args.iter().find_map(|a| match a {
+        GenericArgument::Type(t) => Some(t.clone()),
+        _ => None,
+    })
+}
+
+fn is_unit_type(ty: &Type) -> bool {
+    matches!(ty, Type::Tuple(TypeTuple { elems, .. }) if elems.is_empty())
+}
+
+fn is_path_segment(ty: &Type, expected_last: &str) -> bool {
+    let Type::Path(TypePath { path, qself: None }) = ty else {
+        return false;
+    };
+    path.segments
+        .last()
+        .map(|s| s.ident == expected_last)
+        .unwrap_or(false)
+}
+
+// ----- Codegen helpers ----------------------------------------------------
+
+fn prop_struct_field(p: &Prop) -> TokenStream2 {
+    let i = &p.ident;
+    match &p.kind {
+        PropKind::Style { .. } | PropKind::Attr { .. } => {
+            let t = &p.ty;
+            quote! { pub #i: #t }
+        }
+        PropKind::Children => {
+            quote! { pub #i: ::whisker::runtime::view::Children }
+        }
+        PropKind::EventNoPayload { .. } => {
+            quote! { pub #i: ::std::boxed::Box<dyn ::std::ops::Fn() + 'static> }
+        }
+        PropKind::EventStringPayload { .. } => {
+            quote! { pub #i: ::std::boxed::Box<dyn ::std::ops::Fn(::std::string::String) + 'static> }
+        }
+    }
+}
+
+fn prop_builder_field(p: &Prop) -> TokenStream2 {
+    let i = &p.ident;
+    match &p.kind {
+        PropKind::Style { .. } | PropKind::Attr { .. } => {
+            let t = &p.ty;
+            quote! { #i: ::std::option::Option<#t> }
+        }
+        PropKind::Children => {
+            quote! { #i: ::std::option::Option<::whisker::runtime::view::Children> }
+        }
+        PropKind::EventNoPayload { .. } => {
+            quote! { #i: ::std::option::Option<::std::boxed::Box<dyn ::std::ops::Fn() + 'static>> }
+        }
+        PropKind::EventStringPayload { .. } => {
+            quote! { #i: ::std::option::Option<::std::boxed::Box<dyn ::std::ops::Fn(::std::string::String) + 'static>> }
+        }
+    }
+}
+
+fn prop_setter(p: &Prop) -> TokenStream2 {
+    let i = &p.ident;
+    match &p.kind {
+        PropKind::Style { .. } | PropKind::Attr { .. } => {
+            let t = &p.ty;
+            quote! {
+                #[allow(unused_mut)]
+                pub fn #i(mut self, value: impl ::std::convert::Into<#t>) -> Self {
+                    self.#i = ::std::option::Option::Some(value.into());
+                    self
+                }
+            }
+        }
+        PropKind::Children => {
+            // Match the render! macro's UserComponent emission shape:
+            //   .children(::std::rc::Rc::new(move || { … }))
+            // So the setter accepts a `Children` directly.
+            quote! {
+                #[allow(unused_mut)]
+                pub fn #i(mut self, value: ::whisker::runtime::view::Children) -> Self {
+                    self.#i = ::std::option::Option::Some(value);
+                    self
+                }
+            }
+        }
+        PropKind::EventNoPayload { .. } => {
+            quote! {
+                #[allow(unused_mut)]
+                pub fn #i<F: ::std::ops::Fn() + 'static>(mut self, f: F) -> Self {
+                    self.#i = ::std::option::Option::Some(::std::boxed::Box::new(f));
+                    self
+                }
+            }
+        }
+        PropKind::EventStringPayload { .. } => {
+            quote! {
+                #[allow(unused_mut)]
+                pub fn #i<F: ::std::ops::Fn(::std::string::String) + 'static>(mut self, f: F) -> Self {
+                    self.#i = ::std::option::Option::Some(::std::boxed::Box::new(f));
+                    self
+                }
+            }
+        }
+    }
+}
+
+fn prop_build_assignment(p: &Prop, tag_name: &str) -> TokenStream2 {
+    let i = &p.ident;
+    let name = i.to_string();
+    let err = format!("required prop `{name}` was not set on `{tag_name}`");
+    match &p.kind {
+        PropKind::Children => {
+            // Default to an empty children list when omitted — mirrors
+            // `#[component]`'s Children default.
+            quote! {
+                #i: self.#i.unwrap_or_else(|| {
+                    ::std::rc::Rc::new(|| ::whisker::runtime::view::View::Empty)
+                })
+            }
+        }
+        _ => quote! { #i: self.#i.expect(#err) },
+    }
+}
+
+fn prop_apply_call(p: &Prop) -> TokenStream2 {
+    let i = &p.ident;
+    let name = i.to_string();
+    match &p.kind {
+        PropKind::Style { inner } => {
+            quote! {
+                ::whisker::__tags::apply_styles::<_, #inner>(__handle, props.#i);
+            }
+        }
+        PropKind::Attr { inner } => {
+            let attr_name = name.replace('_', "-");
+            quote! {
+                ::whisker::__tags::apply_attr::<_, #inner>(__handle, #attr_name, props.#i);
+            }
+        }
+        PropKind::EventNoPayload { event } => {
+            quote! {
+                ::whisker::runtime::view::set_event_listener(__handle, #event, props.#i);
+            }
+        }
+        PropKind::EventStringPayload { event } => {
+            quote! {
+                ::whisker::runtime::view::set_event_listener_with_string_payload(
+                    __handle, #event, props.#i,
+                );
+            }
+        }
+        PropKind::Children => {
+            quote! {
+                let __children_view: ::whisker::runtime::view::View = (props.#i)();
+                ::whisker::runtime::view::IntoView::into_view(__children_view)
+                    .attach_to(__handle);
+            }
+        }
+    }
 }
 
 /// `x_hello` / `x_input` → `XHello` / `XInput`. ASCII-only — native

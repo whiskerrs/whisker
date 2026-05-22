@@ -132,6 +132,25 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_set_event_listener(WhiskerElement* ele
                                     WhiskerEventCallback callback,
                                     void* user_data);
 
+// Same as `whisker_bridge_set_event_listener` but also passes the event's
+// payload (the platform-side `event.detail` / `event.params` body
+// serialised as a JSON UTF-8 string) into `callback`. The payload
+// pointer is owned by the bridge and only valid for the duration of
+// the call — the callback MUST copy if it needs to retain it.
+//
+// For events that don't carry a payload (touch, focus, etc.) the
+// bridge passes `""` (empty string), never NULL.
+//
+// Used by `#[whisker::native_element]` for event-handler props
+// declared as `on_<event>: String` (e.g. `on_input: String` on an
+// `<input>` element receives the new text value).
+typedef void (*WhiskerEventPayloadCallback)(void* user_data, const char* payload_json);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_set_event_listener_with_payload(
+    WhiskerElement* element,
+    const char* event_name,
+    WhiskerEventPayloadCallback callback,
+    void* user_data);
+
 // ---- Pipeline (TASM thread only) -----------------------------------------
 
 // Make `page` the engine's root element. Must be a Page element produced

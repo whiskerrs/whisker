@@ -29,6 +29,12 @@ pub enum WhiskerElementTag {
 
 pub type WhiskerTasmCallback = extern "C" fn(user_data: *mut c_void);
 pub type WhiskerEventCallback = extern "C" fn(user_data: *mut c_void);
+/// String-payload event callback. `payload_json` is a UTF-8 string
+/// (never NULL — the bridge normalises NULL to ""), owned by the
+/// bridge and only valid for the duration of the call. See
+/// `whisker_bridge_set_event_listener_with_payload`.
+pub type WhiskerEventPayloadCallback =
+    extern "C" fn(user_data: *mut c_void, payload_json: *const c_char);
 
 extern "C" {
     pub fn whisker_bridge_engine_attach(lynx_view_ptr: *mut c_void) -> *mut WhiskerEngine;
@@ -64,6 +70,13 @@ extern "C" {
         element: *mut WhiskerElement,
         event_name: *const c_char,
         callback: WhiskerEventCallback,
+        user_data: *mut c_void,
+    );
+
+    pub fn whisker_bridge_set_event_listener_with_payload(
+        element: *mut WhiskerElement,
+        event_name: *const c_char,
+        callback: WhiskerEventPayloadCallback,
         user_data: *mut c_void,
     );
 

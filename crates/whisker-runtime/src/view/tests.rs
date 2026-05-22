@@ -84,6 +84,17 @@ impl DynRenderer for RecordingRenderer {
             name: name.into(),
         });
     }
+    fn set_event_listener_with_string_payload(
+        &mut self,
+        h: Element,
+        name: &str,
+        _callback: Box<dyn Fn(String) + 'static>,
+    ) {
+        self.ops.borrow_mut().push(Op::Event {
+            id: h.id(),
+            name: name.into(),
+        });
+    }
     fn set_root(&mut self, page: Element) {
         self.ops.borrow_mut().push(Op::SetRoot { id: page.id() });
     }
