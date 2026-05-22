@@ -103,6 +103,27 @@ impl WhiskerValue {
     }
 }
 
+/// Failure surface for the `#[whisker::native_module]` proc-macro-
+/// generated proxy methods.
+///
+/// Wraps the UTF-8 description the bridge returned via
+/// [`WhiskerValue::Error`] (unknown module / missing method /
+/// platform-side exception / etc.), plus type-mismatch messages
+/// the proxy synthesises when the bridge returned an unexpected
+/// variant for the declared return type. Implements
+/// [`std::error::Error`] so callers can `?`-propagate through
+/// `Result` chains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhiskerModuleError(pub String);
+
+impl std::fmt::Display for WhiskerModuleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for WhiskerModuleError {}
+
 // ----- From impls — let callers pass primitives directly ------------------
 
 impl From<()> for WhiskerValue {

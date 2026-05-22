@@ -17,6 +17,7 @@ use syn::{parse_macro_input, ItemFn};
 
 mod component;
 mod native_element;
+mod native_module;
 mod render;
 
 /// Annotates the user's app function (returning `whisker::Element`) and
@@ -231,4 +232,52 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn native_element(attr: TokenStream, item: TokenStream) -> TokenStream {
     native_element::expand(attr.into(), item.into()).into()
+}
+
+/// Declare a typed Rust proxy for a Lynx-registered native module.
+///
+/// ```ignore
+/// #[whisker::native_module(name = "WhiskerStorage")]
+/// pub trait WhiskerStorage {
+///     fn save(key: String, value: String) -> bool;
+///     fn load(key: String) -> Option<String>;
+///     async fn fetch(url: String) -> Vec<u8>;
+/// }
+/// ```
+///
+/// Emits a same-named unit struct with associated functions
+/// matching each trait method. Each function marshals its args
+/// into [`whisker::native_module::WhiskerValue`], invokes the
+/// bridge via [`invoke`](whisker::native_module::invoke) (sync)
+/// or [`invoke_async`](whisker::native_module::invoke_async)
+/// (`async fn`), then converts the returned `WhiskerValue` back
+/// into the declared return type. Mismatched return shapes
+/// (bridge returned `Bool` but the method declared `String`,
+/// platform raised an error, etc.) surface as
+/// `Err(WhiskerModuleError(_))`.
+///
+/// **Module name**: `name = "..."` overrides the trait name as
+/// the registration string. The platform-side class registers
+/// against `WhiskerModuleRegistry` using this same name.
+///
+/// **Supported types** (args + returns):
+/// - Scalars: `bool`, `i32`/`i64`/`u32`/`u64`, `f32`/`f64`.
+/// - `String`.
+/// - `Vec<u8>` (bytes — zero-copy on the platform side for
+///   large blobs).
+/// - `Option<T>` where T is any of the above (maps to
+///   `WhiskerValue::Null` for None).
+/// - `WhiskerValue` (raw passthrough — useful for module methods
+///   that return polymorphic data).
+///
+/// Sync methods (no `async` keyword) generate
+/// `pub fn NAME(...) -> Result<RET, WhiskerModuleError>`. Async
+/// methods generate `pub async fn NAME(...) -> Result<RET,
+/// WhiskerModuleError>` that awaits the bridge's callback.
+///
+/// See `crates/whisker-macros/src/native_module.rs` for the
+/// emission details.
+#[proc_macro_attribute]
+pub fn native_module(attr: TokenStream, item: TokenStream) -> TokenStream {
+    native_module::expand(attr.into(), item.into()).into()
 }
