@@ -73,9 +73,8 @@ pub struct AndroidSectionRaw {
     /// runtime's own Kotlin sources. Paths are relative to the
     /// manifest's directory.
     ///
-    /// Most modules use these to declare a `LynxUI` subclass + a
-    /// `@WhiskerElement("tag")` annotation that the KSP processor
-    /// turns into a behaviour-registry registration at app init.
+    /// Most modules use these to declare a `LynxUI` subclass that
+    /// the [`behaviors`] list below points the Lynx engine at.
     #[serde(default)]
     pub kotlin_sources: Vec<String>,
     /// Paths to JNI C / C++ source files (`*.c`, `*.cc`, `*.cpp`)
@@ -85,6 +84,35 @@ pub struct AndroidSectionRaw {
     /// Kotlin.
     #[serde(default)]
     pub jni_sources: Vec<String>,
+    /// `(tag, class)` pairs of Lynx behaviors this module
+    /// contributes. Each entry tells whisker-build to emit a
+    /// `LynxEnv.addBehavior(Behavior(tag) { createUIFiber → new
+    /// <class>(ctx) })` registration into the generated
+    /// `WhiskerModuleBehaviors.kt`. `WhiskerView.init` calls
+    /// `registerAll()` on this object before the LynxView starts.
+    ///
+    /// Lynx's stock `@LynxBehavior` annotation can't be the
+    /// registration source on its own — the matching annotation
+    /// processor (`platform/android/lynx_processor/`) is a
+    /// gradle-only artefact upstream Lynx doesn't publish as a
+    /// consumable jar. Until the `@WhiskerElement` KSP processor
+    /// lands (planned follow-up), modules declare their
+    /// behaviour-registry contribution explicitly here.
+    #[serde(default)]
+    pub behaviors: Vec<AndroidBehaviorRaw>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AndroidBehaviorRaw {
+    /// Lynx tag name the behaviour registers under. Matches the
+    /// `tag_name` passed through `lynx_create_fiber_element_by_name`.
+    pub tag: String,
+    /// Fully-qualified Kotlin / Java class name (e.g.
+    /// `rs.whisker.elements.hello.WhiskerHelloElement`). Must be
+    /// reachable from the host app's classpath — typically the
+    /// class declared in one of the module's `kotlin_sources`.
+    pub class: String,
 }
 
 /// A single discovered module after its manifest has been resolved
@@ -106,6 +134,20 @@ pub struct ResolvedModule {
     /// for the Android build. Empty by default — most native_element
     /// modules use Kotlin, not JNI.
     pub android_jni_sources: Vec<PathBuf>,
+    /// `(tag, class)` behaviours this module contributes to Lynx
+    /// Android's behaviour registry. `whisker-build::android`
+    /// folds these into a generated `WhiskerModuleBehaviors.kt`.
+    pub android_behaviors: Vec<AndroidBehavior>,
+}
+
+/// Resolved `[android].behaviors` entry. Same shape as
+/// [`AndroidBehaviorRaw`]; the type exists separately so future
+/// validation (e.g. tag-name uniqueness across modules) can land
+/// on the resolved side without changing the manifest schema.
+#[derive(Debug, Clone)]
+pub struct AndroidBehavior {
+    pub tag: String,
+    pub class: String,
 }
 
 /// Walk the cargo dep graph of `app_package` (resolved at
@@ -234,6 +276,7 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
         }
         let mut android_kotlin: Vec<PathBuf> = Vec::new();
         let mut android_jni: Vec<PathBuf> = Vec::new();
+        let mut android_behaviors: Vec<AndroidBehavior> = Vec::new();
         if let Some(android) = manifest.android {
             for raw_path in android.kotlin_sources {
                 let resolved_path = manifest_dir.join(&raw_path);
@@ -261,6 +304,12 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                 })?;
                 android_jni.push(canonical);
             }
+            for b in android.behaviors {
+                android_behaviors.push(AndroidBehavior {
+                    tag: b.tag,
+                    class: b.class,
+                });
+            }
         }
         resolved.push(ResolvedModule {
             package: pkg.name.clone(),
@@ -268,6 +317,7 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
             ios_native_sources: ios_sources,
             android_kotlin_sources: android_kotlin,
             android_jni_sources: android_jni,
+            android_behaviors,
         });
     }
 

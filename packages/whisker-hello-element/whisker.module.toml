@@ -33,8 +33,19 @@ native_sources = ["src/native/whisker_hello_element.mm"]
 # by `whisker-build::android::stage_module_kotlin_sources`. Gradle's
 # main source-set then compiles them into the host APK alongside
 # the Whisker Android runtime's own Kotlin sources.
-#
-# `WhiskerHelloElement.kt` registers the `x-hello` tag against
-# Lynx's behaviour registry via Lynx's `@LynxBehavior` annotation
-# — the Android equivalent of the iOS `LYNX_REGISTER_UI` macro.
 kotlin_sources = ["src/android/WhiskerHelloElement.kt"]
+
+# `(tag, class)` registrations folded into the gen tree's
+# `WhiskerModuleBehaviors.kt` so `WhiskerView` calls
+# `LynxEnv.inst().addBehavior(Behavior("x-hello") { …
+# WhiskerHelloElement(ctx) })` once at init.
+#
+# (`@LynxBehavior` on the Kotlin class is currently ineffective —
+# Lynx's matching annotation processor isn't shipped as a
+# consumable jar by the fork — so the explicit declaration here is
+# what actually wires the class into Lynx's behaviour registry.
+# A future `@WhiskerElement` KSP processor will reproduce the same
+# entry automatically and this section becomes redundant.)
+behaviors = [
+    { tag = "x-hello", class = "rs.whisker.elements.hello.WhiskerHelloElement" },
+]

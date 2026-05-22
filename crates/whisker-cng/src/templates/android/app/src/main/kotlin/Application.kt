@@ -11,5 +11,16 @@ class {{android_application_class}} : WhiskerApplication() {
         // later, by which time the Rust lib is in `RTLD_DEFAULT`.
         super.onCreate()
         System.loadLibrary("{{rust_lib_name}}")
+
+        // Phase 7-Φ.C: register every Whisker module's
+        // `[android].behaviors` entry against Lynx's behaviour
+        // registry. The generated `WhiskerModuleBehaviors` object
+        // lives in this app module (`whisker_modules/` source set)
+        // so the call has to happen here — the runtime module
+        // (`WhiskerView`'s home) doesn't have access to the
+        // generated symbol. Must run before the first `WhiskerView`
+        // construction so `create_element_by_name(...)` calls
+        // issued during `nativeAppMain` find their class.
+        rs.whisker.runtime.generated.WhiskerModuleBehaviors.registerAll()
     }
 }
