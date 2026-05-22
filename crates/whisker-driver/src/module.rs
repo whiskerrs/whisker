@@ -292,19 +292,24 @@ extern "C" fn async_trampoline(user_data: *mut c_void, result: *const ffi::Whisk
 /// the builder after the FFI call frees everything.
 #[derive(Default)]
 struct RawBuilder {
-    /// `CString`s back the `WhiskerValueRaw::s` pointers. We hold
-    /// them by `Box<CString>` so growing the `Vec` doesn't move
-    /// the heap allocation underneath the FFI pointer (the box
-    /// stays put even if the outer Vec reallocates).
-    strings: Vec<Box<CString>>,
-    /// Owned `Vec<u8>` for bytes values; box for pointer stability.
-    bytes: Vec<Box<Vec<u8>>>,
+    /// `CString`s back the `WhiskerValueRaw::s` pointers. The
+    /// FFI pointer points to the CString's internal buffer (a
+    /// heap allocation owned by the CString's inner `Vec<u8>`);
+    /// the buffer's address doesn't change when the outer
+    /// `Vec<CString>` reallocates — only the CString *headers*
+    /// (3-word `Vec<u8>` `{ptr, len, cap}`) move, and they don't
+    /// hold the FFI-visible bytes.
+    strings: Vec<CString>,
+    /// Owned `Vec<u8>` for bytes values. Same pointer-stability
+    /// rule as `strings`: `Vec::as_ptr` returns the heap buffer's
+    /// address, which is stable across moves of the Vec header.
+    bytes: Vec<Vec<u8>>,
     /// Owned arrays of nested `WhiskerValueRaw` for the array
     /// variant. Each nested element may itself have heap
     /// allocations owned by `self`.
-    arrays: Vec<Box<Vec<ffi::WhiskerValueRaw>>>,
+    arrays: Vec<Vec<ffi::WhiskerValueRaw>>,
     /// Owned arrays of `WhiskerKeyValueRaw` for the map variant.
-    maps: Vec<Box<Vec<ffi::WhiskerKeyValueRaw>>>,
+    maps: Vec<Vec<ffi::WhiskerKeyValueRaw>>,
 }
 
 impl RawBuilder {
@@ -327,7 +332,7 @@ impl RawBuilder {
                 raw
             }
             WhiskerValue::String(s) => {
-                let c = Box::new(CString::new(s.as_str()).unwrap_or_else(|_| CString::default()));
+                let c = CString::new(s.as_str()).unwrap_or_default();
                 let mut raw = empty_raw(ffi::WhiskerValueType::String);
                 raw.v.s = ffi::WhiskerStringRef {
                     ptr: c.as_ptr(),
@@ -337,13 +342,13 @@ impl RawBuilder {
                 raw
             }
             WhiskerValue::Bytes(b) => {
-                let boxed = Box::new(b.clone());
+                let owned = b.clone();
                 let mut raw = empty_raw(ffi::WhiskerValueType::Bytes);
                 raw.v.bytes = ffi::WhiskerBytesRef {
-                    ptr: boxed.as_ptr(),
-                    len: boxed.len(),
+                    ptr: owned.as_ptr(),
+                    len: owned.len(),
                 };
-                self.bytes.push(boxed);
+                self.bytes.push(owned);
                 raw
             }
             WhiskerValue::Array(items) => {
@@ -354,16 +359,14 @@ impl RawBuilder {
                     items: nested.as_mut_ptr(),
                     count: nested.len(),
                 };
-                self.arrays.push(Box::new(nested));
+                self.arrays.push(nested);
                 raw
             }
             WhiskerValue::Map(map) => {
                 let mut entries: Vec<ffi::WhiskerKeyValueRaw> = map
                     .iter()
                     .map(|(k, v)| {
-                        let key_c = Box::new(
-                            CString::new(k.as_str()).unwrap_or_else(|_| CString::default()),
-                        );
+                        let key_c = CString::new(k.as_str()).unwrap_or_default();
                         let key_ref = ffi::WhiskerStringRef {
                             ptr: key_c.as_ptr(),
                             len: k.len(),
@@ -381,11 +384,11 @@ impl RawBuilder {
                     entries: entries.as_mut_ptr(),
                     count: entries.len(),
                 };
-                self.maps.push(Box::new(entries));
+                self.maps.push(entries);
                 raw
             }
             WhiskerValue::Error(msg) => {
-                let c = Box::new(CString::new(msg.as_str()).unwrap_or_else(|_| CString::default()));
+                let c = CString::new(msg.as_str()).unwrap_or_default();
                 let mut raw = empty_raw(ffi::WhiskerValueType::Error);
                 raw.v.s = ffi::WhiskerStringRef {
                     ptr: c.as_ptr(),
