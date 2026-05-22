@@ -33,6 +33,16 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("src/main/jniLibs")
+            // Whisker module-system v1 (Phase 7-Φ.C): module crates'
+            // Android Kotlin sources are staged into `whisker_modules/`
+            // by `whisker-build::android::stage_module_kotlin_sources`.
+            // We include it here as a Kotlin source root so gradle's
+            // compileDebugKotlin / compileReleaseKotlin tasks pick
+            // them up alongside `src/main/kotlin/`.
+            //
+            // Empty when no module declares android.kotlin_sources —
+            // gradle is fine with non-existent source roots.
+            kotlin.srcDirs("src/main/kotlin", "src/main/whisker_modules")
         }
     }
 

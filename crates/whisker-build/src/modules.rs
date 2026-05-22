@@ -68,10 +68,51 @@ pub struct IosSectionRaw {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AndroidSectionRaw {
-    // Placeholder. Android module support lands in Phase 7-Φ.C.
-    // Keeping the section parsed (rather than rejecting) so a
-    // module can declare its Android intent today without breaking
-    // the iOS build.
+    /// Paths to Kotlin / Java source files (`*.kt`, `*.java`) that
+    /// should be compiled into the host app's APK alongside the
+    /// runtime's own Kotlin sources. Paths are relative to the
+    /// manifest's directory.
+    ///
+    /// Most modules use these to declare a `LynxUI` subclass that
+    /// the [`behaviors`] list below points the Lynx engine at.
+    #[serde(default)]
+    pub kotlin_sources: Vec<String>,
+    /// Paths to JNI C / C++ source files (`*.c`, `*.cc`, `*.cpp`)
+    /// — for modules that need to drop into native code on Android
+    /// (cross-language calls, raw NDK APIs, etc.). Less common than
+    /// kotlin_sources; most native_element modules can stay in
+    /// Kotlin.
+    #[serde(default)]
+    pub jni_sources: Vec<String>,
+    /// `(tag, class)` pairs of Lynx behaviors this module
+    /// contributes. Each entry tells whisker-build to emit a
+    /// `LynxEnv.addBehavior(Behavior(tag) { createUIFiber → new
+    /// <class>(ctx) })` registration into the generated
+    /// `WhiskerModuleBehaviors.kt`. `WhiskerView.init` calls
+    /// `registerAll()` on this object before the LynxView starts.
+    ///
+    /// Lynx's stock `@LynxBehavior` annotation can't be the
+    /// registration source on its own — the matching annotation
+    /// processor (`platform/android/lynx_processor/`) is a
+    /// gradle-only artefact upstream Lynx doesn't publish as a
+    /// consumable jar. Until the `@WhiskerElement` KSP processor
+    /// lands (planned follow-up), modules declare their
+    /// behaviour-registry contribution explicitly here.
+    #[serde(default)]
+    pub behaviors: Vec<AndroidBehaviorRaw>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AndroidBehaviorRaw {
+    /// Lynx tag name the behaviour registers under. Matches the
+    /// `tag_name` passed through `lynx_create_fiber_element_by_name`.
+    pub tag: String,
+    /// Fully-qualified Kotlin / Java class name (e.g.
+    /// `rs.whisker.elements.hello.WhiskerHelloElement`). Must be
+    /// reachable from the host app's classpath — typically the
+    /// class declared in one of the module's `kotlin_sources`.
+    pub class: String,
 }
 
 /// A single discovered module after its manifest has been resolved
@@ -85,6 +126,28 @@ pub struct ResolvedModule {
     /// Absolute, existence-checked paths to `.m` / `.mm` sources.
     /// Empty when the module declares no iOS contributions.
     pub ios_native_sources: Vec<PathBuf>,
+    /// Absolute, existence-checked paths to Kotlin / Java sources
+    /// for the Android build. Empty when the module declares no
+    /// Android Kotlin contributions.
+    pub android_kotlin_sources: Vec<PathBuf>,
+    /// Absolute, existence-checked paths to JNI C / C++ sources
+    /// for the Android build. Empty by default — most native_element
+    /// modules use Kotlin, not JNI.
+    pub android_jni_sources: Vec<PathBuf>,
+    /// `(tag, class)` behaviours this module contributes to Lynx
+    /// Android's behaviour registry. `whisker-build::android`
+    /// folds these into a generated `WhiskerModuleBehaviors.kt`.
+    pub android_behaviors: Vec<AndroidBehavior>,
+}
+
+/// Resolved `[android].behaviors` entry. Same shape as
+/// [`AndroidBehaviorRaw`]; the type exists separately so future
+/// validation (e.g. tag-name uniqueness across modules) can land
+/// on the resolved side without changing the manifest schema.
+#[derive(Debug, Clone)]
+pub struct AndroidBehavior {
+    pub tag: String,
+    pub class: String,
 }
 
 /// Walk the cargo dep graph of `app_package` (resolved at
@@ -211,10 +274,50 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                 ios_sources.push(canonical);
             }
         }
+        let mut android_kotlin: Vec<PathBuf> = Vec::new();
+        let mut android_jni: Vec<PathBuf> = Vec::new();
+        let mut android_behaviors: Vec<AndroidBehavior> = Vec::new();
+        if let Some(android) = manifest.android {
+            for raw_path in android.kotlin_sources {
+                let resolved_path = manifest_dir.join(&raw_path);
+                let canonical = resolved_path.canonicalize().with_context(|| {
+                    format!(
+                        "module `{}` declares android.kotlin_sources = [..., {raw_path:?}] in {} \
+                         but {} does not exist",
+                        pkg.name,
+                        manifest_file.display(),
+                        resolved_path.display(),
+                    )
+                })?;
+                android_kotlin.push(canonical);
+            }
+            for raw_path in android.jni_sources {
+                let resolved_path = manifest_dir.join(&raw_path);
+                let canonical = resolved_path.canonicalize().with_context(|| {
+                    format!(
+                        "module `{}` declares android.jni_sources = [..., {raw_path:?}] in {} \
+                         but {} does not exist",
+                        pkg.name,
+                        manifest_file.display(),
+                        resolved_path.display(),
+                    )
+                })?;
+                android_jni.push(canonical);
+            }
+            for b in android.behaviors {
+                android_behaviors.push(AndroidBehavior {
+                    tag: b.tag,
+                    class: b.class,
+                });
+            }
+        }
         resolved.push(ResolvedModule {
             package: pkg.name.clone(),
             manifest_dir,
             ios_native_sources: ios_sources,
+            android_kotlin_sources: android_kotlin,
+            android_jni_sources: android_jni,
+            android_behaviors,
         });
     }
 
@@ -235,6 +338,32 @@ pub fn ios_sources_env_value(modules: &[ResolvedModule]) -> String {
     let mut paths: Vec<String> = Vec::new();
     for m in modules {
         for p in &m.ios_native_sources {
+            paths.push(p.to_string_lossy().into_owned());
+        }
+    }
+    paths.join(":")
+}
+
+/// Same shape as [`ios_sources_env_value`] but for Android Kotlin
+/// sources. The Android orchestration uses these paths to extend
+/// gradle's main source set (see `whisker-build::android`).
+pub fn android_kotlin_sources_env_value(modules: &[ResolvedModule]) -> String {
+    let mut paths: Vec<String> = Vec::new();
+    for m in modules {
+        for p in &m.android_kotlin_sources {
+            paths.push(p.to_string_lossy().into_owned());
+        }
+    }
+    paths.join(":")
+}
+
+/// Same shape, JNI sources. Currently only consumed by the Android
+/// orchestration when a module needs C/C++ code on Android (rare;
+/// most modules stick to Kotlin).
+pub fn android_jni_sources_env_value(modules: &[ResolvedModule]) -> String {
+    let mut paths: Vec<String> = Vec::new();
+    for m in modules {
+        for p in &m.android_jni_sources {
             paths.push(p.to_string_lossy().into_owned());
         }
     }

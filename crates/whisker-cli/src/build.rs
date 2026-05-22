@@ -119,7 +119,18 @@ fn build_android_apk(m: &manifest::ResolvedManifest, workspace_root: &Path) -> R
         capture: None,
     })?;
 
-    // 3. Stage the .so + libc++_shared.so into jniLibs/<abi>/.
+    // 3a. Discover Whisker modules in the user crate's dep graph and
+    //     stage their Android Kotlin sources under whisker_modules/
+    //     so gradle's source-set picks them up. iOS does the
+    //     equivalent through `WHISKER_IOS_MODULE_NATIVE_SOURCES` at
+    //     cargo-build time; the Android side stages files at
+    //     post-cargo / pre-gradle time because gradle scans its
+    //     source set fresh on every assemble.
+    let modules = whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), &m.package)
+        .with_context(|| format!("discover modules for `{}`", m.package))?;
+    android::stage_module_kotlin_sources(&sync.gen_dir, &modules)?;
+
+    // 3b. Stage the .so + libc++_shared.so into jniLibs/<abi>/.
     android::stage_jni_libs(&sync.gen_dir, abi, &so, &toolchain)?;
 
     // 4. Gradle release.
