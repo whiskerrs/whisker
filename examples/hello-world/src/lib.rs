@@ -146,14 +146,18 @@ fn grid_tile(
     let on_heart = move || bitmask.update(|b| *b ^= liked_bit);
 
     // Heart appearance — driven reactively off the bitmask signal.
-    let heart_glyph = move || {
+    // Φ.B removed the render! macro's `move ||` auto-wrap, so a bare
+    // call like `value: heart_glyph()` becomes a one-shot snapshot.
+    // We route through `computed` so the read sits inside an effect
+    // and re-fires when bitmask changes.
+    let heart_glyph = computed(move || {
         if bitmask.get() & liked_bit != 0 {
-            "♥"
+            "♥".to_string()
         } else {
-            "♡"
+            "♡".to_string()
         }
-    };
-    let heart_style = move || {
+    });
+    let heart_style = computed(move || {
         let color = if bitmask.get() & liked_bit != 0 {
             ACCENT_2
         } else {
@@ -165,7 +169,7 @@ fn grid_tile(
              background-color: rgba(0,0,0,0.45); color: {color}; \
              font-size: 16px; text-align: center; line-height: 28px;"
         )
-    };
+    });
     let title_style =
         format!("font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY}; margin-top: 10px;");
     let sub_style = format!("font-size: 11px; color: {TEXT_SECONDARY}; margin-top: 2px;");
@@ -176,7 +180,7 @@ fn grid_tile(
                      display: flex; flex-direction: column;") {
             view(style: "position: relative; width: 100%;") {
                 ArtTile(c1: c1, c2: c2, w: "100%", radius: "10px")
-                text(style: heart_style(), on_tap: on_heart, value: heart_glyph())
+                text(style: heart_style, on_tap: on_heart, value: heart_glyph)
             }
             text(style: title_style, value: title)
             text(style: sub_style, value: "Daily Mix")
@@ -225,28 +229,28 @@ fn activity_row(
 fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppState) -> Element {
     let tab = state.selected_tab;
     let on_pick = move || tab.set(index);
-    let glyph_style = move || {
+    let glyph_style = computed(move || {
         let color = if tab.get() == index {
             ACCENT
         } else {
             TEXT_MUTED
         };
         format!("font-size: 22px; color: {color};")
-    };
-    let label_style = move || {
+    });
+    let label_style = computed(move || {
         let selected = tab.get() == index;
         let color = if selected { ACCENT } else { TEXT_MUTED };
         let weight = if selected { 700 } else { 500 };
         format!("font-size: 11px; color: {color}; font-weight: {weight};")
-    };
+    });
     render! {
         view(
             style: "display: flex; flex-direction: column; align-items: center; \
                     gap: 4px; padding: 4px 12px;",
             on_tap: on_pick,
         ) {
-            text(style: glyph_style(), value: glyph)
-            text(style: label_style(), value: label)
+            text(style: glyph_style, value: glyph)
+            text(style: label_style, value: label)
         }
     }
 }
@@ -274,14 +278,20 @@ fn tab_bar(state: AppState) -> Element {
 fn now_playing(state: AppState) -> Element {
     let playing = state.is_playing;
     let toggle = move || playing.update(|p| *p = !*p);
-    let glyph = move || if playing.get() { "▌▌" } else { "▶" };
-    let status = move || {
+    let glyph = computed(move || {
         if playing.get() {
-            "Lo-Fi Beats · playing"
+            "▌▌".to_string()
         } else {
-            "Lo-Fi Beats · paused"
+            "▶".to_string()
         }
-    };
+    });
+    let status = computed(move || {
+        if playing.get() {
+            "Lo-Fi Beats · playing".to_string()
+        } else {
+            "Lo-Fi Beats · paused".to_string()
+        }
+    });
     let container_style = format!(
         "position: absolute; left: 12px; right: 12px; bottom: 78px; \
          display: flex; flex-direction: row; align-items: center; \
@@ -300,9 +310,9 @@ fn now_playing(state: AppState) -> Element {
             ArtTile(c1: "#ff7e5f", c2: "#feb47b", w: "48px", radius: "8px")
             view(style: "flex: 1; padding: 0 12px; display: flex; flex-direction: column;") {
                 text(style: title_style, value: "Sunset Drive")
-                text(style: sub_style, value: status())
+                text(style: sub_style, value: status)
             }
-            text(style: btn_style, on_tap: toggle, value: glyph())
+            text(style: btn_style, on_tap: toggle, value: glyph)
         }
     }
 }
