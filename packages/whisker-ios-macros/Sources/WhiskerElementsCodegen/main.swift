@@ -111,28 +111,6 @@ private func firstStringArgument(of attr: AttributeSyntax) -> String? {
     return seg.content.text
 }
 
-/// Make a Swift identifier out of a module name. Replaces any
-/// non-`[A-Za-z0-9_]` byte with `_` so the dispatch fn name is
-/// always a legal Swift identifier. Must match the sanitisation
-/// `WhiskerElementMacro.swift` does at macro-emission time —
-/// otherwise the registration call would reference an undefined
-/// symbol.
-private func sanitiseIdentifier(_ raw: String) -> String {
-    var out = ""
-    out.reserveCapacity(raw.count)
-    for char in raw.unicodeScalars {
-        if (char.value >= 0x30 && char.value <= 0x39) ||  // 0-9
-           (char.value >= 0x41 && char.value <= 0x5A) ||  // A-Z
-           (char.value >= 0x61 && char.value <= 0x7A) ||  // a-z
-           char.value == 0x5F {                           // _
-            out.unicodeScalars.append(char)
-        } else {
-            out.append("_")
-        }
-    }
-    return out
-}
-
 // ---- Codegen -----------------------------------------------------------------
 
 func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
@@ -204,12 +182,13 @@ func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
             """
     }
     for hit in sortedModules {
-        // Hand `_whiskerDispatch_<sanitised name>` directly to the
-        // bridge's register fn. Swift converts the function
-        // reference to the C `WhiskerModuleDispatchFn` typedef
-        // automatically because the macro-emitted decl is
-        // `@_cdecl` (C calling convention).
-        let symbol = "_whiskerDispatch_\(sanitiseIdentifier(hit.name))"
+        // The macro emits `_whiskerDispatch_<ClassName>` (Swift's
+        // `prefixed(...)` peer-macro coverage rule pins the name
+        // to the attached decl's identifier; the module-name
+        // annotation arg is just the registration key, not the
+        // symbol name). We register the module-name string here
+        // with the class-name-based dispatch fn.
+        let symbol = "_whiskerDispatch_\(hit.className)"
         out += """
                     whisker_bridge_register_module_dispatch(
                         "\(hit.name)", \(symbol))

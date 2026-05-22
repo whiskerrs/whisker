@@ -8,6 +8,7 @@ import com.google.devtools.ksp.processing.SymbolProcessor
 import com.google.devtools.ksp.processing.SymbolProcessorEnvironment
 import com.google.devtools.ksp.processing.SymbolProcessorProvider
 import com.google.devtools.ksp.symbol.ClassKind
+import com.google.devtools.ksp.symbol.FunctionKind
 import com.google.devtools.ksp.symbol.KSAnnotated
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
@@ -239,7 +240,13 @@ public class WhiskerElementProcessor(
         val out = mutableListOf<String>()
         for (decl in cls.declarations) {
             if (decl !is KSFunctionDeclaration) continue
-            if (decl.isConstructor()) continue
+            // Skip the synthesised primary / explicit constructor — KSP
+            // surfaces them as `FunctionKind.MEMBER` items named
+            // `<init>`. Their simpleName isn't usable as a dispatch
+            // case so we filter them out (matches the iOS Swift Macro
+            // policy).
+            if (decl.functionKind == FunctionKind.STATIC) continue
+            if (decl.simpleName.asString() == "<init>") continue
             val mods = decl.modifiers
             if (Modifier.PRIVATE in mods) continue
             // `Modifier.JAVA_STATIC` covers `@JvmStatic`-annotated

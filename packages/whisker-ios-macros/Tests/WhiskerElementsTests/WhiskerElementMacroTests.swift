@@ -71,11 +71,11 @@ final class WhiskerElementMacroTests: XCTestCase {
                 func load(_ args: [WhiskerValue]) -> WhiskerValue { .null }
             }
 
-            @_cdecl("_whiskerDispatch_LocalStore")
-            public func _whiskerDispatch_LocalStore(
-                methodName: UnsafePointer<CChar>?,
-                argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                argCount: Int
+            @_cdecl("_whiskerDispatch_LocalStoreImpl")
+            public func _whiskerDispatch_LocalStoreImpl(
+                _ methodName: UnsafePointer<CChar>?,
+                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
+                _ argCount: Int
             ) -> WhiskerValueRaw {
                 let method = methodName == nil ? "" : String(cString: methodName!)
                 let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)
@@ -96,9 +96,10 @@ final class WhiskerElementMacroTests: XCTestCase {
         )
     }
 
-    /// Module name containing a hyphen — sanitised to `_` in the
-    /// `@_cdecl` symbol so the C linker is happy.
-    func testModuleNameSanitisedForCDeclSymbol() {
+    /// Module-name annotation argument is preserved verbatim in
+    /// the default-arm error message (it's the registration key,
+    /// not part of the symbol name) — hyphens are kept untouched.
+    func testModuleNameUsedInErrorMessageVerbatim() {
         assertMacroExpansion(
             """
             @WhiskerModule("Whisker-Store")
@@ -111,11 +112,11 @@ final class WhiskerElementMacroTests: XCTestCase {
                 func ping(_ args: [WhiskerValue]) -> WhiskerValue { .null }
             }
 
-            @_cdecl("_whiskerDispatch_Whisker_Store")
-            public func _whiskerDispatch_Whisker_Store(
-                methodName: UnsafePointer<CChar>?,
-                argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                argCount: Int
+            @_cdecl("_whiskerDispatch_StoreImpl")
+            public func _whiskerDispatch_StoreImpl(
+                _ methodName: UnsafePointer<CChar>?,
+                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
+                _ argCount: Int
             ) -> WhiskerValueRaw {
                 let method = methodName == nil ? "" : String(cString: methodName!)
                 let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)
@@ -148,11 +149,11 @@ final class WhiskerElementMacroTests: XCTestCase {
             public class EmptyImpl {
             }
 
-            @_cdecl("_whiskerDispatch_Empty")
-            public func _whiskerDispatch_Empty(
-                methodName: UnsafePointer<CChar>?,
-                argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                argCount: Int
+            @_cdecl("_whiskerDispatch_EmptyImpl")
+            public func _whiskerDispatch_EmptyImpl(
+                _ methodName: UnsafePointer<CChar>?,
+                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
+                _ argCount: Int
             ) -> WhiskerValueRaw {
                 let method = methodName == nil ? "" : String(cString: methodName!)
                 let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)
@@ -189,11 +190,11 @@ final class WhiskerElementMacroTests: XCTestCase {
                 func ping(_ args: [WhiskerValue]) -> WhiskerValue { .null }
             }
 
-            @_cdecl("_whiskerDispatch_Demo")
-            public func _whiskerDispatch_Demo(
-                methodName: UnsafePointer<CChar>?,
-                argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                argCount: Int
+            @_cdecl("_whiskerDispatch_DemoImpl")
+            public func _whiskerDispatch_DemoImpl(
+                _ methodName: UnsafePointer<CChar>?,
+                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
+                _ argCount: Int
             ) -> WhiskerValueRaw {
                 let method = methodName == nil ? "" : String(cString: methodName!)
                 let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)

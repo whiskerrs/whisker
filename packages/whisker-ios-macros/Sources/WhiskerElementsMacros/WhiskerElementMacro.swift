@@ -98,7 +98,15 @@ public struct WhiskerModuleMacro: PeerMacro {
         }
         let className = classDecl.name.text
         let methodNames = discoverInstanceMethods(in: classDecl)
-        let dispatchFnName = "_whiskerDispatch_\(sanitiseIdentifier(moduleName))"
+        // Dispatch fn name MUST be `_whiskerDispatch_<ClassName>` —
+        // Swift's macro-name-coverage check requires
+        // `prefixed(_whiskerDispatch_)` to produce
+        // `_whiskerDispatch_<attached-decl-name>`. Module-name-based
+        // names (which the registry actually looks the dispatch fn
+        // up by) don't satisfy that constraint, so the SwiftPM
+        // codegen plugin handles the (module name → dispatch fn
+        // name) mapping at registration time.
+        let dispatchFnName = "_whiskerDispatch_\(className)"
 
         // Build the switch body. With no methods we emit just the
         // default arm — the dispatch fn still resolves to a real
@@ -121,12 +129,19 @@ public struct WhiskerModuleMacro: PeerMacro {
         // singleton themselves (matching the Android side, where
         // the KSP processor emits an `object` rather than a
         // `class` instance).
+        // Underscored argument labels: keeps the function's
+        // declaration-name a simple identifier (`_whiskerDispatch_X`)
+        // rather than `_whiskerDispatch_X(methodName:argsPtr:argCount:)`,
+        // so Swift's macro-name-coverage check matches it against
+        // the declared `prefixed(_whiskerDispatch_)` clause. With
+        // labels, Swift treats the labelled form as the full
+        // declaration name and the prefix-matching path didn't fire.
         let body = """
         @_cdecl("\(dispatchFnName)")
         public func \(dispatchFnName)(
-            methodName: UnsafePointer<CChar>?,
-            argsPtr: UnsafePointer<WhiskerValueRaw>?,
-            argCount: Int
+            _ methodName: UnsafePointer<CChar>?,
+            _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
+            _ argCount: Int
         ) -> WhiskerValueRaw {
             let method = methodName == nil ? "" : String(cString: methodName!)
             let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)
@@ -170,28 +185,6 @@ private func discoverInstanceMethods(in classDecl: ClassDeclSyntax) -> [String] 
         names.append(funcDecl.name.text)
     }
     return names
-}
-
-/// Make a Swift identifier out of a module name. Replaces any
-/// non-`[A-Za-z0-9_]` byte with `_` so the dispatch fn name is
-/// always a legal Swift identifier even for hyphenated module
-/// names. Identical to the sanitisation
-/// `WhiskerElementsCodegen/main.swift` does on the consumer side
-/// when emitting the registration call.
-private func sanitiseIdentifier(_ raw: String) -> String {
-    var out = ""
-    out.reserveCapacity(raw.count)
-    for char in raw.unicodeScalars {
-        if (char.value >= 0x30 && char.value <= 0x39) ||  // 0-9
-           (char.value >= 0x41 && char.value <= 0x5A) ||  // A-Z
-           (char.value >= 0x61 && char.value <= 0x7A) ||  // a-z
-           char.value == 0x5F {                           // _
-            out.unicodeScalars.append(char)
-        } else {
-            out.append("_")
-        }
-    }
-    return out
 }
 
 /// First positional string-literal argument of an `@Attr("...")`

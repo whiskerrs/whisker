@@ -2,6 +2,11 @@ package rs.whisker.runtime
 
 import java.util.concurrent.ConcurrentHashMap
 
+/// Signature of the dispatch closure each module's KSP-generated
+/// `<Class>_Dispatch` object exposes. Lifted to file scope —
+/// Kotlin disallows nested `typealias` declarations.
+public typealias WhiskerModuleDispatchFn = (String, Array<WhiskerValue>) -> WhiskerValue
+
 /**
  * Whisker native-module dispatch registry — Kotlin side.
  *
@@ -23,13 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
  * lookup.
  */
 public object WhiskerModuleRegistry {
-    /// Signature of the dispatch closure each module's KSP-generated
-    /// `<Module>_Dispatch` object exposes (via a static `dispatch`
-    /// method that this registry wraps in a lambda when
-    /// [registerDispatch] is called).
-    public typealias DispatchFn = (String, Array<WhiskerValue>) -> WhiskerValue
-
-    private val dispatchers = ConcurrentHashMap<String, DispatchFn>()
+    private val dispatchers = ConcurrentHashMap<String, WhiskerModuleDispatchFn>()
 
     /**
      * Register a dispatch closure under [name]. Subsequent
@@ -41,7 +40,7 @@ public object WhiskerModuleRegistry {
      * onCreate()` via `WhiskerModuleBehaviors.registerAll()`).
      */
     @JvmStatic
-    public fun registerDispatch(name: String, dispatch: DispatchFn) {
+    public fun registerDispatch(name: String, dispatch: WhiskerModuleDispatchFn) {
         dispatchers[name] = dispatch
     }
 

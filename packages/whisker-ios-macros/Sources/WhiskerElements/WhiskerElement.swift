@@ -89,6 +89,13 @@ public macro WhiskerElement(_ tag: String) =
 /// Phase 7-Φ.F: dispatch shim replaces the previous Obj-C
 /// `NSInvocation`-based registry. The class no longer needs to
 /// inherit from `NSObject` or declare `@objc` selectors.
-@attached(peer, names: arbitrary)
+// `names: prefixed(_whiskerDispatch_)` is load-bearing: Swift
+// rejects `names: arbitrary` on peer macros at global scope (the
+// macro could otherwise shadow any top-level decl), but the
+// `prefixed` form is allowed because every generated symbol
+// starts with the declared prefix. The dispatch shim name is
+// `_whiskerDispatch_<sanitised module name>` which satisfies the
+// constraint.
+@attached(peer, names: prefixed(_whiskerDispatch_))
 public macro WhiskerModule(_ name: String) =
     #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerModuleMacro")

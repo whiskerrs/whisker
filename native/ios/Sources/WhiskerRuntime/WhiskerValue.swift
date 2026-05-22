@@ -71,7 +71,7 @@ public extension WhiskerValue {
 
     /// Copy one `WhiskerValueRaw` into a Swift `WhiskerValue`.
     static func from(raw: WhiskerValueRaw) -> WhiskerValue {
-        switch Int(raw.type_) {
+        switch Int(raw.type) {
         case Int(WHISKER_VALUE_NULL.rawValue):
             return .null
         case Int(WHISKER_VALUE_BOOL.rawValue):
@@ -91,7 +91,7 @@ public extension WhiskerValue {
         case Int(WHISKER_VALUE_ERROR.rawValue):
             return .error(decodeString(raw.v.s))
         default:
-            return .error("WhiskerValueRaw carries unknown type \(raw.type_)")
+            return .error("WhiskerValueRaw carries unknown type \(raw.type)")
         }
     }
 
@@ -103,30 +103,30 @@ public extension WhiskerValue {
         var out = WhiskerValueRaw()
         switch self {
         case .null:
-            out.type_ = UInt8(WHISKER_VALUE_NULL.rawValue)
+            out.type = UInt8(WHISKER_VALUE_NULL.rawValue)
         case .bool(let b):
-            out.type_ = UInt8(WHISKER_VALUE_BOOL.rawValue)
+            out.type = UInt8(WHISKER_VALUE_BOOL.rawValue)
             out.v.b = b
         case .int(let i):
-            out.type_ = UInt8(WHISKER_VALUE_INT.rawValue)
+            out.type = UInt8(WHISKER_VALUE_INT.rawValue)
             out.v.i = i
         case .float(let f):
-            out.type_ = UInt8(WHISKER_VALUE_FLOAT.rawValue)
+            out.type = UInt8(WHISKER_VALUE_FLOAT.rawValue)
             out.v.f = f
         case .string(let s):
-            out.type_ = UInt8(WHISKER_VALUE_STRING.rawValue)
+            out.type = UInt8(WHISKER_VALUE_STRING.rawValue)
             out.v.s = encodeString(s)
         case .bytes(let b):
-            out.type_ = UInt8(WHISKER_VALUE_BYTES.rawValue)
+            out.type = UInt8(WHISKER_VALUE_BYTES.rawValue)
             out.v.bytes = encodeBytes(b)
         case .array(let items):
-            out.type_ = UInt8(WHISKER_VALUE_ARRAY.rawValue)
+            out.type = UInt8(WHISKER_VALUE_ARRAY.rawValue)
             out.v.array = encodeArray(items)
         case .map(let entries):
-            out.type_ = UInt8(WHISKER_VALUE_MAP.rawValue)
+            out.type = UInt8(WHISKER_VALUE_MAP.rawValue)
             out.v.map = encodeMap(entries)
         case .error(let msg):
-            out.type_ = UInt8(WHISKER_VALUE_ERROR.rawValue)
+            out.type = UInt8(WHISKER_VALUE_ERROR.rawValue)
             out.v.s = encodeString(msg)
         }
         return out
