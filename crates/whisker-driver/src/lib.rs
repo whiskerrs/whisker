@@ -8,6 +8,7 @@
 //! helpers from here as `whisker::__main_runtime::{run,tick}`.
 
 pub mod lynx;
+pub mod module;
 
 pub use lynx::bootstrap;
 pub use lynx::renderer::BridgeRenderer;

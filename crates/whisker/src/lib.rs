@@ -638,6 +638,21 @@ pub mod __tags {
 //     });
 pub use whisker_runtime::main_thread::run_on_main_thread;
 
+/// Whisker native module invocation entry point.
+///
+/// Phase 7-Φ.E API surface — `WhiskerValue` tagged-union type +
+/// `invoke` / `invoke_async` callers that cross the C bridge to
+/// platform-side modules (Obj-C class on iOS, Kotlin class on
+/// Android, both inheriting from Lynx's `LynxModule`).
+///
+/// The `#[whisker::native_module]` proc macro (Phase 7-Φ.E.5)
+/// generates type-safe Rust proxies that wrap [`invoke`] /
+/// [`invoke_async`] — direct callers use `whisker::native_module`
+/// when they need access to the raw `WhiskerValue` enum.
+pub mod native_module {
+    pub use whisker_driver::module::{from_raw, invoke, invoke_async, WhiskerValue};
+}
+
 /// Internal runtime entry points used by code the `#[whisker::main]` macro
 /// expands to. Not stable, not for direct use.
 #[doc(hidden)]
