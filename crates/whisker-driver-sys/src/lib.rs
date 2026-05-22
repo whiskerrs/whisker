@@ -36,6 +36,64 @@ pub type WhiskerEventCallback = extern "C" fn(user_data: *mut c_void);
 pub type WhiskerEventPayloadCallback =
     extern "C" fn(user_data: *mut c_void, payload_json: *const c_char);
 
+// ----- Native module invocation (Phase 7-Φ.E) ------------------------------
+//
+// Mirror of the C struct in `whisker_bridge.h`. Sizes and field
+// order MUST match exactly so by-value passing across the FFI
+// matches the C compiler's layout. The union is modeled with a
+// `[u64; 4]` storage block large enough for the largest variant
+// (`array`/`map`, each `{ptr, count}` = 16 bytes), and Rust-side
+// helpers `WhiskerValue::as_*` reinterpret the storage per `type`.
+//
+// Native callers (Rust runtime, proc-macro-generated proxies)
+// never poke the storage directly — they use the `View::*` /
+// `From<T>` impls in `whisker-runtime::view::module` which do the
+// layout casts behind a typed enum API.
+
+/// Discriminant for [`WhiskerValueRaw::type_`]. Must stay in lock
+/// step with `enum WhiskerValueType` in `whisker_bridge.h`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhiskerValueType {
+    Null = 0,
+    Bool = 1,
+    Int = 2,
+    Float = 3,
+    String = 4,
+    Bytes = 5,
+    Array = 6,
+    Map = 7,
+    Error = 8,
+}
+
+/// Raw FFI form of `WhiskerValue` — `#[repr(C)]` to match the C
+/// header byte-for-byte. The union is opaque storage Rust callers
+/// must interpret via the inspector methods in
+/// `whisker-runtime::view::module::WhiskerValue`.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct WhiskerValueRaw {
+    /// Discriminant — cast to [`WhiskerValueType`] before use.
+    pub type_: u8,
+    /// Padding matching `uint8_t _pad[7]` in the C struct so the
+    /// union starts on an 8-byte boundary (matches what the C
+    /// compiler would emit for the same layout).
+    pub _pad: [u8; 7],
+    /// 32 bytes of union storage — accommodates the largest
+    /// variant (`bytes` / `array` / `map`, all `{ptr: usize, len:
+    /// usize}` = 16 bytes; padded for future growth). Inspected
+    /// via the typed `as_*` helpers on the Rust wrapper.
+    pub storage: [u64; 4],
+}
+
+/// Callback type for `whisker_bridge_invoke_module_async`. The
+/// `result` pointer is borrowed for the duration of the call only —
+/// the bridge frees the underlying allocations once the callback
+/// returns, so closures that need to retain the value must copy
+/// into Rust-owned storage via the `whisker-runtime` wrapper.
+pub type WhiskerModuleCallback =
+    extern "C" fn(user_data: *mut c_void, result: *const WhiskerValueRaw);
+
 extern "C" {
     pub fn whisker_bridge_engine_attach(lynx_view_ptr: *mut c_void) -> *mut WhiskerEngine;
     pub fn whisker_bridge_engine_release(engine: *mut WhiskerEngine);
@@ -82,4 +140,31 @@ extern "C" {
 
     pub fn whisker_bridge_set_root(engine: *mut WhiskerEngine, page: *mut WhiskerElement);
     pub fn whisker_bridge_flush(engine: *mut WhiskerEngine);
+
+    /// Invoke a registered Whisker native module's method,
+    /// synchronously. See `whisker_bridge.h` for ownership rules
+    /// around the returned `WhiskerValueRaw`.
+    pub fn whisker_bridge_invoke_module(
+        module_name: *const c_char,
+        method_name: *const c_char,
+        args: *const WhiskerValueRaw,
+        arg_count: usize,
+    ) -> WhiskerValueRaw;
+
+    /// Async variant. Caller-supplied `callback` fires once the
+    /// method completes. `user_data` is opaque — caller owns
+    /// lifetime / dropping.
+    pub fn whisker_bridge_invoke_module_async(
+        module_name: *const c_char,
+        method_name: *const c_char,
+        args: *const WhiskerValueRaw,
+        arg_count: usize,
+        callback: WhiskerModuleCallback,
+        user_data: *mut c_void,
+    ) -> bool;
+
+    /// Free any heap allocations the bridge attached to `value` —
+    /// caller of `whisker_bridge_invoke_module` MUST eventually
+    /// call this on the returned value (no-op for scalars).
+    pub fn whisker_bridge_value_release(value: *mut WhiskerValueRaw);
 }

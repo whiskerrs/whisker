@@ -357,3 +357,65 @@ extern "C" void whisker_bridge_flush(WhiskerEngine* engine) {
     if (engine == nullptr || engine->shell == nullptr) return;
     lynx_shell_flush(engine->shell);
 }
+
+// ---- Native module invocation stubs (Phase 7-Φ.E.1) -----------------------
+//
+// Foundation-only commit — the platform-specific dispatch
+// (NSInvocation on iOS, JNI reflection on Android) lands in
+// Phase 7-Φ.E.2/E.3. Until then, every call returns a
+// WHISKER_VALUE_ERROR carrying a "not yet implemented" message so
+// the FFI shape is verifiable end-to-end (build, link, Rust-side
+// type checks) without committing to dispatch internals.
+//
+// `value_release` is a real no-op — there are no heap allocations
+// to free in the error case. Once the dispatch lands, this fn
+// gains real cleanup of strings/bytes/arrays/maps the bridge
+// produces.
+
+#include <cstring>
+#include <cstdlib>
+
+namespace {
+
+WhiskerValue MakeErrorValue(const char* message) {
+    WhiskerValue v;
+    std::memset(&v, 0, sizeof(v));
+    v.type = WHISKER_VALUE_ERROR;
+    // Stash the message as a borrowed string — caller copies before
+    // calling value_release.
+    v.v.s.ptr = message;
+    v.v.s.len = std::strlen(message);
+    return v;
+}
+
+}  // namespace
+
+extern "C" WhiskerValue whisker_bridge_invoke_module(
+    const char* /*module_name*/,
+    const char* /*method_name*/,
+    const WhiskerValue* /*args*/,
+    size_t /*arg_count*/) {
+    return MakeErrorValue(
+        "whisker_bridge_invoke_module: not yet implemented "
+        "(Phase 7-Φ.E.1 foundation — dispatch lands in E.2/E.3)");
+}
+
+extern "C" bool whisker_bridge_invoke_module_async(
+    const char* /*module_name*/,
+    const char* /*method_name*/,
+    const WhiskerValue* /*args*/,
+    size_t /*arg_count*/,
+    WhiskerModuleCallback callback,
+    void* user_data) {
+    if (callback != nullptr) {
+        WhiskerValue err = MakeErrorValue(
+            "whisker_bridge_invoke_module_async: not yet implemented");
+        callback(user_data, &err);
+    }
+    return false;
+}
+
+extern "C" void whisker_bridge_value_release(WhiskerValue* /*value*/) {
+    // Foundation stub: nothing to free. Once dispatch lands, this
+    // gains case-by-type cleanup of string/bytes/array/map.
+}
