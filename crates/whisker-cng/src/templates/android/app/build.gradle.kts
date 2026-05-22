@@ -1,6 +1,19 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    // Phase 7-Φ.H.2: KSP processor that discovers @WhiskerElement
+    // annotations across the user app's compilation (including the
+    // module-crate Kotlin sources staged under `whisker_modules/`)
+    // and generates `rs.whisker.runtime.generated.WhiskerModuleBehaviors`.
+    // The KSP processor itself lives in `packages/whisker-android-ksp/`
+    // and is pulled in via the composite-build entry added in
+    // `settings.gradle.kts`.
+    //
+    // Version is pinned to match `org.jetbrains.kotlin.android`
+    // 2.0.21 — KSP releases follow the Kotlin major.minor.patch
+    // with a trailing `-1.0.N` ABI suffix. Bump in lockstep with
+    // the Kotlin version.
+    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
 }
 
 android {
@@ -64,4 +77,13 @@ dependencies {
     implementation(project(":whisker-runtime"))
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
+    // `@WhiskerElement` annotation + KSP processor (Phase 7-Φ.H.2).
+    // Both targets live in the composite-build referenced from
+    // `settings.gradle.kts`. The annotation dep is `implementation`
+    // so module-crate Kotlin sources can resolve the
+    // `rs.whisker.annotations.WhiskerElement` symbol; the `ksp(...)`
+    // dep wires the processor into Kotlin compilation so it sees
+    // the annotation applications and emits the registry.
+    implementation("rs.whisker:annotations")
+    ksp("rs.whisker:ksp")
 }

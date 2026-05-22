@@ -48,19 +48,10 @@ behaviors = [
 # by `whisker-build::android::stage_module_kotlin_sources`. Gradle's
 # main source-set then compiles them into the host APK alongside
 # the Whisker Android runtime's own Kotlin sources.
-kotlin_sources = ["src/android/WhiskerHelloElement.kt"]
-
-# `(tag, class)` registrations folded into the gen tree's
-# `WhiskerModuleBehaviors.kt` so `WhiskerView` calls
-# `LynxEnv.inst().addBehavior(Behavior("x-hello") { …
-# WhiskerHelloElement(ctx) })` once at init.
 #
-# (`@LynxBehavior` on the Kotlin class is currently ineffective —
-# Lynx's matching annotation processor isn't shipped as a
-# consumable jar by the fork — so the explicit declaration here is
-# what actually wires the class into Lynx's behaviour registry.
-# A future `@WhiskerElement` KSP processor will reproduce the same
-# entry automatically and this section becomes redundant.)
-behaviors = [
-    { tag = "x-hello", class = "rs.whisker.elements.hello.WhiskerHelloElement" },
-]
+# The `@WhiskerElement(...)` annotations inside these sources are
+# picked up by the `whisker-android-ksp` KSP processor (Phase 7-Φ.H.2)
+# and turned into `LynxEnv.inst().addBehavior(...)` registrations
+# inside the user app's generated `WhiskerModuleBehaviors.kt`. No
+# `behaviors = [...]` manifest entry is needed.
+kotlin_sources = ["src/android/WhiskerHelloElement.kt"]
