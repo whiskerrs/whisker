@@ -23,7 +23,10 @@
 #import <objc/runtime.h>
 
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <string>
+#include <vector>
 
 #include "whisker_bridge.h"
 #include "whisker_bridge_internal.h"

@@ -27,3 +27,11 @@ whisker = { workspace = true }
 # bar from the rendered output — a useful smoke test of the
 # module-discovery pipeline.
 whisker-hello-element = { path = "../../packages/whisker-hello-element" }
+
+# Phase 7-Φ.E.8 demo: persist the heart-toggle bitmask in
+# UserDefaults (iOS) / SharedPreferences (Android) so the liked
+# mixes survive app restarts. The dep walk picks up the module's
+# `whisker.module.toml`, stages the Swift / Kotlin
+# `WhiskerLocalStoreImpl` into the gen tree, and the platform-side
+# annotation discovery wires the registration end-to-end.
+whisker-local-store = { path = "../../packages/whisker-local-store" }

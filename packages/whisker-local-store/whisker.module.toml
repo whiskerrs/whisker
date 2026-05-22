@@ -1,0 +1,18 @@
+# Whisker module manifest (v1).
+#
+# Declares the platform-side source files for `whisker-local-store`,
+# the reference Whisker native module (Phase 7-Φ.E.7). The
+# consuming app's `whisker run` / `whisker build` CLI fold these
+# sources into the host iOS framework / Android APK alongside the
+# user app's other module crates.
+#
+# Module-name string: `"WhiskerLocalStore"` — referenced by the
+# Rust-side `#[whisker::native_module(name = "WhiskerLocalStore")]`
+# proxy + the platform-side `@WhiskerModule("WhiskerLocalStore")`
+# class annotations.
+
+[ios]
+swift_sources = ["src/ios/WhiskerLocalStoreImpl.swift"]
+
+[android]
+kotlin_sources = ["src/android/WhiskerLocalStoreImpl.kt"]
