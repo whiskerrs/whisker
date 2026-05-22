@@ -335,17 +335,22 @@ Java_rs_whisker_runtime_WhiskerView_nativeOnLynxEvent(
     return handled ? JNI_TRUE : JNI_FALSE;
 }
 
-// ---- Native module invocation stubs (Phase 7-Φ.E.2 placeholder) ----------
+// ---- Native module invocation (Phase 7-Φ.E.3) ----------------------------
 //
-// The iOS path landed in E.2 (whisker_bridge_ios.mm). Android's
-// real dispatch (JNI cached jmethodID + CallObjectMethodA against
-// the `WhiskerModuleRegistry` Kotlin object) lands in E.3 — until
-// then, Android returns the same "not implemented" error shape as
-// the C ABI surfaces, so the bridge still links cleanly on the
-// Android target.
+// Real Android dispatch — mirrors the iOS path from E.2 but goes
+// through JNI: look up the class via the `WhiskerModuleRegistry`
+// Kotlin object, find the method by name (signature is the wire
+// shape both platforms share — single `Array<Any?>` / `Object[]`
+// arg, returns `Any?` / `Object`), cache the resolved `jmethodID`
+// per (class, method) so subsequent calls skip the
+// `GetMethodID` reflection cost, build a `jobjectArray` of args
+// from `WhiskerValue[]`, invoke via `CallObjectMethodA`, convert
+// the returned `jobject` back to `WhiskerValue`.
 
 #include <cstring>
 #include <cstdlib>
+#include <string>
+#include <unordered_map>
 
 namespace {
 
@@ -363,44 +368,512 @@ WhiskerValue WhiskerMakeErrorValueAndroid(const char* message) {
     return v;
 }
 
+// Thread attachment helper. Bridge calls can arrive from any
+// thread (Rust runtime, TASM thread, async pool, …) — we need a
+// JNIEnv each time. `GetEnv` reports JNI_EDETACHED for threads
+// the JVM doesn't already own, in which case we attach and
+// remember to detach on scope exit. Pre-attached threads (the
+// app's main thread, JVM thread pool workers) keep their
+// attachment.
+struct ScopedJNIEnv {
+    JNIEnv* env = nullptr;
+    bool attached = false;
+
+    ScopedJNIEnv() {
+        JavaVM* jvm = Handles().jvm;
+        if (jvm == nullptr) return;
+        int rc = jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+        if (rc == JNI_EDETACHED) {
+            if (jvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+                attached = true;
+            } else {
+                env = nullptr;
+            }
+        }
+    }
+
+    ~ScopedJNIEnv() {
+        if (attached && env != nullptr) {
+            JavaVM* jvm = Handles().jvm;
+            if (jvm != nullptr) jvm->DetachCurrentThread();
+        }
+    }
+
+    JNIEnv* get() { return env; }
+};
+
+// jmethodID cache keyed by `<class-pointer-as-string>::<method-name>`.
+// `jclass` is a `jobject` (pointer to JVM class object); we promote
+// it to a global ref before storing so the cached identifier
+// stays live across GCs. Keyed by string for simplicity over a
+// custom hasher.
+struct ModuleMethodCacheEntry {
+    jclass cls_global_ref = nullptr;
+    jmethodID method_id = nullptr;
+};
+
+std::mutex& ModuleMethodCacheMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<std::string, ModuleMethodCacheEntry>& ModuleMethodCache() {
+    static std::unordered_map<std::string, ModuleMethodCacheEntry> c;
+    return c;
+}
+
+// Resolve the cached `jmethodID` for `(cls, method_name)`,
+// inserting via `GetMethodID` on first miss. Both args expected
+// to be non-null. Returns null `method_id` if the method isn't
+// found.
+ModuleMethodCacheEntry GetCachedMethod(JNIEnv* env, jclass cls,
+                                       const char* method_name) {
+    // Use the class's hashCode as a stable identifier across
+    // local refs.
+    jclass class_class = env->FindClass("java/lang/Class");
+    jmethodID hash_method = env->GetMethodID(class_class, "hashCode", "()I");
+    jint class_hash = env->CallIntMethod(cls, hash_method);
+    env->DeleteLocalRef(class_class);
+
+    std::string key = std::to_string(class_hash) + "::" + method_name;
+    auto& mutex = ModuleMethodCacheMutex();
+    {
+        std::lock_guard<std::mutex> g(mutex);
+        auto it = ModuleMethodCache().find(key);
+        if (it != ModuleMethodCache().end()) return it->second;
+    }
+
+    ModuleMethodCacheEntry entry;
+    // Whisker module methods all share the same signature:
+    // `Object method(Object[] args)`. See the convention note in
+    // WhiskerModuleRegistry.kt.
+    entry.method_id = env->GetMethodID(cls, method_name,
+                                       "([Ljava/lang/Object;)Ljava/lang/Object;");
+    if (entry.method_id == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return entry;
+    }
+    entry.cls_global_ref = reinterpret_cast<jclass>(env->NewGlobalRef(cls));
+
+    {
+        std::lock_guard<std::mutex> g(mutex);
+        auto [it, inserted] = ModuleMethodCache().emplace(key, entry);
+        if (!inserted) {
+            // Lost the race — release our just-allocated global
+            // ref and use the existing entry instead.
+            env->DeleteGlobalRef(entry.cls_global_ref);
+            return it->second;
+        }
+    }
+    return entry;
+}
+
+// Forward declarations — converters call each other for the
+// array/map variants.
+jobject WhiskerValueToJObject(JNIEnv* env, const WhiskerValue* v);
+WhiskerValue JObjectToWhiskerValue(JNIEnv* env, jobject obj);
+
+jobject WhiskerValueToJObject(JNIEnv* env, const WhiskerValue* v) {
+    if (v == nullptr) return nullptr;
+    switch (v->type) {
+        case WHISKER_VALUE_NULL:
+            return nullptr;
+        case WHISKER_VALUE_BOOL: {
+            jclass cls = env->FindClass("java/lang/Boolean");
+            jmethodID ctor = env->GetMethodID(cls, "<init>", "(Z)V");
+            jobject o = env->NewObject(cls, ctor, (jboolean)v->v.b);
+            env->DeleteLocalRef(cls);
+            return o;
+        }
+        case WHISKER_VALUE_INT: {
+            jclass cls = env->FindClass("java/lang/Long");
+            jmethodID ctor = env->GetMethodID(cls, "<init>", "(J)V");
+            jobject o = env->NewObject(cls, ctor, (jlong)v->v.i);
+            env->DeleteLocalRef(cls);
+            return o;
+        }
+        case WHISKER_VALUE_FLOAT: {
+            jclass cls = env->FindClass("java/lang/Double");
+            jmethodID ctor = env->GetMethodID(cls, "<init>", "(D)V");
+            jobject o = env->NewObject(cls, ctor, (jdouble)v->v.f);
+            env->DeleteLocalRef(cls);
+            return o;
+        }
+        case WHISKER_VALUE_STRING: {
+            if (v->v.s.ptr == nullptr) {
+                return env->NewStringUTF("");
+            }
+            std::string s(v->v.s.ptr, v->v.s.len);
+            return env->NewStringUTF(s.c_str());
+        }
+        case WHISKER_VALUE_BYTES: {
+            jbyteArray arr = env->NewByteArray((jsize)v->v.bytes.len);
+            if (v->v.bytes.len > 0 && v->v.bytes.ptr != nullptr) {
+                env->SetByteArrayRegion(
+                    arr, 0, (jsize)v->v.bytes.len,
+                    reinterpret_cast<const jbyte*>(v->v.bytes.ptr));
+            }
+            return arr;
+        }
+        case WHISKER_VALUE_ARRAY: {
+            jclass object_cls = env->FindClass("java/lang/Object");
+            jobjectArray arr =
+                env->NewObjectArray((jsize)v->v.array.count, object_cls, nullptr);
+            for (size_t i = 0; i < v->v.array.count; i++) {
+                jobject item = WhiskerValueToJObject(env, &v->v.array.items[i]);
+                env->SetObjectArrayElement(arr, (jsize)i, item);
+                if (item != nullptr) env->DeleteLocalRef(item);
+            }
+            env->DeleteLocalRef(object_cls);
+            return arr;
+        }
+        case WHISKER_VALUE_MAP: {
+            jclass hashmap_cls = env->FindClass("java/util/HashMap");
+            jmethodID ctor = env->GetMethodID(hashmap_cls, "<init>", "()V");
+            jobject map = env->NewObject(hashmap_cls, ctor);
+            jmethodID put = env->GetMethodID(
+                hashmap_cls, "put",
+                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+            for (size_t i = 0; i < v->v.map.count; i++) {
+                std::string key_s(v->v.map.entries[i].key.ptr,
+                                  v->v.map.entries[i].key.len);
+                jstring key_j = env->NewStringUTF(key_s.c_str());
+                jobject val_j =
+                    WhiskerValueToJObject(env, &v->v.map.entries[i].value);
+                jobject prev = env->CallObjectMethod(map, put, key_j, val_j);
+                if (prev != nullptr) env->DeleteLocalRef(prev);
+                env->DeleteLocalRef(key_j);
+                if (val_j != nullptr) env->DeleteLocalRef(val_j);
+            }
+            env->DeleteLocalRef(hashmap_cls);
+            return map;
+        }
+        case WHISKER_VALUE_ERROR:
+        default:
+            return nullptr;
+    }
+}
+
+WhiskerValue JObjectToWhiskerValue(JNIEnv* env, jobject obj) {
+    WhiskerValue v;
+    std::memset(&v, 0, sizeof(v));
+    if (obj == nullptr) {
+        v.type = WHISKER_VALUE_NULL;
+        return v;
+    }
+    // Type discovery via `isInstance` checks. Order matters —
+    // Boolean before Number because Boolean is NOT a subclass of
+    // Number on the JVM but both wrap primitives.
+    jclass boolean_cls = env->FindClass("java/lang/Boolean");
+    if (env->IsInstanceOf(obj, boolean_cls)) {
+        jmethodID m = env->GetMethodID(boolean_cls, "booleanValue", "()Z");
+        v.type = WHISKER_VALUE_BOOL;
+        v.v.b = env->CallBooleanMethod(obj, m);
+        env->DeleteLocalRef(boolean_cls);
+        return v;
+    }
+    env->DeleteLocalRef(boolean_cls);
+
+    jclass float_cls = env->FindClass("java/lang/Float");
+    jclass double_cls = env->FindClass("java/lang/Double");
+    if (env->IsInstanceOf(obj, float_cls) || env->IsInstanceOf(obj, double_cls)) {
+        jclass number_cls = env->FindClass("java/lang/Number");
+        jmethodID m = env->GetMethodID(number_cls, "doubleValue", "()D");
+        v.type = WHISKER_VALUE_FLOAT;
+        v.v.f = env->CallDoubleMethod(obj, m);
+        env->DeleteLocalRef(float_cls);
+        env->DeleteLocalRef(double_cls);
+        env->DeleteLocalRef(number_cls);
+        return v;
+    }
+    env->DeleteLocalRef(float_cls);
+    env->DeleteLocalRef(double_cls);
+
+    jclass number_cls = env->FindClass("java/lang/Number");
+    if (env->IsInstanceOf(obj, number_cls)) {
+        jmethodID m = env->GetMethodID(number_cls, "longValue", "()J");
+        v.type = WHISKER_VALUE_INT;
+        v.v.i = env->CallLongMethod(obj, m);
+        env->DeleteLocalRef(number_cls);
+        return v;
+    }
+    env->DeleteLocalRef(number_cls);
+
+    jclass string_cls = env->FindClass("java/lang/String");
+    if (env->IsInstanceOf(obj, string_cls)) {
+        jstring js = static_cast<jstring>(obj);
+        const char* utf = env->GetStringUTFChars(js, nullptr);
+        size_t len = (utf != nullptr) ? std::strlen(utf) : 0;
+        char* buf = static_cast<char*>(std::malloc(len + 1));
+        if (utf != nullptr) {
+            std::memcpy(buf, utf, len + 1);
+            env->ReleaseStringUTFChars(js, utf);
+        } else {
+            buf[0] = '\0';
+        }
+        v.type = WHISKER_VALUE_STRING;
+        v.v.s.ptr = buf;
+        v.v.s.len = len;
+        env->DeleteLocalRef(string_cls);
+        return v;
+    }
+    env->DeleteLocalRef(string_cls);
+
+    jclass byte_array_cls = env->FindClass("[B");
+    if (env->IsInstanceOf(obj, byte_array_cls)) {
+        jbyteArray jarr = static_cast<jbyteArray>(obj);
+        jsize len = env->GetArrayLength(jarr);
+        uint8_t* buf = static_cast<uint8_t*>(std::malloc((size_t)len));
+        if (len > 0) {
+            env->GetByteArrayRegion(jarr, 0, len,
+                                    reinterpret_cast<jbyte*>(buf));
+        }
+        v.type = WHISKER_VALUE_BYTES;
+        v.v.bytes.ptr = buf;
+        v.v.bytes.len = (size_t)len;
+        env->DeleteLocalRef(byte_array_cls);
+        return v;
+    }
+    env->DeleteLocalRef(byte_array_cls);
+
+    jclass object_array_cls = env->FindClass("[Ljava/lang/Object;");
+    if (env->IsInstanceOf(obj, object_array_cls)) {
+        jobjectArray jarr = static_cast<jobjectArray>(obj);
+        jsize len = env->GetArrayLength(jarr);
+        WhiskerValue* items = static_cast<WhiskerValue*>(
+            std::malloc((size_t)len * sizeof(WhiskerValue)));
+        for (jsize i = 0; i < len; i++) {
+            jobject elem = env->GetObjectArrayElement(jarr, i);
+            items[i] = JObjectToWhiskerValue(env, elem);
+            if (elem != nullptr) env->DeleteLocalRef(elem);
+        }
+        v.type = WHISKER_VALUE_ARRAY;
+        v.v.array.items = items;
+        v.v.array.count = (size_t)len;
+        env->DeleteLocalRef(object_array_cls);
+        return v;
+    }
+    env->DeleteLocalRef(object_array_cls);
+
+    jclass map_cls = env->FindClass("java/util/Map");
+    if (env->IsInstanceOf(obj, map_cls)) {
+        jmethodID size_m = env->GetMethodID(map_cls, "size", "()I");
+        jmethodID entrySet_m =
+            env->GetMethodID(map_cls, "entrySet", "()Ljava/util/Set;");
+        jint size = env->CallIntMethod(obj, size_m);
+        jobject entry_set = env->CallObjectMethod(obj, entrySet_m);
+
+        jclass set_cls = env->FindClass("java/util/Set");
+        jmethodID iter_m =
+            env->GetMethodID(set_cls, "iterator", "()Ljava/util/Iterator;");
+        jobject iter = env->CallObjectMethod(entry_set, iter_m);
+
+        jclass iter_cls = env->FindClass("java/util/Iterator");
+        jmethodID hasnext_m = env->GetMethodID(iter_cls, "hasNext", "()Z");
+        jmethodID next_m = env->GetMethodID(iter_cls, "next", "()Ljava/lang/Object;");
+        jclass entry_cls = env->FindClass("java/util/Map$Entry");
+        jmethodID getkey_m =
+            env->GetMethodID(entry_cls, "getKey", "()Ljava/lang/Object;");
+        jmethodID getvalue_m =
+            env->GetMethodID(entry_cls, "getValue", "()Ljava/lang/Object;");
+
+        WhiskerKeyValue* entries = static_cast<WhiskerKeyValue*>(
+            std::malloc((size_t)size * sizeof(WhiskerKeyValue)));
+        size_t actual = 0;
+        while (env->CallBooleanMethod(iter, hasnext_m)) {
+            jobject entry = env->CallObjectMethod(iter, next_m);
+            jobject key_obj = env->CallObjectMethod(entry, getkey_m);
+            jobject value_obj = env->CallObjectMethod(entry, getvalue_m);
+            // Stringify the key — Whisker maps are
+            // string-keyed by convention.
+            jstring key_str = nullptr;
+            if (key_obj != nullptr && env->IsInstanceOf(key_obj, string_cls)) {
+                key_str = static_cast<jstring>(key_obj);
+            } else if (key_obj != nullptr) {
+                jclass kcls = env->GetObjectClass(key_obj);
+                jmethodID toString = env->GetMethodID(
+                    kcls, "toString", "()Ljava/lang/String;");
+                key_str = static_cast<jstring>(
+                    env->CallObjectMethod(key_obj, toString));
+                env->DeleteLocalRef(kcls);
+            }
+            if (key_str != nullptr) {
+                const char* utf = env->GetStringUTFChars(key_str, nullptr);
+                size_t len = (utf != nullptr) ? std::strlen(utf) : 0;
+                char* buf = static_cast<char*>(std::malloc(len + 1));
+                if (utf != nullptr) {
+                    std::memcpy(buf, utf, len + 1);
+                    env->ReleaseStringUTFChars(key_str, utf);
+                } else {
+                    buf[0] = '\0';
+                }
+                entries[actual].key.ptr = buf;
+                entries[actual].key.len = len;
+                entries[actual].value = JObjectToWhiskerValue(env, value_obj);
+                actual++;
+            }
+            if (entry != nullptr) env->DeleteLocalRef(entry);
+            if (key_obj != nullptr) env->DeleteLocalRef(key_obj);
+            if (value_obj != nullptr) env->DeleteLocalRef(value_obj);
+        }
+        v.type = WHISKER_VALUE_MAP;
+        v.v.map.entries = entries;
+        v.v.map.count = actual;
+        env->DeleteLocalRef(iter);
+        env->DeleteLocalRef(entry_set);
+        env->DeleteLocalRef(set_cls);
+        env->DeleteLocalRef(iter_cls);
+        env->DeleteLocalRef(entry_cls);
+        env->DeleteLocalRef(map_cls);
+        return v;
+    }
+    env->DeleteLocalRef(map_cls);
+
+    // Unknown type — fall through to null. The Rust proxy reports
+    // it as a type mismatch.
+    v.type = WHISKER_VALUE_NULL;
+    return v;
+}
+
 }  // namespace
 
 extern "C" WhiskerValue whisker_bridge_invoke_module(
-    const char* /*module_name*/,
-    const char* /*method_name*/,
-    const WhiskerValue* /*args*/,
-    size_t /*arg_count*/) {
-    return WhiskerMakeErrorValueAndroid(
-        "whisker_bridge_invoke_module: Android dispatch not yet "
-        "implemented (lands in Phase 7-Φ.E.3)");
+    const char* module_name,
+    const char* method_name,
+    const WhiskerValue* args,
+    size_t arg_count) {
+    if (module_name == nullptr || method_name == nullptr) {
+        return WhiskerMakeErrorValueAndroid("module/method name is NULL");
+    }
+    ScopedJNIEnv env_guard;
+    JNIEnv* env = env_guard.get();
+    if (env == nullptr) {
+        return WhiskerMakeErrorValueAndroid(
+            "whisker_bridge_invoke_module: JVM not initialised");
+    }
+
+    // Resolve the Kotlin registry's instance lookup once.
+    jclass registry_cls =
+        env->FindClass("rs/whisker/runtime/WhiskerModuleRegistry");
+    if (registry_cls == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return WhiskerMakeErrorValueAndroid(
+            "WhiskerModuleRegistry class not found");
+    }
+    jmethodID instance_for_name_m = env->GetStaticMethodID(
+        registry_cls, "instanceForName",
+        "(Ljava/lang/String;)Ljava/lang/Object;");
+    if (instance_for_name_m == nullptr) {
+        env->DeleteLocalRef(registry_cls);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return WhiskerMakeErrorValueAndroid(
+            "WhiskerModuleRegistry.instanceForName not found");
+    }
+
+    jstring jname = env->NewStringUTF(module_name);
+    jobject instance =
+        env->CallStaticObjectMethod(registry_cls, instance_for_name_m, jname);
+    env->DeleteLocalRef(jname);
+    env->DeleteLocalRef(registry_cls);
+
+    if (instance == nullptr) {
+        return WhiskerMakeErrorValueAndroid("module not registered");
+    }
+
+    jclass instance_cls = env->GetObjectClass(instance);
+    ModuleMethodCacheEntry cache = GetCachedMethod(env, instance_cls, method_name);
+    env->DeleteLocalRef(instance_cls);
+    if (cache.method_id == nullptr) {
+        env->DeleteLocalRef(instance);
+        return WhiskerMakeErrorValueAndroid("module method not found");
+    }
+
+    // Build Object[] arg array.
+    jclass object_cls = env->FindClass("java/lang/Object");
+    jobjectArray args_arr =
+        env->NewObjectArray((jsize)arg_count, object_cls, nullptr);
+    env->DeleteLocalRef(object_cls);
+    for (size_t i = 0; i < arg_count; i++) {
+        jobject arg = WhiskerValueToJObject(env, &args[i]);
+        env->SetObjectArrayElement(args_arr, (jsize)i, arg);
+        if (arg != nullptr) env->DeleteLocalRef(arg);
+    }
+
+    // CallObjectMethod (varargs-style) is fine for our single-arg
+    // shape — `CallObjectMethodA(env, instance, method_id,
+    // jvalueArray)` would be marginally faster for fully-typed
+    // args, but with one Object[] arg the varargs overhead is the
+    // same.
+    jobject result = env->CallObjectMethod(instance, cache.method_id, args_arr);
+    env->DeleteLocalRef(args_arr);
+
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+        env->DeleteLocalRef(instance);
+        return WhiskerMakeErrorValueAndroid("module method threw an exception");
+    }
+
+    WhiskerValue value = JObjectToWhiskerValue(env, result);
+    if (result != nullptr) env->DeleteLocalRef(result);
+    env->DeleteLocalRef(instance);
+    return value;
 }
 
 extern "C" bool whisker_bridge_invoke_module_async(
-    const char* /*module_name*/,
-    const char* /*method_name*/,
-    const WhiskerValue* /*args*/,
-    size_t /*arg_count*/,
+    const char* module_name,
+    const char* method_name,
+    const WhiskerValue* args,
+    size_t arg_count,
     WhiskerModuleCallback callback,
     void* user_data) {
-    if (callback != nullptr) {
-        WhiskerValue err = WhiskerMakeErrorValueAndroid(
-            "whisker_bridge_invoke_module_async: Android dispatch not yet "
-            "implemented");
-        callback(user_data, &err);
-        std::free(const_cast<char*>(err.v.s.ptr));
-    }
-    return false;
+    if (callback == nullptr) return false;
+    // Foundation impl — dispatch on the same thread for now.
+    // Real off-main-thread async dispatch lives in a follow-up
+    // alongside the storage module's async API. The iOS path uses
+    // a global-queue dispatch_async; Android will get an
+    // equivalent via a thread pool once async semantics are
+    // pinned (cancel handles, drop behavior on detached
+    // futures).
+    WhiskerValue result = whisker_bridge_invoke_module(
+        module_name, method_name, args, arg_count);
+    callback(user_data, &result);
+    whisker_bridge_value_release(&result);
+    return true;
 }
 
 extern "C" void whisker_bridge_value_release(WhiskerValue* value) {
     if (value == nullptr) return;
-    // Stubs only allocate the error message — free that and zero
-    // the discriminant so a double-release is safe.
-    if (value->type == WHISKER_VALUE_STRING ||
-        value->type == WHISKER_VALUE_ERROR) {
-        std::free(const_cast<char*>(value->v.s.ptr));
-        value->v.s.ptr = nullptr;
-        value->v.s.len = 0;
+    switch (value->type) {
+        case WHISKER_VALUE_STRING:
+        case WHISKER_VALUE_ERROR:
+            std::free(const_cast<char*>(value->v.s.ptr));
+            value->v.s.ptr = nullptr;
+            value->v.s.len = 0;
+            break;
+        case WHISKER_VALUE_BYTES:
+            std::free(const_cast<uint8_t*>(value->v.bytes.ptr));
+            value->v.bytes.ptr = nullptr;
+            value->v.bytes.len = 0;
+            break;
+        case WHISKER_VALUE_ARRAY:
+            for (size_t i = 0; i < value->v.array.count; i++) {
+                whisker_bridge_value_release(&value->v.array.items[i]);
+            }
+            std::free(value->v.array.items);
+            value->v.array.items = nullptr;
+            value->v.array.count = 0;
+            break;
+        case WHISKER_VALUE_MAP:
+            for (size_t i = 0; i < value->v.map.count; i++) {
+                std::free(const_cast<char*>(value->v.map.entries[i].key.ptr));
+                whisker_bridge_value_release(&value->v.map.entries[i].value);
+            }
+            std::free(value->v.map.entries);
+            value->v.map.entries = nullptr;
+            value->v.map.count = 0;
+            break;
+        default:
+            break;
     }
     value->type = WHISKER_VALUE_NULL;
 }
