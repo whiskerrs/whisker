@@ -18,6 +18,7 @@ members = [
     "examples/hn-reader",
     "examples/subsecond-poc",
     "packages/whisker-hello-element",
+    "packages/whisker-local-store",
 ]
 exclude = [
     # Throwaway cdylib the dev-server's `thin_rebuild` integration

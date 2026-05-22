@@ -63,6 +63,14 @@ const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_bridge_invoke_module_async",
     "_whisker_bridge_value_release",
     "_whisker_bridge_log_hello",
+    // Obj-C class symbol — `WhiskerModuleRegistry` is referenced
+    // from the auto-generated `WhiskerModuleBehaviors.swift` to
+    // call `registerModuleClass(_:forName:)`. Without this export
+    // ld64 dead-strips the class from the framework's dylib (no
+    // C-side caller references it), and the consuming SwiftPM
+    // target fails to link with "Undefined symbols:
+    // _OBJC_CLASS_$_WhiskerModuleRegistry". Phase 7-Φ.E.6.
+    "_OBJC_CLASS_$_WhiskerModuleRegistry",
 ];
 
 /// Build the WhiskerDriver.xcframework that wraps `package`'s dylib

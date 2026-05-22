@@ -49,13 +49,35 @@ struct AppState {
 
 impl AppState {
     fn new() -> Self {
+        // Phase 7-Φ.E.8 demo: hydrate the heart-bitmask from
+        // `WhiskerLocalStore` so liked mixes survive app restarts.
+        // The store is registered automatically through the
+        // `@WhiskerModule("WhiskerLocalStore")` annotation
+        // discovery — no manual registration needed in the user
+        // app.
+        //
+        // The bridge stub on host targets (e.g. `cargo test`)
+        // returns `WhiskerValue::Error`; the proxy lifts that into
+        // `Err`, which we silently fall back to the default for.
+        // Mobile launches go through the real platform-side
+        // dispatch so this returns the persisted value.
+        let initial_liked = whisker_local_store::WhiskerLocalStore::load(LIKED_MIXES_KEY.into())
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<u8>().ok())
+            .unwrap_or(0b000_010_u8);
         Self {
             selected_tab: RwSignal::new(0_usize),
-            liked_mixes: RwSignal::new(0b000_010_u8),
+            liked_mixes: RwSignal::new(initial_liked),
             is_playing: RwSignal::new(true),
         }
     }
 }
+
+/// Storage key for the heart-bitmask. Single source of truth so a
+/// future schema change (versioning, e.g. `liked_mixes_v2`) lands
+/// in one place.
+const LIKED_MIXES_KEY: &str = "hello_world.liked_mixes";
 
 // ---- Palette / constants ----------------------------------------------------
 
@@ -478,6 +500,15 @@ fn app() -> Element {
     // is `Copy`, so threading it through `#[component]` props below
     // doesn't introduce any `move ||` boilerplate.
     let state = AppState::new();
+
+    // Persist the heart bitmask on every change. The effect reads
+    // `state.liked_mixes` (subscribing) and writes to the local
+    // store so an app restart restores the same toggles.
+    effect(move || {
+        let bits = state.liked_mixes.get();
+        let _ =
+            whisker_local_store::WhiskerLocalStore::save(LIKED_MIXES_KEY.into(), bits.to_string());
+    });
 
     let page_style = format!(
         "width: 100vw; height: 100vh; background-color: {BG}; \

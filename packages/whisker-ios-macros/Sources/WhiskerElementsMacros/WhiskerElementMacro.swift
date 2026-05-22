@@ -36,7 +36,64 @@ import SwiftSyntaxMacros
 struct WhiskerElementsPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         WhiskerElementMacro.self,
+        WhiskerModuleMacro.self,
     ]
+}
+
+/// `@WhiskerModule("Name")` — emit a static `__whiskerModuleName`
+/// constant on the annotated class so the SwiftPM build-tool
+/// plugin (`WhiskerElementsCodegen`) can introspect the
+/// registration name via SwiftSyntax parse. Mirror of
+/// `WhiskerElementMacro`'s `__whiskerElementTag`; same DX shape,
+/// different generated registration target
+/// (`WhiskerModuleRegistry` instead of `LynxComponentRegistry`).
+///
+/// Phase 7-Φ.E.6.
+public struct WhiskerModuleMacro: MemberMacro, MemberAttributeMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingMembersOf declaration: some DeclGroupSyntax,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        guard let name = whiskerModuleFirstStringArgument(of: node) else {
+            return []
+        }
+        return [
+            """
+            @objc public static let __whiskerModuleName: String = \(literal: name)
+            """
+        ]
+    }
+
+    public static func expansion(
+        of node: AttributeSyntax,
+        attachedTo declaration: some DeclGroupSyntax,
+        providingAttributesFor member: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [AttributeSyntax] {
+        // MemberAttributeMacro is invoked per-member — emit nothing
+        // per-method. The `@objc` class-runtime-name pin needed for
+        // `NSClassFromString` lookup is the author's responsibility
+        // via an explicit `@objc(ClassName)` on the class, mirroring
+        // the `@WhiskerElement` policy.
+        []
+    }
+}
+
+/// First positional string-literal argument of an `@Attr("...")`
+/// invocation. Shared shape — `@WhiskerElement(_ tag:)` and
+/// `@WhiskerModule(_ name:)` both take exactly one string arg.
+private func whiskerModuleFirstStringArgument(of node: AttributeSyntax) -> String? {
+    guard
+        let arguments = node.arguments?.as(LabeledExprListSyntax.self),
+        let firstArg = arguments.first,
+        let stringLiteral = firstArg.expression.as(StringLiteralExprSyntax.self),
+        stringLiteral.segments.count == 1,
+        let firstSegment = stringLiteral.segments.first?.as(StringSegmentSyntax.self)
+    else {
+        return nil
+    }
+    return firstSegment.content.text
 }
 
 public struct WhiskerElementMacro: MemberMacro, MemberAttributeMacro {
