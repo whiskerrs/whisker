@@ -25,7 +25,7 @@ pub use whisker_runtime as runtime;
 // the same enum.
 pub use whisker_runtime::element::ElementTag;
 
-pub use whisker_macros::{component, main, native_element, render};
+pub use whisker_macros::{component, main, native_element, native_module, render};
 
 // Phase 6.5a reactive surface, lifted to the top-level namespace so
 // user code can `use whisker::*` and reach the typical primitives
@@ -650,7 +650,9 @@ pub use whisker_runtime::main_thread::run_on_main_thread;
 /// [`invoke_async`] — direct callers use `whisker::native_module`
 /// when they need access to the raw `WhiskerValue` enum.
 pub mod native_module {
-    pub use whisker_driver::module::{from_raw, invoke, invoke_async, WhiskerValue};
+    pub use whisker_driver::module::{
+        from_raw, invoke, invoke_async, WhiskerModuleError, WhiskerValue,
+    };
 }
 
 /// Internal runtime entry points used by code the `#[whisker::main]` macro

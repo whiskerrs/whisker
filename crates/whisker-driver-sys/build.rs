@@ -20,8 +20,30 @@ fn main() -> Result<()> {
     match target_os.as_str() {
         "android" => compile_android(),
         "ios" => compile_ios(),
-        _ => Ok(()),
+        _ => compile_host_stub(),
     }
+}
+
+/// Compile the host-build stub on non-iOS / non-Android targets
+/// (typically a developer's macOS / Linux box running
+/// `cargo test`). Provides the C ABI surface as a tiny `.cc`
+/// returning `WHISKER_VALUE_ERROR` for every invoke — enough to
+/// link cleanly and let host tests verify the
+/// `#[whisker::native_module]` proxies dispatch + handle the
+/// Error variant. Real dispatch lives in the platform-specific
+/// .mm / .cc files.
+fn compile_host_stub() -> Result<()> {
+    let bridge_src = bridge_root().join("src");
+    let mut build = cc::Build::new();
+    build
+        .cpp(true)
+        .flag_if_supported("-std=gnu++17")
+        .file(bridge_src.join("whisker_bridge_host_stub.cc"))
+        .include(bridge_root().join("include"));
+    build
+        .try_compile("whisker_bridge_host_stub")
+        .map_err(|e| anyhow::anyhow!("compile whisker_bridge_host_stub.cc: {e}"))?;
+    Ok(())
 }
 
 // --- Paths -----------------------------------------------------------
