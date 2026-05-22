@@ -317,8 +317,13 @@ Java_rs_whisker_runtime_WhiskerView_nativeOnLynxEvent(
     if (name_jstr == nullptr) return JNI_FALSE;
     const char* name = env->GetStringUTFChars(name_jstr, nullptr);
     if (name == nullptr) return JNI_FALSE;
+    // Phase 7-Φ.A.2 brought a payload-aware dispatch path on iOS.
+    // The Android Kotlin side doesn't yet serialise event params, so
+    // pass nullptr — the bridge normalises that to "" for the Rust
+    // callback. Filling in the JSON serialisation Kotlin-side is
+    // part of the Phase 7-Φ.D Android sub-phase.
     bool handled = whisker_bridge_internal_dispatch_event(
-        static_cast<int32_t>(tag), name);
+        static_cast<int32_t>(tag), name, nullptr);
     env->ReleaseStringUTFChars(name_jstr, name);
     return handled ? JNI_TRUE : JNI_FALSE;
 }

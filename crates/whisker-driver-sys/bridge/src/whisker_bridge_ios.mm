@@ -23,6 +23,7 @@
 #import <objc/runtime.h>
 
 #include <cstdint>
+#include <string>
 
 #include "whisker_bridge.h"
 #include "whisker_bridge_internal.h"
@@ -67,9 +68,37 @@ void InstallEventReporterIfNeeded(WhiskerEngine* engine, LynxView* view) {
     if (emitter == nil) return;
     [emitter setEventReporterBlock:^BOOL(LynxEvent* event) {
         if (event == nil || event.eventName == nil) return NO;
+        // `generateEventBody` is the public seam on `LynxEvent` (the
+        // base class), returning the dict that JS-side handlers would
+        // have received. For touch events the dict has the canonical
+        // touch points; for custom events (input / change / etc.) it
+        // contains the user-supplied params. Serialise via
+        // `NSJSONSerialization` so the bridge can hand it to the Rust
+        // callback as a UTF-8 string.
+        const char* payload_c = "";
+        std::string payload_storage;
+        @try {
+            NSMutableDictionary* body = [event generateEventBody];
+            if (body != nil &&
+                [NSJSONSerialization isValidJSONObject:body]) {
+                NSError* err = nil;
+                NSData* data = [NSJSONSerialization dataWithJSONObject:body
+                                                              options:0
+                                                                error:&err];
+                if (data != nil && err == nil) {
+                    payload_storage.assign(
+                        (const char*)data.bytes, (size_t)data.length);
+                    payload_c = payload_storage.c_str();
+                }
+            }
+        } @catch (NSException* exn) {
+            // Swallow — degrade to empty payload rather than crash
+            // the event-reporter chain.
+        }
         bool handled = whisker_bridge_internal_dispatch_event(
             (int32_t)event.targetSign,
-            [event.eventName UTF8String]);
+            [event.eventName UTF8String],
+            payload_c);
         return handled ? YES : NO;
     }];
     whisker_bridge_internal_mark_event_reporter_installed(engine);

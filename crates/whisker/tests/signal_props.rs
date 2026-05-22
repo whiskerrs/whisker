@@ -100,6 +100,17 @@ impl DynRenderer for Recorder {
             name: name.into(),
         });
     }
+    fn set_event_listener_with_string_payload(
+        &mut self,
+        h: Element,
+        name: &str,
+        _cb: Box<dyn Fn(String) + 'static>,
+    ) {
+        self.log.borrow_mut().push(Op::Event {
+            id: h.id(),
+            name: name.into(),
+        });
+    }
     fn set_root(&mut self, p: Element) {
         self.log.borrow_mut().push(Op::SetRoot { id: p.id() });
     }
