@@ -73,40 +73,16 @@ pub struct IosSectionRaw {
     /// into the host app target alongside its own Swift sources.
     /// Mirror of `[android].kotlin_sources` for symmetry.
     ///
-    /// Most modules use these to declare a `LynxUI<View>` subclass
-    /// annotated with `@WhiskerElement("x-tag")` (from the
-    /// `WhiskerElements` SwiftPM library) — the cross-platform
-    /// counterpart of Android's `@WhiskerElement` KSP annotation.
+    /// Modules apply `@WhiskerElement("x-tag")` (from the
+    /// `WhiskerElements` SwiftPM library) to their `LynxUI<View>`
+    /// subclasses. The `WhiskerElementsCodegenPlugin` SwiftPM
+    /// build-tool plugin (under `packages/whisker-ios-macros/
+    /// Plugins/`) discovers those annotations via SwiftSyntax at
+    /// SwiftPM build time and emits the registration code into
+    /// `WhiskerModuleBehaviors.swift`. The whisker.module.toml
+    /// stays metadata-only — no behaviour list to keep in sync.
     #[serde(default)]
     pub swift_sources: Vec<String>,
-    /// `(tag, class)` pairs of Lynx behaviours this module
-    /// contributes on iOS. Same shape as `[android].behaviors` —
-    /// `whisker-build::ios` folds these into a generated
-    /// `WhiskerModuleBehaviors.swift` that the app's
-    /// `AppDelegate` invokes once at launch.
-    ///
-    /// (The matching `@WhiskerElement` macro in `swift_sources`
-    /// is currently a DX layer that emits a `__whiskerElementTag`
-    /// constant for compile-time anchoring. v1 keeps the manifest
-    /// as the source of truth for registrations; future versions
-    /// can drop this field once whisker-build parses the macro
-    /// applications via SwiftSyntax directly.)
-    #[serde(default)]
-    pub behaviors: Vec<IosBehaviorRaw>,
-}
-
-#[derive(Debug, Default, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct IosBehaviorRaw {
-    /// Lynx tag name. Matches the string passed to
-    /// `lynx_create_fiber_element_by_name` from the Rust side.
-    pub tag: String,
-    /// Bare Swift / Obj-C class name (e.g. `"WhiskerHelloElement"`).
-    /// Must match the class declared in one of the module's
-    /// `swift_sources` or `native_sources`. Whisker-build emits
-    /// the registration as `LynxComponentRegistry.registerUI(
-    /// <class>.self, withName: "<tag>")` from generated Swift.
-    pub class: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -144,10 +120,6 @@ pub struct ResolvedModule {
     /// Absolute, existence-checked paths to `.swift` sources.
     /// Empty when the module declares no Swift contributions.
     pub ios_swift_sources: Vec<PathBuf>,
-    /// `(tag, class)` behaviours this module contributes to Lynx
-    /// iOS's behaviour registry. `whisker-build::ios` folds these
-    /// into a generated `WhiskerModuleBehaviors.swift`.
-    pub ios_behaviors: Vec<IosBehavior>,
     /// Absolute, existence-checked paths to Kotlin / Java sources
     /// for the Android build. Empty when the module declares no
     /// Android Kotlin contributions.
@@ -156,21 +128,6 @@ pub struct ResolvedModule {
     /// for the Android build. Empty by default — most native_element
     /// modules use Kotlin, not JNI.
     pub android_jni_sources: Vec<PathBuf>,
-}
-
-/// Resolved `[ios].behaviors` entry. Kept for iOS because the
-/// Swift Macro (`packages/whisker-ios-macros`) is a DX layer only —
-/// runtime registration on iOS is driven by this manifest list
-/// until a SwiftSyntax-parsing whisker-build pass lands.
-///
-/// Android has no sibling type any more — Phase 7-Φ.H.2's
-/// `@WhiskerElement` KSP processor discovers registrations from
-/// the Kotlin annotation directly, so the manifest never needed
-/// to carry an `[android].behaviors` list.
-#[derive(Debug, Clone)]
-pub struct IosBehavior {
-    pub tag: String,
-    pub class: String,
 }
 
 /// Walk the cargo dep graph of `app_package` (resolved at
@@ -283,7 +240,6 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
             .with_context(|| format!("parse {}", manifest_file.display()))?;
         let mut ios_sources: Vec<PathBuf> = Vec::new();
         let mut ios_swift: Vec<PathBuf> = Vec::new();
-        let mut ios_behaviors: Vec<IosBehavior> = Vec::new();
         if let Some(ios) = manifest.ios {
             for raw_path in ios.native_sources {
                 let resolved_path = manifest_dir.join(&raw_path);
@@ -310,12 +266,6 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                     )
                 })?;
                 ios_swift.push(canonical);
-            }
-            for b in ios.behaviors {
-                ios_behaviors.push(IosBehavior {
-                    tag: b.tag,
-                    class: b.class,
-                });
             }
         }
         let mut android_kotlin: Vec<PathBuf> = Vec::new();
@@ -353,7 +303,6 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
             manifest_dir,
             ios_native_sources: ios_sources,
             ios_swift_sources: ios_swift,
-            ios_behaviors,
             android_kotlin_sources: android_kotlin,
             android_jni_sources: android_jni,
         });
