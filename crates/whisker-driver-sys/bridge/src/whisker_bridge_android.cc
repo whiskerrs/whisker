@@ -313,17 +313,24 @@ Java_rs_whisker_runtime_WhiskerView_nativeTick(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_rs_whisker_runtime_WhiskerView_nativeOnLynxEvent(
     JNIEnv* env, jobject /*self*/, jlong /*engine_raw*/,
-    jint tag, jstring name_jstr) {
+    jint tag, jstring name_jstr, jstring payload_jstr) {
     if (name_jstr == nullptr) return JNI_FALSE;
     const char* name = env->GetStringUTFChars(name_jstr, nullptr);
     if (name == nullptr) return JNI_FALSE;
-    // Phase 7-Φ.A.2 brought a payload-aware dispatch path on iOS.
-    // The Android Kotlin side doesn't yet serialise event params, so
-    // pass nullptr — the bridge normalises that to "" for the Rust
-    // callback. Filling in the JSON serialisation Kotlin-side is
-    // part of the Phase 7-Φ.D Android sub-phase.
+    // Phase 7-Φ.C: the Kotlin side now serialises event.params via
+    // org.json.JSONObject and hands the result here. Mirrors the iOS
+    // event reporter that goes through `[event generateEventBody]` +
+    // `NSJSONSerialization`. Empty string means "no detail" — same
+    // contract as iOS.
+    const char* payload = nullptr;
+    if (payload_jstr != nullptr) {
+        payload = env->GetStringUTFChars(payload_jstr, nullptr);
+    }
     bool handled = whisker_bridge_internal_dispatch_event(
-        static_cast<int32_t>(tag), name, nullptr);
+        static_cast<int32_t>(tag), name, payload);
+    if (payload != nullptr) {
+        env->ReleaseStringUTFChars(payload_jstr, payload);
+    }
     env->ReleaseStringUTFChars(name_jstr, name);
     return handled ? JNI_TRUE : JNI_FALSE;
 }

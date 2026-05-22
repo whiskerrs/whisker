@@ -26,3 +26,15 @@
 # registry, so the `.mm` MUST end up linked into the host dylib
 # (not just compiled and discarded).
 native_sources = ["src/native/whisker_hello_element.mm"]
+
+[android]
+# Paths to Kotlin source files that get staged under
+# `gen/android/app/src/main/whisker_modules/whisker-hello-element/`
+# by `whisker-build::android::stage_module_kotlin_sources`. Gradle's
+# main source-set then compiles them into the host APK alongside
+# the Whisker Android runtime's own Kotlin sources.
+#
+# `WhiskerHelloElement.kt` registers the `x-hello` tag against
+# Lynx's behaviour registry via Lynx's `@LynxBehavior` annotation
+# — the Android equivalent of the iOS `LYNX_REGISTER_UI` macro.
+kotlin_sources = ["src/android/WhiskerHelloElement.kt"]

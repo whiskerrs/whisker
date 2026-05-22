@@ -68,10 +68,23 @@ pub struct IosSectionRaw {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AndroidSectionRaw {
-    // Placeholder. Android module support lands in Phase 7-Φ.C.
-    // Keeping the section parsed (rather than rejecting) so a
-    // module can declare its Android intent today without breaking
-    // the iOS build.
+    /// Paths to Kotlin / Java source files (`*.kt`, `*.java`) that
+    /// should be compiled into the host app's APK alongside the
+    /// runtime's own Kotlin sources. Paths are relative to the
+    /// manifest's directory.
+    ///
+    /// Most modules use these to declare a `LynxUI` subclass + a
+    /// `@WhiskerElement("tag")` annotation that the KSP processor
+    /// turns into a behaviour-registry registration at app init.
+    #[serde(default)]
+    pub kotlin_sources: Vec<String>,
+    /// Paths to JNI C / C++ source files (`*.c`, `*.cc`, `*.cpp`)
+    /// — for modules that need to drop into native code on Android
+    /// (cross-language calls, raw NDK APIs, etc.). Less common than
+    /// kotlin_sources; most native_element modules can stay in
+    /// Kotlin.
+    #[serde(default)]
+    pub jni_sources: Vec<String>,
 }
 
 /// A single discovered module after its manifest has been resolved
@@ -85,6 +98,14 @@ pub struct ResolvedModule {
     /// Absolute, existence-checked paths to `.m` / `.mm` sources.
     /// Empty when the module declares no iOS contributions.
     pub ios_native_sources: Vec<PathBuf>,
+    /// Absolute, existence-checked paths to Kotlin / Java sources
+    /// for the Android build. Empty when the module declares no
+    /// Android Kotlin contributions.
+    pub android_kotlin_sources: Vec<PathBuf>,
+    /// Absolute, existence-checked paths to JNI C / C++ sources
+    /// for the Android build. Empty by default — most native_element
+    /// modules use Kotlin, not JNI.
+    pub android_jni_sources: Vec<PathBuf>,
 }
 
 /// Walk the cargo dep graph of `app_package` (resolved at
@@ -211,10 +232,42 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                 ios_sources.push(canonical);
             }
         }
+        let mut android_kotlin: Vec<PathBuf> = Vec::new();
+        let mut android_jni: Vec<PathBuf> = Vec::new();
+        if let Some(android) = manifest.android {
+            for raw_path in android.kotlin_sources {
+                let resolved_path = manifest_dir.join(&raw_path);
+                let canonical = resolved_path.canonicalize().with_context(|| {
+                    format!(
+                        "module `{}` declares android.kotlin_sources = [..., {raw_path:?}] in {} \
+                         but {} does not exist",
+                        pkg.name,
+                        manifest_file.display(),
+                        resolved_path.display(),
+                    )
+                })?;
+                android_kotlin.push(canonical);
+            }
+            for raw_path in android.jni_sources {
+                let resolved_path = manifest_dir.join(&raw_path);
+                let canonical = resolved_path.canonicalize().with_context(|| {
+                    format!(
+                        "module `{}` declares android.jni_sources = [..., {raw_path:?}] in {} \
+                         but {} does not exist",
+                        pkg.name,
+                        manifest_file.display(),
+                        resolved_path.display(),
+                    )
+                })?;
+                android_jni.push(canonical);
+            }
+        }
         resolved.push(ResolvedModule {
             package: pkg.name.clone(),
             manifest_dir,
             ios_native_sources: ios_sources,
+            android_kotlin_sources: android_kotlin,
+            android_jni_sources: android_jni,
         });
     }
 
@@ -235,6 +288,32 @@ pub fn ios_sources_env_value(modules: &[ResolvedModule]) -> String {
     let mut paths: Vec<String> = Vec::new();
     for m in modules {
         for p in &m.ios_native_sources {
+            paths.push(p.to_string_lossy().into_owned());
+        }
+    }
+    paths.join(":")
+}
+
+/// Same shape as [`ios_sources_env_value`] but for Android Kotlin
+/// sources. The Android orchestration uses these paths to extend
+/// gradle's main source set (see `whisker-build::android`).
+pub fn android_kotlin_sources_env_value(modules: &[ResolvedModule]) -> String {
+    let mut paths: Vec<String> = Vec::new();
+    for m in modules {
+        for p in &m.android_kotlin_sources {
+            paths.push(p.to_string_lossy().into_owned());
+        }
+    }
+    paths.join(":")
+}
+
+/// Same shape, JNI sources. Currently only consumed by the Android
+/// orchestration when a module needs C/C++ code on Android (rare;
+/// most modules stick to Kotlin).
+pub fn android_jni_sources_env_value(modules: &[ResolvedModule]) -> String {
+    let mut paths: Vec<String> = Vec::new();
+    for m in modules {
+        for p in &m.android_jni_sources {
             paths.push(p.to_string_lossy().into_owned());
         }
     }

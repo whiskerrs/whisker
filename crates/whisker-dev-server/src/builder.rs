@@ -118,6 +118,11 @@ impl Builder {
                     capture: capture.as_ref(),
                 })?;
             let gen_android = crate_dir.join("gen/android");
+            // Stage discovered Whisker modules' Android Kotlin
+            // sources before gradle runs. Empty when no module
+            // declares android.kotlin_sources.
+            let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
+            whisker_build::android::stage_module_kotlin_sources(&gen_android, &modules)?;
             whisker_build::android::stage_jni_libs(&gen_android, &abi, &so, &tc)?;
             whisker_build::android::run_gradle_assemble(
                 &gen_android,

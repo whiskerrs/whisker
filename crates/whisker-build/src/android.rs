@@ -290,6 +290,56 @@ pub fn stage_jni_libs(
     Ok(())
 }
 
+/// Copy every discovered Whisker module's Android Kotlin sources
+/// into `gen/android/app/src/main/whisker_modules/<crate-name>/`
+/// so gradle's source-set compilation picks them up alongside the
+/// runtime's own Kotlin tree.
+///
+/// Per-crate subdirectory prevents filename collisions between two
+/// modules that happen to ship the same Kotlin filename — each
+/// module's tree is scoped under its cargo crate name. The Kotlin
+/// compiler determines the package from each file's `package`
+/// declaration, not its filesystem path, so the subdirectory layout
+/// is purely a uniqueness convention.
+///
+/// Empty / non-Android-contributing module list is a no-op — same
+/// contract as the iOS module-source pass-through.
+pub fn stage_module_kotlin_sources(
+    gen_android: &Path,
+    modules: &[crate::modules::ResolvedModule],
+) -> Result<()> {
+    let root = gen_android.join("app/src/main/whisker_modules");
+    // Wipe the staging dir first so a removed module doesn't leave
+    // stale `.kt` files behind that gradle would still try to compile.
+    if root.exists() {
+        std::fs::remove_dir_all(&root).with_context(|| format!("rm -rf {}", root.display()))?;
+    }
+    let mut total = 0usize;
+    for m in modules {
+        if m.android_kotlin_sources.is_empty() {
+            continue;
+        }
+        let crate_dst = root.join(&m.package);
+        std::fs::create_dir_all(&crate_dst)
+            .with_context(|| format!("mkdir -p {}", crate_dst.display()))?;
+        for src in &m.android_kotlin_sources {
+            let filename = src.file_name().ok_or_else(|| {
+                anyhow!("module kotlin source has no filename: {}", src.display())
+            })?;
+            let dst = crate_dst.join(filename);
+            std::fs::copy(src, &dst)
+                .with_context(|| format!("copy {} → {}", src.display(), dst.display()))?;
+            total += 1;
+        }
+    }
+    if total > 0 {
+        crate::ui::info(format!(
+            "stage {total} module Kotlin source(s) under whisker_modules/"
+        ));
+    }
+    Ok(())
+}
+
 /// Locate `libc++_shared.so` inside the NDK sysroot for `abi`. NDKs
 /// place it under the host-prebuilt sysroot's lib/<triple>/ dir.
 fn find_libcxx_shared(ndk: &Path, abi: &str) -> Result<PathBuf> {
