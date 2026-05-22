@@ -139,6 +139,136 @@ let history: StoredValue<Vec<String>> = StoredValue::new(Vec::new());
 effect(move || history.update(|h| h.push(format!("count={}", count.get()))));
 ```
 
+### `Signal<T>` — the prop-value type (Phase 7-Φ)
+
+A 2-variant sum used by built-in tag builders, `#[component]`, and
+`#[whisker::native_element]` to receive prop values that may be
+either a static `T` or a reactive `ReadSignal<T>`. The unified
+type lets all three component surfaces share one calling
+convention.
+
+```rust
+pub enum Signal<T: 'static> {
+    Static(T),                // set once, no subscription
+    Dynamic(ReadSignal<T>),   // tracked: builder wraps the read in effect
+}
+```
+
+`From` impls:
+
+| Source                | Variant                              |
+|-----------------------|--------------------------------------|
+| `T`                   | `Static(value)`                      |
+| `ReadSignal<T>`       | `Dynamic(signal)`                    |
+| `RwSignal<T>`         | `Dynamic(rw.read_only())`            |
+| `&str` (when T=String)| `Static(s.to_string())` — ergonomic  |
+
+Builder methods accept `impl Into<Signal<T>>`, so the call-site
+conversion is implicit:
+
+```rust
+text(value: "static literal")         // → Signal::Static
+text(value: my_string)                // → Signal::Static
+text(value: my_signal)                // → Signal::Dynamic (tracked)
+text(value: my_rw_signal)             // → Signal::Dynamic (tracked)
+text(value: computed(move || …))      // → Signal::Dynamic (computed's
+                                      //   return is a ReadSignal<T>)
+text(value: my_signal.get())          // → Signal::Static (snapshot — read
+                                      //   happens at the call site, before
+                                      //   any effect is on the stack)
+```
+
+The `Static` vs `Dynamic` decision is **visible at the call site**:
+pass the signal handle for reactive binding; pass `.get()` (or any
+already-resolved value) for a one-shot snapshot. Same rule for
+built-in tags, `#[component]`s, and `#[whisker::native_element]`s.
+
+#### Inside the builder
+
+The Static / Dynamic dispatch happens once per `.style(v)` /
+`.class(v)` / `.value(v)` / etc. call. Static → set the attribute
+exactly once; Dynamic → wrap the read in an `effect` so the
+underlying signal becomes a dependency:
+
+```rust
+match v.into() {
+    Signal::Static(t) => set_attribute(h, name, &t.to_string()),
+    Signal::Dynamic(sig) => {
+        effect(move || set_attribute(h, name, &sig.get().to_string()));
+    }
+}
+```
+
+#### Reading `Signal<T>` props inside a `#[component]` body
+
+For props declared as `Signal<T>`, the body reads via
+`Signal::<T>::get()`, which dispatches:
+
+- `Static`: returns a clone of the held value.
+- `Dynamic`: forwards to `ReadSignal::get`, which registers the
+  underlying signal as a dependency of whatever effect or
+  `computed` is currently on the observer stack.
+
+```rust
+#[component]
+fn dynamic_tile(color: Signal<String>) -> Element {
+    // `color.clone()` is cheap — Dynamic clones the NodeId,
+    // Static clones the value. Required because the component's
+    // `__hot::call(move || …)` wrap is FnMut-typed and we want
+    // to move `color` into a downstream `computed` closure
+    // without consuming the outer capture.
+    let style = {
+        let color = color.clone();
+        computed(move || format!("background: {};", color.get()))
+    };
+    render! { view(style: style) }
+}
+```
+
+Used externally:
+
+```rust
+let (color, set_color) = signal("red".to_string());
+render! {
+    DynamicTile(color: color)        // → Dynamic, reactive
+}
+set_color.set("blue".into());        // tile re-renders automatically
+flush();
+```
+
+#### Why not auto-wrap kwargs in `render!`?
+
+Pre-Phase 7-Φ, the `render!` macro silently wrapped each kwarg
+expression in `move || …to_string()` and the builder accepted
+a closure. That made `text(value: signal.get())` reactive
+without any user effort — the read happened *inside* the
+emitted closure, which the builder then placed inside an effect.
+
+Three things made that wrong:
+
+1. **Asymmetric across component types.** Built-in tags got the
+   auto-wrap; `#[component]` calls didn't. So
+   `text(value: signal.get())` was reactive but
+   `MyComponent(value: signal.get())` wasn't, with no surface
+   indication of the difference.
+2. **Hidden DX.** New users were surprised that
+   `text(value: format!("…{}", signal.get()))` reactively
+   updated — there was no syntactic marker telling them where
+   the reactive boundary was.
+3. **Closure-only API for the builders.** Static values couldn't
+   skip the effect overhead — every kwarg got wrapped, even the
+   pure-string-literal ones.
+
+Phase 7-Φ.B made the wrap explicit: kwargs flow verbatim into
+the builder, the builder dispatches on `Signal::Static` vs
+`Signal::Dynamic`, and the user controls reactivity by choosing
+to pass the signal handle vs `.get()`. Derived expressions go
+through `computed(move || …)` so the closure (and the resulting
+memo's `ReadSignal<T>`) are named, observable, and reusable.
+
+This is the same model Leptos uses (`MaybeSignal<T>`) and
+Solid's JSX (`<X prop={signal}>` vs `<X prop={signal()}>`).
+
 ## Arena + Owner
 
 All reactive state lives in a thread-local `ReactiveRuntime`. Whisker
@@ -230,6 +360,105 @@ fn my_inner_comp() -> impl IntoView {
     /* … */
 }
 ```
+
+### Props (Phase 7-Φ)
+
+The macro emits a `<Name>Props` struct + hand-rolled builder for
+every component. Required fields take `impl Into<Type>` so call
+sites can omit explicit conversions. For props declared as
+`Signal<T>`, that Into-conversion is the one documented in
+[`Signal<T>`](#signalt--the-prop-value-type-phase-7-φ): any of
+`T`, `ReadSignal<T>`, `RwSignal<T>`, `Memo<T>` (= `ReadSignal<T>`)
+all coerce in.
+
+```rust
+#[component]
+fn art_tile(color: Signal<String>, size: u32) -> Element {
+    // color.get() in a tracking scope subscribes to the source
+    // signal; size is plain static data.
+    let style = {
+        let color = color.clone();
+        computed(move || format!("background: {}; width: {}px;", color.get(), size))
+    };
+    render! { view(style: style) }
+}
+
+// Call site:
+let (color, set_color) = signal("red".to_string());
+render! {
+    ArtTile(color: color, size: 48)
+}
+set_color.set("blue".into());   // tile re-paints
+flush();
+```
+
+## native_element (Phase 7-Φ.D)
+
+```rust
+#[whisker::native_element("x-input")]
+pub fn x_input(value: Signal<String>, placeholder: Signal<String>) {}
+//                                                                ^^
+//                                          empty body — auto-generated
+```
+
+`#[whisker::native_element(tag)]` is a sibling of `#[component]`:
+same `<Name>Props` + builder + PascalCase-alias surface, but
+the body is **auto-generated** rather than supplied by the user.
+The macro emits:
+
+1. `XInput(props) -> Element` whose body calls
+   `view::create_element_by_name("x-input")` to allocate a Lynx
+   `FiberElement` of the given tag (which the host's behaviour
+   registry must know about — see below).
+2. Per-prop `apply_styles(h, props.style)` (if the prop is
+   literally named `style`) or `apply_attr(h, kebab-name, props.<prop>)`
+   for everything else — same helpers built-in tags use, so
+   `Signal::Dynamic` props transparently effect-wrap the underlying
+   `SetAttribute` / `SetRawInlineStyles` call.
+
+Call site mirrors built-in tags + user components:
+
+```rust
+render! {
+    XInput(value: my_string_signal, placeholder: "Type here")
+}
+```
+
+### Tag-name → host element class
+
+`create_element_by_name("x-input")` routes through
+`whisker_bridge_create_element_by_name` → Lynx CAPI
+`lynx_create_fiber_element_by_name(shell, tag_name)` →
+`ElementManager::CreateFiberNode(base::String(tag_name))`. Lynx's
+behaviour registry then looks up the registered class for the
+tag and instantiates it:
+
+- **iOS**: `LYNX_REGISTER_UI("x-input")` decorates a `LynxUI<UIView*>`
+  subclass that lives in the app's Mach-O image. The bridge's
+  `whisker_hello_element.mm` is the canonical sample.
+- **Android** (planned): `@WhiskerElement` Kotlin annotation
+  generates the same registration as Lynx's existing
+  `@LynxBehavior` machinery.
+
+If the host hasn't registered a class for the tag, `CreateFiberNode`
+returns nullptr; the Rust side surfaces that as a sentinel
+`Element` whose subsequent operations are silent no-ops (logged
+in debug). No null-pointer surprises propagate to user code.
+
+### Constraints
+
+v1 of `#[whisker::native_element]` is intentionally narrow:
+
+- **Every prop must be `Signal<T>`** for the macro to wire up
+  reactivity automatically. Future extension: extract `T` from
+  `Signal<T>` and route static / numeric / boolean props through
+  the `ToString` path.
+- **No children**: nesting under a native element isn't supported
+  yet. Bridge has `whisker_bridge_append_child`; macro needs a
+  `children: Children` prop story (mirrors `#[component]`).
+- **No event handlers**: `on_<event>: …` props need a separate
+  prop classifier (`on_` prefix → `set_event_listener` instead of
+  `apply_attr`). Trivial follow-up.
 
 ## render! macro
 
