@@ -63,9 +63,7 @@ fn async_proxy_compiles() {
     // We can't `await` here without an executor — just confirm
     // the macro emits a callable signature. The future itself
     // can be constructed safely (constructing doesn't dispatch).
-    let _fut = WhiskerHttpSys::fetch(vec![
-        WhiskerValue::String("https://example.com".into()),
-    ]);
+    let _fut = WhiskerHttpSys::fetch(vec![WhiskerValue::String("https://example.com".into())]);
 }
 
 // ----- Custom module name -------------------------------------------------

@@ -58,9 +58,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::{
-    parse2, FnArg, ItemTrait, Lit, Meta, Pat, PatType, ReturnType, TraitItem, TraitItemFn,
-};
+use syn::{parse2, FnArg, ItemTrait, Lit, Meta, Pat, PatType, ReturnType, TraitItem, TraitItemFn};
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input: ItemTrait = match parse2(item.clone()) {
