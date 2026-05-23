@@ -133,10 +133,19 @@ public struct WhiskerModuleMacro: PeerMacro {
         // declaration-name a simple identifier (`_whiskerDispatch_X`)
         // rather than `_whiskerDispatch_X(methodName:argsPtr:argCount:)`,
         // so Swift's macro-name-coverage check matches it against
-        // the declared `prefixed(_whiskerDispatch_)` clause. With
-        // labels, Swift treats the labelled form as the full
-        // declaration name and the prefix-matching path didn't fire.
-        let body = """
+        // the declared `prefixed(_whiskerDispatch_)` clause.
+        //
+        // We ALSO emit `_whiskerRegister_<ClassName>` in the same
+        // peer slot. The register fn holds the module-name string
+        // and the dispatch fn reference — both materialise in the
+        // SAME .o as the dispatch fn, so Swift never has to emit
+        // a `@convention(c)` thunk in another .o. The codegen
+        // plugin's `WhiskerModuleBehaviors.registerAll()` then
+        // just calls `_whiskerRegister_<ClassName>()` — a plain
+        // function call, no address-taken, no duplicate-symbol
+        // hazard. Phase 7-Φ.F.s7.
+        let registerFnName = "_whiskerRegister_\(className)"
+        let dispatchBody = """
         @_cdecl("\(dispatchFnName)")
         public func \(dispatchFnName)(
             _ methodName: UnsafePointer<CChar>?,
@@ -154,8 +163,23 @@ public struct WhiskerModuleMacro: PeerMacro {
             return result.toRaw()
         }
         """
+        // No `@_cdecl` on the register fn — it's invoked only from
+        // the codegen plugin's Swift output, which lives in the
+        // same SwiftPM target. Calling a Swift fn by its Swift
+        // identifier doesn't trigger `@convention(c)` thunk
+        // emission, so the dispatch fn's `@_cdecl` symbol stays
+        // unique to this .o.
+        let registerBody = """
+        public func \(registerFnName)() {
+            whisker_bridge_register_module_dispatch(
+                "\(moduleName)", \(dispatchFnName))
+        }
+        """
 
-        return [DeclSyntax(stringLiteral: body)]
+        return [
+            DeclSyntax(stringLiteral: dispatchBody),
+            DeclSyntax(stringLiteral: registerBody),
+        ]
     }
 }
 

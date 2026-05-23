@@ -143,14 +143,23 @@ func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
         // `WhiskerValueRaw`, …) the module registration touches.
         import WhiskerRuntime
 
-        // Forward declarations for the per-module `@_cdecl` dispatch
-        // shims the macro emits as top-level peers of each
-        // `@WhiskerModule`-annotated class. Each shim's Swift symbol
-        // name matches its `@_cdecl` exposed name, so we can take
-        // its address by Swift identifier — the conversion to the
-        // C function-pointer type happens implicitly at the call
-        // site below.
-        \(sortedModules.isEmpty ? "// (no module dispatch shims)\n" : "")
+
+        """
+
+    // The macro emits TWO peer fns per `@WhiskerModule` class:
+    //   - `_whiskerDispatch_<ClassName>` — the @_cdecl C dispatch
+    //   - `_whiskerRegister_<ClassName>` — a plain Swift fn that
+    //     calls `whisker_bridge_register_module_dispatch(name,
+    //     dispatch)`. The `@convention(c)` thunk for the dispatch
+    //     fn reference materialises in the SAME .o as the dispatch
+    //     definition; this file only calls the register fn by its
+    //     Swift identifier — no thunk, no duplicate symbol.
+    //
+    // Both files live in the same `WhiskerModules` Swift module,
+    // so the codegen file sees the register fns via plain Swift
+    // name lookup without any forward declaration (Phase 7-Φ.F.s7).
+
+    out += """
         @objc public final class WhiskerModuleBehaviors: NSObject {
             private static var registered = false
             private static let lock = NSLock()
@@ -182,16 +191,12 @@ func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
             """
     }
     for hit in sortedModules {
-        // The macro emits `_whiskerDispatch_<ClassName>` (Swift's
-        // `prefixed(...)` peer-macro coverage rule pins the name
-        // to the attached decl's identifier; the module-name
-        // annotation arg is just the registration key, not the
-        // symbol name). We register the module-name string here
-        // with the class-name-based dispatch fn.
-        let symbol = "_whiskerDispatch_\(hit.className)"
+        // Just call the per-module register fn. The macro hard-codes
+        // the module-name string inside that fn, so we don't need
+        // to pass it here.
+        let registerName = "_whiskerRegister_\(hit.className)"
         out += """
-                    whisker_bridge_register_module_dispatch(
-                        "\(hit.name)", \(symbol))
+                    \(registerName)()
 
             """
     }

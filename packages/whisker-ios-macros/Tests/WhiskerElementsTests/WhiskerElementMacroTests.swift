@@ -91,15 +91,21 @@ final class WhiskerElementMacroTests: XCTestCase {
                 }
                 return result.toRaw()
             }
+
+            public func _whiskerRegister_LocalStoreImpl() {
+                whisker_bridge_register_module_dispatch(
+                    "LocalStore", _whiskerDispatch_LocalStoreImpl)
+            }
             """,
             macros: testMacros
         )
     }
 
     /// Module-name annotation argument is preserved verbatim in
-    /// the default-arm error message (it's the registration key,
-    /// not part of the symbol name) — hyphens are kept untouched.
-    func testModuleNameUsedInErrorMessageVerbatim() {
+    /// the default-arm error message AND in the registration call
+    /// (it's the registration key, not the symbol name) — hyphens
+    /// are kept untouched.
+    func testModuleNameUsedVerbatimInRegister() {
         assertMacroExpansion(
             """
             @WhiskerModule("Whisker-Store")
@@ -129,6 +135,11 @@ final class WhiskerElementMacroTests: XCTestCase {
                     result = .error("unknown method \\(method) on Whisker-Store")
                 }
                 return result.toRaw()
+            }
+
+            public func _whiskerRegister_StoreImpl() {
+                whisker_bridge_register_module_dispatch(
+                    "Whisker-Store", _whiskerDispatch_StoreImpl)
             }
             """,
             macros: testMacros
@@ -164,6 +175,11 @@ final class WhiskerElementMacroTests: XCTestCase {
                     result = .error("unknown method \\(method) on Empty")
                 }
                 return result.toRaw()
+            }
+
+            public func _whiskerRegister_EmptyImpl() {
+                whisker_bridge_register_module_dispatch(
+                    "Empty", _whiskerDispatch_EmptyImpl)
             }
             """,
             macros: testMacros
@@ -207,6 +223,11 @@ final class WhiskerElementMacroTests: XCTestCase {
                     result = .error("unknown method \\(method) on Demo")
                 }
                 return result.toRaw()
+            }
+
+            public func _whiskerRegister_DemoImpl() {
+                whisker_bridge_register_module_dispatch(
+                    "Demo", _whiskerDispatch_DemoImpl)
             }
             """,
             macros: testMacros

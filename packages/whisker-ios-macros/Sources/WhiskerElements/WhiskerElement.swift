@@ -89,13 +89,20 @@ public macro WhiskerElement(_ tag: String) =
 /// Phase 7-Φ.F: dispatch shim replaces the previous Obj-C
 /// `NSInvocation`-based registry. The class no longer needs to
 /// inherit from `NSObject` or declare `@objc` selectors.
-// `names: prefixed(_whiskerDispatch_)` is load-bearing: Swift
-// rejects `names: arbitrary` on peer macros at global scope (the
-// macro could otherwise shadow any top-level decl), but the
-// `prefixed` form is allowed because every generated symbol
-// starts with the declared prefix. The dispatch shim name is
-// `_whiskerDispatch_<sanitised module name>` which satisfies the
-// constraint.
-@attached(peer, names: prefixed(_whiskerDispatch_))
+// `names: prefixed(...)` covers both peer functions the macro
+// emits:
+//   - `_whiskerDispatch_<ClassName>` — the @_cdecl C dispatch shim
+//   - `_whiskerRegister_<ClassName>` — a tiny registration helper
+//     that calls `whisker_bridge_register_module_dispatch`. Lives
+//     in the same .o as the dispatch shim so Swift can convert
+//     the dispatch fn to `@convention(c)` locally (no inter-.o
+//     thunk → no duplicate-symbol linker error in Debug). The
+//     codegen plugin calls `_whiskerRegister_<ClassName>()` rather
+//     than taking the dispatch shim's address directly.
+//
+// Swift rejects `names: arbitrary` on peer macros at global scope
+// (a macro could otherwise shadow any top-level decl), so we
+// enumerate each prefix explicitly.
+@attached(peer, names: prefixed(_whiskerDispatch_), prefixed(_whiskerRegister_))
 public macro WhiskerModule(_ name: String) =
     #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerModuleMacro")
