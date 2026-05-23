@@ -64,6 +64,9 @@ public class WhiskerElementProcessor(
     /** FQN of the `@WhiskerModule` annotation — Phase 7-Φ.E.6. */
     private val moduleAnnotationFqn = "rs.whisker.annotations.WhiskerModule"
 
+    /** FQN of the `@WhiskerProp` annotation — Phase 7-Φ.H.1. */
+    private val propAnnotationFqn = "rs.whisker.annotations.WhiskerProp"
+
     /**
      * KSP invokes `process` at least twice per compilation: once
      * when the user code is first processed (annotations visible)
@@ -143,10 +146,76 @@ public class WhiskerElementProcessor(
             w.appendLine("import com.lynx.tasm.LynxEnv")
             w.appendLine("import com.lynx.tasm.behavior.Behavior")
             w.appendLine("import com.lynx.tasm.behavior.LynxContext")
+            w.appendLine("import com.lynx.tasm.behavior.LynxProp")
             w.appendLine("import com.lynx.tasm.behavior.ui.LynxUI")
             w.appendLine("import rs.whisker.runtime.WhiskerModuleRegistry")
             w.appendLine("import rs.whisker.runtime.WhiskerValue")
             w.appendLine("import java.util.concurrent.atomic.AtomicBoolean")
+
+            // Per-element bridge subclasses for @WhiskerProp forwarding.
+            // Kotlin's `typealias` keyword can't alias annotation
+            // types, so we can't surface `@LynxProp` as `@WhiskerProp`
+            // directly. Instead, for every @WhiskerElement class
+            // that carries @WhiskerProp-tagged setters, emit a
+            // `<Class>_LynxBridge` subclass with `@LynxProp(name =
+            // ...)` wrapper methods that forward to the user's
+            // setter. The element registration further down
+            // instantiates the bridge subclass rather than the
+            // user class, so Lynx's reflection-based prop dispatch
+            // finds the @LynxProp-tagged wrappers on the bridge
+            // without the module author ever mentioning Lynx in
+            // their own code.
+            for (cls in elements) {
+                val fqn = cls.qualifiedName?.asString() ?: continue
+                val simple = cls.simpleName.asString()
+                val props = propMethods(cls)
+                if (props.isEmpty()) continue
+
+                w.appendLine()
+                w.appendLine("/**")
+                w.appendLine(" * @WhiskerProp -> @LynxProp forwarding bridge for")
+                w.appendLine(" * `$fqn`. Generated so module authors avoid the")
+                w.appendLine(" * direct `@LynxProp` import (Kotlin doesn't allow")
+                w.appendLine(" * typealiasing annotations).")
+                w.appendLine(" */")
+                w.appendLine("private class ${simple}_LynxBridge(context: LynxContext) : $fqn(context) {")
+                for (m in props) {
+                    val methodName = m.decl.simpleName.asString()
+                    val propName = m.propName
+                    val params = m.decl.parameters
+                    // Each @WhiskerProp method takes a single value
+                    // parameter — Lynx's reflection contract for
+                    // prop setters. We render exactly that one
+                    // parameter; multi-param setters would need
+                    // adjustment but aren't supported by Lynx
+                    // anyway.
+                    if (params.size != 1) {
+                        logger.error(
+                            "@WhiskerProp methods must take exactly one parameter; " +
+                                "`$fqn.$methodName` has ${params.size}",
+                            m.decl,
+                        )
+                        continue
+                    }
+                    val param = params[0]
+                    val paramName = param.name?.asString() ?: "value"
+                    // Render the param type via KSP's resolved
+                    // representation. For built-ins (`kotlin.String`,
+                    // `kotlin.Int`, `kotlin.Boolean`, …) this yields
+                    // a fully-qualified name that Kotlin source
+                    // accepts unchanged. Generic args + nullability
+                    // markers come through via `toString()`.
+                    val paramTypeRendered = param.type.resolve().let { t ->
+                        val base = t.declaration.qualifiedName?.asString() ?: t.toString()
+                        if (t.isMarkedNullable) "$base?" else base
+                    }
+                    w.appendLine("    @LynxProp(name = \"$propName\")")
+                    w.appendLine("    fun lynxSet_$methodName($paramName: $paramTypeRendered) {")
+                    w.appendLine("        $methodName($paramName)")
+                    w.appendLine("    }")
+                }
+                w.appendLine("}")
+            }
 
             // Per-module dispatch objects are emitted at file scope
             // (companion to the generated `WhiskerModuleBehaviors`
@@ -211,11 +280,23 @@ public class WhiskerElementProcessor(
                     )
                     continue
                 }
+                // If the class has @WhiskerProp methods, instantiate
+                // the bridge subclass (which carries the @LynxProp
+                // wrappers) rather than the user class. The user
+                // class doesn't itself participate in Lynx's
+                // attribute-dispatch reflection, but its sub-class
+                // (the bridge) does.
+                val simple = cls.simpleName.asString()
+                val instantiated = if (propMethods(cls).isNotEmpty()) {
+                    "${simple}_LynxBridge"
+                } else {
+                    fqn
+                }
                 w.appendLine("        env.addBehavior(object : Behavior(\"$tag\") {")
                 w.appendLine("            override fun createUI(context: LynxContext): LynxUI<*> =")
-                w.appendLine("                $fqn(context)")
+                w.appendLine("                $instantiated(context)")
                 w.appendLine("            override fun createUIFiber(context: LynxContext): LynxUI<*> =")
-                w.appendLine("                $fqn(context)")
+                w.appendLine("                $instantiated(context)")
                 w.appendLine("        })")
             }
 
@@ -252,6 +333,41 @@ public class WhiskerElementProcessor(
             w.appendLine("    }")
             w.appendLine("}")
         }
+    }
+
+    /** One discovered `@WhiskerProp("name") fun setX(...)` setter. */
+    data class PropMethod(val decl: KSFunctionDeclaration, val propName: String)
+
+    /**
+     * Find every `@WhiskerProp("name")`-annotated instance method
+     * on `cls`. Phase 7-Φ.H.1 — used to emit `<Class>_LynxBridge`
+     * subclasses that carry the real `@LynxProp(name = …)` setters.
+     *
+     * Skips methods missing the `name` argument (KSP-level error
+     * logged separately) so the rest of the bridge still compiles.
+     */
+    private fun propMethods(cls: KSClassDeclaration): List<PropMethod> {
+        val out = mutableListOf<PropMethod>()
+        for (decl in cls.declarations) {
+            if (decl !is KSFunctionDeclaration) continue
+            if (decl.simpleName.asString() == "<init>") continue
+            val annotation = decl.annotations.firstOrNull {
+                it.annotationType.resolve().declaration.qualifiedName?.asString() == propAnnotationFqn
+            } ?: continue
+            val name = annotation.arguments
+                .firstOrNull { it.name?.asString() == "name" || it.name == null }
+                ?.value as? String
+            if (name == null) {
+                logger.error(
+                    "@WhiskerProp on `${cls.qualifiedName?.asString()}.${decl.simpleName.asString()}` " +
+                        "has no `name` argument",
+                    decl,
+                )
+                continue
+            }
+            out.add(PropMethod(decl, name))
+        }
+        return out
     }
 
     /**
