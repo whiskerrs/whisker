@@ -1,0 +1,72 @@
+// Gradle build for the `whisker-hello-element` module's Android
+// half (Phase 7-Φ.G).
+//
+// Each Whisker module package is now its own Android library
+// subproject. whisker-build's android sync generates a
+// `settings.gradle.kts` include + sets `projectDir` to this
+// directory, so the user app's gradle composite sees this module
+// as `:whisker-hello-element`.
+//
+// Module authors are free to add their own Maven / AAR deps here.
+// KSP runs per-subproject and emits a uniquely-named
+// `<ModuleName>Behaviors.kt` registration helper; the user app's
+// whisker-build-generated top-level aggregator imports + calls
+// each one.
+
+plugins {
+    id("com.android.library")
+    id("org.jetbrains.kotlin.android")
+    // KSP version pinned to the same `<kotlin>-<abi>` pair the
+    // user app uses (see `crates/whisker-cng/src/templates/android/
+    // app/build.gradle.kts`). Bump in lockstep with Kotlin.
+    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
+}
+
+android {
+    // Unique per-module package namespace. Conventionally
+    // `rs.whisker.modules.<crate-name-flat>` so two modules can't
+    // shadow each other's resources / R class.
+    namespace = "rs.whisker.modules.helloelement"
+    compileSdk = 34
+
+    defaultConfig {
+        minSdk = 21
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    // Kotlin sources live in `src/android/` (alongside the Rust
+    // crate's `src/` and the iOS `src/ios/`). SwiftPM does the
+    // analogous mapping via `path:` on its target.
+    sourceSets {
+        getByName("main") {
+            kotlin.srcDirs("src/android")
+        }
+    }
+}
+
+// Pass the module name to KSP so the processor can produce a
+// uniquely-named `<Module>Behaviors.kt` per subproject. The
+// processor reads this option via
+// `environment.options["whisker.moduleName"]`.
+ksp {
+    arg("whisker.moduleName", "WhiskerHelloElement")
+}
+
+dependencies {
+    // Whisker runtime provides the `WhiskerValue` sealed class,
+    // `WhiskerModuleRegistry`, plus the Lynx AAR (via api(…))
+    // for `LynxUI`, `LynxComponentRegistry`, etc.
+    implementation(project(":whisker-runtime"))
+    // `@WhiskerElement` / `@WhiskerModule` annotations + KSP
+    // processor. Resolved through the user-app gradle's
+    // composite-build entry for `packages/whisker-android-ksp`.
+    implementation("rs.whisker:annotations")
+    ksp("rs.whisker:ksp")
+}

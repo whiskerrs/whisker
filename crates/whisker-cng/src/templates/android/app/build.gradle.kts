@@ -1,19 +1,17 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    // Phase 7-Φ.H.2: KSP processor that discovers @WhiskerElement
-    // annotations across the user app's compilation (including the
-    // module-crate Kotlin sources staged under `whisker_modules/`)
-    // and generates `rs.whisker.runtime.generated.WhiskerModuleBehaviors`.
-    // The KSP processor itself lives in `packages/whisker-android-ksp/`
-    // and is pulled in via the composite-build entry added in
-    // `settings.gradle.kts`.
-    //
-    // Version is pinned to match `org.jetbrains.kotlin.android`
-    // 2.0.21 — KSP releases follow the Kotlin major.minor.patch
-    // with a trailing `-1.0.N` ABI suffix. Bump in lockstep with
-    // the Kotlin version.
-    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
+    // Phase 7-Φ.G: KSP is no longer applied at the app level. Each
+    // Whisker module package is now its own Android library subproject
+    // with KSP running per-subproject — see
+    // `packages/whisker-*/build.gradle.kts`. The user app no longer
+    // sees `@WhiskerElement` / `@WhiskerModule` annotations directly
+    // (they're inside the subproject classpaths), so it has nothing
+    // to process. The whisker-build-generated
+    // `WhiskerModuleBehaviors.kt` (under
+    // `src/main/whisker_generated/`) imports each subproject's
+    // per-module behaviors object and chains the `registerAll()`
+    // calls.
 }
 
 android {
@@ -46,16 +44,18 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("src/main/jniLibs")
-            // Whisker module-system v1 (Phase 7-Φ.C): module crates'
-            // Android Kotlin sources are staged into `whisker_modules/`
-            // by `whisker-build::android::stage_module_kotlin_sources`.
-            // We include it here as a Kotlin source root so gradle's
-            // compileDebugKotlin / compileReleaseKotlin tasks pick
-            // them up alongside `src/main/kotlin/`.
+            // Phase 7-Φ.G: `src/main/whisker_generated/` holds the
+            // whisker-build-generated
+            // `rs.whisker.runtime.generated.WhiskerModuleBehaviors`
+            // aggregator that imports each Whisker module's
+            // KSP-generated `<ModuleName>Behaviors` object and
+            // chains the `registerAll()` calls. The actual module
+            // sources live in their own subprojects now — we don't
+            // stage them into the app's source set anymore.
             //
-            // Empty when no module declares android.kotlin_sources —
-            // gradle is fine with non-existent source roots.
-            kotlin.srcDirs("src/main/kotlin", "src/main/whisker_modules")
+            // Empty when no Whisker module deps — gradle is fine
+            // with non-existent source roots.
+            kotlin.srcDirs("src/main/kotlin", "src/main/whisker_generated")
         }
     }
 
@@ -77,13 +77,15 @@ dependencies {
     implementation(project(":whisker-runtime"))
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
-    // `@WhiskerElement` annotation + KSP processor (Phase 7-Φ.H.2).
-    // Both targets live in the composite-build referenced from
-    // `settings.gradle.kts`. The annotation dep is `implementation`
-    // so module-crate Kotlin sources can resolve the
-    // `rs.whisker.annotations.WhiskerElement` symbol; the `ksp(...)`
-    // dep wires the processor into Kotlin compilation so it sees
-    // the annotation applications and emits the registry.
-    implementation("rs.whisker:annotations")
-    ksp("rs.whisker:ksp")
+}
+
+// Phase 7-Φ.G: whisker-build emits per-module
+// `implementation(project(":<crate-name>"))` deps into
+// `whisker_module_deps.gradle.kts` (under the gradle root) so the
+// list refreshes when cargo deps change. Applied with this build
+// script's `Project` as the receiver, so `dependencies { ... }`
+// blocks inside it register against this `:app` target.
+val whiskerModuleDeps = file("${rootProject.projectDir}/whisker_module_deps.gradle.kts")
+if (whiskerModuleDeps.exists()) {
+    apply(from = whiskerModuleDeps)
 }

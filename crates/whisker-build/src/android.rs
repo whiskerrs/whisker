@@ -290,66 +290,196 @@ pub fn stage_jni_libs(
     Ok(())
 }
 
-/// Copy every discovered Whisker module's Android Kotlin sources
-/// into `gen/android/app/src/main/whisker_modules/<crate-name>/`
-/// so gradle's source-set compilation picks them up alongside the
-/// runtime's own Kotlin tree.
+/// Generate the per-app Gradle module-aggregator artefacts under
+/// `gen/android/`. Phase 7-Φ.G: replaces the previous file-copy
+/// flow — each Whisker module package is now its own Android
+/// library subproject with a hand-written `build.gradle.kts`. We
+/// emit three files that wire those subprojects into the user
+/// app's composite Gradle build:
 ///
-/// Per-crate subdirectory prevents filename collisions between two
-/// modules that happen to ship the same Kotlin filename — each
-/// module's tree is scoped under its cargo crate name. The Kotlin
-/// compiler determines the package from each file's `package`
-/// declaration, not its filesystem path, so the subdirectory layout
-/// is purely a uniqueness convention.
+/// 1. `whisker_modules.settings.gradle.kts` — `include(":<crate>")`
+///    + `project(...).projectDir = file("...")` calls. Applied
+///    by the cng-generated `settings.gradle.kts` via `apply(from
+///    = ...)`.
 ///
-/// Empty / non-Android-contributing module list is a no-op — same
-/// contract as the iOS module-source pass-through.
+/// 2. `whisker_module_deps.gradle.kts` —
+///    `dependencies { implementation(project(":<crate>")) }`.
+///    Applied by the cng-generated `app/build.gradle.kts` so the
+///    user app picks up each module's library AAR.
+///
+/// 3. `app/src/main/whisker_generated/.../WhiskerModuleBehaviors.kt`
+///    — the aggregator object whose `registerAll()` imports each
+///    subproject's per-module `<ModuleName>Behaviors` object and
+///    calls its `registerAll()`. The aggregator's FQN matches
+///    what the user app's `Application.onCreate()` already
+///    invokes, so the user-facing surface is unchanged.
+///
+/// Each module's KSP plugin emits its own `<ModuleName>Behaviors`
+/// object into its subproject's generated-source set; the
+/// aggregator stitches them together. Discovery signal:
+/// presence of a `build.gradle.kts` next to the module's
+/// `whisker.module.toml` (Phase G dropped `kotlin_sources` from
+/// the discovery role).
 pub fn stage_module_kotlin_sources(
     gen_android: &Path,
     modules: &[crate::modules::ResolvedModule],
 ) -> Result<()> {
-    let root = gen_android.join("app/src/main/whisker_modules");
-    // Wipe the staging dir first so a removed module doesn't leave
-    // stale `.kt` files behind that gradle would still try to compile.
-    if root.exists() {
-        std::fs::remove_dir_all(&root).with_context(|| format!("rm -rf {}", root.display()))?;
-    }
-    let mut total = 0usize;
-    for m in modules {
-        if m.android_kotlin_sources.is_empty() {
-            continue;
-        }
-        let crate_dst = root.join(&m.package);
-        std::fs::create_dir_all(&crate_dst)
-            .with_context(|| format!("mkdir -p {}", crate_dst.display()))?;
-        for src in &m.android_kotlin_sources {
-            let filename = src.file_name().ok_or_else(|| {
-                anyhow!("module kotlin source has no filename: {}", src.display())
-            })?;
-            let dst = crate_dst.join(filename);
-            std::fs::copy(src, &dst)
-                .with_context(|| format!("copy {} → {}", src.display(), dst.display()))?;
-            total += 1;
-        }
-    }
+    let android_modules: Vec<&crate::modules::ResolvedModule> = modules
+        .iter()
+        .filter(|m| m.manifest_dir.join("build.gradle.kts").is_file())
+        .collect();
 
-    // `WhiskerModuleBehaviors.kt` is no longer generated here —
-    // Phase 7-Φ.H.2 moved that responsibility to the
-    // `whisker-android-ksp` KSP processor, which discovers
-    // `@WhiskerElement(...)` applications across the user app's
-    // compilation (including the staged module sources we just
-    // copied in) and emits the registry into the user app's KSP
-    // generated-source set. The generated FQN
-    // (`rs.whisker.runtime.generated.WhiskerModuleBehaviors`)
-    // matches what the Application template already calls, so the
-    // user-facing surface is unchanged.
+    // 1. Settings include script.
+    let settings_include_path = gen_android.join("whisker_modules.settings.gradle.kts");
+    std::fs::write(
+        &settings_include_path,
+        render_module_settings_include(&android_modules),
+    )
+    .with_context(|| format!("write {}", settings_include_path.display()))?;
 
-    if total > 0 {
+    // 2. App-level dependencies script.
+    let deps_script_path = gen_android.join("whisker_module_deps.gradle.kts");
+    std::fs::write(&deps_script_path, render_module_deps_script(&android_modules))
+        .with_context(|| format!("write {}", deps_script_path.display()))?;
+
+    // 3. Aggregator Kotlin file. Always (re)create the directory
+    // so a removed module doesn't leave behind a stale aggregator.
+    let aggregator_dir = gen_android.join("app/src/main/whisker_generated/rs/whisker/runtime/generated");
+    // Also drop the legacy staging dir so removed-Phase-F builds
+    // don't leave behind stale `.kt` files that gradle would try
+    // to compile.
+    let legacy_staging = gen_android.join("app/src/main/whisker_modules");
+    if legacy_staging.exists() {
+        std::fs::remove_dir_all(&legacy_staging)
+            .with_context(|| format!("rm -rf {}", legacy_staging.display()))?;
+    }
+    if aggregator_dir.exists() {
+        std::fs::remove_dir_all(&aggregator_dir)
+            .with_context(|| format!("rm -rf {}", aggregator_dir.display()))?;
+    }
+    std::fs::create_dir_all(&aggregator_dir)
+        .with_context(|| format!("mkdir -p {}", aggregator_dir.display()))?;
+    let aggregator_path = aggregator_dir.join("WhiskerModuleBehaviors.kt");
+    std::fs::write(&aggregator_path, render_aggregator_kt(&android_modules))
+        .with_context(|| format!("write {}", aggregator_path.display()))?;
+
+    if !android_modules.is_empty() {
         crate::ui::info(format!(
-            "stage {total} module Kotlin source(s) under whisker_modules/"
+            "wire {n} module gradle subproject(s) into the app build",
+            n = android_modules.len()
         ));
     }
     Ok(())
+}
+
+/// Convention: per-module KSP-emitted behaviors object name is
+/// `PascalCase(crate_name) + "Behaviors"`. Matches the
+/// `whisker.moduleName` ksp arg in each module's
+/// `build.gradle.kts`.
+fn crate_to_behaviors_object(crate_name: &str) -> String {
+    let mut out = String::new();
+    let mut next_upper = true;
+    for ch in crate_name.chars() {
+        if ch == '-' || ch == '_' {
+            next_upper = true;
+            continue;
+        }
+        if next_upper {
+            out.extend(ch.to_uppercase());
+            next_upper = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push_str("Behaviors");
+    out
+}
+
+fn render_module_settings_include(modules: &[&crate::modules::ResolvedModule]) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "// AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
+         // `whisker run` / `whisker build` to refresh.\n\
+         //\n\
+         // `apply(from = ...)`'d by the cng-generated\n\
+         // settings.gradle.kts. Each `include` + `projectDir` pair\n\
+         // wires a Whisker module package into the user app's\n\
+         // composite Gradle build as a normal subproject.\n\n",
+    );
+    if modules.is_empty() {
+        out.push_str("// (no Whisker module deps)\n");
+        return out;
+    }
+    for m in modules {
+        let path = m.manifest_dir.display().to_string();
+        out.push_str(&format!("include(\":{name}\")\n", name = m.package));
+        out.push_str(&format!(
+            "project(\":{name}\").projectDir = file({path:?})\n",
+            name = m.package
+        ));
+    }
+    out
+}
+
+fn render_module_deps_script(modules: &[&crate::modules::ResolvedModule]) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "// AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
+         // `whisker run` / `whisker build` to refresh.\n\
+         //\n\
+         // `apply(from = ...)`'d by the cng-generated\n\
+         // app/build.gradle.kts. Adds an `implementation(project(...))`\n\
+         // entry for every Whisker module subproject so the user\n\
+         // app links against their AARs.\n\n",
+    );
+    if modules.is_empty() {
+        out.push_str("// (no Whisker module deps)\n");
+        return out;
+    }
+    out.push_str("dependencies {\n");
+    for m in modules {
+        out.push_str(&format!(
+            "    \"implementation\"(project(\":{name}\"))\n",
+            name = m.package
+        ));
+    }
+    out.push_str("}\n");
+    out
+}
+
+fn render_aggregator_kt(modules: &[&crate::modules::ResolvedModule]) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "// AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
+         // `whisker run` / `whisker build` to refresh.\n\
+         //\n\
+         // Aggregates every Whisker module subproject's KSP-\n\
+         // generated `<ModuleName>Behaviors` object into a single\n\
+         // `rs.whisker.runtime.generated.WhiskerModuleBehaviors`\n\
+         // entry point. The user app's `WhiskerApplication.onCreate()`\n\
+         // (generated from the cng `Application.kt` template) calls\n\
+         // `registerAll()` once at launch — that fans out to each\n\
+         // subproject's per-module behaviors, which themselves wire\n\
+         // both `@WhiskerElement` Lynx registrations and\n\
+         // `@WhiskerModule` dispatch registrations.\n\n",
+    );
+    out.push_str("package rs.whisker.runtime.generated\n\n");
+    out.push_str("import java.util.concurrent.atomic.AtomicBoolean\n\n");
+    out.push_str("public object WhiskerModuleBehaviors {\n");
+    out.push_str("    private val registered = AtomicBoolean(false)\n\n");
+    out.push_str("    @JvmStatic\n");
+    out.push_str("    public fun registerAll() {\n");
+    out.push_str("        if (!registered.compareAndSet(false, true)) return\n");
+    if modules.is_empty() {
+        out.push_str("        // (no Whisker module deps)\n");
+    }
+    for m in modules {
+        let obj = crate_to_behaviors_object(&m.package);
+        out.push_str(&format!("        {obj}.registerAll()\n"));
+    }
+    out.push_str("    }\n");
+    out.push_str("}\n");
+    out
 }
 
 /// Locate `libc++_shared.so` inside the NDK sysroot for `abi`. NDKs

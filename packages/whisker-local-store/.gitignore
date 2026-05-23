@@ -5,3 +5,7 @@
 .build/
 .swiftpm/
 Package.resolved
+
+# Android Gradle subproject build artifacts.
+build/
+.gradle/
