@@ -27,6 +27,12 @@ import rs.whisker.annotations.WhiskerModule
 import rs.whisker.runtime.WhiskerApplication
 import rs.whisker.runtime.WhiskerValue
 
+// Phase 7-Φ.G PoC: external Maven dep pulled via this module's
+// `build.gradle.kts`. `androidx.collection.ArrayMap` isn't actively
+// used yet — the import just proves the dep resolves + the symbol
+// is reachable from module sources.
+import androidx.collection.ArrayMap
+
 @WhiskerModule("WhiskerLocalStore")
 class WhiskerLocalStoreImpl {
 

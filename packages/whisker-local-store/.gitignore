@@ -1,0 +1,11 @@
+# Local SwiftPM build artifacts produced when running `swift build` /
+# Xcode against this package directly. Real iOS builds go through
+# whisker-build's gen tree; these are only present after host-side
+# tooling has touched the package.
+.build/
+.swiftpm/
+Package.resolved
+
+# Android Gradle subproject build artifacts.
+build/
+.gradle/

@@ -40,3 +40,18 @@ project(":whisker-runtime").projectDir = file("{{whisker_runtime_android_path}}"
 // app's (2.0.21) is what keeps the KSP processor's symbols ABI-
 // compatible with the user app's Kotlin compiler.
 includeBuild("{{whisker_android_ksp_path}}")
+
+// Phase 7-Φ.G: Whisker module packages are now Gradle subprojects
+// of the user app. The actual `include(":<crate-name>")` +
+// `project(...).projectDir = file(...)` calls are emitted by
+// whisker-build into `whisker_modules.settings.gradle.kts` (next
+// to this file) so the list refreshes automatically when a
+// cargo dep is added / removed.
+//
+// `apply(from = ...)` invokes the external script with this
+// settings instance as the receiver, so its top-level `include`
+// calls register subprojects on the user app's Gradle build.
+val whiskerModulesSettings = file("whisker_modules.settings.gradle.kts")
+if (whiskerModulesSettings.exists()) {
+    apply(from = whiskerModulesSettings)
+}
