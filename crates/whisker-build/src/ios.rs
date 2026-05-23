@@ -741,11 +741,11 @@ fn render_register_all_swift(modules: &[&crate::modules::ResolvedModule]) -> Str
         let target = crate_to_spm_target(&m.package);
         out.push_str(&format!("import {target}\n"));
     }
-    out.push_str("\n");
+    out.push('\n');
     out.push_str("@objc public final class WhiskerModuleBehaviors: NSObject {\n");
     out.push_str("    private static var registered = false\n");
     out.push_str("    private static let lock = NSLock()\n");
-    out.push_str("\n");
+    out.push('\n');
     out.push_str("    @objc public static func registerAll() {\n");
     out.push_str("        lock.lock()\n");
     out.push_str("        defer { lock.unlock() }\n");

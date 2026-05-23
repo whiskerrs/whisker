@@ -297,22 +297,21 @@ pub fn stage_jni_libs(
 /// emit three files that wire those subprojects into the user
 /// app's composite Gradle build:
 ///
-/// 1. `whisker_modules.settings.gradle.kts` — `include(":<crate>")`
-///    + `project(...).projectDir = file("...")` calls. Applied
-///    by the cng-generated `settings.gradle.kts` via `apply(from
-///    = ...)`.
+/// 1. `whisker_modules.settings.gradle.kts` — `include(":<crate>")` +
+///    `project(...).projectDir = file("...")` calls. Applied by the
+///    cng-generated `settings.gradle.kts` via `apply(from = ...)`.
 ///
 /// 2. `whisker_module_deps.gradle.kts` —
-///    `dependencies { implementation(project(":<crate>")) }`.
-///    Applied by the cng-generated `app/build.gradle.kts` so the
-///    user app picks up each module's library AAR.
+///    `dependencies { implementation(project(":<crate>")) }`. Applied
+///    by the cng-generated `app/build.gradle.kts` so the user app
+///    picks up each module's library AAR.
 ///
 /// 3. `app/src/main/whisker_generated/.../WhiskerModuleBehaviors.kt`
 ///    — the aggregator object whose `registerAll()` imports each
-///    subproject's per-module `<ModuleName>Behaviors` object and
-///    calls its `registerAll()`. The aggregator's FQN matches
-///    what the user app's `Application.onCreate()` already
-///    invokes, so the user-facing surface is unchanged.
+///    subproject's per-module `<ModuleName>Behaviors` object and calls
+///    its `registerAll()`. The aggregator's FQN matches what the user
+///    app's `Application.onCreate()` already invokes, so the
+///    user-facing surface is unchanged.
 ///
 /// Each module's KSP plugin emits its own `<ModuleName>Behaviors`
 /// object into its subproject's generated-source set; the
@@ -339,12 +338,16 @@ pub fn stage_module_kotlin_sources(
 
     // 2. App-level dependencies script.
     let deps_script_path = gen_android.join("whisker_module_deps.gradle.kts");
-    std::fs::write(&deps_script_path, render_module_deps_script(&android_modules))
-        .with_context(|| format!("write {}", deps_script_path.display()))?;
+    std::fs::write(
+        &deps_script_path,
+        render_module_deps_script(&android_modules),
+    )
+    .with_context(|| format!("write {}", deps_script_path.display()))?;
 
     // 3. Aggregator Kotlin file. Always (re)create the directory
     // so a removed module doesn't leave behind a stale aggregator.
-    let aggregator_dir = gen_android.join("app/src/main/whisker_generated/rs/whisker/runtime/generated");
+    let aggregator_dir =
+        gen_android.join("app/src/main/whisker_generated/rs/whisker/runtime/generated");
     // Also drop the legacy staging dir so removed-Phase-F builds
     // don't leave behind stale `.kt` files that gradle would try
     // to compile.
