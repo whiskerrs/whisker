@@ -8,7 +8,7 @@
 //!
 //! ```ignore
 //! #[whisker::native_module(name = "WhiskerLocalStore")]
-//! pub trait WhiskerLocalStoreRaw {
+//! pub trait WhiskerLocalStoreSys {
 //!     fn save(args: Vec<WhiskerValue>) -> WhiskerValue;
 //!     fn load(args: Vec<WhiskerValue>) -> WhiskerValue;
 //!     async fn fetch(args: Vec<WhiskerValue>) -> WhiskerValue;
@@ -23,10 +23,13 @@
 //! `WhiskerValue::Error` into `Result` here (the caller has full
 //! context to decide how to surface a dispatch failure).
 //!
-//! ## Why "Raw" suffix on the trait
+//! ## Why "Sys" suffix on the trait
 //!
 //! The proc-macro-emitted proxy is the `-sys` layer — a thin
 //! pass-through to the bridge with no type marshalling magic.
+//! The `Sys` suffix mirrors Rust's `*-sys` crate convention
+//! (`libc-sys`, `openssl-sys`, …) and the sibling
+//! `whisker-driver-sys` crate that wraps the C ABI directly.
 //! Typed call surfaces (`fn save(key: String, value: String) ->
 //! Result<bool, _>`) live in a hand-written wrapper module
 //! authors layer on top:
@@ -35,7 +38,7 @@
 //! pub struct WhiskerLocalStore;
 //! impl WhiskerLocalStore {
 //!     pub fn save(key: String, value: String) -> Result<bool, WhiskerModuleError> {
-//!         let raw = WhiskerLocalStoreRaw::save(vec![
+//!         let raw = WhiskerLocalStoreSys::save(vec![
 //!             WhiskerValue::String(key),
 //!             WhiskerValue::String(value),
 //!         ]);
@@ -67,7 +70,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 compile_error!(concat!(
                     "`#[whisker::native_module]` expects a trait declaration, e.g.\n",
                     "    #[whisker::native_module(name = \"MyStorage\")]\n",
-                    "    pub trait MyStorageRaw {\n",
+                    "    pub trait MyStorageSys {\n",
                     "        fn save(args: Vec<WhiskerValue>) -> WhiskerValue;\n",
                     "    }\n",
                 ));

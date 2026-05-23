@@ -21,7 +21,7 @@ use whisker::native_module::WhiskerValue;
 // ----- Sync proxy ---------------------------------------------------------
 
 #[whisker::native_module(name = "WhiskerStorage")]
-pub trait WhiskerStorageRaw {
+pub trait WhiskerStorageSys {
     fn save(args: Vec<WhiskerValue>) -> WhiskerValue;
     fn load(args: Vec<WhiskerValue>) -> WhiskerValue;
     fn clear(args: Vec<WhiskerValue>) -> WhiskerValue;
@@ -32,7 +32,7 @@ fn sync_proxy_unregistered_module_returns_err_value() {
     // No platform module registered → bridge returns an Error
     // WhiskerValue. The proxy returns it verbatim — type-safe
     // unwrap is the author wrapper's job, not the macro's.
-    let result = WhiskerStorageRaw::save(vec![
+    let result = WhiskerStorageSys::save(vec![
         WhiskerValue::String("k".into()),
         WhiskerValue::String("v".into()),
     ]);
@@ -41,20 +41,20 @@ fn sync_proxy_unregistered_module_returns_err_value() {
 
 #[test]
 fn sync_proxy_single_arg_passthrough() {
-    let result = WhiskerStorageRaw::load(vec![WhiskerValue::String("k".into())]);
+    let result = WhiskerStorageSys::load(vec![WhiskerValue::String("k".into())]);
     assert!(matches!(result, WhiskerValue::Error(_)));
 }
 
 #[test]
 fn sync_proxy_empty_arg_vec() {
-    let result = WhiskerStorageRaw::clear(vec![]);
+    let result = WhiskerStorageSys::clear(vec![]);
     assert!(matches!(result, WhiskerValue::Error(_)));
 }
 
 // ----- Async proxy --------------------------------------------------------
 
 #[whisker::native_module(name = "WhiskerHttp")]
-pub trait WhiskerHttpRaw {
+pub trait WhiskerHttpSys {
     async fn fetch(args: Vec<WhiskerValue>) -> WhiskerValue;
 }
 
@@ -63,7 +63,7 @@ fn async_proxy_compiles() {
     // We can't `await` here without an executor — just confirm
     // the macro emits a callable signature. The future itself
     // can be constructed safely (constructing doesn't dispatch).
-    let _fut = WhiskerHttpRaw::fetch(vec![
+    let _fut = WhiskerHttpSys::fetch(vec![
         WhiskerValue::String("https://example.com".into()),
     ]);
 }
@@ -71,13 +71,13 @@ fn async_proxy_compiles() {
 // ----- Custom module name -------------------------------------------------
 
 #[whisker::native_module(name = "OverriddenName")]
-pub trait MyLocalTraitRaw {
+pub trait MyLocalTraitSys {
     fn ping(args: Vec<WhiskerValue>) -> WhiskerValue;
 }
 
 #[test]
 fn custom_module_name_compiles() {
-    let _ = MyLocalTraitRaw::ping(vec![]);
+    let _ = MyLocalTraitSys::ping(vec![]);
 }
 
 // ----- Default name (= trait name) ----------------------------------------
