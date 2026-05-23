@@ -21,6 +21,13 @@ import Foundation
 import WhiskerElements
 import WhiskerRuntime
 
+// Phase 7-Φ.G PoC: external SPM dep pulled via this module's
+// `Package.swift`. `OrderedCollections` isn't actively used yet
+// — the import just proves the dep resolves + the symbol is
+// reachable from module sources without any aggregator-side
+// plumbing.
+import OrderedCollections
+
 @WhiskerModule("WhiskerLocalStore")
 public class WhiskerLocalStoreImpl {
     /// Save args[0] (String key) → args[1] (String value) in

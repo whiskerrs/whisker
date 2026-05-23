@@ -39,4 +39,12 @@ dependencies {
     implementation(project(":whisker-runtime"))
     implementation("rs.whisker:annotations")
     ksp("rs.whisker:ksp")
+
+    // Phase 7-Φ.G PoC — an external Maven dependency. AndroidX
+    // Collection is small + pure-Kotlin (no native libs), so it
+    // resolves quickly on cold caches. The import isn't used yet
+    // (see WhiskerLocalStoreImpl.kt). The point of this entry is
+    // to prove that module subprojects CAN declare arbitrary
+    // Maven deps without any Whisker-side build plumbing.
+    implementation("androidx.collection:collection:1.4.4")
 }
