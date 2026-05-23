@@ -42,12 +42,21 @@ let package = Package(
     products: [
         .library(name: "WhiskerRuntime", targets: ["WhiskerRuntime"]),
         // Re-export the binary `WhiskerDriver` framework so external
-        // packages (specifically `gen/ios/whisker_modules` for Phase
-        // 7-Φ.E.6's auto-generated module registrations) can `import
-        // WhiskerDriver` to see the Obj-C `WhiskerModuleRegistry`
-        // class. Without this product the binary target stays scoped
-        // to WhiskerRuntime's own sources.
+        // packages can `import WhiskerDriver` to see the C ABI
+        // declarations (`whisker_bridge_register_module_dispatch`,
+        // `WhiskerValueRaw`, …) the `@WhiskerModule` macro-emitted
+        // dispatch shim references. Without this product the binary
+        // target stays scoped to WhiskerRuntime's own sources.
         .library(name: "WhiskerDriver", targets: ["WhiskerDriver"]),
+        // Phase 7-Φ.G: each module package is now its own SwiftPM
+        // library and needs to `import Lynx` (etc.) directly to
+        // subclass `LynxUI<UIView>`. Expose the binary frameworks
+        // as products so module Package.swifts can pull them via
+        // `.product(name: "Lynx", package: "WhiskerRuntime")`.
+        .library(name: "Lynx", targets: ["Lynx"]),
+        .library(name: "LynxBase", targets: ["LynxBase"]),
+        .library(name: "LynxServiceAPI", targets: ["LynxServiceAPI"]),
+        .library(name: "PrimJS", targets: ["PrimJS"]),
     ],
     targets: [
         // Rust runtime + C++ bridge, packaged as a dynamic xcframework

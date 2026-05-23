@@ -5,12 +5,18 @@
 // Activates when a target's `Package.swift` declares
 // `plugins: [.plugin(name: "WhiskerElementsCodegenPlugin",
 //                    package: "whisker-ios-macros")]`.
-// The generated `WhiskerModuleBehaviors.swift` lands in the plugin's
-// per-target work directory; SwiftPM automatically adds it to the
-// target's compilation.
 //
-// Companion to the Android KSP processor — same shape, same output
-// (a `WhiskerModuleBehaviors` symbol with a single `registerAll`).
+// Phase 7-Φ.G: applied per-module — each module package adds the
+// plugin to its own SwiftPM target. The codegen emits a top-level
+// `_whiskerRegisterModules_<TargetName>()` function (uniquely
+// named per module to avoid linker conflicts across modules) plus
+// the per-target `<TargetName>+Generated.swift` file. The
+// whisker-build-generated aggregator imports each module and
+// calls every per-module register fn from its top-level
+// `WhiskerModuleBehaviors.registerAll()`.
+//
+// Companion to the Android KSP processor — same shape, same
+// per-subproject-per-app-aggregator split.
 
 import Foundation
 import PackagePlugin
@@ -28,19 +34,28 @@ struct WhiskerElementsCodegenPlugin: BuildToolPlugin {
         }
 
         let tool = try context.tool(named: "WhiskerElementsCodegen")
-        let output = context.pluginWorkDirectory
-            .appending("WhiskerModuleBehaviors.swift")
+        // Output file name is the target name + `+Generated.swift`.
+        // Filename uniqueness across modules isn't strictly required
+        // (each SwiftPM target has its own work dir), but using the
+        // target name in the filename keeps the build log readable
+        // when multiple modules log "Generate <X>+Generated.swift"
+        // simultaneously.
+        let outputFileName = "\(sourceTarget.name)+Generated.swift"
+        let output = context.pluginWorkDirectory.appending(outputFileName)
 
         let inputs = sourceTarget.sourceFiles
             .filter { $0.path.extension == "swift" }
             .map { $0.path }
 
-        var arguments: [String] = ["--output", output.string]
+        var arguments: [String] = [
+            "--target-name", sourceTarget.name,
+            "--output", output.string,
+        ]
         arguments.append(contentsOf: inputs.map { $0.string })
 
         return [
             .buildCommand(
-                displayName: "Generate WhiskerModuleBehaviors.swift",
+                displayName: "Generate \(outputFileName)",
                 executable: tool.path,
                 arguments: arguments,
                 inputFiles: inputs,

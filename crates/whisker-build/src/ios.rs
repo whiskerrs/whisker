@@ -531,42 +531,45 @@ pub struct XcodebuildArgs<'a> {
     pub derived_data: &'a Path,
 }
 
-/// Stage every discovered Whisker module's iOS `swift_sources`
-/// under `gen/ios/whisker_modules/Sources/WhiskerModules/<crate>/`
-/// and emit the package machinery the user app's pbxproj
-/// references (`Package.swift` declaring a `WhiskerModules`
-/// SwiftPM library + `WhiskerModuleBehaviors.swift` aggregating
-/// the manifest's `[ios].behaviors` registrations).
+/// Generate the iOS module-aggregator SwiftPM package under
+/// `gen/ios/whisker_modules/`. Phase 7-Φ.G: replaces the previous
+/// file-copy flow (`stage_module_swift_sources`) — module source
+/// files now stay in their own package directories, and each module
+/// ships its own hand-written `Package.swift`. The aggregator simply
+/// depends on each module package via `.package(path: …)` and
+/// imports each one's per-target register fn.
 ///
-/// Mirror of [`crate::android::stage_module_kotlin_sources`] for
-/// iOS. The Android path drops `.kt` files into a gradle source
-/// set; the iOS equivalent produces a tiny SwiftPM package the
-/// user app declares as a local Swift Package Dependency. This
-/// keeps the user app's `.xcodeproj` template free of per-file
-/// `PBXFileReference` entries — SwiftPM handles compilation +
-/// dep resolution.
+/// Mirror of [`crate::android::generate_module_aggregator`] for
+/// iOS. The Android path generates `settings.gradle.kts` includes;
+/// the iOS equivalent produces a tiny SwiftPM package the user
+/// app declares as a local Swift Package Dependency.
 ///
 /// Layout produced (within `gen/ios/whisker_modules/`):
 ///
 /// ```text
 /// whisker_modules/
-/// ├── Package.swift                                  ← generated
+/// ├── Package.swift                       ← generated (aggregator)
 /// └── Sources/WhiskerModules/
-///     ├── WhiskerModuleBehaviors.swift               ← generated
-///     └── <crate-name>/                              ← per-module subdir
-///         └── <Whatever>.swift                       ← copied verbatim
+///     └── RegisterAll.swift               ← generated
 /// ```
 ///
 /// `Package.swift` declares one product (`WhiskerModules`) depending
-/// on `WhiskerRuntime` (for the Lynx types every module needs to
-/// import). The user app's pbxproj template references both
-/// `native/ios` (WhiskerRuntime) and `gen/ios/whisker_modules`
-/// (WhiskerModules) as `XCLocalSwiftPackageReference` entries.
+/// on `WhiskerRuntime` + each discovered module's local-path
+/// SwiftPM package. The user app's pbxproj template references
+/// both `native/ios` (WhiskerRuntime) and `gen/ios/whisker_modules`
+/// (the aggregator) as `XCLocalSwiftPackageReference` entries —
+/// SwiftPM resolves the transitive deps to each module package.
 ///
-/// Empty / non-Swift-contributing module list still writes a no-op
-/// `Package.swift` + a no-op `WhiskerModuleBehaviors.registerAll`
-/// so the pbxproj reference always resolves and `AppDelegate.swift`
-/// compiles.
+/// `RegisterAll.swift` imports every module's SwiftPM library and
+/// exposes the `@objc WhiskerModuleBehaviors.registerAll()` entry
+/// point the AppDelegate calls at launch. The actual registration
+/// work happens inside the per-module
+/// `_whiskerRegisterModules_<TargetName>()` fns that the
+/// `WhiskerElementsCodegenPlugin` emits into each module target.
+///
+/// Empty / non-Swift-contributing module list still writes a
+/// no-op aggregator so the pbxproj reference always resolves
+/// and `AppDelegate.swift` compiles.
 pub fn stage_module_swift_sources(
     gen_ios: &Path,
     whisker_runtime_path: &Path,
@@ -577,69 +580,77 @@ pub fn stage_module_swift_sources(
     let sources_root = root.join("Sources/WhiskerModules");
 
     // Wipe the previous tree so a removed-or-renamed module doesn't
-    // leave behind a stale `.swift` that SwiftPM would compile.
+    // leave behind a stale Package.swift / RegisterAll.swift entry.
     if root.exists() {
         std::fs::remove_dir_all(&root).with_context(|| format!("rm -rf {}", root.display()))?;
     }
     std::fs::create_dir_all(&sources_root)
         .with_context(|| format!("mkdir -p {}", sources_root.display()))?;
 
-    let mut total = 0usize;
-    for m in modules {
-        if m.ios_swift_sources.is_empty() {
-            continue;
-        }
-        let crate_dst = sources_root.join(&m.package);
-        std::fs::create_dir_all(&crate_dst)
-            .with_context(|| format!("mkdir -p {}", crate_dst.display()))?;
-        for src in &m.ios_swift_sources {
-            let filename = src
-                .file_name()
-                .ok_or_else(|| anyhow!("module swift source has no filename: {}", src.display()))?;
-            let dst = crate_dst.join(filename);
-            std::fs::copy(src, &dst)
-                .with_context(|| format!("copy {} → {}", src.display(), dst.display()))?;
-            total += 1;
-        }
-    }
-
-    // `WhiskerModuleBehaviors.swift` is no longer rendered here —
-    // Phase 7-Φ.H.3 moved that responsibility to the
-    // `WhiskerElementsCodegenPlugin` SwiftPM build-tool plugin
-    // (under `packages/whisker-ios-macros/Plugins/`). The plugin
-    // scans the WhiskerModules target's `.swift` sources with
-    // SwiftSyntax at SwiftPM build time and emits the registry
-    // into its per-target work directory; SwiftPM adds the
-    // generated file to the WhiskerModules compilation
-    // automatically.
-    //
-    // Symmetric with the Android `whisker-android-ksp` processor.
+    // Each module package contributes via its own Package.swift in
+    // its manifest dir. Discovery signal: presence of `Package.swift`
+    // next to `whisker.module.toml` (Phase G dropped the
+    // `swift_sources` field as the staging trigger). Modules that
+    // are Android-only naturally don't have a Package.swift, so
+    // they're skipped here without further filtering.
+    let ios_modules: Vec<&crate::modules::ResolvedModule> = modules
+        .iter()
+        .filter(|m| m.manifest_dir.join("Package.swift").is_file())
+        .collect();
 
     let package_path = root.join("Package.swift");
     std::fs::write(
         &package_path,
-        render_modules_package_swift(whisker_runtime_path, whisker_ios_macros_path),
+        render_modules_package_swift(whisker_runtime_path, whisker_ios_macros_path, &ios_modules),
     )
     .with_context(|| format!("write {}", package_path.display()))?;
 
-    if total > 0 {
+    let register_all_path = sources_root.join("RegisterAll.swift");
+    std::fs::write(&register_all_path, render_register_all_swift(&ios_modules))
+        .with_context(|| format!("write {}", register_all_path.display()))?;
+
+    if !ios_modules.is_empty() {
         crate::ui::info(format!(
-            "stage {total} module Swift source(s) under whisker_modules/"
+            "stage {n} module SPM package(s) under whisker_modules/",
+            n = ios_modules.len()
         ));
     }
     Ok(())
 }
 
+/// Convention: SwiftPM library product / target name is the
+/// `PascalCase`-ised cargo crate name. So `whisker-local-store` →
+/// `WhiskerLocalStore`. Module authors MUST follow this convention
+/// in their hand-written `Package.swift` for the aggregator's
+/// `.product(name:, package:)` lookups to resolve.
+///
+/// Deterministic + reversible — same input always yields same
+/// output, no separator chars beyond `-` are touched.
+fn crate_to_spm_target(crate_name: &str) -> String {
+    let mut out = String::new();
+    let mut next_upper = true;
+    for ch in crate_name.chars() {
+        if ch == '-' || ch == '_' {
+            next_upper = true;
+            continue;
+        }
+        if next_upper {
+            out.extend(ch.to_uppercase());
+            next_upper = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Render `Package.swift` for the generated `WhiskerModules`
-/// SwiftPM library. The library depends on `WhiskerRuntime`
-/// (located via `whisker_runtime_path`, same absolute-path mechanism
-/// the pbxproj `XCLocalSwiftPackageReference` for the same dir uses)
-/// — that gives module sources access to `LynxComponentRegistry`,
-/// `LynxUI`, and the rest of the Lynx surface their `@WhiskerElement`
-/// classes subclass.
+/// aggregator. Depends on `WhiskerRuntime` + each discovered
+/// module package via local-path SwiftPM dependency.
 fn render_modules_package_swift(
     whisker_runtime_path: &Path,
     whisker_ios_macros_path: &Path,
+    modules: &[&crate::modules::ResolvedModule],
 ) -> String {
     let runtime = whisker_runtime_path.display().to_string();
     let macros = whisker_ios_macros_path.display().to_string();
@@ -650,17 +661,16 @@ fn render_modules_package_swift(
          // AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
          // `whisker run` / `whisker build` to refresh.\n\
          //\n\
-         // SwiftPM library aggregating every Whisker module crate's\n\
-         // iOS `swift_sources`. Compiled into the user app via the\n\
-         // pbxproj template's `XCLocalSwiftPackageReference` for\n\
-         // `gen/ios/whisker_modules`.\n\
+         // Phase 7-Φ.G aggregator. Each Whisker module ships its\n\
+         // own SwiftPM package (with hand-written Package.swift),\n\
+         // and this file just lists them as local-path dependencies.\n\
+         // SwiftPM resolves the transitive build graph; the user\n\
+         // app's pbxproj only references THIS aggregator package\n\
+         // via `XCLocalSwiftPackageReference`.\n\
          //\n\
-         // Two upstream deps:\n\
-         //   - WhiskerRuntime: Lynx C++ types every module's LynxUI\n\
-         //     subclass needs to subclass.\n\
-         //   - WhiskerElements (from `whisker-ios-macros`): the\n\
-         //     `@WhiskerElement(\"x-tag\")` Swift Macro module authors\n\
-         //     apply to their classes.\n\n",
+         // RegisterAll.swift (next to this file) imports each\n\
+         // module and calls its per-target register fn from a\n\
+         // top-level `WhiskerModuleBehaviors.registerAll()`.\n\n",
     );
     out.push_str("import PackageDescription\n\n");
     out.push_str("let package = Package(\n");
@@ -676,6 +686,13 @@ fn render_modules_package_swift(
     out.push_str(&format!(
         "        .package(name: \"whisker-ios-macros\", path: {macros:?}),\n"
     ));
+    for m in modules {
+        let path = m.manifest_dir.display().to_string();
+        out.push_str(&format!(
+            "        .package(name: {pkg:?}, path: {path:?}),\n",
+            pkg = m.package
+        ));
+    }
     out.push_str("    ],\n");
     out.push_str("    targets: [\n");
     out.push_str("        .target(\n");
@@ -684,33 +701,64 @@ fn render_modules_package_swift(
     out.push_str(
         "                .product(name: \"WhiskerRuntime\", package: \"WhiskerRuntime\"),\n",
     );
-    // Phase 7-Φ.F: WhiskerDriver no longer needs to be an explicit
-    // dep — WhiskerRuntime now re-exports it (`@_exported import
-    // WhiskerDriver` inside WhiskerValue.swift), so the C ABI
-    // symbols (`whisker_bridge_register_module_dispatch`,
-    // `WhiskerValueRaw`, …) flow through transitively. The Obj-C
-    // `WhiskerModuleRegistry` class is gone — every module
-    // dispatch goes through the per-module `@_cdecl` shim the
-    // `@WhiskerModule` macro emits.
-    out.push_str(
-        "                .product(name: \"WhiskerElements\", package: \"whisker-ios-macros\"),\n",
-    );
+    out.push_str("                .product(name: \"Lynx\", package: \"WhiskerRuntime\"),\n");
+    for m in modules {
+        let target = crate_to_spm_target(&m.package);
+        out.push_str(&format!(
+            "                .product(name: {target:?}, package: {pkg:?}),\n",
+            pkg = m.package
+        ));
+    }
     out.push_str("            ],\n");
-    out.push_str("            path: \"Sources/WhiskerModules\",\n");
-    // Activates the SwiftPM build-tool plugin from
-    // `whisker-ios-macros`. SwiftPM runs `WhiskerElementsCodegen`
-    // before compiling this target, against every `.swift` in
-    // `Sources/WhiskerModules/` (recursively). The produced
-    // `WhiskerModuleBehaviors.swift` is auto-added to the target's
-    // compilation. Phase 7-Φ.H.3.
-    out.push_str("            plugins: [\n");
-    out.push_str(
-        "                .plugin(name: \"WhiskerElementsCodegenPlugin\", package: \"whisker-ios-macros\"),\n",
-    );
-    out.push_str("            ]\n");
+    out.push_str("            path: \"Sources/WhiskerModules\"\n");
     out.push_str("        ),\n");
     out.push_str("    ]\n");
     out.push_str(")\n");
+    out
+}
+
+/// Render `RegisterAll.swift` for the aggregator. Imports every
+/// module's SwiftPM library and exposes the top-level
+/// `WhiskerModuleBehaviors.registerAll()` entry point the
+/// AppDelegate calls. Per-target work happens inside each
+/// module's plugin-emitted `_whiskerRegisterModules_<TargetName>()`.
+fn render_register_all_swift(modules: &[&crate::modules::ResolvedModule]) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "// AUTO-GENERATED by whisker-build. Do NOT edit — re-run\n\
+         // `whisker run` / `whisker build` to refresh.\n\
+         //\n\
+         // Aggregates every Whisker module's per-target register fn\n\
+         // (emitted by the `WhiskerElementsCodegenPlugin` SwiftPM\n\
+         // build-tool plugin into each module's compilation) into a\n\
+         // single `WhiskerModuleBehaviors.registerAll()` entry point.\n\
+         // The user app's AppDelegate calls this once at launch —\n\
+         // the actual per-module registration work runs inside each\n\
+         // `_whiskerRegisterModules_<TargetName>()`.\n\n",
+    );
+    out.push_str("import Foundation\n");
+    for m in modules {
+        let target = crate_to_spm_target(&m.package);
+        out.push_str(&format!("import {target}\n"));
+    }
+    out.push_str("\n");
+    out.push_str("@objc public final class WhiskerModuleBehaviors: NSObject {\n");
+    out.push_str("    private static var registered = false\n");
+    out.push_str("    private static let lock = NSLock()\n");
+    out.push_str("\n");
+    out.push_str("    @objc public static func registerAll() {\n");
+    out.push_str("        lock.lock()\n");
+    out.push_str("        defer { lock.unlock() }\n");
+    out.push_str("        if registered { return }\n");
+    out.push_str("        registered = true\n");
+    if modules.is_empty() {
+        out.push_str("        // (no Whisker module dependencies)\n");
+    }
+    for m in modules {
+        let target = crate_to_spm_target(&m.package);
+        out.push_str(&format!("        _whiskerRegisterModules_{target}()\n"));
+    }
+    out.push_str("    }\n}\n");
     out
 }
 
