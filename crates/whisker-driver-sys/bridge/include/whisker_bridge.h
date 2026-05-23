@@ -193,9 +193,23 @@ typedef enum {
 } WhiskerValueType;
 
 // Forward declaration so `WhiskerValueArray`/`Map` can hold
-// `WhiskerValue`s recursively.
+// `WhiskerValueRaw`s recursively.
 struct WhiskerValueRec;
 struct WhiskerKeyValueRec;
+
+// `{ptr, len}` member-typedefs. Promoted from anonymous structs so
+// Swift's Clang importer can see them as named types (Swift's
+// `WhiskerValue.swift` references `WhiskerStringRef` /
+// `WhiskerBytesRef` from these declarations).
+typedef struct WhiskerStringRefRec {
+    const char* ptr;
+    size_t len;
+} WhiskerStringRef;
+
+typedef struct WhiskerBytesRefRec {
+    const uint8_t* ptr;
+    size_t len;
+} WhiskerBytesRef;
 
 typedef struct WhiskerValueArrayRec {
     struct WhiskerValueRec* items;  // length = count
@@ -212,6 +226,11 @@ typedef struct WhiskerValueMapRec {
 // from the producer (Rust → C call: Rust owns; C → Rust return: C
 // owns + provides matching `whisker_bridge_value_release` so the
 // callee can free after copying).
+//
+// Typedef name is `WhiskerValueRaw` rather than the more obvious
+// `WhiskerValue` to avoid clashing with Swift's `enum WhiskerValue`
+// (the higher-level typed wrapper Swift / Kotlin module code uses
+// — `WhiskerValueRaw` is the FFI form).
 typedef struct WhiskerValueRec {
     uint8_t type;  // WhiskerValueType
     uint8_t _pad[7];
@@ -219,26 +238,44 @@ typedef struct WhiskerValueRec {
         bool b;
         int64_t i;
         double f;
-        struct {
-            const char* ptr;
-            size_t len;
-        } s;
-        struct {
-            const uint8_t* ptr;
-            size_t len;
-        } bytes;
+        WhiskerStringRef s;
+        WhiskerBytesRef bytes;
         WhiskerValueArray array;
         WhiskerValueMap map;
     } v;
-} WhiskerValue;
+} WhiskerValueRaw;
 
 typedef struct WhiskerKeyValueRec {
-    struct {
-        const char* ptr;
-        size_t len;
-    } key;
-    WhiskerValue value;
-} WhiskerKeyValue;
+    WhiskerStringRef key;
+    WhiskerValueRaw value;
+} WhiskerKeyValueRaw;
+
+// Per-module dispatch function — the platform-side Swift Macro or
+// KSP processor emits one of these per `@WhiskerModule`-annotated
+// class. The bridge stores `(module_name → dispatch_fn)` in an
+// internal lookup table; `whisker_bridge_invoke_module` then routes
+// calls through the registered function directly, without going
+// through Obj-C `NSInvocation` or JNI per-call reflection
+// (Phase 7-Φ.F).
+//
+// Args are borrowed for the duration of the call; the returned
+// `WhiskerValueRaw` may carry heap allocations owned by the dispatch
+// function. Caller's `whisker_bridge_value_release` frees them.
+typedef WhiskerValueRaw (*WhiskerModuleDispatchFn)(
+    const char* method_name,
+    const WhiskerValueRaw* args,
+    size_t arg_count);
+
+// Register `dispatch` as the per-method router for `module_name`.
+// Called by the platform-side generated code at app launch (Swift
+// Macro emits a `@_cdecl` function and a matching registration
+// call; KSP emits a JNI wrapper that does the equivalent).
+//
+// Last write wins on duplicate registration. Passing `dispatch=NULL`
+// unregisters (the table entry is dropped).
+WHISKER_BRIDGE_EXPORT void whisker_bridge_register_module_dispatch(
+    const char* module_name,
+    WhiskerModuleDispatchFn dispatch);
 
 // Invoke a registered module's method synchronously.
 //
@@ -255,10 +292,10 @@ typedef struct WhiskerKeyValueRec {
 // On error (unknown module, missing method, dispatch failed) the
 // return is a `WHISKER_VALUE_ERROR` whose `v.s` payload carries a
 // UTF-8 description.
-WHISKER_BRIDGE_EXPORT WhiskerValue whisker_bridge_invoke_module(
+WHISKER_BRIDGE_EXPORT WhiskerValueRaw whisker_bridge_invoke_module(
     const char* module_name,
     const char* method_name,
-    const WhiskerValue* args,
+    const WhiskerValueRaw* args,
     size_t arg_count);
 
 // Async variant — returns immediately, the bridge will call
@@ -268,11 +305,11 @@ WHISKER_BRIDGE_EXPORT WhiskerValue whisker_bridge_invoke_module(
 // returning). The bridge frees the result automatically once the
 // callback returns.
 typedef void (*WhiskerModuleCallback)(void* user_data,
-                                      const WhiskerValue* result);
+                                      const WhiskerValueRaw* result);
 WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_module_async(
     const char* module_name,
     const char* method_name,
-    const WhiskerValue* args,
+    const WhiskerValueRaw* args,
     size_t arg_count,
     WhiskerModuleCallback callback,
     void* user_data);
@@ -281,7 +318,7 @@ WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_module_async(
 // content, bytes content, recursive array/map contents). Safe to
 // call on a value whose `type` doesn't carry heap data — it's a
 // no-op for scalars. NULL pointer is also safe.
-WHISKER_BRIDGE_EXPORT void whisker_bridge_value_release(WhiskerValue* value);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_value_release(WhiskerValueRaw* value);
 
 // ---- Phase 0–3 leftovers (kept temporarily for compatibility) ------------
 

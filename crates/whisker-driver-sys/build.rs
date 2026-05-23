@@ -24,14 +24,14 @@ fn main() -> Result<()> {
     }
 }
 
-/// Compile the host-build stub on non-iOS / non-Android targets
-/// (typically a developer's macOS / Linux box running
-/// `cargo test`). Provides the C ABI surface as a tiny `.cc`
-/// returning `WHISKER_VALUE_ERROR` for every invoke — enough to
-/// link cleanly and let host tests verify the
-/// `#[whisker::native_module]` proxies dispatch + handle the
-/// Error variant. Real dispatch lives in the platform-specific
-/// .mm / .cc files.
+/// Compile `whisker_bridge_host_stub.cc` on non-iOS / non-Android
+/// targets. The stub satisfies the bridge's pure-C surface
+/// (native-module dispatch registry, `whisker_bridge_invoke_module`,
+/// `whisker_bridge_value_release`, `whisker_bridge_log_hello`) so
+/// host tests link without pulling in `whisker_bridge_common.cc`'s
+/// Lynx C-API calls (`lynx_shell_*`, `lynx_element_*`, …). Those
+/// symbols only exist inside the Lynx framework / shared library
+/// that ships with the iOS / Android slices.
 fn compile_host_stub() -> Result<()> {
     let bridge_src = bridge_root().join("src");
     let mut build = cc::Build::new();
@@ -39,7 +39,8 @@ fn compile_host_stub() -> Result<()> {
         .cpp(true)
         .flag_if_supported("-std=gnu++17")
         .file(bridge_src.join("whisker_bridge_host_stub.cc"))
-        .include(bridge_root().join("include"));
+        .include(bridge_root().join("include"))
+        .include(&bridge_src);
     build
         .try_compile("whisker_bridge_host_stub")
         .map_err(|e| anyhow::anyhow!("compile whisker_bridge_host_stub.cc: {e}"))?;
@@ -258,7 +259,6 @@ fn compile_ios() -> Result<()> {
         .flag("-fobjc-arc")
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_ios.mm"))
-        .file(bridge_src.join("whisker_module_registry.mm"))
         .file(bridge_src.join("lynx_native_renderer.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);

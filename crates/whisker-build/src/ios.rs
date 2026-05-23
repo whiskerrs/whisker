@@ -62,15 +62,14 @@ const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_bridge_invoke_module",
     "_whisker_bridge_invoke_module_async",
     "_whisker_bridge_value_release",
+    // Phase 7-Φ.F: Swift Macro `@WhiskerModule` emits an `@_cdecl`
+    // dispatch shim per module + the generated
+    // `WhiskerModuleBehaviors.swift` calls this to register the
+    // shim against the C-side dispatch table. Replaces the
+    // previous `_OBJC_CLASS_$_WhiskerModuleRegistry` export (the
+    // Obj-C class is gone — pure C function pointer table now).
+    "_whisker_bridge_register_module_dispatch",
     "_whisker_bridge_log_hello",
-    // Obj-C class symbol — `WhiskerModuleRegistry` is referenced
-    // from the auto-generated `WhiskerModuleBehaviors.swift` to
-    // call `registerModuleClass(_:forName:)`. Without this export
-    // ld64 dead-strips the class from the framework's dylib (no
-    // C-side caller references it), and the consuming SwiftPM
-    // target fails to link with "Undefined symbols:
-    // _OBJC_CLASS_$_WhiskerModuleRegistry". Phase 7-Φ.E.6.
-    "_OBJC_CLASS_$_WhiskerModuleRegistry",
 ];
 
 /// Build the WhiskerDriver.xcframework that wraps `package`'s dylib
@@ -445,21 +444,17 @@ fn build_framework_dir(
         bridge_headers_src.join("whisker_bridge.h"),
         hdr_dir.join("whisker_bridge.h"),
     )?;
-    // Native module registry — the Obj-C class auto-generated
-    // `WhiskerModuleBehaviors.swift` calls into via
-    // `WhiskerModuleRegistry.registerModuleClass(_:forName:)`. The
-    // class is compiled into the framework's static archive, but
-    // Swift's clang importer needs the header in the framework's
-    // Headers/ + modulemap to discover the type.
-    std::fs::copy(
-        bridge_headers_src.join("whisker_module_registry.h"),
-        hdr_dir.join("whisker_module_registry.h"),
-    )?;
 
     // Modules/module.modulemap — framework form (`framework module …`).
     // The repo-level modulemap is a plain `module …` declaration; the
     // framework xcframework wants the `framework module` keyword so
     // Xcode can `import` it.
+    //
+    // Phase 7-Φ.F: dropped `whisker_module_registry.h` from the
+    // header set — the Obj-C class is gone, replaced by a pure C
+    // function-pointer table inside `whisker_bridge_common.cc`. The
+    // C ABI in `whisker_bridge.h` (the `whisker_bridge_register_module_dispatch`
+    // declaration) is the only surface user-app code needs.
     let mod_dir = fw_dir.join("Modules");
     std::fs::create_dir_all(&mod_dir)?;
     std::fs::write(
@@ -468,7 +463,6 @@ fn build_framework_dir(
             "framework module {FRAMEWORK_NAME} {{\n    \
              header \"whisker.h\"\n    \
              header \"whisker_bridge.h\"\n    \
-             header \"whisker_module_registry.h\"\n    \
              export *\n\
              }}\n"
         ),
@@ -690,13 +684,14 @@ fn render_modules_package_swift(
     out.push_str(
         "                .product(name: \"WhiskerRuntime\", package: \"WhiskerRuntime\"),\n",
     );
-    // WhiskerDriver re-exports the bridge Obj-C `WhiskerModuleRegistry`
-    // class — the SwiftPM build plugin's generated
-    // `WhiskerModuleBehaviors.swift` imports it to call
-    // `WhiskerModuleRegistry.registerModuleClass(_:forName:)`.
-    out.push_str(
-        "                .product(name: \"WhiskerDriver\", package: \"WhiskerRuntime\"),\n",
-    );
+    // Phase 7-Φ.F: WhiskerDriver no longer needs to be an explicit
+    // dep — WhiskerRuntime now re-exports it (`@_exported import
+    // WhiskerDriver` inside WhiskerValue.swift), so the C ABI
+    // symbols (`whisker_bridge_register_module_dispatch`,
+    // `WhiskerValueRaw`, …) flow through transitively. The Obj-C
+    // `WhiskerModuleRegistry` class is gone — every module
+    // dispatch goes through the per-module `@_cdecl` shim the
+    // `@WhiskerModule` macro emits.
     out.push_str(
         "                .product(name: \"WhiskerElements\", package: \"whisker-ios-macros\"),\n",
     );

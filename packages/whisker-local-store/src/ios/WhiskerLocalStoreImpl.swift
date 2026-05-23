@@ -2,81 +2,63 @@
 // `whisker::native_module::invoke("WhiskerLocalStore", ...)` calls
 // with `UserDefaults.standard`.
 //
-// Activated by the `@WhiskerModule("WhiskerLocalStore")` annotation
-// — the `WhiskerElementsCodegen` SwiftPM build-tool plugin scans
-// for it at build time and emits a
-// `WhiskerModuleRegistry.registerModuleClass(_:forName:)` call into
-// the auto-generated `WhiskerModuleBehaviors.swift`. The C bridge's
-// `whisker_bridge_invoke_module` then looks up this class by name
-// when the Rust proxy dispatches.
+// Phase 7-Φ.F: the contract is now WhiskerValue-only. Each method
+// takes `[WhiskerValue]` and returns `WhiskerValue`; the
+// `@WhiskerModule` macro emits the `@_cdecl` dispatch shim that
+// decodes args from the C ABI, switches on method name, and
+// re-encodes the return for the bridge. No more Obj-C selectors,
+// no `@objc(...)`, no `NSArray` / `NSObject` marshalling.
 //
-// Method shape contract (shared with Android):
-//   Each method takes a single `NSArray*` arg and returns `NSObject?`.
-//   The Obj-C runtime selector is `<methodName>:` — the C bridge
-//   appends the colon when building its NSInvocation.
-//
-// Args + returns marshal via `WhiskerValueToFoundation` /
-// `FoundationToWhiskerValue` (see `whisker_bridge_ios.mm`):
-//
-//   Rust          C ABI            Foundation           Swift here
-//   --------------------------------------------------------------
-//   String  →  WHISKER_VALUE_STRING → NSString    →  args[i] as String
-//   bool    ←  WHISKER_VALUE_BOOL   ← NSNumber    ←  NSNumber(value: true)
-//   None    ←  WHISKER_VALUE_NULL   ← NSNull      ←  NSNull() (or return nil)
-//
-// The proxy on the Rust side handles dispatch failures (unknown
-// module / wrong return type) by returning
-// `WhiskerValue::Error("...")`, so this Swift code only needs to
-// handle the happy path + arg-shape mismatches.
+// The Rust-side type-safe wrapper (`WhiskerLocalStore::save(key,
+// value)`) builds the `Vec<WhiskerValue>` from typed args; here
+// we pattern-match on the `WhiskerValue` cases to extract the
+// expected types and produce the matching `WhiskerValue` return.
+// Anything that doesn't match — wrong arity, wrong variant —
+// returns `.error("...")` so the Rust wrapper can lift it into
+// `WhiskerModuleError`.
 
 import Foundation
 import WhiskerElements
+import WhiskerRuntime
 
 @WhiskerModule("WhiskerLocalStore")
-@objc(WhiskerLocalStoreImpl)
-public class WhiskerLocalStoreImpl: NSObject {
+public class WhiskerLocalStoreImpl {
     /// Save args[0] (String key) → args[1] (String value) in
-    /// UserDefaults. Returns NSNumber(true) on success.
-    @objc public func save(_ args: NSArray) -> NSObject {
-        guard
-            args.count >= 2,
-            let key = args[0] as? String,
-            let value = args[1] as? String
+    /// UserDefaults. Returns `Bool(true)` on success.
+    func save(_ args: [WhiskerValue]) -> WhiskerValue {
+        guard args.count >= 2,
+              case .string(let key)   = args[0],
+              case .string(let value) = args[1]
         else {
-            return NSNumber(value: false)
+            return .error("WhiskerLocalStore.save expects (String, String)")
         }
         UserDefaults.standard.set(value, forKey: key)
-        return NSNumber(value: true)
+        return .bool(true)
     }
 
     /// Load the value for args[0] (String key). Returns the value
-    /// as NSString on success, NSNull on no-such-key — the bridge's
-    /// FoundationToWhiskerValue maps NSNull → WhiskerValue::Null,
-    /// which the `#[whisker::native_module]` proxy lifts into
-    /// `Option::None`.
-    @objc public func load(_ args: NSArray) -> NSObject {
-        guard
-            args.count >= 1,
-            let key = args[0] as? String
+    /// as `.string(_)` on hit, `.null` on miss. The Rust wrapper
+    /// lifts `.null` into `Option::None`.
+    func load(_ args: [WhiskerValue]) -> WhiskerValue {
+        guard args.count >= 1,
+              case .string(let key) = args[0]
         else {
-            return NSNull()
+            return .error("WhiskerLocalStore.load expects (String,)")
         }
         if let value = UserDefaults.standard.string(forKey: key) {
-            return value as NSString
+            return .string(value)
         }
-        return NSNull()
+        return .null
     }
 
-    /// Remove args[0]'s entry from UserDefaults. Returns NSNull
-    /// (bridge → WhiskerValue::Null → `()` on the Rust side).
-    @objc public func remove(_ args: NSArray) -> NSObject {
-        guard
-            args.count >= 1,
-            let key = args[0] as? String
+    /// Remove args[0]'s entry. Returns `.null` (→ `()` Rust-side).
+    func remove(_ args: [WhiskerValue]) -> WhiskerValue {
+        guard args.count >= 1,
+              case .string(let key) = args[0]
         else {
-            return NSNull()
+            return .error("WhiskerLocalStore.remove expects (String,)")
         }
         UserDefaults.standard.removeObject(forKey: key)
-        return NSNull()
+        return .null
     }
 }

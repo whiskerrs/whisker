@@ -8,27 +8,36 @@ import com.google.devtools.ksp.processing.SymbolProcessor
 import com.google.devtools.ksp.processing.SymbolProcessorEnvironment
 import com.google.devtools.ksp.processing.SymbolProcessorProvider
 import com.google.devtools.ksp.symbol.ClassKind
+import com.google.devtools.ksp.symbol.FunctionKind
 import com.google.devtools.ksp.symbol.KSAnnotated
 import com.google.devtools.ksp.symbol.KSClassDeclaration
+import com.google.devtools.ksp.symbol.KSFunctionDeclaration
+import com.google.devtools.ksp.symbol.Modifier
 
 /**
  * KSP processor that scans the user app's compilation for every
  * `@WhiskerElement("x-tag")`- AND `@WhiskerModule("Name")`-annotated
  * Kotlin class and generates
- * `rs.whisker.runtime.generated.WhiskerModuleBehaviors`. The
- * generated `registerAll()` calls:
+ * `rs.whisker.runtime.generated.WhiskerModuleBehaviors`.
  *
- *  - `LynxEnv.inst().addBehavior(...)` for every `@WhiskerElement`,
- *    matching the Phase 7-Φ.H.2 element-registration path.
- *  - `WhiskerModuleRegistry.registerModuleClass(name, MyClass::class.java)`
- *    for every `@WhiskerModule`, matching the Phase 7-Φ.E.6
- *    native-module registration path.
+ * `registerAll()` does:
+ *
+ *  - For every `@WhiskerElement`: `LynxEnv.inst().addBehavior(...)`
+ *    — matches the Phase 7-Φ.H.2 element-registration path.
+ *  - For every `@WhiskerModule`: emits a `<ClassName>_Dispatch`
+ *    object with a `dispatch(method, args)` switch over the
+ *    annotated class's declared instance methods, then registers
+ *    that dispatcher with `WhiskerModuleRegistry.registerDispatch`.
+ *    The C JNI bridge in `whisker_bridge_android.cc` resolves
+ *    `WhiskerModuleRegistry.invokeDispatch` once per process; every
+ *    `whisker_bridge_invoke_module` call from Rust then routes
+ *    through `(name → dispatch lambda)` in pure Kotlin without
+ *    per-call `Class.getMethod` reflection (Phase 7-Φ.F).
  *
  * The generated object's symbol matches what
  * `WhiskerApplication.onCreate()` already invokes — see
  * `crates/whisker-cng/src/templates/android/app/src/main/kotlin/
- * Application.kt`. So adding the second annotation shape doesn't
- * change the consuming-app boilerplate.
+ * Application.kt`.
  */
 public class WhiskerElementProcessor(
     private val codeGenerator: CodeGenerator,
@@ -113,7 +122,43 @@ public class WhiskerElementProcessor(
             w.appendLine("import com.lynx.tasm.behavior.LynxContext")
             w.appendLine("import com.lynx.tasm.behavior.ui.LynxUI")
             w.appendLine("import rs.whisker.runtime.WhiskerModuleRegistry")
+            w.appendLine("import rs.whisker.runtime.WhiskerValue")
             w.appendLine("import java.util.concurrent.atomic.AtomicBoolean")
+
+            // Per-module dispatch objects are emitted at file scope
+            // (companion to the generated `WhiskerModuleBehaviors`
+            // object). Each object exposes a single `dispatch`
+            // function the registry invokes; the dispatch body is
+            // a `when (method)` switch over the annotated class's
+            // declared instance methods.
+            for (cls in modules) {
+                val fqn = cls.qualifiedName?.asString() ?: continue
+                val simple = cls.simpleName.asString()
+                val moduleName = annotationStringArg(cls, moduleAnnotationFqn, "name")
+                    ?: continue
+                val methodNames = instanceMethodNames(cls)
+
+                w.appendLine()
+                w.appendLine("/**")
+                w.appendLine(" * Dispatch shim for `@WhiskerModule(\"$moduleName\")` on")
+                w.appendLine(" * `$fqn`. Constructed once at registration time, dispatch")
+                w.appendLine(" * is a `when (method)` switch over the class's instance")
+                w.appendLine(" * methods.")
+                w.appendLine(" */")
+                w.appendLine("private object ${simple}_Dispatch {")
+                w.appendLine("    private val instance = $fqn()")
+                w.appendLine()
+                w.appendLine("    fun dispatch(method: String, args: Array<WhiskerValue>): WhiskerValue {")
+                w.appendLine("        return when (method) {")
+                for (m in methodNames) {
+                    w.appendLine("            \"$m\" -> instance.$m(args)")
+                }
+                w.appendLine("            else -> WhiskerValue.Err(\"unknown method \$method on $moduleName\")")
+                w.appendLine("        }")
+                w.appendLine("    }")
+                w.appendLine("}")
+            }
+
             w.appendLine()
             w.appendLine("public object WhiskerModuleBehaviors {")
             w.appendLine("    private val registered = AtomicBoolean(false)")
@@ -160,6 +205,7 @@ public class WhiskerElementProcessor(
                     )
                     continue
                 }
+                val simple = cls.simpleName.asString()
                 val name = annotationStringArg(cls, moduleAnnotationFqn, "name")
                 if (name == null) {
                     logger.error(
@@ -168,15 +214,49 @@ public class WhiskerElementProcessor(
                     )
                     continue
                 }
-                w.appendLine("        WhiskerModuleRegistry.registerModuleClass(")
+                // Register a lambda that forwards into the dispatch
+                // object above. We don't reference `::dispatch`
+                // directly because Kotlin's method-reference type
+                // doesn't unify with the lambda type
+                // `(String, Array<WhiskerValue>) -> WhiskerValue`
+                // without a synthetic wrapper anyway.
+                w.appendLine("        WhiskerModuleRegistry.registerDispatch(")
                 w.appendLine("            name = \"$name\",")
-                w.appendLine("            cls = $fqn::class.java,")
+                w.appendLine("            dispatch = { method, args -> ${simple}_Dispatch.dispatch(method, args) },")
                 w.appendLine("        )")
             }
 
             w.appendLine("    }")
             w.appendLine("}")
         }
+    }
+
+    /**
+     * Names of every declared instance method on the class. Skips
+     * static (`companion`-resident) methods, private methods, and
+     * constructors — same filter the iOS Swift Macro applies.
+     */
+    private fun instanceMethodNames(cls: KSClassDeclaration): List<String> {
+        val out = mutableListOf<String>()
+        for (decl in cls.declarations) {
+            if (decl !is KSFunctionDeclaration) continue
+            // Skip the synthesised primary / explicit constructor — KSP
+            // surfaces them as `FunctionKind.MEMBER` items named
+            // `<init>`. Their simpleName isn't usable as a dispatch
+            // case so we filter them out (matches the iOS Swift Macro
+            // policy).
+            if (decl.functionKind == FunctionKind.STATIC) continue
+            if (decl.simpleName.asString() == "<init>") continue
+            val mods = decl.modifiers
+            if (Modifier.PRIVATE in mods) continue
+            // `Modifier.JAVA_STATIC` covers `@JvmStatic`-annotated
+            // funcs (which Kotlin lifts into a companion); plain
+            // companion-object members aren't included in the
+            // class's own declarations, so no extra filter needed.
+            if (Modifier.JAVA_STATIC in mods) continue
+            out.add(decl.simpleName.asString())
+        }
+        return out
     }
 
     /**

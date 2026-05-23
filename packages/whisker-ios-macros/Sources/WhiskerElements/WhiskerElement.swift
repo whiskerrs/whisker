@@ -44,40 +44,65 @@
 public macro WhiskerElement(_ tag: String) =
     #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerElementMacro")
 
-/// Marks an `NSObject` subclass as a Whisker native module under `name`.
+/// Marks a class as a Whisker native module under `name`.
 ///
-/// Apply to a class implementing one or more single-`NSArray*`-arg
-/// Obj-C methods (the wire shape `whisker_bridge_invoke_module`
-/// expects on the platform side). The matching
+/// Apply to a class whose instance methods follow the shape
+/// `func name(_ args: [WhiskerValue]) -> WhiskerValue` — that's
+/// the wire contract the C bridge dispatches against. The class
+/// must have a zero-arg initialiser (`init()`); a fresh instance
+/// is constructed per dispatch.
+///
+/// The macro expands into a top-level `@_cdecl` C-callable
+/// dispatch shim that switches on the incoming method name and
+/// routes to the matching instance method. The
 /// `WhiskerElementsCodegen` SwiftPM build-tool plugin discovers
-/// this annotation and emits a registration call against
-/// `WhiskerModuleRegistry` so the C bridge's by-name lookup finds
-/// the class at runtime.
+/// the annotation at build time and emits a
+/// `whisker_bridge_register_module_dispatch(name, _whiskerDispatch_…)`
+/// call into `WhiskerModuleBehaviors.swift` so the C bridge's
+/// by-name lookup finds the shim at runtime.
 ///
 /// Pairs with the Rust-side `#[whisker::native_module]` proc macro
 /// (Phase 7-Φ.E.5) — the Swift class provides the platform-side
 /// implementation, the Rust proxy provides the typed call surface.
+/// Authors are encouraged to hand-write a separate typed wrapper
+/// in front of the proc-macro-emitted unit struct rather than
+/// publish the `[WhiskerValue]`-shaped API directly.
 ///
 /// ```swift
+/// import WhiskerElements
+/// import WhiskerRuntime  // brings WhiskerValue + WhiskerValueRaw into scope
+///
 /// @WhiskerModule("WhiskerStorage")
-/// @objc(WhiskerStorageImpl)
-/// public class WhiskerStorageImpl: NSObject {
-///     @objc public func save(_ args: NSArray) -> NSObject {
+/// public class WhiskerStorageImpl {
+///     func save(_ args: [WhiskerValue]) -> WhiskerValue {
 ///         guard args.count >= 2,
-///               let key = args[0] as? String,
-///               let value = args[1] as? String else {
-///             return NSNumber(value: false)
+///               case .string(let key)   = args[0],
+///               case .string(let value) = args[1] else {
+///             return .bool(false)
 ///         }
 ///         UserDefaults.standard.set(value, forKey: key)
-///         return NSNumber(value: true)
+///         return .bool(true)
 ///     }
 /// }
 /// ```
 ///
-/// The macro decorates the annotated class with a
-/// `__whiskerModuleName` constant carrying the registration name,
-/// for SwiftSyntax-driven discovery at build time. Phase 7-Φ.E.6.
-@attached(member, names: arbitrary)
-@attached(memberAttribute)
+/// Phase 7-Φ.F: dispatch shim replaces the previous Obj-C
+/// `NSInvocation`-based registry. The class no longer needs to
+/// inherit from `NSObject` or declare `@objc` selectors.
+// `names: prefixed(...)` covers both peer functions the macro
+// emits:
+//   - `_whiskerDispatch_<ClassName>` — the @_cdecl C dispatch shim
+//   - `_whiskerRegister_<ClassName>` — a tiny registration helper
+//     that calls `whisker_bridge_register_module_dispatch`. Lives
+//     in the same .o as the dispatch shim so Swift can convert
+//     the dispatch fn to `@convention(c)` locally (no inter-.o
+//     thunk → no duplicate-symbol linker error in Debug). The
+//     codegen plugin calls `_whiskerRegister_<ClassName>()` rather
+//     than taking the dispatch shim's address directly.
+//
+// Swift rejects `names: arbitrary` on peer macros at global scope
+// (a macro could otherwise shadow any top-level decl), so we
+// enumerate each prefix explicitly.
+@attached(peer, names: prefixed(_whiskerDispatch_), prefixed(_whiskerRegister_))
 public macro WhiskerModule(_ name: String) =
     #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerModuleMacro")

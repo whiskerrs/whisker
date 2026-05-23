@@ -2,7 +2,8 @@
 // source files for `@WhiskerElement("x-tag")` AND `@WhiskerModule(
 // "Name")` applications and emits `WhiskerModuleBehaviors.swift`
 // containing the matching `LynxComponentRegistry.registerUI(...)`
-// and `WhiskerModuleRegistry.registerModuleClass(_:forName:)` calls.
+// and `whisker_bridge_register_module_dispatch(name, dispatch_fn)`
+// calls.
 //
 // Invoked at SwiftPM build time by `WhiskerElementsCodegenPlugin`
 // (under `../../Plugins/`). The plugin passes:
@@ -17,6 +18,11 @@
 // Companion of `WhiskerElementProcessor.kt` (Android KSP). Same
 // shape — annotations in, generated registry out. Apple's
 // SwiftSyntax is the iOS equivalent of KSP's `Resolver`.
+//
+// Phase 7-Φ.F: module registrations now point at the per-module
+// `@_cdecl` C dispatch shim the macro itself emits (one top-level
+// `_whiskerDispatch_<sanitised name>` function per `@WhiskerModule`).
+// The previous Obj-C `WhiskerModuleRegistry` class is gone.
 
 import Foundation
 import SwiftSyntax
@@ -62,10 +68,10 @@ struct ElementHit {
 }
 
 /// One discovered `(name, className)` pair from a `@WhiskerModule`
-/// annotation. Same naming convention as `ElementHit`; the
-/// platform-side dispatch (`whisker_bridge_invoke_module`) goes
-/// through `WhiskerModuleRegistry` rather than Lynx's behaviour
-/// registry.
+/// annotation. Same naming convention as `ElementHit`. The
+/// platform-side dispatch (`whisker_bridge_invoke_module`) routes
+/// through the per-module `@_cdecl` shim the macro emits — we
+/// reference that fn by name in the registration call.
 struct ModuleHit {
     let name: String
     let className: String
@@ -132,11 +138,28 @@ func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
 
         import Foundation
         import Lynx
-        // `WhiskerModuleRegistry` ships as an Obj-C class in the
-        // WhiskerDriver framework — `import WhiskerDriver` exposes
-        // it to Swift via the framework's bridged headers.
-        import WhiskerDriver
+        // WhiskerRuntime re-exports WhiskerDriver, which carries the
+        // C ABI declarations (`whisker_bridge_register_module_dispatch`,
+        // `WhiskerValueRaw`, …) the module registration touches.
+        import WhiskerRuntime
 
+
+        """
+
+    // The macro emits TWO peer fns per `@WhiskerModule` class:
+    //   - `_whiskerDispatch_<ClassName>` — the @_cdecl C dispatch
+    //   - `_whiskerRegister_<ClassName>` — a plain Swift fn that
+    //     calls `whisker_bridge_register_module_dispatch(name,
+    //     dispatch)`. The `@convention(c)` thunk for the dispatch
+    //     fn reference materialises in the SAME .o as the dispatch
+    //     definition; this file only calls the register fn by its
+    //     Swift identifier — no thunk, no duplicate symbol.
+    //
+    // Both files live in the same `WhiskerModules` Swift module,
+    // so the codegen file sees the register fns via plain Swift
+    // name lookup without any forward declaration (Phase 7-Φ.F.s7).
+
+    out += """
         @objc public final class WhiskerModuleBehaviors: NSObject {
             private static var registered = false
             private static let lock = NSLock()
@@ -168,19 +191,12 @@ func render(elements: [ElementHit], modules: [ModuleHit]) -> String {
             """
     }
     for hit in sortedModules {
-        // `WhiskerModuleRegistry` is an Obj-C class compiled into
-        // WhiskerDriver.framework (under crates/whisker-driver-sys/
-        // bridge/src/whisker_module_registry.mm). The class header
-        // is staged in the framework's Headers/ + modulemap, so
-        // Swift sees it once we `import WhiskerDriver` above.
+        // Just call the per-module register fn. The macro hard-codes
+        // the module-name string inside that fn, so we don't need
+        // to pass it here.
+        let registerName = "_whiskerRegister_\(hit.className)"
         out += """
-                    do {
-                        let cls = NSClassFromString("WhiskerModules.\(hit.className)")
-                            ?? NSClassFromString("\(hit.className)")
-                        if let cls = cls {
-                            WhiskerModuleRegistry.registerModuleClass(cls, forName: "\(hit.name)")
-                        }
-                    }
+                    \(registerName)()
 
             """
     }
