@@ -30,7 +30,7 @@ pub use whisker_macros::{
 };
 
 // Phase 7-Φ.H.2 — `ElementRef<T>` is the Rust-side handle for
-// invoking methods on a mounted native element. `element_ref::<T>()`
+// invoking methods on a mounted platform component. `element_ref::<T>()`
 // allocates a fresh, unbound ref; the `#[whisker::platform_component]`
 // macro binds it on mount when passed as the `ref:` prop.
 pub use whisker_driver::{element_ref, ElementRef};
@@ -646,7 +646,7 @@ pub mod __tags {
 //     });
 pub use whisker_runtime::main_thread::run_on_main_thread;
 
-/// Whisker native module invocation entry point.
+/// Whisker platform module invocation entry point.
 ///
 /// Phase 7-Φ.E API surface — `WhiskerValue` tagged-union type +
 /// `invoke` / `invoke_async` callers that cross the C bridge to

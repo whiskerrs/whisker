@@ -2,7 +2,7 @@ package rs.whisker.annotations
 
 /**
  * Marks a class as the platform-side implementation of a Whisker
- * native module registered under [name].
+ * platform module registered under [name].
  *
  * Companion of iOS's `@WhiskerModule` Swift Macro (under
  * `platforms/ios/macros`). Authors apply this annotation
@@ -30,7 +30,7 @@ package rs.whisker.annotations
  * registerAll()` — sibling registration to the `@WhiskerComponent`
  * processing.
  *
- * Pairs with the Rust-side `#[whisker::native_module]` proc macro
+ * Pairs with the Rust-side `#[whisker::platform_module]` proc macro
  * (Phase 7-Φ.E.5) — the Kotlin class is the platform implementer
  * the Rust proxy ultimately dispatches against via JNI.
  *

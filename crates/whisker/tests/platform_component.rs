@@ -111,7 +111,7 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     out
 }
 
-// ---- Native element declarations ------------------------------------------
+// ---- Platform component declarations ------------------------------------------
 
 #[whisker::platform_component("x-zero-props")]
 pub fn x_zero_props() {}

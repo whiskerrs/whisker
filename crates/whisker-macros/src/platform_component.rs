@@ -130,7 +130,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         return syn::Error::new(
             sig.generics.span(),
             "#[whisker::platform_component] does not support generic parameters \
-             — native elements are tag-name driven, not type-parameterised. \
+             — platform components are tag-name driven, not type-parameterised. \
              Each tag is a distinct registered Lynx UI class.",
         )
         .to_compile_error();
@@ -218,7 +218,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         }
     };
 
-    // Phase 7-Φ.H.2.4 — every native element implicitly carries
+    // Phase 7-Φ.H.2.4 — every platform component implicitly carries
     // a `__ref: Option<ElementRef<#props_name>>` Props field.
     // `render!` recognises `ref: <expr>` at the call site and
     // routes it to the `.with_ref(expr)` setter the macro emits

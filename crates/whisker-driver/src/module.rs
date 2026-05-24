@@ -1,4 +1,4 @@
-//! Whisker native module invocation — Rust-side entry point for
+//! Whisker platform module invocation — Rust-side entry point for
 //! the C bridge `whisker_bridge_invoke_module*` family
 //! (`whisker-driver-sys`).
 //!
@@ -187,7 +187,7 @@ where
 
 // ----- Sync invoke --------------------------------------------------------
 
-/// Call the registered native module's method, synchronously.
+/// Call the registered platform module's method, synchronously.
 ///
 /// Returns a [`WhiskerValue::Error`] on dispatch failure (unknown
 /// module, missing method, platform-side exception). The bridge's

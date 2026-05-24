@@ -2,7 +2,7 @@ package rs.whisker.annotations
 
 /**
  * Marks a `WhiskerUI` subclass as the implementation of a Whisker
- * native element with the given local [tag].
+ * platform component with the given local [tag].
  *
  * Companion of iOS's `@WhiskerComponent` Swift Macro (under
  * `platforms/ios/macros`). Module-crate authors apply this

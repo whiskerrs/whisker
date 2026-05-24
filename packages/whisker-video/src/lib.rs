@@ -2,7 +2,7 @@
 //! `@WhiskerUIMethod` + `ElementRef<T>` for imperative element-
 //! method dispatch. Phase 7-Φ.H.2.6.
 //!
-//! Registers a single native element with the Lynx tag
+//! Registers a single platform component with the Lynx tag
 //! `whisker-video:Video` and exposes three sync methods callable
 //! from Rust:
 //!
@@ -70,7 +70,7 @@
 use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
 
-/// `whisker-video:Video` native element. The Lynx-side
+/// `whisker-video:Video` platform component. The Lynx-side
 /// implementations under `src/ios/` and `src/android/` declare
 /// the same three `@WhiskerUIMethod`s as the `VideoSys` trait
 /// below.

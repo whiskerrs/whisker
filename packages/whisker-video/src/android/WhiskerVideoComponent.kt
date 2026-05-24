@@ -1,4 +1,4 @@
-// `whisker-video:Video` native element on Android — Phase
+// `whisker-video:Video` platform component on Android — Phase
 // 7-Φ.H.2.6 sample. Backed by AndroidX Media3 ExoPlayer +
 // `PlayerView` (the modern replacement for the deprecated
 // `MediaPlayer` / `VideoView` pair).

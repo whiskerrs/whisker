@@ -195,7 +195,7 @@ func render(targetName: String, crateName: String, elements: [ElementHit], modul
         // The Lynx tag is namespaced by the cargo crate name so two
         // unrelated module packages can both declare an element
         // named `Video` without colliding. Matches what the
-        // Rust-side `#[whisker::native_element]` proc macro emits
+        // Rust-side `#[whisker::platform_component]` proc macro emits
         // via `concat!(env!("CARGO_PKG_NAME"), ":", tag_local)`.
         let qualifiedTag = "\(crateName):\(hit.tag)"
         out += """

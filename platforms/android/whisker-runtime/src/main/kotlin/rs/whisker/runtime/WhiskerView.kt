@@ -51,7 +51,7 @@ class WhiskerView @JvmOverloads constructor(
             // Phase 7-Φ.C: serialise the event's params (if any) into
             // a JSON string so the bridge can hand it through to Rust
             // `on_<event>: String` callbacks declared via
-            // `#[whisker::native_element]`. Mirrors what the iOS
+            // `#[whisker::platform_component]`. Mirrors what the iOS
             // event reporter does with `LynxEvent.generateEventBody`
             // + `NSJSONSerialization`.
             //

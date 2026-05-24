@@ -30,11 +30,11 @@ pub fn sync_for_target(
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,
-) -> Result<NativeSync> {
+) -> Result<PlatformSync> {
     match target {
         Target::Android => sync_android(app_config, crate_dir, workspace_root, package),
         Target::IosSimulator => sync_ios(app_config, crate_dir, workspace_root),
-        Target::Host => Ok(NativeSync {
+        Target::Host => Ok(PlatformSync {
             gen_dir: crate_dir.to_path_buf(),
             regenerated: false,
         }),
@@ -43,7 +43,7 @@ pub fn sync_for_target(
 
 /// Outcome of one sync_native pass.
 #[derive(Debug, Clone)]
-pub struct NativeSync {
+pub struct PlatformSync {
     /// Where the generated project tree lives — `gen/android/` or
     /// `gen/ios/` under `crate_dir`. For `Target::Host` this is just
     /// `crate_dir` (no native project to generate).
@@ -58,8 +58,8 @@ fn sync_android(
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,
-) -> Result<NativeSync> {
-    let whisker_runtime = resolve_whisker_native(workspace_root, "android/whisker-runtime")
+) -> Result<PlatformSync> {
+    let whisker_runtime = resolve_whisker_platform(workspace_root, "android/whisker-runtime")
         .context("resolve Whisker's platforms/android/whisker-runtime")?;
     // Lynx AARs are not required to *exist* at sync time — they only
     // matter at gradle resolution. We still pass the canonical path
@@ -82,15 +82,15 @@ fn sync_android(
     )?;
     let gen_dir = crate_dir.join("gen/android");
     let regenerated = whisker_cng::sync_android(&gen_dir, &inputs).context("render gen/android")?;
-    Ok(NativeSync {
+    Ok(PlatformSync {
         gen_dir,
         regenerated,
     })
 }
 
-fn sync_ios(app_config: &AppConfig, crate_dir: &Path, workspace_root: &Path) -> Result<NativeSync> {
+fn sync_ios(app_config: &AppConfig, crate_dir: &Path, workspace_root: &Path) -> Result<PlatformSync> {
     let whisker_runtime =
-        resolve_whisker_native(workspace_root, "ios").context("resolve Whisker's platforms/ios")?;
+        resolve_whisker_platform(workspace_root, "ios").context("resolve Whisker's platforms/ios")?;
     let gen_dir = crate_dir.join("gen/ios");
     // `gen/ios/whisker_modules/` is populated lazily by
     // `whisker-build::ios::stage_module_swift_sources` later in the
@@ -104,24 +104,24 @@ fn sync_ios(app_config: &AppConfig, crate_dir: &Path, workspace_root: &Path) -> 
     // xcworkspacedata + sources). No xcodegen subprocess needed —
     // see crates/whisker-cng/src/ios.rs for the rationale.
     let regenerated = whisker_cng::sync_ios(&gen_dir, &inputs).context("render gen/ios")?;
-    Ok(NativeSync {
+    Ok(PlatformSync {
         gen_dir,
         regenerated,
     })
 }
 
-/// Locate the Whisker-provided native subtree (Android Gradle module
-/// or iOS SPM package). Today the only source is the in-workspace
-/// `native/` dir; for external users this'll move to a downloaded
-/// cache once `whisker-cli` learns to fetch published Lynx artifacts.
-/// The clear-cut error message points at that future feature so
-/// surprised users have a thread to pull.
-fn resolve_whisker_native(workspace_root: &Path, relative: &str) -> Result<PathBuf> {
-    let p = workspace_root.join("native").join(relative);
+/// Locate the Whisker-provided platform-side subtree (Android Gradle
+/// module or iOS SPM package). Today the only source is the
+/// in-workspace `platforms/` dir; for external users this'll move to
+/// a downloaded cache once `whisker-cli` learns to fetch published
+/// Lynx artifacts. The clear-cut error message points at that future
+/// feature so surprised users have a thread to pull.
+fn resolve_whisker_platform(workspace_root: &Path, relative: &str) -> Result<PathBuf> {
+    let p = workspace_root.join("platforms").join(relative);
     if !p.exists() {
         return Err(anyhow!(
-            "Whisker native runtime not found at {}.\n\
-             Today `whisker-cli` only resolves the in-workspace `native/` tree; \
+            "Whisker platform runtime not found at {}.\n\
+             Today `whisker-cli` only resolves the in-workspace `platforms/` tree; \
              external installs need the Lynx artifacts download feature (not \
              yet implemented).",
             p.display(),
@@ -146,13 +146,13 @@ mod tests {
 
     #[test]
     fn resolve_whisker_native_errors_when_missing() {
-        let err = resolve_whisker_native(
+        let err = resolve_whisker_platform(
             &PathBuf::from("/definitely-not-a-real-path"),
             "android/whisker-runtime",
         )
         .unwrap_err();
         assert!(
-            err.to_string().contains("native runtime not found"),
+            err.to_string().contains("platform runtime not found"),
             "got: {err:#}",
         );
     }

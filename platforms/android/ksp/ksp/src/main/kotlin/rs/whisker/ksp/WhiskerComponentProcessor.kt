@@ -358,7 +358,7 @@ public class WhiskerComponentProcessor(
                 // Namespace the Lynx tag with the cargo crate name
                 // so two unrelated module packages can both declare
                 // an element named `Video` without colliding. Matches
-                // what the Rust-side `#[whisker::native_element]`
+                // what the Rust-side `#[whisker::platform_component]`
                 // proc macro emits via
                 // `concat!(env!("CARGO_PKG_NAME"), ":", tag_local)`.
                 // Phase 7-Φ.H.2.

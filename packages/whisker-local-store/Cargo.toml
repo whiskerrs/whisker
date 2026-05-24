@@ -3,7 +3,7 @@ name = "whisker-local-store"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Reference Whisker native module — persistent key-value local store wrapping UserDefaults on iOS and SharedPreferences on Android. Doubles as the documented template for first-party Whisker native modules."
+description = "Reference Whisker platform module — persistent key-value local store wrapping UserDefaults on iOS and SharedPreferences on Android. Doubles as the documented template for first-party Whisker platform modules."
 
 # rlib only. The Whisker module system handles native-source
 # distribution out-of-band via `whisker.module.toml` — we don't

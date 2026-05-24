@@ -1,5 +1,5 @@
 // Android implementation of `WhiskerLocalStore` — backs the
-// `whisker::native_module::invoke("WhiskerLocalStore", ...)` calls
+// `whisker::platform_module::invoke("WhiskerLocalStore", ...)` calls
 // with `SharedPreferences` (private to the host app under the name
 // "WhiskerLocalStore").
 //

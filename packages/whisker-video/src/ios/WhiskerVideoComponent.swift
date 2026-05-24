@@ -1,4 +1,4 @@
-// `whisker-video:Video` native element on iOS — Phase 7-Φ.H.2.6
+// `whisker-video:Video` platform component on iOS — Phase 7-Φ.H.2.6
 // sample. Backed by AVPlayer.
 //
 // Demonstrates:

@@ -1,11 +1,11 @@
-// WhiskerValue — Swift mirror of the Rust `whisker::native_module::
+// WhiskerValue — Swift mirror of the Rust `whisker::platform_module::
 // WhiskerValue` tagged union. Used by `@WhiskerModule`-annotated
 // classes' methods as the universal arg/return type, replacing the
 // previous `NSArray` + Foundation type marshalling.
 //
 // ## Why a Swift enum
 //
-// Phase 7-Φ.F: the native_module bridge now exchanges typed Whisker
+// Phase 7-Φ.F: the platform_module bridge now exchanges typed Whisker
 // values directly, not Foundation NSObject wrappers. Author code
 // pattern-matches on enum cases instead of `as?` casting against
 // NSNumber / NSString / NSData / NSArray / NSDictionary — fewer

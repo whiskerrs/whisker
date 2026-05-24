@@ -1,4 +1,4 @@
-// Whisker native element on Android with local tag `Hello`. The
+// Whisker platform component on Android with local tag `Hello`. The
 // Lynx registration string is `whisker-hello-element:Hello` — the
 // KSP processor prepends the cargo crate name (read from
 // `ksp { arg("whisker.crateName", …) }` in this module's

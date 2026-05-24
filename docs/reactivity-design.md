@@ -392,7 +392,7 @@ set_color.set("blue".into());   // tile re-paints
 flush();
 ```
 
-## native_element (Phase 7-Φ.D)
+## platform_component (Phase 7-Φ.D)
 
 ```rust
 #[whisker::platform_component("x-input")]
@@ -453,7 +453,7 @@ v1 of `#[whisker::platform_component]` is intentionally narrow:
   reactivity automatically. Future extension: extract `T` from
   `Signal<T>` and route static / numeric / boolean props through
   the `ToString` path.
-- **No children**: nesting under a native element isn't supported
+- **No children**: nesting under a platform component isn't supported
   yet. Bridge has `whisker_bridge_append_child`; macro needs a
   `children: Children` prop story (mirrors `#[component]`).
 - **No event handlers**: `on_<event>: …` props need a separate

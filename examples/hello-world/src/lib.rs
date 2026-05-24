@@ -479,7 +479,7 @@ fn scroll_body(state: AppState) -> Element {
 
 // ---- Main app ---------------------------------------------------------------
 
-// Phase 7-Φ.F: the `Hello` native element is sourced from the
+// Phase 7-Φ.F: the `Hello` platform component is sourced from the
 // external `whisker-hello-element` module crate (see
 // `packages/whisker-hello-element/`). The Whisker module-system
 // machinery discovers the crate via cargo metadata; per-package

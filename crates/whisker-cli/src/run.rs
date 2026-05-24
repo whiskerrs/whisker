@@ -92,7 +92,7 @@ pub fn run(args: Args) -> Result<()> {
     // a single file read. Errors here (missing whisker.rs fields,
     // missing native runtime) are fatal: there's no point starting
     // the dev loop if we can't build the app it would deploy.
-    let sync = crate::native::sync_for_target(
+    let sync = crate::platforms::sync_for_target(
         target,
         &m.config,
         &m.crate_dir,

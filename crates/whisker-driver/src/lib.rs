@@ -23,7 +23,7 @@ use whisker_runtime::view::{platform_component_ptr, Element};
 
 use crate::module::{from_raw, RawBuilder, WhiskerValue};
 
-/// Synchronously invoke `method` on the native element identified
+/// Synchronously invoke `method` on the platform component identified
 /// by `handle`. Routes through the C bridge
 /// (`whisker_bridge_invoke_element_method`) — itself a stub in
 /// Phase 7-Φ.H.2.5, returning a Lynx-fork-pending Error until
@@ -40,7 +40,7 @@ pub fn invoke_element_method(
     let ptr_usize = platform_component_ptr(handle);
     if ptr_usize == 0 {
         return WhiskerValue::Error(format!(
-            "invoke_element_method({method}): no native element for handle {} \
+            "invoke_element_method({method}): no platform component for handle {} \
              (renderer not installed, or element released)",
             handle.id()
         ));

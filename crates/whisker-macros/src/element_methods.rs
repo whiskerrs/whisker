@@ -77,7 +77,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             return quote_spanned! { e.span() =>
                 compile_error!(concat!(
                     "`#[whisker::element_methods(...)]` expects a type \
-                     argument (the marker type for the native element), e.g.\n",
+                     argument (the marker type for the platform component), e.g.\n",
                     "    #[whisker::element_methods(Video)]\n",
                     "    pub trait VideoExt { ... }\n",
                 ));

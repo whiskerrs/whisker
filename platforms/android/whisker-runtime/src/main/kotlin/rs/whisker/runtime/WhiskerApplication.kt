@@ -20,7 +20,7 @@ import com.lynx.tasm.LynxEnv
  * loaded.
  *
  * Also stashes a process-wide [appContext] reference for Whisker
- * native modules instantiated reflectively by the C bridge (their
+ * platform modules instantiated reflectively by the C bridge (their
  * `cls.getDeclaredConstructor().newInstance()` zero-arg ctor has no
  * Context to pull from). Modules read [appContext] lazily on first
  * dispatch — by that time `onCreate` has long since run.

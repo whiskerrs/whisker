@@ -1,5 +1,5 @@
 //! `#[whisker::platform_module]` — WhiskerValue-only `-sys` proxy
-//! generator for Whisker native modules.
+//! generator for Whisker platform modules.
 //!
 //! ## Shape contract
 //!

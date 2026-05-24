@@ -1,10 +1,10 @@
 //! `ElementRef<T>` — Rust-side handle for invoking methods on a
-//! mounted Whisker native element. Phase 7-Φ.H.2.
+//! mounted Whisker platform component. Phase 7-Φ.H.2.
 //!
 //! The mental model mirrors React's `useRef` + ImperativeHandle
 //! pattern. Author code allocates an `ElementRef<Video>` once and
 //! passes it as the `ref:` prop on a `Video(...)` element inside
-//! `render!`. The native_element macro captures the underlying
+//! `render!`. The platform_component macro captures the underlying
 //! [`Element`] handle into the ref at mount time. Once captured,
 //! `video.play(...)` / `video.seek(30.0)` can fire at any later
 //! point in the program; the `#[whisker::element_methods]`
@@ -43,7 +43,7 @@ use std::rc::Rc;
 use crate::module::WhiskerValue;
 use whisker_runtime::view::Element;
 
-/// Typed reference to a mounted Whisker native element.
+/// Typed reference to a mounted Whisker platform component.
 ///
 /// `T` is a marker type — the same struct the
 /// `#[whisker::platform_component]` proc macro emits for the element.

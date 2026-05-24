@@ -32,7 +32,7 @@ pub mod build;
 pub mod doctor;
 pub mod linker_shim;
 pub mod manifest;
-pub mod native;
+pub mod platforms;
 pub mod probe;
 pub mod run;
 pub mod rustc_shim;

@@ -1,4 +1,4 @@
-// Whisker native element on iOS with local tag `Hello`. The Lynx
+// Whisker platform component on iOS with local tag `Hello`. The Lynx
 // registration string is `whisker-hello-element:Hello` — the
 // SwiftPM build plugin prepends `context.package.displayName`
 // (the cargo crate name) as the namespace so two unrelated

@@ -53,7 +53,7 @@ struct WhiskerComponentsCodegenPlugin: BuildToolPlugin {
         // (kebab-case, e.g. "whisker-hello-element"), so this is the
         // tag namespace string we prepend to element registration
         // calls — matching what the Rust-side
-        // `#[whisker::native_element]` proc macro emits via
+        // `#[whisker::platform_component]` proc macro emits via
         // `env!("CARGO_PKG_NAME")`. Phase 7-Φ.H.2.
         var arguments: [String] = [
             "--target-name", sourceTarget.name,

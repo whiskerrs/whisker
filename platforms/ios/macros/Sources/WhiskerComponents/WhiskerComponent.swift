@@ -32,7 +32,7 @@
 // allowing the codegen to resolve the class via
 // `NSClassFromString` regardless of SwiftPM target mangling.
 
-/// Marks a `WhiskerUI` subclass as a Whisker native element with
+/// Marks a `WhiskerUI` subclass as a Whisker platform component with
 /// local tag name `tag`.
 ///
 /// Apply to any subclass of `WhiskerUI<View>` (or a Lynx-provided
@@ -47,7 +47,7 @@
 public macro WhiskerComponent(_ tag: String) =
     #externalMacro(module: "WhiskerComponentsMacros", type: "WhiskerComponentMacro")
 
-/// Marks a class as a Whisker native module under `name`.
+/// Marks a class as a Whisker platform module under `name`.
 ///
 /// Apply to a class whose instance methods follow the shape
 /// `func name(_ args: [WhiskerValue]) -> WhiskerValue` — that's
@@ -64,7 +64,7 @@ public macro WhiskerComponent(_ tag: String) =
 /// call into `WhiskerModuleBehaviors.swift` so the C bridge's
 /// by-name lookup finds the shim at runtime.
 ///
-/// Pairs with the Rust-side `#[whisker::native_module]` proc macro
+/// Pairs with the Rust-side `#[whisker::platform_module]` proc macro
 /// (Phase 7-Φ.E.5) — the Swift class provides the platform-side
 /// implementation, the Rust proxy provides the typed call surface.
 /// Authors are encouraged to hand-write a separate typed wrapper
