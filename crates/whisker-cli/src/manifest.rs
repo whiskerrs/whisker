@@ -57,6 +57,13 @@ pub fn resolve(cargo_toml_override: Option<&Path>) -> Result<ResolvedManifest> {
             })?
         }
     };
+    // Canonicalize: downstream sites (Command::current_dir,
+    // find_workspace_root's upward walk) break when crate_dir is
+    // relative and the workspace root coincides with the process cwd —
+    // PathBuf::pop() then bottoms out at "" which feeds chdir("") and
+    // surfaces as posix-spawn ENOENT.
+    let cargo_toml = std::fs::canonicalize(&cargo_toml)
+        .with_context(|| format!("canonicalize {}", cargo_toml.display()))?;
     let crate_dir = cargo_toml
         .parent()
         .ok_or_else(|| anyhow!("Cargo.toml has no parent dir: {}", cargo_toml.display()))?
