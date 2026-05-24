@@ -38,4 +38,11 @@ dependencies {
     implementation(project(":whisker-runtime"))
     implementation("rs.whisker:annotations")
     ksp("rs.whisker:ksp")
+
+    // AndroidX Media3 — modern replacement for the deprecated
+    // android.widget.VideoView / MediaPlayer pair. ExoPlayer is
+    // the underlying player; PlayerView is the view widget.
+    // Version pinned to Media3 1.4.1 (stable, mid-2024).
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
 }

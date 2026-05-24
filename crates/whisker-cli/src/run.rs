@@ -235,7 +235,12 @@ fn ensure_lynx_for_target(target: Target, workspace_root: &Path) -> Result<()> {
 /// `[workspace]` section. Returns the directory holding the matching
 /// Cargo.toml, or `None` if we walk off the top of the filesystem.
 fn find_workspace_root(start: &Path) -> Option<PathBuf> {
-    let mut cur = start.to_path_buf();
+    // Canonicalize so the upward walk doesn't bottom out at an empty
+    // PathBuf when `start` is relative and the workspace root happens
+    // to be the process's cwd. An empty `workspace_root` later feeds
+    // `Command::current_dir("")`, which posix-spawns ENOENT and
+    // surfaces as "spawn cargo: No such file or directory".
+    let mut cur = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     loop {
         let cargo = cur.join("Cargo.toml");
         if cargo.is_file() {

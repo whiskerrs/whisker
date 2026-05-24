@@ -1,18 +1,23 @@
 // `whisker-video:Video` native element on Android — Phase
-// 7-Φ.H.2.6 sample. Backed by `android.widget.VideoView`.
+// 7-Φ.H.2.6 sample. Backed by AndroidX Media3 ExoPlayer +
+// `PlayerView` (the modern replacement for the deprecated
+// `MediaPlayer` / `VideoView` pair).
 //
-// Demonstrates `@WhiskerUIMethod` (KSP forwarder under Phase
-// 7-Φ.H.2.2 emits the matching `@LynxUIMethod`-tagged forwarder
-// on a `<Class>_LynxBridge` subclass). Imperative dispatch from
-// Rust via `ElementRef<VideoProps>::play()` etc. reaches the
-// methods below once Phase 7-Φ.H.2.7 wires up the C bridge.
+// Demonstrates:
+//   - `@WhiskerElement` for tag registration (Phase 7-Φ.H.2.1
+//     namespaced as `whisker-video:Video`).
+//   - `@WhiskerProp("src")` for declarative prop dispatch from
+//     Lynx's reflection layer.
+//   - `@WhiskerUIMethod` for imperative methods Rust dispatches
+//     via `ElementRef<T>` (`video_ref.play()` etc.).
 
 package rs.whisker.elements.video
 
 import android.content.Context
-import android.net.Uri
 import android.view.View
-import android.widget.VideoView
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import rs.whisker.annotations.WhiskerElement
 import rs.whisker.annotations.WhiskerProp
 import rs.whisker.annotations.WhiskerUIMethod
@@ -23,44 +28,57 @@ import rs.whisker.runtime.WhiskerValue
 @WhiskerElement("Video")
 open class WhiskerVideoElement(context: WhiskerContext) : WhiskerUI<View>(context) {
 
-    private var videoView: VideoView? = null
+    private var player: ExoPlayer? = null
+    private var playerView: PlayerView? = null
 
     override fun createView(context: Context): View {
-        val vv = VideoView(context)
-        videoView = vv
-        return vv
+        // PlayerView wraps a SurfaceView/TextureView under the
+        // hood + draws the playback controls overlay. The ExoPlayer
+        // instance is attached via `player =` once a media item
+        // is set in `setSrc`.
+        val view = PlayerView(context)
+        // Hide the built-in controls — Whisker apps drive playback
+        // through the @WhiskerUIMethod handlers below from Rust.
+        view.useController = false
+        playerView = view
+        return view
     }
 
-    /**
-     * `src=` attribute. `@WhiskerProp` routes Lynx's prop dispatch
-     * to this setter (the KSP forwarder generates the matching
-     * `@LynxProp(name = "src")` wrapper on a bridge subclass).
-     * `open` so the bridge subclass can call through. Phase
-     * 7-Φ.H.1.
-     */
     @WhiskerProp("src")
     open fun setSrc(value: String) {
-        videoView?.setVideoURI(Uri.parse(value))
+        // Tear down any prior player so a `src=` change rebuilds
+        // cleanly. Media3 requires `release()` before dropping the
+        // last reference; without it the audio session leaks.
+        player?.release()
+
+        val ctx = view?.context ?: return
+        val p = ExoPlayer.Builder(ctx).build()
+        playerView?.player = p
+        p.setMediaItem(MediaItem.fromUri(value))
+        p.prepare()
+        // Autoplay so the demo shows motion immediately. Real
+        // modules would expose this via an `autoplay` attribute.
+        p.playWhenReady = true
+        player = p
     }
 
-    // ---- @WhiskerUIMethod handlers (Phase 7-Φ.H.2.2) -----------
+    // ---- @WhiskerUIMethod handlers ---------------------------
     //
-    // Reachable from Rust via `ElementRef<VideoProps>` once
-    // Phase 7-Φ.H.2.7's bridge wiring lands. The KSP forwarder
-    // generates a `@LynxUIMethod`-tagged wrapper on
-    // `WhiskerVideoElement_LynxBridge` for each — that's what
-    // Lynx's `LynxUIMethodsExecutor` reflection finds and
-    // dispatches to.
+    // Reachable from Rust via `ElementRef<VideoProps>`. The KSP
+    // forwarder generates a `@LynxUIMethod`-tagged wrapper on
+    // `WhiskerVideoElement_LynxBridge` for each — Lynx's
+    // `LynxUIMethodsExecutor` reflection finds and dispatches to
+    // those.
 
     @WhiskerUIMethod
     open fun play(args: List<WhiskerValue>): WhiskerValue {
-        videoView?.start()
+        player?.play()
         return WhiskerValue.Null
     }
 
     @WhiskerUIMethod
     open fun pause(args: List<WhiskerValue>): WhiskerValue {
-        videoView?.pause()
+        player?.pause()
         return WhiskerValue.Null
     }
 
@@ -74,7 +92,7 @@ open class WhiskerVideoElement(context: WhiskerContext) : WhiskerUI<View>(contex
                 "seek: expected first arg to be a Float / Int (position in seconds)"
             )
         }
-        videoView?.seekTo((seconds * 1000.0).toInt())
+        player?.seekTo((seconds * 1000.0).toLong())
         return WhiskerValue.Null
     }
 }
