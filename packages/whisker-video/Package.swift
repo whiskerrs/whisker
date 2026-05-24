@@ -17,20 +17,20 @@ let package = Package(
         .library(name: "WhiskerVideo", targets: ["WhiskerVideo"]),
     ],
     dependencies: [
-        .package(name: "whisker-ios-macros", path: "../whisker-ios-macros"),
-        .package(name: "WhiskerRuntime", path: "../../native/ios"),
+        .package(name: "macros", path: "../../platforms/ios/macros"),
+        .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
     ],
     targets: [
         .target(
             name: "WhiskerVideo",
             dependencies: [
-                .product(name: "WhiskerComponents", package: "whisker-ios-macros"),
+                .product(name: "WhiskerComponents", package: "macros"),
                 .product(name: "WhiskerRuntime", package: "WhiskerRuntime"),
                 .product(name: "Lynx", package: "WhiskerRuntime"),
             ],
             path: "src/ios",
             plugins: [
-                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "whisker-ios-macros"),
+                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),
             ]
         ),
     ]

@@ -5,7 +5,7 @@
 //
 // Phase 7-Φ.F: the contract is now WhiskerValue-only. Each method
 // takes `Array<WhiskerValue>` and returns `WhiskerValue`. The KSP
-// processor (`packages/whisker-android-ksp`) emits a
+// processor (`platforms/android/ksp`) emits a
 // `WhiskerLocalStoreImpl_Dispatch` object whose
 // `dispatch(method, args)` `when`-switches on the method name and
 // calls the matching instance method; the C JNI bridge resolves

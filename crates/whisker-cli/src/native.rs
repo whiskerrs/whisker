@@ -60,19 +60,19 @@ fn sync_android(
     package: &str,
 ) -> Result<NativeSync> {
     let whisker_runtime = resolve_whisker_native(workspace_root, "android/whisker-runtime")
-        .context("resolve Whisker's native/android/whisker-runtime")?;
+        .context("resolve Whisker's platforms/android/whisker-runtime")?;
     // Lynx AARs are not required to *exist* at sync time — they only
     // matter at gradle resolution. We still pass the canonical path
     // so the generated settings.gradle.kts always knows where to
     // look once `whisker-build` has fetched the Lynx tarball + set
     // up the symlink under target/lynx-android.
     let lynx_aars = workspace_root.join("target/lynx-android");
-    // `packages/whisker-android-ksp/` is the composite-build root
+    // `platforms/android/ksp/` is the composite-build root
     // that ships `@WhiskerElement` + the KSP processor (Phase 7-Φ.H.2).
     // Same convention as `whisker_runtime_path` — absolute path,
     // referenced from the generated `settings.gradle.kts` via
     // `includeBuild(...)`.
-    let whisker_android_ksp = workspace_root.join("packages/whisker-android-ksp");
+    let whisker_android_ksp = workspace_root.join("platforms/android/ksp");
     let inputs = whisker_cng::android::inputs_from(
         app_config,
         package.replace('-', "_"),
@@ -90,7 +90,7 @@ fn sync_android(
 
 fn sync_ios(app_config: &AppConfig, crate_dir: &Path, workspace_root: &Path) -> Result<NativeSync> {
     let whisker_runtime =
-        resolve_whisker_native(workspace_root, "ios").context("resolve Whisker's native/ios")?;
+        resolve_whisker_native(workspace_root, "ios").context("resolve Whisker's platforms/ios")?;
     let gen_dir = crate_dir.join("gen/ios");
     // `gen/ios/whisker_modules/` is populated lazily by
     // `whisker-build::ios::stage_module_swift_sources` later in the

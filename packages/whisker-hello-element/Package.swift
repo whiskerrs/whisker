@@ -36,18 +36,18 @@ let package = Package(
         // WhiskerComponents ships the `@WhiskerComponent` / `@WhiskerModule`
         // macros + the SwiftPM build-tool plugin that scans this
         // target's sources for those annotations.
-        .package(name: "whisker-ios-macros", path: "../whisker-ios-macros"),
+        .package(name: "macros", path: "../../platforms/ios/macros"),
         // WhiskerRuntime gives module sources access to Lynx C++
         // types (LynxUI, LynxComponentRegistry, …) and re-exports
         // the WhiskerDriver C ABI symbols the macro-emitted
         // dispatch shim references.
-        .package(name: "WhiskerRuntime", path: "../../native/ios"),
+        .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
     ],
     targets: [
         .target(
             name: "WhiskerHelloComponent",
             dependencies: [
-                .product(name: "WhiskerComponents", package: "whisker-ios-macros"),
+                .product(name: "WhiskerComponents", package: "macros"),
                 .product(name: "WhiskerRuntime", package: "WhiskerRuntime"),
                 .product(name: "Lynx", package: "WhiskerRuntime"),
             ],
@@ -62,7 +62,7 @@ let package = Package(
                 // a top-level `_whiskerRegisterModules_WhiskerHelloComponent()`
                 // fn the aggregator calls from
                 // `WhiskerModuleBehaviors.registerAll()`.
-                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "whisker-ios-macros"),
+                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),
             ]
         ),
     ]

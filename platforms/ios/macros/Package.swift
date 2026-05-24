@@ -38,7 +38,7 @@ let package = Package(
         // Exposing the plugin as a product lets the generated
         // `gen/ios/whisker_modules/Package.swift` reference it via
         // `.plugin(name: "WhiskerComponentsCodegenPlugin",
-        //         package: "whisker-ios-macros")` on its WhiskerModules
+        //         package: "macros")` on its WhiskerModules
         // target. Without the .plugin product the consumer can't see
         // it (SwiftPM scopes plugins per-package by default).
         .plugin(

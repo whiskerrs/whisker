@@ -156,8 +156,8 @@ impl Builder {
             // fail to resolve.
             let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
             let gen_ios = crate_dir.join("gen/ios");
-            let whisker_runtime_path = ws.join("native/ios");
-            let whisker_ios_macros_path = ws.join("packages/whisker-ios-macros");
+            let whisker_runtime_path = ws.join("platforms/ios");
+            let whisker_ios_macros_path = ws.join("platforms/ios/macros");
             whisker_build::ios::stage_module_swift_sources(
                 &gen_ios,
                 &whisker_runtime_path,

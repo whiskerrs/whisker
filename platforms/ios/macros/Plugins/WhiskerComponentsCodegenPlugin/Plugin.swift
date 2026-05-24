@@ -4,7 +4,7 @@
 //
 // Activates when a target's `Package.swift` declares
 // `plugins: [.plugin(name: "WhiskerComponentsCodegenPlugin",
-//                    package: "whisker-ios-macros")]`.
+//                    package: "macros")]`.
 //
 // Phase 7-Φ.G: applied per-module — each module package adds the
 // plugin to its own SwiftPM target. The codegen emits a top-level

@@ -27,11 +27,11 @@ include(":app")
 include(":whisker-runtime")
 project(":whisker-runtime").projectDir = file("{{whisker_runtime_android_path}}")
 
-// Phase 7-Φ.H.2: `whisker-android-ksp` brings the `@WhiskerComponent`
+// Phase 7-Φ.H.2: `ksp` brings the `@WhiskerComponent`
 // annotation + KSP processor into the build via Gradle's
 // composite-build mechanism. The included build resolves
 // `rs.whisker:annotations` and `rs.whisker:ksp` against its own
-// subprojects (see `packages/whisker-android-ksp/settings.gradle.kts`),
+// subprojects (see `platforms/android/ksp/settings.gradle.kts`),
 // so the app's `build.gradle.kts` references them by group:artifact
 // like any regular external dep.
 //

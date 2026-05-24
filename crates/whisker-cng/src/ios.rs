@@ -48,7 +48,7 @@ pub struct IosInputs {
     pub bundle_id: String,
     pub deployment_target: String,
     /// Path to the WhiskerRuntime SPM package — typically
-    /// `<workspace>/native/ios`. Written into the rendered pbxproj
+    /// `<workspace>/platforms/ios`. Written into the rendered pbxproj
     /// as the `XCLocalSwiftPackageReference.relativePath` value
     /// (Xcode accepts an absolute path there) and as the `path` of
     /// the synthetic Packages-group `PBXFileReference` (with
@@ -270,7 +270,7 @@ mod tests {
             scheme: "HelloWorld".into(),
             bundle_id: "rs.whisker.examples.helloWorld".into(),
             deployment_target: "13.0".into(),
-            whisker_runtime_path: PathBuf::from("/abs/native/ios"),
+            whisker_runtime_path: PathBuf::from("/abs/platforms/ios"),
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             template_version: 3,
         }
@@ -305,8 +305,8 @@ mod tests {
             std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
         assert!(pbxproj.contains("PRODUCT_BUNDLE_IDENTIFIER = \"rs.whisker.examples.helloWorld\""));
         assert!(pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = \"13.0\""));
-        assert!(pbxproj.contains("relativePath = \"/abs/native/ios\""));
-        assert!(pbxproj.contains("path = \"/abs/native/ios\""));
+        assert!(pbxproj.contains("relativePath = \"/abs/platforms/ios\""));
+        assert!(pbxproj.contains("path = \"/abs/platforms/ios\""));
         assert!(pbxproj.contains("name = \"HelloWorld\""));
         assert!(pbxproj.contains("productName = \"HelloWorld\""));
         // Catch any unsubstituted placeholders.

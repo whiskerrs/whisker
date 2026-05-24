@@ -5,7 +5,7 @@ package rs.whisker.annotations
  * native module registered under [name].
  *
  * Companion of iOS's `@WhiskerModule` Swift Macro (under
- * `packages/whisker-ios-macros`). Authors apply this annotation
+ * `platforms/ios/macros`). Authors apply this annotation
  * to a Kotlin class that exposes one or more methods with the
  * single-`Array<Any?>` argument shape `whisker_bridge_invoke_module`
  * expects:

@@ -28,7 +28,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "whisker-android-ksp"
+rootProject.name = "ksp"
 
 include(":annotations")
 include(":ksp")

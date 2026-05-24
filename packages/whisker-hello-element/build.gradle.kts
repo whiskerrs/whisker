@@ -72,7 +72,7 @@ dependencies {
     implementation(project(":whisker-runtime"))
     // `@WhiskerComponent` / `@WhiskerModule` annotations + KSP
     // processor. Resolved through the user-app gradle's
-    // composite-build entry for `packages/whisker-android-ksp`.
+    // composite-build entry for `platforms/android/ksp`.
     implementation("rs.whisker:annotations")
     ksp("rs.whisker:ksp")
 }

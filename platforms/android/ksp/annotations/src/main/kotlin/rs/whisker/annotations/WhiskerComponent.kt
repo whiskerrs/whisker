@@ -5,7 +5,7 @@ package rs.whisker.annotations
  * native element with the given local [tag].
  *
  * Companion of iOS's `@WhiskerComponent` Swift Macro (under
- * `packages/whisker-ios-macros`). Module-crate authors apply this
+ * `platforms/ios/macros`). Module-crate authors apply this
  * annotation to their `WhiskerUI<View>` subclass:
  *
  * ```kotlin

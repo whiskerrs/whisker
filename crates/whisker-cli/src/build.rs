@@ -179,8 +179,8 @@ fn build_ios_app(
     //    pattern as the Android pre-gradle staging step.
     let modules = whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), &m.package)
         .with_context(|| format!("discover modules for `{}`", m.package))?;
-    let whisker_runtime_path = workspace_root.join("native/ios");
-    let whisker_ios_macros_path = workspace_root.join("packages/whisker-ios-macros");
+    let whisker_runtime_path = workspace_root.join("platforms/ios");
+    let whisker_ios_macros_path = workspace_root.join("platforms/ios/macros");
     ios::stage_module_swift_sources(
         &sync.gen_dir,
         &whisker_runtime_path,
