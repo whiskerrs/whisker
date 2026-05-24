@@ -32,6 +32,7 @@ pub mod build;
 pub mod doctor;
 pub mod linker_shim;
 pub mod manifest;
+pub mod new_module;
 pub mod platforms;
 pub mod probe;
 pub mod run;
@@ -68,6 +69,10 @@ enum Command {
     /// gradle / xcodebuild without the dev-server. Output is the
     /// shippable `.apk` / `.app`.
     Build(build::Args),
+    /// Scaffold a new Whisker module crate (Cargo.toml + whisker.module.toml
+    /// + Package.swift + build.gradle.kts + skeleton Rust/Swift/Kotlin sources).
+    /// See `docs/module-author-guide.md`.
+    NewModule(new_module::NewModuleArgs),
 }
 
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
@@ -88,6 +93,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Command::Doctor(a) => doctor::run(a),
         Command::Run(a) => run::run(a),
         Command::Build(a) => build::run(a),
+        Command::NewModule(a) => new_module::run(a),
     }
 }
 
