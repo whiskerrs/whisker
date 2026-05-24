@@ -489,7 +489,7 @@ fn scroll_body(state: AppState) -> Element {
 // would use.
 //
 // Phase 7-Φ.H.2: the actual Lynx tag string is namespaced as
-// `whisker-hello-element:Hello` — the `#[whisker::native_element]`
+// `whisker-hello-element:Hello` — the `#[whisker::platform_component]`
 // proc macro auto-prepends `env!("CARGO_PKG_NAME")` on the call
 // site, and the SwiftPM build plugin / KSP processor do the same
 // on the platform side. From the author's perspective the name

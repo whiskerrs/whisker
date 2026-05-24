@@ -54,7 +54,7 @@
 //!    and calls `whisker_driver::invoke_element_method(handle,
 //!    "play", vec![])`.
 //! 4. The driver looks up the platform `WhiskerElement*` via the
-//!    renderer's `native_element_ptr(handle)` and calls
+//!    renderer's `platform_component_ptr(handle)` and calls
 //!    `whisker_bridge_invoke_element_method`.
 //! 5. **(Pending Phase 7-Φ.H.2.7)** The C bridge resolves
 //!    `WhiskerElement*` → Lynx UI sign → `LynxUI*` and dispatches
@@ -67,7 +67,7 @@
 //! the `@WhiskerUIMethod`-emitted forwarder on the mounted
 //! element's `WhiskerUI<View>` subclass.
 
-use whisker::native_module::WhiskerValue;
+use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
 
 /// `whisker-video:Video` native element. The Lynx-side
@@ -81,7 +81,7 @@ use whisker::prelude::*;
 /// are optional — omitting them at the call site defaults the
 /// prop to `Signal::Static(Default::default())` (empty string),
 /// which platforms treat as "attribute not set".
-#[whisker::native_element("Video")]
+#[whisker::platform_component("Video")]
 pub fn video(src: Signal<String>, style: Signal<String>) {}
 
 /// `-sys` proxy: each method is a thin pass-through that calls

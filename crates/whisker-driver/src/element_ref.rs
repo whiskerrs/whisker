@@ -46,7 +46,7 @@ use whisker_runtime::view::Element;
 /// Typed reference to a mounted Whisker native element.
 ///
 /// `T` is a marker type — the same struct the
-/// `#[whisker::native_element]` proc macro emits for the element.
+/// `#[whisker::platform_component]` proc macro emits for the element.
 /// It anchors the inherent-impl methods the
 /// `#[whisker::element_methods]` proc macro produces (so
 /// `video.play()` resolves only on an `ElementRef<Video>`, not on
@@ -64,7 +64,7 @@ pub struct ElementRef<T> {
 impl<T> ElementRef<T> {
     /// Allocate a fresh, unbound ref. Use [`element_ref::<T>()`]
     /// at call sites — this constructor is mostly for the
-    /// `#[whisker::native_element]` macro's prop-default path.
+    /// `#[whisker::platform_component]` macro's prop-default path.
     pub fn new() -> Self {
         Self {
             inner: Rc::new(Cell::new(None)),

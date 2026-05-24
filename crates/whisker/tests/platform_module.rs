@@ -1,4 +1,4 @@
-//! `#[whisker::native_module]` integration tests.
+//! `#[whisker::platform_module]` integration tests.
 //!
 //! We can't exercise the bridge end-to-end here — the bridge
 //! requires a registered platform-side module (Swift class on
@@ -16,11 +16,11 @@
 //! (whisker-local-store + hello-world integration on iOS
 //! simulator + Android emulator).
 
-use whisker::native_module::WhiskerValue;
+use whisker::platform_module::WhiskerValue;
 
 // ----- Sync proxy ---------------------------------------------------------
 
-#[whisker::native_module(name = "WhiskerStorage")]
+#[whisker::platform_module(name = "WhiskerStorage")]
 pub trait WhiskerStorageSys {
     fn save(args: Vec<WhiskerValue>) -> WhiskerValue;
     fn load(args: Vec<WhiskerValue>) -> WhiskerValue;
@@ -53,7 +53,7 @@ fn sync_proxy_empty_arg_vec() {
 
 // ----- Async proxy --------------------------------------------------------
 
-#[whisker::native_module(name = "WhiskerHttp")]
+#[whisker::platform_module(name = "WhiskerHttp")]
 pub trait WhiskerHttpSys {
     async fn fetch(args: Vec<WhiskerValue>) -> WhiskerValue;
 }
@@ -68,7 +68,7 @@ fn async_proxy_compiles() {
 
 // ----- Custom module name -------------------------------------------------
 
-#[whisker::native_module(name = "OverriddenName")]
+#[whisker::platform_module(name = "OverriddenName")]
 pub trait MyLocalTraitSys {
     fn ping(args: Vec<WhiskerValue>) -> WhiskerValue;
 }
@@ -80,7 +80,7 @@ fn custom_module_name_compiles() {
 
 // ----- Default name (= trait name) ----------------------------------------
 
-#[whisker::native_module]
+#[whisker::platform_module]
 pub trait UnnamedModule {
     fn echo(args: Vec<WhiskerValue>) -> WhiskerValue;
 }

@@ -1,4 +1,4 @@
-//! `#[whisker::native_module]` — WhiskerValue-only `-sys` proxy
+//! `#[whisker::platform_module]` — WhiskerValue-only `-sys` proxy
 //! generator for Whisker native modules.
 //!
 //! ## Shape contract
@@ -7,7 +7,7 @@
 //! WhiskerValue-only `-sys` signature:
 //!
 //! ```ignore
-//! #[whisker::native_module(name = "WhiskerLocalStore")]
+//! #[whisker::platform_module(name = "WhiskerLocalStore")]
 //! pub trait WhiskerLocalStoreSys {
 //!     fn save(args: Vec<WhiskerValue>) -> WhiskerValue;
 //!     fn load(args: Vec<WhiskerValue>) -> WhiskerValue;
@@ -17,7 +17,7 @@
 //!
 //! Output: a unit struct + an `impl` block exposing each method
 //! as an associated function that calls
-//! `whisker::native_module::invoke(module_name, method_name, args)`
+//! `whisker::platform_module::invoke(module_name, method_name, args)`
 //! and returns the raw [`WhiskerValue`] back to the caller. Error
 //! propagation is the caller's job — the proxy doesn't lift
 //! `WhiskerValue::Error` into `Result` here (the caller has full
@@ -66,8 +66,8 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(e) => {
             return quote_spanned! { e.span() =>
                 compile_error!(concat!(
-                    "`#[whisker::native_module]` expects a trait declaration, e.g.\n",
-                    "    #[whisker::native_module(name = \"MyStorage\")]\n",
+                    "`#[whisker::platform_module]` expects a trait declaration, e.g.\n",
+                    "    #[whisker::platform_module(name = \"MyStorage\")]\n",
                     "    pub trait MyStorageSys {\n",
                     "        fn save(args: Vec<WhiskerValue>) -> WhiskerValue;\n",
                     "    }\n",
@@ -89,7 +89,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         let TraitItem::Fn(method) = item else {
             return syn::Error::new_spanned(
                 item,
-                "`#[whisker::native_module]` only supports `fn` items in the trait body",
+                "`#[whisker::platform_module]` only supports `fn` items in the trait body",
             )
             .into_compile_error();
         };
@@ -117,7 +117,7 @@ fn parse_module_name(attr: &TokenStream, input: &ItemTrait) -> syn::Result<Strin
     let Meta::NameValue(nv) = meta else {
         return Err(syn::Error::new_spanned(
             meta,
-            "`#[whisker::native_module]` accepts `name = \"...\"`",
+            "`#[whisker::platform_module]` accepts `name = \"...\"`",
         ));
     };
     if !nv.path.is_ident("name") {
@@ -160,7 +160,7 @@ fn emit_method(module_name: &str, method: &TraitItemFn) -> syn::Result<TokenStre
                 let Pat::Ident(ident_pat) = pat.as_ref() else {
                     return Err(syn::Error::new_spanned(
                         pat,
-                        "native_module method args must be plain identifiers",
+                        "platform_module method args must be plain identifiers",
                     ));
                 };
                 arg_decls.push(quote! { #ident_pat: #ty });
@@ -177,7 +177,7 @@ fn emit_method(module_name: &str, method: &TraitItemFn) -> syn::Result<TokenStre
     if arg_idents.len() > 1 {
         return Err(syn::Error::new_spanned(
             &sig.inputs,
-            "native_module methods take exactly one `args: Vec<WhiskerValue>` parameter \
+            "platform_module methods take exactly one `args: Vec<WhiskerValue>` parameter \
              — type-safe wrappers belong in author-owned code on top of this proxy",
         ));
     }
@@ -186,7 +186,7 @@ fn emit_method(module_name: &str, method: &TraitItemFn) -> syn::Result<TokenStre
         let id = arg_idents[0];
         quote! { #id }
     } else {
-        quote! { ::std::vec::Vec::<::whisker::native_module::WhiskerValue>::new() }
+        quote! { ::std::vec::Vec::<::whisker::platform_module::WhiskerValue>::new() }
     };
 
     // Return type defaults to `WhiskerValue` if the user wrote
@@ -195,14 +195,14 @@ fn emit_method(module_name: &str, method: &TraitItemFn) -> syn::Result<TokenStre
     // fails — surfacing the mismatch with the user's own return
     // type's span.
     let return_type: TokenStream = match &sig.output {
-        ReturnType::Default => quote! { ::whisker::native_module::WhiskerValue },
+        ReturnType::Default => quote! { ::whisker::platform_module::WhiskerValue },
         ReturnType::Type(_, ty) => quote! { #ty },
     };
 
     let invoke_path = if is_async {
-        quote! { ::whisker::native_module::invoke_async }
+        quote! { ::whisker::platform_module::invoke_async }
     } else {
-        quote! { ::whisker::native_module::invoke }
+        quote! { ::whisker::platform_module::invoke }
     };
     let dot_await = if is_async {
         quote! { .await }

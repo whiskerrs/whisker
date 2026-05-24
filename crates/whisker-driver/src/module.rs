@@ -38,7 +38,7 @@
 //! Errors from the bridge (unknown module, missing method,
 //! exception thrown) surface as the [`WhiskerValue::Error`]
 //! variant carrying a UTF-8 description. The matching
-//! `#[whisker::native_module]` proc macro layer (Phase 7-Φ.E.5)
+//! `#[whisker::platform_module]` proc macro layer (Phase 7-Φ.E.5)
 //! folds those into typed `Result<T, ModuleError>` returns.
 
 use std::collections::BTreeMap;
@@ -103,7 +103,7 @@ impl WhiskerValue {
     }
 }
 
-/// Failure surface for the `#[whisker::native_module]` proc-macro-
+/// Failure surface for the `#[whisker::platform_module]` proc-macro-
 /// generated proxy methods.
 ///
 /// Wraps the UTF-8 description the bridge returned via

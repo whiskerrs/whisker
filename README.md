@@ -41,7 +41,7 @@ The reactive contract at a glance:
 | `text(value: my_signal.get())`               | static — read happens at the call site, no subscription                     |
 
 Same rule for built-in tags, `#[component]`s, and
-`#[whisker::native_element]`s. See
+`#[whisker::platform_component]`s. See
 [`docs/reactivity-design.md`](docs/reactivity-design.md#signalt--the-prop-value-type-phase-7-φ)
 for the full design.
 
@@ -94,7 +94,7 @@ Major decisions made so far:
   updates only the affected element attribute. No virtual DOM, no
   diff pass.
 - **Unified prop reactivity via `Signal<T>`** (Phase 7-Φ) —
-  built-in tags, `#[component]`, and `#[whisker::native_element]`
+  built-in tags, `#[component]`, and `#[whisker::platform_component]`
   all accept the same `Signal<T> = Static(T) | Dynamic(ReadSignal<T>)`
   prop shape, so call sites have one rule across every component
   surface (pass a signal handle → reactive; pass a value or
@@ -144,7 +144,7 @@ GitHub.
 | Reactive runtime (signals, effects, computed, resource) | ✅ |
 | `render!` macro | ✅ |
 | `Signal<T>` unified prop reactivity (Phase 7-Φ) | ✅ |
-| `#[whisker::native_element]` (iOS only for now) | ✅ |
+| `#[whisker::platform_component]` (iOS only for now) | ✅ |
 | CNG (`whisker prebuild`) | ⏳ |
 | `whisker run` (Tier 1 hot reload) | ✅ (iOS) / ⏳ (Android) |
 | iOS xcframework build | ✅ |

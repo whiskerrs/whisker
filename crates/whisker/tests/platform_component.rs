@@ -1,4 +1,4 @@
-//! `#[whisker::native_element]` end-to-end tests.
+//! `#[whisker::platform_component]` end-to-end tests.
 //!
 //! Verifies the proc-macro lowers a tag-name + prop list into:
 //! - `XxxProps::builder().<prop>(v).build()` shape
@@ -113,27 +113,27 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 
 // ---- Native element declarations ------------------------------------------
 
-#[whisker::native_element("x-zero-props")]
+#[whisker::platform_component("x-zero-props")]
 pub fn x_zero_props() {}
 
-#[whisker::native_element("x-styled")]
+#[whisker::platform_component("x-styled")]
 pub fn x_styled(style: Signal<String>) {}
 
-#[whisker::native_element("x-input")]
+#[whisker::platform_component("x-input")]
 pub fn x_input(value: Signal<String>, placeholder: Signal<String>) {}
 
 // ---- Phase 7-Φ.D v2 elements ----------------------------------------------
 
-#[whisker::native_element("x-typed-checkbox")]
+#[whisker::platform_component("x-typed-checkbox")]
 pub fn x_typed_checkbox(checked: Signal<bool>, count: Signal<i32>) {}
 
-#[whisker::native_element("x-button")]
+#[whisker::platform_component("x-button")]
 pub fn x_button(label: Signal<String>, on_tap: ()) {}
 
-#[whisker::native_element("x-input-payload")]
+#[whisker::platform_component("x-input-payload")]
 pub fn x_input_payload(value: Signal<String>, on_input: String) {}
 
-#[whisker::native_element("x-container")]
+#[whisker::platform_component("x-container")]
 pub fn x_container(style: Signal<String>, children: ::whisker::Children) {}
 
 // ---- Tests -----------------------------------------------------------------

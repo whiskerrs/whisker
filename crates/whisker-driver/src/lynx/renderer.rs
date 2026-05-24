@@ -204,7 +204,7 @@ impl DynRenderer for BridgeRenderer {
         unsafe { ffi::whisker_bridge_flush(self.engine_ptr()) };
     }
 
-    fn native_element_ptr(&self, handle: Element) -> usize {
+    fn platform_component_ptr(&self, handle: Element) -> usize {
         // Cast the per-element `WhiskerElement*` to `usize` so the
         // runtime crate doesn't need to import bridge types. The
         // driver's `ElementRef::invoke` casts back to

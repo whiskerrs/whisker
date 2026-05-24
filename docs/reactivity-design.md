@@ -142,7 +142,7 @@ effect(move || history.update(|h| h.push(format!("count={}", count.get()))));
 ### `Signal<T>` — the prop-value type (Phase 7-Φ)
 
 A 2-variant sum used by built-in tag builders, `#[component]`, and
-`#[whisker::native_element]` to receive prop values that may be
+`#[whisker::platform_component]` to receive prop values that may be
 either a static `T` or a reactive `ReadSignal<T>`. The unified
 type lets all three component surfaces share one calling
 convention.
@@ -181,7 +181,7 @@ text(value: my_signal.get())          // → Signal::Static (snapshot — read
 The `Static` vs `Dynamic` decision is **visible at the call site**:
 pass the signal handle for reactive binding; pass `.get()` (or any
 already-resolved value) for a one-shot snapshot. Same rule for
-built-in tags, `#[component]`s, and `#[whisker::native_element]`s.
+built-in tags, `#[component]`s, and `#[whisker::platform_component]`s.
 
 #### Inside the builder
 
@@ -395,13 +395,13 @@ flush();
 ## native_element (Phase 7-Φ.D)
 
 ```rust
-#[whisker::native_element("x-input")]
+#[whisker::platform_component("x-input")]
 pub fn x_input(value: Signal<String>, placeholder: Signal<String>) {}
 //                                                                ^^
 //                                          empty body — auto-generated
 ```
 
-`#[whisker::native_element(tag)]` is a sibling of `#[component]`:
+`#[whisker::platform_component(tag)]` is a sibling of `#[component]`:
 same `<Name>Props` + builder + PascalCase-alias surface, but
 the body is **auto-generated** rather than supplied by the user.
 The macro emits:
@@ -447,7 +447,7 @@ in debug). No null-pointer surprises propagate to user code.
 
 ### Constraints
 
-v1 of `#[whisker::native_element]` is intentionally narrow:
+v1 of `#[whisker::platform_component]` is intentionally narrow:
 
 - **Every prop must be `Signal<T>`** for the macro to wire up
   reactivity automatically. Future extension: extract `T` from

@@ -5,7 +5,7 @@
 //! ## Shape contract
 //!
 //! Input is a trait declaration whose methods follow the
-//! WhiskerValue-only `-sys` shape (same as `#[whisker::native_module]`):
+//! WhiskerValue-only `-sys` shape (same as `#[whisker::platform_module]`):
 //!
 //! ```ignore
 //! #[whisker::element_methods(Video)]
@@ -59,7 +59,7 @@
 //! }
 //! ```
 //!
-//! Same discipline as `#[whisker::native_module]` — the proc macro
+//! Same discipline as `#[whisker::platform_module]` — the proc macro
 //! is the predictable `-sys` layer; ergonomics live in the
 //! hand-written wrapper.
 
@@ -156,7 +156,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                 compile_error!(concat!(
                     "`#[whisker::element_methods]` trait methods must take \
                      exactly one extra arg (`args: Vec<WhiskerValue>`) — \
-                     same shape as `#[whisker::native_module]`. Typed wrappers \
+                     same shape as `#[whisker::platform_module]`. Typed wrappers \
                      belong in a hand-written extension trait layered on top."
                 ));
             };
