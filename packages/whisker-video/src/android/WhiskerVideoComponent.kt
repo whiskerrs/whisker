@@ -4,7 +4,7 @@
 // `MediaPlayer` / `VideoView` pair).
 //
 // Demonstrates:
-//   - `@WhiskerElement` for tag registration (Phase 7-Φ.H.2.1
+//   - `@WhiskerComponent` for tag registration (Phase 7-Φ.H.2.1
 //     namespaced as `whisker-video:Video`).
 //   - `@WhiskerProp("src")` for declarative prop dispatch from
 //     Lynx's reflection layer.
@@ -18,15 +18,15 @@ import android.view.View
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import rs.whisker.annotations.WhiskerElement
+import rs.whisker.annotations.WhiskerComponent
 import rs.whisker.annotations.WhiskerProp
 import rs.whisker.annotations.WhiskerUIMethod
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerUI
 import rs.whisker.runtime.WhiskerValue
 
-@WhiskerElement("Video")
-open class WhiskerVideoElement(context: WhiskerContext) : WhiskerUI<View>(context) {
+@WhiskerComponent("Video")
+open class WhiskerVideoComponent(context: WhiskerContext) : WhiskerUI<View>(context) {
 
     private var player: ExoPlayer? = null
     private var playerView: PlayerView? = null
@@ -66,7 +66,7 @@ open class WhiskerVideoElement(context: WhiskerContext) : WhiskerUI<View>(contex
     //
     // Reachable from Rust via `ElementRef<VideoProps>`. The KSP
     // forwarder generates a `@LynxUIMethod`-tagged wrapper on
-    // `WhiskerVideoElement_LynxBridge` for each — Lynx's
+    // `WhiskerVideoComponent_LynxBridge` for each — Lynx's
     // `LynxUIMethodsExecutor` reflection finds and dispatches to
     // those.
 

@@ -18,7 +18,7 @@
 // `WhiskerModuleError`.
 
 import Foundation
-import WhiskerElements
+import WhiskerComponents
 import WhiskerRuntime
 
 // Phase 7-Φ.G PoC: external SPM dep pulled via this module's

@@ -24,13 +24,13 @@ let package = Package(
         .target(
             name: "WhiskerVideo",
             dependencies: [
-                .product(name: "WhiskerElements", package: "whisker-ios-macros"),
+                .product(name: "WhiskerComponents", package: "whisker-ios-macros"),
                 .product(name: "WhiskerRuntime", package: "WhiskerRuntime"),
                 .product(name: "Lynx", package: "WhiskerRuntime"),
             ],
             path: "src/ios",
             plugins: [
-                .plugin(name: "WhiskerElementsCodegenPlugin", package: "whisker-ios-macros"),
+                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "whisker-ios-macros"),
             ]
         ),
     ]

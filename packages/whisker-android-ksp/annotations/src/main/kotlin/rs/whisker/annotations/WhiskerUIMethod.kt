@@ -1,14 +1,14 @@
 package rs.whisker.annotations
 
 /**
- * Marks a `@WhiskerElement`-annotated class's method as a UI
+ * Marks a `@WhiskerComponent`-annotated class's method as a UI
  * method invokable from Rust via an `ElementRef<T>`. Phase 7-Φ.H.2.
  *
  * Author writes:
  *
  * ```kotlin
- * @WhiskerElement("Video")
- * open class WhiskerVideoElement(context: WhiskerContext) :
+ * @WhiskerComponent("Video")
+ * open class WhiskerVideoComponent(context: WhiskerContext) :
  *     WhiskerUI<View>(context) {
  *
  *     override fun createView(context: Context): View = VideoView(context)

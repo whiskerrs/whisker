@@ -1,15 +1,15 @@
-// Whisker module-system iOS attached macro — `@WhiskerElement`.
+// Whisker module-system iOS attached macro — `@WhiskerComponent`.
 //
 // Applied to a `WhiskerUI<View>` subclass to mark it as the
 // platform UI class for a given tag name:
 //
 // ```swift
-// import WhiskerElements
+// import WhiskerComponents
 // import WhiskerRuntime
 // import UIKit
 //
-// @WhiskerElement("Hello")
-// public class WhiskerHelloElement: WhiskerUI<UIView> {
+// @WhiskerComponent("Hello")
+// public class WhiskerHelloComponent: WhiskerUI<UIView> {
 //     public override func createView() -> UIView {
 //         let v = UIView()
 //         v.backgroundColor = .systemPink
@@ -19,7 +19,7 @@
 // ```
 //
 // The tag string the author passes here is the *local* name. The
-// `WhiskerElementsCodegen` SwiftPM build plugin prepends the
+// `WhiskerComponentsCodegen` SwiftPM build plugin prepends the
 // SwiftPM package's `displayName` (which equals the cargo crate
 // name for Whisker module packages) at codegen time to produce
 // the fully-qualified registration string
@@ -37,15 +37,15 @@
 ///
 /// Apply to any subclass of `WhiskerUI<View>` (or a Lynx-provided
 /// flatten variant) declared in a Whisker module crate's
-/// `swift_sources`. The `WhiskerElementsCodegen` SwiftPM build
+/// `swift_sources`. The `WhiskerComponentsCodegen` SwiftPM build
 /// plugin discovers the annotation, prepends the crate name as a
 /// namespace (`<crate-name>:<tag>`), and emits the
 /// `LynxComponentRegistry.registerUI(cls, withName:)` call into
 /// the package's generated registration helper.
 @attached(member, names: arbitrary)
 @attached(memberAttribute)
-public macro WhiskerElement(_ tag: String) =
-    #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerElementMacro")
+public macro WhiskerComponent(_ tag: String) =
+    #externalMacro(module: "WhiskerComponentsMacros", type: "WhiskerComponentMacro")
 
 /// Marks a class as a Whisker native module under `name`.
 ///
@@ -58,7 +58,7 @@ public macro WhiskerElement(_ tag: String) =
 /// The macro expands into a top-level `@_cdecl` C-callable
 /// dispatch shim that switches on the incoming method name and
 /// routes to the matching instance method. The
-/// `WhiskerElementsCodegen` SwiftPM build-tool plugin discovers
+/// `WhiskerComponentsCodegen` SwiftPM build-tool plugin discovers
 /// the annotation at build time and emits a
 /// `whisker_bridge_register_module_dispatch(name, _whiskerDispatch_…)`
 /// call into `WhiskerModuleBehaviors.swift` so the C bridge's
@@ -72,7 +72,7 @@ public macro WhiskerElement(_ tag: String) =
 /// publish the `[WhiskerValue]`-shaped API directly.
 ///
 /// ```swift
-/// import WhiskerElements
+/// import WhiskerComponents
 /// import WhiskerRuntime  // brings WhiskerValue + WhiskerValueRaw into scope
 ///
 /// @WhiskerModule("WhiskerStorage")
@@ -108,7 +108,7 @@ public macro WhiskerElement(_ tag: String) =
 // enumerate each prefix explicitly.
 @attached(peer, names: prefixed(_whiskerDispatch_), prefixed(_whiskerRegister_))
 public macro WhiskerModule(_ name: String) =
-    #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerModuleMacro")
+    #externalMacro(module: "WhiskerComponentsMacros", type: "WhiskerModuleMacro")
 
 /// Marks a `WhiskerUI` subclass's method as a UI method invokable
 /// from Rust via an `ElementRef<T>`. Phase 7-Φ.H.2.
@@ -127,8 +127,8 @@ public macro WhiskerModule(_ name: String) =
 ///      returned `WhiskerValue` for Lynx's callback.
 ///
 /// ```swift
-/// @WhiskerElement("Video")
-/// public class WhiskerVideoElement: WhiskerUI<UIView> {
+/// @WhiskerComponent("Video")
+/// public class WhiskerVideoComponent: WhiskerUI<UIView> {
 ///     @WhiskerUIMethod
 ///     public func play(_ args: [WhiskerValue]) -> WhiskerValue {
 ///         (view as? VideoView)?.play()
@@ -146,9 +146,9 @@ public macro WhiskerModule(_ name: String) =
 /// reserved for future module-side method declarations.
 @attached(peer, names: arbitrary)
 public macro WhiskerUIMethod() =
-    #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerUIMethodMacro")
+    #externalMacro(module: "WhiskerComponentsMacros", type: "WhiskerUIMethodMacro")
 
-/// Marks an `@objc` method on a `@WhiskerElement` class as the
+/// Marks an `@objc` method on a `@WhiskerComponent` class as the
 /// setter for a Lynx prop named `name`. Phase 7-Φ.H.2 follow-up.
 ///
 /// Sibling of the Android `@WhiskerProp` annotation (Phase
@@ -158,8 +158,8 @@ public macro WhiskerUIMethod() =
 /// `LYNX_PROP_SETTER` / `@LynxProp` directly.
 ///
 /// ```swift
-/// @WhiskerElement("Video")
-/// public class WhiskerVideoElement: WhiskerUI<UIView> {
+/// @WhiskerComponent("Video")
+/// public class WhiskerVideoComponent: WhiskerUI<UIView> {
 ///     @WhiskerProp("src")
 ///     @objc public func setSrc(_ value: NSString, requestReset: Bool) {
 ///         // load URL
@@ -174,4 +174,4 @@ public macro WhiskerUIMethod() =
 ///     `<methodName>:requestReset:` and invokes it with that shape.
 @attached(peer, names: arbitrary)
 public macro WhiskerProp(_ name: String) =
-    #externalMacro(module: "WhiskerElementsMacros", type: "WhiskerPropMacro")
+    #externalMacro(module: "WhiskerComponentsMacros", type: "WhiskerPropMacro")

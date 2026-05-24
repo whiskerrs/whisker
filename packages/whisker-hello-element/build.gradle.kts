@@ -70,7 +70,7 @@ dependencies {
     // `WhiskerModuleRegistry`, plus the Lynx AAR (via api(…))
     // for `LynxUI`, `LynxComponentRegistry`, etc.
     implementation(project(":whisker-runtime"))
-    // `@WhiskerElement` / `@WhiskerModule` annotations + KSP
+    // `@WhiskerComponent` / `@WhiskerModule` annotations + KSP
     // processor. Resolved through the user-app gradle's
     // composite-build entry for `packages/whisker-android-ksp`.
     implementation("rs.whisker:annotations")

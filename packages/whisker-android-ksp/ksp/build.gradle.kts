@@ -1,5 +1,5 @@
 // `whisker-ksp` — the KSP `SymbolProcessor` that discovers
-// `@WhiskerElement(...)` applications across the user app's
+// `@WhiskerComponent(...)` applications across the user app's
 // compilation classpath and emits `WhiskerModuleBehaviors.kt`
 // into the app's generated-source set.
 //

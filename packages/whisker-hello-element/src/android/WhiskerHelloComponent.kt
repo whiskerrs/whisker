@@ -20,12 +20,12 @@ package rs.whisker.elements.hello
 import android.content.Context
 import android.graphics.Color
 import android.view.View
-import rs.whisker.annotations.WhiskerElement
+import rs.whisker.annotations.WhiskerComponent
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerUI
 
-@WhiskerElement("Hello")
-open class WhiskerHelloElement(context: WhiskerContext) : WhiskerUI<View>(context) {
+@WhiskerComponent("Hello")
+open class WhiskerHelloComponent(context: WhiskerContext) : WhiskerUI<View>(context) {
 
     override fun createView(context: Context): View {
         val view = View(context)

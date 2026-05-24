@@ -1,14 +1,14 @@
 package rs.whisker.annotations
 
 /**
- * Marks a `@WhiskerElement`-annotated class's method as a prop
+ * Marks a `@WhiskerComponent`-annotated class's method as a prop
  * setter that should be wired up to Lynx's attribute-dispatch
  * machinery.
  *
  * Author writes:
  *
  * ```kotlin
- * @WhiskerElement("x-input")
+ * @WhiskerComponent("x-input")
  * open class WhiskerInput(context: WhiskerContext) : WhiskerUI<EditText>(context) {
  *     override fun createView(context: Context): EditText = EditText(context)
  *
@@ -19,7 +19,7 @@ package rs.whisker.annotations
  * }
  * ```
  *
- * The `:ksp` companion processor scans `@WhiskerElement`-annotated
+ * The `:ksp` companion processor scans `@WhiskerComponent`-annotated
  * classes for `@WhiskerProp`-tagged methods and generates a
  * `<Class>_LynxBridge` subclass alongside the per-module behaviors
  * file. The bridge subclass declares matching `@LynxProp(name =

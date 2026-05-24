@@ -27,7 +27,7 @@ include(":app")
 include(":whisker-runtime")
 project(":whisker-runtime").projectDir = file("{{whisker_runtime_android_path}}")
 
-// Phase 7-Φ.H.2: `whisker-android-ksp` brings the `@WhiskerElement`
+// Phase 7-Φ.H.2: `whisker-android-ksp` brings the `@WhiskerComponent`
 // annotation + KSP processor into the build via Gradle's
 // composite-build mechanism. The included build resolves
 // `rs.whisker:annotations` and `rs.whisker:ksp` against its own

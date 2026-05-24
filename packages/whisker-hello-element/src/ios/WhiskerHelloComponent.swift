@@ -15,12 +15,12 @@
 // source-level concept only.
 
 import UIKit
-import WhiskerElements
+import WhiskerComponents
 import WhiskerRuntime
 
-@WhiskerElement("Hello")
-@objc(WhiskerHelloElement)
-public final class WhiskerHelloElement: WhiskerUI<UIView> {
+@WhiskerComponent("Hello")
+@objc(WhiskerHelloComponent)
+public final class WhiskerHelloComponent: WhiskerUI<UIView> {
     @objc public override func createView() -> UIView {
         let v = UIView()
         v.backgroundColor = .systemPink

@@ -27,7 +27,7 @@ package rs.whisker.annotations
  * for every `@WhiskerModule(...)`-annotated class and folds a
  * `WhiskerModuleRegistry.registerModuleClass(name, MyClass::class.java)`
  * call into `rs.whisker.runtime.generated.WhiskerModuleBehaviors.
- * registerAll()` — sibling registration to the `@WhiskerElement`
+ * registerAll()` — sibling registration to the `@WhiskerComponent`
  * processing.
  *
  * Pairs with the Rust-side `#[whisker::native_module]` proc macro

@@ -1,4 +1,4 @@
-// Tests for the @WhiskerElement / @WhiskerModule macro expansions.
+// Tests for the @WhiskerComponent / @WhiskerModule macro expansions.
 //
 // Uses Swift's `SwiftSyntaxMacrosTestSupport.assertMacroExpansion`
 // to verify the macros produce the expected declarations without
@@ -8,11 +8,11 @@ import SwiftSyntax
 import SwiftSyntaxMacros
 import SwiftSyntaxMacrosTestSupport
 import XCTest
-@testable import WhiskerElementsMacros
+@testable import WhiskerComponentsMacros
 
-final class WhiskerElementMacroTests: XCTestCase {
+final class WhiskerComponentMacroTests: XCTestCase {
     private let testMacros: [String: Macro.Type] = [
-        "WhiskerElement":  WhiskerElementMacro.self,
+        "WhiskerComponent":  WhiskerComponentMacro.self,
         "WhiskerModule":   WhiskerModuleMacro.self,
         "WhiskerUIMethod": WhiskerUIMethodMacro.self,
         "WhiskerProp":     WhiskerPropMacro.self,
@@ -21,16 +21,16 @@ final class WhiskerElementMacroTests: XCTestCase {
     func testElementEmitsTagConstantOnClass() {
         // The macro stores the local tag verbatim — the
         // `<crate-name>:<tag>` namespacing is applied at codegen
-        // time by `WhiskerElementsCodegenPlugin`, not in the
+        // time by `WhiskerComponentsCodegenPlugin`, not in the
         // macro itself, so the constant here is just `"Hello"`.
         assertMacroExpansion(
             """
-            @WhiskerElement("Hello")
-            public class WhiskerHelloElement {
+            @WhiskerComponent("Hello")
+            public class WhiskerHelloComponent {
             }
             """,
             expandedSource: """
-            public class WhiskerHelloElement {
+            public class WhiskerHelloComponent {
 
                 @objc public static let __whiskerElementTag: String = "Hello"
             }
@@ -41,12 +41,12 @@ final class WhiskerElementMacroTests: XCTestCase {
 
     func testElementMissingTagArgumentLeavesClassEmpty() {
         // Compile-time argument validation happens at the parser
-        // level — a call like `@WhiskerElement()` won't reach the
+        // level — a call like `@WhiskerComponent()` won't reach the
         // expansion. Pass an invalid string-literal expression to
         // confirm we don't crash and just emit nothing.
         assertMacroExpansion(
             """
-            @WhiskerElement(123)
+            @WhiskerComponent(123)
             public class BadElement {
             }
             """,

@@ -1,6 +1,6 @@
-// `whisker-annotations` — the public `@WhiskerElement` annotation
+// `whisker-annotations` — the public `@WhiskerComponent` annotation
 // surface. Pure Kotlin/JVM library so module-crate code that
-// declares `@WhiskerElement("x-tag")` on its `LynxUI` subclass has
+// declares `@WhiskerComponent("x-tag")` on its `LynxUI` subclass has
 // a lightweight dep (no Android Gradle Plugin needed for an
 // annotation type).
 //

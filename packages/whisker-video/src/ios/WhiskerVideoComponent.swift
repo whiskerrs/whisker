@@ -2,7 +2,7 @@
 // sample. Backed by AVPlayer.
 //
 // Demonstrates:
-//   - `@WhiskerElement` for tag registration (namespaced as
+//   - `@WhiskerComponent` for tag registration (namespaced as
 //     `whisker-video:Video` — Phase 7-Φ.H.2.1).
 //   - `@WhiskerProp("src")` for declarative prop dispatch from
 //     Lynx's reflection layer — emits the `__lynx_prop_config__src`
@@ -14,12 +14,12 @@
 
 import AVKit
 import UIKit
-import WhiskerElements
+import WhiskerComponents
 import WhiskerRuntime
 
-@WhiskerElement("Video")
-@objc(WhiskerVideoElement)
-public final class WhiskerVideoElement: WhiskerUI<UIView> {
+@WhiskerComponent("Video")
+@objc(WhiskerVideoComponent)
+public final class WhiskerVideoComponent: WhiskerUI<UIView> {
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
 

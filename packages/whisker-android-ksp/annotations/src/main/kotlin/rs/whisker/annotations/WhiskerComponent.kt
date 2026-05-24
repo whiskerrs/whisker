@@ -4,13 +4,13 @@ package rs.whisker.annotations
  * Marks a `WhiskerUI` subclass as the implementation of a Whisker
  * native element with the given local [tag].
  *
- * Companion of iOS's `@WhiskerElement` Swift Macro (under
+ * Companion of iOS's `@WhiskerComponent` Swift Macro (under
  * `packages/whisker-ios-macros`). Module-crate authors apply this
  * annotation to their `WhiskerUI<View>` subclass:
  *
  * ```kotlin
- * @WhiskerElement("Hello")
- * class WhiskerHelloElement(context: WhiskerContext) : WhiskerUI<View>(context) {
+ * @WhiskerComponent("Hello")
+ * class WhiskerHelloComponent(context: WhiskerContext) : WhiskerUI<View>(context) {
  *     override fun createView(context: Context): View {
  *         val v = View(context)
  *         v.setBackgroundColor(Color.YELLOW)
@@ -41,4 +41,4 @@ package rs.whisker.annotations
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.SOURCE)
 @MustBeDocumented
-public annotation class WhiskerElement(val tag: String)
+public annotation class WhiskerComponent(val tag: String)

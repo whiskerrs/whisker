@@ -1,13 +1,13 @@
 // Phase 7-Φ.H.1: Lynx symbol hiding (iOS).
 //
-// Module authors writing `@WhiskerElement(...)`-annotated classes
+// Module authors writing `@WhiskerComponent(...)`-annotated classes
 // previously had to import Lynx types directly:
 //
 // ```swift
 // import Lynx
 //
-// @WhiskerElement("Hello")
-// public class WhiskerHelloElement: LynxUI<UIView> {
+// @WhiskerComponent("Hello")
+// public class WhiskerHelloComponent: LynxUI<UIView> {
 //     @objc public override func createView() -> UIView { … }
 // }
 // ```
@@ -23,8 +23,8 @@
 // ```swift
 // import WhiskerRuntime
 //
-// @WhiskerElement("Hello")
-// public class WhiskerHelloElement: WhiskerUI<UIView> {
+// @WhiskerComponent("Hello")
+// public class WhiskerHelloComponent: WhiskerUI<UIView> {
 //     @objc public override func createView() -> UIView { … }
 // }
 // ```
@@ -44,7 +44,7 @@
 @_exported import Lynx
 
 /// Whisker's preferred alias for Lynx's `LynxUI` generic base.
-/// Subclass this in `@WhiskerElement`-annotated classes.
+/// Subclass this in `@WhiskerComponent`-annotated classes.
 ///
 /// The generic parameter is the native view type the element
 /// wraps (`UIView` / `UITextField` / …). Lynx's create / layout
@@ -63,8 +63,8 @@ public typealias WhiskerContext = LynxContext
 public typealias WhiskerCustomEventBase = LynxCustomEvent
 
 /// Lynx's component-registration entry point. Module authors
-/// rarely call this directly — the `WhiskerElementsCodegenPlugin`
-/// generates the registration code from `@WhiskerElement`
+/// rarely call this directly — the `WhiskerComponentsCodegenPlugin`
+/// generates the registration code from `@WhiskerComponent`
 /// annotations.
 public typealias WhiskerComponentRegistry = LynxComponentRegistry
 

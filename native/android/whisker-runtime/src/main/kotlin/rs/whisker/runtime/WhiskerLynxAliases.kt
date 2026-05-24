@@ -3,15 +3,15 @@ package rs.whisker.runtime
 /**
  * Phase 7-Φ.H.1: Lynx symbol hiding (Android).
  *
- * Module authors writing `@WhiskerElement(...)`-annotated classes
+ * Module authors writing `@WhiskerComponent(...)`-annotated classes
  * previously had to import Lynx types directly:
  *
  * ```kotlin
  * import com.lynx.tasm.behavior.LynxContext
  * import com.lynx.tasm.behavior.ui.LynxUI
  *
- * @WhiskerElement("Hello")
- * class WhiskerHelloElement(context: LynxContext) : LynxUI<View>(context) { ... }
+ * @WhiskerComponent("Hello")
+ * class WhiskerHelloComponent(context: LynxContext) : LynxUI<View>(context) { ... }
  * ```
  *
  * The bridge is built on Lynx and that won't change in the
@@ -26,8 +26,8 @@ package rs.whisker.runtime
  * import rs.whisker.runtime.WhiskerContext
  * import rs.whisker.runtime.WhiskerUI
  *
- * @WhiskerElement("Hello")
- * class WhiskerHelloElement(context: WhiskerContext) : WhiskerUI<View>(context) { ... }
+ * @WhiskerComponent("Hello")
+ * class WhiskerHelloComponent(context: WhiskerContext) : WhiskerUI<View>(context) { ... }
  * ```
  *
  * Stack traces / debugger views still surface the real `LynxUI`
