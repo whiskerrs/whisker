@@ -21,7 +21,7 @@
 // runtime classes, just a presentation rename.
 //
 // ```swift
-// import WhiskerRuntime
+// import WhiskerModuleApi
 //
 // @WhiskerComponent("Hello")
 // public class WhiskerHelloComponent: WhiskerUI<UIView> {

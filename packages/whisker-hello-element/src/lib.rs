@@ -27,7 +27,7 @@
 //! matching `<crate-name>:<local-name>` registration on its end.
 //! (Phase 7-Φ.H.2.)
 
-use whisker::prelude::*;
+use whisker::Signal;
 
 /// Whisker platform component with local tag name `Hello`. The Lynx
 /// registration string is `whisker-hello-element:Hello`. Empty

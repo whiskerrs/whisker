@@ -25,8 +25,12 @@ let package = Package(
             name: "WhiskerVideo",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
-                .product(name: "WhiskerRuntime", package: "WhiskerRuntime"),
-                .product(name: "Lynx", package: "WhiskerRuntime"),
+                // Phase J: smaller `WhiskerModuleApi` instead of the
+                // full `WhiskerRuntime`. WhiskerModuleApi re-exports
+                // Lynx transitively, so no separate `Lynx` product
+                // dep is needed (it wasn't actually `import`ed by
+                // this target anyway — Stage 2 audit leak).
+                .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
             ],
             path: "src/ios",
             plugins: [

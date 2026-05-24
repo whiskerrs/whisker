@@ -16,7 +16,7 @@
 
 import UIKit
 import WhiskerComponents
-import WhiskerRuntime
+import WhiskerModuleApi
 
 @WhiskerComponent("Hello")
 @objc(WhiskerHelloComponent)

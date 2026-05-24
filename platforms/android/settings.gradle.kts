@@ -15,4 +15,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "whisker-runtime-android"
+include(":module-api")
 include(":whisker-runtime")

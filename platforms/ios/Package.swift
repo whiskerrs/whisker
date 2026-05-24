@@ -40,6 +40,14 @@ let package = Package(
         .iOS(.v13),
     ],
     products: [
+        // Phase J — the minimal surface a third-party Whisker module
+        // depends on. Re-exports `WhiskerValue`, `WhiskerLynxAliases`
+        // (WhiskerUI / WhiskerContext / WhiskerCustomEvent), and
+        // `@_exported imports Lynx` so subclasses of `WhiskerUI<View>`
+        // resolve. Module Package.swift files should depend on this
+        // product, NOT on `WhiskerRuntime` (that's the *host* surface
+        // including WhiskerView / WhiskerViewController / AppDelegate).
+        .library(name: "WhiskerModuleApi", targets: ["WhiskerModuleApi"]),
         .library(name: "WhiskerRuntime", targets: ["WhiskerRuntime"]),
         // Re-export the binary `WhiskerDriver` framework so external
         // packages can `import WhiskerDriver` to see the C ABI
@@ -88,9 +96,27 @@ let package = Package(
             path: "../../target/lynx-ios/PrimJS.xcframework"
         ),
 
+        // Phase J — minimal module-author surface. Carved out of the
+        // larger `WhiskerRuntime` target so a third-party Whisker
+        // module's `Package.swift` only pulls in the types it actually
+        // uses (`WhiskerValue`, `WhiskerUI`, `WhiskerContext`,
+        // `WhiskerCustomEvent`) without dragging in the host-side
+        // `WhiskerView` / `WhiskerViewController` / `WhiskerAppDelegate`
+        // or the WhiskerDriver C ABI surface.
+        //
+        // `WhiskerLynxAliases.swift` does `@_exported import Lynx`,
+        // so a consumer's `import WhiskerModuleApi` transitively pulls
+        // the Lynx symbols needed to subclass `LynxUI<View>`.
+        .target(
+            name: "WhiskerModuleApi",
+            dependencies: ["Lynx"],
+            path: "Sources/WhiskerModuleApi"
+        ),
+
         .target(
             name: "WhiskerRuntime",
             dependencies: [
+                "WhiskerModuleApi",
                 "WhiskerDriver",
                 "Lynx",
                 "LynxBase",

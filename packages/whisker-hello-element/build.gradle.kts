@@ -69,10 +69,14 @@ dependencies {
     // Whisker runtime provides the `WhiskerValue` sealed class,
     // `WhiskerModuleRegistry`, plus the Lynx AAR (via api(…))
     // for `LynxUI`, `LynxComponentRegistry`, etc.
-    implementation(project(":whisker-runtime"))
+    // Phase J — single Whisker runtime dep. `:module-api` re-exports
+    // `rs.whisker:annotations` transitively, so no separate dep on
+    // the annotation JAR is needed. `ksp("rs.whisker:ksp")` stays
+    // separate (it is a build-time processor, not on the runtime
+    // classpath).
+    implementation(project(":module-api"))
     // `@WhiskerComponent` / `@WhiskerModule` annotations + KSP
     // processor. Resolved through the user-app gradle's
     // composite-build entry for `platforms/android/ksp`.
-    implementation("rs.whisker:annotations")
     ksp("rs.whisker:ksp")
 }

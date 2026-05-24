@@ -104,46 +104,14 @@ pub mod __tags {
     // blocks stay terse without macro-rules expansion getting
     // in the way of RA.
 
-    /// Apply an inline-styles value to `h`, picking a static vs
-    /// reactive code path based on the [`Signal<T>`] variant. The
-    /// `Dynamic` case wraps the read in an `effect` so the
-    /// returned [`ReadSignal<T>::get`] call registers the source
-    /// as a dependency.
-    ///
-    /// `pub` so the `#[whisker::platform_component]` proc-macro can
-    /// route through the same helper from outside this module.
-    /// Not part of the stable surface — gated under `__tags` which
-    /// itself is `#[doc(hidden)]`.
-    pub fn apply_styles<V, T>(h: Element, v: V)
-    where
-        V: ::std::convert::Into<Signal<T>>,
-        T: ::std::string::ToString + ::std::clone::Clone + 'static,
-    {
-        match v.into() {
-            Signal::Static(t) => set_inline_styles(h, &t.to_string()),
-            Signal::Dynamic(sig) => {
-                effect(move || set_inline_styles(h, &sig.get().to_string()));
-            }
-        }
-    }
-
-    /// Apply a named attribute value to `h`. Same Static / Dynamic
-    /// dispatch as [`apply_styles`].
-    ///
-    /// `pub` so the `#[whisker::platform_component]` proc-macro can
-    /// route through the same helper.
-    pub fn apply_attr<V, T>(h: Element, name: &'static str, v: V)
-    where
-        V: ::std::convert::Into<Signal<T>>,
-        T: ::std::string::ToString + ::std::clone::Clone + 'static,
-    {
-        match v.into() {
-            Signal::Static(t) => set_attribute(h, name, &t.to_string()),
-            Signal::Dynamic(sig) => {
-                effect(move || set_attribute(h, name, &sig.get().to_string()));
-            }
-        }
-    }
+    // `apply_styles` / `apply_attr` moved to
+    // `whisker_runtime::view::apply` (Phase J) so the
+    // `whisker-module-api` re-export crate can reach them on the
+    // same import path. Re-export here for any caller that still
+    // routes through `::whisker::__tags::apply_styles` —
+    // the `#[whisker::platform_component]` macro emits
+    // `::whisker::runtime::view::apply_styles` directly now.
+    pub use whisker_runtime::view::{apply_attr, apply_styles};
 
     /// `<page>` — top-level container Lynx mounts as the root of
     /// an app. Holds the screen-level `style=` (background, flex

@@ -37,10 +37,13 @@ let package = Package(
         // macros + the SwiftPM build-tool plugin that scans this
         // target's sources for those annotations.
         .package(name: "macros", path: "../../platforms/ios/macros"),
-        // WhiskerRuntime gives module sources access to Lynx C++
-        // types (LynxUI, LynxComponentRegistry, …) and re-exports
-        // the WhiskerDriver C ABI symbols the macro-emitted
-        // dispatch shim references.
+        // Phase J: the `platforms/ios` package exposes a smaller
+        // `WhiskerModuleApi` product alongside the full
+        // `WhiskerRuntime`. Modules depend on the smaller one —
+        // just the `WhiskerUI` / `WhiskerContext` typealiases +
+        // `WhiskerValue` + transitive `@_exported import Lynx`.
+        // The host-only WhiskerView / WhiskerAppDelegate /
+        // WhiskerDriver bits stay scoped to WhiskerRuntime.
         .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
     ],
     targets: [
@@ -48,8 +51,7 @@ let package = Package(
             name: "WhiskerHelloElement",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
-                .product(name: "WhiskerRuntime", package: "WhiskerRuntime"),
-                .product(name: "Lynx", package: "WhiskerRuntime"),
+                .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
             ],
             // Sources live in `src/ios/` next to the Rust crate's
             // `src/lib.rs` — SwiftPM's `path:` is relative to the
