@@ -255,10 +255,21 @@ public class WhiskerElementProcessor(
                 // The user method shape is fixed to
                 // `(List<WhiskerValue>) -> WhiskerValue` — matches
                 // the @WhiskerModule contract on the dispatch side.
+                //
+                // The forwarder MUST be named exactly `$methodName`
+                // (no `lynxInvoke_` prefix). Lynx Android's
+                // `LynxUIMethodsCache` keys its method map by raw
+                // `method.getName()` — `@LynxUIMethod` has no `name`
+                // argument like `@LynxProp` does — so Rust's
+                // `ElementRef::invoke("pause", …)` look-up only
+                // resolves when the Kotlin method is literally called
+                // `pause`. Co-existence with the inherited
+                // `open fun pause(args: List<WhiskerValue>)` is fine:
+                // they're parameter-disjoint Kotlin overloads.
                 for (decl in uiMethods) {
                     val methodName = decl.simpleName.asString()
                     w.appendLine("    @LynxUIMethod")
-                    w.appendLine("    fun lynxInvoke_$methodName(params: ReadableMap?, callback: Callback?) {")
+                    w.appendLine("    fun $methodName(params: ReadableMap?, callback: Callback?) {")
                     w.appendLine("        val args = WhiskerValue.fromReadableMap(params)")
                     w.appendLine("        val result = super.$methodName(args)")
                     w.appendLine("        callback?.invoke(0, result.toJavaObject())")
