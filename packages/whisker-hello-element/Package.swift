@@ -28,9 +28,9 @@ let package = Package(
     products: [
         // Library name MUST match the target name — the
         // whisker-build-generated aggregator imports this product
-        // via `.product(name: "WhiskerHelloComponent",
+        // via `.product(name: "WhiskerHelloElement",
         //               package: "whisker-hello-element")`.
-        .library(name: "WhiskerHelloComponent", targets: ["WhiskerHelloComponent"]),
+        .library(name: "WhiskerHelloElement", targets: ["WhiskerHelloElement"]),
     ],
     dependencies: [
         // WhiskerComponents ships the `@WhiskerComponent` / `@WhiskerModule`
@@ -45,7 +45,7 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "WhiskerHelloComponent",
+            name: "WhiskerHelloElement",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
                 .product(name: "WhiskerRuntime", package: "WhiskerRuntime"),
