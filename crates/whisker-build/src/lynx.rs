@@ -57,36 +57,37 @@ use std::path::{Path, PathBuf};
 /// Schema: `<lynx-upstream-version>-whisker.<patch-iteration>` so a
 /// reader can tell at a glance which upstream Lynx is wrapped, and
 /// our own patch iterations bump independently.
-pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.2";
+pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.3";
 
 /// Version segment that appears in cache paths + tarball filenames.
 /// Derived from [`LYNX_FORK_TAG`] minus the leading `v`.
-pub const LYNX_VERSION: &str = "3.7.0-whisker.2";
+pub const LYNX_VERSION: &str = "3.7.0-whisker.3";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
 /// produced by the fork's CI. Pinned to the
-/// [v3.7.0-whisker.2 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.2).
+/// [v3.7.0-whisker.3 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.3).
 ///
-/// Bump from `.1`: rebuilds Android `liblynx.so` against
-/// whiskerrs/lynx#1, which adds `lynx_create_fiber_element_by_name`
-/// to `core/native_renderer_capi`. Required for the
-/// `#[whisker::native_element]` Android path — without this symbol
-/// in liblynx.so, `Hello()` and any other custom native element
-/// call breaks at the FFI boundary on Android.
+/// Bump from `.2`: rebuilds Android `liblynx.so` against
+/// whiskerrs/lynx#2, which adds `lynx_ui_invoke_method` to
+/// `core/native_renderer_capi`. Required for the
+/// `#[whisker::element_methods]` Android path — without this symbol
+/// in liblynx.so, `ElementRef<T>::invoke(...)` fails at the FFI
+/// boundary and the C bridge's `whisker_bridge_invoke_element_method`
+/// can't route to `LynxUIMethodsExecutor`.
 pub const LYNX_ANDROID_SHA256: &str =
-    "692deb849606e76cda1c3ff60de9e3f29dac9a50daa527446eae82c8559b9201";
+    "fc62a45315cc5e9986d4d7c5e57fff7535f7b2613982cb40666c41aa529d2f47";
 
 /// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`. Pinned to
 /// the same release as Android — the fork's CI builds both halves
 /// in parallel and uploads them as a pair.
 ///
-/// The iOS xcframework doesn't strictly need the `.2` bump (Whisker
+/// The iOS xcframework doesn't strictly need the `.3` bump (Whisker
 /// compiles `core/native_renderer_capi/lynx_native_renderer.cc`
 /// itself on iOS — see `whisker-driver-sys/build.rs`), but keeping
 /// both halves on the same Lynx tag avoids the "Android against
-/// .2, iOS against .1" version-skew footgun.
+/// .3, iOS against .2" version-skew footgun.
 pub const LYNX_IOS_SHA256: &str =
-    "e79ec33a11b2d0e74243a0ac2b95b5e3a97854ae6fcca7a1ef383c33f25167ff";
+    "5d1709e74e9bc9d4e9138770186744797575e4407cdaa8afa10f20f547ac3c92";
 
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
 /// placeholders are filled by [`download_url`].
