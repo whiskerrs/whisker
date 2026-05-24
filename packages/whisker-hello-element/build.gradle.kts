@@ -55,8 +55,14 @@ android {
 // uniquely-named `<Module>Behaviors.kt` per subproject. The
 // processor reads this option via
 // `environment.options["whisker.moduleName"]`.
+//
+// `whisker.crateName` (Phase 7-Φ.H.2) is the cargo crate name —
+// used as the element-tag namespace so two unrelated module
+// packages can both declare an element named `Video` without
+// colliding in Lynx's behaviour registry.
 ksp {
     arg("whisker.moduleName", "WhiskerHelloElement")
+    arg("whisker.crateName", "whisker-hello-element")
 }
 
 dependencies {

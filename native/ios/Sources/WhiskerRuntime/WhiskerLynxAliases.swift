@@ -6,7 +6,7 @@
 // ```swift
 // import Lynx
 //
-// @WhiskerElement("x-hello")
+// @WhiskerElement("Hello")
 // public class WhiskerHelloElement: LynxUI<UIView> {
 //     @objc public override func createView() -> UIView { … }
 // }
@@ -23,7 +23,7 @@
 // ```swift
 // import WhiskerRuntime
 //
-// @WhiskerElement("x-hello")
+// @WhiskerElement("Hello")
 // public class WhiskerHelloElement: WhiskerUI<UIView> {
 //     @objc public override func createView() -> UIView { … }
 // }
@@ -74,7 +74,7 @@ public typealias WhiskerComponentRegistry = LynxComponentRegistry
 /// `LynxUIContext.eventEmitter.dispatchCustomEvent(_:)`.
 ///
 /// Module authors that need to push events back to Rust (e.g. an
-/// `<x-input>` text-change firing `on_input:` on the consumer
+/// `Input` element's text-change firing `on_input:` on the consumer
 /// crate) call:
 ///
 /// ```swift

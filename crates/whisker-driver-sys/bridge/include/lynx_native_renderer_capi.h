@@ -28,6 +28,7 @@
 #define WHISKER_VENDORED_LYNX_NATIVE_RENDERER_CAPI_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -120,6 +121,36 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_shell_set_root_element(
     lynx_fiber_element_t* page);
 
 LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_shell_flush(lynx_shell_t* shell);
+
+// ----- UI method dispatch ---------------------------------------------------
+//
+// Mirrors the fork's C ABI — see the upstream header for the full
+// commentary. Phase 7-Φ.H.2.7.
+
+typedef enum lynx_ui_method_value_type_e {
+  LYNX_UI_METHOD_VALUE_NULL = 0,
+  LYNX_UI_METHOD_VALUE_BOOL = 1,
+  LYNX_UI_METHOD_VALUE_INT = 2,
+  LYNX_UI_METHOD_VALUE_DOUBLE = 3,
+  LYNX_UI_METHOD_VALUE_STRING = 4,
+} lynx_ui_method_value_type_e;
+
+typedef struct lynx_ui_method_value_t {
+  lynx_ui_method_value_type_e type;
+  union {
+    bool b;
+    int64_t i;
+    double f;
+    const char* s;
+  } v;
+} lynx_ui_method_value_t;
+
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
+    lynx_shell_t* shell,
+    int32_t sign,
+    const char* method_name,
+    const lynx_ui_method_value_t* args,
+    size_t arg_count);
 
 // ----- subsecond ASLR anchor ------------------------------------------------
 

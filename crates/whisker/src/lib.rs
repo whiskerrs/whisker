@@ -25,7 +25,13 @@ pub use whisker_runtime as runtime;
 // the same enum.
 pub use whisker_runtime::element::ElementTag;
 
-pub use whisker_macros::{component, main, native_element, native_module, render};
+pub use whisker_macros::{component, element_methods, main, native_element, native_module, render};
+
+// Phase 7-Φ.H.2 — `ElementRef<T>` is the Rust-side handle for
+// invoking methods on a mounted native element. `element_ref::<T>()`
+// allocates a fresh, unbound ref; the `#[whisker::native_element]`
+// macro binds it on mount when passed as the `ref:` prop.
+pub use whisker_driver::{element_ref, ElementRef};
 
 // Phase 6.5a reactive surface, lifted to the top-level namespace so
 // user code can `use whisker::*` and reach the typical primitives
@@ -736,11 +742,14 @@ pub mod prelude {
     pub use crate::Children;
     pub use crate::ElementTag;
     pub use crate::{component, main, render};
+    // Phase 7-Φ.H.2 — `ElementRef<T>` + `element_ref::<T>()` for
+    // imperative element-method dispatch (video.play(), etc.).
     pub use crate::{
         computed, effect, for_each, on_cleanup, on_mount, provide_context, resource, resource_sync,
         run_blocking, run_on_main_thread, show, signal, spawn_local, use_context, with_context,
         ReadSignal, Resource, ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
     };
+    pub use crate::{element_ref, ElementRef};
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
     // typing a tag name inside render! (the macro source position

@@ -17,9 +17,11 @@
 // .so boundary.
 
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "lynx_native_renderer_capi.h"
 
@@ -44,8 +46,15 @@ struct WhiskerEngine {
 // hands out raw pointers; whisker_bridge_release_element drops the
 // underlying lynx_fiber_element_t (which itself drops Lynx's strong
 // ref).
+//
+// `shell` is the lynx_shell_t* the element was created against —
+// stashed here so element-method dispatch (Phase 7-Φ.H.2.7) can
+// reach the shell without threading WhiskerEngine through every
+// per-element call. Borrowed; the engine outlives every element
+// it spawned.
 struct WhiskerElement {
     lynx_fiber_element_t* handle = nullptr;
+    lynx_shell_t* shell = nullptr;
 };
 
 // Native event listener registry. Lynx dispatches physical touches
@@ -223,7 +232,7 @@ extern "C" WhiskerElement* whisker_bridge_create_element(WhiskerEngine* engine,
     lynx_fiber_element_t* handle =
         lynx_create_fiber_element(engine->shell, MapTag(tag));
     if (handle == nullptr) return nullptr;
-    return new WhiskerElement{handle};
+    return new WhiskerElement{handle, engine->shell};
 }
 
 extern "C" WhiskerElement* whisker_bridge_create_element_by_name(
@@ -235,7 +244,7 @@ extern "C" WhiskerElement* whisker_bridge_create_element_by_name(
     lynx_fiber_element_t* handle =
         lynx_create_fiber_element_by_name(engine->shell, tag_name);
     if (handle == nullptr) return nullptr;
-    return new WhiskerElement{handle};
+    return new WhiskerElement{handle, engine->shell};
 }
 
 extern "C" void whisker_bridge_release_element(WhiskerElement* element) {
@@ -465,6 +474,101 @@ extern "C" bool whisker_bridge_invoke_module_async(
     return true;
 }
 #endif  // !__ANDROID__
+
+// Phase 7-Φ.H.2.7 — `whisker_bridge_invoke_element_method` impl.
+//
+// Routes element-method calls (`video.play()`, etc.) through the
+// fork's `lynx_ui_invoke_method` wrapper, which packages args as
+// `{"args": [arg0, arg1, ...]}` and calls
+// `Catalyzer::Invoke(sign, method, params, callback)`. That in
+// turn dispatches via `LynxUIMethodProcessor.invokeMethod:` (iOS)
+// or `LynxUIMethodsExecutor.invokeMethod(...)` (Android) onto the
+// `@WhiskerUIMethod`-emitted forwarder on the mounted element's
+// `WhiskerUI<View>` subclass.
+//
+// `element->shell` carries the `lynx_shell_t*` we need; the sign
+// comes from `lynx_element_id(element->handle)`.
+//
+// Currently fire-and-forget — the platform Invoke routes the
+// actual call to the main / UI thread, so the result isn't
+// available synchronously. Typed Rust wrappers (`fn play(&self)`)
+// discard the result anyway, so this matches v1's contract.
+// Returns `WHISKER_VALUE_NULL` on dispatch-scheduled-OK, or an
+// Error if preconditions fail (NULL element, NULL shell, NUL byte
+// in method name, manager not initialised).
+extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
+    WhiskerElement* element,
+    const char* method_name,
+    const WhiskerValueRaw* args,
+    size_t arg_count) {
+    if (element == nullptr || element->handle == nullptr ||
+        element->shell == nullptr || method_name == nullptr) {
+        return MakeBridgeErrorValue(
+            "whisker_bridge_invoke_element_method: NULL element / shell / method");
+    }
+    int32_t sign = lynx_element_id(element->handle);
+    if (sign <= 0) {
+        return MakeBridgeErrorValue(
+            "whisker_bridge_invoke_element_method: element has no sign yet "
+            "(was it flushed into the tree?)");
+    }
+
+    // Convert WhiskerValueRaw[] → lynx_ui_method_value_t[]. Lynx
+    // owns string buffers transiently — they're copied into
+    // `base::String` inside the wrapper before returning, so the
+    // pointers we hand over only need to outlive the call.
+    std::vector<lynx_ui_method_value_t> lynx_args;
+    lynx_args.reserve(arg_count);
+    for (size_t i = 0; i < arg_count; i++) {
+        lynx_ui_method_value_t out;
+        std::memset(&out, 0, sizeof(out));
+        const WhiskerValueRaw& v = args[i];
+        switch (v.type) {
+            case WHISKER_VALUE_NULL:
+                out.type = LYNX_UI_METHOD_VALUE_NULL;
+                break;
+            case WHISKER_VALUE_BOOL:
+                out.type = LYNX_UI_METHOD_VALUE_BOOL;
+                out.v.b = v.v.b;
+                break;
+            case WHISKER_VALUE_INT:
+                out.type = LYNX_UI_METHOD_VALUE_INT;
+                out.v.i = v.v.i;
+                break;
+            case WHISKER_VALUE_FLOAT:
+                out.type = LYNX_UI_METHOD_VALUE_DOUBLE;
+                out.v.f = v.v.f;
+                break;
+            case WHISKER_VALUE_STRING:
+                out.type = LYNX_UI_METHOD_VALUE_STRING;
+                out.v.s = v.v.s.ptr;  // borrowed for the call
+                break;
+            // Arrays / maps / bytes / errors aren't supported by the
+            // sync v1 ABI — they'd need a recursive lepus::Value
+            // builder. Skip silently (treat as NULL). Author code
+            // ranges for play/pause/seek don't hit this.
+            default:
+                out.type = LYNX_UI_METHOD_VALUE_NULL;
+                break;
+        }
+        lynx_args.push_back(out);
+    }
+
+    int32_t code = lynx_ui_invoke_method(
+        element->shell, sign, method_name,
+        lynx_args.empty() ? nullptr : lynx_args.data(), lynx_args.size());
+    if (code != 0) {
+        return MakeBridgeErrorValue(
+            ("lynx_ui_invoke_method returned non-zero (code=" +
+             std::to_string(code) + ")").c_str());
+    }
+    // Success: dispatch was scheduled. Return Null since the actual
+    // method's return value isn't synchronously available.
+    WhiskerValueRaw ok;
+    std::memset(&ok, 0, sizeof(ok));
+    ok.type = WHISKER_VALUE_NULL;
+    return ok;
+}
 
 extern "C" void whisker_bridge_value_release(WhiskerValueRaw* value) {
     if (value == nullptr) return;

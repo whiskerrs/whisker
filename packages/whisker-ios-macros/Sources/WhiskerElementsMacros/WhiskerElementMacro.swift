@@ -60,6 +60,8 @@ struct WhiskerElementsPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         WhiskerElementMacro.self,
         WhiskerModuleMacro.self,
+        WhiskerUIMethodMacro.self,
+        WhiskerPropMacro.self,
     ]
 }
 
@@ -225,6 +227,223 @@ private func whiskerModuleFirstStringArgument(of node: AttributeSyntax) -> Strin
         return nil
     }
     return firstSegment.content.text
+}
+
+/// `@WhiskerUIMethod` — emit the `LYNX_UI_METHOD` Obj-C pair
+/// (`+ __lynx_ui_method_config__<methodName>` registration probe +
+/// `- methodName:withResult:` instance dispatch) as peers of the
+/// annotated method. Lynx's `LynxUIMethodProcessor.invokeMethod:
+/// forUI:` walks an element class for static methods whose name
+/// starts with `__lynx_ui_method_config__`, calls each one to
+/// recover the registered method name, then dispatches via the
+/// matching `<name>:withResult:` selector — so the macro just
+/// needs to install both halves of that pair around the user
+/// method.
+///
+/// User writes (Phase 7-Φ.H.2):
+///
+/// ```swift
+/// @WhiskerElement("Video")
+/// public class WhiskerVideoElement: WhiskerUI<UIView> {
+///     @WhiskerUIMethod
+///     public func play(_ args: [WhiskerValue]) -> WhiskerValue {
+///         // play the video
+///         return .null
+///     }
+/// }
+/// ```
+///
+/// Macro emits as peer:
+///
+/// ```swift
+/// @objc public class func __lynx_ui_method_config__play() -> String { "play" }
+///
+/// @objc public func play(
+///     _ params: NSDictionary?,
+///     withResult callback: @escaping LynxUIMethodCallbackBlock
+/// ) {
+///     let args = WhiskerValue.fromNSDictionary(params)
+///     let result = self.play(args)
+///     callback(Int32(kUIMethodSuccess.rawValue), WhiskerValue.toAnyObject(result))
+/// }
+/// ```
+///
+/// User's `play(_:)` and the macro's `play(_:withResult:)` have
+/// distinct Obj-C selectors so they coexist on the same class.
+/// Lynx calls the latter; the user only sees the former.
+///
+/// The `WhiskerUIMethod` namespace is reserved for element-side
+/// method declarations — `WhiskerMethod` is reserved for future
+/// module-side method declarations (Phase 7-Φ.H.* and beyond).
+public struct WhiskerUIMethodMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        guard let funcDecl = declaration.as(FunctionDeclSyntax.self) else {
+            // `@WhiskerUIMethod` on non-function decls is meaningless;
+            // bail with no output. Swift's normal type checker
+            // surfaces the mismatch elsewhere.
+            return []
+        }
+        let methodName = funcDecl.name.text
+        // Re-use the user-supplied visibility on the emitted peers
+        // so a `public` user method gets `public` Obj-C wrappers
+        // (otherwise Swift defaults them to `internal` and the
+        // Obj-C-runtime probe from outside the module can't see
+        // them). `class` keyword on the config probe — Obj-C class
+        // method, hence `@objc class func`.
+        let modifiers = funcDecl.modifiers.map { $0.name.text }
+        let visibility: String =
+            modifiers.contains("public") ? "public " :
+            modifiers.contains("internal") ? "" :
+            modifiers.contains("private") ? "private " :
+            modifiers.contains("fileprivate") ? "fileprivate " :
+            ""
+
+        // Config probe: a class method named
+        // `__lynx_ui_method_config__<methodName>` returning the user
+        // method's bare name. Lynx's reflection walks for any class
+        // method whose name starts with the
+        // `LYNX_UI_METHOD_CONFIG_PREFIX_STR` (= `__lynx_ui_method_config__`)
+        // and uses the returned string as the dispatch key.
+        // Using the user method name as the suffix is enough to
+        // uniquify within the class (Obj-C's `__LINE__` /
+        // `__COUNTER__` aren't available to Swift Macros).
+        let configFnName = "__lynx_ui_method_config__\(methodName)"
+        let configBody = """
+        @objc \(visibility)class func \(configFnName)() -> String {
+            return "\(methodName)"
+        }
+        """
+
+        // Dispatch wrapper: selector `<methodName>:withResult:`.
+        // Decodes the NSDictionary params Lynx hands in (convention:
+        // `{"args": [<positional WhiskerValue entries>]}`) into a
+        // Swift `[WhiskerValue]`, invokes the user method, encodes
+        // the return value back to an Obj-C-compatible `Any?` for
+        // Lynx's callback.
+        //
+        // Argument label `_` on params + `withResult` on the
+        // callback parameter is necessary so the emitted method's
+        // Obj-C selector matches what Lynx invokes
+        // (`<methodName>:withResult:`).
+        let wrapperBody = """
+        @objc \(visibility)func \(methodName)(
+            _ params: NSDictionary?,
+            withResult callback: @escaping LynxUIMethodCallbackBlock
+        ) {
+            let args = WhiskerValue.fromNSDictionary(params)
+            let result = self.\(methodName)(args)
+            callback(Int32(kUIMethodSuccess.rawValue), WhiskerValue.toAnyObject(result))
+        }
+        """
+
+        return [
+            DeclSyntax(stringLiteral: configBody),
+            DeclSyntax(stringLiteral: wrapperBody),
+        ]
+    }
+}
+
+/// `@WhiskerProp("name")` — emit the `LYNX_PROP_SETTER` config
+/// pair around a `@WhiskerElement` class's prop-setter method.
+/// Mirrors the Android `@WhiskerProp` annotation + KSP forwarder
+/// (Phase 7-Φ.H.1.b on the Kotlin side). Phase 7-Φ.H.2 follow-up
+/// for iOS.
+///
+/// User writes:
+///
+/// ```swift
+/// @WhiskerElement("Video")
+/// public class WhiskerVideoElement: WhiskerUI<UIView> {
+///     @WhiskerProp("src")
+///     @objc public func setSrc(_ value: NSString, requestReset: Bool) {
+///         // load URL
+///     }
+/// }
+/// ```
+///
+/// Macro emits (as a peer of the annotated method):
+///
+/// ```swift
+/// @objc public class func __lynx_prop_config__src() -> [String] {
+///     return ["src", "setSrc", "NSString*"]
+/// }
+/// ```
+///
+/// Lynx's `LynxPropsProcessor` reflectively walks for class methods
+/// whose name starts with `__lynx_prop_config__`, calls them to
+/// recover the `(propName, shortSelector, typeName)` triple, then
+/// dispatches the matching `<shortSelector>:requestReset:` selector
+/// when the corresponding HTML/CSS attribute changes.
+///
+/// User responsibilities:
+///   - Method MUST be `@objc` (Lynx reflection can't see Swift-only
+///     methods).
+///   - Method signature MUST end in `:requestReset:(Bool)` — i.e.
+///     `func setX(_ value: T, requestReset: Bool)`. This is what
+///     Lynx's selector building expects.
+///   - The Obj-C type string in the third array slot is `NSString*`
+///     for `NSString`, `BOOL` for `Bool`, etc. The macro infers it
+///     from the first parameter type (limited to common types for
+///     v1; a future enhancement can widen this).
+public struct WhiskerPropMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        guard let propName = whiskerModuleFirstStringArgument(of: node) else {
+            return []
+        }
+        guard let funcDecl = declaration.as(FunctionDeclSyntax.self) else {
+            return []
+        }
+        let methodName = funcDecl.name.text
+
+        // Visibility passthrough — keep parity with the user method
+        // so the emitted config class method has the same access
+        // level. `@objc` exposes it to Obj-C runtime regardless,
+        // but Swift's own access control still applies to direct
+        // calls.
+        let modifiers = funcDecl.modifiers.map { $0.name.text }
+        let visibility: String =
+            modifiers.contains("public") ? "public " :
+            modifiers.contains("private") ? "private " :
+            modifiers.contains("fileprivate") ? "fileprivate " :
+            ""
+
+        // Infer the Obj-C type name from the first parameter type.
+        // Lynx's PropsProcessor uses the type string as the value-
+        // unboxing key — `"NSString*"` for strings, `"BOOL"` for
+        // bools, etc. Unknown types fall back to `id` which lets
+        // Lynx pass through the raw object without coercion.
+        let firstParamType: String = {
+            guard let first = funcDecl.signature.parameterClause.parameters.first else {
+                return "id"
+            }
+            let typeText = first.type.trimmedDescription
+            switch typeText {
+            case "NSString", "NSString?", "String": return "NSString*"
+            case "Bool", "BOOL": return "BOOL"
+            case "Int", "NSInteger": return "NSInteger"
+            case "Double", "CGFloat": return "CGFloat"
+            case "NSDictionary", "NSDictionary?": return "NSDictionary*"
+            case "NSArray", "NSArray?": return "NSArray*"
+            default: return "id"
+            }
+        }()
+
+        let configFnName = "__lynx_prop_config__\(propName)"
+        let body = """
+        @objc \(visibility)class func \(configFnName)() -> [String] {
+            return ["\(propName)", "\(methodName)", "\(firstParamType)"]
+        }
+        """
+        return [DeclSyntax(stringLiteral: body)]
+    }
 }
 
 public struct WhiskerElementMacro: MemberMacro, MemberAttributeMacro {

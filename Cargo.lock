@@ -523,6 +523,7 @@ dependencies = [
  "whisker",
  "whisker-hello-element",
  "whisker-local-store",
+ "whisker-video",
 ]
 
 [[package]]
@@ -1918,6 +1919,13 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "whisker-video"
+version = "0.1.0"
+dependencies = [
+ "whisker",
 ]
 
 [[package]]

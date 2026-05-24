@@ -48,7 +48,9 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
 use syn::{
-    braced, parenthesized,
+    braced,
+    ext::IdentExt,
+    parenthesized,
     parse::{Parse, ParseStream, Result},
     token, Expr, Ident, LitStr, Token,
 };
@@ -172,13 +174,22 @@ impl Parse for Node {
             let body;
             parenthesized!(body in input);
             while !body.is_empty() {
-                if !body.peek(Ident) {
+                // `Ident::peek_any` / `Ident::parse_any` admits
+                // raw-style identifiers AND Rust keywords. The
+                // latter matters for Phase 7-Φ.H.2.4's `ref:` kwarg
+                // (the most natural call-site name; `ref` itself
+                // is a Rust keyword). Plain `body.peek(Ident)`
+                // would reject `ref` outright; `peek_any` lets it
+                // through as an `Ident` whose text is `"ref"` and
+                // the later `name_str == "ref"` branch routes it
+                // to the `.with_ref(...)` setter.
+                if !body.peek(syn::Ident::peek_any) {
                     return Err(body.error(
                         "kwargs must be `name: expr` — positional arguments \
                          not allowed",
                     ));
                 }
-                let name: Ident = body.parse()?;
+                let name: Ident = body.call(syn::Ident::parse_any)?;
                 let (value, partial) = if body.peek(Token![:]) {
                     body.parse::<Token![:]>()?;
                     (body.parse::<Expr>()?, false)
@@ -646,12 +657,23 @@ impl UserComponentNode {
             .iter()
             .map(|kw| {
                 let name = &kw.name;
+                let name_str = name.to_string();
                 let span = name.span();
                 if kw.partial {
                     // Partial kwarg on a user component → emit
                     // `.name(())` so typed-builder's per-field
                     // setter shows up under RA's method completion.
                     quote_spanned! {span=> .#name(()) }
+                } else if name_str == "ref" {
+                    // Phase 7-Φ.H.2.4 — `ref:` is the canonical
+                    // call-site name for the implicit ElementRef
+                    // prop. `ref` is a Rust keyword though, so
+                    // typed-builder can't expose `.ref(...)` as a
+                    // setter — the native_element macro emits
+                    // `.with_ref(...)` instead and we re-route
+                    // here.
+                    let value = &kw.value;
+                    quote_spanned! {span=> .with_ref(#value) }
                 } else {
                     let value = &kw.value;
                     quote_spanned! {span=> .#name(#value) }

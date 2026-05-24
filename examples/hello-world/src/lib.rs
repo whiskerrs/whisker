@@ -479,20 +479,76 @@ fn scroll_body(state: AppState) -> Element {
 
 // ---- Main app ---------------------------------------------------------------
 
-// Phase 7-Φ.F: the `XHello` native element is sourced from the
+// Phase 7-Φ.F: the `Hello` native element is sourced from the
 // external `whisker-hello-element` module crate (see
 // `packages/whisker-hello-element/`). The Whisker module-system
-// machinery discovers the crate's `whisker.module.toml` via cargo
-// metadata and folds its `whisker_hello_element.mm` into the iOS
-// framework build — so the pink bar that appears at the top of
-// this screen has its registration code wired in via the same
-// path a third-party native-element library would use.
-// `XHello` is the call-site alias; `XHelloProps` is what
-// `render!` emits via `XHelloProps::builder()...build()` for
-// every native-element invocation. Both must be in scope at the
-// macro's emission site — wildcard import keeps the line short
-// and matches the pattern third-party module crates will follow.
+// machinery discovers the crate via cargo metadata; per-package
+// SwiftPM target / Gradle subproject builds the platform-side
+// registration. The pink bar at the top of this screen is wired
+// in through the same path a third-party native-element library
+// would use.
+//
+// Phase 7-Φ.H.2: the actual Lynx tag string is namespaced as
+// `whisker-hello-element:Hello` — the `#[whisker::native_element]`
+// proc macro auto-prepends `env!("CARGO_PKG_NAME")` on the call
+// site, and the SwiftPM build plugin / KSP processor do the same
+// on the platform side. From the author's perspective the name
+// is just `Hello`; the namespacing prevents collisions between
+// unrelated module packages.
+//
+// `Hello` is the call-site alias; `HelloProps` is what `render!`
+// emits via `HelloProps::builder()...build()` for every native-
+// element invocation. Both must be in scope at the macro's
+// emission site — wildcard import keeps the line short and
+// matches the pattern third-party module crates will follow.
 use whisker_hello_element::*;
+// `Video` (call-site alias) + `VideoProps` (Props struct + ref
+// marker type) + `VideoControls` (typed trait — `r.play()`,
+// `r.seek(10.0)`). `VideoSys` is intentionally NOT imported —
+// it's the `-sys` raw `Vec<WhiskerValue>` trait that
+// `#[whisker::element_methods]` emits the impl onto, and bringing
+// it into scope here would make `r.play()` ambiguous between the
+// two trait methods.
+use whisker_video::{Video, VideoControls, VideoProps};
+
+// Phase 7-Φ.H.2.7 demo — Big Buck Bunny in a Whisker Video
+// element, with imperative play/pause/seek dispatched from Rust
+// via `ElementRef<VideoProps>`. The video sits at the top of the
+// page; the existing hello-world UI sits below it untouched.
+//
+// A tiny 10s 360p mp4 (~1MB) is enough to see frames inside the
+// initial network-fetch window. Larger / longer clips work too —
+// AVPlayer's progressive download starts as soon as it has the
+// moov atom.
+const BIG_BUCK_BUNNY_URL: &str =
+    "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4";
+
+#[component]
+pub fn video_demo() -> Element {
+    let video_ref = element_ref::<VideoProps>();
+    let r_play = video_ref.clone();
+    let r_pause = video_ref.clone();
+    let r_seek = video_ref.clone();
+
+    let row_style = "flex-direction: row; align-items: center; padding: 8px; \
+         background-color: #1a1a1a; gap: 12px;";
+    let btn_style = "padding: 8px 16px; background-color: #6c5ce7; \
+         border-radius: 6px; color: #fff; font-size: 14px;";
+    render! {
+        view(style: "flex-direction: column;") {
+            Video(
+                ref: video_ref,
+                src: BIG_BUCK_BUNNY_URL,
+                style: "width: 100%; height: 220px;"
+            )
+            view(style: row_style) {
+                text(value: "▶ Play",  style: btn_style, on_tap: move || { r_play.play(); })
+                text(value: "⏸ Pause", style: btn_style, on_tap: move || { r_pause.pause(); })
+                text(value: "+10s",    style: btn_style, on_tap: move || { r_seek.seek(10.0); })
+            }
+        }
+    }
+}
 
 #[whisker::main]
 fn app() -> Element {
@@ -516,7 +572,8 @@ fn app() -> Element {
     );
     render! {
         page(style: page_style) {
-            XHello(style: "width: 100%; height: 8px;")
+            Hello(style: "width: 100%; height: 8px;")
+            VideoDemo()
             Header()
             ScrollBody(state: state)
             NowPlaying(state: state)
