@@ -259,36 +259,93 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// Synthesise a `Modify(Data(Content))` event for the given path.
+    /// Used by the debounce tests so they don't depend on real
+    /// filesystem timings — the e2e flavor (`editing_a_rust_file_*`
+    /// above) already covers the notify-to-debouncer wiring.
+    fn synth_modify(path: impl Into<PathBuf>) -> Event {
+        use notify::event::{DataChange, ModifyKind};
+        Event {
+            kind: EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            paths: vec![path.into()],
+            attrs: notify::event::EventAttributes::new(),
+        }
+    }
+
     #[tokio::test]
     async fn rapid_edits_get_coalesced_into_one_change() {
-        let dir = unique_tempdir();
-        std::fs::write(dir.join("a.rs"), "fn a() {}").unwrap();
-
+        // Drive `debounce_loop` directly with synthetic events
+        // instead of touching the filesystem + notify. The earlier
+        // e2e version was flaky on slow CI runners (#30/#33/#34):
+        // each `std::fs::write` + `tokio::time::sleep(20ms)` could
+        // stretch past the 150 ms debounce window, splitting the
+        // batch into two `Change`s and tripping the "expect no
+        // second change" assertion. Feeding events through the std
+        // channel keeps the test deterministic — the only timing
+        // dependency left is the debounce window itself, which is
+        // the thing under test.
+        let debounce = Duration::from_millis(100);
+        let (raw_tx, raw_rx) = std_mpsc::channel::<Event>();
         let (tx, mut rx) = mpsc::channel::<Change>(8);
-        let _watcher =
-            spawn_watcher(dir.clone(), Duration::from_millis(150), tx).expect("watcher up");
+        std::thread::spawn(move || debounce_loop(raw_rx, debounce, tx));
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        // 5 rapid edits within the debounce window.
+        // 5 rapid events back-to-back. No inter-send sleep — every
+        // send hits the debouncer before the deadline fires, so they
+        // coalesce into one `Change`.
         for i in 0..5 {
-            std::fs::write(dir.join("a.rs"), format!("fn a{i}() {{}}")).unwrap();
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            raw_tx
+                .send(synth_modify(PathBuf::from(format!("a{i}.rs"))))
+                .unwrap();
         }
 
-        let first = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        let first = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
-            .expect("change should arrive")
+            .expect("debounced change should arrive within 2s")
             .expect("channel closed");
         assert_eq!(first.kind, ChangeKind::RustCode);
+        assert_eq!(
+            first.paths.len(),
+            5,
+            "all 5 events should coalesce into one batch, got {:?}",
+            first.paths,
+        );
 
         // After waiting > debounce window, no second change should
-        // appear (everything coalesced into the first).
-        let second = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await;
+        // appear — pending is drained, no new events fed.
+        let second = tokio::time::timeout(debounce * 3, rx.recv()).await;
         assert!(
             second.is_err(),
             "expected no second change after coalescing, got {second:?}",
         );
+    }
 
-        std::fs::remove_dir_all(&dir).ok();
+    #[tokio::test]
+    async fn events_outside_debounce_window_split_into_two_changes() {
+        // Inverse of the coalesce test: events separated by more
+        // than the debounce window MUST surface as two distinct
+        // `Change`s. Keeps us honest if someone "fixes" the
+        // coalesce test by making the debouncer too greedy.
+        let debounce = Duration::from_millis(80);
+        let (raw_tx, raw_rx) = std_mpsc::channel::<Event>();
+        let (tx, mut rx) = mpsc::channel::<Change>(8);
+        std::thread::spawn(move || debounce_loop(raw_rx, debounce, tx));
+
+        raw_tx.send(synth_modify("first.rs")).unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("first change should arrive")
+            .expect("channel closed");
+        assert_eq!(first.paths.len(), 1);
+
+        // Wait well past the debounce window so the deadline fires
+        // before the next event, then send a second event.
+        tokio::time::sleep(debounce * 3).await;
+        raw_tx.send(synth_modify("second.rs")).unwrap();
+        let second = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("second change should arrive")
+            .expect("channel closed");
+        assert_eq!(second.paths.len(), 1);
+        assert!(second.paths[0].ends_with("second.rs"));
     }
 }
