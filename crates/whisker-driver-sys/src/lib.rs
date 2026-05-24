@@ -240,4 +240,37 @@ extern "C" {
         module_name: *const c_char,
         dispatch: WhiskerModuleDispatchFn,
     );
+
+    /// Invoke a Lynx UI method on a mounted element. Synchronous —
+    /// dispatches through Lynx's `LynxUIMethodProcessor` (iOS) /
+    /// `LynxUIMethodsExecutor` (Android), which in turn calls the
+    /// `@WhiskerUIMethod`-emitted forwarder on the element's
+    /// `WhiskerUI<View>` subclass.
+    ///
+    /// `element` is the `WhiskerElement*` originally returned by
+    /// `whisker_bridge_create_element_by_name`. The bridge looks up
+    /// the Lynx UI sign from this element and routes the method
+    /// call to the matching mounted `LynxUI`.
+    ///
+    /// `args` matches the `invoke_module` shape — a flat
+    /// `WhiskerValueRaw[]` the platform side decodes into
+    /// `[WhiskerValue]` before dispatch.
+    ///
+    /// Returns `WhiskerValueRaw` whose ownership matches
+    /// `invoke_module` — caller MUST eventually pass it to
+    /// `whisker_bridge_value_release`. A bridge-side failure (no
+    /// such method, element not mounted, args wrong shape, …)
+    /// surfaces as `WHISKER_VALUE_ERROR`.
+    ///
+    /// Phase 7-Φ.H.2.5: implementation is currently a stub
+    /// returning `WHISKER_VALUE_ERROR` — the real wiring lives in
+    /// Phase 7-Φ.H.2.7 once the Lynx fork exposes the C wrappers
+    /// over `LynxShell::GetUIOwner` / `LynxUIOwner::FindUIBySign` /
+    /// `LynxUIMethodProcessor::InvokeMethod`.
+    pub fn whisker_bridge_invoke_element_method(
+        element: *mut WhiskerElement,
+        method_name: *const c_char,
+        args: *const WhiskerValueRaw,
+        arg_count: usize,
+    ) -> WhiskerValueRaw;
 }

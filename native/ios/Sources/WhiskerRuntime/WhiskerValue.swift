@@ -219,3 +219,85 @@ private func decodeMap(_ map: WhiskerValueMap) -> [String: WhiskerValue] {
     }
     return out
 }
+
+// MARK: - NSDictionary <-> WhiskerValue (Phase 7-Φ.H.2)
+
+public extension WhiskerValue {
+    /// Decode the params `NSDictionary` Lynx's `LynxUIMethodProcessor`
+    /// hands to a `@WhiskerUIMethod`-emitted dispatcher into the
+    /// `[WhiskerValue]` shape user code expects.
+    ///
+    /// Convention: the C bridge packs the Rust-side `&[WhiskerValue]`
+    /// into `{"args": [...]}` — a single key `args` holding an
+    /// `NSArray` of positionally-encoded entries. Each entry decodes
+    /// via [WhiskerValue.from(nsObject:)] (recursive). Missing key
+    /// or non-array shape yields an empty list rather than an error
+    /// so the user method still runs (with no args).
+    ///
+    /// The C bridge that produces this shape lives in
+    /// `whisker_bridge_invoke_element_method` (Phase 7-Φ.H.2.5,
+    /// tracked separately) — until that lands, callers receive an
+    /// empty list.
+    static func fromNSDictionary(_ params: NSDictionary?) -> [WhiskerValue] {
+        guard let params, let raw = params["args"] else { return [] }
+        guard let arr = raw as? [Any] else { return [] }
+        return arr.map { WhiskerValue.from(nsObject: $0) }
+    }
+
+    /// Recursive `Any` -> `WhiskerValue` conversion for entries
+    /// inside Lynx-supplied NSDictionary / NSArray payloads.
+    /// `NSNumber` -> int / float / bool depending on its objCType;
+    /// `NSDictionary` -> `.map`; `NSArray` -> `.array`; everything
+    /// else falls through to `.error`.
+    static func from(nsObject: Any) -> WhiskerValue {
+        if nsObject is NSNull { return .null }
+        if let n = nsObject as? NSNumber {
+            // `NSNumber` doesn't distinguish bool / int / double at
+            // the Swift bridging level — peek at its objCType to
+            // choose the matching WhiskerValue variant. `c` is the
+            // Obj-C bool encoding.
+            let type = String(cString: n.objCType)
+            switch type {
+            case "c", "B": return .bool(n.boolValue)
+            case "f", "d": return .float(n.doubleValue)
+            default: return .int(n.int64Value)
+            }
+        }
+        if let s = nsObject as? String { return .string(s) }
+        if let d = nsObject as? Data { return .bytes(d) }
+        if let arr = nsObject as? [Any] {
+            return .array(arr.map { WhiskerValue.from(nsObject: $0) })
+        }
+        if let dict = nsObject as? [String: Any] {
+            var out: [String: WhiskerValue] = [:]
+            for (k, v) in dict { out[k] = WhiskerValue.from(nsObject: v) }
+            return .map(out)
+        }
+        return .error("unsupported NSObject \(Swift.type(of: nsObject)) in @WhiskerUIMethod args")
+    }
+
+    /// Encode a `WhiskerValue` into an Obj-C-compatible `Any?`
+    /// suitable for handing to Lynx's `LynxUIMethodCallbackBlock`
+    /// (`callback(code, id _Nullable data)`). The bridge then passes
+    /// the value back through Lynx's standard callback JNI path.
+    ///
+    /// `bytes` becomes `Data` (`NSData` on the Obj-C side). `error`
+    /// becomes `["error": message]` since the callback already has
+    /// the error-code channel for the failure signal.
+    static func toAnyObject(_ value: WhiskerValue) -> Any? {
+        switch value {
+        case .null: return nil
+        case .bool(let b): return NSNumber(value: b)
+        case .int(let i): return NSNumber(value: i)
+        case .float(let f): return NSNumber(value: f)
+        case .string(let s): return s
+        case .bytes(let d): return d
+        case .array(let arr): return arr.map { WhiskerValue.toAnyObject($0) as Any }
+        case .map(let map):
+            var out: [String: Any] = [:]
+            for (k, v) in map { out[k] = WhiskerValue.toAnyObject(v) as Any }
+            return out
+        case .error(let msg): return ["error": msg]
+        }
+    }
+}

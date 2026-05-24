@@ -16,6 +16,7 @@ use quote::quote;
 use syn::{parse_macro_input, ItemFn};
 
 mod component;
+mod element_methods;
 mod native_element;
 mod native_module;
 mod render;
@@ -205,8 +206,8 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Declare a Whisker-side wrapper for a Lynx-registered native element.
 ///
 /// ```ignore
-/// #[whisker::native_element("x-hello")]
-/// pub fn x_hello(style: Signal<String>) -> Element;
+/// #[whisker::native_element("Hello")]
+/// pub fn hello(style: Signal<String>) -> Element;
 /// ```
 ///
 /// Generates the same Props + builder + PascalCase-alias surface as
@@ -218,11 +219,19 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// helpers built-in tags use, so a `Signal::Dynamic` prop transparently
 /// effect-wraps the attribute write.
 ///
+/// Phase 7-Φ.H.2: the tag string passed to Lynx at runtime is
+/// `<cargo-crate-name>:<attr-tag>` — the macro auto-prepends
+/// `env!("CARGO_PKG_NAME")` so two unrelated module packages can
+/// both declare an element named `Hello` without colliding in
+/// Lynx's behaviour registry. The matching platform-side
+/// registrations (`@WhiskerElement` Swift Macro / Kotlin
+/// annotation) prepend the crate name the same way.
+///
 /// Call-site shape mirrors built-in tags + user components:
 ///
 /// ```ignore
 /// render! {
-///     XHello(style: "width: 100%; height: 8px;")
+///     Hello(style: "width: 100%; height: 8px;")
 /// }
 /// ```
 ///
@@ -280,4 +289,31 @@ pub fn native_element(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn native_module(attr: TokenStream, item: TokenStream) -> TokenStream {
     native_module::expand(attr.into(), item.into()).into()
+}
+
+/// Declare element-method dispatch on an `ElementRef<T>`.
+/// Phase 7-Φ.H.2.3.
+///
+/// ```ignore
+/// #[whisker::element_methods(Video)]
+/// pub trait VideoExt {
+///     fn play(&self, args: Vec<WhiskerValue>) -> WhiskerValue;
+///     fn seek(&self, args: Vec<WhiskerValue>) -> WhiskerValue;
+/// }
+/// ```
+///
+/// Emits the trait verbatim plus an `impl VideoExt for
+/// ::whisker::ElementRef<Video>` block whose method bodies call
+/// `self.invoke("play", args)` / `self.invoke("seek", args)` —
+/// dispatching through the C bridge's
+/// `whisker_bridge_invoke_element_method`. Module authors write a
+/// typed wrapper (`fn play(&self)`, `fn seek(&self, pos: f64)`)
+/// on top of this `-sys` trait — same discipline as
+/// `#[whisker::native_module]`.
+///
+/// See `crates/whisker-macros/src/element_methods.rs` for the
+/// emission details + diagnostics.
+#[proc_macro_attribute]
+pub fn element_methods(attr: TokenStream, item: TokenStream) -> TokenStream {
+    element_methods::expand(attr.into(), item.into()).into()
 }

@@ -158,6 +158,17 @@ impl<T: 'static> From<T> for Signal<T> {
     }
 }
 
+// `Signal<T: Default>::default() -> Signal::Static(T::default())`.
+// Used by `#[whisker::native_element]`'s builder: a prop the caller
+// omits falls back to `unwrap_or_default()`, which produces a
+// reasonable "attribute not set" value (`""` for `Signal<String>`,
+// `false` for `Signal<bool>`, etc.). Phase 7-Φ.H.2 follow-up.
+impl<T: 'static + Default> Default for Signal<T> {
+    fn default() -> Self {
+        Signal::Static(T::default())
+    }
+}
+
 impl<T: 'static + Clone> From<ReadSignal<T>> for Signal<T> {
     fn from(s: ReadSignal<T>) -> Self {
         Signal::Dynamic(s)

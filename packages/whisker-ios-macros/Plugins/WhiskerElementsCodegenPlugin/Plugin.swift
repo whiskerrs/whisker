@@ -47,8 +47,17 @@ struct WhiskerElementsCodegenPlugin: BuildToolPlugin {
             .filter { $0.path.extension == "swift" }
             .map { $0.path }
 
+        // `context.package.displayName` returns the `name:` declared
+        // in the module's Package.swift. By convention each module
+        // package's Package.swift names itself after its cargo crate
+        // (kebab-case, e.g. "whisker-hello-element"), so this is the
+        // tag namespace string we prepend to element registration
+        // calls — matching what the Rust-side
+        // `#[whisker::native_element]` proc macro emits via
+        // `env!("CARGO_PKG_NAME")`. Phase 7-Φ.H.2.
         var arguments: [String] = [
             "--target-name", sourceTarget.name,
+            "--crate-name", context.package.displayName,
             "--output", output.string,
         ]
         arguments.append(contentsOf: inputs.map { $0.string })

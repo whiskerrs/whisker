@@ -10,7 +10,7 @@ package rs.whisker.runtime
  * import com.lynx.tasm.behavior.LynxContext
  * import com.lynx.tasm.behavior.ui.LynxUI
  *
- * @WhiskerElement("x-hello")
+ * @WhiskerElement("Hello")
  * class WhiskerHelloElement(context: LynxContext) : LynxUI<View>(context) { ... }
  * ```
  *
@@ -26,7 +26,7 @@ package rs.whisker.runtime
  * import rs.whisker.runtime.WhiskerContext
  * import rs.whisker.runtime.WhiskerUI
  *
- * @WhiskerElement("x-hello")
+ * @WhiskerElement("Hello")
  * class WhiskerHelloElement(context: WhiskerContext) : WhiskerUI<View>(context) { ... }
  * ```
  *
@@ -59,7 +59,7 @@ public typealias WhiskerEnv = com.lynx.tasm.LynxEnv
  * `LynxContext.eventEmitter.dispatchCustomEvent(...)`.
  *
  * Module authors that need to push events back to Rust (e.g. an
- * `<x-input>` text-change firing `on_input:` on the consumer
+ * `Input` element's text-change firing `on_input:` on the consumer
  * crate) call:
  *
  * ```kotlin

@@ -33,6 +33,7 @@ android {
 
 ksp {
     arg("whisker.moduleName", "WhiskerLocalStore")
+    arg("whisker.crateName", "whisker-local-store")
 }
 
 dependencies {

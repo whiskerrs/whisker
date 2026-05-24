@@ -203,6 +203,17 @@ impl DynRenderer for BridgeRenderer {
     fn flush(&mut self) {
         unsafe { ffi::whisker_bridge_flush(self.engine_ptr()) };
     }
+
+    fn native_element_ptr(&self, handle: Element) -> usize {
+        // Cast the per-element `WhiskerElement*` to `usize` so the
+        // runtime crate doesn't need to import bridge types. The
+        // driver's `ElementRef::invoke` casts back to
+        // `*mut WhiskerElement` before calling
+        // `whisker_bridge_invoke_element_method`. Phase 7-Φ.H.2.3.
+        self.lookup(handle)
+            .map(|p| p.as_ptr() as usize)
+            .unwrap_or(0)
+    }
 }
 
 extern "C" fn rust_event_trampoline(user_data: *mut c_void) {

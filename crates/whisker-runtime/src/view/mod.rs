@@ -37,8 +37,8 @@ pub use into_view::{Children, IntoView, View};
 pub use renderer::__reset_children_mirror_for_tests;
 pub use renderer::{
     append_child, child_index, children_of, create_element, create_element_by_name,
-    current_renderer_id, flush, insert_child_at, install_renderer, previous_sibling,
-    release_element, remove_child, set_attribute, set_event_listener,
+    current_renderer_id, flush, insert_child_at, install_renderer, native_element_ptr,
+    previous_sibling, release_element, remove_child, set_attribute, set_event_listener,
     set_event_listener_with_string_payload, set_inline_styles, set_root, uninstall_renderer,
     with_installed_renderer, DynRenderer,
 };

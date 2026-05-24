@@ -71,7 +71,7 @@ pub const LYNX_VERSION: &str = "3.7.0-whisker.2";
 /// whiskerrs/lynx#1, which adds `lynx_create_fiber_element_by_name`
 /// to `core/native_renderer_capi`. Required for the
 /// `#[whisker::native_element]` Android path — without this symbol
-/// in liblynx.so, `XHello()` and any other custom native element
+/// in liblynx.so, `Hello()` and any other custom native element
 /// call breaks at the FFI boundary on Android.
 pub const LYNX_ANDROID_SHA256: &str =
     "692deb849606e76cda1c3ff60de9e3f29dac9a50daa527446eae82c8559b9201";

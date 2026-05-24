@@ -73,6 +73,22 @@ pub trait DynRenderer {
 
     fn set_root(&mut self, page: Element);
     fn flush(&mut self);
+
+    /// Opaque platform pointer the C bridge associates with this
+    /// `Element` handle (cast from `*mut WhiskerElement` for the
+    /// Lynx bridge renderer; `0` for renderers without a native
+    /// backing).
+    ///
+    /// Used by `whisker-driver`'s `ElementRef::invoke` to call
+    /// `whisker_bridge_invoke_element_method` without the runtime
+    /// crate having to know about the bridge's C types. Renderers
+    /// that don't have a native pointer return `0`, which the
+    /// driver surfaces as `WhiskerValue::Error` to the caller.
+    ///
+    /// Phase 7-Φ.H.2.3.
+    fn native_element_ptr(&self, _handle: Element) -> usize {
+        0
+    }
 }
 
 thread_local! {
@@ -317,4 +333,17 @@ pub fn set_root(page: Element) {
 
 pub fn flush() {
     with_renderer(|r| r.flush(), ())
+}
+
+/// Opaque platform pointer for `handle`. Phase 7-Φ.H.2.3 — used by
+/// `whisker-driver`'s `ElementRef::invoke` to call the C bridge
+/// without leaking the bridge's `WhiskerElement*` type into the
+/// runtime crate's public surface. Returns `0` if no renderer is
+/// installed or the renderer doesn't have a native pointer for
+/// `handle`.
+pub fn native_element_ptr(handle: Element) -> usize {
+    CURRENT_RENDERER.with_borrow(|slot| match slot.as_ref() {
+        Some(r) => r.native_element_ptr(handle),
+        None => 0,
+    })
 }

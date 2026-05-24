@@ -109,7 +109,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             return syn::Error::new(
                 attr.span(),
                 "#[whisker::native_element(\"<tag-name>\")] requires a \
-                 string-literal tag name (e.g. `\"x-hello\"`, `\"x-input\"`)",
+                 string-literal tag name (e.g. `\"Hello\"`, `\"Input\"`)",
             )
             .to_compile_error();
         }
@@ -218,6 +218,24 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         }
     };
 
+    // Phase 7-Φ.H.2.4 — every native element implicitly carries
+    // a `__ref: Option<ElementRef<#props_name>>` Props field.
+    // `render!` recognises `ref: <expr>` at the call site and
+    // routes it to the `.with_ref(expr)` setter the macro emits
+    // below. Inside the body we `bind(__handle)` the ref after
+    // creating the element, so the `ElementRef<T>` returned by
+    // `element_ref::<T>()` reaches a live `Element` handle as
+    // soon as the call site hits this code path.
+    //
+    // The marker type for the ref is the Props struct itself
+    // (e.g. `VideoProps`). User code writes
+    // `element_ref::<VideoProps>()` and passes the resulting
+    // handle as the `ref:` kwarg. We picked the Props struct
+    // rather than the PascalCase fn alias because the latter is
+    // a value-namespace re-export (`use ... as Video`), not a
+    // type — `ElementRef<Video>` would fail to resolve to a type
+    // argument.
+
     quote! {
         #[doc(hidden)]
         mod #internal_mod {
@@ -225,17 +243,24 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 
             pub struct #props_name {
                 #(#props_fields,)*
+                /// Phase 7-Φ.H.2.4 — implicit `ref:` prop. Bound
+                /// to the freshly-created element inside the
+                /// macro-emitted body. The marker type is the
+                /// Props struct itself (canonical, in-scope).
+                pub __ref: ::std::option::Option<::whisker::ElementRef<#props_name>>,
             }
 
             #[doc(hidden)]
             pub struct #builder_name {
                 #(#builder_fields,)*
+                pub __ref: ::std::option::Option<::whisker::ElementRef<#props_name>>,
             }
 
             impl #props_name {
                 pub fn builder() -> #builder_name {
                     #builder_name {
                         #(#builder_init,)*
+                        __ref: ::std::option::Option::None,
                     }
                 }
             }
@@ -243,9 +268,23 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             impl #builder_name {
                 #(#setters)*
 
+                /// Bind an `ElementRef` to this element on mount.
+                /// Phase 7-Φ.H.2.4 — `render!` routes the `ref:`
+                /// kwarg to this setter. Takes the ref by value
+                /// (cheap `Rc<Cell<...>>` clone) so callers can
+                /// keep their handle for later `invoke` calls.
+                pub fn with_ref(
+                    mut self,
+                    r: ::whisker::ElementRef<#props_name>,
+                ) -> Self {
+                    self.__ref = ::std::option::Option::Some(r);
+                    self
+                }
+
                 pub fn build(self) -> #props_name {
                     #props_name {
                         #(#build_assignments,)*
+                        __ref: self.__ref,
                     }
                 }
             }
@@ -261,8 +300,27 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             #(#attrs)*
             pub fn #fn_name(props: #props_name) -> ::whisker::runtime::view::Element {
                 #drop_unused
-                let __handle = ::whisker::runtime::view::create_element_by_name(#tag_name);
+                // Tag string is namespaced by the cargo crate name to
+                // avoid collisions between elements from independent
+                // module packages. Two unrelated crates that both
+                // declare `#[whisker::native_element("Video")]` end up
+                // with distinct platform-side registrations
+                // (`crate-a:Video` vs `crate-b:Video`). The platform
+                // SwiftPM plugin / KSP processor prepends the same
+                // namespace when emitting the matching
+                // `LynxComponentRegistry.registerUI` / `addBehavior`
+                // call, so the lookup matches end-to-end. Phase 7-Φ.H.2.
+                let __handle = ::whisker::runtime::view::create_element_by_name(
+                    concat!(env!("CARGO_PKG_NAME"), ":", #tag_name)
+                );
                 #(#apply_calls)*
+                // Phase 7-Φ.H.2.4 — bind the user-supplied
+                // `ElementRef` (if any) to the freshly-created
+                // handle so subsequent `video.play(...)` calls
+                // can route through the C bridge.
+                if let ::std::option::Option::Some(ref __r) = props.__ref {
+                    __r.bind(__handle);
+                }
                 __handle
             }
         }
@@ -473,10 +531,8 @@ fn prop_setter(p: &Prop) -> TokenStream2 {
     }
 }
 
-fn prop_build_assignment(p: &Prop, tag_name: &str) -> TokenStream2 {
+fn prop_build_assignment(p: &Prop, _tag_name: &str) -> TokenStream2 {
     let i = &p.ident;
-    let name = i.to_string();
-    let err = format!("required prop `{name}` was not set on `{tag_name}`");
     match &p.kind {
         PropKind::Children => {
             // Default to an empty children list when omitted — mirrors
@@ -487,7 +543,15 @@ fn prop_build_assignment(p: &Prop, tag_name: &str) -> TokenStream2 {
                 })
             }
         }
-        _ => quote! { #i: self.#i.expect(#err) },
+        // Phase 7-Φ.H.2 follow-up — native-element props are
+        // optional by default. `Signal<String>` props that the
+        // call site omits default to `Signal::Static("")`, which
+        // matches what Lynx would see if the attribute wasn't
+        // declared at all in a template. Eliminates the panic
+        // path the previous `.expect("required prop ...")` had,
+        // so writers can declare a prop in the function signature
+        // and only set it when relevant.
+        _ => quote! { #i: self.#i.unwrap_or_default() },
     }
 }
 
@@ -528,7 +592,7 @@ fn prop_apply_call(p: &Prop) -> TokenStream2 {
     }
 }
 
-/// `x_hello` / `x_input` → `XHello` / `XInput`. ASCII-only — native
+/// `hello` / `my_input` → `Hello` / `MyInput`. ASCII-only — native
 /// element names should stay simple.
 fn to_pascal_case(snake: &str) -> String {
     let mut out = String::with_capacity(snake.len());

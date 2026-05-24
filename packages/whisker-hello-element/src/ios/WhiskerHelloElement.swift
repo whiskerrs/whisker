@@ -1,6 +1,12 @@
-// `<x-hello>` Whisker native element on iOS — Phase 7-Φ.H.1
-// migration target. Demonstrates the Whisker-only API surface
-// (no `import Lynx`, no `LynxUI` mentions in author code).
+// Whisker native element on iOS with local tag `Hello`. The Lynx
+// registration string is `whisker-hello-element:Hello` — the
+// SwiftPM build plugin prepends `context.package.displayName`
+// (the cargo crate name) as the namespace so two unrelated
+// packages can both declare a `Hello` element without colliding
+// in Lynx's behaviour registry. Phase 7-Φ.H.2.
+//
+// Demonstrates the Whisker-only API surface (no `import Lynx`,
+// no `LynxUI` mentions in author code).
 //
 // `WhiskerUI` / `WhiskerContext` are typealiases provided by
 // WhiskerRuntime that resolve to the underlying Lynx types at
@@ -12,7 +18,7 @@ import UIKit
 import WhiskerElements
 import WhiskerRuntime
 
-@WhiskerElement("x-hello")
+@WhiskerElement("Hello")
 @objc(WhiskerHelloElement)
 public final class WhiskerHelloElement: WhiskerUI<UIView> {
     @objc public override func createView() -> UIView {

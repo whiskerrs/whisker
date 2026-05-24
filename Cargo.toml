@@ -19,6 +19,7 @@ members = [
     "examples/subsecond-poc",
     "packages/whisker-hello-element",
     "packages/whisker-local-store",
+    "packages/whisker-video",
 ]
 exclude = [
     # Throwaway cdylib the dev-server's `thin_rebuild` integration

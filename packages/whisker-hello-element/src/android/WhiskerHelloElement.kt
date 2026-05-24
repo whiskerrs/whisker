@@ -1,6 +1,13 @@
-// `<x-hello>` Whisker native element on Android — Phase 7-Φ.H.1
-// migration target. Demonstrates the Whisker-only API surface
-// (no `com.lynx.tasm.*` imports in author code).
+// Whisker native element on Android with local tag `Hello`. The
+// Lynx registration string is `whisker-hello-element:Hello` — the
+// KSP processor prepends the cargo crate name (read from
+// `ksp { arg("whisker.crateName", …) }` in this module's
+// `build.gradle.kts`) as the namespace, so two unrelated packages
+// can both declare a `Hello` element without colliding in Lynx's
+// behaviour registry. Phase 7-Φ.H.2.
+//
+// Demonstrates the Whisker-only API surface (no `com.lynx.tasm.*`
+// imports in author code).
 //
 // `WhiskerUI` / `WhiskerContext` are typealiases provided by
 // `rs.whisker.runtime` that resolve to the underlying Lynx types
@@ -17,7 +24,7 @@ import rs.whisker.annotations.WhiskerElement
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerUI
 
-@WhiskerElement("x-hello")
+@WhiskerElement("Hello")
 open class WhiskerHelloElement(context: WhiskerContext) : WhiskerUI<View>(context) {
 
     override fun createView(context: Context): View {

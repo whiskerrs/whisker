@@ -90,6 +90,20 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_module(
     return fn(method_name, args, arg_count);
 }
 
+extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
+    WhiskerElement* /*element*/,
+    const char* /*method_name*/,
+    const WhiskerValueRaw* /*args*/,
+    size_t /*arg_count*/) {
+    // Same shape as the production stub in `whisker_bridge_common.cc`
+    // — host builds (cargo test) don't have Lynx, so the call is a
+    // pure error path. Phase 7-Φ.H.2.5.
+    return MakeHostStubError(
+        "whisker_bridge_invoke_element_method: host build has no Lynx — "
+        "link against the iOS / Android bridge for real element-method "
+        "dispatch (which itself is currently a stub pending Phase 7-Φ.H.2.7)");
+}
+
 extern "C" bool whisker_bridge_invoke_module_async(
     const char* module_name,
     const char* method_name,

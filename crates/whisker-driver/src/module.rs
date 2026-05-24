@@ -312,7 +312,11 @@ extern "C" fn async_trampoline(user_data: *mut c_void, result: *const ffi::Whisk
 /// builder produces reference into these allocations; dropping
 /// the builder after the FFI call frees everything.
 #[derive(Default)]
-struct RawBuilder {
+/// Pinned storage for the heap allocations referenced by a flat
+/// `WhiskerValueRaw[]` handed to the C bridge. Keep the builder
+/// alive until the FFI call returns; the bridge borrows pointers
+/// out of it for the duration of the call.
+pub(crate) struct RawBuilder {
     /// `CString`s back the `WhiskerValueRaw::s` pointers. The
     /// FFI pointer points to the CString's internal buffer (a
     /// heap allocation owned by the CString's inner `Vec<u8>`);
@@ -334,7 +338,7 @@ struct RawBuilder {
 }
 
 impl RawBuilder {
-    fn encode(&mut self, v: &WhiskerValue) -> ffi::WhiskerValueRaw {
+    pub(crate) fn encode(&mut self, v: &WhiskerValue) -> ffi::WhiskerValueRaw {
         match v {
             WhiskerValue::Null => empty_raw(ffi::WhiskerValueType::Null),
             WhiskerValue::Bool(b) => {

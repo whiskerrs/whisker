@@ -320,6 +320,27 @@ WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_module_async(
 // no-op for scalars. NULL pointer is also safe.
 WHISKER_BRIDGE_EXPORT void whisker_bridge_value_release(WhiskerValueRaw* value);
 
+// Invoke a Lynx UI method on a mounted element synchronously.
+// Phase 7-Φ.H.2.5 stub — currently always returns
+// `WHISKER_VALUE_ERROR` because the Lynx fork doesn't yet expose
+// C wrappers over `LynxShell::GetUIOwner` / `LynxUIOwner::
+// FindUIBySign` / `LynxUIMethodProcessor::InvokeMethod`. Phase
+// 7-Φ.H.2.7 fills in the real dispatch.
+//
+// `element` is the handle originally returned by
+// `whisker_bridge_create_element_by_name`. `args` matches
+// `invoke_module`'s shape (flat `WhiskerValueRaw[]`). The platform
+// side decodes them back to `[WhiskerValue]` inside the
+// `@WhiskerUIMethod`-emitted forwarder.
+//
+// Return ownership matches `invoke_module` — caller MUST eventually
+// call `whisker_bridge_value_release` on the result.
+WHISKER_BRIDGE_EXPORT WhiskerValueRaw whisker_bridge_invoke_element_method(
+    WhiskerElement* element,
+    const char* method_name,
+    const WhiskerValueRaw* args,
+    size_t arg_count);
+
 // ---- Phase 0–3 leftovers (kept temporarily for compatibility) ------------
 
 WHISKER_BRIDGE_EXPORT void whisker_bridge_log_hello(void);
