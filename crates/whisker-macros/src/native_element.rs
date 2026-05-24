@@ -531,8 +531,10 @@ fn prop_setter(p: &Prop) -> TokenStream2 {
     }
 }
 
-fn prop_build_assignment(p: &Prop, _tag_name: &str) -> TokenStream2 {
+fn prop_build_assignment(p: &Prop, tag_name: &str) -> TokenStream2 {
     let i = &p.ident;
+    let name = i.to_string();
+    let err = format!("required prop `{name}` was not set on `{tag_name}`");
     match &p.kind {
         PropKind::Children => {
             // Default to an empty children list when omitted — mirrors
@@ -543,15 +545,19 @@ fn prop_build_assignment(p: &Prop, _tag_name: &str) -> TokenStream2 {
                 })
             }
         }
-        // Phase 7-Φ.H.2 follow-up — native-element props are
-        // optional by default. `Signal<String>` props that the
-        // call site omits default to `Signal::Static("")`, which
-        // matches what Lynx would see if the attribute wasn't
-        // declared at all in a template. Eliminates the panic
-        // path the previous `.expect("required prop ...")` had,
-        // so writers can declare a prop in the function signature
-        // and only set it when relevant.
-        _ => quote! { #i: self.#i.unwrap_or_default() },
+        // Phase 7-Φ.H.2 follow-up — Style/Attr props are
+        // optional by default. `Signal<String>` defaults to
+        // `Signal::Static("")` when omitted, matching what Lynx
+        // would see if the attribute wasn't declared. Event
+        // handler props stay required because their `dyn Fn`
+        // types don't have a sensible default and a missing
+        // callback is almost always an author bug.
+        PropKind::Style { .. } | PropKind::Attr { .. } => {
+            quote! { #i: self.#i.unwrap_or_default() }
+        }
+        PropKind::EventNoPayload { .. } | PropKind::EventStringPayload { .. } => {
+            quote! { #i: self.#i.expect(#err) }
+        }
     }
 }
 

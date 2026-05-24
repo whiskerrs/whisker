@@ -152,7 +152,11 @@ fn zero_props_creates_element_with_tag_name() {
                 _ => None,
             })
             .collect();
-        assert_eq!(creates, vec!["x-zero-props".to_string()]);
+        // Tag is namespaced with the cargo crate name. Phase
+        // 7-Φ.H.2.1 — `concat!(env!("CARGO_PKG_NAME"), ":", tag)`
+        // resolves at the integration-test crate to
+        // `whisker:x-zero-props`.
+        assert_eq!(creates, vec!["whisker:x-zero-props".to_string()]);
     });
 }
 
@@ -348,12 +352,12 @@ fn children_prop_attaches_inner_view() {
         // count Append entries whose parent is that id.
         let log_b = log.borrow();
         let container_id = log_b.iter().find_map(|op| match op {
-            Op::CreateByName { id, tag_name } if tag_name == "x-container" => Some(*id),
+            Op::CreateByName { id, tag_name } if tag_name == "whisker:x-container" => Some(*id),
             _ => None,
         });
         assert!(
             container_id.is_some(),
-            "x-container element must be created"
+            "whisker:x-container element must be created"
         );
     });
 }

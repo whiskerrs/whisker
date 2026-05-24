@@ -29,9 +29,9 @@ use crate::module::{from_raw, RawBuilder, WhiskerValue};
 /// Phase 7-Φ.H.2.5, returning a Lynx-fork-pending Error until
 /// Phase 7-Φ.H.2.7 wires in the real dispatch.
 ///
-/// Direct callers are mostly the proc macros (`ElementRef::invoke`
-/// + `#[whisker::element_methods]`-emitted bodies). User code uses
-/// the typed wrappers, not this entry point.
+/// Direct callers are mostly the proc macros — `ElementRef::invoke`
+/// and the `#[whisker::element_methods]`-emitted bodies. User code
+/// uses the typed wrappers, not this entry point.
 pub fn invoke_element_method(
     handle: Element,
     method: &str,
