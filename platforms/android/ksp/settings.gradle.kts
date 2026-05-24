@@ -28,7 +28,12 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ksp"
+// `rootProject.name` MUST stay distinct from the inner `:ksp`
+// submodule. `rs.whisker` is the inherited group; if both root and
+// submodule publish artifact ID `ksp`, Gradle composite-build
+// resolution errors with "Module version 'rs.whisker:ksp' is not
+// unique in composite: can be provided by [project :ksp, project :ksp:ksp]".
+rootProject.name = "whisker-android-ksp"
 
 include(":annotations")
 include(":ksp")
