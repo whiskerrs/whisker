@@ -88,9 +88,13 @@ fn sync_android(
     })
 }
 
-fn sync_ios(app_config: &AppConfig, crate_dir: &Path, workspace_root: &Path) -> Result<PlatformSync> {
-    let whisker_runtime =
-        resolve_whisker_platform(workspace_root, "ios").context("resolve Whisker's platforms/ios")?;
+fn sync_ios(
+    app_config: &AppConfig,
+    crate_dir: &Path,
+    workspace_root: &Path,
+) -> Result<PlatformSync> {
+    let whisker_runtime = resolve_whisker_platform(workspace_root, "ios")
+        .context("resolve Whisker's platforms/ios")?;
     let gen_dir = crate_dir.join("gen/ios");
     // `gen/ios/whisker_modules/` is populated lazily by
     // `whisker-build::ios::stage_module_swift_sources` later in the
