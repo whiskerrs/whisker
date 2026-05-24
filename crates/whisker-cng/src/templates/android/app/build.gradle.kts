@@ -5,7 +5,7 @@ plugins {
     // Whisker module package is now its own Android library subproject
     // with KSP running per-subproject — see
     // `packages/whisker-*/build.gradle.kts`. The user app no longer
-    // sees `@WhiskerElement` / `@WhiskerModule` annotations directly
+    // sees `@WhiskerComponent` / `@WhiskerModule` annotations directly
     // (they're inside the subproject classpaths), so it has nothing
     // to process. The whisker-build-generated
     // `WhiskerModuleBehaviors.kt` (under

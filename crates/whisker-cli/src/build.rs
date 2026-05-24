@@ -8,7 +8,7 @@
 //!
 //! 1. Resolve `whisker.rs` → `AppConfig` (probe).
 //! 2. Sync the native host project (`gen/{android,ios}/`) via
-//!    [`crate::native::sync_for_target`].
+//!    [`crate::platforms::sync_for_target`].
 //! 3. Cargo cross-compile the user crate as a release-profile dylib,
 //!    **without** the `whisker/hot-reload` feature — the dev-runtime
 //!    is feature-gated and disappears from the binary.
@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use whisker_build::{android, ios, Profile};
 use whisker_dev_server::Target;
 
-use crate::{manifest, native};
+use crate::{manifest, platforms};
 
 #[derive(clap::Args, Debug)]
 pub struct Args {
@@ -91,7 +91,7 @@ fn build_android_apk(m: &manifest::ResolvedManifest, workspace_root: &Path) -> R
     whisker_build::link_lynx_into_workspace(workspace_root, whisker_build::LynxPlatform::Android)?;
 
     // 1. Sync `gen/android/` from whisker.rs.
-    let sync = native::sync_for_target(
+    let sync = platforms::sync_for_target(
         Target::Android,
         &m.config,
         &m.crate_dir,
@@ -159,7 +159,7 @@ fn build_ios_app(
 
     // 1. Sync `gen/ios/` (renders project.yml + Info.plist + AppDelegate
     //    and runs `xcodegen generate`).
-    let sync = native::sync_for_target(
+    let sync = platforms::sync_for_target(
         Target::IosSimulator,
         &m.config,
         &m.crate_dir,
@@ -179,8 +179,8 @@ fn build_ios_app(
     //    pattern as the Android pre-gradle staging step.
     let modules = whisker_build::modules::discover(&workspace_root.join("Cargo.toml"), &m.package)
         .with_context(|| format!("discover modules for `{}`", m.package))?;
-    let whisker_runtime_path = workspace_root.join("native/ios");
-    let whisker_ios_macros_path = workspace_root.join("packages/whisker-ios-macros");
+    let whisker_runtime_path = workspace_root.join("platforms/ios");
+    let whisker_ios_macros_path = workspace_root.join("platforms/ios/macros");
     ios::stage_module_swift_sources(
         &sync.gen_dir,
         &whisker_runtime_path,

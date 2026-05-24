@@ -3,7 +3,7 @@
 # Generates the Android / iOS host projects under `gen/{android,ios}/`
 # from the user's `whisker.rs` (= `whisker_app_config::AppConfig`).
 # Modelled on Expo's CNG: the source of truth is the declarative
-# config, the native directories are build artifacts, never committed.
+# config, the platforms directory are build artifacts, never committed.
 #
 # Pure logic crate — no CLI surface. `whisker-cli` consumes the
 # `sync_android` / `sync_ios` entry points and handles user interaction.

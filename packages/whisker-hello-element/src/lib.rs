@@ -1,9 +1,9 @@
 //! `whisker-hello-element` — reference Whisker module / element library.
 //!
-//! Registers a single Lynx native element (locally named `Hello`)
+//! Registers a single Lynx platform component (locally named `Hello`)
 //! that renders as a system-pink `UIView`. Used by
 //! `examples/hello-world` as the smoke test for the full
-//! `#[whisker::native_element]` → bridge → Lynx → host registry
+//! `#[whisker::platform_component]` → bridge → Lynx → host registry
 //! chain, and as the canonical template for the Whisker module
 //! system.
 //!
@@ -20,7 +20,7 @@
 //! `Hello(style: "…")` inside any `render! { … }`. The Lynx tag
 //! string the bridge actually registers against is
 //! `whisker-hello-element:Hello` — the cargo crate name (kebab-
-//! case) is auto-prepended by `#[whisker::native_element]` so two
+//! case) is auto-prepended by `#[whisker::platform_component]` so two
 //! unrelated module packages can both declare an element named
 //! `Hello` without colliding in Lynx's behaviour registry. The
 //! platform-side `@WhiskerElement` macro / KSP processor emits the
@@ -29,9 +29,9 @@
 
 use whisker::prelude::*;
 
-/// Whisker native element with local tag name `Hello`. The Lynx
+/// Whisker platform component with local tag name `Hello`. The Lynx
 /// registration string is `whisker-hello-element:Hello`. Empty
 /// `Signal<String>` prop (`style`) routes through the macro's
 /// `apply_styles` so the host can size / colour the rectangle.
-#[whisker::native_element("Hello")]
+#[whisker::platform_component("Hello")]
 pub fn hello(style: Signal<String>) {}

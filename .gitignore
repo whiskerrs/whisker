@@ -25,17 +25,24 @@ examples/**/gen/
 # Native build artifacts under the workspace's Whisker-internal
 # `native/` tree (Lynx AARs, SPM build caches, etc.). These belong to
 # the Whisker build, not user projects.
-native/android/.gradle/
-native/android/build/
-native/android/local.properties
-native/android/.idea/
-native/android/**/build/
-native/android/**/.cxx/
-native/ios/.build/
-native/ios/.swiftpm/
-native/ios/*.xcodeproj/
-native/ios/*.xcworkspace/
-native/bridge/build/
+platforms/android/.gradle/
+platforms/android/build/
+platforms/android/local.properties
+platforms/android/.idea/
+platforms/android/**/build/
+platforms/android/**/.cxx/
+platforms/ios/.build/
+platforms/ios/.swiftpm/
+platforms/ios/*.xcodeproj/
+platforms/ios/*.xcworkspace/
+platforms/bridge/build/
+
+# Gradle build artifacts under per-package module trees
+# (`packages/<name>/build/`, `packages/<name>/.gradle/`). KSP outputs +
+# transform caches live there during dev; same story as native/.
+packages/**/build/
+packages/**/.gradle/
+packages/**/.kotlin/
 
 # Per-example Rust workspace artifacts.
 examples/**/target/

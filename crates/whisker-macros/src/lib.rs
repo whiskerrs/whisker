@@ -17,8 +17,8 @@ use syn::{parse_macro_input, ItemFn};
 
 mod component;
 mod element_methods;
-mod native_element;
-mod native_module;
+mod platform_component;
+mod platform_module;
 mod render;
 
 /// Annotates the user's app function (returning `whisker::Element`) and
@@ -203,10 +203,10 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     component::expand(item.into()).into()
 }
 
-/// Declare a Whisker-side wrapper for a Lynx-registered native element.
+/// Declare a Whisker-side wrapper for a Lynx-registered platform component.
 ///
 /// ```ignore
-/// #[whisker::native_element("Hello")]
+/// #[whisker::platform_component("Hello")]
 /// pub fn hello(style: Signal<String>) -> Element;
 /// ```
 ///
@@ -222,9 +222,9 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Phase 7-Φ.H.2: the tag string passed to Lynx at runtime is
 /// `<cargo-crate-name>:<attr-tag>` — the macro auto-prepends
 /// `env!("CARGO_PKG_NAME")` so two unrelated module packages can
-/// both declare an element named `Hello` without colliding in
+/// both declare a component named `Hello` without colliding in
 /// Lynx's behaviour registry. The matching platform-side
-/// registrations (`@WhiskerElement` Swift Macro / Kotlin
+/// registrations (`@WhiskerComponent` Swift Macro / Kotlin
 /// annotation) prepend the crate name the same way.
 ///
 /// Call-site shape mirrors built-in tags + user components:
@@ -235,18 +235,18 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// See `crates/whisker-macros/src/native_element.rs` for the
+/// See `crates/whisker-macros/src/platform_component.rs` for the
 /// emission details (children + event-handler props are NOT yet
 /// supported; tracked in Phase 7-Φ follow-ups).
 #[proc_macro_attribute]
-pub fn native_element(attr: TokenStream, item: TokenStream) -> TokenStream {
-    native_element::expand(attr.into(), item.into()).into()
+pub fn platform_component(attr: TokenStream, item: TokenStream) -> TokenStream {
+    platform_component::expand(attr.into(), item.into()).into()
 }
 
-/// Declare a typed Rust proxy for a Lynx-registered native module.
+/// Declare a typed Rust proxy for a Lynx-registered platform module.
 ///
 /// ```ignore
-/// #[whisker::native_module(name = "WhiskerStorage")]
+/// #[whisker::platform_module(name = "WhiskerStorage")]
 /// pub trait WhiskerStorage {
 ///     fn save(key: String, value: String) -> bool;
 ///     fn load(key: String) -> Option<String>;
@@ -256,9 +256,9 @@ pub fn native_element(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Emits a same-named unit struct with associated functions
 /// matching each trait method. Each function marshals its args
-/// into [`whisker::native_module::WhiskerValue`], invokes the
-/// bridge via [`invoke`](whisker::native_module::invoke) (sync)
-/// or [`invoke_async`](whisker::native_module::invoke_async)
+/// into [`whisker::platform_module::WhiskerValue`], invokes the
+/// bridge via [`invoke`](whisker::platform_module::invoke) (sync)
+/// or [`invoke_async`](whisker::platform_module::invoke_async)
 /// (`async fn`), then converts the returned `WhiskerValue` back
 /// into the declared return type. Mismatched return shapes
 /// (bridge returned `Bool` but the method declared `String`,
@@ -284,11 +284,11 @@ pub fn native_element(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// methods generate `pub async fn NAME(...) -> Result<RET,
 /// WhiskerModuleError>` that awaits the bridge's callback.
 ///
-/// See `crates/whisker-macros/src/native_module.rs` for the
+/// See `crates/whisker-macros/src/platform_module.rs` for the
 /// emission details.
 #[proc_macro_attribute]
-pub fn native_module(attr: TokenStream, item: TokenStream) -> TokenStream {
-    native_module::expand(attr.into(), item.into()).into()
+pub fn platform_module(attr: TokenStream, item: TokenStream) -> TokenStream {
+    platform_module::expand(attr.into(), item.into()).into()
 }
 
 /// Declare element-method dispatch on an `ElementRef<T>`.
@@ -309,7 +309,7 @@ pub fn native_module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `whisker_bridge_invoke_element_method`. Module authors write a
 /// typed wrapper (`fn play(&self)`, `fn seek(&self, pos: f64)`)
 /// on top of this `-sys` trait — same discipline as
-/// `#[whisker::native_module]`.
+/// `#[whisker::platform_module]`.
 ///
 /// See `crates/whisker-macros/src/element_methods.rs` for the
 /// emission details + diagnostics.

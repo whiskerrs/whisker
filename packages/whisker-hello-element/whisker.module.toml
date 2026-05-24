@@ -20,13 +20,13 @@
 # template's `WhiskerModules` `XCLocalSwiftPackageReference` then
 # pulls the generated SwiftPM package into the user app's build.
 #
-# The `@WhiskerElement(...)` annotations inside these sources are
+# The `@WhiskerComponent(...)` annotations inside these sources are
 # discovered by the `WhiskerElementsCodegenPlugin` SwiftPM build-tool
-# plugin (under `packages/whisker-ios-macros/Plugins/`) and turned
+# plugin (under `platforms/ios/macros/Plugins/`) and turned
 # into `LynxComponentRegistry.registerUI(...)` registrations inside
 # the auto-generated `WhiskerModuleBehaviors.swift`. No behaviour
 # list to keep in sync — same DX as Android's KSP path.
-swift_sources = ["src/ios/WhiskerHelloElement.swift"]
+swift_sources = ["src/ios/WhiskerHelloComponent.swift"]
 
 [android]
 # Paths to Kotlin source files that get staged under
@@ -35,9 +35,9 @@ swift_sources = ["src/ios/WhiskerHelloElement.swift"]
 # main source-set then compiles them into the host APK alongside
 # the Whisker Android runtime's own Kotlin sources.
 #
-# The `@WhiskerElement(...)` annotations inside these sources are
+# The `@WhiskerComponent(...)` annotations inside these sources are
 # picked up by the `whisker-android-ksp` KSP processor (Phase 7-Φ.H.2)
 # and turned into `LynxEnv.inst().addBehavior(...)` registrations
 # inside the user app's generated `WhiskerModuleBehaviors.kt`. No
 # `behaviors = [...]` manifest entry is needed.
-kotlin_sources = ["src/android/WhiskerHelloElement.kt"]
+kotlin_sources = ["src/android/WhiskerHelloComponent.kt"]

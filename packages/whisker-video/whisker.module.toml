@@ -3,7 +3,7 @@
 # for imperative element-method dispatch.
 
 [ios]
-swift_sources = ["src/ios/WhiskerVideoElement.swift"]
+swift_sources = ["src/ios/WhiskerVideoComponent.swift"]
 
 [android]
-kotlin_sources = ["src/android/WhiskerVideoElement.kt"]
+kotlin_sources = ["src/android/WhiskerVideoComponent.kt"]

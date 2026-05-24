@@ -21,7 +21,7 @@ import PackageDescription
 let package = Package(
     name: "whisker-hello-element",
     // macOS 13 is required because the SwiftPM build plugin
-    // (`WhiskerElementsCodegenPlugin`) is hosted by SwiftSyntax,
+    // (`WhiskerComponentsCodegenPlugin`) is hosted by SwiftSyntax,
     // which requires that floor at build time. The module's
     // runtime artefacts only need iOS 13.
     platforms: [.iOS(.v13), .macOS(.v13)],
@@ -33,21 +33,21 @@ let package = Package(
         .library(name: "WhiskerHelloElement", targets: ["WhiskerHelloElement"]),
     ],
     dependencies: [
-        // WhiskerElements ships the `@WhiskerElement` / `@WhiskerModule`
+        // WhiskerComponents ships the `@WhiskerComponent` / `@WhiskerModule`
         // macros + the SwiftPM build-tool plugin that scans this
         // target's sources for those annotations.
-        .package(name: "whisker-ios-macros", path: "../whisker-ios-macros"),
+        .package(name: "macros", path: "../../platforms/ios/macros"),
         // WhiskerRuntime gives module sources access to Lynx C++
         // types (LynxUI, LynxComponentRegistry, …) and re-exports
         // the WhiskerDriver C ABI symbols the macro-emitted
         // dispatch shim references.
-        .package(name: "WhiskerRuntime", path: "../../native/ios"),
+        .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
     ],
     targets: [
         .target(
             name: "WhiskerHelloElement",
             dependencies: [
-                .product(name: "WhiskerElements", package: "whisker-ios-macros"),
+                .product(name: "WhiskerComponents", package: "macros"),
                 .product(name: "WhiskerRuntime", package: "WhiskerRuntime"),
                 .product(name: "Lynx", package: "WhiskerRuntime"),
             ],
@@ -58,11 +58,11 @@ let package = Package(
             path: "src/ios",
             plugins: [
                 // The plugin emits a per-target
-                // `WhiskerHelloElement+Generated.swift` containing
-                // a top-level `_whiskerRegisterModules_WhiskerHelloElement()`
+                // `WhiskerHelloComponent+Generated.swift` containing
+                // a top-level `_whiskerRegisterModules_WhiskerHelloComponent()`
                 // fn the aggregator calls from
                 // `WhiskerModuleBehaviors.registerAll()`.
-                .plugin(name: "WhiskerElementsCodegenPlugin", package: "whisker-ios-macros"),
+                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),
             ]
         ),
     ]

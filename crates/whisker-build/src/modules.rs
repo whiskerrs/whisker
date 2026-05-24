@@ -63,7 +63,7 @@ pub struct IosSectionRaw {
     /// relative to the manifest's directory.
     ///
     /// Legacy entry point — Phase 7-Φ.D introduced `swift_sources`
-    /// as the preferred way to author iOS native elements. `.mm`
+    /// as the preferred way to author iOS platform components. `.mm`
     /// modules still work, but new authors should prefer Swift.
     #[serde(default)]
     pub native_sources: Vec<String>,
@@ -74,8 +74,8 @@ pub struct IosSectionRaw {
     /// Mirror of `[android].kotlin_sources` for symmetry.
     ///
     /// Modules apply `@WhiskerElement("x-tag")` (from the
-    /// `WhiskerElements` SwiftPM library) to their `LynxUI<View>`
-    /// subclasses. The `WhiskerElementsCodegenPlugin` SwiftPM
+    /// `WhiskerComponents` SwiftPM library) to their `LynxUI<View>`
+    /// subclasses. The `WhiskerComponentsCodegenPlugin` SwiftPM
     /// build-tool plugin (under `packages/whisker-ios-macros/
     /// Plugins/`) discovers those annotations via SwiftSyntax at
     /// SwiftPM build time and emits the registration code into

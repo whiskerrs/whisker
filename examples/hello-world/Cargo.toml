@@ -20,7 +20,7 @@ crate-type = ["rlib"]
 [dependencies]
 whisker = { workspace = true }
 
-# Phase 7-Φ.F: the `Hello` native element lives in a separate
+# Phase 7-Φ.F: the `Hello` platform component lives in a separate
 # module crate now. `whisker run` walks this app's dep tree, picks
 # up the module's `whisker.module.toml`, and folds its Swift /
 # Kotlin sources into the iOS / Android builds. Removing this dep

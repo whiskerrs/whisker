@@ -36,7 +36,7 @@ pub type WhiskerEventCallback = extern "C" fn(user_data: *mut c_void);
 pub type WhiskerEventPayloadCallback =
     extern "C" fn(user_data: *mut c_void, payload_json: *const c_char);
 
-// ----- Native module invocation (Phase 7-Φ.E) ------------------------------
+// ----- Platform module invocation (Phase 7-Φ.E) ------------------------------
 //
 // `#[repr(C)]` mirror of the C tagged-union in `whisker_bridge.h`.
 // Each variant has its own pure-Rust struct so the layout matches
@@ -205,7 +205,7 @@ extern "C" {
     pub fn whisker_bridge_set_root(engine: *mut WhiskerEngine, page: *mut WhiskerElement);
     pub fn whisker_bridge_flush(engine: *mut WhiskerEngine);
 
-    /// Invoke a registered Whisker native module's method,
+    /// Invoke a registered Whisker platform module's method,
     /// synchronously. See `whisker_bridge.h` for ownership rules
     /// around the returned `WhiskerValueRaw`.
     pub fn whisker_bridge_invoke_module(

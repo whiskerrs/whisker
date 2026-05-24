@@ -1,11 +1,11 @@
 // Android implementation of `WhiskerLocalStore` — backs the
-// `whisker::native_module::invoke("WhiskerLocalStore", ...)` calls
+// `whisker::platform_module::invoke("WhiskerLocalStore", ...)` calls
 // with `SharedPreferences` (private to the host app under the name
 // "WhiskerLocalStore").
 //
 // Phase 7-Φ.F: the contract is now WhiskerValue-only. Each method
 // takes `Array<WhiskerValue>` and returns `WhiskerValue`. The KSP
-// processor (`packages/whisker-android-ksp`) emits a
+// processor (`platforms/android/ksp`) emits a
 // `WhiskerLocalStoreImpl_Dispatch` object whose
 // `dispatch(method, args)` `when`-switches on the method name and
 // calls the matching instance method; the C JNI bridge resolves

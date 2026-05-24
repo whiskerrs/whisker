@@ -3,7 +3,7 @@ name = "whisker-video"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Whisker native element module — `whisker-video:Video` element backed by AVPlayer on iOS / VideoView on Android. Demonstrates `@WhiskerUIMethod` (`play()`, `pause()`, `seek(position)`) and `ElementRef<T>` for imperative Rust-side control of a mounted element."
+description = "Whisker platform component module — `whisker-video:Video` element backed by AVPlayer on iOS / VideoView on Android. Demonstrates `@WhiskerUIMethod` (`play()`, `pause()`, `seek(position)`) and `ElementRef<T>` for imperative Rust-side control of a mounted element."
 
 [lib]
 crate-type = ["rlib"]

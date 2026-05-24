@@ -1,5 +1,5 @@
 // iOS implementation of `WhiskerLocalStore` — backs the
-// `whisker::native_module::invoke("WhiskerLocalStore", ...)` calls
+// `whisker::platform_module::invoke("WhiskerLocalStore", ...)` calls
 // with `UserDefaults.standard`.
 //
 // Phase 7-Φ.F: the contract is now WhiskerValue-only. Each method
@@ -18,7 +18,7 @@
 // `WhiskerModuleError`.
 
 import Foundation
-import WhiskerElements
+import WhiskerComponents
 import WhiskerRuntime
 
 // Phase 7-Φ.G PoC: external SPM dep pulled via this module's

@@ -58,7 +58,7 @@ const GRADLE_WRAPPER_JAR: &[u8] =
 
 /// Inputs the Android renderer pulls out of `AppConfig` (+ a few
 /// values the cli passes in like the dylib name and the workspace's
-/// `native/android/whisker-runtime` location).
+/// `platforms/android/whisker-runtime` location).
 ///
 /// Holding these in a struct rather than a big tuple keeps the
 /// fingerprint serialization stable and the template-vars build site
@@ -75,7 +75,7 @@ pub struct AndroidInputs {
     /// `System.loadLibrary` and `keepDebugSymbols` reference.
     pub rust_lib_name: String,
     /// Absolute or `settings.gradle.kts`-relative path to
-    /// `<workspace>/native/android/whisker-runtime`. The renderer
+    /// `<workspace>/platforms/android/whisker-runtime`. The renderer
     /// writes it verbatim into the `project(":whisker-runtime").projectDir`
     /// call.
     pub whisker_runtime_path: PathBuf,
@@ -84,7 +84,7 @@ pub struct AndroidInputs {
     /// repo in the generated `settings.gradle.kts` so whisker-runtime's
     /// `api(name="LynxAndroid", ext="aar")` style deps resolve.
     pub whisker_lynx_aar_dir: PathBuf,
-    /// Absolute path to `<workspace>/packages/whisker-android-ksp/`.
+    /// Absolute path to `<workspace>/platforms/android/ksp/`.
     /// Pulled into the generated `settings.gradle.kts` via
     /// Gradle's `includeBuild(...)` so the app's `ksp(...)` +
     /// `implementation(...)` deps on `rs.whisker:annotations` /
@@ -429,9 +429,9 @@ mod tests {
             min_sdk: 24,
             target_sdk: 34,
             rust_lib_name: "hello_world".into(),
-            whisker_runtime_path: PathBuf::from("/abs/native/android/whisker-runtime"),
+            whisker_runtime_path: PathBuf::from("/abs/platforms/android/whisker-runtime"),
             whisker_lynx_aar_dir: PathBuf::from("/abs/target/lynx-android"),
-            whisker_android_ksp_path: PathBuf::from("/abs/packages/whisker-android-ksp"),
+            whisker_android_ksp_path: PathBuf::from("/abs/platforms/android/ksp"),
             template_version: 3,
         }
     }

@@ -7,7 +7,7 @@
 //! tree (`gen/<platform>/.whisker-fingerprint`).
 //!
 //! Modelled on Expo's CNG: the source of truth is the declarative
-//! config, the native directories are build artifacts (never
+//! config, the platforms directory are build artifacts (never
 //! committed). Unlike Expo, regeneration is *implicit* — there's no
 //! `whisker prebuild` command. Whichever command needs the native
 //! tree (today: `whisker run` / `whisker build`) calls

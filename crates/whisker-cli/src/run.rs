@@ -92,7 +92,7 @@ pub fn run(args: Args) -> Result<()> {
     // a single file read. Errors here (missing whisker.rs fields,
     // missing native runtime) are fatal: there's no point starting
     // the dev loop if we can't build the app it would deploy.
-    let sync = crate::native::sync_for_target(
+    let sync = crate::platforms::sync_for_target(
         target,
         &m.config,
         &m.crate_dir,
@@ -281,7 +281,16 @@ mod tests {
     fn find_workspace_root_returns_dir_when_cargo_toml_at_start() {
         let tmp = unique_tempdir();
         std::fs::write(tmp.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
-        assert_eq!(find_workspace_root(&tmp).as_deref(), Some(tmp.as_path()));
+        // Compare against the canonical form — `find_workspace_root`
+        // canonicalises its input to avoid the empty-PathBuf ENOENT
+        // (see fn docs), and on macOS `std::env::temp_dir()` returns a
+        // path under `/var/folders/...` which is a symlink to
+        // `/private/var/folders/...`.
+        let canonical_tmp = std::fs::canonicalize(&tmp).unwrap();
+        assert_eq!(
+            find_workspace_root(&tmp).as_deref(),
+            Some(canonical_tmp.as_path()),
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -296,7 +305,11 @@ mod tests {
             "[package]\nname = \"app\"\nversion = \"0.0.0\"\n",
         )
         .unwrap();
-        assert_eq!(find_workspace_root(&nested).as_deref(), Some(tmp.as_path()),);
+        let canonical_tmp = std::fs::canonicalize(&tmp).unwrap();
+        assert_eq!(
+            find_workspace_root(&nested).as_deref(),
+            Some(canonical_tmp.as_path()),
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

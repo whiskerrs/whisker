@@ -25,11 +25,13 @@ pub use whisker_runtime as runtime;
 // the same enum.
 pub use whisker_runtime::element::ElementTag;
 
-pub use whisker_macros::{component, element_methods, main, native_element, native_module, render};
+pub use whisker_macros::{
+    component, element_methods, main, platform_component, platform_module, render,
+};
 
 // Phase 7-Φ.H.2 — `ElementRef<T>` is the Rust-side handle for
-// invoking methods on a mounted native element. `element_ref::<T>()`
-// allocates a fresh, unbound ref; the `#[whisker::native_element]`
+// invoking methods on a mounted platform component. `element_ref::<T>()`
+// allocates a fresh, unbound ref; the `#[whisker::platform_component]`
 // macro binds it on mount when passed as the `ref:` prop.
 pub use whisker_driver::{element_ref, ElementRef};
 
@@ -108,7 +110,7 @@ pub mod __tags {
     /// returned [`ReadSignal<T>::get`] call registers the source
     /// as a dependency.
     ///
-    /// `pub` so the `#[whisker::native_element]` proc-macro can
+    /// `pub` so the `#[whisker::platform_component]` proc-macro can
     /// route through the same helper from outside this module.
     /// Not part of the stable surface — gated under `__tags` which
     /// itself is `#[doc(hidden)]`.
@@ -128,7 +130,7 @@ pub mod __tags {
     /// Apply a named attribute value to `h`. Same Static / Dynamic
     /// dispatch as [`apply_styles`].
     ///
-    /// `pub` so the `#[whisker::native_element]` proc-macro can
+    /// `pub` so the `#[whisker::platform_component]` proc-macro can
     /// route through the same helper.
     pub fn apply_attr<V, T>(h: Element, name: &'static str, v: V)
     where
@@ -644,18 +646,18 @@ pub mod __tags {
 //     });
 pub use whisker_runtime::main_thread::run_on_main_thread;
 
-/// Whisker native module invocation entry point.
+/// Whisker platform module invocation entry point.
 ///
 /// Phase 7-Φ.E API surface — `WhiskerValue` tagged-union type +
 /// `invoke` / `invoke_async` callers that cross the C bridge to
 /// platform-side modules (Obj-C class on iOS, Kotlin class on
 /// Android, both inheriting from Lynx's `LynxModule`).
 ///
-/// The `#[whisker::native_module]` proc macro (Phase 7-Φ.E.5)
+/// The `#[whisker::platform_module]` proc macro (Phase 7-Φ.E.5)
 /// generates type-safe Rust proxies that wrap [`invoke`] /
-/// [`invoke_async`] — direct callers use `whisker::native_module`
+/// [`invoke_async`] — direct callers use `whisker::platform_module`
 /// when they need access to the raw `WhiskerValue` enum.
-pub mod native_module {
+pub mod platform_module {
     pub use whisker_driver::module::{
         from_raw, invoke, invoke_async, WhiskerModuleError, WhiskerValue,
     };

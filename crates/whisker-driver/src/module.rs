@@ -1,4 +1,4 @@
-//! Whisker native module invocation — Rust-side entry point for
+//! Whisker platform module invocation — Rust-side entry point for
 //! the C bridge `whisker_bridge_invoke_module*` family
 //! (`whisker-driver-sys`).
 //!
@@ -38,7 +38,7 @@
 //! Errors from the bridge (unknown module, missing method,
 //! exception thrown) surface as the [`WhiskerValue::Error`]
 //! variant carrying a UTF-8 description. The matching
-//! `#[whisker::native_module]` proc macro layer (Phase 7-Φ.E.5)
+//! `#[whisker::platform_module]` proc macro layer (Phase 7-Φ.E.5)
 //! folds those into typed `Result<T, ModuleError>` returns.
 
 use std::collections::BTreeMap;
@@ -103,7 +103,7 @@ impl WhiskerValue {
     }
 }
 
-/// Failure surface for the `#[whisker::native_module]` proc-macro-
+/// Failure surface for the `#[whisker::platform_module]` proc-macro-
 /// generated proxy methods.
 ///
 /// Wraps the UTF-8 description the bridge returned via
@@ -187,7 +187,7 @@ where
 
 // ----- Sync invoke --------------------------------------------------------
 
-/// Call the registered native module's method, synchronously.
+/// Call the registered platform module's method, synchronously.
 ///
 /// Returns a [`WhiskerValue::Error`] on dispatch failure (unknown
 /// module, missing method, platform-side exception). The bridge's
