@@ -1,4 +1,4 @@
-//! # whisker-module-api
+//! # whisker-modules-api
 //!
 //! Minimal API surface for third-party **Whisker modules** (the
 //! cargo-distributed packages that ship platform-side Swift / Kotlin
@@ -38,7 +38,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! whisker = { package = "whisker-module-api", workspace = true }
+//! whisker = { package = "whisker-modules-api", workspace = true }
 //! ```
 //!
 //! With that in place, `use whisker::platform_module::WhiskerValue;`

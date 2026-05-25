@@ -1873,14 +1873,14 @@ dependencies = [
 name = "whisker-hello-element"
 version = "0.1.0"
 dependencies = [
- "whisker-module-api",
+ "whisker-modules-api",
 ]
 
 [[package]]
 name = "whisker-local-store"
 version = "0.1.0"
 dependencies = [
- "whisker-module-api",
+ "whisker-modules-api",
 ]
 
 [[package]]
@@ -1895,7 +1895,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whisker-module-api"
+name = "whisker-modules-api"
 version = "0.1.0"
 dependencies = [
  "whisker-driver",
@@ -1934,7 +1934,7 @@ dependencies = [
 name = "whisker-video"
 version = "0.1.0"
 dependencies = [
- "whisker-module-api",
+ "whisker-modules-api",
 ]
 
 [[package]]

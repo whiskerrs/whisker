@@ -1,5 +1,5 @@
 [package]
-name = "whisker-module-api"
+name = "whisker-modules-api"
 version = "0.1.0"
 edition = "2021"
 description = "Minimal API surface third-party Whisker modules depend on. The umbrella `whisker` crate is for *app* code; module crates pull in just this."
