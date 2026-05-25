@@ -10,6 +10,7 @@ import com.google.devtools.ksp.processing.SymbolProcessorProvider
 import com.google.devtools.ksp.symbol.ClassKind
 import com.google.devtools.ksp.symbol.FunctionKind
 import com.google.devtools.ksp.symbol.KSAnnotated
+import com.google.devtools.ksp.getAllSuperTypes
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
 import com.google.devtools.ksp.symbol.Modifier
@@ -82,6 +83,12 @@ public class WhiskerComponentProcessor(
     /** FQN of the `@WhiskerUIMethod` annotation — Phase 7-Φ.H.2. */
     private val uiMethodAnnotationFqn = "rs.whisker.annotations.WhiskerUIMethod"
 
+    /** FQN of the `WhiskerModule` base class — Phase L-2a/c. Subclasses
+     *  are discovered by walking the superclass chain (no annotation
+     *  required — subclassing IS the opt-in).
+     */
+    private val whiskerModuleBaseFqn = "rs.whisker.runtime.WhiskerModule"
+
     /**
      * KSP invokes `process` at least twice per compilation: once
      * when the user code is first processed (annotations visible)
@@ -106,27 +113,54 @@ public class WhiskerComponentProcessor(
             .filter { it.classKind == ClassKind.CLASS }
             .toList()
 
-        // Always write the file, even when both annotation sets are
-        // empty, so the user app's `Application.onCreate()` call to
-        // `WhiskerModuleBehaviors.registerAll()` always resolves —
+        // Phase L-2c — DSL modules. Discovery: every non-abstract
+        // class that extends `rs.whisker.runtime.WhiskerModule`
+        // (directly or transitively). No annotation required —
+        // subclassing IS the opt-in, matching Expo Modules' /
+        // Whisker iOS-side convention.
+        val dslModuleSymbols = resolver
+            .getAllFiles()
+            .flatMap { it.declarations }
+            .filterIsInstance<KSClassDeclaration>()
+            .filter { it.classKind == ClassKind.CLASS }
+            .filter { !it.modifiers.contains(Modifier.ABSTRACT) }
+            .filter { extendsWhiskerModule(it) }
+            .toList()
+
+        // Always write the file, even when all sets are empty, so
+        // the user app's `Application.onCreate()` call to
+        // `<Module>Behaviors.registerAll()` always resolves —
         // mirrors the iOS-side `WhiskerModuleBehaviors.swift` policy.
-        writeBehavioursFile(elementSymbols, moduleSymbols)
+        writeBehavioursFile(elementSymbols, moduleSymbols, dslModuleSymbols)
         generated = true
 
         return emptyList()
     }
 
+    /**
+     * Walk the class's superclass chain looking for
+     * [whiskerModuleBaseFqn]. Stops at `kotlin.Any`. Returns true
+     * iff the class transitively extends `WhiskerModule`.
+     */
+    private fun extendsWhiskerModule(cls: KSClassDeclaration): Boolean {
+        return cls.getAllSuperTypes().any { superType ->
+            superType.declaration.qualifiedName?.asString() == whiskerModuleBaseFqn
+        }
+    }
+
     private fun writeBehavioursFile(
         elements: List<KSClassDeclaration>,
         modules: List<KSClassDeclaration>,
+        dslModules: List<KSClassDeclaration>,
     ) {
         // `Dependencies(aggregating = true, *sourceFiles)` makes the
         // generated file invalidate when ANY of the input source
         // files changes (add/remove of @WhiskerComponent /
-        // @WhiskerModule). Important for incremental compilation —
-        // without `aggregating = true` KSP wouldn't re-run when a
-        // new module's annotated class appears.
-        val sourceFiles = (elements + modules).mapNotNull { it.containingFile }
+        // @WhiskerModule / DSL subclass). Important for incremental
+        // compilation — without `aggregating = true` KSP wouldn't
+        // re-run when a new annotated class or `WhiskerModule`
+        // subclass appears.
+        val sourceFiles = (elements + modules + dslModules).mapNotNull { it.containingFile }
         val dependencies = Dependencies(aggregating = true, *sourceFiles.toTypedArray())
 
         // File / object name. Per-subproject KSP runs (Phase G) pass
@@ -155,8 +189,9 @@ public class WhiskerComponentProcessor(
             w.appendLine("// `ksp { arg(\"whisker.crateName\", \"…\") }` so two modules can")
             w.appendLine("// both declare a `Hello` element without colliding.")
             w.appendLine("//")
-            w.appendLine("// Element registrations: ${elements.size}")
-            w.appendLine("// Module  registrations: ${modules.size}")
+            w.appendLine("// Element registrations:    ${elements.size}")
+            w.appendLine("// Module  registrations:    ${modules.size}")
+            w.appendLine("// DSL Module registrations: ${dslModules.size}")
             w.appendLine()
             w.appendLine("package rs.whisker.runtime.generated")
             w.appendLine()
@@ -170,6 +205,7 @@ public class WhiskerComponentProcessor(
             w.appendLine("import com.lynx.tasm.behavior.ui.LynxUI")
             w.appendLine("import rs.whisker.runtime.WhiskerModuleRegistry")
             w.appendLine("import rs.whisker.runtime.WhiskerValue")
+            w.appendLine("import rs.whisker.runtime.registerWithLynx")
             // `WhiskerValue.fromReadableMap` is a companion @JvmStatic
             // — resolved through WhiskerValue itself, no extra import.
             // `toJavaObject` is a top-level extension function, needs
@@ -399,6 +435,69 @@ public class WhiskerComponentProcessor(
                 w.appendLine("            name = \"$name\",")
                 w.appendLine("            dispatch = { method, args -> ${simple}_Dispatch.dispatch(method, args) },")
                 w.appendLine("        )")
+            }
+
+            // ---- Phase L-2c — DSL modules ---------------------------------
+            //
+            // For each `WhiskerModule` subclass:
+            //   1. Build an instance.
+            //   2. Read its `definitionLazy`.
+            //   3. If a `View(...)` block is present, register a
+            //      `Behavior` against the user's view class so Lynx
+            //      can instantiate it on element creation.
+            //   4. Call `.registerWithLynx()` so the DSL's Prop /
+            //      Function components install themselves via the
+            //      L-1 Class-explicit registration APIs.
+            //
+            // View-less DSL modules are valid declarations but L-2c
+            // doesn't wire their module-level Function dispatch
+            // (that path stays on the `@WhiskerModule` annotation
+            // through L-3); the registration skips them silently
+            // here and emits a debug log for the user.
+            if (dslModules.isNotEmpty()) {
+                w.appendLine("        // ---- DSL modules (Phase L-2c) ----")
+            }
+            for (cls in dslModules) {
+                val fqn = cls.qualifiedName?.asString()
+                if (fqn == null) {
+                    logger.warn(
+                        "WhiskerModule subclass has no qualified name; skipping",
+                        cls,
+                    )
+                    continue
+                }
+                val simple = cls.simpleName.asString()
+                val instanceLocal = "_dsl_${simple}"
+                val defLocal = "_dsl_def_${simple}"
+                val viewLocal = "_dsl_view_${simple}"
+                val nameLocal = "_dsl_name_${simple}"
+                w.appendLine("        run {")
+                w.appendLine("            val $instanceLocal = $fqn()")
+                w.appendLine("            val $defLocal = $instanceLocal.definitionLazy")
+                w.appendLine("            val $nameLocal = $defLocal.name")
+                w.appendLine("            val $viewLocal = $defLocal.view")
+                w.appendLine("            if ($nameLocal != null && $viewLocal != null) {")
+                // Tag namespacing matches @WhiskerComponent (see above).
+                val tagPrefix = if (crateName != null) "$crateName:" else ""
+                w.appendLine("                val qualifiedTag = \"$tagPrefix\" + $nameLocal")
+                w.appendLine("                val viewClass = $viewLocal.viewClass")
+                // Generic reflective instantiator. The Lynx UI
+                // subclass is required to expose a single-arg
+                // `(LynxContext)` constructor (matches the
+                // `WhiskerUI<View>(context)` convention authors
+                // already follow under the annotation API).
+                w.appendLine("                env.addBehavior(object : Behavior(qualifiedTag) {")
+                w.appendLine("                    override fun createUI(context: LynxContext): LynxUI<*> =")
+                w.appendLine("                        viewClass.getConstructor(LynxContext::class.java)")
+                w.appendLine("                            .newInstance(context) as LynxUI<*>")
+                w.appendLine("                    override fun createUIFiber(context: LynxContext): LynxUI<*> =")
+                w.appendLine("                        viewClass.getConstructor(LynxContext::class.java)")
+                w.appendLine("                            .newInstance(context) as LynxUI<*>")
+                w.appendLine("                })")
+                w.appendLine("                // Install prop setters + function dispatchers via L-1 APIs.")
+                w.appendLine("                $instanceLocal.registerWithLynx()")
+                w.appendLine("            }")
+                w.appendLine("        }")
             }
 
             w.appendLine("    }")
