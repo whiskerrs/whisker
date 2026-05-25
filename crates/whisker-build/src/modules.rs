@@ -247,10 +247,7 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
         };
         let manifest: ManifestRaw =
             serde_json::from_value(whisker_meta.clone()).with_context(|| {
-                format!(
-                    "parse [package.metadata.whisker] in {}",
-                    pkg.manifest_path,
-                )
+                format!("parse [package.metadata.whisker] in {}", pkg.manifest_path,)
             })?;
         let mut ios_sources: Vec<PathBuf> = Vec::new();
         let mut ios_swift: Vec<PathBuf> = Vec::new();
