@@ -160,3 +160,30 @@ public fun WhiskerValue.toJavaObject(): Any? = when (this) {
     is WhiskerValue.Map -> value.mapValues { (_, v) -> v.toJavaObject() }
     is WhiskerValue.Err -> mapOf("error" to message)
 }
+
+/**
+ * Wrap a raw Kotlin value (a DSL `Function` handler's return value,
+ * or a positional arg already unwrapped via [toJavaObject]) back
+ * into a [WhiskerValue]. Inverse of [toJavaObject] for the scalar
+ * + container cases. `Unit` / `null` collapse to [WhiskerValue.Null]
+ * — the convention the Rust side lifts into `()` / `Option::None`.
+ * A value that's already a [WhiskerValue] passes through unchanged
+ * (lets handlers return a `WhiskerValue` directly when they want
+ * full control, e.g. an explicit `Err`).
+ */
+public fun whiskerValueOf(v: Any?): WhiskerValue = when (v) {
+    null, Unit -> WhiskerValue.Null
+    is WhiskerValue -> v
+    is Boolean -> WhiskerValue.Bool(v)
+    is kotlin.Int -> WhiskerValue.Int(v.toLong())
+    is Long -> WhiskerValue.Int(v)
+    is Float -> WhiskerValue.Float(v.toDouble())
+    is Double -> WhiskerValue.Float(v)
+    is String -> WhiskerValue.Str(v)
+    is ByteArray -> WhiskerValue.Bytes(v)
+    is List<*> -> WhiskerValue.Array(v.map { whiskerValueOf(it) })
+    is Map<*, *> -> WhiskerValue.Map(
+        v.entries.associate { (k, value) -> k.toString() to whiskerValueOf(value) },
+    )
+    else -> WhiskerValue.Err("unsupported return type ${v::class.java.name}")
+}

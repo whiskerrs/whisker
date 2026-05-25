@@ -1,36 +1,18 @@
-// Phase L-3 — `whisker-hello-element` migrated to the new
-// `ModuleDefinition` DSL.
+// Phase L-3 — `whisker-hello-element` ModuleDefinition (Android).
 //
 // Replaces the pre-L-3 `@WhiskerComponent("Hello")`-annotated
-// `WhiskerHelloComponent` class. The Lynx tag stays
+// `WhiskerHelloComponent`. The Lynx tag stays
 // `whisker-hello-element:Hello` (the cargo crate name is the
-// namespace, prepended by the KSP processor / codegen plugin).
+// namespace, prepended by the KSP processor).
 //
-// Same shape on iOS — `HelloModule.swift` next to this file.
+// The `HelloView` Lynx UI subclass this references lives in
+// `HelloView.kt`. Same split on iOS (`HelloModule.swift` +
+// `HelloView.swift`).
 
 package rs.whisker.elements.hello
 
-import android.content.Context
-import android.graphics.Color
-import android.view.View
 import rs.whisker.runtime.ModuleDefinition
-import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerModule
-import rs.whisker.runtime.WhiskerUI
-
-/**
- * Plain Lynx UI subclass. No annotation; instantiated by the
- * Lynx behavior the DSL registers below via reflection. The
- * single-arg `(WhiskerContext)` constructor matches the convention
- * the KSP L-2c registration code expects.
- */
-open class HelloView(context: WhiskerContext) : WhiskerUI<View>(context) {
-    override fun createView(context: Context): View {
-        val view = View(context)
-        view.setBackgroundColor(Color.YELLOW)
-        return view
-    }
-}
 
 /**
  * DSL-driven module. The KSP L-2c processor discovers this class
@@ -41,8 +23,7 @@ open class HelloView(context: WhiskerContext) : WhiskerUI<View>(context) {
  *   - Registers a `Behavior("whisker-hello-element:Hello")` whose
  *     `createUI` instantiates `HelloView(context)`.
  *   - Calls `module.registerWithLynx()` so any Prop / Function
- *     declared below installs via L-1's
- *     `PropsUpdater.registerSetter(Class, Settable)` etc.
+ *     declared below installs via L-1's registration APIs.
  */
 class HelloModule : WhiskerModule() {
     override fun definition() = ModuleDefinition {

@@ -276,58 +276,79 @@ func render(
     // ---- Phase L-3 — DSL modules ---------------------------------------
     //
     // For each `class X : WhiskerModule` found in this target's
-    // sources:
-    //   1. Build an instance: `X()`
-    //   2. Read its `definitionLazy`.
-    //   3. If a `View(...)` block is present, register a Lynx
-    //      behavior bound to the view class declared inside it.
-    //   4. Call `.registerWithLynx()` so the DSL's Prop / Function
-    //      components install via the Obj-C-runtime path.
+    // sources, the registration block reads its `definitionLazy`
+    // (via a top-level instance referenced directly — same SwiftPM
+    // target, so no `NSClassFromString` / `@objc` pinning needed),
+    // then branches at runtime:
     //
-    // The view class comes from `def.view!.viewClass`, which is
-    // an `AnyClass`; we pass it to `LynxComponentRegistry.registerUI`
-    // verbatim. View-less DSL modules are silently skipped here
-    // (Phase L-3 only wires view-bearing modules; module-level
-    // `Function` dispatch stays on the `@WhiskerModule` annotation
-    // path until a follow-up).
+    //   - **View-bearing** (`def.view != nil`): register a Lynx
+    //     behavior bound to `def.view!.viewClass`, then
+    //     `module.registerWithLynx()` to install Prop / Function
+    //     dispatch (Obj-C-runtime path, L-2b).
+    //   - **View-less** (module-level `Function`s): register the
+    //     `@_cdecl` dispatch shim (emitted as a top-level decl
+    //     below) with the C bridge via
+    //     `whisker_bridge_register_module_dispatch(name, shim)`.
+    //
+    // The `@_cdecl` shim + the top-level module instance it
+    // dispatches against are emitted *after* the register fn (a
+    // forward reference within the same file is legal).
     if !sortedDSLModules.isEmpty {
         out += "        // ---- DSL modules (Phase L-3) ----\n"
     }
+    let tagPrefix = "\(crateName):"
     for hit in sortedDSLModules {
-        // Dual-resolution shape (same as @WhiskerComponent above):
-        // SwiftPM-target-prefixed name first, bare name fallback for
-        // authors that add `@objc(BareName)` themselves.
-        let qualifiedTag = "\(crateName):"  // prefix; `+ def.name!` at runtime
+        let instance = "_whiskerDSLInstance_\(hit.className)"
+        let shim = "_whiskerDSLDispatch_\(hit.className)"
         out += """
                 do {
-                    let cls: AnyClass? = NSClassFromString("\(targetName).\(hit.className)")
-                        ?? NSClassFromString("\(hit.className)")
-                    guard let cls = cls as? WhiskerModule.Type else {
-                        // Class isn't reachable via NSClassFromString
-                        // (probably stripped by the linker because the
-                        // user app never references it from non-Whisker
-                        // code). Authors can fix this by adding
-                        // `@objc(\(hit.className))` to the class to
-                        // pin its Obj-C name.
-                        break
-                    }
-                    let module = cls.init()
+                    let module = \(instance)
                     let def = module.definitionLazy
-                    if let name = def.name, let view = def.view {
-                        let viewClass: AnyClass = view.viewClass
-                        let fullTag = "\(qualifiedTag)" + name
-                        LynxComponentRegistry.registerUI(viewClass, withName: fullTag)
-                        module.registerWithLynx()
+                    if let name = def.name {
+                        if let view = def.view {
+                            LynxComponentRegistry.registerUI(view.viewClass, withName: "\(tagPrefix)" + name)
+                            module.registerWithLynx()
+                        } else {
+                            whisker_bridge_register_module_dispatch(name, \(shim))
+                        }
                     }
                 }
 
             """
     }
 
+    // Close the register fn.
     out += """
         }
 
         """
+
+    // ---- Top-level @_cdecl shims for DSL modules -----------------------
+    //
+    // One per DSL module. Always emitted (codegen can't know at
+    // build time whether a module is view-less); only registered at
+    // runtime when `def.view == nil`. The shim forwards the C-ABI
+    // call straight into `WhiskerModule.dispatchModuleFunctionRaw`.
+    for hit in sortedDSLModules {
+        let instance = "_whiskerDSLInstance_\(hit.className)"
+        let shim = "_whiskerDSLDispatch_\(hit.className)"
+        out += """
+            // Top-level instance + C-ABI dispatch shim for the DSL
+            // module `\(hit.className)`. The `let` is lazily
+            // initialised on first reference (Swift global semantics).
+            private let \(instance) = \(hit.className)()
+
+            @_cdecl("\(shim)")
+            public func \(shim)(
+                _ methodName: UnsafePointer<CChar>?,
+                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
+                _ argCount: Int
+            ) -> WhiskerValueRaw {
+                return \(instance).dispatchModuleFunctionRaw(methodName, argsPtr, argCount)
+            }
+
+        """
+    }
     return out
 }
 
