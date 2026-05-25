@@ -37,7 +37,13 @@ open class WhiskerModule {
     /// Designated init — empty so subclasses don't have to forward
     /// arguments. State setup happens inside `definition()` (or
     /// inside lifecycle hooks added in a follow-up).
-    public init() {}
+    ///
+    /// `required` so the codegen-emitted registration block can
+    /// construct an instance from a metatype value
+    /// (`cls.init()` where `cls: WhiskerModule.Type` is resolved
+    /// via `NSClassFromString`). Without `required`, Swift rejects
+    /// `metatype.init()` at compile time.
+    public required init() {}
 
     /// Authors override to declare the module via the DSL.
     /// Default impl returns an empty definition — useful for tests
