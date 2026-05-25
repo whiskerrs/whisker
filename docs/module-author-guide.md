@@ -118,13 +118,13 @@ crate-type = ["rlib"]
 [package.metadata.whisker]
 
 [dependencies]
-# Rename `whisker-modules-api` → `whisker` so the proc macros' emit
+# Rename `whisker-module` → `whisker` so the proc macros' emit
 # paths (`::whisker::ElementRef`, `::whisker::platform_module::WhiskerValue`,
 # …) resolve. Cargo doesn't allow `package = ...` with
 # `workspace = true`, so the version + path are inlined here. Drop
 # the `path = "..."` when you publish — `version = "x.y.z"` alone is
 # what consumers see from crates.io.
-whisker = { package = "whisker-modules-api", version = "0.1" }
+whisker = { package = "whisker-module", version = "0.1" }
 ```
 
 ### 2. Mark the crate as a module — `[package.metadata.whisker]`
@@ -152,7 +152,7 @@ module's metadata in one file that `cargo` already validates.)
 
 These are the SwiftPM + Gradle manifests the *consuming* app's host
 build references (`.package(path: …)` for iOS, a Gradle subproject for
-Android). They depend on `WhiskerModuleApi` / `:module-api`
+Android). They depend on `WhiskerModule` / `:module`
 respectively (provided by Whisker itself), plus whatever the module
 needs (third-party SwiftPM dep, AndroidX library, etc.). Both live at
 the crate root; `Package.swift`'s target `path:` points at
@@ -209,7 +209,7 @@ declares module-level `Function`s instead.
 ```swift
 // ios/Sources/WhiskerFoo/FooModule.swift
 import WhiskerComponents   // @WhiskerModule
-import WhiskerModuleApi    // Module, ModuleDefinition, DSL
+import WhiskerModule    // Module, ModuleDefinition, DSL
 
 @WhiskerModule
 public final class FooModule: Module {
@@ -226,7 +226,7 @@ public final class FooModule: Module {
 
 // ios/Sources/WhiskerFoo/FooView.swift
 import UIKit
-import WhiskerModuleApi
+import WhiskerModule
 
 @objc(FooView)
 public final class FooView: WhiskerUI<UIView> {
@@ -347,14 +347,14 @@ identity off its directory name.
 
 | Symbol | Crate / module | Used by |
 |---|---|---|
-| `#[whisker::platform_component("Tag")]` | `whisker-modules-api` (proc macro) | View-bearing modules |
-| `#[whisker::platform_module(name = "X")]` | `whisker-modules-api` (proc macro) | Function-only modules |
-| `#[whisker::element_methods(Props)]` | `whisker-modules-api` (proc macro) | Typed `ElementRef<T>::method()` dispatch |
+| `#[whisker::platform_component("Tag")]` | `whisker-module` (proc macro) | View-bearing modules |
+| `#[whisker::platform_module(name = "X")]` | `whisker-module` (proc macro) | Function-only modules |
+| `#[whisker::element_methods(Props)]` | `whisker-module` (proc macro) | Typed `ElementRef<T>::method()` dispatch |
 | `WhiskerValue`, `WhiskerModuleError` | `whisker::platform_module` | Both flavors |
 | `Signal<T>`, `ElementRef<T>`, `element_ref()` | `whisker` (top-level) | View-bearing modules' shim |
 | `@WhiskerModule` (marker) | `WhiskerComponents` SPM target / `rs.whisker.annotations.WhiskerModule` | iOS / Android DSL module classes |
-| `Module`, `ModuleDefinition`, `Name`/`View`/`Prop`/`Function`/`Events`/`Constants` | `WhiskerModuleApi` SPM target / `rs.whisker.runtime` Kotlin package | DSL `definition()` body |
-| `WhiskerUI<View>` / `WhiskerContext` / `WhiskerValue` | `WhiskerModuleApi` SPM target / `rs.whisker.runtime` Kotlin package | iOS / Android view classes |
+| `Module`, `ModuleDefinition`, `Name`/`View`/`Prop`/`Function`/`Events`/`Constants` | `WhiskerModule` SPM target / `rs.whisker.runtime` Kotlin package | DSL `definition()` body |
+| `WhiskerUI<View>` / `WhiskerContext` / `WhiskerValue` | `WhiskerModule` SPM target / `rs.whisker.runtime` Kotlin package | iOS / Android view classes |
 
 ## Future direction
 
@@ -365,4 +365,4 @@ they share the same `definition() -> ModuleDefinition` entry point and
 `@WhiskerComponent` / `@WhiskerProp` / `@WhiskerUIMethod` annotation
 set is being removed in Phase M (#212).
 
-See the Whisker Modules epic (#55) for the broader roadmap.
+See the Whisker Module epic (#55) for the broader roadmap.

@@ -1,4 +1,4 @@
-// Phase J — `whisker-module-api` minimal Android surface for
+// Phase J — `whisker-module` minimal Android surface for
 // third-party Whisker modules. Carved out of `whisker-runtime` so
 // modules pull in just the types they need (`WhiskerValue`,
 // `WhiskerUI` / `WhiskerContext` typealiases, `WhiskerApplication`)
@@ -57,7 +57,7 @@ dependencies {
 
     // Re-export the Whisker annotation set (from the KSP composite
     // build) so a module's `build.gradle.kts` only needs one
-    // runtime dep on `:module-api`. The `ksp(...)` processor dep
+    // runtime dep on `:module`. The `ksp(...)` processor dep
     // stays separate — it's build-time, not a runtime classpath.
     api("rs.whisker:annotations")
 }

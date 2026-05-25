@@ -10,7 +10,7 @@
 // `HelloView.kt`).
 
 import WhiskerComponents   // @WhiskerModule
-import WhiskerModuleApi    // Module, ModuleDefinition, DSL
+import WhiskerModule    // Module, ModuleDefinition, DSL
 
 /// DSL-driven module. `@WhiskerModule` marks it for registration;
 /// the SwiftPM codegen plugin (L-3) discovers the attribute, then

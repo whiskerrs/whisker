@@ -1,6 +1,6 @@
 // Phase L-2a — `ModuleDefinition` DSL surface (Android).
 //
-// Kotlin counterpart of `platforms/ios/Sources/WhiskerModuleApi/
+// Kotlin counterpart of `platforms/ios/Sources/WhiskerModule/
 // ModuleDefinition.swift`. Modeled after Expo Modules'
 // `ModuleDefinition` (https://docs.expo.dev/modules/module-api/).
 //

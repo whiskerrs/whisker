@@ -63,7 +63,7 @@ public macro WhiskerComponent(_ tag: String) =
 ///
 /// ```swift
 /// import WhiskerComponents   // @WhiskerModule
-/// import WhiskerModuleApi    // Module, ModuleDefinition, DSL
+/// import WhiskerModule    // Module, ModuleDefinition, DSL
 ///
 /// @WhiskerModule
 /// public final class VideoModule: Module {

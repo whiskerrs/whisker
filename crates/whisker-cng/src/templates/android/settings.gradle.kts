@@ -24,8 +24,8 @@ dependencyResolutionManagement {
 
 rootProject.name = "{{android_project_name}}"
 include(":app")
-include(":module-api")
-project(":module-api").projectDir = file("{{whisker_modules_api_android_path}}")
+include(":module")
+project(":module").projectDir = file("{{whisker_module_android_path}}")
 include(":whisker-runtime")
 project(":whisker-runtime").projectDir = file("{{whisker_runtime_android_path}}")
 

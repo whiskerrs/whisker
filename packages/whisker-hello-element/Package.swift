@@ -51,7 +51,7 @@ let package = Package(
     dependencies: [
         // Package.swift at the package root (SwiftPM requirement;
         // identity = crate dir name, unique). WhiskerComponents
-        // ships the codegen build-tool plugin; WhiskerModuleApi
+        // ships the codegen build-tool plugin; WhiskerModule
         // exposes the `WhiskerUI` / `WhiskerContext` typealiases +
         // `WhiskerValue` + transitive `@_exported import Lynx`.
         .package(name: "macros", path: whiskerMacrosPath),
@@ -62,7 +62,7 @@ let package = Package(
             name: "WhiskerHelloElement",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
-                .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
+                .product(name: "WhiskerModule", package: "WhiskerRuntime"),
             ],
             // Swift sources under the package's `ios/` directory
             // (Expo-style layout), next to `android/` and `src/`.

@@ -34,7 +34,7 @@ extension Module {
     }
 
     /// C-ABI bridge the codegen-emitted `@_cdecl` shim calls. Lives
-    /// in `WhiskerModuleApi` (same module as `WhiskerValue`) so it
+    /// in `WhiskerModule` (same module as `WhiskerValue`) so it
     /// can reach the `internal` `decodeArray` / `toRaw` helpers —
     /// keeping those off the public surface while still letting the
     /// generated shim (in the module author's target) dispatch with

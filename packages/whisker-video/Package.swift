@@ -45,9 +45,9 @@ let package = Package(
             name: "WhiskerVideo",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
-                // WhiskerModuleApi re-exports Lynx transitively, so
+                // WhiskerModule re-exports Lynx transitively, so
                 // no separate `Lynx` product dep is needed.
-                .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
+                .product(name: "WhiskerModule", package: "WhiskerRuntime"),
             ],
             // Swift sources live under the package's `ios/` directory
             // (Expo-style layout), next to `android/` and `src/`.

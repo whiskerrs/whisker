@@ -47,7 +47,7 @@ let package = Package(
         // resolve. Module Package.swift files should depend on this
         // product, NOT on `WhiskerRuntime` (that's the *host* surface
         // including WhiskerView / WhiskerViewController / AppDelegate).
-        .library(name: "WhiskerModuleApi", targets: ["WhiskerModuleApi"]),
+        .library(name: "WhiskerModule", targets: ["WhiskerModule"]),
         .library(name: "WhiskerRuntime", targets: ["WhiskerRuntime"]),
         // Re-export the binary `WhiskerDriver` framework so external
         // packages can `import WhiskerDriver` to see the C ABI
@@ -105,18 +105,18 @@ let package = Package(
         // or the WhiskerDriver C ABI surface.
         //
         // `WhiskerLynxAliases.swift` does `@_exported import Lynx`,
-        // so a consumer's `import WhiskerModuleApi` transitively pulls
+        // so a consumer's `import WhiskerModule` transitively pulls
         // the Lynx symbols needed to subclass `LynxUI<View>`.
         .target(
-            name: "WhiskerModuleApi",
+            name: "WhiskerModule",
             dependencies: ["Lynx"],
-            path: "Sources/WhiskerModuleApi"
+            path: "Sources/WhiskerModule"
         ),
 
         .target(
             name: "WhiskerRuntime",
             dependencies: [
-                "WhiskerModuleApi",
+                "WhiskerModule",
                 "WhiskerDriver",
                 "Lynx",
                 "LynxBase",

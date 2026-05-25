@@ -16,9 +16,9 @@
 //
 // ```
 // swiftc -o /tmp/l2b_smoke \
-//   platforms/ios/Sources/WhiskerModuleApi/ModuleDefinition.swift \
-//   platforms/ios/Sources/WhiskerModuleApi/Module.swift \
-//   platforms/ios/Sources/WhiskerModuleApi/WhiskerModuleRegistrar.swift \
+//   platforms/ios/Sources/WhiskerModule/ModuleDefinition.swift \
+//   platforms/ios/Sources/WhiskerModule/Module.swift \
+//   platforms/ios/Sources/WhiskerModule/WhiskerModuleRegistrar.swift \
 //   platforms/ios/tools/l2b_lynx_installer_smoke.swift
 // /tmp/l2b_smoke
 // ```

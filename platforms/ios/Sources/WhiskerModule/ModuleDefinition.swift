@@ -320,13 +320,13 @@ public func Prop<V: AnyObject, T>(
     WhiskerPropComponent(name: name) { uiAny, valueAny in
         guard let ui = uiAny as? V else {
             #if DEBUG
-            print("WhiskerModuleApi: Prop(\"\(name)\") view type mismatch — expected \(V.self), got \(type(of: uiAny))")
+            print("WhiskerModule: Prop(\"\(name)\") view type mismatch — expected \(V.self), got \(type(of: uiAny))")
             #endif
             return
         }
         guard let value = valueAny as? T else {
             #if DEBUG
-            print("WhiskerModuleApi: Prop(\"\(name)\") value type mismatch — expected \(T.self), got \(type(of: valueAny as Any))")
+            print("WhiskerModule: Prop(\"\(name)\") value type mismatch — expected \(T.self), got \(type(of: valueAny as Any))")
             #endif
             return
         }

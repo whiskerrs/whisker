@@ -63,9 +63,9 @@ fn sync_android(
         .context("resolve Whisker's platforms/android/whisker-runtime")?;
     // Phase J — the smaller module-author subproject. Carved out of
     // `whisker-runtime` so third-party Whisker modules depend only
-    // on `:module-api`.
-    let whisker_modules_api = resolve_whisker_platform(workspace_root, "android/module-api")
-        .context("resolve Whisker's platforms/android/module-api")?;
+    // on `:module`.
+    let whisker_module = resolve_whisker_platform(workspace_root, "android/module")
+        .context("resolve Whisker's platforms/android/module")?;
     // Lynx AARs are not required to *exist* at sync time — they only
     // matter at gradle resolution. We still pass the canonical path
     // so the generated settings.gradle.kts always knows where to
@@ -82,7 +82,7 @@ fn sync_android(
         app_config,
         package.replace('-', "_"),
         whisker_runtime,
-        whisker_modules_api,
+        whisker_module,
         lynx_aars,
         whisker_android_ksp,
     )?;

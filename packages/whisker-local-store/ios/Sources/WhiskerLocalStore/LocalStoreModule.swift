@@ -13,7 +13,7 @@
 // The storage logic lives in `LocalStore.swift`.
 
 import WhiskerComponents   // @WhiskerModule
-import WhiskerModuleApi    // Module, ModuleDefinition, DSL
+import WhiskerModule    // Module, ModuleDefinition, DSL
 
 @WhiskerModule
 public final class LocalStoreModule: Module {

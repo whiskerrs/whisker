@@ -50,7 +50,7 @@ let package = Package(
             name: "WhiskerLocalStore",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
-                .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
+                .product(name: "WhiskerModule", package: "WhiskerRuntime"),
                 .product(name: "OrderedCollections", package: "swift-collections"),
             ],
             // Swift sources under the package's `ios/` directory

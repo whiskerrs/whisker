@@ -228,11 +228,11 @@ crate-type = ["rlib"]
 [package.metadata.whisker]
 
 [dependencies]
-# Rename `whisker-modules-api` -> `whisker` so the proc macros' emit
+# Rename `whisker-module` -> `whisker` so the proc macros' emit
 # paths (::whisker::ElementRef, ::whisker::platform_module::WhiskerValue,
 # ...) resolve. Cargo doesn't allow `package = ...` with
 # `workspace = true`, so the version is inlined here.
-whisker = {{ package = "whisker-modules-api", version = "0.1" }}
+whisker = {{ package = "whisker-module", version = "0.1" }}
 "#,
         name = v.crate_name,
     )
@@ -316,7 +316,7 @@ let package = Package(
             name: "{spm}",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
-                .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
+                .product(name: "WhiskerModule", package: "WhiskerRuntime"),
             ],
             path: "ios/Sources/{spm}",
             plugins: [
@@ -373,10 +373,10 @@ ksp {{
 }}
 
 dependencies {{
-    // Single Whisker runtime dep — :module-api re-exports
+    // Single Whisker runtime dep — :module re-exports
     // rs.whisker:annotations transitively. ksp(rs.whisker:ksp)
     // stays separate because it's build-time, not runtime.
-    implementation(project(":module-api"))
+    implementation(project(":module"))
     ksp("rs.whisker:ksp")
 }}
 "#,
@@ -461,7 +461,7 @@ fn swift_view_module(v: &Vars) -> String {
 // in `{view_class}.swift`.
 
 import WhiskerComponents   // @WhiskerModule
-import WhiskerModuleApi    // Module, ModuleDefinition, DSL
+import WhiskerModule    // Module, ModuleDefinition, DSL
 
 @WhiskerModule
 public final class {module_class}: Module {{
@@ -494,7 +494,7 @@ fn swift_view(v: &Vars) -> String {
 // codegen plugin's `NSClassFromString` lookup resolves it.
 
 import UIKit
-import WhiskerModuleApi
+import WhiskerModule
 
 @objc({view_class})
 public final class {view_class}: WhiskerUI<UIView> {{
@@ -594,7 +594,7 @@ fn swift_function_module(v: &Vars) -> String {
 // `Whisker{tag}::placeholder()` on the Rust side routes here.
 
 import WhiskerComponents   // @WhiskerModule
-import WhiskerModuleApi    // Module, ModuleDefinition, DSL
+import WhiskerModule    // Module, ModuleDefinition, DSL
 
 @WhiskerModule
 public final class {module_class}: Module {{

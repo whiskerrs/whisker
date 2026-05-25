@@ -189,9 +189,9 @@ func render(
         import WhiskerRuntime
         // Phase L-3 — the DSL discovery path emits
         // `MyModule().registerWithLynx()` calls; `registerWithLynx`
-        // lives in `WhiskerModuleApi` (`WhiskerModuleRegistrar.swift`)
+        // lives in `WhiskerModule` (`WhiskerModuleRegistrar.swift`)
         // as an extension on `WhiskerModule`.
-        import WhiskerModuleApi
+        import WhiskerModule
 
         /// Per-target registration entry point. The aggregator
         /// (`gen/ios/whisker_modules/Sources/WhiskerModules/RegisterAll.swift`,
