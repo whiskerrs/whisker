@@ -9,10 +9,11 @@
 // `HelloView.swift`. Same split on Android (`HelloModule.kt` +
 // `HelloView.kt`).
 
-import WhiskerModuleApi
+import WhiskerComponents   // @WhiskerModule
+import WhiskerModule    // Module, ModuleDefinition, DSL
 
-/// DSL-driven module. The SwiftPM codegen plugin (L-3) discovers
-/// this class by spotting the `: WhiskerModule` inheritance, then
+/// DSL-driven module. `@WhiskerModule` marks it for registration;
+/// the SwiftPM codegen plugin (L-3) discovers the attribute, then
 /// emits a registration block that:
 ///
 ///   - Reads `definitionLazy.view!.viewClass` (== `HelloView`).
@@ -20,7 +21,8 @@ import WhiskerModuleApi
 ///     "whisker-hello-element:Hello")`.
 ///   - Calls `module.registerWithLynx()` so any Prop / Function
 ///     declared below installs via the Obj-C-runtime path (L-2b).
-public final class HelloModule: WhiskerModule {
+@WhiskerModule
+public final class HelloModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("Hello")

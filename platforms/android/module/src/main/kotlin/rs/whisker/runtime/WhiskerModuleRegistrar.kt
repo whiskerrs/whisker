@@ -57,7 +57,7 @@ import com.lynx.tasm.behavior.utils.PropsUpdater
  * Idempotent — re-registering replaces the prior entry
  * (last-write-wins on both maps).
  */
-public fun WhiskerModule.registerWithLynx() {
+public fun Module.registerWithLynx() {
     val def = definitionLazy
     val viewBlock = def.view
 

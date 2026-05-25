@@ -17,26 +17,34 @@ include = [
     "Cargo.toml",
     "Package.swift",
     "build.gradle.kts",
-    "whisker.module.toml",
     "src/lib.rs",
-    "src/android/**/*.kt",
-    "src/ios/**/*.swift",
+    "android/**/*.kt",
+    "ios/**/*.swift",
     "README.md",
 ]
 
 [lib]
 crate-type = ["rlib"]
 
+# Module-system opt-in marker. The bare table identifies this cargo
+# crate as a Whisker module; `whisker-build` walks the consuming
+# app's dep tree, picks out every dep carrying it, and wires the
+# Android Gradle subproject (`android/build.gradle.kts`) + iOS
+# SwiftPM package (`ios/Package.swift`) into the host build. No
+# source list needed — the per-platform manifests are the source of
+# truth.
+[package.metadata.whisker]
+
 [dependencies]
-# Rename `whisker-modules-api` → `whisker` so the proc macros' emit
+# Rename `whisker-module` → `whisker` so the proc macros' emit
 # paths (`::whisker::ElementRef`, `::whisker::runtime::view::Element`,
 # `::whisker::platform_module::WhiskerValue`, …) resolve in this
 # module crate. The umbrella `whisker` crate isn't a dep — module
-# crates only need the smaller `whisker-modules-api` surface. See
-# `crates/whisker-modules-api/src/lib.rs` for the contract.
+# crates only need the smaller `whisker-module` surface. See
+# `crates/whisker-module/src/lib.rs` for the contract.
 #
 # Cargo doesn't allow combining `package = ...` with `workspace = true`,
 # so the version + path are inlined here. Keep the version pinned to
 # the workspace-wide `[workspace.package].version` so publishes stay
 # in lock-step.
-whisker = { package = "whisker-modules-api", path = "../../crates/whisker-modules-api", version = "0.1.0" }
+whisker = { package = "whisker-module", path = "../../crates/whisker-module", version = "0.1.0" }

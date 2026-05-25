@@ -343,7 +343,18 @@ async fn ios_install_and_launch(
         .args(["-destination", "generic/platform=iOS Simulator"])
         .arg("-derivedDataPath")
         .arg(&derived)
-        .args(["-quiet", "build"]);
+        .args(["-quiet", "build"])
+        // Inject the absolute location of Whisker's iOS runtime +
+        // macros packages so each module's Package.swift resolves
+        // them via `Context.environment` (with a relative fallback)
+        // instead of a fixed `../../platforms/ios`. Same values the
+        // generated aggregator Package.swift uses, so SwiftPM dedupes
+        // by identity. Mirrors the Android `projectDir` injection.
+        .env("WHISKER_IOS_RUNTIME", workspace_root.join("platforms/ios"))
+        .env(
+            "WHISKER_IOS_MACROS",
+            workspace_root.join("platforms/ios/macros"),
+        );
     let xc_status = run_filtered(xc_cmd, SimctlNoise::Xcodebuild)
         .await
         .context("spawn xcodebuild")?;

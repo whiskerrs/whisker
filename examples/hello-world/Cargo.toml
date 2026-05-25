@@ -22,18 +22,18 @@ whisker = { workspace = true }
 
 # Phase 7-Φ.F: the `Hello` platform component lives in a separate
 # module crate now. `whisker run` walks this app's dep tree, picks
-# up the module's `whisker.module.toml`, and folds its Swift /
-# Kotlin sources into the iOS / Android builds. Removing this dep
-# removes the pink bar from the rendered output — a useful smoke
+# up the module's `[package.metadata.whisker]` marker, and folds its
+# Swift / Kotlin sources into the iOS / Android builds. Removing this
+# dep removes the pink bar from the rendered output — a useful smoke
 # test of the module-discovery pipeline.
 whisker-hello-element = { path = "../../packages/whisker-hello-element" }
 
 # Phase 7-Φ.E.8 demo: persist the heart-toggle bitmask in
 # UserDefaults (iOS) / SharedPreferences (Android) so the liked
 # mixes survive app restarts. The dep walk picks up the module's
-# `whisker.module.toml`, stages the Swift / Kotlin
-# `WhiskerLocalStoreImpl` into the gen tree, and the platform-side
-# annotation discovery wires the registration end-to-end.
+# `[package.metadata.whisker]` marker, stages the Swift / Kotlin
+# DSL module into the gen tree, and the `@WhiskerModule` discovery
+# wires the registration end-to-end.
 whisker-local-store = { path = "../../packages/whisker-local-store" }
 
 # Phase 7-Φ.H.2.6 demo: imperative element-method dispatch

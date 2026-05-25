@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Phase L-2b runtime smoke test runner.
 #
-# Compiles the WhiskerModuleApi DSL + registrar sources together
+# Compiles the WhiskerModule DSL + registrar sources together
 # with the in-tree smoke driver, runs the binary, and reports
 # the result. No iOS simulator / Lynx framework needed — the
 # smoke test stubs the LynxUI surface and exercises only the
@@ -22,9 +22,9 @@ tmp_bin="$(mktemp -d)/l2b_smoke"
 # expressions in the other files. Combined with a `@main`
 # attribute on the entry struct below.
 swiftc -o "${tmp_bin}" -parse-as-library \
-  "${repo_root}/platforms/ios/Sources/WhiskerModuleApi/ModuleDefinition.swift" \
-  "${repo_root}/platforms/ios/Sources/WhiskerModuleApi/WhiskerModule.swift" \
-  "${repo_root}/platforms/ios/Sources/WhiskerModuleApi/WhiskerModuleRegistrar.swift" \
+  "${repo_root}/platforms/ios/Sources/WhiskerModule/ModuleDefinition.swift" \
+  "${repo_root}/platforms/ios/Sources/WhiskerModule/Module.swift" \
+  "${repo_root}/platforms/ios/Sources/WhiskerModule/WhiskerModuleRegistrar.swift" \
   "${repo_root}/platforms/ios/tools/l2b_lynx_installer_smoke.swift"
 
 "${tmp_bin}"

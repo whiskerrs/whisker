@@ -33,7 +33,7 @@ A small framework-provided type. Module authors use it when wiring up
 their platform-component wrappers; end-users normally never see it.
 
 ```rust
-// crates/whisker-modules-api
+// crates/whisker-module
 use whisker::reactive::{RwSignal, Signal, signal};
 
 #[derive(Clone)]
@@ -541,7 +541,7 @@ attribute` error, prompting authors to migrate.
 
 | Step | Scope |
 |---|---|
-| **N-1** | Add `ElementRef`, `RefError`, `WhiskerValue::try_into_*` helpers to `whisker-modules-api`. Existing `RefHandle` aliased. |
+| **N-1** | Add `ElementRef`, `RefError`, `WhiskerValue::try_into_*` helpers to `whisker-module`. Existing `RefHandle` aliased. |
 | **N-2** | `#[platform_component]` macro recognizes `ref:` props of type `ElementRef` and emits mount/unmount `__bind` / `__unbind` calls. `#[component]` no longer treats `ref:` specially — Handle props are ordinary `Clone` props. |
 | **N-3** | Migrate `whisker-video`, `whisker-hello-element`, `whisker-local-store` to the `VideoHandle` + wrapper-component + bridge-effects pattern. |
 | **N-4** | Built-in handles: `TextInputHandle`, `ScrollViewHandle`, `ViewHandle`. Update built-in platform components to expose them. |

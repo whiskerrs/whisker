@@ -173,8 +173,8 @@ pub fn build_xcframework_with(
     };
 
     // Module-system discovery (Phase 7-Φ.F). Walks the consuming
-    // app's cargo dep graph for any sibling `whisker.module.toml`,
-    // collects the iOS native-source paths, and passes them through
+    // app's cargo dep graph for any `[package.metadata.whisker]`
+    // table, collects the iOS native-source paths, and passes them through
     // `WHISKER_IOS_MODULE_NATIVE_SOURCES` to `whisker-driver-sys`'s
     // build.rs — which then folds them into its `cc::Build` so each
     // module's `LYNX_REGISTER_UI(...)` constructor ends up inside
@@ -529,6 +529,19 @@ pub struct XcodebuildArgs<'a> {
     /// `-derivedDataPath` value. Picked by the caller so the gen
     /// tree stays drift-free for the next sync.
     pub derived_data: &'a Path,
+    /// Absolute path to Whisker's `platforms/ios` SwiftPM package.
+    /// Exported to `xcodebuild` as `WHISKER_IOS_RUNTIME` so each
+    /// module's `Package.swift` resolves its `WhiskerRuntime`
+    /// dependency by env (with a relative fallback) instead of a
+    /// hardcoded `../../platforms/ios` — which only works when the
+    /// module sits at a fixed depth in the monorepo. Mirrors how the
+    /// Android side injects each module's `projectDir`. `None` skips
+    /// the export (the module then relies on its relative fallback).
+    pub whisker_runtime_path: Option<&'a Path>,
+    /// Absolute path to Whisker's `platforms/ios/macros` SwiftPM
+    /// package. Exported as `WHISKER_IOS_MACROS`. Sibling of
+    /// [`Self::whisker_runtime_path`].
+    pub whisker_ios_macros_path: Option<&'a Path>,
 }
 
 /// Generate the iOS module-aggregator SwiftPM package under
@@ -589,7 +602,7 @@ pub fn stage_module_swift_sources(
 
     // Each module package contributes via its own Package.swift in
     // its manifest dir. Discovery signal: presence of `Package.swift`
-    // next to `whisker.module.toml` (Phase G dropped the
+    // next to the crate's `Cargo.toml` (Phase G dropped the
     // `swift_sources` field as the staging trigger). Modules that
     // are Android-only naturally don't have a Package.swift, so
     // they're skipped here without further filtering.
@@ -786,17 +799,22 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
         other => return Err(anyhow!("unknown SDK: {other}")),
     };
 
-    let status = Command::new("xcodebuild")
-        .arg("-project")
+    let mut cmd = Command::new("xcodebuild");
+    cmd.arg("-project")
         .arg(&project)
         .args(["-scheme", args.scheme])
         .args(["-configuration", args.configuration])
         .args(["-destination", &destination])
         .arg("-derivedDataPath")
         .arg(args.derived_data)
-        .args(["-quiet", "build"])
-        .status()
-        .context("spawn xcodebuild")?;
+        .args(["-quiet", "build"]);
+    if let Some(p) = args.whisker_runtime_path {
+        cmd.env("WHISKER_IOS_RUNTIME", p);
+    }
+    if let Some(p) = args.whisker_ios_macros_path {
+        cmd.env("WHISKER_IOS_MACROS", p);
+    }
+    let status = cmd.status().context("spawn xcodebuild")?;
     if !status.success() {
         return Err(anyhow!("xcodebuild failed ({status})"));
     }
@@ -856,6 +874,8 @@ mod tests {
             configuration: "Release",
             xcodeproj_name: "X",
             derived_data: &dd,
+            whisker_runtime_path: None,
+            whisker_ios_macros_path: None,
         };
         let err = run_xcodebuild_app(&args).unwrap_err();
         assert!(
@@ -879,6 +899,8 @@ mod tests {
             configuration: "Release",
             xcodeproj_name: "X",
             derived_data: &dd,
+            whisker_runtime_path: None,
+            whisker_ios_macros_path: None,
         };
         let err = run_xcodebuild_app(&args).unwrap_err();
         assert!(err.to_string().contains("unknown SDK"), "got: {err:#}");

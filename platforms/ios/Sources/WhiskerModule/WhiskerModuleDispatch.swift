@@ -15,7 +15,7 @@
 
 import Foundation
 
-extension WhiskerModule {
+extension Module {
     /// Dispatch a module-level `Function` by name. Public so it's
     /// unit-testable against `[WhiskerValue]` without the C ABI.
     public func dispatchModuleFunction(
@@ -34,7 +34,7 @@ extension WhiskerModule {
     }
 
     /// C-ABI bridge the codegen-emitted `@_cdecl` shim calls. Lives
-    /// in `WhiskerModuleApi` (same module as `WhiskerValue`) so it
+    /// in `WhiskerModule` (same module as `WhiskerValue`) so it
     /// can reach the `internal` `decodeArray` / `toRaw` helpers —
     /// keeping those off the public surface while still letting the
     /// generated shim (in the module author's target) dispatch with

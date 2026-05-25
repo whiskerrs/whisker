@@ -2,7 +2,7 @@
 //
 // These samples exist purely so a `compileDebugKotlin` failure
 // against the DSL surface surfaces here at build time. They're
-// `internal` so they don't show up in the public module-api ABI;
+// `internal` so they don't show up in the public module ABI;
 // strip in a follow-up if they're holding back stripping the
 // annotation-based API path.
 //
@@ -55,9 +55,9 @@ internal object ModuleDefinitionSamples {
         }
     }
 
-    // ---- WhiskerModule subclass shape ----------------------------------
+    // ---- Module subclass shape -----------------------------------------
 
-    internal class StubModule : WhiskerModule() {
+    internal class StubModule : Module() {
         override fun definition(): ModuleDefinition = videoModuleDefinition()
     }
 }

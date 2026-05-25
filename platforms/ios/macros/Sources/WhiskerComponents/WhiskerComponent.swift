@@ -47,67 +47,47 @@
 public macro WhiskerComponent(_ tag: String) =
     #externalMacro(module: "WhiskerComponentsMacros", type: "WhiskerComponentMacro")
 
-/// Marks a class as a Whisker platform module under `name`.
+/// Marks a `Module` subclass as a Whisker module the build should
+/// register.
 ///
-/// Apply to a class whose instance methods follow the shape
-/// `func name(_ args: [WhiskerValue]) -> WhiskerValue` — that's
-/// the wire contract the C bridge dispatches against. The class
-/// must have a zero-arg initialiser (`init()`); a fresh instance
-/// is constructed per dispatch.
-///
-/// The macro expands into a top-level `@_cdecl` C-callable
-/// dispatch shim that switches on the incoming method name and
-/// routes to the matching instance method. The
-/// `WhiskerComponentsCodegen` SwiftPM build-tool plugin discovers
-/// the annotation at build time and emits a
-/// `whisker_bridge_register_module_dispatch(name, _whiskerDispatch_…)`
-/// call into `WhiskerModuleBehaviors.swift` so the C bridge's
-/// by-name lookup finds the shim at runtime.
-///
-/// Pairs with the Rust-side `#[whisker::platform_module]` proc macro
-/// (Phase 7-Φ.E.5) — the Swift class provides the platform-side
-/// implementation, the Rust proxy provides the typed call surface.
-/// Authors are encouraged to hand-write a separate typed wrapper
-/// in front of the proc-macro-emitted unit struct rather than
-/// publish the `[WhiskerValue]`-shaped API directly.
+/// Applying `@WhiskerModule` is the registration trigger — the
+/// `WhiskerComponentsCodegen` SwiftPM build-tool plugin scans the
+/// target's sources for it and emits the Lynx behaviour /
+/// module-dispatch registration into `<Target>+Generated.swift`.
+/// The module's local tag / name comes from the `Name("…")` entry
+/// inside `definition()`, so the annotation itself takes no
+/// arguments. It plays the role of Expo's
+/// `expo-module.config.json` entry, but inline at the declaration
+/// (idiomatic Swift: an attribute marks the entry point, like
+/// `@main`).
 ///
 /// ```swift
-/// import WhiskerComponents
-/// import WhiskerRuntime  // brings WhiskerValue + WhiskerValueRaw into scope
+/// import WhiskerComponents   // @WhiskerModule
+/// import WhiskerModule    // Module, ModuleDefinition, DSL
 ///
-/// @WhiskerModule("WhiskerStorage")
-/// public class WhiskerStorageImpl {
-///     func save(_ args: [WhiskerValue]) -> WhiskerValue {
-///         guard args.count >= 2,
-///               case .string(let key)   = args[0],
-///               case .string(let value) = args[1] else {
-///             return .bool(false)
+/// @WhiskerModule
+/// public final class VideoModule: Module {
+///     public override func definition() -> ModuleDefinition {
+///         Name("Video")
+///         View(VideoView.self) {
+///             Prop("src") { (view: VideoView, value: String) in view.setSrc(value) }
+///             Function("play") { (view: VideoView) in view.play() }
 ///         }
-///         UserDefaults.standard.set(value, forKey: key)
-///         return .bool(true)
 ///     }
 /// }
 /// ```
 ///
-/// Phase 7-Φ.F: dispatch shim replaces the previous Obj-C
-/// `NSInvocation`-based registry. The class no longer needs to
-/// inherit from `NSObject` or declare `@objc` selectors.
-// `names: prefixed(...)` covers both peer functions the macro
-// emits:
-//   - `_whiskerDispatch_<ClassName>` — the @_cdecl C dispatch shim
-//   - `_whiskerRegister_<ClassName>` — a tiny registration helper
-//     that calls `whisker_bridge_register_module_dispatch`. Lives
-//     in the same .o as the dispatch shim so Swift can convert
-//     the dispatch fn to `@convention(c)` locally (no inter-.o
-//     thunk → no duplicate-symbol linker error in Debug). The
-//     codegen plugin calls `_whiskerRegister_<ClassName>()` rather
-//     than taking the dispatch shim's address directly.
-//
-// Swift rejects `names: arbitrary` on peer macros at global scope
-// (a macro could otherwise shadow any top-level decl), so we
-// enumerate each prefix explicitly.
-@attached(peer, names: prefixed(_whiskerDispatch_), prefixed(_whiskerRegister_))
-public macro WhiskerModule(_ name: String) =
+/// Companion of Android's `@WhiskerModule` (KSP). The macro itself
+/// expands to nothing — it's a pure marker; the codegen plugin
+/// does the registration work by scanning for the attribute.
+///
+/// Declared as a `member` macro (not `peer`) so it's valid on a
+/// top-level class: Swift forbids `peer` macros that introduce
+/// `arbitrary` names at global scope, but a `member` macro's names
+/// live inside the type's scope. The macro produces no members —
+/// the role is just a vehicle for a valid marker attribute.
+@attached(member, names: arbitrary)
+public macro WhiskerModule() =
     #externalMacro(module: "WhiskerComponentsMacros", type: "WhiskerModuleMacro")
 
 /// Marks a `WhiskerUI` subclass's method as a UI method invokable

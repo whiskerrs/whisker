@@ -10,7 +10,8 @@
 // ## Target syntax
 //
 // ```swift
-// public final class VideoModule: WhiskerModule {
+// @WhiskerModule
+// public final class VideoModule: Module {
 //     public override func definition() -> ModuleDefinition {
 //         Name("Video")
 //
@@ -35,7 +36,8 @@
 // inner `View(...)` block:
 //
 // ```swift
-// public final class LocalStoreModule: WhiskerModule {
+// @WhiskerModule
+// public final class LocalStoreModule: Module {
 //     public override func definition() -> ModuleDefinition {
 //         Name("WhiskerLocalStore")
 //         Function("save") { (key: String, value: String) -> Bool in
@@ -52,12 +54,10 @@
 // ## What L-2a delivers
 //
 // This file defines the **DSL surface and value model**. The
-// `WhiskerModule` base class collects the `ModuleDefinition` at
-// init time but does **not** yet wire it into Lynx — the iOS
-// dispatch glue lands in Phase L-2b, the Android KSP codegen in
-// L-2c. Module authors can already declare modules with the DSL,
-// and the `@WhiskerComponent` annotation path continues to drive
-// real registrations in parallel.
+// `Module` base class collects the `ModuleDefinition` at init time;
+// the iOS dispatch glue (L-2b) + the `WhiskerComponentsCodegen`
+// plugin's `@WhiskerModule` discovery wire it into Lynx's prop /
+// method dispatch tables.
 
 import Foundation
 
@@ -320,13 +320,13 @@ public func Prop<V: AnyObject, T>(
     WhiskerPropComponent(name: name) { uiAny, valueAny in
         guard let ui = uiAny as? V else {
             #if DEBUG
-            print("WhiskerModuleApi: Prop(\"\(name)\") view type mismatch — expected \(V.self), got \(type(of: uiAny))")
+            print("WhiskerModule: Prop(\"\(name)\") view type mismatch — expected \(V.self), got \(type(of: uiAny))")
             #endif
             return
         }
         guard let value = valueAny as? T else {
             #if DEBUG
-            print("WhiskerModuleApi: Prop(\"\(name)\") value type mismatch — expected \(T.self), got \(type(of: valueAny as Any))")
+            print("WhiskerModule: Prop(\"\(name)\") value type mismatch — expected \(T.self), got \(type(of: valueAny as Any))")
             #endif
             return
         }

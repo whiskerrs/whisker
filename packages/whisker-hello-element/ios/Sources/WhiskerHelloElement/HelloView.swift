@@ -8,7 +8,7 @@
 // either name.
 
 import UIKit
-import WhiskerModuleApi
+import WhiskerModule
 
 @objc(HelloView)
 public final class HelloView: WhiskerUI<UIView> {

@@ -104,7 +104,7 @@ pub mod __tags {
 
     // `apply_styles` / `apply_attr` moved to
     // `whisker_runtime::view::apply` (Phase J) so the
-    // `whisker-modules-api` re-export crate can reach them on the
+    // `whisker-module` re-export crate can reach them on the
     // same import path. Re-export here for any caller that still
     // routes through `::whisker::__tags::apply_styles` —
     // the `#[whisker::platform_component]` macro emits

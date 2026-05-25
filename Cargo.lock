@@ -1786,9 +1786,9 @@ dependencies = [
  "flate2",
  "indicatif",
  "serde",
+ "serde_json",
  "sha2",
  "tar",
- "toml",
  "ureq",
 ]
 
@@ -1873,14 +1873,14 @@ dependencies = [
 name = "whisker-hello-element"
 version = "0.1.0"
 dependencies = [
- "whisker-modules-api",
+ "whisker-module",
 ]
 
 [[package]]
 name = "whisker-local-store"
 version = "0.1.0"
 dependencies = [
- "whisker-modules-api",
+ "whisker-module",
 ]
 
 [[package]]
@@ -1895,7 +1895,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whisker-modules-api"
+name = "whisker-module"
 version = "0.1.0"
 dependencies = [
  "whisker-driver",
@@ -1934,7 +1934,7 @@ dependencies = [
 name = "whisker-video"
 version = "0.1.0"
 dependencies = [
- "whisker-modules-api",
+ "whisker-module",
 ]
 
 [[package]]

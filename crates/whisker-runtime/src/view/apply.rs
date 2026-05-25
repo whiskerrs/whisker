@@ -3,8 +3,8 @@
 //!
 //! Lives in `whisker_runtime` (not the umbrella `whisker` crate or
 //! the proc-macro crate) so both the umbrella and the public
-//! `whisker-modules-api` re-export crate can route through the same
-//! path. Module crates that import only `whisker-modules-api` reach
+//! `whisker-module` re-export crate can route through the same
+//! path. Module crates that import only `whisker-module` reach
 //! these via `::whisker::runtime::view::apply_styles` / `apply_attr`
 //! — the same path app crates reach through the umbrella.
 //!

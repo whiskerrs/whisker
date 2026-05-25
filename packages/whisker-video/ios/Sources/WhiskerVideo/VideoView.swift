@@ -9,7 +9,7 @@
 
 import AVKit
 import UIKit
-import WhiskerModuleApi
+import WhiskerModule
 
 @objc(VideoView)
 public final class VideoView: WhiskerUI<UIView> {

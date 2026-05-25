@@ -38,13 +38,11 @@ sha2 = "0.10"
 # step + status events. Stays a single shared crate so the three
 # orchestration layers all hit the same look + feel.
 indicatif = "0.17"
-# `whisker.module.toml` manifest parsing for the module-system
-# discovery pass. Hand-rolled parsing would be a couple dozen lines
-# but the schema is going to grow — toml + serde is the standard
-# trade.
-toml = "0.8"
+# Module-system discovery deserializes the `[package.metadata.whisker]`
+# table, which cargo_metadata surfaces as a `serde_json::Value`.
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 # Cargo metadata traversal — used by `whisker-build::modules` to
-# walk the consuming app's dep tree and find each dep's directory
-# (where we then look for a sibling `whisker.module.toml`).
+# walk the consuming app's dep tree and find each dep that declares
+# a `[package.metadata.whisker]` table.
 cargo_metadata = "0.18"

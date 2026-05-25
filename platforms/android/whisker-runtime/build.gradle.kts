@@ -44,12 +44,12 @@ android {
 // declarations. Repos must live at the settings level.
 
 dependencies {
-    // Phase J — the `:module-api` AAR holds `WhiskerValue`,
+    // Phase J — the `:module` AAR holds `WhiskerValue`,
     // `WhiskerLynxAliases` (WhiskerUI / WhiskerContext /
     // WhiskerCustomEvent), and `WhiskerApplication`. `api(...)` so
     // existing host apps that depend on just `:whisker-runtime`
     // keep seeing those symbols.
-    api(project(":module-api"))
+    api(project(":module"))
 
     // `api` (not `implementation`) so consuming apps can see LynxView /
     // LynxEnv types that leak through `WhiskerView`'s superclass.

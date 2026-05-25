@@ -11,13 +11,13 @@
 
 package rs.whisker.elements.hello
 
+import rs.whisker.annotations.WhiskerModule
+import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
-import rs.whisker.runtime.WhiskerModule
 
 /**
- * DSL-driven module. The KSP L-2c processor discovers this class
- * by walking the superclass chain looking for [WhiskerModule],
- * then emits a registration call into
+ * DSL-driven module. The KSP processor finds the `@WhiskerModule`
+ * annotation and emits a registration call into
  * `WhiskerHelloElementBehaviors.registerAll()` that:
  *
  *   - Registers a `Behavior("whisker-hello-element:Hello")` whose
@@ -25,7 +25,8 @@ import rs.whisker.runtime.WhiskerModule
  *   - Calls `module.registerWithLynx()` so any Prop / Function
  *     declared below installs via L-1's registration APIs.
  */
-class HelloModule : WhiskerModule() {
+@WhiskerModule
+class HelloModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Hello")
         View(HelloView::class.java) {

@@ -1,23 +1,31 @@
 //! `whisker new-module <name>` — scaffold a Whisker module crate.
 //!
 //! Creates a directory matching the supplied crate name with a
-//! complete module skeleton: `Cargo.toml`, `whisker.module.toml`,
-//! `Package.swift`, `build.gradle.kts`, `src/lib.rs`, an iOS Swift
-//! source, and an Android Kotlin source. The skeleton compiles
+//! complete module skeleton: `Cargo.toml` (carrying the
+//! `[package.metadata.whisker]` discovery marker), `Package.swift`,
+//! `build.gradle.kts`, `src/lib.rs`, and the platform sources under
+//! `ios/` and `android/` (Expo-style layout). The skeleton compiles
 //! standalone — the consumer just runs `cargo build` and adds the
 //! crate as a dep to their Whisker app.
 //!
 //! Naming convention: input is the cargo crate name (kebab-case,
-//! `whisker-foo`). The PascalCase tag (`Foo`) and the platform-side
-//! class name (`WhiskerFooComponent`) are derived. Lynx registers
-//! the module under `<crate-name>:<tag>` (`whisker-foo:Foo`).
+//! `whisker-foo`). The PascalCase tag (`Foo`), the module class
+//! (`FooModule`), and (for view-bearing modules) the view class
+//! (`FooView`) are derived. Lynx registers a view-bearing module's
+//! element under `<crate-name>:<tag>` (`whisker-foo:Foo`).
+//!
+//! Modules are authored with the ModuleDefinition DSL: a class
+//! annotated `@WhiskerModule` (Swift) / `@WhiskerModule` (Kotlin
+//! KSP) subclasses `Module` and overrides `definition()`. The
+//! `@WhiskerModule` attribute is the registration trigger — the
+//! per-platform codegen (SwiftPM build plugin / KSP) discovers it
+//! and emits the Lynx registration.
 //!
 //! This is a minimal scaffolder — it copies a small set of inline
 //! templates and substitutes a handful of variables. For a richer
 //! template story (multiple module types, custom dirs, …) the
-//! `cargo whisker new-module` subcommand can grow later without
-//! breaking the contract documented in
-//! `docs/module-author-guide.md`.
+//! `whisker new-module` subcommand can grow later without breaking
+//! the contract documented in `docs/module-author-guide.md`.
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Args;
@@ -38,11 +46,12 @@ pub struct NewModuleArgs {
     pub path: Option<PathBuf>,
 
     /// Module shape. `view-bearing` (the default) generates a
-    /// `#[whisker::platform_component]` shim + the Kotlin / Swift
-    /// `WhiskerUI<View>` subclasses. `function-only` generates a
-    /// `#[whisker::platform_module]` proxy without a `View(...)` —
-    /// for modules that only expose function calls (e.g.
-    /// `whisker-local-store`-style key-value stores).
+    /// `#[whisker::platform_component]` shim + a DSL module with a
+    /// `View(...)` block and a `WhiskerUI<View>` subclass.
+    /// `function-only` generates a `#[whisker::platform_module]`
+    /// proxy + a DSL module with module-level `Function`s and no
+    /// `View(...)` — for modules that only expose function calls
+    /// (e.g. `whisker-local-store`-style key-value stores).
     #[arg(long, value_enum, default_value_t = ModuleShape::ViewBearing)]
     pub shape: ModuleShape,
 }
@@ -70,22 +79,37 @@ pub fn run(args: NewModuleArgs) -> Result<()> {
     }
 
     let tag = pascal_case_tag(&args.name);
-    let class_name = format!("Whisker{tag}Component");
+    let spm = crate_to_spm_target(&args.name);
+    let ns = args.name.replace('-', "_");
+    let ident = args
+        .name
+        .replace('-', "_")
+        .trim_start_matches("whisker_")
+        .to_string();
+    let module_class = format!("{tag}Module");
+    let view_class = format!("{tag}View");
 
     let v = Vars {
         crate_name: &args.name,
         tag: &tag,
-        class_name: &class_name,
+        spm: &spm,
+        ns: &ns,
+        ident: &ident,
+        module_class: &module_class,
+        view_class: &view_class,
     };
 
-    std::fs::create_dir_all(target_dir.join("src/android"))
-        .with_context(|| format!("create {}/src/android", target_dir.display()))?;
-    std::fs::create_dir_all(target_dir.join("src/ios"))
-        .with_context(|| format!("create {}/src/ios", target_dir.display()))?;
+    // Expo-style layout — platform code under `ios/` and `android/`,
+    // each openable directly in Xcode / Android Studio.
+    let ios_src = format!("ios/Sources/{spm}");
+    let android_src = format!("android/src/main/kotlin/rs/whisker/modules/{ns}");
+    std::fs::create_dir_all(target_dir.join(&ios_src))
+        .with_context(|| format!("create {}/{ios_src}", target_dir.display()))?;
+    std::fs::create_dir_all(target_dir.join(&android_src))
+        .with_context(|| format!("create {}/{android_src}", target_dir.display()))?;
 
     write(&target_dir, "Cargo.toml", &cargo_toml(&v))?;
     write(&target_dir, "README.md", &readme(&v))?;
-    write(&target_dir, "whisker.module.toml", &module_manifest(&v))?;
     write(&target_dir, "Package.swift", &package_swift(&v))?;
     write(&target_dir, "build.gradle.kts", &build_gradle(&v))?;
 
@@ -94,31 +118,36 @@ pub fn run(args: NewModuleArgs) -> Result<()> {
             write(&target_dir, "src/lib.rs", &lib_rs_view(&v))?;
             write(
                 &target_dir,
-                &format!("src/ios/{class_name}.swift"),
+                &format!("{ios_src}/{module_class}.swift"),
+                &swift_view_module(&v),
+            )?;
+            write(
+                &target_dir,
+                &format!("{ios_src}/{view_class}.swift"),
                 &swift_view(&v),
             )?;
             write(
                 &target_dir,
-                &format!("src/android/{class_name}.kt"),
+                &format!("{android_src}/{module_class}.kt"),
+                &kotlin_view_module(&v),
+            )?;
+            write(
+                &target_dir,
+                &format!("{android_src}/{view_class}.kt"),
                 &kotlin_view(&v),
             )?;
         }
         ModuleShape::FunctionOnly => {
             write(&target_dir, "src/lib.rs", &lib_rs_module(&v))?;
-            // For function-only, the file holds the `@WhiskerModule`-
-            // tagged class. Strip the `Component` suffix from the class
-            // name so it reads `WhiskerFoo` rather than
-            // `WhiskerFooComponent` for non-View modules.
-            let module_class = format!("Whisker{tag}");
             write(
                 &target_dir,
-                &format!("src/ios/{module_class}Impl.swift"),
-                &swift_module(&v, &module_class),
+                &format!("{ios_src}/{module_class}.swift"),
+                &swift_function_module(&v),
             )?;
             write(
                 &target_dir,
-                &format!("src/android/{module_class}Impl.kt"),
-                &kotlin_module(&v, &module_class),
+                &format!("{android_src}/{module_class}.kt"),
+                &kotlin_function_module(&v),
             )?;
         }
     }
@@ -128,7 +157,7 @@ pub fn run(args: NewModuleArgs) -> Result<()> {
          \n\
          Next steps:\n  \
          1. cd {}\n  \
-         2. Implement the platform-side logic in src/ios/ and src/android/.\n  \
+         2. Implement the platform-side logic in ios/ and android/.\n  \
          3. From your Whisker app: `cargo add --path {}` (or publish to crates.io).\n  \
          4. See docs/module-author-guide.md for the full reference.",
         target_dir.display(),
@@ -143,9 +172,23 @@ pub fn run(args: NewModuleArgs) -> Result<()> {
 // ============================================================================
 
 struct Vars<'a> {
+    /// Cargo crate name, e.g. `whisker-foo`.
     crate_name: &'a str,
+    /// PascalCase local tag, e.g. `Foo`.
     tag: &'a str,
-    class_name: &'a str,
+    /// SwiftPM target name == PascalCased full crate name, e.g.
+    /// `WhiskerFoo`.
+    spm: &'a str,
+    /// Android package leaf == crate name with `-` → `_`, e.g.
+    /// `whisker_foo`.
+    ns: &'a str,
+    /// Rust fn identifier == crate name minus the `whisker_` prefix,
+    /// e.g. `foo`.
+    ident: &'a str,
+    /// DSL module class, e.g. `FooModule`.
+    module_class: &'a str,
+    /// View-bearing Lynx UI subclass, e.g. `FooView`.
+    view_class: &'a str,
 }
 
 fn write(root: &Path, rel: &str, content: &str) -> Result<()> {
@@ -170,22 +213,26 @@ include = [
     "Cargo.toml",
     "Package.swift",
     "build.gradle.kts",
-    "whisker.module.toml",
     "src/lib.rs",
-    "src/android/**/*.kt",
-    "src/ios/**/*.swift",
+    "android/**/*.kt",
+    "ios/**/*.swift",
     "README.md",
 ]
 
 [lib]
 crate-type = ["rlib"]
 
+# Module-system opt-in marker — the bare table identifies this cargo
+# crate as a Whisker module, so `whisker-build` wires its `android/`
+# Gradle subproject + `ios/` SwiftPM package into the host build.
+[package.metadata.whisker]
+
 [dependencies]
-# Rename `whisker-modules-api` -> `whisker` so the proc macros' emit
+# Rename `whisker-module` -> `whisker` so the proc macros' emit
 # paths (::whisker::ElementRef, ::whisker::platform_module::WhiskerValue,
 # ...) resolve. Cargo doesn't allow `package = ...` with
 # `workspace = true`, so the version is inlined here.
-whisker = {{ package = "whisker-modules-api", version = "0.1" }}
+whisker = {{ package = "whisker-module", version = "0.1" }}
 "#,
         name = v.crate_name,
     )
@@ -196,7 +243,7 @@ fn readme(v: &Vars) -> String {
         r#"# {name}
 
 A Whisker module — registers the `{name}:{tag}` element under Lynx
-and exposes `{class}` for use in Whisker app `render!` trees.
+and exposes `{tag}` for use in Whisker app `render!` trees.
 
 ## Usage
 
@@ -222,23 +269,8 @@ for the full reference.
 "#,
         name = v.crate_name,
         tag = v.tag,
-        class = v.class_name,
-        ident = v.crate_name.replace('-', "_"),
+        ident = v.ident,
     )
-}
-
-fn module_manifest(_v: &Vars) -> String {
-    r#"# Whisker module manifest. Tells `whisker-build` which platform
-# sources to surface from this crate into the consuming app's
-# generated host project. Paths are relative to this file.
-
-[ios]
-swift_sources = ["src/ios"]
-
-[android]
-kotlin_sources = ["src/android"]
-"#
-    .to_string()
 }
 
 fn package_swift(v: &Vars) -> String {
@@ -248,8 +280,26 @@ fn package_swift(v: &Vars) -> String {
 // SwiftPM manifest for the `{name}` module's iOS half. The consumer
 // app's `whisker-build`-generated aggregator depends on the library
 // product below via `.product(name: "{spm}", package: "{name}")`.
+//
+// Package.swift lives at the package root (SwiftPM requires it
+// there); the Swift sources live under the `ios/` subdir alongside
+// `android/` + `src/`.
 
 import PackageDescription
+
+// whisker-build injects the absolute location of Whisker's iOS
+// runtime + macros packages via these env vars, so this module
+// resolves them wherever it lives — in a whisker project, or unpacked
+// from the cargo registry. A Whisker module is only ever built through
+// `whisker run` / `whisker build` (which set these), never standalone.
+guard let whiskerRuntimePath = Context.environment["WHISKER_IOS_RUNTIME"],
+      let whiskerMacrosPath = Context.environment["WHISKER_IOS_MACROS"]
+else {{
+    fatalError("""
+        WHISKER_IOS_RUNTIME / WHISKER_IOS_MACROS not set. Build this Whisker \
+        module through `whisker run` / `whisker build`, which inject these paths.
+        """)
+}}
 
 let package = Package(
     name: "{name}",
@@ -258,17 +308,17 @@ let package = Package(
         .library(name: "{spm}", targets: ["{spm}"]),
     ],
     dependencies: [
-        .package(name: "macros", path: "../../platforms/ios/macros"),
-        .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
+        .package(name: "macros", path: whiskerMacrosPath),
+        .package(name: "WhiskerRuntime", path: whiskerRuntimePath),
     ],
     targets: [
         .target(
             name: "{spm}",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
-                .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
+                .product(name: "WhiskerModule", package: "WhiskerRuntime"),
             ],
-            path: "src/ios",
+            path: "ios/Sources/{spm}",
             plugins: [
                 .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),
             ]
@@ -277,7 +327,7 @@ let package = Package(
 )
 "#,
         name = v.crate_name,
-        spm = crate_to_spm_target(v.crate_name),
+        spm = v.spm,
     )
 }
 
@@ -285,6 +335,8 @@ fn build_gradle(v: &Vars) -> String {
     format!(
         r#"// Gradle subproject for the `{name}` Whisker module on Android.
 // Wired into the consumer app's settings.gradle.kts by whisker-build.
+// build.gradle.kts sits at the package root, alongside Package.swift
+// + Cargo.toml; the Kotlin source set points at the `android/` subdir.
 
 plugins {{
     id("com.android.library")
@@ -310,7 +362,7 @@ android {{
 
     sourceSets {{
         getByName("main") {{
-            kotlin.srcDirs("src/android")
+            kotlin.srcDirs("android/src/main/kotlin")
         }}
     }}
 }}
@@ -321,16 +373,16 @@ ksp {{
 }}
 
 dependencies {{
-    // Single Whisker runtime dep — :module-api re-exports
+    // Single Whisker runtime dep — :module re-exports
     // rs.whisker:annotations transitively. ksp(rs.whisker:ksp)
     // stays separate because it's build-time, not runtime.
-    implementation(project(":module-api"))
+    implementation(project(":module"))
     ksp("rs.whisker:ksp")
 }}
 "#,
         name = v.crate_name,
-        ns = v.crate_name.replace('-', "_"),
-        spm = crate_to_spm_target(v.crate_name),
+        ns = v.ns,
+        spm = v.spm,
     )
 }
 
@@ -340,7 +392,7 @@ fn lib_rs_view(v: &Vars) -> String {
 //!
 //! Registers a Lynx element under `{name}:{tag}` and exposes the
 //! `{tag}` symbol for use inside `render!`. Platform-side classes
-//! live under `src/ios/` and `src/android/`.
+//! live under `ios/` and `android/`.
 
 use whisker::Signal;
 
@@ -352,10 +404,7 @@ pub fn {ident}(style: Signal<String>) {{}}
 "#,
         name = v.crate_name,
         tag = v.tag,
-        ident = v
-            .crate_name
-            .replace('-', "_")
-            .trim_start_matches("whisker_"),
+        ident = v.ident,
     )
 }
 
@@ -364,13 +413,15 @@ fn lib_rs_module(v: &Vars) -> String {
         r#"//! `{name}` — Whisker function-only platform module.
 //!
 //! Exposes typed Rust -> Kotlin/Swift function calls without
-//! rendering UI. Platform-side classes live under `src/ios/` and
-//! `src/android/`.
+//! rendering UI. Platform-side classes live under `ios/` and
+//! `android/`.
 
 use whisker::platform_module::{{WhiskerModuleError, WhiskerValue}};
 
 /// Sys proxy — every method is a thin pass-through to the
-/// platform-side `Whisker{tag}` class via the C bridge.
+/// platform-side `{module_class}` DSL via the C bridge. The `name`
+/// here MUST match the `Name("...")` declared in the module's
+/// `definition()`.
 #[whisker::platform_module(name = "Whisker{tag}")]
 pub trait Whisker{tag}Sys {{
     // Add your trait methods here. They MUST take
@@ -395,20 +446,58 @@ impl Whisker{tag} {{
 "#,
         name = v.crate_name,
         tag = v.tag,
+        module_class = v.module_class,
+    )
+}
+
+fn swift_view_module(v: &Vars) -> String {
+    format!(
+        r#"// `{module_class}` — iOS side of the `{name}:{tag}` Whisker module.
+//
+// Declares the Lynx element `{name}:{tag}` via the ModuleDefinition
+// DSL. `@WhiskerModule` marks it for registration; the SwiftPM
+// codegen plugin discovers the attribute and emits the Lynx
+// behavior registration. The `{view_class}` Lynx UI subclass lives
+// in `{view_class}.swift`.
+
+import WhiskerComponents   // @WhiskerModule
+import WhiskerModule    // Module, ModuleDefinition, DSL
+
+@WhiskerModule
+public final class {module_class}: Module {{
+    public override func definition() -> ModuleDefinition {{
+        ModuleDefinition {{
+            Name("{tag}")
+            View({view_class}.self) {{
+                // Declare Prop / Function entries here, e.g.:
+                //   Prop("title") {{ (view: {view_class}, value: String) in
+                //       view.setTitle(value)
+                //   }}
+                //   Function("focus") {{ (view: {view_class}) in view.focus() }}
+            }}
+        }}
+    }}
+}}
+"#,
+        name = v.crate_name,
+        tag = v.tag,
+        module_class = v.module_class,
+        view_class = v.view_class,
     )
 }
 
 fn swift_view(v: &Vars) -> String {
     format!(
-        r#"// `{class}` — iOS side of the `{name}:{tag}` Whisker component.
+        r#"// `{view_class}` — the Lynx UI subclass backing `{name}:{tag}`.
+// Instantiated by Lynx via the behavior `{module_class}.definition()`
+// registers. `@objc({view_class})` pins the Obj-C class name so the
+// codegen plugin's `NSClassFromString` lookup resolves it.
 
 import UIKit
-import WhiskerComponents
-import WhiskerModuleApi
+import WhiskerModule
 
-@WhiskerComponent("{tag}")
-@objc({class})
-public final class {class}: WhiskerUI<UIView> {{
+@objc({view_class})
+public final class {view_class}: WhiskerUI<UIView> {{
     @objc public override func createView() -> UIView {{
         let v = UIView()
         v.backgroundColor = .systemPink
@@ -418,25 +507,67 @@ public final class {class}: WhiskerUI<UIView> {{
 "#,
         name = v.crate_name,
         tag = v.tag,
-        class = v.class_name,
+        module_class = v.module_class,
+        view_class = v.view_class,
+    )
+}
+
+fn kotlin_view_module(v: &Vars) -> String {
+    format!(
+        r#"// `{module_class}` -- Android side of the `{name}:{tag}` Whisker module.
+//
+// `@WhiskerModule` marks it for registration; the KSP processor
+// discovers the annotation and emits the Lynx behavior registration.
+// The `{view_class}` Lynx UI subclass lives in `{view_class}.kt`.
+//
+// Note the explicit `import rs.whisker.runtime.Module` — without it
+// the unqualified `Module` resolves to `java.lang.Module` (a Kotlin
+// JVM default import).
+
+package rs.whisker.modules.{ns}
+
+import rs.whisker.annotations.WhiskerModule
+import rs.whisker.runtime.Module
+import rs.whisker.runtime.ModuleDefinition
+
+@WhiskerModule
+class {module_class} : Module() {{
+    override fun definition() = ModuleDefinition {{
+        Name("{tag}")
+        View({view_class}::class.java) {{
+            // Declare Prop / Function entries here, e.g.:
+            //   Prop("title") {{ view: {view_class}, value: String ->
+            //       view.setTitle(value)
+            //   }}
+            //   Function("focus") {{ view: {view_class} -> view.focus() }}
+        }}
+    }}
+}}
+"#,
+        name = v.crate_name,
+        tag = v.tag,
+        ns = v.ns,
+        module_class = v.module_class,
+        view_class = v.view_class,
     )
 }
 
 fn kotlin_view(v: &Vars) -> String {
     format!(
-        r#"// `{class}` -- Android side of the `{name}:{tag}` Whisker component.
+        r#"// `{view_class}` -- the Lynx UI subclass backing `{name}:{tag}`.
+// Instantiated by the Lynx behavior `{module_class}.definition()`
+// registers. The single-arg `(WhiskerContext)` constructor matches
+// the convention the KSP registration code expects.
 
 package rs.whisker.modules.{ns}
 
 import android.content.Context
 import android.graphics.Color
 import android.view.View
-import rs.whisker.annotations.WhiskerComponent
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerUI
 
-@WhiskerComponent("{tag}")
-open class {class}(context: WhiskerContext) : WhiskerUI<View>(context) {{
+open class {view_class}(context: WhiskerContext) : WhiskerUI<View>(context) {{
     override fun createView(context: Context): View {{
         val v = View(context)
         v.setBackgroundColor(Color.argb(0xff, 0xff, 0x80, 0xa0))
@@ -446,53 +577,75 @@ open class {class}(context: WhiskerContext) : WhiskerUI<View>(context) {{
 "#,
         name = v.crate_name,
         tag = v.tag,
-        class = v.class_name,
-        ns = v.crate_name.replace('-', "_"),
+        ns = v.ns,
+        module_class = v.module_class,
+        view_class = v.view_class,
     )
 }
 
-fn swift_module(v: &Vars, module_class: &str) -> String {
+fn swift_function_module(v: &Vars) -> String {
     format!(
-        r#"// `{class}Impl` — iOS side of the `{name}` Whisker function-only module.
+        r#"// `{module_class}` — iOS side of the `{name}` Whisker function-only module.
+//
+// A view-less DSL module: `definition()` has no `View(...)` block,
+// just module-level `Function`s. `@WhiskerModule` marks it for
+// registration; the SwiftPM codegen plugin emits a dispatch shim
+// registered under the `Name("...")`, so
+// `Whisker{tag}::placeholder()` on the Rust side routes here.
 
-import Foundation
-import WhiskerComponents
-import WhiskerModuleApi
+import WhiskerComponents   // @WhiskerModule
+import WhiskerModule    // Module, ModuleDefinition, DSL
 
-@WhiskerModule("{class}")
-@objc({class}Impl)
-public final class {class}Impl: NSObject {{
-    @objc public func _placeholder(_ args: [WhiskerValue]) -> WhiskerValue {{
-        // TODO: implement the function the Rust-side sys trait declares.
-        return .null
+@WhiskerModule
+public final class {module_class}: Module {{
+    public override func definition() -> ModuleDefinition {{
+        ModuleDefinition {{
+            // The Name MUST match the Rust sys trait's
+            // `#[whisker::platform_module(name = "...")]`.
+            Name("Whisker{tag}")
+            Function("_placeholder") {{
+                // TODO: implement the function the Rust sys trait declares.
+            }}
+        }}
     }}
 }}
 "#,
         name = v.crate_name,
-        class = module_class,
+        tag = v.tag,
+        module_class = v.module_class,
     )
 }
 
-fn kotlin_module(v: &Vars, module_class: &str) -> String {
+fn kotlin_function_module(v: &Vars) -> String {
     format!(
-        r#"// `{class}Impl` -- Android side of the `{name}` Whisker function-only module.
+        r#"// `{module_class}` -- Android side of the `{name}` Whisker function-only module.
+//
+// A view-less DSL module: module-level `Function`s, no `View(...)`.
+// `@WhiskerModule` marks it for registration. See the note in the
+// view-bearing template re: the explicit `Module` import.
 
 package rs.whisker.modules.{ns}
 
 import rs.whisker.annotations.WhiskerModule
-import rs.whisker.runtime.WhiskerValue
+import rs.whisker.runtime.Module
+import rs.whisker.runtime.ModuleDefinition
 
-@WhiskerModule("{class}")
-class {class}Impl {{
-    fun _placeholder(args: List<WhiskerValue>): WhiskerValue {{
-        // TODO: implement the function the Rust-side sys trait declares.
-        return WhiskerValue.Null
+@WhiskerModule
+class {module_class} : Module() {{
+    override fun definition() = ModuleDefinition {{
+        // The Name MUST match the Rust sys trait's
+        // `#[whisker::platform_module(name = "...")]`.
+        Name("Whisker{tag}")
+        Function("_placeholder") {{
+            // TODO: implement the function the Rust sys trait declares.
+        }}
     }}
 }}
 "#,
         name = v.crate_name,
-        class = module_class,
-        ns = v.crate_name.replace('-', "_"),
+        tag = v.tag,
+        ns = v.ns,
+        module_class = v.module_class,
     )
 }
 
