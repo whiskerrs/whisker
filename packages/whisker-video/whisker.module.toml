@@ -1,9 +1,9 @@
-# Whisker module manifest for `whisker-video` — Phase 7-Φ.H.2.6.
-# Sample module exercising `@WhiskerUIMethod` + `ElementRef<T>`
-# for imperative element-method dispatch.
+# Whisker module manifest for `whisker-video`. Phase L-3: migrated
+# to the `ModuleDefinition` DSL — `VideoModule` holds the
+# definition, `VideoView` the Lynx UI subclass.
 
 [ios]
-swift_sources = ["src/ios/WhiskerVideoComponent.swift"]
+swift_sources = ["src/ios/VideoModule.swift", "src/ios/VideoView.swift"]
 
 [android]
-kotlin_sources = ["src/android/WhiskerVideoComponent.kt"]
+kotlin_sources = ["src/android/VideoModule.kt", "src/android/VideoView.kt"]
