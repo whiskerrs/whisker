@@ -437,7 +437,7 @@ public class WhiskerComponentProcessor(
                 w.appendLine("        )")
             }
 
-            // ---- Phase L-2c — DSL modules ---------------------------------
+            // ---- Phase L-2c / L-3 — DSL modules ---------------------------
             //
             // For each `WhiskerModule` subclass:
             //   1. Build an instance.
@@ -445,17 +445,17 @@ public class WhiskerComponentProcessor(
             //   3. If a `View(...)` block is present, register a
             //      `Behavior` against the user's view class so Lynx
             //      can instantiate it on element creation.
-            //   4. Call `.registerWithLynx()` so the DSL's Prop /
-            //      Function components install themselves via the
-            //      L-1 Class-explicit registration APIs.
+            //   4. Call `.registerWithLynx()` — which installs the
+            //      view's Prop / Function dispatchers (view-bearing)
+            //      OR registers the module-level `Function`s with
+            //      `WhiskerModuleRegistry` (view-less, Phase L-3).
             //
-            // View-less DSL modules are valid declarations but L-2c
-            // doesn't wire their module-level Function dispatch
-            // (that path stays on the `@WhiskerModule` annotation
-            // through L-3); the registration skips them silently
-            // here and emits a debug log for the user.
+            // `registerWithLynx()` branches internally on whether the
+            // definition has a `View(...)` block, so the codegen path
+            // is identical for both shapes — we only add the
+            // `addBehavior(...)` call when a view exists.
             if (dslModules.isNotEmpty()) {
-                w.appendLine("        // ---- DSL modules (Phase L-2c) ----")
+                w.appendLine("        // ---- DSL modules (Phase L-2c / L-3) ----")
             }
             for (cls in dslModules) {
                 val fqn = cls.qualifiedName?.asString()
@@ -476,25 +476,31 @@ public class WhiskerComponentProcessor(
                 w.appendLine("            val $defLocal = $instanceLocal.definitionLazy")
                 w.appendLine("            val $nameLocal = $defLocal.name")
                 w.appendLine("            val $viewLocal = $defLocal.view")
-                w.appendLine("            if ($nameLocal != null && $viewLocal != null) {")
-                // Tag namespacing matches @WhiskerComponent (see above).
+                w.appendLine("            if ($nameLocal != null) {")
+                // View-bearing: register the Lynx Behavior so the tag
+                // resolves to the view class. View-less modules skip
+                // this — they have no element to instantiate.
                 val tagPrefix = if (crateName != null) "$crateName:" else ""
-                w.appendLine("                val qualifiedTag = \"$tagPrefix\" + $nameLocal")
-                w.appendLine("                val viewClass = $viewLocal.viewClass")
+                w.appendLine("                if ($viewLocal != null) {")
+                w.appendLine("                    val qualifiedTag = \"$tagPrefix\" + $nameLocal")
+                w.appendLine("                    val viewClass = $viewLocal.viewClass")
                 // Generic reflective instantiator. The Lynx UI
                 // subclass is required to expose a single-arg
                 // `(LynxContext)` constructor (matches the
                 // `WhiskerUI<View>(context)` convention authors
                 // already follow under the annotation API).
-                w.appendLine("                env.addBehavior(object : Behavior(qualifiedTag) {")
-                w.appendLine("                    override fun createUI(context: LynxContext): LynxUI<*> =")
-                w.appendLine("                        viewClass.getConstructor(LynxContext::class.java)")
-                w.appendLine("                            .newInstance(context) as LynxUI<*>")
-                w.appendLine("                    override fun createUIFiber(context: LynxContext): LynxUI<*> =")
-                w.appendLine("                        viewClass.getConstructor(LynxContext::class.java)")
-                w.appendLine("                            .newInstance(context) as LynxUI<*>")
-                w.appendLine("                })")
-                w.appendLine("                // Install prop setters + function dispatchers via L-1 APIs.")
+                w.appendLine("                    env.addBehavior(object : Behavior(qualifiedTag) {")
+                w.appendLine("                        override fun createUI(context: LynxContext): LynxUI<*> =")
+                w.appendLine("                            viewClass.getConstructor(LynxContext::class.java)")
+                w.appendLine("                                .newInstance(context) as LynxUI<*>")
+                w.appendLine("                        override fun createUIFiber(context: LynxContext): LynxUI<*> =")
+                w.appendLine("                            viewClass.getConstructor(LynxContext::class.java)")
+                w.appendLine("                                .newInstance(context) as LynxUI<*>")
+                w.appendLine("                    })")
+                w.appendLine("                }")
+                // Install dispatch: view Prop/Function (view-bearing)
+                // or module-level Function registration (view-less).
+                w.appendLine("                // Install dispatch (view: Prop/Function; view-less: module Function).")
                 w.appendLine("                $instanceLocal.registerWithLynx()")
                 w.appendLine("            }")
                 w.appendLine("        }")

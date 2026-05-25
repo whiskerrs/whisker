@@ -41,22 +41,34 @@ import com.lynx.tasm.behavior.utils.LynxUIMethodsExecutor
 import com.lynx.tasm.behavior.utils.PropsUpdater
 
 /**
- * Walk [definitionLazy] and install the DSL-declared props /
- * functions on the user's `View(...)`-declared class via the L-1
- * Class-explicit registration APIs.
+ * Walk [definitionLazy] and install the DSL-declared surface.
  *
- * Idempotent — re-registering the same view class with a fresh
- * setter / invoker replaces the prior entry (Lynx's
- * `ConcurrentHashMap.put` is last-write-wins).
+ * Two shapes:
  *
- * Module-level (view-less) `Function`s are not yet wired here; the
- * module-level dispatch stays on the existing `@WhiskerModule`
- * annotation path through L-3.
+ *  - **View-bearing** (`View(...) { Prop / Function }`): installs a
+ *    [LynxUISetter] + [LynxUIMethodInvoker] on the view class via
+ *    the L-1 Class-explicit registration APIs.
+ *  - **View-less** (module-level `Function`s, no `View(...)`):
+ *    registers a dispatch closure with [WhiskerModuleRegistry]
+ *    under the module's `Name(...)`, so `whisker_bridge_invoke_module`
+ *    from Rust routes into the DSL handlers — the same path the
+ *    legacy `@WhiskerModule` annotation used.
+ *
+ * Idempotent — re-registering replaces the prior entry
+ * (last-write-wins on both maps).
  */
 public fun WhiskerModule.registerWithLynx() {
     val def = definitionLazy
-    val viewBlock = def.view ?: return
+    val viewBlock = def.view
 
+    if (viewBlock != null) {
+        registerViewBearing(viewBlock)
+    } else {
+        registerViewLess(def)
+    }
+}
+
+private fun registerViewBearing(viewBlock: WhiskerViewComponent) {
     @Suppress("UNCHECKED_CAST")
     val viewClass: Class<out LynxBaseUI> =
         viewBlock.viewClass as Class<out LynxBaseUI>
@@ -75,6 +87,30 @@ public fun WhiskerModule.registerWithLynx() {
             viewClass,
             WhiskerDSLMethodInvoker(funcComponents),
         )
+    }
+}
+
+private fun registerViewLess(def: ModuleDefinition) {
+    val name = def.name ?: return
+    val functions = def.functions
+    if (functions.isEmpty()) return
+
+    val byName = functions.associateBy { it.name }
+    WhiskerModuleRegistry.registerDispatch(name) { method, args ->
+        val fn = byName[method]
+            ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
+        // Unwrap the WhiskerValue args into raw Kotlin values the
+        // handler's `as A` casts expect, run the closure, then wrap
+        // the result back into a WhiskerValue.
+        val rawArgs: List<Any?> = args.map { it.toJavaObject() }
+        val result: Any? = try {
+            fn.handler(null, rawArgs)
+        } catch (t: Throwable) {
+            return@registerDispatch WhiskerValue.Err(
+                "exception in module `$name` method `$method`: ${t.message}",
+            )
+        }
+        whiskerValueOf(result)
     }
 }
 

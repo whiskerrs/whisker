@@ -62,10 +62,11 @@ extension WhiskerModule {
     public func registerWithLynx() {
         let def = self.definitionLazy
 
-        // Function-only modules (no `View(...)` block): nothing to
-        // do at the LynxUI-class layer in L-2b. The module-level
-        // dispatch stays on the existing `@WhiskerModule`
-        // annotation path through L-3.
+        // Function-only modules (no `View(...)` block) don't install
+        // anything on a LynxUI class — their module-level `Function`s
+        // dispatch through `dispatchModuleFunction(_:_:)` via the
+        // codegen-emitted `@_cdecl` shim + `whisker_bridge_register_
+        // module_dispatch` (Phase L-3), not through this method.
         guard let viewBlock = def.view else { return }
 
         let viewClass: AnyClass = viewBlock.viewClass

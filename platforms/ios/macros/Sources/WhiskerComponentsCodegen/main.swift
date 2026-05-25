@@ -96,11 +96,26 @@ struct ModuleHit {
     let className: String
 }
 
+/// One discovered `class X : WhiskerModule` declaration. Phase
+/// L-3: the new DSL discovery path that supersedes
+/// `@WhiskerComponent` for view-bearing modules. The codegen
+/// emits a registration block that instantiates the class, reads
+/// its `definitionLazy`, registers a Lynx behavior using the
+/// view class from the `View(...)` block, and calls
+/// `module.registerWithLynx()` so the DSL's Prop / Function
+/// dispatchers install via the Obj-C-runtime path (L-2b).
+struct DSLModuleHit {
+    let className: String
+}
+
 final class WhiskerAnnotationCollector: SyntaxVisitor {
     var elements: [ElementHit] = []
     var modules: [ModuleHit] = []
+    var dslModules: [DSLModuleHit] = []
 
     override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
+        // ---- Annotation-based path: @WhiskerComponent / @WhiskerModule ----
+        var hasAnnotation = false
         for attribute in node.attributes {
             guard let attr = attribute.as(AttributeSyntax.self) else { continue }
             guard let attrName = attr.attributeName.as(IdentifierTypeSyntax.self) else { continue }
@@ -112,6 +127,30 @@ final class WhiskerAnnotationCollector: SyntaxVisitor {
                 elements.append(ElementHit(tag: value, className: className))
             } else {
                 modules.append(ModuleHit(name: value, className: className))
+            }
+            hasAnnotation = true
+        }
+
+        // ---- DSL-based path (Phase L-3): `class X : WhiskerModule` ----
+        //
+        // Subclassing IS the opt-in — matches the Android KSP
+        // L-2c convention. Mutual exclusion with the annotation
+        // path: a class with a Whisker annotation isn't picked up
+        // again as a DSL module even if it also extends
+        // `WhiskerModule` (which would be unusual but is a
+        // sensible safety net).
+        if !hasAnnotation, let inheritance = node.inheritanceClause {
+            for entry in inheritance.inheritedTypes {
+                guard let typeName = entry.type.as(IdentifierTypeSyntax.self)?.name.text else {
+                    continue
+                }
+                // The base may be referenced unqualified (`WhiskerModule`)
+                // or via the import alias chain. We match on the leaf
+                // identifier — the typical case for user code.
+                if typeName == "WhiskerModule" {
+                    dslModules.append(DSLModuleHit(className: node.name.text))
+                    break
+                }
             }
         }
         return .skipChildren
@@ -132,12 +171,19 @@ private func firstStringArgument(of attr: AttributeSyntax) -> String? {
 
 // ---- Codegen -----------------------------------------------------------------
 
-func render(targetName: String, crateName: String, elements: [ElementHit], modules: [ModuleHit]) -> String {
+func render(
+    targetName: String,
+    crateName: String,
+    elements: [ElementHit],
+    modules: [ModuleHit],
+    dslModules: [DSLModuleHit]
+) -> String {
     // Deterministic order — sort each list independently so two
     // builds with the same input produce byte-identical output
     // (helps SwiftPM's incremental-rebuild fingerprinting).
     let sortedElements = elements.sorted { $0.tag < $1.tag }
     let sortedModules = modules.sorted { $0.name < $1.name }
+    let sortedDSLModules = dslModules.sorted { $0.className < $1.className }
 
     let registerFn = "_whiskerRegisterModules_\(targetName)"
 
@@ -160,8 +206,9 @@ func render(targetName: String, crateName: String, elements: [ElementHit], modul
         //
         // Sibling of Android's `rs.whisker.ksp.WhiskerComponentProcessor`.
         //
-        // Element registrations: \(sortedElements.count)
-        // Module  registrations: \(sortedModules.count)
+        // Element registrations:    \(sortedElements.count)
+        // Module  registrations:    \(sortedModules.count)
+        // DSL Module registrations: \(sortedDSLModules.count)
 
         import Foundation
         import Lynx
@@ -169,6 +216,11 @@ func render(targetName: String, crateName: String, elements: [ElementHit], modul
         // C ABI declarations (`whisker_bridge_register_module_dispatch`,
         // `WhiskerValueRaw`, …) the module registration touches.
         import WhiskerRuntime
+        // Phase L-3 — the DSL discovery path emits
+        // `MyModule().registerWithLynx()` calls; `registerWithLynx`
+        // lives in `WhiskerModuleApi` (`WhiskerModuleRegistrar.swift`)
+        // as an extension on `WhiskerModule`.
+        import WhiskerModuleApi
 
         /// Per-target registration entry point. The aggregator
         /// (`gen/ios/whisker_modules/Sources/WhiskerModules/RegisterAll.swift`,
@@ -183,8 +235,8 @@ func render(targetName: String, crateName: String, elements: [ElementHit], modul
 
         """
 
-    if sortedElements.isEmpty && sortedModules.isEmpty {
-        out += "    // (no @WhiskerComponent / @WhiskerModule-annotated class found)\n"
+    if sortedElements.isEmpty && sortedModules.isEmpty && sortedDSLModules.isEmpty {
+        out += "    // (no @WhiskerComponent / @WhiskerModule / WhiskerModule-subclass found)\n"
     }
     for hit in sortedElements {
         // Dual-resolution shape: prefixed name first (default
@@ -220,10 +272,83 @@ func render(targetName: String, crateName: String, elements: [ElementHit], modul
 
             """
     }
+
+    // ---- Phase L-3 — DSL modules ---------------------------------------
+    //
+    // For each `class X : WhiskerModule` found in this target's
+    // sources, the registration block reads its `definitionLazy`
+    // (via a top-level instance referenced directly — same SwiftPM
+    // target, so no `NSClassFromString` / `@objc` pinning needed),
+    // then branches at runtime:
+    //
+    //   - **View-bearing** (`def.view != nil`): register a Lynx
+    //     behavior bound to `def.view!.viewClass`, then
+    //     `module.registerWithLynx()` to install Prop / Function
+    //     dispatch (Obj-C-runtime path, L-2b).
+    //   - **View-less** (module-level `Function`s): register the
+    //     `@_cdecl` dispatch shim (emitted as a top-level decl
+    //     below) with the C bridge via
+    //     `whisker_bridge_register_module_dispatch(name, shim)`.
+    //
+    // The `@_cdecl` shim + the top-level module instance it
+    // dispatches against are emitted *after* the register fn (a
+    // forward reference within the same file is legal).
+    if !sortedDSLModules.isEmpty {
+        out += "        // ---- DSL modules (Phase L-3) ----\n"
+    }
+    let tagPrefix = "\(crateName):"
+    for hit in sortedDSLModules {
+        let instance = "_whiskerDSLInstance_\(hit.className)"
+        let shim = "_whiskerDSLDispatch_\(hit.className)"
+        out += """
+                do {
+                    let module = \(instance)
+                    let def = module.definitionLazy
+                    if let name = def.name {
+                        if let view = def.view {
+                            LynxComponentRegistry.registerUI(view.viewClass, withName: "\(tagPrefix)" + name)
+                            module.registerWithLynx()
+                        } else {
+                            whisker_bridge_register_module_dispatch(name, \(shim))
+                        }
+                    }
+                }
+
+            """
+    }
+
+    // Close the register fn.
     out += """
         }
 
         """
+
+    // ---- Top-level @_cdecl shims for DSL modules -----------------------
+    //
+    // One per DSL module. Always emitted (codegen can't know at
+    // build time whether a module is view-less); only registered at
+    // runtime when `def.view == nil`. The shim forwards the C-ABI
+    // call straight into `WhiskerModule.dispatchModuleFunctionRaw`.
+    for hit in sortedDSLModules {
+        let instance = "_whiskerDSLInstance_\(hit.className)"
+        let shim = "_whiskerDSLDispatch_\(hit.className)"
+        out += """
+            // Top-level instance + C-ABI dispatch shim for the DSL
+            // module `\(hit.className)`. The `let` is lazily
+            // initialised on first reference (Swift global semantics).
+            private let \(instance) = \(hit.className)()
+
+            @_cdecl("\(shim)")
+            public func \(shim)(
+                _ methodName: UnsafePointer<CChar>?,
+                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
+                _ argCount: Int
+            ) -> WhiskerValueRaw {
+                return \(instance).dispatchModuleFunctionRaw(methodName, argsPtr, argCount)
+            }
+
+        """
+    }
     return out
 }
 
@@ -255,7 +380,8 @@ let generated = render(
     targetName: args.targetName,
     crateName: args.crateName,
     elements: collector.elements,
-    modules: collector.modules
+    modules: collector.modules,
+    dslModules: collector.dslModules
 )
 do {
     try generated.write(toFile: args.outputPath, atomically: true, encoding: .utf8)
