@@ -185,6 +185,95 @@ where
     }
 }
 
+// ----- TryFrom impls — extract primitives back out of WhiskerValue --------
+//
+// Used by `ElementRef::invoke_typed<T>` so authors can write
+// `r.invoke_typed::<f64>("currentTime", vec![])`. The `Error` payload
+// is a `String` so it folds cleanly into `RefError::DispatchFailed.
+// message` without an extra map step.
+
+impl TryFrom<WhiskerValue> for () {
+    type Error = String;
+    fn try_from(v: WhiskerValue) -> Result<Self, Self::Error> {
+        match v {
+            WhiskerValue::Null => Ok(()),
+            other => Err(format!("expected Null, got {other:?}")),
+        }
+    }
+}
+
+impl TryFrom<WhiskerValue> for bool {
+    type Error = String;
+    fn try_from(v: WhiskerValue) -> Result<Self, Self::Error> {
+        match v {
+            WhiskerValue::Bool(b) => Ok(b),
+            other => Err(format!("expected Bool, got {other:?}")),
+        }
+    }
+}
+
+impl TryFrom<WhiskerValue> for i64 {
+    type Error = String;
+    fn try_from(v: WhiskerValue) -> Result<Self, Self::Error> {
+        match v {
+            WhiskerValue::Int(i) => Ok(i),
+            other => Err(format!("expected Int, got {other:?}")),
+        }
+    }
+}
+
+impl TryFrom<WhiskerValue> for i32 {
+    type Error = String;
+    fn try_from(v: WhiskerValue) -> Result<Self, Self::Error> {
+        match v {
+            WhiskerValue::Int(i) => {
+                i32::try_from(i).map_err(|_| format!("Int {i} out of range for i32"))
+            }
+            other => Err(format!("expected Int, got {other:?}")),
+        }
+    }
+}
+
+impl TryFrom<WhiskerValue> for f64 {
+    type Error = String;
+    fn try_from(v: WhiskerValue) -> Result<Self, Self::Error> {
+        match v {
+            WhiskerValue::Float(f) => Ok(f),
+            // Widen Int → Float so platforms that return integer-valued
+            // numbers don't trip up callers asking for f64.
+            WhiskerValue::Int(i) => Ok(i as f64),
+            other => Err(format!("expected Float, got {other:?}")),
+        }
+    }
+}
+
+impl TryFrom<WhiskerValue> for f32 {
+    type Error = String;
+    fn try_from(v: WhiskerValue) -> Result<Self, Self::Error> {
+        f64::try_from(v).map(|f| f as f32)
+    }
+}
+
+impl TryFrom<WhiskerValue> for String {
+    type Error = String;
+    fn try_from(v: WhiskerValue) -> Result<Self, Self::Error> {
+        match v {
+            WhiskerValue::String(s) => Ok(s),
+            other => Err(format!("expected String, got {other:?}")),
+        }
+    }
+}
+
+impl TryFrom<WhiskerValue> for Vec<u8> {
+    type Error = String;
+    fn try_from(v: WhiskerValue) -> Result<Self, Self::Error> {
+        match v {
+            WhiskerValue::Bytes(b) => Ok(b),
+            other => Err(format!("expected Bytes, got {other:?}")),
+        }
+    }
+}
+
 // ----- Sync invoke --------------------------------------------------------
 
 /// Call the registered platform module's method, synchronously.

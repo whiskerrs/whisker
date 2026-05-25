@@ -112,7 +112,7 @@ pub trait VideoControls {
     fn seek(&self, position_seconds: f64);
 }
 
-impl VideoControls for ElementRef<VideoProps> {
+impl VideoControls for ElementRef {
     fn play(&self) {
         let _ = VideoSys::play(self, vec![]);
     }

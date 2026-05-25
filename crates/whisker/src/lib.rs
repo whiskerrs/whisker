@@ -33,7 +33,7 @@ pub use whisker_macros::{
 // invoking methods on a mounted platform component. `element_ref::<T>()`
 // allocates a fresh, unbound ref; the `#[whisker::platform_component]`
 // macro binds it on mount when passed as the `ref:` prop.
-pub use whisker_driver::{element_ref, ElementRef};
+pub use whisker_driver::{element_ref, ElementRef, RefError};
 
 // Phase 6.5a reactive surface, lifted to the top-level namespace so
 // user code can `use whisker::*` and reach the typical primitives
@@ -717,7 +717,7 @@ pub mod prelude {
         run_blocking, run_on_main_thread, show, signal, spawn_local, use_context, with_context,
         ReadSignal, Resource, ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
     };
-    pub use crate::{element_ref, ElementRef};
+    pub use crate::{element_ref, ElementRef, RefError};
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
     // typing a tag name inside render! (the macro source position
