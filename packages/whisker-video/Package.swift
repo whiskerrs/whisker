@@ -10,6 +10,16 @@
 
 import PackageDescription
 
+// whisker-build injects the absolute location of Whisker's iOS
+// runtime + macros packages via these env vars (the same paths it
+// writes into the generated aggregator Package.swift), so this module
+// resolves them no matter where the crate lives — in the monorepo, in
+// a user's whisker project, or unpacked from the cargo registry. The
+// relative-path fallback applies only when building this package
+// standalone (e.g. opening it directly in Xcode from the monorepo).
+let whiskerRuntimePath = Context.environment["WHISKER_IOS_RUNTIME"] ?? "../../platforms/ios"
+let whiskerMacrosPath = Context.environment["WHISKER_IOS_MACROS"] ?? "../../platforms/ios/macros"
+
 let package = Package(
     name: "whisker-video",
     platforms: [.iOS(.v13), .macOS(.v13)],
@@ -21,9 +31,8 @@ let package = Package(
         // it there, and the package identity (the crate's dir name)
         // is unique, so the app aggregator references it via
         // `.package(path: …)` without the `ios`-dir-name collision.
-        // Paths are relative to the package root.
-        .package(name: "macros", path: "../../platforms/ios/macros"),
-        .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
+        .package(name: "macros", path: whiskerMacrosPath),
+        .package(name: "WhiskerRuntime", path: whiskerRuntimePath),
     ],
     targets: [
         .target(

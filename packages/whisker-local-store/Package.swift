@@ -6,6 +6,16 @@
 
 import PackageDescription
 
+// whisker-build injects the absolute location of Whisker's iOS
+// runtime + macros packages via these env vars (the same paths it
+// writes into the generated aggregator Package.swift), so this module
+// resolves them no matter where the crate lives — in the monorepo, in
+// a user's whisker project, or unpacked from the cargo registry. The
+// relative-path fallback applies only when building this package
+// standalone (e.g. opening it directly in Xcode from the monorepo).
+let whiskerRuntimePath = Context.environment["WHISKER_IOS_RUNTIME"] ?? "../../platforms/ios"
+let whiskerMacrosPath = Context.environment["WHISKER_IOS_MACROS"] ?? "../../platforms/ios/macros"
+
 let package = Package(
     name: "whisker-local-store",
     // macOS 13 is required because the SwiftPM build plugin
@@ -17,10 +27,8 @@ let package = Package(
         .library(name: "WhiskerLocalStore", targets: ["WhiskerLocalStore"]),
     ],
     dependencies: [
-        // Paths relative to this `ios/` directory (one level below
-        // the package root).
-        .package(name: "macros", path: "../../platforms/ios/macros"),
-        .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
+        .package(name: "macros", path: whiskerMacrosPath),
+        .package(name: "WhiskerRuntime", path: whiskerRuntimePath),
         // PoC — an external SwiftPM dependency. swift-collections is
         // Apple-maintained, header-only Swift, small enough that
         // resolving it is fast even on a cold cache. Use is minimal

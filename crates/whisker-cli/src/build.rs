@@ -218,6 +218,8 @@ fn build_ios_app(
         configuration: "Release",
         xcodeproj_name: &scheme,
         derived_data: &derived,
+        whisker_runtime_path: Some(&whisker_runtime_path),
+        whisker_ios_macros_path: Some(&whisker_ios_macros_path),
     })?;
     println!("\n✅ .app: {}", app.display());
     Ok(())

@@ -287,6 +287,14 @@ fn package_swift(v: &Vars) -> String {
 
 import PackageDescription
 
+// whisker-build injects the absolute location of Whisker's iOS
+// runtime + macros packages via these env vars, so this module
+// resolves them wherever it lives — in a whisker project, or unpacked
+// from the cargo registry. (The relative fallback only matters when
+// opening this package standalone inside the whisker monorepo.)
+let whiskerRuntimePath = Context.environment["WHISKER_IOS_RUNTIME"] ?? "../../platforms/ios"
+let whiskerMacrosPath = Context.environment["WHISKER_IOS_MACROS"] ?? "../../platforms/ios/macros"
+
 let package = Package(
     name: "{name}",
     platforms: [.iOS(.v13), .macOS(.v13)],
@@ -294,8 +302,8 @@ let package = Package(
         .library(name: "{spm}", targets: ["{spm}"]),
     ],
     dependencies: [
-        .package(name: "macros", path: "../../platforms/ios/macros"),
-        .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
+        .package(name: "macros", path: whiskerMacrosPath),
+        .package(name: "WhiskerRuntime", path: whiskerRuntimePath),
     ],
     targets: [
         .target(
