@@ -140,17 +140,64 @@ The existing `WhiskerComponentProcessor` is extended (or replaced):
 
 ### 3c. Rust shim
 
-The Rust side stays close to today's shape:
+The Rust side adopts a **plain struct + impl** pattern that mirrors the
+Phase N standardized Ref API (see `docs/phase-n-ref-api-design.md`).
+Module authors write:
 
 ```rust
-#[whisker::platform_component("Video")]
-pub fn video(src: Signal<String>, style: Signal<String>) {}
+#[whisker::modules::component("Video")]
+pub fn video(r: VideoRef, src: Signal<String>, style: Signal<String>) {}
+
+#[derive(Clone)]
+pub struct VideoRef {
+    handle: RefHandle,
+}
+
+impl VideoRef {
+    pub fn new() -> Self { Self { handle: RefHandle::new() } }
+
+    pub fn play(&self) -> Result<(), RefError> {
+        self.handle.invoke("play", vec![]).map(|_| ())
+    }
+    pub fn pause(&self) -> Result<(), RefError> {
+        self.handle.invoke("pause", vec![]).map(|_| ())
+    }
+    pub fn seek(&self, position_seconds: f64) -> Result<(), RefError> {
+        self.handle.invoke("seek", vec![WhiskerValue::Float(position_seconds)]).map(|_| ())
+    }
+
+    pub fn try_play(&self) { let _ = self.play(); }
+    pub fn try_pause(&self) { let _ = self.pause(); }
+    pub fn try_seek(&self, seconds: f64) { let _ = self.seek(seconds); }
+}
+
+impl WhiskerRef for VideoRef {
+    fn handle(&self) -> &RefHandle { &self.handle }
+}
 ```
 
-The proc macro keeps emitting the Props struct + render-time apply logic. What changes:
+This replaces the current `#[whisker::element_methods] trait VideoSys + impl VideoControls for ElementRef<VideoProps>` triple-declaration with a single hand-written struct. Tradeoffs and full design rationale are in
+the [Phase N Ref API design doc](./phase-n-ref-api-design.md). Highlights:
 
-- The `#[whisker::element_methods]` trait's typed dispatch (`r.pause()`, `r.seek(10.0)`) still routes through `whisker_bridge_invoke_element_method`. The bridge now uses the *new* Lynx Android `LynxUIMethodInvoker<T>` direct-table lookup — much less Lynx-version-coupled than the old reflection path. No Rust-side change visible to users.
-- A future Rust-side `ModuleDefinition` macro (think `module! { ... }`) could let Rust authors declare modules without writing the Swift/Kotlin halves — but that's out of Phase L's scope. Phase L only replaces the *platform-side* author surface.
+- **All plain Rust** — no Rust-side macros for the methods themselves;
+  the `#[whisker::modules::component]` macro only needs to recognize
+  the `r: VideoRef` parameter (any type implementing `WhiskerRef`) and
+  emit mount-time `RefHandle::__bind(...)` wiring.
+- **Symmetric with Kotlin / Swift surface** — the platform-side
+  `definition()` DSL declares prop names + method names; the Rust-side
+  `impl VideoRef` declares matching methods that dispatch via the same
+  names. Both halves describe the same component from their own
+  language's perspective.
+- **Composite custom refs** (`CustomInputRef`, `FormRef`, …) compose
+  built-in refs as struct fields and forward methods — see Phase N
+  §5 for the pattern. No special Whisker support needed; it's just
+  Rust struct composition.
+
+A future Rust-side declarative macro (`whisker::module! { ... }`)
+that derives both the platform-side DSL and the Rust struct from a
+single source-of-truth declaration is **out of scope for Phase L** —
+the per-platform manual declaration is fine for v1 and keeps the
+codegen story simpler.
 
 ## 4. Migration story
 
@@ -186,7 +233,7 @@ Phase M (#59) then deprecates → removes the annotation surface in a follow-up 
 
 ## 7. Out of scope for Phase L
 
-- A Rust-side `ModuleDefinition` macro (declaring modules from Rust). The platform-side DSL is the primary deliverable; Rust shim stays as `#[whisker::platform_component]` for now.
+- A Rust-side `whisker::module! { ... }` declarative macro that derives both halves (Rust struct + platform-side DSL) from a single source-of-truth declaration. Rust authors write the `XxxRef` struct by hand per the [Phase N Ref API design](./phase-n-ref-api-design.md); the platform-side `definition()` is declared separately. Single-source-of-truth comes later if the redundancy ever bites.
 - View-less `Function(...)` blocks outside the `View(...) { ... }` scope (i.e. module-level functions). These map to the function-only flavor and need separate bridge plumbing — track as a sub-issue if it comes up.
 - Code-generation perf optimizations beyond what's needed to ship (e.g. KSP incremental processing for individual module files). Defer to a polish PR if/when build times become noticeable.
 
@@ -207,5 +254,7 @@ Phase M is a follow-up; not included in this estimate.
 - [ ] Closure-body strategy (A vs B from §5).
 - [ ] Async function semantics (callback vs Swift `async`).
 - [ ] Whether to keep `WhiskerCustomEvent.dispatch` as the runtime emit API or fold it into the `WhiskerModule` base class.
+
+Phase N's Ref API is **settled** — see [`docs/phase-n-ref-api-design.md`](./phase-n-ref-api-design.md). The Rust shim path in §3c assumes that design and lands before or alongside L-2.
 
 Once these are resolved, L-2 implementation can start.
