@@ -131,24 +131,136 @@ public data class WhiskerEventsComponent(public val names: List<String>) :
 @DslMarker
 public annotation class WhiskerDefinitionDsl
 
+/**
+ * Top-level definition builder. The DSL factories ([Name], [View],
+ * [Function], [Constants], [Events]) are **member functions** so
+ * authors call them inside the `ModuleDefinition { ... }` block
+ * without any `import` — and so `View(...)` doesn't collide with
+ * `android.view.View` (a member on the implicit receiver wins over
+ * an imported top-level / constructor name).
+ *
+ * They're plain (non-`inline`/non-`reified`) members; the
+ * generic [WhiskerViewDefinitionBuilder.Prop] / `Function`
+ * overloads use unchecked casts at dispatch time instead of
+ * reified type checks. A type mismatch therefore surfaces as a
+ * `ClassCastException` when the closure runs (loud), rather than
+ * a silent no-op.
+ */
 @WhiskerDefinitionDsl
 public class WhiskerModuleDefinitionBuilder {
-    /**
-     * Internal mutable collection of components the factory
-     * functions ([Name], [View], [Function], [Constants], [Events])
-     * append to as they execute. The lambda block's receiver is a
-     * [WhiskerModuleDefinitionBuilder], so calls inside the block
-     * resolve to the extension functions defined below — each one
-     * has the side effect of appending its component here.
-     */
-    @PublishedApi
     internal val components: MutableList<WhiskerDefinitionComponent> = mutableListOf()
+
+    /** `Name("Foo")` — the module's local tag name. */
+    public fun Name(value: String): WhiskerDefinitionComponent =
+        WhiskerNameComponent(value).also { components.add(it) }
+
+    /** `Constants("k" to v, ...)` — static key/value pairs. */
+    public fun Constants(vararg entries: Pair<String, Any?>): WhiskerDefinitionComponent =
+        WhiskerConstantsComponent(entries.toMap()).also { components.add(it) }
+
+    /** `Constants(mapOf(...))` — same, but takes a Map directly. */
+    public fun Constants(values: Map<String, Any?>): WhiskerDefinitionComponent =
+        WhiskerConstantsComponent(values).also { components.add(it) }
+
+    /**
+     * `View(MyView::class.java) { ... }` — registers a Lynx UI
+     * subclass + its inner DSL block (Prop / Function / Events).
+     */
+    public fun View(
+        viewClass: Class<*>,
+        block: WhiskerViewDefinitionBuilder.() -> Unit,
+    ): WhiskerDefinitionComponent {
+        val b = WhiskerViewDefinitionBuilder()
+        b.block()
+        return WhiskerViewComponent(viewClass, b.components.toList())
+            .also { components.add(it) }
+    }
+
+    /** `Events("a", "b", ...)` — variadic event-name declaration. */
+    public fun Events(vararg names: String): WhiskerDefinitionComponent =
+        WhiskerEventsComponent(names.toList()).also { components.add(it) }
+
+    // ---- Module-level (view-less) functions: no view argument ----
+
+    public fun Function(name: String, handler: () -> Any?): WhiskerDefinitionComponent =
+        WhiskerFunctionComponent(name) { _, _ -> handler() }.also { components.add(it) }
+
+    public fun <A> Function(
+        name: String,
+        handler: (A) -> Any?,
+    ): WhiskerDefinitionComponent =
+        WhiskerFunctionComponent(name) { _, args ->
+            @Suppress("UNCHECKED_CAST")
+            handler(args.getOrNull(0) as A)
+        }.also { components.add(it) }
+
+    public fun <A, B> Function(
+        name: String,
+        handler: (A, B) -> Any?,
+    ): WhiskerDefinitionComponent =
+        WhiskerFunctionComponent(name) { _, args ->
+            @Suppress("UNCHECKED_CAST")
+            handler(args.getOrNull(0) as A, args.getOrNull(1) as B)
+        }.also { components.add(it) }
 }
 
+/**
+ * Inner builder for the `View(...) { ... }` block. Same
+ * member-function rationale as [WhiskerModuleDefinitionBuilder].
+ * `@DslMarker` keeps the top-level factories ([Name], [View], …)
+ * out of scope here so they can't be called inside a View block.
+ */
 @WhiskerDefinitionDsl
 public class WhiskerViewDefinitionBuilder {
-    @PublishedApi
     internal val components: MutableList<WhiskerDefinitionComponent> = mutableListOf()
+
+    /**
+     * `Prop("foo") { view, value -> ... }` — view-bearing prop
+     * setter. `V` / `T` are inferred from the lambda parameter
+     * types. The dispatch-time cast is unchecked (erased generics):
+     * a mismatch raises `ClassCastException` inside the closure.
+     */
+    public fun <V : Any, T> Prop(
+        name: String,
+        setter: (V, T) -> Unit,
+    ): WhiskerDefinitionComponent =
+        WhiskerPropComponent(name) { viewAny, valueAny ->
+            @Suppress("UNCHECKED_CAST")
+            setter(viewAny as V, valueAny as T)
+        }.also { components.add(it) }
+
+    /** `Events("a", "b", ...)` declared inside a `View(...)` block. */
+    public fun Events(vararg names: String): WhiskerDefinitionComponent =
+        WhiskerEventsComponent(names.toList()).also { components.add(it) }
+
+    // ---- View-bound functions: first arg is the view ----
+
+    public fun <V : Any> Function(
+        name: String,
+        handler: (V) -> Any?,
+    ): WhiskerDefinitionComponent =
+        WhiskerFunctionComponent(name) { viewAny, _ ->
+            @Suppress("UNCHECKED_CAST")
+            handler(viewAny as V)
+        }.also { components.add(it) }
+
+    public fun <V : Any, A> Function(
+        name: String,
+        handler: (V, A) -> Any?,
+    ): WhiskerDefinitionComponent =
+        WhiskerFunctionComponent(name) { viewAny, args ->
+            @Suppress("UNCHECKED_CAST")
+            handler(viewAny as V, args.getOrNull(0) as A)
+        }.also { components.add(it) }
+
+    public fun <V : Any, A, B> Function(
+        name: String,
+        handler: (V, A, B) -> Any?,
+    ): WhiskerDefinitionComponent =
+        WhiskerFunctionComponent(name) { viewAny, args ->
+            @Suppress("UNCHECKED_CAST")
+            handler(viewAny as V, args.getOrNull(0) as A, args.getOrNull(1) as B)
+        }.also { components.add(it) }
 }
 
 // ----- ModuleDefinition value -----------------------------------------------
@@ -193,179 +305,4 @@ public data class ModuleDefinition(public val components: List<WhiskerDefinition
             return ModuleDefinition(b.components.toList())
         }
     }
-}
-
-// ----- Top-level factories — the DSL surface --------------------------------
-
-// Naming convention: PascalCase, mirroring Expo Modules + the
-// Swift side. Kotlin allows top-level fn names of any case.
-
-/** `Name("Foo")` — the module's local tag name. */
-public fun WhiskerModuleDefinitionBuilder.Name(value: String): WhiskerDefinitionComponent {
-    val c = WhiskerNameComponent(value)
-    components.add(c)
-    return c
-}
-
-/** `Constants("k" to v, ...)` — static dictionary. */
-public fun WhiskerModuleDefinitionBuilder.Constants(
-    vararg entries: Pair<String, Any?>,
-): WhiskerDefinitionComponent {
-    val c = WhiskerConstantsComponent(entries.toMap())
-    components.add(c)
-    return c
-}
-
-/** `Constants(mapOf(...))` — same, but takes a Map directly. */
-public fun WhiskerModuleDefinitionBuilder.Constants(
-    values: Map<String, Any?>,
-): WhiskerDefinitionComponent {
-    val c = WhiskerConstantsComponent(values)
-    components.add(c)
-    return c
-}
-
-/**
- * `View(MyView::class.java) { ... }` — registers a Lynx UI
- * subclass + its inner DSL block (Prop / Function / Events).
- */
-public fun WhiskerModuleDefinitionBuilder.View(
-    viewClass: Class<*>,
-    block: WhiskerViewDefinitionBuilder.() -> Unit,
-): WhiskerDefinitionComponent {
-    val b = WhiskerViewDefinitionBuilder()
-    b.block()
-    val c = WhiskerViewComponent(viewClass, b.components.toList())
-    components.add(c)
-    return c
-}
-
-/** `Events("a", "b", ...)` — variadic event-name declaration. */
-public fun WhiskerModuleDefinitionBuilder.Events(
-    vararg names: String,
-): WhiskerDefinitionComponent {
-    val c = WhiskerEventsComponent(names.toList())
-    components.add(c)
-    return c
-}
-
-/** Events declared inside a `View(...)` block. */
-public fun WhiskerViewDefinitionBuilder.Events(
-    vararg names: String,
-): WhiskerDefinitionComponent {
-    val c = WhiskerEventsComponent(names.toList())
-    components.add(c)
-    return c
-}
-
-// ----- Prop factories ------------------------------------------------------
-
-/**
- * `Prop("foo") { view, value -> ... }` — view-bearing prop setter.
- * Inside a `View(...)` block.
- *
- * Reified type parameters let the framework downcast at dispatch
- * time. Mismatches silently no-op (with a debug-build log).
- */
-public inline fun <reified V : Any, reified T> WhiskerViewDefinitionBuilder.Prop(
-    name: String,
-    noinline setter: (V, T) -> Unit,
-): WhiskerDefinitionComponent {
-    val c = WhiskerPropComponent(name) { viewAny: Any, valueAny: Any? ->
-        val v = viewAny as? V
-        if (v == null) {
-            // Type mismatch — drop the call.
-            return@WhiskerPropComponent
-        }
-        @Suppress("UNCHECKED_CAST")
-        val t = valueAny as? T
-        if (t == null && valueAny != null) {
-            return@WhiskerPropComponent
-        }
-        @Suppress("UNCHECKED_CAST")
-        setter(v, t as T)
-    }
-    components.add(c)
-    return c
-}
-
-// ----- Function factories — overloads for 0..2 args -------------------------
-
-// View-bound functions: first arg is the view type.
-
-public inline fun <reified V : Any> WhiskerViewDefinitionBuilder.Function(
-    name: String,
-    crossinline handler: (V) -> Any?,
-): WhiskerDefinitionComponent {
-    val c = WhiskerFunctionComponent(name) { viewAny: Any?, _: List<Any?> ->
-        val v = viewAny as? V ?: return@WhiskerFunctionComponent null
-        handler(v)
-    }
-    components.add(c)
-    return c
-}
-
-public inline fun <reified V : Any, reified A> WhiskerViewDefinitionBuilder.Function(
-    name: String,
-    crossinline handler: (V, A) -> Any?,
-): WhiskerDefinitionComponent {
-    val c = WhiskerFunctionComponent(name) { viewAny: Any?, args: List<Any?> ->
-        val v = viewAny as? V ?: return@WhiskerFunctionComponent null
-        val a = args.firstOrNull() as? A ?: return@WhiskerFunctionComponent null
-        handler(v, a)
-    }
-    components.add(c)
-    return c
-}
-
-public inline fun <reified V : Any, reified A, reified B> WhiskerViewDefinitionBuilder.Function(
-    name: String,
-    crossinline handler: (V, A, B) -> Any?,
-): WhiskerDefinitionComponent {
-    val c = WhiskerFunctionComponent(name) { viewAny: Any?, args: List<Any?> ->
-        val v = viewAny as? V ?: return@WhiskerFunctionComponent null
-        if (args.size < 2) return@WhiskerFunctionComponent null
-        val a = args[0] as? A ?: return@WhiskerFunctionComponent null
-        val b = args[1] as? B ?: return@WhiskerFunctionComponent null
-        handler(v, a, b)
-    }
-    components.add(c)
-    return c
-}
-
-// Module-level (view-less) functions: no view argument.
-
-public fun WhiskerModuleDefinitionBuilder.Function(
-    name: String,
-    handler: () -> Any?,
-): WhiskerDefinitionComponent {
-    val c = WhiskerFunctionComponent(name) { _: Any?, _: List<Any?> -> handler() }
-    components.add(c)
-    return c
-}
-
-public inline fun <reified A> WhiskerModuleDefinitionBuilder.Function(
-    name: String,
-    crossinline handler: (A) -> Any?,
-): WhiskerDefinitionComponent {
-    val c = WhiskerFunctionComponent(name) { _: Any?, args: List<Any?> ->
-        val a = args.firstOrNull() as? A ?: return@WhiskerFunctionComponent null
-        handler(a)
-    }
-    components.add(c)
-    return c
-}
-
-public inline fun <reified A, reified B> WhiskerModuleDefinitionBuilder.Function(
-    name: String,
-    crossinline handler: (A, B) -> Any?,
-): WhiskerDefinitionComponent {
-    val c = WhiskerFunctionComponent(name) { _: Any?, args: List<Any?> ->
-        if (args.size < 2) return@WhiskerFunctionComponent null
-        val a = args[0] as? A ?: return@WhiskerFunctionComponent null
-        val b = args[1] as? B ?: return@WhiskerFunctionComponent null
-        handler(a, b)
-    }
-    components.add(c)
-    return c
 }

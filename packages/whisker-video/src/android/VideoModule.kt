@@ -18,10 +18,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import rs.whisker.runtime.ModuleDefinition
-import rs.whisker.runtime.Name
-import rs.whisker.runtime.View as DSLView
-import rs.whisker.runtime.Prop
-import rs.whisker.runtime.Function as DSLFunction
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.WhiskerUI
@@ -88,13 +84,13 @@ open class VideoView(context: WhiskerContext) : WhiskerUI<View>(context) {
 class VideoModule : WhiskerModule() {
     override fun definition() = ModuleDefinition {
         Name("Video")
-        DSLView(VideoView::class.java) {
+        View(VideoView::class.java) {
             Prop("src") { view: VideoView, value: String ->
                 view.setSrc(value)
             }
-            DSLFunction("play") { view: VideoView -> view.play() }
-            DSLFunction("pause") { view: VideoView -> view.pause() }
-            DSLFunction("seek") { view: VideoView, seconds: Double ->
+            Function("play") { view: VideoView -> view.play() }
+            Function("pause") { view: VideoView -> view.pause() }
+            Function("seek") { view: VideoView, seconds: Double ->
                 view.seek(seconds)
             }
         }

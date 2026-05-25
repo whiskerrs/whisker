@@ -14,8 +14,6 @@ import android.content.Context
 import android.graphics.Color
 import android.view.View
 import rs.whisker.runtime.ModuleDefinition
-import rs.whisker.runtime.Name
-import rs.whisker.runtime.View as DSLView
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerModule
 import rs.whisker.runtime.WhiskerUI
@@ -49,7 +47,7 @@ open class HelloView(context: WhiskerContext) : WhiskerUI<View>(context) {
 class HelloModule : WhiskerModule() {
     override fun definition() = ModuleDefinition {
         Name("Hello")
-        DSLView(HelloView::class.java) {
+        View(HelloView::class.java) {
             // Hello is style-only (`Hello(style: "...")` on the
             // Rust side); no Prop / Function declarations needed.
             // Style props flow through Lynx's CSS path, not the
