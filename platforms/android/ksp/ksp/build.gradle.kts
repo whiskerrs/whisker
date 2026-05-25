@@ -1,6 +1,6 @@
 // `whisker-ksp` — the KSP `SymbolProcessor` that discovers
-// `@WhiskerComponent(...)` applications across the user app's
-// compilation classpath and emits `WhiskerModuleBehaviors.kt`
+// `@WhiskerModule` applications across the user app's
+// compilation classpath and emits `<Module>Behaviors.kt`
 // into the app's generated-source set.
 //
 // Pure Kotlin/JVM module. The processor itself isn't Android-aware;

@@ -55,7 +55,7 @@
 //
 // This file defines the **DSL surface and value model**. The
 // `Module` base class collects the `ModuleDefinition` at init time;
-// the iOS dispatch glue (L-2b) + the `WhiskerComponentsCodegen`
+// the iOS dispatch glue (L-2b) + the `WhiskerModuleCodegen`
 // plugin's `@WhiskerModule` discovery wire it into Lynx's prop /
 // method dispatch tables.
 

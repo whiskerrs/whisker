@@ -1,8 +1,7 @@
-// `whisker-annotations` — the public `@WhiskerComponent` annotation
-// surface. Pure Kotlin/JVM library so module-crate code that
-// declares `@WhiskerComponent("x-tag")` on its `LynxUI` subclass has
-// a lightweight dep (no Android Gradle Plugin needed for an
-// annotation type).
+// `whisker-annotations` — the public `@WhiskerModule` annotation
+// surface. Pure Kotlin/JVM library so module-crate code that marks
+// its `Module` subclass with `@WhiskerModule` has a lightweight dep
+// (no Android Gradle Plugin needed for an annotation type).
 //
 // Consumed by:
 //   - Module crates' Kotlin sources (e.g.

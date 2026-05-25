@@ -208,7 +208,7 @@ declares module-level `Function`s instead.
 
 ```swift
 // ios/Sources/WhiskerFoo/FooModule.swift
-import WhiskerComponents   // @WhiskerModule
+import WhiskerModuleMacros   // @WhiskerModule
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
 @WhiskerModule
@@ -352,17 +352,17 @@ identity off its directory name.
 | `#[whisker::element_methods(Props)]` | `whisker-module` (proc macro) | Typed `ElementRef<T>::method()` dispatch |
 | `WhiskerValue`, `WhiskerModuleError` | `whisker::platform_module` | Both flavors |
 | `Signal<T>`, `ElementRef<T>`, `element_ref()` | `whisker` (top-level) | View-bearing modules' shim |
-| `@WhiskerModule` (marker) | `WhiskerComponents` SPM target / `rs.whisker.annotations.WhiskerModule` | iOS / Android DSL module classes |
+| `@WhiskerModule` (marker) | `WhiskerModuleMacros` SPM target / `rs.whisker.annotations.WhiskerModule` | iOS / Android DSL module classes |
 | `Module`, `ModuleDefinition`, `Name`/`View`/`Prop`/`Function`/`Events`/`Constants` | `WhiskerModule` SPM target / `rs.whisker.runtime` Kotlin package | DSL `definition()` body |
 | `WhiskerUI<View>` / `WhiskerContext` / `WhiskerValue` | `WhiskerModule` SPM target / `rs.whisker.runtime` Kotlin package | iOS / Android view classes |
 
 ## Future direction
 
-The Expo-style `ModuleDefinition` DSL (Phase L, #58) is now the
+The Expo-style `ModuleDefinition` DSL (Phase L, #58) is the sole
 authoring surface for both view-bearing and function-only modules —
 they share the same `definition() -> ModuleDefinition` entry point and
 `View(...) { Prop(...) … }` is a feature of the DSL. The older
 `@WhiskerComponent` / `@WhiskerProp` / `@WhiskerUIMethod` annotation
-set is being removed in Phase M (#212).
+set was removed in Phase M (#212).
 
 See the Whisker Module epic (#55) for the broader roadmap.

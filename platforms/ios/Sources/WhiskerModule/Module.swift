@@ -1,12 +1,12 @@
 // `Module` base class (iOS) — the API a Whisker module subclasses.
-// Mark the subclass with `@WhiskerModule` (from `WhiskerComponents`)
+// Mark the subclass with `@WhiskerModule` (from `WhiskerModuleMacros`)
 // so the SwiftPM codegen plugin discovers it and generates the Lynx
 // registration. (Modeled after Expo's `Module` base class; the
 // `@WhiskerModule` marker plays the role of Expo's
 // `expo-module.config.json` entry — but inline at the declaration.)
 //
 // ```swift
-// import WhiskerComponents   // @WhiskerModule
+// import WhiskerModuleMacros   // @WhiskerModule
 // import WhiskerModule    // Module, ModuleDefinition, DSL
 //
 // @WhiskerModule

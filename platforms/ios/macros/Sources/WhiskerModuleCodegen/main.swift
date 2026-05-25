@@ -1,21 +1,19 @@
-// `whisker-components-codegen` — Swift executable that scans .swift
-// source files for `@WhiskerComponent("x-tag")` AND `@WhiskerModule`
-// applications and emits `<TargetName>+Generated.swift`
-// containing the matching `LynxComponentRegistry.registerUI(...)`
-// and DSL-module registration calls.
+// `whisker-module-codegen` — Swift executable that scans .swift
+// source files for `@WhiskerModule` applications and emits
+// `<TargetName>+Generated.swift` containing the matching DSL-module
+// registration calls.
 //
-// Invoked at SwiftPM build time by `WhiskerComponentsCodegenPlugin`
+// Invoked at SwiftPM build time by `WhiskerModuleCodegenPlugin`
 // (under `../../Plugins/`). The plugin passes:
 //   --target-name <name>        ← the SwiftPM target being built
 //   --output <path>             ← target for the generated .swift
 //   <input1.swift> <input2.swift> …
 //
 // Apple's SwiftSyntax parses each input file into an AST; we walk
-// it to find any class declaration carrying either annotation,
-// pull the string literal argument, and produce one registration
-// line per match.
+// it to find any class declaration carrying the `@WhiskerModule`
+// attribute and produce one registration block per match.
 //
-// Companion of `WhiskerComponentProcessor.kt` (Android KSP). Same
+// Companion of `WhiskerModuleProcessor.kt` (Android KSP). Same
 // shape — annotations in, generated registry out. Apple's
 // SwiftSyntax is the iOS equivalent of KSP's `Resolver`.
 //
@@ -75,17 +73,6 @@ func parseArgs(_ argv: [String]) -> Args? {
 
 // ---- AST walker --------------------------------------------------------------
 
-/// One discovered `(tag, className)` pair from a `@WhiskerComponent`
-/// annotation. `className` is the bare Swift class name as
-/// written; the generated registry's `NSClassFromString` lookup
-/// applies both the `<TargetName>.` SwiftPM-target prefix AND
-/// the bare name (to support authors who add their own
-/// `@objc(BareName)`).
-struct ElementHit {
-    let tag: String
-    let className: String
-}
-
 /// One discovered `@WhiskerModule`-annotated class. Phase L-3 +
 /// the discovery overhaul: `@WhiskerModule` is the explicit
 /// opt-in (companion of Android's KSP `@WhiskerModule`). The
@@ -101,7 +88,6 @@ struct DSLModuleHit {
 }
 
 final class WhiskerAnnotationCollector: SyntaxVisitor {
-    var elements: [ElementHit] = []
     var dslModules: [DSLModuleHit] = []
 
     override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
@@ -109,13 +95,6 @@ final class WhiskerAnnotationCollector: SyntaxVisitor {
             guard let attr = attribute.as(AttributeSyntax.self) else { continue }
             guard let attrName = attr.attributeName.as(IdentifierTypeSyntax.self) else { continue }
             let name = attrName.name.text
-            let className = node.name.text
-
-            // ---- Element path: @WhiskerComponent("tag") ----
-            if name == "WhiskerComponent" {
-                guard let value = firstStringArgument(of: attr) else { continue }
-                elements.append(ElementHit(tag: value, className: className))
-            }
 
             // ---- DSL module path: @WhiskerModule (no argument) ----
             //
@@ -124,23 +103,11 @@ final class WhiskerAnnotationCollector: SyntaxVisitor {
             // `Name("…")` entry inside `definition()`, so the
             // attribute itself takes no arguments.
             if name == "WhiskerModule" {
-                dslModules.append(DSLModuleHit(className: className))
+                dslModules.append(DSLModuleHit(className: node.name.text))
             }
         }
         return .skipChildren
     }
-}
-
-/// Extract the first positional string-literal argument from an
-/// `@Attr("...")` invocation. Returns nil for any deviation
-/// (multi-segment interpolation, missing args, non-string expr).
-private func firstStringArgument(of attr: AttributeSyntax) -> String? {
-    guard let args = attr.arguments?.as(LabeledExprListSyntax.self) else { return nil }
-    guard let first = args.first else { return nil }
-    guard let strLit = first.expression.as(StringLiteralExprSyntax.self) else { return nil }
-    guard strLit.segments.count == 1 else { return nil }
-    guard let seg = strLit.segments.first?.as(StringSegmentSyntax.self) else { return nil }
-    return seg.content.text
 }
 
 // ---- Codegen -----------------------------------------------------------------
@@ -148,37 +115,33 @@ private func firstStringArgument(of attr: AttributeSyntax) -> String? {
 func render(
     targetName: String,
     crateName: String,
-    elements: [ElementHit],
     dslModules: [DSLModuleHit]
 ) -> String {
-    // Deterministic order — sort each list independently so two
-    // builds with the same input produce byte-identical output
-    // (helps SwiftPM's incremental-rebuild fingerprinting).
-    let sortedElements = elements.sorted { $0.tag < $1.tag }
+    // Deterministic order — sort so two builds with the same input
+    // produce byte-identical output (helps SwiftPM's incremental-
+    // rebuild fingerprinting).
     let sortedDSLModules = dslModules.sorted { $0.className < $1.className }
 
     let registerFn = "_whiskerRegisterModules_\(targetName)"
 
     var out = """
-        // AUTO-GENERATED by `whisker-components-codegen` (SwiftPM build plugin).
+        // AUTO-GENERATED by `whisker-module-codegen` (SwiftPM build plugin).
         // DO NOT EDIT — re-runs automatically on next `swift build`.
         //
-        // Sourced from `@WhiskerComponent("LocalTag")` and
-        // `@WhiskerModule` applications in the `\(targetName)`
-        // SwiftPM target's source set. Each `@WhiskerComponent` is
-        // registered against Lynx with the fully-qualified tag
-        // `\(crateName):<LocalTag>`; the cargo crate name (this
-        // package's SwiftPM `displayName`) is the namespace, so two
-        // unrelated module packages can both declare a `Hello`
-        // element without colliding. Each module package owns its
-        // own copy of this generated file; the whisker-build-
-        // generated aggregator imports every module and calls each
-        // per-target register fn from a top-level
+        // Sourced from `@WhiskerModule` applications in the
+        // `\(targetName)` SwiftPM target's source set. Each
+        // view-bearing module registers against Lynx with the
+        // fully-qualified tag `\(crateName):<Name>`; the cargo crate
+        // name (this package's SwiftPM `displayName`) is the
+        // namespace, so two unrelated module packages can both
+        // declare a `Hello` element without colliding. Each module
+        // package owns its own copy of this generated file; the
+        // whisker-build-generated aggregator imports every module and
+        // calls each per-target register fn from a top-level
         // `WhiskerModuleBehaviors.registerAll()`.
         //
-        // Sibling of Android's `rs.whisker.ksp.WhiskerComponentProcessor`.
+        // Sibling of Android's `rs.whisker.ksp.WhiskerModuleProcessor`.
         //
-        // Element registrations:    \(sortedElements.count)
         // DSL Module registrations: \(sortedDSLModules.count)
 
         import Foundation
@@ -206,31 +169,8 @@ func render(
 
         """
 
-    if sortedElements.isEmpty && sortedDSLModules.isEmpty {
-        out += "    // (no @WhiskerComponent / @WhiskerModule found)\n"
-    }
-    for hit in sortedElements {
-        // Dual-resolution shape: prefixed name first (default
-        // SwiftPM-target mangled name `<TargetName>.<ClassName>`),
-        // bare name fallback (for authors who declare
-        // `@objc(BareName)` themselves).
-        //
-        // The Lynx tag is namespaced by the cargo crate name so two
-        // unrelated module packages can both declare an element
-        // named `Video` without colliding. Matches what the
-        // Rust-side `#[whisker::platform_component]` proc macro emits
-        // via `concat!(env!("CARGO_PKG_NAME"), ":", tag_local)`.
-        let qualifiedTag = "\(crateName):\(hit.tag)"
-        out += """
-                do {
-                    let cls: AnyClass? = NSClassFromString("\(targetName).\(hit.className)")
-                        ?? NSClassFromString("\(hit.className)")
-                    if let cls = cls {
-                        LynxComponentRegistry.registerUI(cls, withName: "\(qualifiedTag)")
-                    }
-                }
-
-            """
+    if sortedDSLModules.isEmpty {
+        out += "    // (no @WhiskerModule found)\n"
     }
     // ---- Phase L-3 — DSL modules ---------------------------------------
     //
@@ -315,7 +255,7 @@ func render(
 
 guard let args = parseArgs(CommandLine.arguments) else {
     FileHandle.standardError.write(Data(
-        "usage: whisker-components-codegen --target-name <name> --crate-name <pkg> --output <path> <input.swift>...\n".utf8
+        "usage: whisker-module-codegen --target-name <name> --crate-name <pkg> --output <path> <input.swift>...\n".utf8
     ))
     exit(2)
 }
@@ -327,7 +267,7 @@ for input in args.inputs {
         source = try String(contentsOfFile: input, encoding: .utf8)
     } catch {
         FileHandle.standardError.write(Data(
-            "whisker-components-codegen: cannot read \(input): \(error)\n".utf8
+            "whisker-module-codegen: cannot read \(input): \(error)\n".utf8
         ))
         exit(1)
     }
@@ -338,14 +278,13 @@ for input in args.inputs {
 let generated = render(
     targetName: args.targetName,
     crateName: args.crateName,
-    elements: collector.elements,
     dslModules: collector.dslModules
 )
 do {
     try generated.write(toFile: args.outputPath, atomically: true, encoding: .utf8)
 } catch {
     FileHandle.standardError.write(Data(
-        "whisker-components-codegen: cannot write \(args.outputPath): \(error)\n".utf8
+        "whisker-module-codegen: cannot write \(args.outputPath): \(error)\n".utf8
     ))
     exit(1)
 }

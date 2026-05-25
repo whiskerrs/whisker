@@ -25,7 +25,7 @@ else {
 let package = Package(
     name: "whisker-local-store",
     // macOS 13 is required because the SwiftPM build plugin
-    // (`WhiskerComponentsCodegenPlugin`) is hosted by SwiftSyntax,
+    // (`WhiskerModuleCodegenPlugin`) is hosted by SwiftSyntax,
     // which requires that floor at build time. The module's
     // runtime artefacts only need iOS 13.
     platforms: [.iOS(.v13), .macOS(.v13)],
@@ -49,7 +49,7 @@ let package = Package(
         .target(
             name: "WhiskerLocalStore",
             dependencies: [
-                .product(name: "WhiskerComponents", package: "macros"),
+                .product(name: "WhiskerModuleMacros", package: "macros"),
                 .product(name: "WhiskerModule", package: "WhiskerRuntime"),
                 .product(name: "OrderedCollections", package: "swift-collections"),
             ],
@@ -57,7 +57,7 @@ let package = Package(
             // (Expo-style layout), next to `android/` and `src/`.
             path: "ios/Sources/WhiskerLocalStore",
             plugins: [
-                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),
+                .plugin(name: "WhiskerModuleCodegenPlugin", package: "macros"),
             ]
         ),
     ]

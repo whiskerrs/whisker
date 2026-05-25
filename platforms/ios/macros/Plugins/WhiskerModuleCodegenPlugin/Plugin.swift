@@ -1,9 +1,9 @@
-// SwiftPM build-tool plugin that invokes the `WhiskerComponentsCodegen`
-// executable (Sources/WhiskerComponentsCodegen) against every `.swift`
+// SwiftPM build-tool plugin that invokes the `WhiskerModuleCodegen`
+// executable (Sources/WhiskerModuleCodegen) against every `.swift`
 // file in the consuming target's source set.
 //
 // Activates when a target's `Package.swift` declares
-// `plugins: [.plugin(name: "WhiskerComponentsCodegenPlugin",
+// `plugins: [.plugin(name: "WhiskerModuleCodegenPlugin",
 //                    package: "macros")]`.
 //
 // Phase 7-Φ.G: applied per-module — each module package adds the
@@ -22,7 +22,7 @@ import Foundation
 import PackagePlugin
 
 @main
-struct WhiskerComponentsCodegenPlugin: BuildToolPlugin {
+struct WhiskerModuleCodegenPlugin: BuildToolPlugin {
     func createBuildCommands(
         context: PluginContext,
         target: Target
@@ -33,7 +33,7 @@ struct WhiskerComponentsCodegenPlugin: BuildToolPlugin {
             return []
         }
 
-        let tool = try context.tool(named: "WhiskerComponentsCodegen")
+        let tool = try context.tool(named: "WhiskerModuleCodegen")
         // Output file name is the target name + `+Generated.swift`.
         // Filename uniqueness across modules isn't strictly required
         // (each SwiftPM target has its own work dir), but using the

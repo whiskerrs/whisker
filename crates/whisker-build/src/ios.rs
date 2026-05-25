@@ -578,7 +578,7 @@ pub struct XcodebuildArgs<'a> {
 /// point the AppDelegate calls at launch. The actual registration
 /// work happens inside the per-module
 /// `_whiskerRegisterModules_<TargetName>()` fns that the
-/// `WhiskerComponentsCodegenPlugin` emits into each module target.
+/// `WhiskerModuleCodegenPlugin` emits into each module target.
 ///
 /// Empty / non-Swift-contributing module list still writes a
 /// no-op aggregator so the pbxproj reference always resolves
@@ -746,7 +746,7 @@ fn render_register_all_swift(modules: &[&crate::modules::ResolvedModule]) -> Str
          // `whisker run` / `whisker build` to refresh.\n\
          //\n\
          // Aggregates every Whisker module's per-target register fn\n\
-         // (emitted by the `WhiskerComponentsCodegenPlugin` SwiftPM\n\
+         // (emitted by the `WhiskerModuleCodegenPlugin` SwiftPM\n\
          // build-tool plugin into each module's compilation) into a\n\
          // single `WhiskerModuleBehaviors.registerAll()` entry point.\n\
          // The user app's AppDelegate calls this once at launch —\n\
