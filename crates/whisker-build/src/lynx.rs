@@ -57,37 +57,42 @@ use std::path::{Path, PathBuf};
 /// Schema: `<lynx-upstream-version>-whisker.<patch-iteration>` so a
 /// reader can tell at a glance which upstream Lynx is wrapped, and
 /// our own patch iterations bump independently.
-pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.3";
+pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.4";
 
 /// Version segment that appears in cache paths + tarball filenames.
 /// Derived from [`LYNX_FORK_TAG`] minus the leading `v`.
-pub const LYNX_VERSION: &str = "3.7.0-whisker.3";
+pub const LYNX_VERSION: &str = "3.7.0-whisker.4";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
 /// produced by the fork's CI. Pinned to the
-/// [v3.7.0-whisker.3 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.3).
+/// [v3.7.0-whisker.4 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.4).
 ///
-/// Bump from `.2`: rebuilds Android `liblynx.so` against
-/// whiskerrs/lynx#2, which adds `lynx_ui_invoke_method` to
-/// `core/native_renderer_capi`. Required for the
-/// `#[whisker::element_methods]` Android path — without this symbol
-/// in liblynx.so, `ElementRef<T>::invoke(...)` fails at the FFI
-/// boundary and the C bridge's `whisker_bridge_invoke_element_method`
-/// can't route to `LynxUIMethodsExecutor`.
+/// Bump from `.3`: rebuilds Android `liblynx.so` against
+/// whiskerrs/lynx#3, which adds Class-explicit overloads to
+/// `PropsUpdater.registerSetter(Class, Settable)` and
+/// `LynxUIMethodsExecutor.registerMethodInvoker(Class, Invoker)`.
+/// Required for the Phase L `ModuleDefinition` DSL — without those
+/// overloads the KSP-emitted setter / invoker classes can't be
+/// registered against arbitrary target UI classes (the existing
+/// single-arg overload of `registerMethodInvoker` had a key-mismatch
+/// bug that made it effectively unusable; the single-arg
+/// `registerSetter` only worked under the `<UIClass>$$PropsSetter`
+/// name convention).
 pub const LYNX_ANDROID_SHA256: &str =
-    "fc62a45315cc5e9986d4d7c5e57fff7535f7b2613982cb40666c41aa529d2f47";
+    "4f5dc0025e3a64aad659f08f44bae24c376ead6ce0e899d40c3bc5fbf874e6f0";
 
 /// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`. Pinned to
 /// the same release as Android — the fork's CI builds both halves
 /// in parallel and uploads them as a pair.
 ///
-/// The iOS xcframework doesn't strictly need the `.3` bump (Whisker
-/// compiles `core/native_renderer_capi/lynx_native_renderer.cc`
-/// itself on iOS — see `whisker-driver-sys/build.rs`), but keeping
-/// both halves on the same Lynx tag avoids the "Android against
-/// .3, iOS against .2" version-skew footgun.
+/// The iOS xcframework doesn't strictly need the `.4` bump (the
+/// Phase L registration-API additions are Android-side only, and
+/// iOS already exposes `LYNX_UI_METHOD` macros as first-class
+/// public API), but keeping both halves on the same Lynx tag
+/// avoids the "Android against .4, iOS against .3" version-skew
+/// footgun.
 pub const LYNX_IOS_SHA256: &str =
-    "5d1709e74e9bc9d4e9138770186744797575e4407cdaa8afa10f20f547ac3c92";
+    "64221632feed79957e0f5bfd9b6d1b2027b35f83529aad9f79e39cd9eec1d819";
 
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
 /// placeholders are filled by [`download_url`].
