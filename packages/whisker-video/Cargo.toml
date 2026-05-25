@@ -17,15 +17,23 @@ include = [
     "Cargo.toml",
     "Package.swift",
     "build.gradle.kts",
-    "whisker.module.toml",
     "src/lib.rs",
-    "src/android/**/*.kt",
-    "src/ios/**/*.swift",
+    "android/**/*.kt",
+    "ios/**/*.swift",
     "README.md",
 ]
 
 [lib]
 crate-type = ["rlib"]
+
+# Module-system opt-in marker. The bare table identifies this cargo
+# crate as a Whisker module; `whisker-build` walks the consuming
+# app's dep tree, picks out every dep carrying it, and wires the
+# Android Gradle subproject (`android/build.gradle.kts`) + iOS
+# SwiftPM package (`ios/Package.swift`) into the host build. No
+# source list needed — the per-platform manifests are the source of
+# truth.
+[package.metadata.whisker]
 
 [dependencies]
 # Rename `whisker-modules-api` → `whisker` so the proc macros' emit

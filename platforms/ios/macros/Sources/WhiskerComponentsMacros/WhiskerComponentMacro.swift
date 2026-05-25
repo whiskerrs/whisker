@@ -1,5 +1,5 @@
-// Macro implementation for `@WhiskerComponent("x-tag")` +
-// `@WhiskerModule("Name")`.
+// Macro implementations for `@WhiskerComponent("x-tag")` +
+// `@WhiskerModule`.
 //
 // `@WhiskerComponent` keeps the v1 shape — emits an `@objc` static
 // `__whiskerElementTag` constant on the annotated `LynxUI<View>`
@@ -7,47 +7,29 @@
 // `WhiskerComponentsCodegen` SwiftPM build-tool plugin from the
 // annotation discovery.
 //
-// `@WhiskerModule` (Phase 7-Φ.F) is a peer-emission macro that
-// expands into a top-level `@_cdecl` C dispatch shim:
+// `@WhiskerModule` (discovery overhaul) is a pure marker — it
+// expands to nothing. It's applied to a `Module` subclass authored
+// with the ModuleDefinition DSL:
 //
 //   ```swift
-//   @WhiskerModule("WhiskerLocalStore")
-//   public class WhiskerLocalStoreImpl {
-//       func save(_ args: [WhiskerValue]) -> WhiskerValue { … }
-//       func load(_ args: [WhiskerValue]) -> WhiskerValue { … }
-//       func remove(_ args: [WhiskerValue]) -> WhiskerValue { … }
-//   }
-//   ```
-//
-// expands to (added as a sibling top-level decl in the same file):
-//
-//   ```swift
-//   @_cdecl("_whiskerDispatch_WhiskerLocalStore")
-//   public func _whiskerDispatch_WhiskerLocalStore(
-//       methodName: UnsafePointer<CChar>?,
-//       args: UnsafePointer<WhiskerValueRaw>?,
-//       argCount: Int
-//   ) -> WhiskerValueRaw {
-//       let method = methodName.flatMap { String(cString: $0) } ?? ""
-//       let decoded = WhiskerValue.decodeArray(args, count: argCount)
-//       let instance = WhiskerLocalStoreImpl()
-//       let result: WhiskerValue
-//       switch method {
-//       case "save":   result = instance.save(decoded)
-//       case "load":   result = instance.load(decoded)
-//       case "remove": result = instance.remove(decoded)
-//       default:
-//           result = .error("unknown method \(method) on WhiskerLocalStore")
+//   @WhiskerModule
+//   public final class LocalStoreModule: Module {
+//       public override func definition() -> ModuleDefinition {
+//           ModuleDefinition {
+//               Name("WhiskerLocalStore")
+//               Function("save") { (key: String, value: String) in … }
+//           }
 //       }
-//       return result.toRaw()
 //   }
 //   ```
 //
-// The C bridge looks the dispatch fn up via the lookup table
-// populated by the `WhiskerComponentsCodegen`-generated
-// `WhiskerModuleBehaviors.registerAll()` call to
-// `whisker_bridge_register_module_dispatch("WhiskerLocalStore",
-//  _whiskerDispatch_WhiskerLocalStore)` at app launch.
+// The `WhiskerComponentsCodegen` SwiftPM build-tool plugin scans
+// each target's sources for the `@WhiskerModule` attribute and
+// emits the registration block (Lynx behavior for view-bearing
+// modules; `whisker_bridge_register_module_dispatch` for view-less
+// ones) into `<Target>+Generated.swift`. The macro itself does no
+// codegen — it exists only so `@WhiskerModule` is a valid Swift
+// attribute the plugin can key on.
 
 import SwiftCompilerPlugin
 import SwiftSyntax
@@ -65,157 +47,29 @@ struct WhiskerComponentsPlugin: CompilerPlugin {
     ]
 }
 
-/// `@WhiskerModule("Name")` — emit the per-module `@_cdecl` C
-/// dispatch shim as a peer of the annotated class. The
-/// `WhiskerComponentsCodegen` SwiftPM plugin discovers the
-/// annotation via SwiftSyntax and emits a registration call
-/// against `whisker_bridge_register_module_dispatch` pointing at
-/// the generated shim.
+/// `@WhiskerModule` — a pure marker attribute applied to a `Module`
+/// subclass. The `WhiskerComponentsCodegen` SwiftPM plugin
+/// discovers the attribute via SwiftSyntax and emits the
+/// registration; the macro itself expands to nothing.
 ///
-/// The annotated class is expected to declare zero-or-more
-/// instance methods of the shape
-/// `func name(_ args: [WhiskerValue]) -> WhiskerValue`. The macro
-/// emits one `case` per such method into the dispatch switch;
-/// methods with other shapes cause a Swift compile error at the
-/// call site, which surfaces to the author with the right
-/// source-location diagnostic.
-public struct WhiskerModuleMacro: PeerMacro {
+/// Implemented as a `MemberMacro` (rather than `PeerMacro`) so the
+/// attribute is valid on a top-level class — Swift rejects a
+/// `peer` macro with `names: arbitrary` at global scope, but a
+/// `member` macro's names are scoped to the type. It adds no
+/// members; the role is just a vehicle for a valid marker.
+public struct WhiskerModuleMacro: MemberMacro {
     public static func expansion(
         of node: AttributeSyntax,
-        providingPeersOf declaration: some DeclSyntaxProtocol,
+        providingMembersOf declaration: some DeclGroupSyntax,
         in context: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
-        guard let moduleName = whiskerModuleFirstStringArgument(of: node) else {
-            // Parser ensures the argument exists at the syntactic
-            // level — a malformed string-literal expression makes
-            // the macro a no-op (the consumer still sees the
-            // Swift parser's diagnostic for the malformed source).
-            return []
-        }
-        guard let classDecl = declaration.as(ClassDeclSyntax.self) else {
-            // `@WhiskerModule` on non-class decls is meaningless;
-            // bail with no output and let Swift's normal type
-            // checker surface the mismatch.
-            return []
-        }
-        let className = classDecl.name.text
-        let methodNames = discoverInstanceMethods(in: classDecl)
-        // Dispatch fn name MUST be `_whiskerDispatch_<ClassName>` —
-        // Swift's macro-name-coverage check requires
-        // `prefixed(_whiskerDispatch_)` to produce
-        // `_whiskerDispatch_<attached-decl-name>`. Module-name-based
-        // names (which the registry actually looks the dispatch fn
-        // up by) don't satisfy that constraint, so the SwiftPM
-        // codegen plugin handles the (module name → dispatch fn
-        // name) mapping at registration time.
-        let dispatchFnName = "_whiskerDispatch_\(className)"
-
-        // Build the switch body. With no methods we emit just the
-        // default arm — the dispatch fn still resolves to a real
-        // symbol (so registration doesn't fail), and every call
-        // reports "unknown method" as the error value.
-        var switchArms = ""
-        for method in methodNames {
-            switchArms += """
-                case "\(method)":
-                    result = instance.\(method)(decoded)
-
-            """
-        }
-
-        // The instance lifetime is per-call: the macro doesn't
-        // know which methods are stateful, and pulling that into
-        // a `static let shared` here would tie module dispatch to
-        // class-level state that author code can't override.
-        // Module impls that need shared state can stash it in a
-        // singleton themselves (matching the Android side, where
-        // the KSP processor emits an `object` rather than a
-        // `class` instance).
-        // Underscored argument labels: keeps the function's
-        // declaration-name a simple identifier (`_whiskerDispatch_X`)
-        // rather than `_whiskerDispatch_X(methodName:argsPtr:argCount:)`,
-        // so Swift's macro-name-coverage check matches it against
-        // the declared `prefixed(_whiskerDispatch_)` clause.
-        //
-        // We ALSO emit `_whiskerRegister_<ClassName>` in the same
-        // peer slot. The register fn holds the module-name string
-        // and the dispatch fn reference — both materialise in the
-        // SAME .o as the dispatch fn, so Swift never has to emit
-        // a `@convention(c)` thunk in another .o. The codegen
-        // plugin's `WhiskerModuleBehaviors.registerAll()` then
-        // just calls `_whiskerRegister_<ClassName>()` — a plain
-        // function call, no address-taken, no duplicate-symbol
-        // hazard. Phase 7-Φ.F.s7.
-        let registerFnName = "_whiskerRegister_\(className)"
-        let dispatchBody = """
-        @_cdecl("\(dispatchFnName)")
-        public func \(dispatchFnName)(
-            _ methodName: UnsafePointer<CChar>?,
-            _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
-            _ argCount: Int
-        ) -> WhiskerValueRaw {
-            let method = methodName == nil ? "" : String(cString: methodName!)
-            let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)
-            let instance = \(className)()
-            let result: WhiskerValue
-            switch method {
-        \(switchArms)    default:
-                result = .error("unknown method \\(method) on \(moduleName)")
-            }
-            return result.toRaw()
-        }
-        """
-        // No `@_cdecl` on the register fn — it's invoked only from
-        // the codegen plugin's Swift output, which lives in the
-        // same SwiftPM target. Calling a Swift fn by its Swift
-        // identifier doesn't trigger `@convention(c)` thunk
-        // emission, so the dispatch fn's `@_cdecl` symbol stays
-        // unique to this .o.
-        let registerBody = """
-        public func \(registerFnName)() {
-            whisker_bridge_register_module_dispatch(
-                "\(moduleName)", \(dispatchFnName))
-        }
-        """
-
-        return [
-            DeclSyntax(stringLiteral: dispatchBody),
-            DeclSyntax(stringLiteral: registerBody),
-        ]
+        []
     }
-}
-
-/// Names of every instance-method declaration in `classDecl`.
-/// Excludes `static` / `class` methods (no `self` to dispatch on),
-/// `init` / `deinit` (different decl kinds in SwiftSyntax — not
-/// `FunctionDeclSyntax`), and `private` methods (intentionally
-/// hidden from the module-dispatch surface).
-private func discoverInstanceMethods(in classDecl: ClassDeclSyntax) -> [String] {
-    var names: [String] = []
-    for member in classDecl.memberBlock.members {
-        guard let funcDecl = member.decl.as(FunctionDeclSyntax.self) else {
-            continue
-        }
-        var isStatic = false
-        var isPrivate = false
-        for modifier in funcDecl.modifiers {
-            let text = modifier.name.text
-            if text == "static" || text == "class" {
-                isStatic = true
-            }
-            if text == "private" || text == "fileprivate" {
-                isPrivate = true
-            }
-        }
-        if isStatic || isPrivate { continue }
-        names.append(funcDecl.name.text)
-    }
-    return names
 }
 
 /// First positional string-literal argument of an `@Attr("...")`
-/// invocation. Shared shape — `@WhiskerComponent(_ tag:)` and
-/// `@WhiskerModule(_ name:)` both take exactly one string arg.
+/// invocation. Used by `@WhiskerProp(_ name:)` and
+/// `@WhiskerComponent(_ tag:)` — both take exactly one string arg.
 private func whiskerModuleFirstStringArgument(of node: AttributeSyntax) -> String? {
     guard
         let arguments = node.arguments?.as(LabeledExprListSyntax.self),

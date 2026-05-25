@@ -263,12 +263,13 @@ fn compile_ios() -> Result<()> {
         .include(bridge_root().join("include"))
         .include(&bridge_src);
 
-    // Whisker module-system v1: external module crates (e.g.
-    // `packages/whisker-hello-element`) declare their iOS .mm sources
-    // in `whisker.module.toml`. `whisker-build` walks the consuming
-    // app's cargo dep tree, gathers each module's
-    // `[ios] native_sources` (resolved to absolute paths), and passes
-    // them through here as a colon-separated env var so they're
+    // Whisker module-system: external module crates (e.g.
+    // `packages/whisker-hello-element`) may declare legacy iOS .mm
+    // sources in `[package.metadata.whisker.ios] native_sources`.
+    // `whisker-build` walks the consuming app's cargo dep tree,
+    // gathers each module's `native_sources` (resolved to absolute
+    // paths), and passes them through here as a colon-separated env
+    // var so they're
     // compiled into the same bridge static archive as the core
     // bridge code. That puts each module's `LYNX_REGISTER_UI(...)`
     // constructor inside the host dylib's `+load` set, which is what

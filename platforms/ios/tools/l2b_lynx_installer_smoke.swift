@@ -17,7 +17,7 @@
 // ```
 // swiftc -o /tmp/l2b_smoke \
 //   platforms/ios/Sources/WhiskerModuleApi/ModuleDefinition.swift \
-//   platforms/ios/Sources/WhiskerModuleApi/WhiskerModule.swift \
+//   platforms/ios/Sources/WhiskerModuleApi/Module.swift \
 //   platforms/ios/Sources/WhiskerModuleApi/WhiskerModuleRegistrar.swift \
 //   platforms/ios/tools/l2b_lynx_installer_smoke.swift
 // /tmp/l2b_smoke
@@ -41,7 +41,7 @@ final class SmokeFakeVideoView: NSObject {
     @objc dynamic var playCount: Int = 0
 }
 
-final class SmokeModule: WhiskerModule {
+final class SmokeModule: Module {
     override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("SmokeVideo")

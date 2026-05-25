@@ -1,44 +1,39 @@
 package rs.whisker.annotations
 
 /**
- * Marks a class as the platform-side implementation of a Whisker
- * platform module registered under [name].
+ * Marks a [rs.whisker.runtime.Module] subclass as a Whisker module
+ * the KSP processor should register.
  *
- * Companion of iOS's `@WhiskerModule` Swift Macro (under
- * `platforms/ios/macros`). Authors apply this annotation
- * to a Kotlin class that exposes one or more methods with the
- * single-`Array<Any?>` argument shape `whisker_bridge_invoke_module`
- * expects:
+ * Applying `@WhiskerModule` is the registration trigger — the
+ * `:ksp` companion processor scans the user app's compilation for
+ * every `@WhiskerModule`-annotated class, reads its
+ * `definitionLazy`, and folds the Lynx behaviour / module-dispatch
+ * registration into `rs.whisker.runtime.generated.<Module>Behaviors
+ * .registerAll()`. The module's local tag / name comes from the
+ * `Name("…")` entry inside `definition()`, so the annotation itself
+ * takes no arguments.
  *
  * ```kotlin
- * @WhiskerModule("WhiskerStorage")
- * class WhiskerStorageImpl(private val context: Context) {
- *     fun save(args: Array<Any?>): Any {
- *         val key = args[0] as String
- *         val value = args[1] as String
- *         context.getSharedPreferences("whisker", Context.MODE_PRIVATE)
- *             .edit().putString(key, value).apply()
- *         return true
+ * import rs.whisker.annotations.WhiskerModule
+ * import rs.whisker.runtime.Module
+ *
+ * @WhiskerModule
+ * class VideoModule : Module() {
+ *     override fun definition() = ModuleDefinition {
+ *         Name("Video")
+ *         View(VideoView::class.java) {
+ *             Prop("src") { view: VideoView, value: String -> view.setSrc(value) }
+ *             Function("play") { view: VideoView -> view.play() }
+ *         }
  *     }
  * }
  * ```
  *
- * The `:ksp` companion processor scans the user app's compilation
- * for every `@WhiskerModule(...)`-annotated class and folds a
- * `WhiskerModuleRegistry.registerModuleClass(name, MyClass::class.java)`
- * call into `rs.whisker.runtime.generated.WhiskerModuleBehaviors.
- * registerAll()` — sibling registration to the `@WhiskerComponent`
- * processing.
- *
- * Pairs with the Rust-side `#[whisker::platform_module]` proc macro
- * (Phase 7-Φ.E.5) — the Kotlin class is the platform implementer
- * the Rust proxy ultimately dispatches against via JNI.
- *
- * `SOURCE` retention because KSP only reads annotations at
- * compile time — once the registration is generated, the
- * annotation has no runtime role and shouldn't bloat the APK.
+ * Companion of iOS's `@WhiskerModule` Swift macro (under
+ * `platforms/ios/macros`). `SOURCE` retention — KSP only reads it
+ * at compile time; it has no runtime role.
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.SOURCE)
 @MustBeDocumented
-public annotation class WhiskerModule(val name: String)
+public annotation class WhiskerModule

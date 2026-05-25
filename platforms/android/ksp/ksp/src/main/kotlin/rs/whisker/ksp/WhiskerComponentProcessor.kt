@@ -8,16 +8,14 @@ import com.google.devtools.ksp.processing.SymbolProcessor
 import com.google.devtools.ksp.processing.SymbolProcessorEnvironment
 import com.google.devtools.ksp.processing.SymbolProcessorProvider
 import com.google.devtools.ksp.symbol.ClassKind
-import com.google.devtools.ksp.symbol.FunctionKind
 import com.google.devtools.ksp.symbol.KSAnnotated
-import com.google.devtools.ksp.getAllSuperTypes
 import com.google.devtools.ksp.symbol.KSClassDeclaration
 import com.google.devtools.ksp.symbol.KSFunctionDeclaration
 import com.google.devtools.ksp.symbol.Modifier
 
 /**
- * KSP processor that scans the user app's compilation for every
- * `@WhiskerComponent("LocalTag")`- AND `@WhiskerModule("Name")`-
+ * KSP processor that scans each module subproject's compilation for
+ * every `@WhiskerComponent("LocalTag")`- AND `@WhiskerModule`-
  * annotated Kotlin class and generates a per-subproject
  * `rs.whisker.runtime.generated.<ModuleName>Behaviors` Kotlin
  * object whose `registerAll()` does the Lynx behaviour /
@@ -27,15 +25,15 @@ import com.google.devtools.ksp.symbol.Modifier
  *
  *  - For every `@WhiskerComponent`: `LynxEnv.inst().addBehavior(...)`
  *    — matches the Phase 7-Φ.H.2 element-registration path.
- *  - For every `@WhiskerModule`: emits a `<ClassName>_Dispatch`
- *    object with a `dispatch(method, args)` switch over the
- *    annotated class's declared instance methods, then registers
- *    that dispatcher with `WhiskerModuleRegistry.registerDispatch`.
- *    The C JNI bridge in `whisker_bridge_android.cc` resolves
- *    `WhiskerModuleRegistry.invokeDispatch` once per process; every
- *    `whisker_bridge_invoke_module` call from Rust then routes
- *    through `(name → dispatch lambda)` in pure Kotlin without
- *    per-call `Class.getMethod` reflection (Phase 7-Φ.F).
+ *  - For every `@WhiskerModule` (a no-arg marker on a `Module`
+ *    subclass authored with the ModuleDefinition DSL): instantiates
+ *    the class, reads its `definition()`, registers a Lynx behavior
+ *    for view-bearing modules, and calls `.registerWithLynx()`.
+ *    `registerWithLynx()` branches internally — view-bearing modules
+ *    install their Prop / Function dispatchers via the L-1 Lynx APIs;
+ *    view-less modules register with `WhiskerModuleRegistry` so
+ *    `whisker_bridge_invoke_module` from Rust routes to the DSL's
+ *    `Function` handlers.
  *
  * The generated object's symbol matches what
  * `WhiskerApplication.onCreate()` already invokes — see
@@ -74,7 +72,9 @@ public class WhiskerComponentProcessor(
     /** FQN of the `@WhiskerComponent` annotation. Single source of truth. */
     private val elementAnnotationFqn = "rs.whisker.annotations.WhiskerComponent"
 
-    /** FQN of the `@WhiskerModule` annotation — Phase 7-Φ.E.6. */
+    /** FQN of the `@WhiskerModule` annotation — the marker on a
+     *  `rs.whisker.runtime.Module` subclass that flags it for DSL
+     *  registration. */
     private val moduleAnnotationFqn = "rs.whisker.annotations.WhiskerModule"
 
     /** FQN of the `@WhiskerProp` annotation — Phase 7-Φ.H.1. */
@@ -82,12 +82,6 @@ public class WhiskerComponentProcessor(
 
     /** FQN of the `@WhiskerUIMethod` annotation — Phase 7-Φ.H.2. */
     private val uiMethodAnnotationFqn = "rs.whisker.annotations.WhiskerUIMethod"
-
-    /** FQN of the `WhiskerModule` base class — Phase L-2a/c. Subclasses
-     *  are discovered by walking the superclass chain (no annotation
-     *  required — subclassing IS the opt-in).
-     */
-    private val whiskerModuleBaseFqn = "rs.whisker.runtime.WhiskerModule"
 
     /**
      * KSP invokes `process` at least twice per compilation: once
@@ -107,60 +101,40 @@ public class WhiskerComponentProcessor(
             .filter { it.classKind == ClassKind.CLASS }
             .toList()
 
-        val moduleSymbols = resolver
+        // DSL modules. Discovery: every class annotated with
+        // `@WhiskerModule` (the marker on a `rs.whisker.runtime.Module`
+        // subclass). The annotation is the explicit registration
+        // trigger — idiomatic for Kotlin/KSP (cf. @HiltViewModel,
+        // @Serializable), and an obvious entry point at the
+        // declaration site.
+        val dslModuleSymbols = resolver
             .getSymbolsWithAnnotation(moduleAnnotationFqn)
             .filterIsInstance<KSClassDeclaration>()
             .filter { it.classKind == ClassKind.CLASS }
-            .toList()
-
-        // Phase L-2c — DSL modules. Discovery: every non-abstract
-        // class that extends `rs.whisker.runtime.WhiskerModule`
-        // (directly or transitively). No annotation required —
-        // subclassing IS the opt-in, matching Expo Modules' /
-        // Whisker iOS-side convention.
-        val dslModuleSymbols = resolver
-            .getAllFiles()
-            .flatMap { it.declarations }
-            .filterIsInstance<KSClassDeclaration>()
-            .filter { it.classKind == ClassKind.CLASS }
             .filter { !it.modifiers.contains(Modifier.ABSTRACT) }
-            .filter { extendsWhiskerModule(it) }
             .toList()
 
-        // Always write the file, even when all sets are empty, so
+        // Always write the file, even when both sets are empty, so
         // the user app's `Application.onCreate()` call to
         // `<Module>Behaviors.registerAll()` always resolves —
         // mirrors the iOS-side `WhiskerModuleBehaviors.swift` policy.
-        writeBehavioursFile(elementSymbols, moduleSymbols, dslModuleSymbols)
+        writeBehavioursFile(elementSymbols, dslModuleSymbols)
         generated = true
 
         return emptyList()
     }
 
-    /**
-     * Walk the class's superclass chain looking for
-     * [whiskerModuleBaseFqn]. Stops at `kotlin.Any`. Returns true
-     * iff the class transitively extends `WhiskerModule`.
-     */
-    private fun extendsWhiskerModule(cls: KSClassDeclaration): Boolean {
-        return cls.getAllSuperTypes().any { superType ->
-            superType.declaration.qualifiedName?.asString() == whiskerModuleBaseFqn
-        }
-    }
-
     private fun writeBehavioursFile(
         elements: List<KSClassDeclaration>,
-        modules: List<KSClassDeclaration>,
         dslModules: List<KSClassDeclaration>,
     ) {
         // `Dependencies(aggregating = true, *sourceFiles)` makes the
         // generated file invalidate when ANY of the input source
         // files changes (add/remove of @WhiskerComponent /
-        // @WhiskerModule / DSL subclass). Important for incremental
+        // @WhiskerModule-annotated class). Important for incremental
         // compilation — without `aggregating = true` KSP wouldn't
-        // re-run when a new annotated class or `WhiskerModule`
-        // subclass appears.
-        val sourceFiles = (elements + modules + dslModules).mapNotNull { it.containingFile }
+        // re-run when a new annotated class appears.
+        val sourceFiles = (elements + dslModules).mapNotNull { it.containingFile }
         val dependencies = Dependencies(aggregating = true, *sourceFiles.toTypedArray())
 
         // File / object name. Per-subproject KSP runs (Phase G) pass
@@ -189,9 +163,8 @@ public class WhiskerComponentProcessor(
             w.appendLine("// `ksp { arg(\"whisker.crateName\", \"…\") }` so two modules can")
             w.appendLine("// both declare a `Hello` element without colliding.")
             w.appendLine("//")
-            w.appendLine("// Element registrations:    ${elements.size}")
-            w.appendLine("// Module  registrations:    ${modules.size}")
-            w.appendLine("// DSL Module registrations: ${dslModules.size}")
+            w.appendLine("// @WhiskerComponent registrations: ${elements.size}")
+            w.appendLine("// @WhiskerModule registrations:    ${dslModules.size}")
             w.appendLine()
             w.appendLine("package rs.whisker.runtime.generated")
             w.appendLine()
@@ -314,40 +287,6 @@ public class WhiskerComponentProcessor(
                 w.appendLine("}")
             }
 
-            // Per-module dispatch objects are emitted at file scope
-            // (companion to the generated `WhiskerModuleBehaviors`
-            // object). Each object exposes a single `dispatch`
-            // function the registry invokes; the dispatch body is
-            // a `when (method)` switch over the annotated class's
-            // declared instance methods.
-            for (cls in modules) {
-                val fqn = cls.qualifiedName?.asString() ?: continue
-                val simple = cls.simpleName.asString()
-                val moduleName = annotationStringArg(cls, moduleAnnotationFqn, "name")
-                    ?: continue
-                val methodNames = instanceMethodNames(cls)
-
-                w.appendLine()
-                w.appendLine("/**")
-                w.appendLine(" * Dispatch shim for `@WhiskerModule(\"$moduleName\")` on")
-                w.appendLine(" * `$fqn`. Constructed once at registration time, dispatch")
-                w.appendLine(" * is a `when (method)` switch over the class's instance")
-                w.appendLine(" * methods.")
-                w.appendLine(" */")
-                w.appendLine("private object ${simple}_Dispatch {")
-                w.appendLine("    private val instance = $fqn()")
-                w.appendLine()
-                w.appendLine("    fun dispatch(method: String, args: Array<WhiskerValue>): WhiskerValue {")
-                w.appendLine("        return when (method) {")
-                for (m in methodNames) {
-                    w.appendLine("            \"$m\" -> instance.$m(args)")
-                }
-                w.appendLine("            else -> WhiskerValue.Err(\"unknown method \$method on $moduleName\")")
-                w.appendLine("        }")
-                w.appendLine("    }")
-                w.appendLine("}")
-            }
-
             w.appendLine()
             w.appendLine("public object $behaviorsObjectName {")
             w.appendLine("    private val registered = AtomicBoolean(false)")
@@ -356,7 +295,7 @@ public class WhiskerComponentProcessor(
             w.appendLine("    public fun registerAll() {")
             w.appendLine("        if (!registered.compareAndSet(false, true)) return")
             w.appendLine("        val env = LynxEnv.inst()")
-            if (elements.isEmpty() && modules.isEmpty()) {
+            if (elements.isEmpty() && dslModules.isEmpty()) {
                 w.appendLine("        // (no @WhiskerComponent / @WhiskerModule-annotated class found)")
             }
 
@@ -407,37 +346,7 @@ public class WhiskerComponentProcessor(
                 w.appendLine("        })")
             }
 
-            for (cls in modules) {
-                val fqn = cls.qualifiedName?.asString()
-                if (fqn == null) {
-                    logger.warn(
-                        "@WhiskerModule class has no qualified name; skipping",
-                        cls,
-                    )
-                    continue
-                }
-                val simple = cls.simpleName.asString()
-                val name = annotationStringArg(cls, moduleAnnotationFqn, "name")
-                if (name == null) {
-                    logger.error(
-                        "@WhiskerModule on `$fqn` has no `name` argument",
-                        cls,
-                    )
-                    continue
-                }
-                // Register a lambda that forwards into the dispatch
-                // object above. We don't reference `::dispatch`
-                // directly because Kotlin's method-reference type
-                // doesn't unify with the lambda type
-                // `(String, Array<WhiskerValue>) -> WhiskerValue`
-                // without a synthetic wrapper anyway.
-                w.appendLine("        WhiskerModuleRegistry.registerDispatch(")
-                w.appendLine("            name = \"$name\",")
-                w.appendLine("            dispatch = { method, args -> ${simple}_Dispatch.dispatch(method, args) },")
-                w.appendLine("        )")
-            }
-
-            // ---- Phase L-2c / L-3 — DSL modules ---------------------------
+            // ---- @WhiskerModule DSL modules ------------------------------
             //
             // For each `WhiskerModule` subclass:
             //   1. Build an instance.
@@ -572,33 +481,6 @@ public class WhiskerComponentProcessor(
         return out
     }
 
-    /**
-     * Names of every declared instance method on the class. Skips
-     * static (`companion`-resident) methods, private methods, and
-     * constructors — same filter the iOS Swift Macro applies.
-     */
-    private fun instanceMethodNames(cls: KSClassDeclaration): List<String> {
-        val out = mutableListOf<String>()
-        for (decl in cls.declarations) {
-            if (decl !is KSFunctionDeclaration) continue
-            // Skip the synthesised primary / explicit constructor — KSP
-            // surfaces them as `FunctionKind.MEMBER` items named
-            // `<init>`. Their simpleName isn't usable as a dispatch
-            // case so we filter them out (matches the iOS Swift Macro
-            // policy).
-            if (decl.functionKind == FunctionKind.STATIC) continue
-            if (decl.simpleName.asString() == "<init>") continue
-            val mods = decl.modifiers
-            if (Modifier.PRIVATE in mods) continue
-            // `Modifier.JAVA_STATIC` covers `@JvmStatic`-annotated
-            // funcs (which Kotlin lifts into a companion); plain
-            // companion-object members aren't included in the
-            // class's own declarations, so no extra filter needed.
-            if (Modifier.JAVA_STATIC in mods) continue
-            out.add(decl.simpleName.asString())
-        }
-        return out
-    }
 
     /**
      * Pull a named string argument out of the `[annotationFqn]`

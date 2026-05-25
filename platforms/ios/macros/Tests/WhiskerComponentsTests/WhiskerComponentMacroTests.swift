@@ -58,182 +58,31 @@ final class WhiskerComponentMacroTests: XCTestCase {
         )
     }
 
-    /// `@WhiskerModule` emits a top-level `@_cdecl` dispatch shim
-    /// with one switch arm per instance method on the class. The
-    /// shim is a peer of the annotated class, not a member —
-    /// `@_cdecl` requires top-level placement.
-    func testModuleEmitsCDeclDispatch() {
+    /// `@WhiskerModule` is a pure marker after the discovery
+    /// overhaul — it expands to nothing. Discovery + registration is
+    /// done by the `WhiskerComponentsCodegen` SwiftPM build plugin,
+    /// which scans sources for the attribute and emits the DSL
+    /// module's registration. The macro exists only so
+    /// `@WhiskerModule` is a valid Swift attribute.
+    func testModuleMarkerExpandsToNothing() {
         assertMacroExpansion(
             """
-            @WhiskerModule("LocalStore")
-            public class LocalStoreImpl {
-                func save(_ args: [WhiskerValue]) -> WhiskerValue { .null }
-                func load(_ args: [WhiskerValue]) -> WhiskerValue { .null }
+            @WhiskerModule
+            public final class LocalStoreModule: Module {
+                public override func definition() -> ModuleDefinition {
+                    ModuleDefinition {
+                        Name("WhiskerLocalStore")
+                    }
+                }
             }
             """,
             expandedSource: """
-            public class LocalStoreImpl {
-                func save(_ args: [WhiskerValue]) -> WhiskerValue { .null }
-                func load(_ args: [WhiskerValue]) -> WhiskerValue { .null }
-            }
-
-            @_cdecl("_whiskerDispatch_LocalStoreImpl")
-            public func _whiskerDispatch_LocalStoreImpl(
-                _ methodName: UnsafePointer<CChar>?,
-                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                _ argCount: Int
-            ) -> WhiskerValueRaw {
-                let method = methodName == nil ? "" : String(cString: methodName!)
-                let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)
-                let instance = LocalStoreImpl()
-                let result: WhiskerValue
-                switch method {
-                case "save":
-                    result = instance.save(decoded)
-                case "load":
-                    result = instance.load(decoded)
-                default:
-                    result = .error("unknown method \\(method) on LocalStore")
+            public final class LocalStoreModule: Module {
+                public override func definition() -> ModuleDefinition {
+                    ModuleDefinition {
+                        Name("WhiskerLocalStore")
+                    }
                 }
-                return result.toRaw()
-            }
-
-            public func _whiskerRegister_LocalStoreImpl() {
-                whisker_bridge_register_module_dispatch(
-                    "LocalStore", _whiskerDispatch_LocalStoreImpl)
-            }
-            """,
-            macros: testMacros
-        )
-    }
-
-    /// Module-name annotation argument is preserved verbatim in
-    /// the default-arm error message AND in the registration call
-    /// (it's the registration key, not the symbol name) — hyphens
-    /// are kept untouched.
-    func testModuleNameUsedVerbatimInRegister() {
-        assertMacroExpansion(
-            """
-            @WhiskerModule("Whisker-Store")
-            public class StoreImpl {
-                func ping(_ args: [WhiskerValue]) -> WhiskerValue { .null }
-            }
-            """,
-            expandedSource: """
-            public class StoreImpl {
-                func ping(_ args: [WhiskerValue]) -> WhiskerValue { .null }
-            }
-
-            @_cdecl("_whiskerDispatch_StoreImpl")
-            public func _whiskerDispatch_StoreImpl(
-                _ methodName: UnsafePointer<CChar>?,
-                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                _ argCount: Int
-            ) -> WhiskerValueRaw {
-                let method = methodName == nil ? "" : String(cString: methodName!)
-                let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)
-                let instance = StoreImpl()
-                let result: WhiskerValue
-                switch method {
-                case "ping":
-                    result = instance.ping(decoded)
-                default:
-                    result = .error("unknown method \\(method) on Whisker-Store")
-                }
-                return result.toRaw()
-            }
-
-            public func _whiskerRegister_StoreImpl() {
-                whisker_bridge_register_module_dispatch(
-                    "Whisker-Store", _whiskerDispatch_StoreImpl)
-            }
-            """,
-            macros: testMacros
-        )
-    }
-
-    /// Class with no methods — dispatch shim still emitted so
-    /// registration resolves at the C linker level; every call
-    /// drops into the default arm and returns an error value.
-    func testModuleWithNoMethodsEmitsDefaultOnlySwitch() {
-        assertMacroExpansion(
-            """
-            @WhiskerModule("Empty")
-            public class EmptyImpl {
-            }
-            """,
-            expandedSource: """
-            public class EmptyImpl {
-            }
-
-            @_cdecl("_whiskerDispatch_EmptyImpl")
-            public func _whiskerDispatch_EmptyImpl(
-                _ methodName: UnsafePointer<CChar>?,
-                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                _ argCount: Int
-            ) -> WhiskerValueRaw {
-                let method = methodName == nil ? "" : String(cString: methodName!)
-                let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)
-                let instance = EmptyImpl()
-                let result: WhiskerValue
-                switch method {
-                default:
-                    result = .error("unknown method \\(method) on Empty")
-                }
-                return result.toRaw()
-            }
-
-            public func _whiskerRegister_EmptyImpl() {
-                whisker_bridge_register_module_dispatch(
-                    "Empty", _whiskerDispatch_EmptyImpl)
-            }
-            """,
-            macros: testMacros
-        )
-    }
-
-    /// `static` and `private` methods are filtered out of the
-    /// dispatch switch — they aren't part of the module's C-bridge
-    /// surface.
-    func testModuleSkipsStaticAndPrivateMethods() {
-        assertMacroExpansion(
-            """
-            @WhiskerModule("Demo")
-            public class DemoImpl {
-                static func makeOne() -> DemoImpl { DemoImpl() }
-                private func helper(_ args: [WhiskerValue]) -> WhiskerValue { .null }
-                func ping(_ args: [WhiskerValue]) -> WhiskerValue { .null }
-            }
-            """,
-            expandedSource: """
-            public class DemoImpl {
-                static func makeOne() -> DemoImpl { DemoImpl() }
-                private func helper(_ args: [WhiskerValue]) -> WhiskerValue { .null }
-                func ping(_ args: [WhiskerValue]) -> WhiskerValue { .null }
-            }
-
-            @_cdecl("_whiskerDispatch_DemoImpl")
-            public func _whiskerDispatch_DemoImpl(
-                _ methodName: UnsafePointer<CChar>?,
-                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
-                _ argCount: Int
-            ) -> WhiskerValueRaw {
-                let method = methodName == nil ? "" : String(cString: methodName!)
-                let decoded = WhiskerValue.decodeArray(argsPtr, count: argCount)
-                let instance = DemoImpl()
-                let result: WhiskerValue
-                switch method {
-                case "ping":
-                    result = instance.ping(decoded)
-                default:
-                    result = .error("unknown method \\(method) on Demo")
-                }
-                return result.toRaw()
-            }
-
-            public func _whiskerRegister_DemoImpl() {
-                whisker_bridge_register_module_dispatch(
-                    "Demo", _whiskerDispatch_DemoImpl)
             }
             """,
             macros: testMacros

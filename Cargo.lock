@@ -1786,9 +1786,9 @@ dependencies = [
  "flate2",
  "indicatif",
  "serde",
+ "serde_json",
  "sha2",
  "tar",
- "toml",
  "ureq",
 ]
 

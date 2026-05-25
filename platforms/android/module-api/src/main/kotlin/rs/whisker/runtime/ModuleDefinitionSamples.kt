@@ -55,9 +55,9 @@ internal object ModuleDefinitionSamples {
         }
     }
 
-    // ---- WhiskerModule subclass shape ----------------------------------
+    // ---- Module subclass shape -----------------------------------------
 
-    internal class StubModule : WhiskerModule() {
+    internal class StubModule : Module() {
         override fun definition(): ModuleDefinition = videoModuleDefinition()
     }
 }

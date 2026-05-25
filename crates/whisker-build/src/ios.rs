@@ -173,8 +173,8 @@ pub fn build_xcframework_with(
     };
 
     // Module-system discovery (Phase 7-Φ.F). Walks the consuming
-    // app's cargo dep graph for any sibling `whisker.module.toml`,
-    // collects the iOS native-source paths, and passes them through
+    // app's cargo dep graph for any `[package.metadata.whisker]`
+    // table, collects the iOS native-source paths, and passes them through
     // `WHISKER_IOS_MODULE_NATIVE_SOURCES` to `whisker-driver-sys`'s
     // build.rs — which then folds them into its `cc::Build` so each
     // module's `LYNX_REGISTER_UI(...)` constructor ends up inside
@@ -589,7 +589,7 @@ pub fn stage_module_swift_sources(
 
     // Each module package contributes via its own Package.swift in
     // its manifest dir. Discovery signal: presence of `Package.swift`
-    // next to `whisker.module.toml` (Phase G dropped the
+    // next to the crate's `Cargo.toml` (Phase G dropped the
     // `swift_sources` field as the staging trigger). Modules that
     // are Android-only naturally don't have a Package.swift, so
     // they're skipped here without further filtering.

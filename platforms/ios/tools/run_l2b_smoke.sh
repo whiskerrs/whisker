@@ -23,7 +23,7 @@ tmp_bin="$(mktemp -d)/l2b_smoke"
 # attribute on the entry struct below.
 swiftc -o "${tmp_bin}" -parse-as-library \
   "${repo_root}/platforms/ios/Sources/WhiskerModuleApi/ModuleDefinition.swift" \
-  "${repo_root}/platforms/ios/Sources/WhiskerModuleApi/WhiskerModule.swift" \
+  "${repo_root}/platforms/ios/Sources/WhiskerModuleApi/Module.swift" \
   "${repo_root}/platforms/ios/Sources/WhiskerModuleApi/WhiskerModuleRegistrar.swift" \
   "${repo_root}/platforms/ios/tools/l2b_lynx_installer_smoke.swift"
 

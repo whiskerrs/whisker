@@ -1,38 +1,47 @@
-//! Whisker module-system v1 — discovery + manifest parsing.
+//! Whisker module-system — discovery + manifest parsing.
 //!
 //! When `whisker run` / `whisker build` builds an app crate for
 //! iOS or Android, every cargo dependency may optionally contribute
-//! native code (Obj-C / Obj-C++ on iOS, Kotlin / JNI on Android) to
-//! the final host binary by shipping a `whisker.module.toml` next
-//! to its `Cargo.toml`. The Whisker CLI walks the consuming app's
-//! dep graph via `cargo metadata`, parses each module's manifest,
-//! and feeds the per-platform source paths through to the
+//! native code (Swift / Obj-C++ on iOS, Kotlin / JNI on Android) to
+//! the final host binary. A crate opts in by declaring a
+//! `[package.metadata.whisker]` table in its `Cargo.toml`. The
+//! Whisker CLI walks the consuming app's dep graph via `cargo
+//! metadata`, picks out every dependency carrying that table, and
+//! feeds the per-platform source paths through to the
 //! platform-specific build step.
 //!
 //! This module is platform-neutral — it just produces the
 //! `ResolvedModule` list. `whisker-build::ios` and
 //! `whisker-build::android` consume the list and decide what to do
-//! with the paths (cc::Build on iOS, gradle source-set on Android).
+//! with each module (the SwiftPM aggregator on iOS, the gradle
+//! settings include on Android).
 //!
-//! ## Schema v1
+//! ## Schema
 //!
 //! ```toml
-//! # packages/whisker-hello-element/whisker.module.toml
-//! [ios]
-//! native_sources = ["src/native/whisker_hello_element.mm"]
+//! # packages/whisker-video/Cargo.toml
+//! [package.metadata.whisker]
+//! # The bare table is the marker — its presence identifies this
+//! # crate as a Whisker module. Platform code + build manifests live
+//! # at the package root in `android/` and `ios/` (Expo-style):
+//! #   android/build.gradle.kts   — AGP library
+//! #   ios/Package.swift          — SwiftPM library
+//! # whisker-build discovers those per-platform manifests directly,
+//! # so no source-file list is needed for DSL modules.
 //!
-//! [android]
-//! # not used yet
+//! # Optional: legacy `.mm` / `.m` modules can still declare raw
+//! # Obj-C++ sources to be compiled into the host dylib's bridge.
+//! [package.metadata.whisker.ios]
+//! native_sources = ["src/native/whisker_hello_element.mm"]
 //! ```
 //!
 //! All paths are resolved relative to the directory containing the
-//! manifest. The resolver returns absolute paths so the downstream
-//! cc::Build / gradle invocations don't have to know about the
-//! module's source layout.
+//! manifest (the crate's `Cargo.toml`). The resolver returns
+//! absolute paths so the downstream cc::Build / gradle invocations
+//! don't have to know about the module's source layout.
 //!
 //! Future extensions (e.g. exported headers, link flags, cargo
-//! feature gates) land additively without breaking modules pinned
-//! to the v1 schema.
+//! feature gates) land additively under the same table.
 
 use std::path::{Path, PathBuf};
 
@@ -40,12 +49,14 @@ use anyhow::{anyhow, Context, Result};
 use cargo_metadata::MetadataCommand;
 use serde::Deserialize;
 
-/// Top-level shape of `whisker.module.toml`.
+/// Top-level shape of the `[package.metadata.whisker]` table.
 ///
 /// Every section is optional so a module can declare just the
-/// platform(s) it supports. Unknown sections / fields are rejected
-/// to catch typos early (we don't want a typoed `iOS` section to
-/// silently produce a no-op build).
+/// platform(s) it supports — the bare table (no sub-sections) is a
+/// valid marker for a pure-DSL module that ships only Swift /
+/// Kotlin via its `ios/` / `android/` dirs. Unknown sections /
+/// fields are rejected to catch typos early (we don't want a
+/// typoed `iOS` section to silently produce a no-op build).
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestRaw {
@@ -73,14 +84,11 @@ pub struct IosSectionRaw {
     /// into the host app target alongside its own Swift sources.
     /// Mirror of `[android].kotlin_sources` for symmetry.
     ///
-    /// Modules apply `@WhiskerElement("x-tag")` (from the
-    /// `WhiskerComponents` SwiftPM library) to their `LynxUI<View>`
-    /// subclasses. The `WhiskerComponentsCodegenPlugin` SwiftPM
-    /// build-tool plugin (under `packages/whisker-ios-macros/
-    /// Plugins/`) discovers those annotations via SwiftSyntax at
-    /// SwiftPM build time and emits the registration code into
-    /// `WhiskerModuleBehaviors.swift`. The whisker.module.toml
-    /// stays metadata-only — no behaviour list to keep in sync.
+    /// Largely vestigial in the Expo-style layout: DSL module
+    /// authors declare their Swift in `ios/Package.swift`, which
+    /// whisker-build discovers directly. Retained for the rare
+    /// module that wants raw Swift sources staged outside a SwiftPM
+    /// package; existence-checked but otherwise inert.
     #[serde(default)]
     pub swift_sources: Vec<String>,
 }
@@ -106,10 +114,10 @@ pub struct AndroidSectionRaw {
     pub jni_sources: Vec<String>,
 }
 
-/// A single discovered module after its manifest has been resolved
+/// A single discovered module after its metadata has been resolved
 /// against the cargo dep tree. `package` carries the cargo crate
 /// name (handy for diagnostics) and `manifest_dir` is the absolute
-/// path of the directory the `whisker.module.toml` lives in.
+/// path of the directory the crate's `Cargo.toml` lives in.
 #[derive(Debug, Clone)]
 pub struct ResolvedModule {
     pub package: String,
@@ -131,8 +139,8 @@ pub struct ResolvedModule {
 }
 
 /// Walk the cargo dep graph of `app_package` (resolved at
-/// `manifest_path`) and return every dependency that carries a
-/// `whisker.module.toml`.
+/// `manifest_path`) and return every dependency that declares a
+/// `[package.metadata.whisker]` table in its `Cargo.toml`.
 ///
 /// Ordering: `cargo metadata`'s topological order, deduplicated by
 /// package id (a diamond dep landed twice gets resolved once).
@@ -142,14 +150,14 @@ pub struct ResolvedModule {
 /// Errors:
 /// - `cargo metadata` failure (workspace broken, manifest_path
 ///   invalid, etc.) propagates with the `cargo_metadata` error.
-/// - Manifest parse failure (`whisker.module.toml` exists but
-///   invalid toml or has unknown sections) propagates with the
-///   offending file path attached.
-/// - Native-source path referenced in a manifest but not present
+/// - Metadata parse failure (`[package.metadata.whisker]` exists
+///   but has unknown sections / fields) propagates with the
+///   offending crate name attached.
+/// - Native-source path referenced in the table but not present
 ///   on disk errors with the missing absolute path attached. We
 ///   prefer eager failure over silently skipping — a missing source
-///   almost certainly means the module's `whisker.module.toml` is
-///   out of sync with its `src/native/` layout.
+///   almost certainly means the module's metadata is out of sync
+///   with its `src/native/` layout.
 pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedModule>> {
     let metadata = MetadataCommand::new()
         .manifest_path(manifest_path)
@@ -204,8 +212,8 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
             }
         }
         // Don't include the root app itself — by convention an app
-        // declares native sources directly, not through a sibling
-        // `whisker.module.toml`.
+        // declares native sources directly, not through a
+        // `[package.metadata.whisker]` table.
         if pkg_id != &root_id {
             module_pkg_ids.push(pkg_id.clone());
         }
@@ -230,14 +238,20 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                     pkg.manifest_path,
                 )
             })?;
-        let manifest_file = manifest_dir.join("whisker.module.toml");
-        if !manifest_file.is_file() {
+        // The opt-in marker: a `[package.metadata.whisker]` table.
+        // cargo_metadata surfaces `[package.metadata]` as a JSON
+        // value; absence is `Value::Null`, so a non-module dep has
+        // no `whisker` key and is skipped.
+        let Some(whisker_meta) = pkg.metadata.get("whisker") else {
             continue;
-        }
-        let raw_text = std::fs::read_to_string(&manifest_file)
-            .with_context(|| format!("read {}", manifest_file.display()))?;
-        let manifest: ManifestRaw = toml::from_str(&raw_text)
-            .with_context(|| format!("parse {}", manifest_file.display()))?;
+        };
+        let manifest: ManifestRaw =
+            serde_json::from_value(whisker_meta.clone()).with_context(|| {
+                format!(
+                    "parse [package.metadata.whisker] in {}",
+                    pkg.manifest_path,
+                )
+            })?;
         let mut ios_sources: Vec<PathBuf> = Vec::new();
         let mut ios_swift: Vec<PathBuf> = Vec::new();
         if let Some(ios) = manifest.ios {
@@ -245,10 +259,9 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                 let resolved_path = manifest_dir.join(&raw_path);
                 let canonical = resolved_path.canonicalize().with_context(|| {
                     format!(
-                        "module `{}` declares ios.native_sources = [..., {raw_path:?}] in {} \
-                         but {} does not exist",
+                        "module `{}` declares metadata.whisker.ios.native_sources = \
+                         [..., {raw_path:?}] but {} does not exist",
                         pkg.name,
-                        manifest_file.display(),
                         resolved_path.display(),
                     )
                 })?;
@@ -258,10 +271,9 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                 let resolved_path = manifest_dir.join(&raw_path);
                 let canonical = resolved_path.canonicalize().with_context(|| {
                     format!(
-                        "module `{}` declares ios.swift_sources = [..., {raw_path:?}] in {} \
-                         but {} does not exist",
+                        "module `{}` declares metadata.whisker.ios.swift_sources = \
+                         [..., {raw_path:?}] but {} does not exist",
                         pkg.name,
-                        manifest_file.display(),
                         resolved_path.display(),
                     )
                 })?;
@@ -275,10 +287,9 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                 let resolved_path = manifest_dir.join(&raw_path);
                 let canonical = resolved_path.canonicalize().with_context(|| {
                     format!(
-                        "module `{}` declares android.kotlin_sources = [..., {raw_path:?}] in {} \
-                         but {} does not exist",
+                        "module `{}` declares metadata.whisker.android.kotlin_sources = \
+                         [..., {raw_path:?}] but {} does not exist",
                         pkg.name,
-                        manifest_file.display(),
                         resolved_path.display(),
                     )
                 })?;
@@ -288,10 +299,9 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                 let resolved_path = manifest_dir.join(&raw_path);
                 let canonical = resolved_path.canonicalize().with_context(|| {
                     format!(
-                        "module `{}` declares android.jni_sources = [..., {raw_path:?}] in {} \
-                         but {} does not exist",
+                        "module `{}` declares metadata.whisker.android.jni_sources = \
+                         [..., {raw_path:?}] but {} does not exist",
                         pkg.name,
-                        manifest_file.display(),
                         resolved_path.display(),
                     )
                 })?;

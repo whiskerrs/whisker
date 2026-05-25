@@ -49,7 +49,7 @@
 import Foundation
 import ObjectiveC.runtime
 
-extension WhiskerModule {
+extension Module {
 
     /// Walk `definitionLazy` and install the Lynx-visible setters /
     /// methods on the view class.

@@ -4,7 +4,7 @@
 // annotated `WhiskerLocalStoreImpl`. A view-less DSL module:
 // `definition()` has no `View(...)` block, just module-level
 // `Function`s. The SwiftPM codegen plugin discovers the
-// `WhiskerModule` subclass, emits a `@_cdecl` dispatch shim, and
+// `@WhiskerModule` attribute, emits a `@_cdecl` dispatch shim, and
 // registers it via `whisker_bridge_register_module_dispatch(
 // "WhiskerLocalStore", shim)` — so
 // `whisker::platform_module::invoke("WhiskerLocalStore", ...)`
@@ -12,9 +12,11 @@
 //
 // The storage logic lives in `LocalStore.swift`.
 
-import WhiskerModuleApi
+import WhiskerComponents   // @WhiskerModule
+import WhiskerModuleApi    // Module, ModuleDefinition, DSL
 
-public final class LocalStoreModule: WhiskerModule {
+@WhiskerModule
+public final class LocalStoreModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("WhiskerLocalStore")

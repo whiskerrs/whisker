@@ -15,7 +15,7 @@
 
 import Foundation
 
-extension WhiskerModule {
+extension Module {
     /// Dispatch a module-level `Function` by name. Public so it's
     /// unit-testable against `[WhiskerValue]` without the C ABI.
     public func dispatchModuleFunction(

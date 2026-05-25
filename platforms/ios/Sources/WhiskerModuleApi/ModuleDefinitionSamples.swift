@@ -54,7 +54,7 @@ internal enum ModuleDefinitionSamples {
 
     // MARK: - WhiskerModule subclass shape
 
-    internal final class StubModule: WhiskerModule {
+    internal final class StubModule: Module {
         public override func definition() -> ModuleDefinition {
             ModuleDefinitionSamples.videoModuleDefinition()
         }

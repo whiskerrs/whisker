@@ -10,10 +10,11 @@
 // `VideoView.swift`. Same split on Android (`VideoModule.kt` +
 // `VideoView.kt`).
 
-import WhiskerModuleApi
+import WhiskerComponents   // @WhiskerModule
+import WhiskerModuleApi    // Module, ModuleDefinition, DSL
 
-/// DSL-driven module. The SwiftPM codegen plugin (L-3) discovers
-/// this class by spotting the `: WhiskerModule` inheritance, then
+/// DSL-driven module. `@WhiskerModule` marks it for registration;
+/// the SwiftPM codegen plugin (L-3) discovers the attribute, then
 /// emits a registration block in `<Target>+Generated.swift` that:
 ///
 ///   - Reads `definitionLazy.view!.viewClass` (== `VideoView`).
@@ -22,7 +23,8 @@ import WhiskerModuleApi
 ///   - Calls `module.registerWithLynx()` so the DSL's `Prop("src")`
 ///     + `Function("play"/"pause"/"seek")` install via the
 ///     Obj-C-runtime path (L-2b).
-public final class VideoModule: WhiskerModule {
+@WhiskerModule
+public final class VideoModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("Video")

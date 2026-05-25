@@ -7,7 +7,8 @@
 // ## Target syntax
 //
 // ```kotlin
-// class VideoModule : WhiskerModule() {
+// @WhiskerModule
+// class VideoModule : Module() {
 //     override fun definition() = ModuleDefinition {
 //         Name("Video")
 //
@@ -27,7 +28,8 @@
 // Function-only modules omit the inner `View(...)` block:
 //
 // ```kotlin
-// class LocalStoreModule : WhiskerModule() {
+// @WhiskerModule
+// class LocalStoreModule : Module() {
 //     override fun definition() = ModuleDefinition {
 //         Name("WhiskerLocalStore")
 //         Function("save") { key: String, value: String ->
@@ -41,11 +43,10 @@
 //
 // ## What L-2a delivers
 //
-// Type surface only. The `WhiskerModule` base + DSL types compile
-// and authors can write modules using the syntax above; the KSP
-// codegen that turns `definition()` into Lynx prop / method
-// registrations lands in Phase L-2c. Existing `@WhiskerComponent`
-// annotation surface continues in parallel.
+// Type surface only. The `Module` base + DSL types compile and
+// authors write modules using the syntax above; the KSP codegen
+// (L-2c) keyed on the `@WhiskerModule` annotation turns
+// `definition()` into Lynx prop / method registrations.
 
 package rs.whisker.runtime
 

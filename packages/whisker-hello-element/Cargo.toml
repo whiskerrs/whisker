@@ -12,18 +12,21 @@ include = [
     "Cargo.toml",
     "Package.swift",
     "build.gradle.kts",
-    "whisker.module.toml",
     "src/lib.rs",
-    "src/android/**/*.kt",
-    "src/ios/**/*.swift",
+    "android/**/*.kt",
+    "ios/**/*.swift",
     "README.md",
 ]
 
 # rlib only. The Whisker module system handles native-source
-# distribution out-of-band via `whisker.module.toml` — we don't ship
-# a cdylib here.
+# distribution out-of-band via the `android/` + `ios/` package dirs
+# — we don't ship a cdylib here.
 [lib]
 crate-type = ["rlib"]
+
+# Module-system opt-in marker. See `whisker-video/Cargo.toml` for the
+# rationale; the bare table identifies this crate as a Whisker module.
+[package.metadata.whisker]
 
 [dependencies]
 # Rename `whisker-modules-api` → `whisker` so the proc macros' emit

@@ -30,9 +30,8 @@ The `.crate` artifact (the tarball cargo uploads) contains:
 
 ```
 whisker-foo-0.1.0/
-├── Cargo.toml
+├── Cargo.toml           ← carries the `[package.metadata.whisker]` marker
 ├── README.md
-├── whisker.module.toml
 ├── Package.swift        ← SwiftPM manifest (MUST sit at the package
 │                          root — SwiftPM derives the package identity
 │                          from the root dir name, so it can't live in
@@ -45,11 +44,13 @@ whisker-foo-0.1.0/
 │   └── lib.rs           ← Rust-side `#[whisker::platform_component]` proxy
 ├── ios/                 ← Swift sources (Expo-style: native code grouped
 │   └── Sources/WhiskerFoo/   per-platform; Package.swift `path:` targets this)
-│       └── FooModule.swift
+│       ├── FooModule.swift    ← `@WhiskerModule` DSL module
+│       └── FooView.swift      ← the `WhiskerUI<UIView>` subclass
 └── android/             ← Kotlin sources (build.gradle.kts `srcDirs`
     └── src/main/kotlin/      points here; standard AGP nesting)
         └── rs/whisker/modules/foo/
-            └── FooModule.kt
+            ├── FooModule.kt    ← `@WhiskerModule` DSL module
+            └── FooView.kt      ← the `WhiskerUI<View>` subclass
 ```
 
 The native code lives in `ios/` and `android/` at the package root
@@ -66,17 +67,19 @@ into `ios/Sources/<Module>/`; the Gradle build's `srcDirs` points into
 When the user app builds, `whisker-build` does the following:
 
 1. `cargo metadata` enumerates every transitive dependency of the app.
-2. For each dep, look for `whisker.module.toml` next to its
+2. For each dep, check for a `[package.metadata.whisker]` table in its
    `Cargo.toml`. If present, the dep is a Whisker Module.
-3. Read `[ios].swift_sources` + `[android].kotlin_sources` from the
-   module's `whisker.module.toml` — these are paths *relative to the
-   crate root* that list the platform sources to surface to the host
-   project.
-4. Stage them into the user's `gen/ios/whisker_modules/` and
-   `gen/android/` source trees. SwiftPM and Gradle pick them up
-   exactly like any other source under the host project's tree.
+3. Discover the per-platform manifests at the crate root: `Package.swift`
+   marks the iOS SwiftPM package, `build.gradle.kts` the Android Gradle
+   library. Those manifests' own `path:` / `srcDirs` are the
+   source-of-truth for which files compile — there's no source list in
+   the cargo metadata.
+4. Wire them into the user's host project: the iOS package is referenced
+   via `.package(path: …)` in the generated SwiftPM aggregator; the
+   Android library is included as a Gradle subproject. SwiftPM and
+   Gradle compile them exactly like any other dependency.
 
-Step 3 works identically whether the dep was resolved from a local
+Step 2 works identically whether the dep was resolved from a local
 `path = "..."`, a git ref, or `~/.cargo/registry/src/index.crates.io-*/`.
 The cargo crate's tarball contents are the contract — no separate
 package registries are involved.
@@ -102,7 +105,6 @@ include = [
     "Cargo.toml",
     "Package.swift",
     "build.gradle.kts",
-    "whisker.module.toml",
     "src/lib.rs",
     "android/**/*.kt",
     "ios/**/*.swift",
@@ -111,6 +113,9 @@ include = [
 
 [lib]
 crate-type = ["rlib"]
+
+# The marker that makes this crate a Whisker module (see step 2).
+[package.metadata.whisker]
 
 [dependencies]
 # Rename `whisker-modules-api` → `whisker` so the proc macros' emit
@@ -122,26 +127,26 @@ crate-type = ["rlib"]
 whisker = { package = "whisker-modules-api", version = "0.1" }
 ```
 
-### 2. Mark the crate as a module — `whisker.module.toml`
+### 2. Mark the crate as a module — `[package.metadata.whisker]`
 
 ```toml
-# whisker.module.toml — at the crate root, sibling of Cargo.toml.
-# Its *presence* marks the crate as a Whisker module. The
-# per-platform build manifests are the source-of-truth for which
-# sources compile, so no source-file list is needed here:
-#   - ios/Package.swift        discovers the SwiftPM target
-#   - android/build.gradle.kts  discovers the Gradle library
-
-[ios]
-
-[android]
+# In Cargo.toml. The bare table's *presence* marks the crate as a
+# Whisker module. The per-platform build manifests are the
+# source-of-truth for which sources compile, so no source-file list
+# is needed here:
+#   - Package.swift       discovers the iOS SwiftPM target
+#   - build.gradle.kts    discovers the Android Gradle library
+[package.metadata.whisker]
 ```
 
-`whisker-build` discovers the iOS package via `Package.swift` (at the
-crate root) and the Android library via `build.gradle.kts` (also at
-the root); both manifests' own `path:` / `srcDirs` point at `ios/` and
-`android/`. There's no source list to keep in sync — that was a
-frequent stale-path foot-gun, so it's gone.
+`whisker-build` walks the app's cargo dep tree, picks out every dep
+carrying this table, then discovers the iOS package via `Package.swift`
+(at the crate root) and the Android library via `build.gradle.kts`
+(also at the root); both manifests' own `path:` / `srcDirs` point at
+`ios/` and `android/`. There's no source list to keep in sync — that
+was a frequent stale-path foot-gun, so it's gone. (Storing the marker
+in `Cargo.toml` rather than a separate `whisker.module.toml` keeps a
+module's metadata in one file that `cargo` already validates.)
 
 ### 3. Add the per-platform `Package.swift` and `build.gradle.kts`
 
@@ -187,61 +192,87 @@ impl FooControls for ElementRef<FooProps> {
 The proc macro auto-prepends `env!("CARGO_PKG_NAME")` to the local
 tag name so the registration string becomes `whisker-foo:Foo` — two
 unrelated modules can both declare a `Foo` component without colliding
-in Lynx's behavior registry. The platform-side `@WhiskerComponent`
-annotations do the same prefixing.
+in Lynx's behavior registry. The platform-side DSL `Name("Foo")` is
+namespaced the same way by the codegen.
 
-### 5. Write the Swift + Kotlin component classes
+### 5. Write the Swift + Kotlin module
+
+Modules are authored with the ModuleDefinition DSL (modeled on Expo
+Modules). A class annotated `@WhiskerModule` subclasses `Module` and
+overrides `definition()`. The `@WhiskerModule` attribute is the
+registration trigger — the SwiftPM codegen plugin (iOS) and the KSP
+processor (Android) discover it and emit the Lynx registration. A
+view-bearing module declares a `View(...)` block referencing a
+`WhiskerUI<View>` subclass; a function-only module omits it and
+declares module-level `Function`s instead.
 
 ```swift
-// src/ios/WhiskerFooComponent.swift
+// ios/Sources/WhiskerFoo/FooModule.swift
+import WhiskerComponents   // @WhiskerModule
+import WhiskerModuleApi    // Module, ModuleDefinition, DSL
+
+@WhiskerModule
+public final class FooModule: Module {
+    public override func definition() -> ModuleDefinition {
+        ModuleDefinition {
+            Name("Foo")
+            View(FooView.self) {
+                Prop("src") { (view: FooView, value: String) in view.setSrc(value) }
+                Function("play") { (view: FooView) in view.play() }
+            }
+        }
+    }
+}
+
+// ios/Sources/WhiskerFoo/FooView.swift
 import UIKit
-import WhiskerComponents
 import WhiskerModuleApi
 
-@WhiskerComponent("Foo")
-@objc(WhiskerFooComponent)
-public final class WhiskerFooComponent: WhiskerUI<UIView> {
+@objc(FooView)
+public final class FooView: WhiskerUI<UIView> {
     @objc public override func createView() -> UIView { UIView() }
-
-    @WhiskerProp("src")
-    @objc public func setSrc(_ value: NSString, requestReset: Bool) { … }
-
-    @WhiskerUIMethod
-    public func play(_ args: [WhiskerValue]) -> WhiskerValue {
-        // …
-        return .null
-    }
+    func setSrc(_ value: String) { /* … */ }
+    func play() { /* … */ }
 }
 ```
 
 ```kotlin
-// src/android/WhiskerFooComponent.kt
+// android/src/main/kotlin/rs/whisker/modules/foo/FooModule.kt
+package rs.whisker.modules.foo
+
+import rs.whisker.annotations.WhiskerModule
+import rs.whisker.runtime.Module        // NB: explicit — else java.lang.Module shadows
+import rs.whisker.runtime.ModuleDefinition
+
+@WhiskerModule
+class FooModule : Module() {
+    override fun definition() = ModuleDefinition {
+        Name("Foo")
+        View(FooView::class.java) {
+            Prop("src") { view: FooView, value: String -> view.setSrc(value) }
+            Function("play") { view: FooView -> view.play() }
+        }
+    }
+}
+
+// android/src/main/kotlin/rs/whisker/modules/foo/FooView.kt
 package rs.whisker.modules.foo
 
 import android.content.Context
 import android.view.View
-import rs.whisker.annotations.WhiskerComponent
-import rs.whisker.annotations.WhiskerProp
-import rs.whisker.annotations.WhiskerUIMethod
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerUI
-import rs.whisker.runtime.WhiskerValue
 
-@WhiskerComponent("Foo")
-open class WhiskerFooComponent(context: WhiskerContext) : WhiskerUI<View>(context) {
-
+open class FooView(context: WhiskerContext) : WhiskerUI<View>(context) {
     override fun createView(context: Context): View = View(context)
-
-    @WhiskerProp("src")
-    open fun setSrc(value: String) { /* … */ }
-
-    @WhiskerUIMethod
-    open fun play(args: List<WhiskerValue>): WhiskerValue {
-        // …
-        return WhiskerValue.Null
-    }
+    fun setSrc(value: String) { /* … */ }
+    fun play() { /* … */ }
 }
 ```
+
+> `whisker new-module <name>` scaffolds this whole skeleton — Cargo.toml
+> with the marker, both manifests, the Rust shim, and the DSL module +
+> view stubs. Pass `--shape function-only` for a view-less module.
 
 ### 6. Publish
 
@@ -289,24 +320,28 @@ host-project staging step.
 
 ```
 whisker-foo/
-├── Cargo.toml              ← the cargo manifest
-├── whisker.module.toml     ← declares which platform sources exist
+├── Cargo.toml              ← cargo manifest (carries [package.metadata.whisker])
 ├── Package.swift           ← SwiftPM subproject for the host app
 ├── build.gradle.kts        ← Gradle subproject for the host app
 ├── README.md
-└── src/
-    ├── lib.rs              ← Rust shim
-    ├── android/            ← Kotlin platform sources
-    │   └── …Component.kt
-    └── ios/                ← Swift platform sources
-        └── …Component.swift
+├── src/
+│   └── lib.rs              ← Rust shim
+├── ios/                    ← Swift platform sources (Expo-style)
+│   └── Sources/WhiskerFoo/
+│       ├── FooModule.swift
+│       └── FooView.swift
+└── android/                ← Kotlin platform sources (standard AGP nesting)
+    └── src/main/kotlin/rs/whisker/modules/foo/
+        ├── FooModule.kt
+        └── FooView.kt
 ```
 
-The Rust `src/lib.rs` and the platform `src/{android,ios}/` siblings
-share the `src/` parent intentionally — cargo's default crate layout
-puts the Rust root there, and we co-locate the platform code alongside
-rather than separating into top-level `android/` / `ios/` directories.
-Keeps a single `src/` to glance at when navigating the crate.
+The platform code lives under top-level `ios/` and `android/` dirs
+(the way Expo Modules / most native libraries group it), each openable
+directly in Xcode / Android Studio. The three build manifests
+(`Cargo.toml`, `Package.swift`, `build.gradle.kts`) stay at the root;
+`Package.swift` *must* be there because SwiftPM keys a local package's
+identity off its directory name.
 
 ## What goes where — quick reference
 
@@ -317,18 +352,17 @@ Keeps a single `src/` to glance at when navigating the crate.
 | `#[whisker::element_methods(Props)]` | `whisker-modules-api` (proc macro) | Typed `ElementRef<T>::method()` dispatch |
 | `WhiskerValue`, `WhiskerModuleError` | `whisker::platform_module` | Both flavors |
 | `Signal<T>`, `ElementRef<T>`, `element_ref()` | `whisker` (top-level) | View-bearing modules' shim |
-| `@WhiskerComponent("Tag")` | `WhiskerComponents` SPM target / `rs.whisker.annotations.WhiskerComponent` | iOS / Android view classes |
-| `@WhiskerModule("Name")` | same | iOS / Android function-only classes |
-| `@WhiskerProp("name")` / `@WhiskerUIMethod` | same | iOS / Android dispatch annotations |
+| `@WhiskerModule` (marker) | `WhiskerComponents` SPM target / `rs.whisker.annotations.WhiskerModule` | iOS / Android DSL module classes |
+| `Module`, `ModuleDefinition`, `Name`/`View`/`Prop`/`Function`/`Events`/`Constants` | `WhiskerModuleApi` SPM target / `rs.whisker.runtime` Kotlin package | DSL `definition()` body |
 | `WhiskerUI<View>` / `WhiskerContext` / `WhiskerValue` | `WhiskerModuleApi` SPM target / `rs.whisker.runtime` Kotlin package | iOS / Android view classes |
 
 ## Future direction
 
-Phase L (#58) replaces the `@WhiskerComponent` / `@WhiskerProp` /
-`@WhiskerUIMethod` annotation surface with an Expo-style
-`ModuleDefinition` DSL. View-bearing and function-only modules will
-both use the same `definition() -> ModuleDefinition` entry point;
-`View(...) { Prop(...) ... }` becomes a feature of the DSL rather
-than a separate annotation set.
+The Expo-style `ModuleDefinition` DSL (Phase L, #58) is now the
+authoring surface for both view-bearing and function-only modules —
+they share the same `definition() -> ModuleDefinition` entry point and
+`View(...) { Prop(...) … }` is a feature of the DSL. The older
+`@WhiskerComponent` / `@WhiskerProp` / `@WhiskerUIMethod` annotation
+set is being removed in Phase M (#212).
 
 See the Whisker Modules epic (#55) for the broader roadmap.
