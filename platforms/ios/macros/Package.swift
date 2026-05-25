@@ -1,24 +1,24 @@
 // swift-tools-version:5.9
 //
 // `WhiskerComponents` — Swift Macro + SwiftPM Build Tool plugin
-// powering the Whisker module system's iOS `@WhiskerComponent(...)`
+// powering the Whisker module system's iOS `@WhiskerModule`
 // declaration site.
 //
 // Four targets:
 //
 // - **`WhiskerComponents`** (library, public surface): exports the
-//   `@WhiskerComponent` attached macro module authors apply to their
-//   `LynxUI<View>` subclasses.
+//   `@WhiskerModule` marker module authors apply to their `Module`
+//   subclasses.
 //
 // - **`WhiskerComponentsMacros`** (macro plugin): the SwiftSyntax-based
-//   macro expansion. Decorates the annotated class with metadata
-//   the codegen plugin can introspect at SwiftPM build time.
+//   macro expansion. `@WhiskerModule` is a pure marker (expands to
+//   nothing); the codegen plugin does the registration work.
 //
 // - **`whisker-components-codegen`** (executable): scans the consuming
 //   target's `.swift` sources via SwiftSyntax, extracts every
-//   `@WhiskerComponent(...)` application, and emits
-//   `WhiskerModuleBehaviors.swift` (the iOS counterpart of Android's
-//   KSP-generated `WhiskerModuleBehaviors.kt`). Invoked at SPM
+//   `@WhiskerModule` application, and emits
+//   `<Target>+Generated.swift` (the iOS counterpart of Android's
+//   KSP-generated `<Module>Behaviors.kt`). Invoked at SPM
 //   build time by the plugin below.
 //
 // - **`WhiskerComponentsCodegenPlugin`** (SPM build plugin): tells
@@ -56,7 +56,7 @@ let package = Package(
     ],
     targets: [
         // Public-facing library. Module authors `import WhiskerComponents`
-        // and apply `@WhiskerComponent(...)` to their LynxUI subclasses.
+        // and apply `@WhiskerModule` to their `Module` subclasses.
         .target(
             name: "WhiskerComponents",
             dependencies: ["WhiskerComponentsMacros"],

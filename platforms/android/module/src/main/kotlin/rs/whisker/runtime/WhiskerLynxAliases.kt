@@ -3,15 +3,15 @@ package rs.whisker.runtime
 /**
  * Phase 7-Φ.H.1: Lynx symbol hiding (Android).
  *
- * Module authors writing `@WhiskerComponent(...)`-annotated classes
- * previously had to import Lynx types directly:
+ * A view-bearing Whisker module's `View(...)` block references a
+ * Lynx UI subclass, which previously had to import Lynx types
+ * directly:
  *
  * ```kotlin
  * import com.lynx.tasm.behavior.LynxContext
  * import com.lynx.tasm.behavior.ui.LynxUI
  *
- * @WhiskerComponent("Hello")
- * class WhiskerHelloComponent(context: LynxContext) : LynxUI<View>(context) { ... }
+ * class HelloView(context: LynxContext) : LynxUI<View>(context) { ... }
  * ```
  *
  * The bridge is built on Lynx and that won't change in the
@@ -26,8 +26,7 @@ package rs.whisker.runtime
  * import rs.whisker.runtime.WhiskerContext
  * import rs.whisker.runtime.WhiskerUI
  *
- * @WhiskerComponent("Hello")
- * class WhiskerHelloComponent(context: WhiskerContext) : WhiskerUI<View>(context) { ... }
+ * class HelloView(context: WhiskerContext) : WhiskerUI<View>(context) { ... }
  * ```
  *
  * Stack traces / debugger views still surface the real `LynxUI`
@@ -35,11 +34,6 @@ package rs.whisker.runtime
  * Renaming the underlying classes themselves would require
  * patching the Lynx fork — a separate, larger effort planned
  * for the long-term roadmap.
- *
- * Note: Kotlin's `typealias` keyword cannot alias annotation
- * types. `@LynxProp` therefore needs a separate KSP-forwarder
- * mechanism (see `@WhiskerProp` + the KSP processor) rather than
- * a typealias here.
  */
 
 public typealias WhiskerUI<V> = com.lynx.tasm.behavior.ui.LynxUI<V>

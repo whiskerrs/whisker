@@ -358,11 +358,11 @@ identity off its directory name.
 
 ## Future direction
 
-The Expo-style `ModuleDefinition` DSL (Phase L, #58) is now the
+The Expo-style `ModuleDefinition` DSL (Phase L, #58) is the sole
 authoring surface for both view-bearing and function-only modules —
 they share the same `definition() -> ModuleDefinition` entry point and
 `View(...) { Prop(...) … }` is a feature of the DSL. The older
 `@WhiskerComponent` / `@WhiskerProp` / `@WhiskerUIMethod` annotation
-set is being removed in Phase M (#212).
+set was removed in Phase M (#212).
 
 See the Whisker Module epic (#55) for the broader roadmap.
