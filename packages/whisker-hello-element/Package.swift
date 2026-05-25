@@ -22,11 +22,17 @@ import PackageDescription
 // runtime + macros packages via these env vars (the same paths it
 // writes into the generated aggregator Package.swift), so this module
 // resolves them no matter where the crate lives — in the monorepo, in
-// a user's whisker project, or unpacked from the cargo registry. The
-// relative-path fallback applies only when building this package
-// standalone (e.g. opening it directly in Xcode from the monorepo).
-let whiskerRuntimePath = Context.environment["WHISKER_IOS_RUNTIME"] ?? "../../platforms/ios"
-let whiskerMacrosPath = Context.environment["WHISKER_IOS_MACROS"] ?? "../../platforms/ios/macros"
+// a user's whisker project, or unpacked from the cargo registry. No
+// relative fallback: a Whisker module is only ever built through
+// `whisker run` / `whisker build`, never standalone `swift build`.
+guard let whiskerRuntimePath = Context.environment["WHISKER_IOS_RUNTIME"],
+      let whiskerMacrosPath = Context.environment["WHISKER_IOS_MACROS"]
+else {
+    fatalError("""
+        WHISKER_IOS_RUNTIME / WHISKER_IOS_MACROS not set. Build this Whisker \
+        module through `whisker run` / `whisker build`, which inject these paths.
+        """)
+}
 
 let package = Package(
     name: "whisker-hello-element",

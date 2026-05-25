@@ -290,10 +290,16 @@ import PackageDescription
 // whisker-build injects the absolute location of Whisker's iOS
 // runtime + macros packages via these env vars, so this module
 // resolves them wherever it lives — in a whisker project, or unpacked
-// from the cargo registry. (The relative fallback only matters when
-// opening this package standalone inside the whisker monorepo.)
-let whiskerRuntimePath = Context.environment["WHISKER_IOS_RUNTIME"] ?? "../../platforms/ios"
-let whiskerMacrosPath = Context.environment["WHISKER_IOS_MACROS"] ?? "../../platforms/ios/macros"
+// from the cargo registry. A Whisker module is only ever built through
+// `whisker run` / `whisker build` (which set these), never standalone.
+guard let whiskerRuntimePath = Context.environment["WHISKER_IOS_RUNTIME"],
+      let whiskerMacrosPath = Context.environment["WHISKER_IOS_MACROS"]
+else {{
+    fatalError("""
+        WHISKER_IOS_RUNTIME / WHISKER_IOS_MACROS not set. Build this Whisker \
+        module through `whisker run` / `whisker build`, which inject these paths.
+        """)
+}}
 
 let package = Package(
     name: "{name}",
