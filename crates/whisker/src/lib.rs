@@ -78,10 +78,8 @@ pub use whisker_runtime::view::Children;
 #[doc(hidden)]
 pub mod __tags {
     use crate::ElementTag;
-    use whisker_runtime::reactive::{effect, Signal};
-    use whisker_runtime::view::{
-        append_child, create_element, set_attribute, set_event_listener, set_inline_styles, Element,
-    };
+    use whisker_runtime::reactive::Signal;
+    use whisker_runtime::view::{append_child, create_element, set_event_listener, Element};
 
     // Each built-in tag is a struct + a hand-written inherent
     // `impl` block listing every method explicitly. **No

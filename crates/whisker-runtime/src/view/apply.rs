@@ -8,12 +8,13 @@
 //! these via `::whisker::runtime::view::apply_styles` / `apply_attr`
 //! — the same path app crates reach through the umbrella.
 //!
-//! The two helpers are intentionally generic over `V: Into<Signal<T>>`
-//! + `T: ToString + Clone + 'static`, so a caller can hand them
-//! a `&'static str`, a `String`, a `ReadSignal<String>`, or any
-//! other source that `From<...> for Signal<String>` covers. The
-//! `Dynamic` branch wraps the read in `effect(...)` so the value
-//! re-applies whenever the signal source changes.
+//! The two helpers are intentionally generic over
+//! `V: Into<Signal<T>>` plus `T: ToString + Clone + 'static`, so a
+//! caller can hand them a `&'static str`, a `String`, a
+//! `ReadSignal<String>`, or any other source that
+//! `From<...> for Signal<String>` covers. The `Dynamic` branch wraps
+//! the read in `effect(...)` so the value re-applies whenever the
+//! signal source changes.
 
 use crate::reactive::{effect, Signal};
 use crate::view::handle::Element;
