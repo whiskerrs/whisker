@@ -245,15 +245,17 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                 #(#props_fields,)*
                 /// Phase 7-Φ.H.2.4 — implicit `ref:` prop. Bound
                 /// to the freshly-created element inside the
-                /// macro-emitted body. The marker type is the
-                /// Props struct itself (canonical, in-scope).
-                pub __ref: ::std::option::Option<::whisker::ElementRef<#props_name>>,
+                /// macro-emitted body. Phase N: the type is the
+                /// non-generic `ElementRef`; the wrapping
+                /// `#[component]` owns it and bridges Handle
+                /// signals through `effect(...)` blocks.
+                pub __ref: ::std::option::Option<::whisker::ElementRef>,
             }
 
             #[doc(hidden)]
             pub struct #builder_name {
                 #(#builder_fields,)*
-                pub __ref: ::std::option::Option<::whisker::ElementRef<#props_name>>,
+                pub __ref: ::std::option::Option<::whisker::ElementRef>,
             }
 
             impl #props_name {
@@ -271,11 +273,11 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                 /// Bind an `ElementRef` to this element on mount.
                 /// Phase 7-Φ.H.2.4 — `render!` routes the `ref:`
                 /// kwarg to this setter. Takes the ref by value
-                /// (cheap `Rc<Cell<...>>` clone) so callers can
-                /// keep their handle for later `invoke` calls.
+                /// (a `Copy` slotmap-handle) so callers can keep
+                /// theirs for later `invoke` calls.
                 pub fn with_ref(
                     mut self,
-                    r: ::whisker::ElementRef<#props_name>,
+                    r: ::whisker::ElementRef,
                 ) -> Self {
                     self.__ref = ::std::option::Option::Some(r);
                     self
@@ -314,12 +316,17 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                     concat!(env!("CARGO_PKG_NAME"), ":", #tag_name)
                 );
                 #(#apply_calls)*
-                // Phase 7-Φ.H.2.4 — bind the user-supplied
-                // `ElementRef` (if any) to the freshly-created
-                // handle so subsequent `video.play(...)` calls
-                // can route through the C bridge.
-                if let ::std::option::Option::Some(ref __r) = props.__ref {
-                    __r.bind(__handle);
+                // Phase N — bind the user-supplied `ElementRef` (if
+                // any) to the freshly-created handle so subsequent
+                // `sys.invoke("play", ...)` calls can route through
+                // the C bridge. Phase N-2 adds the matching
+                // `on_cleanup(...)` that clears the binding on
+                // unmount so post-unmount calls surface as
+                // `RefError::NotBound` rather than dispatching
+                // against a recycled `Element` ID.
+                if let ::std::option::Option::Some(__r) = props.__ref {
+                    __r.__bind(__handle);
+                    ::whisker::on_cleanup(move || __r.__unbind());
                 }
                 __handle
             }

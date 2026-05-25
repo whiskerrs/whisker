@@ -526,9 +526,11 @@ const BIG_BUCK_BUNNY_URL: &str =
 #[component]
 pub fn video_demo() -> Element {
     let video_ref = element_ref::<VideoProps>();
-    let r_play = video_ref.clone();
-    let r_pause = video_ref.clone();
-    let r_seek = video_ref.clone();
+    // Phase N — `ElementRef` is `Copy` (slotmap-handle backed),
+    // so the per-closure aliases are just copies of the same handle.
+    let r_play = video_ref;
+    let r_pause = video_ref;
+    let r_seek = video_ref;
 
     let row_style = "flex-direction: row; align-items: center; padding: 8px; \
          background-color: #1a1a1a; gap: 12px;";

@@ -174,13 +174,19 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
 
-    // The full crate path `::whisker::ElementRef<#target_type>`
-    // requires the consumer to depend on `whisker` directly —
-    // module crates already do (via `use whisker::prelude::*;`).
+    // Phase N — `ElementRef` is non-generic; the marker type from
+    // `#[element_methods(Foo)]` is retained on the attribute purely
+    // for diagnostic clarity (and forward-compat with future
+    // disambiguation tooling) but isn't emitted into the impl.
+    let _ = target_type;
+
+    // The full crate path `::whisker::ElementRef` requires the
+    // consumer to depend on `whisker` directly — module crates
+    // already do (via `use whisker::prelude::*;`).
     quote! {
         #input
 
-        impl #trait_name for ::whisker::ElementRef<#target_type> {
+        impl #trait_name for ::whisker::ElementRef {
             #(#impl_methods)*
         }
     }

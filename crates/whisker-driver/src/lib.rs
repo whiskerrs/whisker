@@ -11,7 +11,7 @@ pub mod element_ref;
 pub mod lynx;
 pub mod module;
 
-pub use element_ref::{element_ref, ElementRef};
+pub use element_ref::{element_ref, ElementRef, RefError};
 pub use lynx::bootstrap;
 pub use lynx::renderer::BridgeRenderer;
 

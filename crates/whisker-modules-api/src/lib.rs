@@ -58,9 +58,9 @@ pub use whisker_runtime::element::ElementTag;
 
 pub use whisker_macros::{element_methods, platform_component, platform_module};
 
-pub use whisker_driver::{element_ref, ElementRef};
+pub use whisker_driver::{element_ref, ElementRef, RefError};
 
-pub use whisker_runtime::reactive::Signal;
+pub use whisker_runtime::reactive::{on_cleanup, Signal};
 
 // `WhiskerValue` / `invoke` / `invoke_async` live under
 // `whisker::platform_module::*` in the umbrella, so we mirror the

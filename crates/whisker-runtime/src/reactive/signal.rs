@@ -269,6 +269,22 @@ impl<T: 'static> RwSignal<T> {
         }
         .set(value);
     }
+
+    /// Non-panicking variant of [`set`]. Returns `true` if the write
+    /// happened, `false` if the underlying signal has already been
+    /// disposed (e.g. its owner was torn down). Used by callers that
+    /// legitimately race owner disposal — the canonical example is
+    /// `ElementRef::__unbind`, called from an `on_cleanup` callback
+    /// that may fire after the signal's owner has freed its nodes.
+    pub fn try_set(self, value: T) -> bool {
+        try_write_and_notify(self.id, move |slot| *slot = value, true)
+    }
+
+    /// Non-panicking variant of [`update`]. Same semantics as
+    /// [`try_set`].
+    pub fn try_update(self, f: impl FnOnce(&mut T)) -> bool {
+        try_write_and_notify(self.id, f, true)
+    }
 }
 
 impl<T: 'static + Clone> RwSignal<T> {
@@ -330,13 +346,21 @@ fn fetch_value(id: NodeId) -> Rc<RefCell<dyn Any>> {
 /// Mutate the value of signal `id` under `f`, optionally notifying
 /// subscribers afterwards.
 fn write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: bool) {
+    let _ = try_write_and_notify(id, f, notify);
+}
+
+/// `write_and_notify` variant that returns `false` instead of
+/// panicking when the signal is disposed. Used by callers that
+/// legitimately may race against owner disposal — most notably the
+/// Phase N `ElementRef::__unbind` path, which runs from an
+/// `on_cleanup` callback after the underlying RwSignal's owner has
+/// already freed its nodes.
+fn try_write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: bool) -> bool {
     // Step 1: pull a clone of the Rc handle in a short borrow.
-    let value = with_runtime(|rt| {
-        rt.nodes
-            .get(id)
-            .and_then(|n| n.data.value().cloned())
-            .expect("WriteSignal: signal disposed or not a value-bearing node")
-    });
+    let Some(value) = with_runtime(|rt| rt.nodes.get(id).and_then(|n| n.data.value().cloned()))
+    else {
+        return false;
+    };
 
     // Step 2: mutate without holding the runtime borrow.
     {
@@ -359,4 +383,5 @@ fn write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: bool
             scheduler::schedule(sub);
         }
     }
+    true
 }
