@@ -151,8 +151,7 @@ struct Vars<'a> {
 fn write(root: &Path, rel: &str, content: &str) -> Result<()> {
     let path = root.join(rel);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     std::fs::write(&path, content).with_context(|| format!("write {}", path.display()))?;
     Ok(())
@@ -353,7 +352,10 @@ pub fn {ident}(style: Signal<String>) {{}}
 "#,
         name = v.crate_name,
         tag = v.tag,
-        ident = v.crate_name.replace('-', "_").trim_start_matches("whisker_"),
+        ident = v
+            .crate_name
+            .replace('-', "_")
+            .trim_start_matches("whisker_"),
     )
 }
 
@@ -528,9 +530,7 @@ fn validate_crate_name(name: &str) -> Result<()> {
 /// - `whisker-blur-view` -> `BlurView`
 /// - `foo-bar` -> `FooBar` (no `whisker-` prefix → tag is the whole name)
 fn pascal_case_tag(crate_name: &str) -> String {
-    let stripped = crate_name
-        .strip_prefix("whisker-")
-        .unwrap_or(crate_name);
+    let stripped = crate_name.strip_prefix("whisker-").unwrap_or(crate_name);
     let mut out = String::new();
     let mut upper = true;
     for ch in stripped.chars() {

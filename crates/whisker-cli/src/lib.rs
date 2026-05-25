@@ -69,9 +69,10 @@ enum Command {
     /// gradle / xcodebuild without the dev-server. Output is the
     /// shippable `.apk` / `.app`.
     Build(build::Args),
-    /// Scaffold a new Whisker module crate (Cargo.toml + whisker.module.toml
-    /// + Package.swift + build.gradle.kts + skeleton Rust/Swift/Kotlin sources).
-    /// See `docs/module-author-guide.md`.
+    /// Scaffold a new Whisker module crate — Cargo.toml,
+    /// whisker.module.toml, Package.swift, build.gradle.kts, and
+    /// skeleton Rust / Swift / Kotlin sources. See
+    /// `docs/module-author-guide.md`.
     NewModule(new_module::NewModuleArgs),
 }
 
