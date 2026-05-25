@@ -102,12 +102,11 @@ pub mod __tags {
     // blocks stay terse without macro-rules expansion getting
     // in the way of RA.
 
-    // `apply_styles` / `apply_attr` moved to
-    // `whisker_runtime::view::apply` (Phase J) so the
-    // `whisker-module` re-export crate can reach them on the
-    // same import path. Re-export here for any caller that still
-    // routes through `::whisker::__tags::apply_styles` —
-    // the `#[whisker::platform_component]` macro emits
+    // `apply_styles` / `apply_attr` live in
+    // `whisker_runtime::view::apply` (Phase J). Re-export here for
+    // any caller that still routes through
+    // `::whisker::__tags::apply_styles` — the
+    // `#[whisker::platform_component]` macro emits
     // `::whisker::runtime::view::apply_styles` directly now.
     pub use whisker_runtime::view::{apply_attr, apply_styles};
 

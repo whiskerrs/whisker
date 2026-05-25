@@ -29,8 +29,7 @@ crate-type = ["rlib"]
 [package.metadata.whisker]
 
 [dependencies]
-# Rename `whisker-module` → `whisker` so the proc macros' emit
-# paths resolve. See `crates/whisker-module/src/lib.rs` for the
-# rationale + contract. Cargo doesn't allow `package = ...` with
-# `workspace = true`, so path + version are inlined here.
-whisker = { package = "whisker-module", path = "../../crates/whisker-module", version = "0.1.0" }
+# The umbrella `whisker` crate — same dep app crates use. The proc
+# macros' emit paths (`::whisker::*`) resolve under the `whisker`
+# name. A published module would write `whisker = "0.1"`.
+whisker = { workspace = true }

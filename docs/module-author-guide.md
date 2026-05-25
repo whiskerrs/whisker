@@ -118,13 +118,11 @@ crate-type = ["rlib"]
 [package.metadata.whisker]
 
 [dependencies]
-# Rename `whisker-module` → `whisker` so the proc macros' emit
-# paths (`::whisker::ElementRef`, `::whisker::platform_module::WhiskerValue`,
-# …) resolve. Cargo doesn't allow `package = ...` with
-# `workspace = true`, so the version + path are inlined here. Drop
-# the `path = "..."` when you publish — `version = "x.y.z"` alone is
-# what consumers see from crates.io.
-whisker = { package = "whisker-module", version = "0.1" }
+# The umbrella `whisker` crate — the same dep app crates use. Module
+# crates reach the proc macros + `ElementRef` / `Signal` /
+# `platform_module::*` through it; the macros' emit paths
+# (`::whisker::…`) resolve under the `whisker` name.
+whisker = "0.1"
 ```
 
 ### 2. Mark the crate as a module — `[package.metadata.whisker]`
@@ -347,9 +345,9 @@ identity off its directory name.
 
 | Symbol | Crate / module | Used by |
 |---|---|---|
-| `#[whisker::platform_component("Tag")]` | `whisker-module` (proc macro) | View-bearing modules |
-| `#[whisker::platform_module(name = "X")]` | `whisker-module` (proc macro) | Function-only modules |
-| `#[whisker::element_methods(Props)]` | `whisker-module` (proc macro) | Typed `ElementRef<T>::method()` dispatch |
+| `#[whisker::platform_component("Tag")]` | `whisker` (proc macro) | View-bearing modules |
+| `#[whisker::platform_module(name = "X")]` | `whisker` (proc macro) | Function-only modules |
+| `#[whisker::element_methods(Props)]` | `whisker` (proc macro) | Typed `ElementRef<T>::method()` dispatch |
 | `WhiskerValue`, `WhiskerModuleError` | `whisker::platform_module` | Both flavors |
 | `Signal<T>`, `ElementRef<T>`, `element_ref()` | `whisker` (top-level) | View-bearing modules' shim |
 | `@WhiskerModule` (marker) | `WhiskerModuleMacros` SPM target / `rs.whisker.annotations.WhiskerModule` | iOS / Android DSL module classes |

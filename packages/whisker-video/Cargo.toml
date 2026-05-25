@@ -36,15 +36,9 @@ crate-type = ["rlib"]
 [package.metadata.whisker]
 
 [dependencies]
-# Rename `whisker-module` → `whisker` so the proc macros' emit
-# paths (`::whisker::ElementRef`, `::whisker::runtime::view::Element`,
-# `::whisker::platform_module::WhiskerValue`, …) resolve in this
-# module crate. The umbrella `whisker` crate isn't a dep — module
-# crates only need the smaller `whisker-module` surface. See
-# `crates/whisker-module/src/lib.rs` for the contract.
-#
-# Cargo doesn't allow combining `package = ...` with `workspace = true`,
-# so the version + path are inlined here. Keep the version pinned to
-# the workspace-wide `[workspace.package].version` so publishes stay
-# in lock-step.
-whisker = { package = "whisker-module", path = "../../crates/whisker-module", version = "0.1.0" }
+# The umbrella `whisker` crate. Module crates and app crates depend
+# on the same crate — the proc macros' emit paths (`::whisker::ElementRef`,
+# `::whisker::runtime::view::Element`, `::whisker::platform_module::WhiskerValue`,
+# …) resolve under the `whisker` name. A published module would write
+# `whisker = "0.1"`.
+whisker = { workspace = true }

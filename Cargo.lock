@@ -1873,14 +1873,14 @@ dependencies = [
 name = "whisker-hello-element"
 version = "0.1.0"
 dependencies = [
- "whisker-module",
+ "whisker",
 ]
 
 [[package]]
 name = "whisker-local-store"
 version = "0.1.0"
 dependencies = [
- "whisker-module",
+ "whisker",
 ]
 
 [[package]]
@@ -1892,15 +1892,6 @@ dependencies = [
  "serde",
  "serde_json",
  "syn",
-]
-
-[[package]]
-name = "whisker-module"
-version = "0.1.0"
-dependencies = [
- "whisker-driver",
- "whisker-macros",
- "whisker-runtime",
 ]
 
 [[package]]
@@ -1934,7 +1925,7 @@ dependencies = [
 name = "whisker-video"
 version = "0.1.0"
 dependencies = [
- "whisker-module",
+ "whisker",
 ]
 
 [[package]]
