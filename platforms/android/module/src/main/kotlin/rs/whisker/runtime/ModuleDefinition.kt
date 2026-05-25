@@ -86,10 +86,11 @@ public data class WhiskerViewComponent(
 
 /**
  * Type-erased prop setter the framework calls on prop dispatch.
- * `view` is the Lynx UI instance; `value` is the raw decoded
- * Lynx value (typed-decoded by L-2c at dispatch time).
+ * `view` is the Lynx UI instance; `value` is the raw
+ * [WhiskerValue] (case ②: no auto-deserialization — the author
+ * destructures it, e.g. `value.asString()`).
  */
-public typealias WhiskerPropSetterFn = (view: Any, value: Any?) -> Unit
+public typealias WhiskerPropSetterFn = (view: Any, value: WhiskerValue) -> Unit
 
 public data class WhiskerPropComponent(
     public val name: String,
@@ -97,13 +98,14 @@ public data class WhiskerPropComponent(
 ) : WhiskerDefinitionComponent
 
 /**
- * Type-erased function handler. `view` is `null` for
- * module-level [Function]s, the Lynx UI instance for view-block
- * [Function]s. `args` carry positional arguments from the JS /
- * Rust call site; the return value is auto-encoded by the
- * dispatch glue (`Unit` → `WhiskerValue.Null`).
+ * Type-erased function handler. `view` is `null` for module-level
+ * [Function]s, the Lynx UI instance for view-block [Function]s.
+ * `args` are the raw positional [WhiskerValue]s from the Rust call
+ * site (case ②: no auto-deserialization — the author destructures,
+ * e.g. `args[0].asDouble()`); the return is a raw [WhiskerValue]
+ * (`WhiskerValue.Null` for "no result").
  */
-public typealias WhiskerFunctionHandlerFn = (view: Any?, args: List<Any?>) -> Any?
+public typealias WhiskerFunctionHandlerFn = (view: Any?, args: List<WhiskerValue>) -> WhiskerValue
 
 public data class WhiskerFunctionComponent(
     public val name: String,
@@ -181,28 +183,18 @@ public class WhiskerModuleDefinitionBuilder {
     public fun Events(vararg names: String): WhiskerDefinitionComponent =
         WhiskerEventsComponent(names.toList()).also { components.add(it) }
 
-    // ---- Module-level (view-less) functions: no view argument ----
+    // ---- Module-level (view-less) function: raw args (case ②) ----
 
-    public fun Function(name: String, handler: () -> Any?): WhiskerDefinitionComponent =
-        WhiskerFunctionComponent(name) { _, _ -> handler() }.also { components.add(it) }
-
-    public fun <A> Function(
+    /**
+     * `Function("save") { args -> WhiskerValue.Bool(...) }` — the
+     * author reads `args[i]` (e.g. `args[0].asString()`) and returns
+     * a [WhiskerValue]. No arity overloads, no type coercion.
+     */
+    public fun Function(
         name: String,
-        handler: (A) -> Any?,
+        handler: (args: List<WhiskerValue>) -> WhiskerValue,
     ): WhiskerDefinitionComponent =
-        WhiskerFunctionComponent(name) { _, args ->
-            @Suppress("UNCHECKED_CAST")
-            handler(args.getOrNull(0) as A)
-        }.also { components.add(it) }
-
-    public fun <A, B> Function(
-        name: String,
-        handler: (A, B) -> Any?,
-    ): WhiskerDefinitionComponent =
-        WhiskerFunctionComponent(name) { _, args ->
-            @Suppress("UNCHECKED_CAST")
-            handler(args.getOrNull(0) as A, args.getOrNull(1) as B)
-        }.also { components.add(it) }
+        WhiskerFunctionComponent(name) { _, args -> handler(args) }.also { components.add(it) }
 }
 
 /**
@@ -216,51 +208,38 @@ public class WhiskerViewDefinitionBuilder {
     internal val components: MutableList<WhiskerDefinitionComponent> = mutableListOf()
 
     /**
-     * `Prop("foo") { view, value -> ... }` — view-bearing prop
-     * setter. `V` / `T` are inferred from the lambda parameter
-     * types. The dispatch-time cast is unchecked (erased generics):
-     * a mismatch raises `ClassCastException` inside the closure.
+     * `Prop("src") { view: VideoView, value -> view.setSrc(value.asString()) }`
+     * — view-bearing prop setter. Case ②: `value` is the raw
+     * [WhiskerValue]; the author destructures it. `V` is inferred
+     * from the lambda; the dispatch-time view cast is unchecked
+     * (erased generics) — a mismatch raises `ClassCastException`.
      */
-    public fun <V : Any, T> Prop(
+    public fun <V : Any> Prop(
         name: String,
-        setter: (V, T) -> Unit,
+        setter: (V, WhiskerValue) -> Unit,
     ): WhiskerDefinitionComponent =
-        WhiskerPropComponent(name) { viewAny, valueAny ->
+        WhiskerPropComponent(name) { viewAny, value ->
             @Suppress("UNCHECKED_CAST")
-            setter(viewAny as V, valueAny as T)
+            setter(viewAny as V, value)
         }.also { components.add(it) }
 
     /** `Events("a", "b", ...)` declared inside a `View(...)` block. */
     public fun Events(vararg names: String): WhiskerDefinitionComponent =
         WhiskerEventsComponent(names.toList()).also { components.add(it) }
 
-    // ---- View-bound functions: first arg is the view ----
+    // ---- View-bound function: view + raw args (case ②) ----
 
+    /**
+     * `Function("seek") { view: VideoView, args -> view.seek(args[0].asDouble()); WhiskerValue.Null }`
+     * — the author reads `args[i]` and returns a [WhiskerValue].
+     */
     public fun <V : Any> Function(
         name: String,
-        handler: (V) -> Any?,
-    ): WhiskerDefinitionComponent =
-        WhiskerFunctionComponent(name) { viewAny, _ ->
-            @Suppress("UNCHECKED_CAST")
-            handler(viewAny as V)
-        }.also { components.add(it) }
-
-    public fun <V : Any, A> Function(
-        name: String,
-        handler: (V, A) -> Any?,
+        handler: (view: V, args: List<WhiskerValue>) -> WhiskerValue,
     ): WhiskerDefinitionComponent =
         WhiskerFunctionComponent(name) { viewAny, args ->
             @Suppress("UNCHECKED_CAST")
-            handler(viewAny as V, args.getOrNull(0) as A)
-        }.also { components.add(it) }
-
-    public fun <V : Any, A, B> Function(
-        name: String,
-        handler: (V, A, B) -> Any?,
-    ): WhiskerDefinitionComponent =
-        WhiskerFunctionComponent(name) { viewAny, args ->
-            @Suppress("UNCHECKED_CAST")
-            handler(viewAny as V, args.getOrNull(0) as A, args.getOrNull(1) as B)
+            handler(viewAny as V, args)
         }.also { components.add(it) }
 }
 

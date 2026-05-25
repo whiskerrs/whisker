@@ -144,7 +144,9 @@ internal enum WhiskerLynxInstaller {
         let setterSel = NSSelectorFromString(setterShort + ":requestReset:")
         let setter = comp.setter
         let setterBlock: @convention(block) (AnyObject, Any?, Bool) -> Void = { view, value, _ in
-            setter(view, value)
+            // Case ②: hand the closure the raw `WhiskerValue`.
+            let wv = value.map { WhiskerValue.from(nsObject: $0) } ?? .null
+            setter(view, wv)
         }
         let setterIMP = imp_implementationWithBlock(setterBlock)
         addInstanceMethod(
@@ -192,19 +194,15 @@ internal enum WhiskerLynxInstaller {
         let methodSel = NSSelectorFromString(methodName + ":withResult:")
         let handler = comp.handler
         let methodBlock: @convention(block) (AnyObject, NSDictionary?, LynxUIMethodCallbackBlockShim?) -> Void = { view, params, cb in
-            let rawArgs: [Any?] = {
-                guard let p = params else { return [] }
-                if let arr = p["args"] as? [Any?] { return arr }
-                if let arr = p["args"] as? NSArray { return arr.map { $0 as Any? } }
-                return []
-            }()
-            let result = handler(view, rawArgs)
-            // Lynx kUIMethodSuccess = 0; we report 0 unconditionally
-            // here since the closure-typed dispatch doesn't currently
-            // surface failure codes. Type mismatches inside the
-            // closure are silently swallowed by the type-erased
-            // wrappers (with a debug-build log).
-            cb?(0, result as AnyObject?)
+            // Case ②: decode Lynx's `@{ "args": [...] }` into the raw
+            // `[WhiskerValue]` the closure receives, and encode its
+            // `WhiskerValue` result back for the Lynx callback.
+            let args = WhiskerValue.fromNSDictionary(params)
+            let result = handler(view, args)
+            // Lynx kUIMethodSuccess = 0; reported unconditionally —
+            // dispatch failures surface as a `WhiskerValue.error`
+            // inside `result` rather than a failure code.
+            cb?(0, WhiskerValue.toAnyObject(result) as AnyObject?)
         }
         let methodIMP = imp_implementationWithBlock(methodBlock)
         addInstanceMethod(

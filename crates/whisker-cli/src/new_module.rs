@@ -46,7 +46,7 @@ pub struct NewModuleArgs {
     pub path: Option<PathBuf>,
 
     /// Module shape. `view-bearing` (the default) generates a
-    /// `#[whisker::platform_component]` shim + a DSL module with a
+    /// `#[whisker::module_component]` shim + a DSL module with a
     /// `View(...)` block and a `WhiskerUI<View>` subclass.
     /// `function-only` generates a `#[whisker::platform_module]`
     /// proxy + a DSL module with module-level `Function`s and no
@@ -395,10 +395,12 @@ fn lib_rs_view(v: &Vars) -> String {
 
 use whisker::Signal;
 
-/// View-bearing platform component. The Lynx tag the bridge
-/// registers against is `{name}:{tag}` — the crate name namespace
-/// is auto-prepended by `#[whisker::platform_component]`.
-#[whisker::platform_component("{tag}")]
+/// View-bearing element. The Lynx tag the bridge registers against
+/// is `{name}:{tag}` — the crate name namespace is auto-prepended by
+/// `#[whisker::module_component]`. Imperative methods on a mounted
+/// instance go through an `ElementRef` (the `ref:` prop) — wrap one
+/// in a typed `{tag}Handle` struct for the public API.
+#[whisker::module_component("{tag}")]
 pub fn {ident}(style: Signal<String>) {{}}
 "#,
         name = v.crate_name,
@@ -417,35 +419,28 @@ fn lib_rs_module(v: &Vars) -> String {
 
 use whisker::platform_module::{{WhiskerModuleError, WhiskerValue}};
 
-/// Sys proxy — every method is a thin pass-through to the
-/// platform-side `{module_class}` DSL via the C bridge. The `name`
-/// here MUST match the `Name("...")` declared in the module's
-/// `definition()`.
-#[whisker::platform_module(name = "Whisker{tag}")]
-pub trait Whisker{tag}Sys {{
-    // Add your trait methods here. They MUST take
-    // `args: Vec<WhiskerValue>` and return `WhiskerValue`.
-    //
-    // Example:
-    //     fn hello(args: Vec<WhiskerValue>) -> WhiskerValue;
-    fn _placeholder(args: Vec<WhiskerValue>) -> WhiskerValue;
-}}
-
-/// Typed Rust API — hand-written wrapper above the sys proxy. Build
-/// the `Vec<WhiskerValue>` arg list, dispatch through the sys
-/// trait, and lift the `WhiskerValue` return into the matching
-/// typed result.
+/// Typed Rust API for the `Whisker{tag}` platform module.
+///
+/// Hand-written wrapper over the framework primitive: each method
+/// builds the raw `Vec<WhiskerValue>` arg list, dispatches via
+/// `whisker::module!("Whisker{tag}").invoke(method, args)`, and lifts
+/// the returned `WhiskerValue` into a typed `Result`. The `module!`
+/// name MUST match the `Name("...")` in the platform-side
+/// `definition()`; `module!` auto-prepends this crate's name so two
+/// crates can ship same-named modules without colliding.
 pub struct Whisker{tag};
 impl Whisker{tag} {{
     pub fn placeholder() -> Result<(), WhiskerModuleError> {{
-        let _ = Whisker{tag}Sys::_placeholder(vec![]);
-        Ok(())
+        // Build args, dispatch, lift the WhiskerValue into a typed result.
+        match whisker::module!("Whisker{tag}").invoke("_placeholder", vec![]) {{
+            WhiskerValue::Error(msg) => Err(WhiskerModuleError(msg)),
+            _ => Ok(()),
+        }}
     }}
 }}
 "#,
         name = v.crate_name,
         tag = v.tag,
-        module_class = v.module_class,
     )
 }
 

@@ -57,14 +57,18 @@ import com.lynx.tasm.behavior.utils.PropsUpdater
  * Idempotent — re-registering replaces the prior entry
  * (last-write-wins on both maps).
  */
-public fun Module.registerWithLynx() {
+public fun Module.registerWithLynx(crateName: String? = null) {
     val def = definitionLazy
     val viewBlock = def.view
 
     if (viewBlock != null) {
+        // View props / methods dispatch on the view CLASS, so no
+        // name prefix is needed here.
         registerViewBearing(viewBlock)
     } else {
-        registerViewLess(def)
+        // View-less dispatch is keyed by module name — namespace it
+        // with the crate so two crates can ship same-named modules.
+        registerViewLess(def, crateName)
     }
 }
 
@@ -90,27 +94,26 @@ private fun registerViewBearing(viewBlock: WhiskerViewComponent) {
     }
 }
 
-private fun registerViewLess(def: ModuleDefinition) {
+private fun registerViewLess(def: ModuleDefinition, crateName: String?) {
     val name = def.name ?: return
     val functions = def.functions
     if (functions.isEmpty()) return
 
+    // `<crate>:<Name>` so the Rust side's `module!("Name")` (which
+    // prepends its own crate name) resolves to the same key.
+    val qualifiedName = if (crateName.isNullOrEmpty()) name else "$crateName:$name"
+
     val byName = functions.associateBy { it.name }
-    WhiskerModuleRegistry.registerDispatch(name) { method, args ->
+    WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
         val fn = byName[method]
             ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
-        // Unwrap the WhiskerValue args into raw Kotlin values the
-        // handler's `as A` casts expect, run the closure, then wrap
-        // the result back into a WhiskerValue.
-        val rawArgs: List<Any?> = args.map { it.toJavaObject() }
-        val result: Any? = try {
-            fn.handler(null, rawArgs)
+        // Case ②: hand the raw `List<WhiskerValue>` straight to the
+        // handler, which returns a `WhiskerValue`.
+        try {
+            fn.handler(null, args.asList())
         } catch (t: Throwable) {
-            return@registerDispatch WhiskerValue.Err(
-                "exception in module `$name` method `$method`: ${t.message}",
-            )
+            WhiskerValue.Err("exception in module `$name` method `$method`: ${t.message}")
         }
-        whiskerValueOf(result)
     }
 }
 
@@ -136,19 +139,10 @@ internal class WhiskerDSLPropsSetter(
 
     override fun setProperty(ui: LynxBaseUI, name: String, propsMap: StylesDiffMap) {
         val component = byName[name] ?: return
-        // Decode the Lynx prop value to a Kotlin Any?. The Dynamic
-        // surface here mirrors what `PropsSetterCache.PropSetter`
-        // does internally: `getDynamic(name)` returns a tagged
-        // value, and we unbox via the type-specific accessor on
-        // first dispatch.
-        //
-        // L-2c keeps the unboxing minimal: we hand the raw boxed
-        // Java object to the DSL closure, which uses Kotlin's
-        // `as? T` downcast to validate. Type-aware decoding lives
-        // in a follow-up that propagates the Prop's declared
-        // value type through `WhiskerPropComponent`.
-        val value: Any? = decodeProp(propsMap, name)
-        component.setter(ui, value)
+        // Decode the Lynx prop value, then wrap as a raw
+        // `WhiskerValue` (case ②) — the closure destructures it
+        // (`value.asString()`, …).
+        component.setter(ui, whiskerValueOf(decodeProp(propsMap, name)))
     }
 
     private fun decodeProp(propsMap: StylesDiffMap, name: String): Any? {
@@ -214,9 +208,12 @@ internal class WhiskerDSLMethodInvoker(
             )
             return
         }
-        val rawArgs: List<Any?> = decodeArgs(params)
-        val result: Any? = try {
-            component.handler(ui, rawArgs)
+        // Case ②: decode Lynx args, wrap each as a raw WhiskerValue,
+        // hand to the closure, encode its WhiskerValue result back
+        // for the Lynx callback.
+        val args: List<WhiskerValue> = decodeArgs(params).map { whiskerValueOf(it) }
+        val result: WhiskerValue = try {
+            component.handler(ui, args)
         } catch (t: Throwable) {
             callback.invoke(
                 LynxUIMethodConstants.UNKNOWN,
@@ -224,7 +221,7 @@ internal class WhiskerDSLMethodInvoker(
             )
             return
         }
-        callback.invoke(LynxUIMethodConstants.SUCCESS, result)
+        callback.invoke(LynxUIMethodConstants.SUCCESS, result.toJavaObject())
     }
 
     private fun decodeArgs(params: ReadableMap?): List<Any?> {

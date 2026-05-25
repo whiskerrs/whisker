@@ -25,12 +25,9 @@ extension Module {
         guard let fn = self.definitionLazy.functions.first(where: { $0.name == method }) else {
             return .error("unknown method `\(method)`")
         }
-        // Unwrap WhiskerValue → Swift-native for the closure's
-        // `as? A` casts; module-level functions get `nil` for the
-        // view argument.
-        let rawArgs: [Any?] = args.map { WhiskerDSLValue.toSwift($0) }
-        let result = fn.handler(nil, rawArgs)
-        return WhiskerDSLValue.fromSwift(result)
+        // Case ②: raw `[WhiskerValue]` straight through. Module-level
+        // functions get `nil` for the view argument.
+        return fn.handler(nil, args)
     }
 
     /// C-ABI bridge the codegen-emitted `@_cdecl` shim calls. Lives
@@ -50,57 +47,3 @@ extension Module {
     }
 }
 
-// MARK: - DSL <-> WhiskerValue scalar conversion
-
-/// Conversions between `WhiskerValue` and the Swift-native values
-/// DSL `Function` closures take / return. Distinct from
-/// `WhiskerValue.toAnyObject` (which boxes numbers as `NSNumber`
-/// for Lynx callbacks) — here we keep Swift-native `Bool` / `Int64`
-/// / `Double` / `String` so the closures' `as? T` downcasts hit.
-internal enum WhiskerDSLValue {
-    static func toSwift(_ v: WhiskerValue) -> Any? {
-        switch v {
-        case .null: return nil
-        case .bool(let b): return b
-        case .int(let i): return i
-        case .float(let f): return f
-        case .string(let s): return s
-        case .bytes(let d): return d
-        case .array(let a): return a.map { toSwift($0) }
-        case .map(let m): return m.mapValues { toSwift($0) }
-        case .error(let e): return e
-        }
-    }
-
-    static func fromSwift(_ value: Any?) -> WhiskerValue {
-        // Flatten one level of Optional so a closure returning
-        // `String?` == nil collapses to `.null` rather than
-        // tripping the `default` arm (Swift boxes `Optional<String>
-        // .none` inside `Optional<Any>.some`).
-        guard let unwrapped = unwrapOptional(value) else { return .null }
-        switch unwrapped {
-        case let v as WhiskerValue: return v
-        case let b as Bool: return .bool(b)
-        case let i as Int: return .int(Int64(i))
-        case let i as Int64: return .int(i)
-        case let d as Double: return .float(d)
-        case let f as Float: return .float(Double(f))
-        case let s as String: return .string(s)
-        case let d as Data: return .bytes(d)
-        default:
-            return .error("unsupported return type \(type(of: unwrapped))")
-        }
-    }
-
-    /// Returns `nil` for `Optional.none` of any wrapped type (incl.
-    /// the `Optional<Optional<…>>` shape that arises when a closure
-    /// returning `T?` is stored as `Any?`); otherwise the unwrapped
-    /// value.
-    private static func unwrapOptional(_ value: Any?) -> Any? {
-        guard let value = value else { return nil }
-        let mirror = Mirror(reflecting: value)
-        guard mirror.displayStyle == .optional else { return value }
-        guard let inner = mirror.children.first else { return nil }
-        return inner.value
-    }
-}

@@ -20,7 +20,7 @@
 //!
 //! ## Where `ElementRef` appears
 //!
-//! Only in the signatures of `#[whisker::platform_component]`-declared
+//! Only in the signatures of `#[whisker::module_component]`-declared
 //! functions, as a hidden `__ref` prop the macro emits, and inside
 //! module-author-written `#[whisker::component]` wrappers that bridge
 //! a Handle struct to native via `effect(...)` blocks. End-users at
@@ -73,7 +73,7 @@ impl std::error::Error for RefError {}
 // ---------------------------------------------------------------------------
 
 /// Framework-internal handle to a mounted platform element. Lives in
-/// `#[platform_component]`-emitted prop tables and the wrapping
+/// `#[module_component]`-emitted prop tables and the wrapping
 /// `#[component]`s that drive a Handle. Not part of an app-author's
 /// surface — Handles wrap this.
 ///
@@ -91,7 +91,7 @@ pub struct ElementRef {
 impl ElementRef {
     /// Allocate a fresh, unbound ref.
     ///
-    /// Used by `#[platform_component]` macro emission and by Handle
+    /// Used by `#[module_component]` macro emission and by Handle
     /// bridge wrappers (`fn video(handle: VideoHandle, ...) -> Element`).
     /// Allocates in the current reactive owner — see
     /// `whisker_runtime::reactive::signal()`.
@@ -177,11 +177,13 @@ impl ElementRef {
         })
     }
 
-    /// Legacy invoke: returns `WhiskerValue`, with
-    /// `WhiskerValue::Error("…")` standing in for both "not bound"
-    /// and "platform-side error". Kept for transitional
-    /// `#[whisker::element_methods]` compatibility (Phase N-3 removes
-    /// the macro alongside this method).
+    /// Invoke a platform method on the bound element. Returns the raw
+    /// `WhiskerValue`, with `WhiskerValue::Error("…")` standing in for
+    /// both "not bound" and "platform-side error" (loggable either
+    /// way). This is the primitive a typed handle wrapper builds on
+    /// (`VideoHandle::play` → `self.r.invoke("play", vec![])`);
+    /// `try_invoke` / `invoke_typed` are the `Result`-returning
+    /// variants for callers that want to branch on failure.
     pub fn invoke(&self, method: &str, args: Vec<WhiskerValue>) -> WhiskerValue {
         let Some(elem) = self.inner.get_untracked() else {
             return WhiskerValue::Error(format!(
@@ -215,7 +217,7 @@ impl ElementRef {
     }
 
     /// Clear the ref. Invoked at element unmount via the
-    /// `on_cleanup(...)` hook emitted by `#[platform_component]`
+    /// `on_cleanup(...)` hook emitted by `#[module_component]`
     /// so subsequent `try_invoke` calls return
     /// `Err(RefError::NotBound)` rather than dispatching against a
     /// recycled `Element` ID.

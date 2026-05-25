@@ -217,9 +217,11 @@ public class WhiskerModuleProcessor(
                 w.appendLine("                    })")
                 w.appendLine("                }")
                 // Install dispatch: view Prop/Function (view-bearing)
-                // or module-level Function registration (view-less).
+                // or module-level Function registration (view-less,
+                // keyed by `<crate>:Name`).
                 w.appendLine("                // Install dispatch (view: Prop/Function; view-less: module Function).")
-                w.appendLine("                $instanceLocal.registerWithLynx()")
+                val crateArg = if (crateName != null) "\"$crateName\"" else "null"
+                w.appendLine("                $instanceLocal.registerWithLynx($crateArg)")
                 w.appendLine("            }")
                 w.appendLine("        }")
             }

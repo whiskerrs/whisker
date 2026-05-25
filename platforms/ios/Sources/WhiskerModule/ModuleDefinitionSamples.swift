@@ -24,13 +24,14 @@ internal enum ModuleDefinitionSamples {
             Constants(["maxResolution": "1080p"])
 
             View(FakeVideoView.self) {
-                Prop("src") { (view: FakeVideoView, value: String) in
-                    view.setSrc(value)
+                Prop("src") { (view: FakeVideoView, value: WhiskerValue) in
+                    view.setSrc(value.asString ?? "")
                 }
-                Function("play")  { (view: FakeVideoView) in view.play()  }
-                Function("pause") { (view: FakeVideoView) in view.pause() }
-                Function("seek")  { (view: FakeVideoView, seconds: Double) in
-                    view.seek(seconds)
+                Function("play")  { (view: FakeVideoView, _: [WhiskerValue]) in view.play(); return .null }
+                Function("pause") { (view: FakeVideoView, _: [WhiskerValue]) in view.pause(); return .null }
+                Function("seek")  { (view: FakeVideoView, args: [WhiskerValue]) in
+                    view.seek(args.first?.asDouble ?? 0)
+                    return .null
                 }
                 Events("onCompleted")
             }
@@ -43,11 +44,13 @@ internal enum ModuleDefinitionSamples {
         ModuleDefinition {
             Name("WhiskerLocalStore")
 
-            Function("save") { (key: String, value: String) -> Bool in
-                !key.isEmpty && !value.isEmpty
+            Function("save") { (args: [WhiskerValue]) -> WhiskerValue in
+                let key = args.first?.asString ?? ""
+                let value = args.count > 1 ? (args[1].asString ?? "") : ""
+                return .bool(!key.isEmpty && !value.isEmpty)
             }
-            Function("load") { (key: String) -> String in
-                "stub-value-for-\(key)"
+            Function("load") { (args: [WhiskerValue]) -> WhiskerValue in
+                .string("stub-value-for-\(args.first?.asString ?? "")")
             }
         }
     }

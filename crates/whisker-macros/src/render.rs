@@ -669,7 +669,7 @@ impl UserComponentNode {
                     // call-site name for the implicit ElementRef
                     // prop. `ref` is a Rust keyword though, so
                     // typed-builder can't expose `.ref(...)` as a
-                    // setter — the platform_component macro emits
+                    // setter — the module_component macro emits
                     // `.with_ref(...)` instead and we re-route
                     // here.
                     let value = &kw.value;

@@ -111,8 +111,9 @@ public struct WhiskerViewComponent: WhiskerDefinitionComponent {
 
 /// Type-erased setter the framework calls on prop dispatch.
 /// `view` is the Lynx UI instance the value was set on; `value`
-/// is the raw Lynx value (Whisker value-decoded by L-2b/c).
-public typealias WhiskerPropSetter = (_ view: AnyObject, _ value: Any?) -> Void
+/// is the raw `WhiskerValue` (case ②: no auto-deserialization —
+/// the author destructures it, e.g. `value.asString()`).
+public typealias WhiskerPropSetter = (_ view: AnyObject, _ value: WhiskerValue) -> Void
 
 /// Prop component — a single named setter on the view class.
 public struct WhiskerPropComponent: WhiskerDefinitionComponent {
@@ -124,12 +125,13 @@ public struct WhiskerPropComponent: WhiskerDefinitionComponent {
     }
 }
 
-/// Type-erased function handler. `args` carry through positional
-/// arguments from the JS / Rust call site; the result is either
-/// the function's return value (auto-encoded) or `nil` for
-/// `Void`-returning bodies. `view` is `nil` for module-level
+/// Type-erased function handler. `args` are the raw positional
+/// `WhiskerValue`s from the Rust call site (case ②: no
+/// auto-deserialization — the author destructures, e.g.
+/// `args[0].asDouble()`); the result is a raw `WhiskerValue`
+/// (`.null` for "no result"). `view` is `nil` for module-level
 /// `Function`s, the Lynx UI instance for view-block `Function`s.
-public typealias WhiskerFunctionHandler = (_ view: AnyObject?, _ args: [Any?]) -> Any?
+public typealias WhiskerFunctionHandler = (_ view: AnyObject?, _ args: [WhiskerValue]) -> WhiskerValue
 
 /// Sync function component. Same shape inside a `View(...)`
 /// block (gets the view as `view`) and at module-level
@@ -309,24 +311,19 @@ public func Events(_ names: String...) -> WhiskerDefinitionComponent {
 
 // MARK: - Prop factories
 
-/// `Prop("foo") { (view, value) in ... }` — view-bearing prop
-/// setter. The closure's parameter types are checked at the call
-/// site; the framework runs a downcast at dispatch time and
-/// silently no-ops on a mismatch (with a debug-build log).
-public func Prop<V: AnyObject, T>(
+/// `Prop("src") { (view: VideoView, value) in view.setSrc(value.asString()) }`
+/// — view-bearing prop setter. Case ②: `value` is the raw
+/// `WhiskerValue`; the author destructures it (`.asString()`,
+/// `.asDouble()`, …). The framework downcasts the view and
+/// silently no-ops on a view-type mismatch (debug-build log).
+public func Prop<V: AnyObject>(
     _ name: String,
-    _ setter: @escaping (V, T) -> Void
+    _ setter: @escaping (V, WhiskerValue) -> Void
 ) -> WhiskerDefinitionComponent {
-    WhiskerPropComponent(name: name) { uiAny, valueAny in
+    WhiskerPropComponent(name: name) { uiAny, value in
         guard let ui = uiAny as? V else {
             #if DEBUG
             print("WhiskerModule: Prop(\"\(name)\") view type mismatch — expected \(V.self), got \(type(of: uiAny))")
-            #endif
-            return
-        }
-        guard let value = valueAny as? T else {
-            #if DEBUG
-            print("WhiskerModule: Prop(\"\(name)\") value type mismatch — expected \(T.self), got \(type(of: valueAny as Any))")
             #endif
             return
         }
@@ -334,141 +331,33 @@ public func Prop<V: AnyObject, T>(
     }
 }
 
-// MARK: - Function factories — 0-arg through 4-arg overloads
+// MARK: - Function factories (case ② — raw `[WhiskerValue]`)
 
-// L-2a ships sync `Function` only. `AsyncFunction` lands in L-2d.
+// L-2a ships sync `Function` only. `AsyncFunction` lands later.
+//
+// Two forms: view-bound (inside a `View(...)` block; closure gets
+// the view + raw args) and module-level (function-only module; raw
+// args only). Both pass the raw `[WhiskerValue]` through unchanged
+// — no arity overloads, no type coercion. The closure returns a
+// `WhiskerValue` (`.null` for "no result").
 
-/// `Function("noargs") { (view) in ... }` — sync view-bound
-/// 0-arg function.
+/// `Function("seek") { (view: VideoView, args) in view.seek(args[0].asDouble()); .null }`
+/// — view-bound sync function. The author reads `args[i]`.
 public func Function<V: AnyObject>(
     _ name: String,
-    _ handler: @escaping (V) -> Void
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { viewAny, _ in
-        guard let view = viewAny as? V else { return nil }
-        handler(view)
-        return nil
-    }
-}
-
-public func Function<V: AnyObject, R>(
-    _ name: String,
-    _ handler: @escaping (V) -> R
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { viewAny, _ in
-        guard let view = viewAny as? V else { return nil }
-        return handler(view)
-    }
-}
-
-public func Function<V: AnyObject, A>(
-    _ name: String,
-    _ handler: @escaping (V, A) -> Void
+    _ handler: @escaping (V, [WhiskerValue]) -> WhiskerValue
 ) -> WhiskerDefinitionComponent {
     WhiskerFunctionComponent(name: name) { viewAny, args in
-        guard let view = viewAny as? V, let a = args.first as? A else { return nil }
-        handler(view, a)
-        return nil
+        guard let view = viewAny as? V else { return .error("Function(\"\(name)\") view type mismatch") }
+        return handler(view, args)
     }
 }
 
-public func Function<V: AnyObject, A, R>(
-    _ name: String,
-    _ handler: @escaping (V, A) -> R
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { viewAny, args in
-        guard let view = viewAny as? V, let a = args.first as? A else { return nil }
-        return handler(view, a)
-    }
-}
-
-public func Function<V: AnyObject, A, B>(
-    _ name: String,
-    _ handler: @escaping (V, A, B) -> Void
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { viewAny, args in
-        guard let view = viewAny as? V,
-              args.count >= 2,
-              let a = args[0] as? A, let b = args[1] as? B
-        else { return nil }
-        handler(view, a, b)
-        return nil
-    }
-}
-
-public func Function<V: AnyObject, A, B, R>(
-    _ name: String,
-    _ handler: @escaping (V, A, B) -> R
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { viewAny, args in
-        guard let view = viewAny as? V,
-              args.count >= 2,
-              let a = args[0] as? A, let b = args[1] as? B
-        else { return nil }
-        return handler(view, a, b)
-    }
-}
-
-// Module-level (view-less) `Function` — same shape but no view
-// arg. Reachable inside a function-only module.
-
+/// `Function("save") { args in .bool(...) }` — module-level
+/// (view-less) sync function for a function-only module.
 public func Function(
     _ name: String,
-    _ handler: @escaping () -> Void
+    _ handler: @escaping ([WhiskerValue]) -> WhiskerValue
 ) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { _, _ in
-        handler()
-        return nil
-    }
-}
-
-public func Function<R>(
-    _ name: String,
-    _ handler: @escaping () -> R
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { _, _ in
-        handler()
-    }
-}
-
-public func Function<A>(
-    _ name: String,
-    _ handler: @escaping (A) -> Void
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { _, args in
-        guard let a = args.first as? A else { return nil }
-        handler(a)
-        return nil
-    }
-}
-
-public func Function<A, R>(
-    _ name: String,
-    _ handler: @escaping (A) -> R
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { _, args in
-        guard let a = args.first as? A else { return nil }
-        return handler(a)
-    }
-}
-
-public func Function<A, B>(
-    _ name: String,
-    _ handler: @escaping (A, B) -> Void
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { _, args in
-        guard args.count >= 2, let a = args[0] as? A, let b = args[1] as? B else { return nil }
-        handler(a, b)
-        return nil
-    }
-}
-
-public func Function<A, B, R>(
-    _ name: String,
-    _ handler: @escaping (A, B) -> R
-) -> WhiskerDefinitionComponent {
-    WhiskerFunctionComponent(name: name) { _, args in
-        guard args.count >= 2, let a = args[0] as? A, let b = args[1] as? B else { return nil }
-        return handler(a, b)
-    }
+    WhiskerFunctionComponent(name: name) { _, args in handler(args) }
 }
