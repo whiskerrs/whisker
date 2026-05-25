@@ -79,6 +79,12 @@ pub struct AndroidInputs {
     /// writes it verbatim into the `project(":whisker-runtime").projectDir`
     /// call.
     pub whisker_runtime_path: PathBuf,
+    /// Absolute path to `<workspace>/platforms/android/module-api/`.
+    /// Phase J — the smaller module-author surface (carved out of
+    /// `whisker-runtime`). Module Gradle subprojects depend on this
+    /// via `project(":module-api")`; the app's settings.gradle.kts
+    /// includes it as a subproject (next to `:whisker-runtime`).
+    pub whisker_modules_api_path: PathBuf,
     /// Absolute path to the dir holding the Lynx AARs (typically
     /// `<workspace>/target/lynx-android`). Registered as a `flatDir`
     /// repo in the generated `settings.gradle.kts` so whisker-runtime's
@@ -140,6 +146,10 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
     v.insert(
         "whisker_runtime_android_path",
         inputs.whisker_runtime_path.display().to_string(),
+    );
+    v.insert(
+        "whisker_modules_api_android_path",
+        inputs.whisker_modules_api_path.display().to_string(),
     );
     v.insert(
         "whisker_lynx_aar_dir",
@@ -362,6 +372,7 @@ pub fn inputs_from(
     app_config: &AppConfig,
     rust_lib_name: String,
     whisker_runtime_path: PathBuf,
+    whisker_modules_api_path: PathBuf,
     whisker_lynx_aar_dir: PathBuf,
     whisker_android_ksp_path: PathBuf,
 ) -> Result<AndroidInputs> {
@@ -393,12 +404,13 @@ pub fn inputs_from(
         target_sdk,
         rust_lib_name,
         whisker_runtime_path,
+        whisker_modules_api_path,
         whisker_lynx_aar_dir,
         whisker_android_ksp_path,
-        // Bumped 2 → 3 alongside the KSP composite-build addition
-        // so existing fingerprints invalidate and gen trees
-        // re-render their settings.gradle.kts + app/build.gradle.kts.
-        template_version: 3,
+        // Bumped 3 → 4 alongside the Phase J `:module-api`
+        // subproject addition so existing fingerprints invalidate
+        // and gen trees re-render their settings.gradle.kts.
+        template_version: 4,
     })
 }
 
@@ -430,9 +442,10 @@ mod tests {
             target_sdk: 34,
             rust_lib_name: "hello_world".into(),
             whisker_runtime_path: PathBuf::from("/abs/platforms/android/whisker-runtime"),
+            whisker_modules_api_path: PathBuf::from("/abs/platforms/android/module-api"),
             whisker_lynx_aar_dir: PathBuf::from("/abs/target/lynx-android"),
             whisker_android_ksp_path: PathBuf::from("/abs/platforms/android/ksp"),
-            template_version: 3,
+            template_version: 4,
         }
     }
 
@@ -578,6 +591,7 @@ mod tests {
         let err = inputs_from(
             &cfg,
             "x".into(),
+            PathBuf::new(),
             PathBuf::new(),
             PathBuf::new(),
             PathBuf::new(),

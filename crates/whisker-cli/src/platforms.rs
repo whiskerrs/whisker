@@ -61,6 +61,11 @@ fn sync_android(
 ) -> Result<PlatformSync> {
     let whisker_runtime = resolve_whisker_platform(workspace_root, "android/whisker-runtime")
         .context("resolve Whisker's platforms/android/whisker-runtime")?;
+    // Phase J — the smaller module-author subproject. Carved out of
+    // `whisker-runtime` so third-party Whisker modules depend only
+    // on `:module-api`.
+    let whisker_modules_api = resolve_whisker_platform(workspace_root, "android/module-api")
+        .context("resolve Whisker's platforms/android/module-api")?;
     // Lynx AARs are not required to *exist* at sync time — they only
     // matter at gradle resolution. We still pass the canonical path
     // so the generated settings.gradle.kts always knows where to
@@ -68,7 +73,7 @@ fn sync_android(
     // up the symlink under target/lynx-android.
     let lynx_aars = workspace_root.join("target/lynx-android");
     // `platforms/android/ksp/` is the composite-build root
-    // that ships `@WhiskerElement` + the KSP processor (Phase 7-Φ.H.2).
+    // that ships `@WhiskerComponent` + the KSP processor (Phase 7-Φ.H.2).
     // Same convention as `whisker_runtime_path` — absolute path,
     // referenced from the generated `settings.gradle.kts` via
     // `includeBuild(...)`.
@@ -77,6 +82,7 @@ fn sync_android(
         app_config,
         package.replace('-', "_"),
         whisker_runtime,
+        whisker_modules_api,
         lynx_aars,
         whisker_android_ksp,
     )?;

@@ -37,7 +37,10 @@ let package = Package(
             name: "WhiskerLocalStore",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
-                .product(name: "WhiskerRuntime", package: "WhiskerRuntime"),
+                // Phase J: smaller `WhiskerModuleApi` instead of full
+                // `WhiskerRuntime`. WhiskerValue + the WhiskerLynxAliases
+                // typealiases live there now.
+                .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
                 .product(name: "OrderedCollections", package: "swift-collections"),
             ],
             path: "src/ios",

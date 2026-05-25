@@ -1,0 +1,11 @@
+[package]
+name = "whisker-modules-api"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal API surface third-party Whisker modules depend on. The umbrella `whisker` crate is for *app* code; module crates pull in just this."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+whisker-driver = { workspace = true }
+whisker-macros = { workspace = true }
+whisker-runtime = { workspace = true }

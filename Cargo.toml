@@ -11,6 +11,7 @@ members = [
     "crates/whisker-driver",
     "crates/whisker-driver-sys",
     "crates/whisker-macros",
+    "crates/whisker-modules-api",
     "crates/whisker-runtime",
     "crates/whisker-subsecond",
     "examples/counter",
@@ -48,6 +49,7 @@ whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.1.0" }
 whisker-driver = { path = "crates/whisker-driver", version = "0.1.0" }
 whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.1.0" }
 whisker-macros = { path = "crates/whisker-macros", version = "0.1.0" }
+whisker-modules-api = { path = "crates/whisker-modules-api", version = "0.1.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.1.0" }
 
 anyhow = "1"

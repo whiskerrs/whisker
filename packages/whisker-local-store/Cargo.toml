@@ -12,4 +12,8 @@ description = "Reference Whisker platform module — persistent key-value local 
 crate-type = ["rlib"]
 
 [dependencies]
-whisker = { workspace = true }
+# Rename `whisker-modules-api` → `whisker` so the proc macros' emit
+# paths resolve. See `crates/whisker-modules-api/src/lib.rs` for the
+# rationale + contract. Cargo doesn't allow `package = ...` with
+# `workspace = true`, so path + version are inlined here.
+whisker = { package = "whisker-modules-api", path = "../../crates/whisker-modules-api", version = "0.1.0" }

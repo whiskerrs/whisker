@@ -37,8 +37,12 @@ ksp {
 }
 
 dependencies {
-    implementation(project(":whisker-runtime"))
-    implementation("rs.whisker:annotations")
+    // Phase J — single Whisker runtime dep. `:module-api` re-exports
+    // `rs.whisker:annotations` transitively, so no separate dep on
+    // the annotation JAR is needed. `ksp("rs.whisker:ksp")` stays
+    // separate (it is a build-time processor, not on the runtime
+    // classpath).
+    implementation(project(":module-api"))
     ksp("rs.whisker:ksp")
 
     // Phase 7-Φ.G PoC — an external Maven dependency. AndroidX

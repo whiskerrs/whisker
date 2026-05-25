@@ -68,7 +68,7 @@
 //! element's `WhiskerUI<View>` subclass.
 
 use whisker::platform_module::WhiskerValue;
-use whisker::prelude::*;
+use whisker::{ElementRef, Signal};
 
 /// `whisker-video:Video` platform component. The Lynx-side
 /// implementations under `src/ios/` and `src/android/` declare

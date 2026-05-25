@@ -15,7 +15,7 @@
 import AVKit
 import UIKit
 import WhiskerComponents
-import WhiskerRuntime
+import WhiskerModuleApi
 
 @WhiskerComponent("Video")
 @objc(WhiskerVideoComponent)

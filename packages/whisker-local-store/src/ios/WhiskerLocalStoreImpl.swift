@@ -19,7 +19,7 @@
 
 import Foundation
 import WhiskerComponents
-import WhiskerRuntime
+import WhiskerModuleApi
 
 // Phase 7-Φ.G PoC: external SPM dep pulled via this module's
 // `Package.swift`. `OrderedCollections` isn't actively used yet

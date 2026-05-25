@@ -9,4 +9,15 @@ description = "Whisker platform component module — `whisker-video:Video` eleme
 crate-type = ["rlib"]
 
 [dependencies]
-whisker = { workspace = true }
+# Rename `whisker-modules-api` → `whisker` so the proc macros' emit
+# paths (`::whisker::ElementRef`, `::whisker::runtime::view::Element`,
+# `::whisker::platform_module::WhiskerValue`, …) resolve in this
+# module crate. The umbrella `whisker` crate isn't a dep — module
+# crates only need the smaller `whisker-modules-api` surface. See
+# `crates/whisker-modules-api/src/lib.rs` for the contract.
+#
+# Cargo doesn't allow combining `package = ...` with `workspace = true`,
+# so the version + path are inlined here. Keep the version pinned to
+# the workspace-wide `[workspace.package].version` so publishes stay
+# in lock-step.
+whisker = { package = "whisker-modules-api", path = "../../crates/whisker-modules-api", version = "0.1.0" }

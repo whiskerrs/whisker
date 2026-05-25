@@ -567,13 +567,13 @@ fn prop_apply_call(p: &Prop) -> TokenStream2 {
     match &p.kind {
         PropKind::Style { inner } => {
             quote! {
-                ::whisker::__tags::apply_styles::<_, #inner>(__handle, props.#i);
+                ::whisker::runtime::view::apply_styles::<_, #inner>(__handle, props.#i);
             }
         }
         PropKind::Attr { inner } => {
             let attr_name = name.replace('_', "-");
             quote! {
-                ::whisker::__tags::apply_attr::<_, #inner>(__handle, #attr_name, props.#i);
+                ::whisker::runtime::view::apply_attr::<_, #inner>(__handle, #attr_name, props.#i);
             }
         }
         PropKind::EventNoPayload { event } => {
