@@ -1,10 +1,10 @@
 // Composite-build root for the Whisker Android KSP package.
 //
 // Two modules:
-// - `annotations` — public `@WhiskerComponent` Kotlin annotation, the
-//   companion to iOS's `@WhiskerComponent` Swift Macro (Phase H.1).
-// - `ksp` — KSP processor that consumes `@WhiskerComponent`
-//   applications and generates `WhiskerModuleBehaviors.kt` in the
+// - `annotations` — public `@WhiskerModule` Kotlin annotation, the
+//   companion to iOS's `@WhiskerModule` Swift macro.
+// - `ksp` — KSP processor that consumes `@WhiskerModule`
+//   applications and generates `<Module>Behaviors.kt` in the
 //   user app's source set. Replaces the manual whisker-build-time
 //   Kotlin generation from Phase 7-Φ.C.
 //

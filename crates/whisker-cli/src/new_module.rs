@@ -315,12 +315,12 @@ let package = Package(
         .target(
             name: "{spm}",
             dependencies: [
-                .product(name: "WhiskerComponents", package: "macros"),
+                .product(name: "WhiskerModuleMacros", package: "macros"),
                 .product(name: "WhiskerModule", package: "WhiskerRuntime"),
             ],
             path: "ios/Sources/{spm}",
             plugins: [
-                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),
+                .plugin(name: "WhiskerModuleCodegenPlugin", package: "macros"),
             ]
         ),
     ]
@@ -460,7 +460,7 @@ fn swift_view_module(v: &Vars) -> String {
 // behavior registration. The `{view_class}` Lynx UI subclass lives
 // in `{view_class}.swift`.
 
-import WhiskerComponents   // @WhiskerModule
+import WhiskerModuleMacros   // @WhiskerModule
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
 @WhiskerModule
@@ -593,7 +593,7 @@ fn swift_function_module(v: &Vars) -> String {
 // registered under the `Name("...")`, so
 // `Whisker{tag}::placeholder()` on the Rust side routes here.
 
-import WhiskerComponents   // @WhiskerModule
+import WhiskerModuleMacros   // @WhiskerModule
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
 @WhiskerModule

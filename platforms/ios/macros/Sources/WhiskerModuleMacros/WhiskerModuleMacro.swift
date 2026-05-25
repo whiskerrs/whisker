@@ -1,8 +1,8 @@
 // Whisker module-system iOS attached macro — `@WhiskerModule`.
 //
-// `WhiskerComponents` exposes the single `@WhiskerModule` marker
+// `WhiskerModuleMacros` exposes the single `@WhiskerModule` marker
 // module authors apply to a `Module` subclass authored with the
-// ModuleDefinition DSL. The `WhiskerComponentsCodegen` SwiftPM
+// ModuleDefinition DSL. The `WhiskerModuleCodegen` SwiftPM
 // build-tool plugin discovers the attribute and emits the Lynx
 // registration; the macro itself expands to nothing.
 
@@ -10,7 +10,7 @@
 /// register.
 ///
 /// Applying `@WhiskerModule` is the registration trigger — the
-/// `WhiskerComponentsCodegen` SwiftPM build-tool plugin scans the
+/// `WhiskerModuleCodegen` SwiftPM build-tool plugin scans the
 /// target's sources for it and emits the Lynx behaviour /
 /// module-dispatch registration into `<Target>+Generated.swift`.
 /// The module's local tag / name comes from the `Name("…")` entry
@@ -21,7 +21,7 @@
 /// `@main`).
 ///
 /// ```swift
-/// import WhiskerComponents   // @WhiskerModule
+/// import WhiskerModuleMacros   // @WhiskerModule
 /// import WhiskerModule       // Module, ModuleDefinition, DSL
 ///
 /// @WhiskerModule
@@ -47,4 +47,4 @@
 /// the role is just a vehicle for a valid marker attribute.
 @attached(member, names: arbitrary)
 public macro WhiskerModule() =
-    #externalMacro(module: "WhiskerComponentsMacros", type: "WhiskerModuleMacro")
+    #externalMacro(module: "WhiskerModuleMacrosImpl", type: "WhiskerModuleMacro")

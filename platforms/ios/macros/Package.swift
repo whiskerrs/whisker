@@ -1,29 +1,29 @@
 // swift-tools-version:5.9
 //
-// `WhiskerComponents` — Swift Macro + SwiftPM Build Tool plugin
+// `WhiskerModuleMacros` — Swift Macro + SwiftPM Build Tool plugin
 // powering the Whisker module system's iOS `@WhiskerModule`
 // declaration site.
 //
 // Four targets:
 //
-// - **`WhiskerComponents`** (library, public surface): exports the
+// - **`WhiskerModuleMacros`** (library, public surface): exports the
 //   `@WhiskerModule` marker module authors apply to their `Module`
 //   subclasses.
 //
-// - **`WhiskerComponentsMacros`** (macro plugin): the SwiftSyntax-based
+// - **`WhiskerModuleMacrosImpl`** (macro plugin): the SwiftSyntax-based
 //   macro expansion. `@WhiskerModule` is a pure marker (expands to
 //   nothing); the codegen plugin does the registration work.
 //
-// - **`whisker-components-codegen`** (executable): scans the consuming
+// - **`whisker-module-codegen`** (executable): scans the consuming
 //   target's `.swift` sources via SwiftSyntax, extracts every
 //   `@WhiskerModule` application, and emits
 //   `<Target>+Generated.swift` (the iOS counterpart of Android's
 //   KSP-generated `<Module>Behaviors.kt`). Invoked at SPM
 //   build time by the plugin below.
 //
-// - **`WhiskerComponentsCodegenPlugin`** (SPM build plugin): tells
+// - **`WhiskerModuleCodegenPlugin`** (SPM build plugin): tells
 //   SwiftPM "before compiling target T, run
-//   `whisker-components-codegen` against its source files; add the
+//   `whisker-module-codegen` against its source files; add the
 //   produced file to T's compilation." Activated per-target by the
 //   consuming `Package.swift`'s `plugins: [.plugin(...)]` clause.
 
@@ -31,19 +31,19 @@ import PackageDescription
 import CompilerPluginSupport
 
 let package = Package(
-    name: "WhiskerComponents",
+    name: "WhiskerModuleMacros",
     platforms: [.iOS(.v13), .macOS(.v13)],
     products: [
-        .library(name: "WhiskerComponents", targets: ["WhiskerComponents"]),
+        .library(name: "WhiskerModuleMacros", targets: ["WhiskerModuleMacros"]),
         // Exposing the plugin as a product lets the generated
         // `gen/ios/whisker_modules/Package.swift` reference it via
-        // `.plugin(name: "WhiskerComponentsCodegenPlugin",
+        // `.plugin(name: "WhiskerModuleCodegenPlugin",
         //         package: "macros")` on its WhiskerModules
         // target. Without the .plugin product the consumer can't see
         // it (SwiftPM scopes plugins per-package by default).
         .plugin(
-            name: "WhiskerComponentsCodegenPlugin",
-            targets: ["WhiskerComponentsCodegenPlugin"]
+            name: "WhiskerModuleCodegenPlugin",
+            targets: ["WhiskerModuleCodegenPlugin"]
         ),
     ],
     dependencies: [
@@ -55,25 +55,25 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "510.0.0"),
     ],
     targets: [
-        // Public-facing library. Module authors `import WhiskerComponents`
+        // Public-facing library. Module authors `import WhiskerModuleMacros`
         // and apply `@WhiskerModule` to their `Module` subclasses.
         .target(
-            name: "WhiskerComponents",
-            dependencies: ["WhiskerComponentsMacros"],
-            path: "Sources/WhiskerComponents"
+            name: "WhiskerModuleMacros",
+            dependencies: ["WhiskerModuleMacrosImpl"],
+            path: "Sources/WhiskerModuleMacros"
         ),
 
         // Compiler plugin that implements the macro. Loaded by the
         // Swift compiler at the consumer's build time; not linked
         // into the runtime binary.
         .macro(
-            name: "WhiskerComponentsMacros",
+            name: "WhiskerModuleMacrosImpl",
             dependencies: [
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
                 .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
             ],
-            path: "Sources/WhiskerComponentsMacros"
+            path: "Sources/WhiskerModuleMacrosImpl"
         ),
 
         // SwiftSyntax-driven codegen tool, invoked by the plugin
@@ -81,34 +81,34 @@ let package = Package(
         // package, then re-used to process every WhiskerModules
         // SwiftPM target source file.
         .executableTarget(
-            name: "WhiskerComponentsCodegen",
+            name: "WhiskerModuleCodegen",
             dependencies: [
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftParser", package: "swift-syntax"),
             ],
-            path: "Sources/WhiskerComponentsCodegen"
+            path: "Sources/WhiskerModuleCodegen"
         ),
 
         // SwiftPM build-tool plugin. Sandboxed by SwiftPM —
         // can't link Swift libraries directly, only invoke the
-        // companion `WhiskerComponentsCodegen` executable. Returns
+        // companion `WhiskerModuleCodegen` executable. Returns
         // `Command.buildCommand(...)` entries SwiftPM schedules
         // before the consuming target's main compile.
         .plugin(
-            name: "WhiskerComponentsCodegenPlugin",
+            name: "WhiskerModuleCodegenPlugin",
             capability: .buildTool(),
-            dependencies: ["WhiskerComponentsCodegen"],
-            path: "Plugins/WhiskerComponentsCodegenPlugin"
+            dependencies: ["WhiskerModuleCodegen"],
+            path: "Plugins/WhiskerModuleCodegenPlugin"
         ),
 
         .testTarget(
-            name: "WhiskerComponentsTests",
+            name: "WhiskerModuleMacrosTests",
             dependencies: [
-                "WhiskerComponents",
-                "WhiskerComponentsMacros",
+                "WhiskerModuleMacros",
+                "WhiskerModuleMacrosImpl",
                 .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
             ],
-            path: "Tests/WhiskerComponentsTests"
+            path: "Tests/WhiskerModuleMacrosTests"
         ),
     ]
 )

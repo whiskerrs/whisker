@@ -37,7 +37,7 @@ else {
 let package = Package(
     name: "whisker-hello-element",
     // macOS 13 is required because the SwiftPM build plugin
-    // (`WhiskerComponentsCodegenPlugin`) is hosted by SwiftSyntax,
+    // (`WhiskerModuleCodegenPlugin`) is hosted by SwiftSyntax,
     // which requires that floor at build time. The module's
     // runtime artefacts only need iOS 13.
     platforms: [.iOS(.v13), .macOS(.v13)],
@@ -50,7 +50,7 @@ let package = Package(
     ],
     dependencies: [
         // Package.swift at the package root (SwiftPM requirement;
-        // identity = crate dir name, unique). WhiskerComponents
+        // identity = crate dir name, unique). WhiskerModuleMacros
         // ships the codegen build-tool plugin; WhiskerModule
         // exposes the `WhiskerUI` / `WhiskerContext` typealiases +
         // `WhiskerValue` + transitive `@_exported import Lynx`.
@@ -61,7 +61,7 @@ let package = Package(
         .target(
             name: "WhiskerHelloElement",
             dependencies: [
-                .product(name: "WhiskerComponents", package: "macros"),
+                .product(name: "WhiskerModuleMacros", package: "macros"),
                 .product(name: "WhiskerModule", package: "WhiskerRuntime"),
             ],
             // Swift sources under the package's `ios/` directory
@@ -72,7 +72,7 @@ let package = Package(
                 // containing the `_whiskerRegisterModules_<Target>()`
                 // fn the aggregator calls from
                 // `WhiskerModuleBehaviors.registerAll()`.
-                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),
+                .plugin(name: "WhiskerModuleCodegenPlugin", package: "macros"),
             ]
         ),
     ]

@@ -10,7 +10,7 @@
 // `VideoView.swift`. Same split on Android (`VideoModule.kt` +
 // `VideoView.kt`).
 
-import WhiskerComponents   // @WhiskerModule
+import WhiskerModuleMacros   // @WhiskerModule
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
 /// DSL-driven module. `@WhiskerModule` marks it for registration;

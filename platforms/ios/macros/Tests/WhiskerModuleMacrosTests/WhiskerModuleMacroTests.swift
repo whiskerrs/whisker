@@ -8,16 +8,16 @@ import SwiftSyntax
 import SwiftSyntaxMacros
 import SwiftSyntaxMacrosTestSupport
 import XCTest
-@testable import WhiskerComponentsMacros
+@testable import WhiskerModuleMacrosImpl
 
-final class WhiskerComponentMacroTests: XCTestCase {
+final class WhiskerModuleMacroTests: XCTestCase {
     private let testMacros: [String: Macro.Type] = [
         "WhiskerModule": WhiskerModuleMacro.self,
     ]
 
     /// `@WhiskerModule` is a pure marker — it expands to nothing.
     /// Discovery + registration is done by the
-    /// `WhiskerComponentsCodegen` SwiftPM build plugin, which scans
+    /// `WhiskerModuleCodegen` SwiftPM build plugin, which scans
     /// sources for the attribute and emits the DSL module's
     /// registration. The macro exists only so `@WhiskerModule` is a
     /// valid Swift attribute.

@@ -63,7 +63,7 @@ public typealias WhiskerContext = LynxContext
 public typealias WhiskerCustomEventBase = LynxCustomEvent
 
 /// Lynx's component-registration entry point. Module authors
-/// rarely call this directly — the `WhiskerComponentsCodegenPlugin`
+/// rarely call this directly — the `WhiskerModuleCodegenPlugin`
 /// generates the registration code from `@WhiskerModule` modules'
 /// `View(...)` blocks.
 public typealias WhiskerComponentRegistry = LynxComponentRegistry

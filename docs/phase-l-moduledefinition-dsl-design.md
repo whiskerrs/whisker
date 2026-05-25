@@ -128,7 +128,7 @@ The `WhiskerModule` base class is annotated with `@WhiskerModuleMacro` (or simil
 
 ### 3b. Android (KSP)
 
-The existing `WhiskerComponentProcessor` is extended (or replaced):
+The existing `WhiskerModuleProcessor` is extended (or replaced):
 
 1. Scans for classes extending `WhiskerModule`.
 2. Parses the `definition() = ModuleDefinition { ... }` block by traversing the Kotlin AST — KSP gives us symbol-level access to lambda bodies and their captured `Prop("...") { ... }` invocations.

@@ -9,7 +9,7 @@
 // `HelloView.swift`. Same split on Android (`HelloModule.kt` +
 // `HelloView.kt`).
 
-import WhiskerComponents   // @WhiskerModule
+import WhiskerModuleMacros   // @WhiskerModule
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
 /// DSL-driven module. `@WhiskerModule` marks it for registration;

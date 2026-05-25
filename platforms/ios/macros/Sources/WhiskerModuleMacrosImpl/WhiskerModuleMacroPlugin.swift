@@ -16,7 +16,7 @@
 //   }
 //   ```
 //
-// The `WhiskerComponentsCodegen` SwiftPM build-tool plugin scans
+// The `WhiskerModuleCodegen` SwiftPM build-tool plugin scans
 // each target's sources for the `@WhiskerModule` attribute and
 // emits the registration block (Lynx behavior for view-bearing
 // modules; `whisker_bridge_register_module_dispatch` for view-less
@@ -30,16 +30,16 @@ import SwiftSyntaxMacros
 
 /// Compiler plugin entry point. Registers the `@WhiskerModule` macro
 /// so the Swift compiler picks it up when consumers
-/// `import WhiskerComponents`.
+/// `import WhiskerModuleMacros`.
 @main
-struct WhiskerComponentsPlugin: CompilerPlugin {
+struct WhiskerModuleMacrosPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         WhiskerModuleMacro.self,
     ]
 }
 
 /// `@WhiskerModule` — a pure marker attribute applied to a `Module`
-/// subclass. The `WhiskerComponentsCodegen` SwiftPM plugin
+/// subclass. The `WhiskerModuleCodegen` SwiftPM plugin
 /// discovers the attribute via SwiftSyntax and emits the
 /// registration; the macro itself expands to nothing.
 ///

@@ -44,7 +44,7 @@ let package = Package(
         .target(
             name: "WhiskerVideo",
             dependencies: [
-                .product(name: "WhiskerComponents", package: "macros"),
+                .product(name: "WhiskerModuleMacros", package: "macros"),
                 // WhiskerModule re-exports Lynx transitively, so
                 // no separate `Lynx` product dep is needed.
                 .product(name: "WhiskerModule", package: "WhiskerRuntime"),
@@ -53,7 +53,7 @@ let package = Package(
             // (Expo-style layout), next to `android/` and `src/`.
             path: "ios/Sources/WhiskerVideo",
             plugins: [
-                .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),
+                .plugin(name: "WhiskerModuleCodegenPlugin", package: "macros"),
             ]
         ),
     ]
