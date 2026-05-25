@@ -23,10 +23,13 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
-
+    // build.gradle.kts sits at the package root (alongside
+    // Package.swift + Cargo.toml). Point the Kotlin source set at
+    // the package's `android/` subdir so AGP doesn't scan the Rust
+    // `src/`, and the native code stays grouped under `android/`.
     sourceSets {
         getByName("main") {
-            kotlin.srcDirs("src/android")
+            kotlin.srcDirs("android/src/main/kotlin")
         }
     }
 }

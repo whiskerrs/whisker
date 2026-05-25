@@ -17,16 +17,15 @@ let package = Package(
         .library(name: "WhiskerLocalStore", targets: ["WhiskerLocalStore"]),
     ],
     dependencies: [
+        // Paths relative to this `ios/` directory (one level below
+        // the package root).
         .package(name: "macros", path: "../../platforms/ios/macros"),
         .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
-        // Phase 7-Φ.G PoC — an external SwiftPM dependency.
-        // swift-collections is Apple-maintained, header-only Swift
-        // (no Obj-C interop layer to negotiate), small enough that
-        // resolving it is fast even on a cold cache. Use of the
-        // library is intentionally minimal — see WhiskerLocalStoreImpl
-        // for the import. The point of this declaration is to prove
-        // module packages CAN pull external SPM URLs without any
-        // Whisker-side build plumbing.
+        // PoC — an external SwiftPM dependency. swift-collections is
+        // Apple-maintained, header-only Swift, small enough that
+        // resolving it is fast even on a cold cache. Use is minimal
+        // — the point is to prove module packages CAN pull external
+        // SPM URLs without Whisker-side build plumbing.
         .package(
             url: "https://github.com/apple/swift-collections.git",
             from: "1.1.0"
@@ -37,13 +36,12 @@ let package = Package(
             name: "WhiskerLocalStore",
             dependencies: [
                 .product(name: "WhiskerComponents", package: "macros"),
-                // Phase J: smaller `WhiskerModuleApi` instead of full
-                // `WhiskerRuntime`. WhiskerValue + the WhiskerLynxAliases
-                // typealiases live there now.
                 .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
                 .product(name: "OrderedCollections", package: "swift-collections"),
             ],
-            path: "src/ios",
+            // Swift sources under the package's `ios/` directory
+            // (Expo-style layout), next to `android/` and `src/`.
+            path: "ios/Sources/WhiskerLocalStore",
             plugins: [
                 .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),
             ]

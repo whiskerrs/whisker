@@ -1,44 +1,16 @@
-# Whisker module manifest (v1).
+# Whisker module manifest — marks this cargo crate as a Whisker
+# module. The platform code + build manifests live at the package
+# root in `android/` and `ios/` (Expo-style layout):
 #
-# This file declares what this cargo crate contributes to the
-# native build of a Whisker app that depends on it. The
-# `whisker run` / `whisker build` CLI walks the consuming app's
-# cargo dep tree, finds every `whisker.module.toml` next to a
-# `Cargo.toml`, parses this file, and folds each module's native
-# sources into the iOS framework / Android AAR build alongside
-# the framework's own bridge code.
+#   android/build.gradle.kts   — AGP library, sources in src/main/kotlin
+#   ios/Package.swift          — SwiftPM library, sources in Sources/<Module>
+#   src/lib.rs                 — the Rust shim (cargo crate root)
 #
-# v1 schema is intentionally minimal — only the per-platform
-# native-source path list. Future extensions (link-flags, headers
-# the module wants to expose, package metadata for `whisker doctor`,
-# etc.) will land additively without breaking existing modules.
+# whisker-build discovers the Android Gradle subproject via
+# `android/build.gradle.kts` and the iOS SwiftPM package via
+# `ios/Package.swift`; those are the per-platform source-of-truth,
+# so no source-file list is needed here.
 
 [ios]
-# Paths to Swift source files that get staged under
-# `gen/ios/whisker_modules/Sources/WhiskerModules/whisker-hello-element/`
-# by `whisker-build::ios::stage_module_swift_sources`. The pbxproj
-# template's `WhiskerModules` `XCLocalSwiftPackageReference` then
-# pulls the generated SwiftPM package into the user app's build.
-#
-# Phase L-3: the `WhiskerModule` subclass (`HelloModule`) is
-# discovered by the `WhiskerComponentsCodegenPlugin` SwiftPM build-tool
-# plugin via its `: WhiskerModule` inheritance and turned into a
-# `LynxComponentRegistry.registerUI(...)` + `registerWithLynx()`
-# registration inside the auto-generated `WhiskerModuleBehaviors.swift`.
-# `HelloView` is the plain Lynx UI subclass it references.
-swift_sources = ["src/ios/HelloModule.swift", "src/ios/HelloView.swift"]
 
 [android]
-# Paths to Kotlin source files that get staged under
-# `gen/android/app/src/main/whisker_modules/whisker-hello-element/`
-# by `whisker-build::android::stage_module_kotlin_sources`. Gradle's
-# main source-set then compiles them into the host APK alongside
-# the Whisker Android runtime's own Kotlin sources.
-#
-# Phase L-3: the `WhiskerModule` subclass (`HelloModule`) is picked
-# up by the `whisker-android-ksp` KSP processor via its superclass
-# chain and turned into an `addBehavior(...)` + `registerWithLynx()`
-# registration inside the user app's generated
-# `WhiskerHelloElementBehaviors.kt`. `HelloView` is the plain Lynx
-# UI subclass it references.
-kotlin_sources = ["src/android/HelloModule.kt", "src/android/HelloView.kt"]
