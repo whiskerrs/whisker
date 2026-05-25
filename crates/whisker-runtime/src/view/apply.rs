@@ -2,11 +2,9 @@
 //! used by every prop-setting code path emitted by the macros.
 //!
 //! Lives in `whisker_runtime` (not the umbrella `whisker` crate or
-//! the proc-macro crate) so both the umbrella and the public
-//! `whisker-module` re-export crate can route through the same
-//! path. Module crates that import only `whisker-module` reach
-//! these via `::whisker::runtime::view::apply_styles` / `apply_attr`
-//! — the same path app crates reach through the umbrella.
+//! the proc-macro crate) so the umbrella can re-export it. Both app
+//! and module crates depend on the umbrella `whisker` and reach
+//! these via `::whisker::runtime::view::apply_styles` / `apply_attr`.
 //!
 //! The two helpers are intentionally generic over
 //! `V: Into<Signal<T>>` plus `T: ToString + Clone + 'static`, so a
