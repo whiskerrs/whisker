@@ -140,64 +140,164 @@ The existing `WhiskerComponentProcessor` is extended (or replaced):
 
 ### 3c. Rust shim
 
-The Rust side adopts a **plain struct + impl** pattern that mirrors the
-Phase N standardized Ref API (see `docs/phase-n-ref-api-design.md`).
-Module authors write:
+The Rust side adopts the **`ElementRef` + `Handle`** two-tier pattern
+from the Phase N design (see `docs/phase-n-ref-api-design.md`). The
+module author writes three things:
+
+1. **`VideoHandle`** — a plain `Clone` struct holding signals; this is
+   what end-users call methods on.
+2. **`fn video(...)`** — a `#[whisker::component]` wrapper that owns an
+   internal `ElementRef`, bridges `VideoHandle`'s command signals to
+   `ElementRef::invoke(...)` via `effect(...)`, and pushes native
+   events back into the handle's query signals.
+3. **`fn video_sys(...)`** — the `#[whisker::modules::component]`
+   platform-component declaration whose `ref: ElementRef` prop is what
+   the wrapper feeds.
 
 ```rust
-#[whisker::modules::component("Video")]
-pub fn video(r: VideoRef, src: Signal<String>, style: Signal<String>) {}
+use std::cell::Cell;
+use whisker::{ElementRef, WhiskerEvent, WhiskerValue};
+use whisker::reactive::{RwSignal, Signal, effect, signal};
 
+// 1. Handle: pure signals, no framework hooks.
 #[derive(Clone)]
-pub struct VideoRef {
-    handle: RefHandle,
+pub struct VideoHandle {
+    play_tick:    RwSignal<u64>,
+    pause_tick:   RwSignal<u64>,
+    seek_to:      RwSignal<Option<f64>>,
+    current_time: RwSignal<f64>,
+    duration:     RwSignal<f64>,
 }
 
-impl VideoRef {
-    pub fn new() -> Self { Self { handle: RefHandle::new() } }
+impl VideoHandle {
+    pub fn new() -> Self {
+        Self {
+            play_tick: signal(0), pause_tick: signal(0),
+            seek_to: signal(None),
+            current_time: signal(0.0), duration: signal(0.0),
+        }
+    }
+    pub fn play(&self)         { self.play_tick.update(|n| *n += 1); }
+    pub fn pause(&self)        { self.pause_tick.update(|n| *n += 1); }
+    pub fn seek(&self, t: f64) { self.seek_to.set(Some(t)); }
 
-    pub fn play(&self) -> Result<(), RefError> {
-        self.handle.invoke("play", vec![]).map(|_| ())
-    }
-    pub fn pause(&self) -> Result<(), RefError> {
-        self.handle.invoke("pause", vec![]).map(|_| ())
-    }
-    pub fn seek(&self, position_seconds: f64) -> Result<(), RefError> {
-        self.handle.invoke("seek", vec![WhiskerValue::Float(position_seconds)]).map(|_| ())
-    }
-
-    pub fn try_play(&self) { let _ = self.play(); }
-    pub fn try_pause(&self) { let _ = self.pause(); }
-    pub fn try_seek(&self, seconds: f64) { let _ = self.seek(seconds); }
+    pub fn current_time(&self) -> Signal<f64> { self.current_time.read_only().into() }
+    pub fn duration(&self)     -> Signal<f64> { self.duration.read_only().into() }
 }
 
-impl WhiskerRef for VideoRef {
-    fn handle(&self) -> &RefHandle { &self.handle }
+// 2. Wrapper component: bridge handle ↔ ElementRef.
+#[whisker::component]
+pub fn video(handle: VideoHandle, src: Signal<String>) -> Element {
+    let sys = ElementRef::new();
+
+    // play_tick → invoke("play"). Counter pattern needs first-fire
+    // suppression (effect runs once on creation; without the guard it
+    // would emit a stray play() on every mount).
+    effect({
+        let sys = sys.clone();
+        let h = handle.clone();
+        let first = Cell::new(true);
+        move || {
+            h.play_tick.get();
+            if first.replace(false) { return; }
+            let _ = sys.invoke("play", vec![]);
+        }
+    });
+    effect({
+        let sys = sys.clone();
+        let h = handle.clone();
+        let first = Cell::new(true);
+        move || {
+            h.pause_tick.get();
+            if first.replace(false) { return; }
+            let _ = sys.invoke("pause", vec![]);
+        }
+    });
+    // Option pattern: dispatch then reset so re-setting same value re-dispatches.
+    effect({
+        let sys = sys.clone();
+        let h = handle.clone();
+        move || {
+            if let Some(t) = h.seek_to.get() {
+                let _ = sys.invoke("seek", vec![WhiskerValue::Float(t)]);
+                h.seek_to.set(None);
+            }
+        }
+    });
+
+    // Native events → query signals.
+    let on_time_update = {
+        let h = handle.clone();
+        move |e: WhiskerEvent| {
+            if let Some(t) = e.get_float("currentTime") { h.current_time.set(t); }
+        }
+    };
+    let on_loaded_metadata = {
+        let h = handle.clone();
+        move |e: WhiskerEvent| {
+            if let Some(d) = e.get_float("duration") { h.duration.set(d); }
+        }
+    };
+
+    render! {
+        VideoSys(ref: sys, src: src,
+                 on_time_update: on_time_update,
+                 on_loaded_metadata: on_loaded_metadata)
+    }
+}
+
+// 3. Platform-component declaration — the only place ElementRef appears
+// in a #[modules::component] signature.
+#[whisker::modules::component("Video")]
+pub fn video_sys(
+    r: ElementRef,
+    src: Signal<String>,
+    on_time_update: impl Fn(WhiskerEvent),
+    on_loaded_metadata: impl Fn(WhiskerEvent),
+) {}
+```
+
+End-user code only ever sees `VideoHandle` + `Video`:
+
+```rust
+let v = VideoHandle::new();
+let progress = v.current_time();
+let v_play = v.clone();
+
+render! {
+    Video(handle: v.clone(), src: signal("video.mp4".into()))
+    text(value: move || format!("{:.1}s", progress.get()))
+    text(on_tap: move || v_play.play(), value: "▶")
 }
 ```
 
-This replaces the current `#[whisker::element_methods] trait VideoSys + impl VideoControls for ElementRef<VideoProps>` triple-declaration with a single hand-written struct. Tradeoffs and full design rationale are in
-the [Phase N Ref API design doc](./phase-n-ref-api-design.md). Highlights:
+This replaces the current `#[whisker::element_methods] trait VideoSys
++ impl VideoControls for ElementRef<VideoProps>` triple-declaration
+with three explicit Rust pieces — handle, wrapper component, platform
+component — each doing one thing. Full design rationale and the four
+command-signal patterns are in the [Phase N Ref API design
+doc](./phase-n-ref-api-design.md). Highlights:
 
-- **All plain Rust** — no Rust-side macros for the methods themselves;
-  the `#[whisker::modules::component]` macro only needs to recognize
-  the `r: VideoRef` parameter (any type implementing `WhiskerRef`) and
-  emit mount-time `RefHandle::__bind(...)` wiring.
-- **Symmetric with Kotlin / Swift surface** — the platform-side
-  `definition()` DSL declares prop names + method names; the Rust-side
-  `impl VideoRef` declares matching methods that dispatch via the same
-  names. Both halves describe the same component from their own
-  language's perspective.
-- **Composite custom refs** (`CustomInputRef`, `FormRef`, …) compose
-  built-in refs as struct fields and forward methods — see Phase N
-  §5 for the pattern. No special Whisker support needed; it's just
-  Rust struct composition.
+- **No `WhiskerRef` trait, no derive, no auto-binding.** A handle is
+  just a `Clone` struct; the framework has no opinion about its shape.
+  Only `#[modules::component]` recognizes `ref: ElementRef` and emits
+  `__bind` / `__unbind` calls on the underlying native element.
+- **Custom components without a native counterpart need no
+  `ElementRef`.** `ModalHandle` (or any signal-only handle) drives a
+  `#[component]` that reads its signals via `show!` / `effect`, and
+  no bridge code is needed at all.
+- **Symmetric with the Kotlin / Swift surface.** Platform-side
+  `definition()` declares prop names + method names; Rust-side
+  `impl VideoHandle` writes methods of the same names. The wrapper
+  component is the routing table that ties the two sides together.
+- **Composite handles are plain struct composition.** A
+  `CustomInputHandle` holds a `TextInputHandle` as a field and
+  forwards methods — see Phase N §5.
 
 A future Rust-side declarative macro (`whisker::module! { ... }`)
-that derives both the platform-side DSL and the Rust struct from a
-single source-of-truth declaration is **out of scope for Phase L** —
-the per-platform manual declaration is fine for v1 and keeps the
-codegen story simpler.
+that derives all three pieces from a single source-of-truth
+declaration is **out of scope for Phase L** — the per-piece manual
+declaration is fine for v1 and keeps the codegen story simpler.
 
 ## 4. Migration story
 
@@ -233,7 +333,7 @@ Phase M (#59) then deprecates → removes the annotation surface in a follow-up 
 
 ## 7. Out of scope for Phase L
 
-- A Rust-side `whisker::module! { ... }` declarative macro that derives both halves (Rust struct + platform-side DSL) from a single source-of-truth declaration. Rust authors write the `XxxRef` struct by hand per the [Phase N Ref API design](./phase-n-ref-api-design.md); the platform-side `definition()` is declared separately. Single-source-of-truth comes later if the redundancy ever bites.
+- A Rust-side `whisker::module! { ... }` declarative macro that derives all three Rust pieces (Handle, wrapper component, platform-component declaration) from a single source-of-truth declaration. Rust authors write each piece by hand per the [Phase N Ref API design](./phase-n-ref-api-design.md); the platform-side `definition()` is declared separately. Single-source-of-truth comes later if the redundancy ever bites.
 - View-less `Function(...)` blocks outside the `View(...) { ... }` scope (i.e. module-level functions). These map to the function-only flavor and need separate bridge plumbing — track as a sub-issue if it comes up.
 - Code-generation perf optimizations beyond what's needed to ship (e.g. KSP incremental processing for individual module files). Defer to a polish PR if/when build times become noticeable.
 
@@ -255,6 +355,8 @@ Phase M is a follow-up; not included in this estimate.
 - [ ] Async function semantics (callback vs Swift `async`).
 - [ ] Whether to keep `WhiskerCustomEvent.dispatch` as the runtime emit API or fold it into the `WhiskerModule` base class.
 
-Phase N's Ref API is **settled** — see [`docs/phase-n-ref-api-design.md`](./phase-n-ref-api-design.md). The Rust shim path in §3c assumes that design and lands before or alongside L-2.
+Phase N's imperative-control API (`ElementRef` primitive + `Handle`
+pattern) is **settled** — see [`docs/phase-n-ref-api-design.md`](./phase-n-ref-api-design.md). The
+Rust shim path in §3c assumes that design and lands before or alongside L-2.
 
 Once these are resolved, L-2 implementation can start.
