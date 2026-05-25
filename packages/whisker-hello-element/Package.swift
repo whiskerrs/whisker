@@ -33,17 +33,12 @@ let package = Package(
         .library(name: "WhiskerHelloElement", targets: ["WhiskerHelloElement"]),
     ],
     dependencies: [
-        // WhiskerComponents ships the `@WhiskerComponent` / `@WhiskerModule`
-        // macros + the SwiftPM build-tool plugin that scans this
-        // target's sources for those annotations.
-        .package(name: "macros", path: "../../platforms/ios/macros"),
-        // Phase J: the `platforms/ios` package exposes a smaller
-        // `WhiskerModuleApi` product alongside the full
-        // `WhiskerRuntime`. Modules depend on the smaller one —
-        // just the `WhiskerUI` / `WhiskerContext` typealiases +
+        // Package.swift at the package root (SwiftPM requirement;
+        // identity = crate dir name, unique). WhiskerComponents
+        // ships the codegen build-tool plugin; WhiskerModuleApi
+        // exposes the `WhiskerUI` / `WhiskerContext` typealiases +
         // `WhiskerValue` + transitive `@_exported import Lynx`.
-        // The host-only WhiskerView / WhiskerAppDelegate /
-        // WhiskerDriver bits stay scoped to WhiskerRuntime.
+        .package(name: "macros", path: "../../platforms/ios/macros"),
         .package(name: "WhiskerRuntime", path: "../../platforms/ios"),
     ],
     targets: [
@@ -53,15 +48,12 @@ let package = Package(
                 .product(name: "WhiskerComponents", package: "macros"),
                 .product(name: "WhiskerModuleApi", package: "WhiskerRuntime"),
             ],
-            // Sources live in `src/ios/` next to the Rust crate's
-            // `src/lib.rs` — SwiftPM's `path:` is relative to the
-            // package root and selects which directory the target
-            // pulls its sources from.
-            path: "src/ios",
+            // Swift sources under the package's `ios/` directory
+            // (Expo-style layout), next to `android/` and `src/`.
+            path: "ios/Sources/WhiskerHelloElement",
             plugins: [
-                // The plugin emits a per-target
-                // `WhiskerHelloComponent+Generated.swift` containing
-                // a top-level `_whiskerRegisterModules_WhiskerHelloComponent()`
+                // The plugin emits a per-target `+Generated.swift`
+                // containing the `_whiskerRegisterModules_<Target>()`
                 // fn the aggregator calls from
                 // `WhiskerModuleBehaviors.registerAll()`.
                 .plugin(name: "WhiskerComponentsCodegenPlugin", package: "macros"),

@@ -316,9 +316,10 @@ pub fn stage_jni_libs(
 /// Each module's KSP plugin emits its own `<ModuleName>Behaviors`
 /// object into its subproject's generated-source set; the
 /// aggregator stitches them together. Discovery signal:
-/// presence of a `build.gradle.kts` next to the module's
-/// `whisker.module.toml` (Phase G dropped `kotlin_sources` from
-/// the discovery role).
+/// presence of a `build.gradle.kts` at the module's package root.
+/// The build script points its Kotlin source set at the package's
+/// `android/` directory (Expo-style layout — native code lives in
+/// `android/` / `ios/`, manifests stay at the package root).
 pub fn stage_module_kotlin_sources(
     gen_android: &Path,
     modules: &[crate::modules::ResolvedModule],
@@ -414,6 +415,9 @@ fn render_module_settings_include(modules: &[&crate::modules::ResolvedModule]) -
         return out;
     }
     for m in modules {
+        // The Gradle library subproject is rooted at the package
+        // directory (build.gradle.kts lives there); its Kotlin
+        // source set points at the package's `android/` subdir.
         let path = m.manifest_dir.display().to_string();
         out.push_str(&format!("include(\":{name}\")\n", name = m.package));
         out.push_str(&format!(

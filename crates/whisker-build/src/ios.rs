@@ -687,6 +687,10 @@ fn render_modules_package_swift(
         "        .package(name: \"whisker-ios-macros\", path: {macros:?}),\n"
     ));
     for m in modules {
+        // The module's SwiftPM package is rooted at the package
+        // directory (Package.swift lives there, identity = the
+        // crate's dir name — unique). Its target sources live under
+        // the package's `ios/` subdir (Expo-style layout).
         let path = m.manifest_dir.display().to_string();
         out.push_str(&format!(
             "        .package(name: {pkg:?}, path: {path:?}),\n",

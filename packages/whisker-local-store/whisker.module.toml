@@ -1,22 +1,16 @@
-# Whisker module manifest (v1).
+# Whisker module manifest — marks this cargo crate as a Whisker
+# module. The platform code + build manifests live at the package
+# root in `android/` and `ios/` (Expo-style layout):
 #
-# Declares the platform-side source files for `whisker-local-store`,
-# the reference Whisker platform module. The consuming app's
-# `whisker run` / `whisker build` CLI fold these sources into the
-# host iOS framework / Android APK alongside the user app's other
-# module crates.
+#   android/build.gradle.kts   — AGP library, sources in src/main/kotlin
+#   ios/Package.swift          — SwiftPM library, sources in Sources/<Module>
+#   src/lib.rs                 — the Rust shim (cargo crate root)
 #
-# Module-name string: `"WhiskerLocalStore"` — referenced by the
-# Rust-side `#[whisker::platform_module(name = "WhiskerLocalStore")]`
-# proxy + the DSL `Name("WhiskerLocalStore")` in `LocalStoreModule`.
-#
-# Phase L-3: migrated to the `ModuleDefinition` DSL. `LocalStoreModule`
-# is a view-less `WhiskerModule` subclass (module-level `Function`s,
-# no `View(...)` block); `LocalStore` holds the UserDefaults /
-# SharedPreferences storage logic.
+# whisker-build discovers the Android Gradle subproject via
+# `android/build.gradle.kts` and the iOS SwiftPM package via
+# `ios/Package.swift`; those are the per-platform source-of-truth,
+# so no source-file list is needed here.
 
 [ios]
-swift_sources = ["src/ios/LocalStoreModule.swift", "src/ios/LocalStore.swift"]
 
 [android]
-kotlin_sources = ["src/android/LocalStoreModule.kt", "src/android/LocalStore.kt"]

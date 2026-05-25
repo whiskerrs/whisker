@@ -33,15 +33,35 @@ whisker-foo-0.1.0/
 ├── Cargo.toml
 ├── README.md
 ├── whisker.module.toml
-├── Package.swift        ← SPM manifest for the iOS half
-├── build.gradle.kts     ← Gradle subproject for the Android half
-└── src/
-    ├── lib.rs           ← Rust-side `#[whisker::platform_component]` proxy
-    ├── ios/             ← Swift sources
-    │   └── WhiskerFooComponent.swift
-    └── android/         ← Kotlin sources
-        └── WhiskerFooComponent.kt
+├── Package.swift        ← SwiftPM manifest (MUST sit at the package
+│                          root — SwiftPM derives the package identity
+│                          from the root dir name, so it can't live in
+│                          a per-module `ios/` dir without colliding
+│                          with every other module's `ios/`)
+├── build.gradle.kts     ← Gradle library manifest (kept at the root
+│                          too, for symmetry; its source set points at
+│                          `android/` below)
+├── src/
+│   └── lib.rs           ← Rust-side `#[whisker::platform_component]` proxy
+├── ios/                 ← Swift sources (Expo-style: native code grouped
+│   └── Sources/WhiskerFoo/   per-platform; Package.swift `path:` targets this)
+│       └── FooModule.swift
+└── android/             ← Kotlin sources (build.gradle.kts `srcDirs`
+    └── src/main/kotlin/      points here; standard AGP nesting)
+        └── rs/whisker/modules/foo/
+            └── FooModule.kt
 ```
+
+The native code lives in `ios/` and `android/` at the package root
+(grouped by platform, the way Expo Modules / most native libraries
+organise it), while the three build manifests (`Cargo.toml`,
+`Package.swift`, `build.gradle.kts`) stay at the root. `Package.swift`
+*has* to be at the root — SwiftPM keys a local package's identity off
+its directory name, so a `Package.swift` inside `ios/` would make the
+package identity `ios` and collide with every other module's `ios/`
+package (and with `platforms/ios`). The `path:` on its target points
+into `ios/Sources/<Module>/`; the Gradle build's `srcDirs` points into
+`android/src/main/kotlin/`.
 
 When the user app builds, `whisker-build` does the following:
 
@@ -84,8 +104,8 @@ include = [
     "build.gradle.kts",
     "whisker.module.toml",
     "src/lib.rs",
-    "src/android/**/*.kt",
-    "src/ios/**/*.swift",
+    "android/**/*.kt",
+    "ios/**/*.swift",
     "README.md",
 ]
 
@@ -102,27 +122,37 @@ crate-type = ["rlib"]
 whisker = { package = "whisker-modules-api", version = "0.1" }
 ```
 
-### 2. Declare platform sources in `whisker.module.toml`
+### 2. Mark the crate as a module — `whisker.module.toml`
 
 ```toml
 # whisker.module.toml — at the crate root, sibling of Cargo.toml.
+# Its *presence* marks the crate as a Whisker module. The
+# per-platform build manifests are the source-of-truth for which
+# sources compile, so no source-file list is needed here:
+#   - ios/Package.swift        discovers the SwiftPM target
+#   - android/build.gradle.kts  discovers the Gradle library
 
 [ios]
-# Swift sources to stage into the host app's
-# gen/ios/whisker_modules/<crate>/. Paths are relative to this manifest.
-swift_sources = ["src/ios/WhiskerFooComponent.swift"]
 
 [android]
-# Kotlin sources for the host app's gen/android/<crate>/ subproject.
-kotlin_sources = ["src/android/WhiskerFooComponent.kt"]
 ```
 
-### 3. Add per-platform `Package.swift` and `build.gradle.kts`
+`whisker-build` discovers the iOS package via `Package.swift` (at the
+crate root) and the Android library via `build.gradle.kts` (also at
+the root); both manifests' own `path:` / `srcDirs` point at `ios/` and
+`android/`. There's no source list to keep in sync — that was a
+frequent stale-path foot-gun, so it's gone.
 
-These are SwiftPM + Gradle subproject manifests for the *consuming*
-app's host build. They depend on `WhiskerModuleApi` / `:module-api`
+### 3. Add the per-platform `Package.swift` and `build.gradle.kts`
+
+These are the SwiftPM + Gradle manifests the *consuming* app's host
+build references (`.package(path: …)` for iOS, a Gradle subproject for
+Android). They depend on `WhiskerModuleApi` / `:module-api`
 respectively (provided by Whisker itself), plus whatever the module
-needs (third-party SwiftPM dep, AndroidX library, etc.).
+needs (third-party SwiftPM dep, AndroidX library, etc.). Both live at
+the crate root; `Package.swift`'s target `path:` points at
+`ios/Sources/<Module>/` and `build.gradle.kts`'s `srcDirs` points at
+`android/src/main/kotlin/`.
 
 See [`packages/whisker-video/Package.swift`](../packages/whisker-video/Package.swift)
 and [`packages/whisker-video/build.gradle.kts`](../packages/whisker-video/build.gradle.kts)
