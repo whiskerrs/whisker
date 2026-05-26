@@ -523,12 +523,6 @@ const BIG_BUCK_BUNNY_URL: &str =
 #[component]
 pub fn video_demo() -> Element {
     let video = VideoHandle::new();
-    // `VideoHandle` is `Copy` (slotmap-handle backed), so the
-    // per-closure aliases are just copies of the same handle.
-    let v_play = video;
-    let v_pause = video;
-    let v_seek = video;
-
     let row_style = "flex-direction: row; align-items: center; padding: 8px; \
          background-color: #1a1a1a; gap: 12px;";
     let btn_style = "padding: 8px 16px; background-color: #6c5ce7; \
@@ -541,9 +535,9 @@ pub fn video_demo() -> Element {
                 style: "width: 100%; height: 220px;"
             )
             view(style: row_style) {
-                text(value: "▶ Play",  style: btn_style, on_tap: move || { v_play.play(); })
-                text(value: "⏸ Pause", style: btn_style, on_tap: move || { v_pause.pause(); })
-                text(value: "+10s",    style: btn_style, on_tap: move || { v_seek.seek(10.0); })
+                text(value: "▶ Play",  style: btn_style, on_tap: move || { video.play(); })
+                text(value: "⏸ Pause", style: btn_style, on_tap: move || { video.pause(); })
+                text(value: "+10s",    style: btn_style, on_tap: move || { video.seek(10.0); })
             }
         }
     }

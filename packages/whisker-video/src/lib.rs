@@ -25,10 +25,12 @@
 //!         view(style: "flex-direction: column;") {
 //!             Video(ref: video.r(), src: "https://example.com/clip.mp4",
 //!                   style: "width: 100%; height: 240px;")
+//!             // `VideoHandle` is `Copy`, so each `move ||` closure
+//!             // captures its own copy — no `clone()` / pre-copy.
 //!             view(style: "flex-direction: row;") {
-//!                 text(value: "play",  on_tap: { let v = video.clone(); move || v.play()  })
-//!                 text(value: "pause", on_tap: { let v = video.clone(); move || v.pause() })
-//!                 text(value: "+10s",  on_tap: { let v = video.clone(); move || v.seek(10.0) })
+//!                 text(value: "play",  on_tap: move || video.play())
+//!                 text(value: "pause", on_tap: move || video.pause())
+//!                 text(value: "+10s",  on_tap: move || video.seek(10.0))
 //!             }
 //!         }
 //!     }
