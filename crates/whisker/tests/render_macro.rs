@@ -11,16 +11,35 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, create_owner, dispose_owner};
-use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element};
+use whisker::runtime::view::{
+    install_renderer, uninstall_renderer, BindType, DynRenderer, Element,
+};
 use whisker::{flush, with_owner};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
-    Create { id: u32, tag: ElementTag },
-    SetAttr { id: u32, key: String, value: String },
-    SetStyles { id: u32, css: String },
-    Append { parent: u32, child: u32 },
-    Event { id: u32, name: String },
+    Create {
+        id: u32,
+        tag: ElementTag,
+    },
+    SetAttr {
+        id: u32,
+        key: String,
+        value: String,
+    },
+    SetStyles {
+        id: u32,
+        css: String,
+    },
+    Append {
+        parent: u32,
+        child: u32,
+    },
+    Event {
+        id: u32,
+        name: String,
+        bind_type: BindType,
+    },
 }
 
 #[derive(Default)]
@@ -78,11 +97,13 @@ impl DynRenderer for Recorder {
         &mut self,
         h: Element,
         name: &str,
+        bind_type: BindType,
         _cb: Box<dyn Fn(whisker::WhiskerValue) + 'static>,
     ) {
         self.log.borrow_mut().push(Op::Event {
             id: h.id(),
             name: name.into(),
+            bind_type,
         });
     }
     fn set_root(&mut self, _p: Element) {}
@@ -246,12 +267,48 @@ fn on_tap_emits_set_event_listener() {
             view(on_tap: move |_| *f.borrow_mut() = true)
         };
         let ops = log.borrow();
-        assert!(ops
-            .iter()
-            .any(|op| matches!(op, Op::Event { name, .. } if name == "tap")));
+        assert!(ops.iter().any(|op| matches!(
+            op,
+            Op::Event { name, bind_type, .. } if name == "tap" && *bind_type == BindType::Bind
+        )));
         // The recorder stored but doesn't fire the callback —
         // verifying registration is enough at the macro layer.
         assert!(!*fired.borrow());
+    });
+}
+
+#[test]
+fn tap_propagation_variants_route_to_bind_types() {
+    // The 1:1 mapping: each `on_[capture_]tap[_catch]` kwarg registers
+    // a "tap" listener with the matching propagation `BindType`.
+    with_recorder(|log| {
+        let _ = render! {
+            view {
+                view(on_tap: |_| {})
+                view(on_tap_catch: |_| {})
+                view(on_capture_tap: |_| {})
+                view(on_capture_tap_catch: |_| {})
+            }
+        };
+        let kinds: Vec<BindType> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::Event {
+                    name, bind_type, ..
+                } if name == "tap" => Some(*bind_type),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                BindType::Bind,
+                BindType::Catch,
+                BindType::CaptureBind,
+                BindType::CaptureCatch,
+            ]
+        );
     });
 }
 

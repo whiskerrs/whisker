@@ -32,6 +32,11 @@ use serde::Deserialize;
 use crate::value::WhiskerValue;
 use crate::view::{set_event_listener, Element};
 
+/// Re-export so `event::BindType` sits next to `event::bind_typed` /
+/// `event::bind_unit` — the propagation type these take. Canonical
+/// definition lives in [`crate::view`].
+pub use crate::view::BindType;
+
 /// Register a **typed** event handler on `handle`.
 ///
 /// The event body crosses the bridge as a [`WhiskerValue`]; this
@@ -47,7 +52,7 @@ use crate::view::{set_event_listener, Element};
 /// logged with the raw value so it stays diagnosable (the Case ②
 /// philosophy: conversion mistakes are loggable, not invisible)
 /// rather than silently swallowing the whole event.
-pub fn bind_typed<E, F>(handle: Element, event_name: &'static str, handler: F)
+pub fn bind_typed<E, F>(handle: Element, event_name: &'static str, bind_type: BindType, handler: F)
 where
     E: DeserializeOwned + Default + 'static,
     F: Fn(E) + 'static,
@@ -55,6 +60,7 @@ where
     set_event_listener(
         handle,
         event_name,
+        bind_type,
         Box::new(move |value: WhiskerValue| {
             let ev = value.deserialize_into::<E>().unwrap_or_else(|err| {
                 eprintln!(
@@ -73,13 +79,14 @@ where
 ///
 /// For `on_<event>: ()` props / call sites that only care that the
 /// event fired. Wraps a `Fn()` into the value-carrying primitive.
-pub fn bind_unit<F>(handle: Element, event_name: &str, handler: F)
+pub fn bind_unit<F>(handle: Element, event_name: &str, bind_type: BindType, handler: F)
 where
     F: Fn() + 'static,
 {
     set_event_listener(
         handle,
         event_name,
+        bind_type,
         Box::new(move |_value: WhiskerValue| handler()),
     );
 }

@@ -132,6 +132,12 @@ extern "C" fn init_callback(user_data: *mut c_void) {
         ctx.engine as *mut c_void,
     );
 
+    // Route the platform reporter's events through Whisker's Rust-side
+    // propagation reconstruction (capture/bubble/catch over the
+    // driver's own element tree). The bridge calls this dispatcher
+    // whenever its reporter hook fires.
+    super::renderer::register_event_dispatcher();
+
     // Install the bridge renderer into the thread-local before
     // running user code. The `render!` macro's `view::*` calls
     // route through whatever is installed here.

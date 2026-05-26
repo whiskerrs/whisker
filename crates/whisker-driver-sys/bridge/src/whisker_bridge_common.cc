@@ -57,57 +57,31 @@ struct WhiskerElement {
     lynx_shell_t* shell = nullptr;
 };
 
-// Native event listener registry. Lynx dispatches physical touches
-// through `Element::SetEventHandler(EventHandler*)` consumed by
+// Event dispatch hook. Lynx dispatches physical touches through
+// `Element::SetEventHandler(EventHandler*)` consumed by
 // `TouchEventHandler` (whose ultimate target is the JS runtime), not
 // through the EventTarget / AddEventListener path — so we can't just
 // hang a `lynx::event::EventListener` off a FiberElement and expect
-// taps to fire it.
+// taps to fire it. We also can't observe Lynx's native capture/bubble
+// CHAIN: each platform's glue installs a "reporter" hook on the host's
+// event emitter (LynxEventEmitter on iOS / Android), but that hook
+// fires once, at the hit-tested TARGET, *before* the engine walks the
+// chain (whose per-element firings go to the absent JS runtime). See
+// `whisker/memory/lynx_event_dispatch`.
 //
-// Instead, each platform's glue installs a "reporter" hook on the
-// host's event emitter (LynxEventEmitter on iOS). The hook calls
-// `whisker_bridge_internal_dispatch_event` below; that looks up
-// (element_sign, event_name) here and fires the C callback if present.
+// So Whisker reconstructs propagation itself: the reporter calls
+// `whisker_bridge_internal_dispatch_event` with the target sign +
+// event body, and that forwards to a dispatcher the Rust driver
+// registers (`whisker_bridge_register_event_dispatcher`). The driver
+// owns the element tree + the per-element listeners (with their
+// bind/catch/capture type) and replays Lynx's capture→bubble→catch
+// algorithm in Rust. Returning `true` tells the reporter the event
+// was consumed (Lynx then skips its own native chain for it).
 namespace {
 
-struct EventKey {
-    int32_t element_sign;
-    std::string event_name;
-    bool operator==(const EventKey& other) const {
-        return element_sign == other.element_sign && event_name == other.event_name;
-    }
-};
-struct EventKeyHash {
-    size_t operator()(const EventKey& k) const noexcept {
-        return std::hash<int32_t>{}(k.element_sign) ^
-               (std::hash<std::string>{}(k.event_name) << 1);
-    }
-};
-// Tagged union covering both the no-payload event-listener
-// (`whisker_bridge_set_event_listener`) and the value-payload variant
-// (`whisker_bridge_set_event_listener_with_value`). Each registry
-// slot is one or the other; dispatch picks the right arm based on
-// `kind`.
-struct EventCallback {
-    enum class Kind {
-        NoPayload,
-        ValuePayload,
-    };
-    Kind kind;
-    union {
-        WhiskerEventCallback no_payload;
-        WhiskerEventValueCallback value_payload;
-    } func;
-    void* user_data;
-};
-
-std::mutex& RegistryMutex() {
-    static std::mutex m;
-    return m;
-}
-std::unordered_map<EventKey, EventCallback, EventKeyHash>& Registry() {
-    static std::unordered_map<EventKey, EventCallback, EventKeyHash> r;
-    return r;
+WhiskerEventDispatcher& EventDispatcher() {
+    static WhiskerEventDispatcher dispatcher = nullptr;
+    return dispatcher;
 }
 
 }  // namespace
@@ -136,38 +110,14 @@ bool whisker_bridge_internal_dispatch_event(int32_t element_sign,
                                             const char* event_name,
                                             const WhiskerValueRaw* payload) {
     if (event_name == nullptr) return false;
-    EventCallback hit{};
-    bool found = false;
-    {
-        std::lock_guard<std::mutex> lock(RegistryMutex());
-        EventKey key{element_sign, std::string(event_name)};
-        auto it = Registry().find(key);
-        if (it != Registry().end()) {
-            hit = it->second;
-            found = true;
-        }
-    }
-    if (!found) return false;
+    WhiskerEventDispatcher dispatcher = EventDispatcher();
+    if (dispatcher == nullptr) return false;
     // Normalise a NULL payload to a stack `WHISKER_VALUE_NULL` so the
-    // value callback always receives a valid pointer ("no body").
+    // dispatcher always receives a valid pointer ("no body").
     WhiskerValueRaw null_value{};
     null_value.type = WHISKER_VALUE_NULL;
     const WhiskerValueRaw* p = payload != nullptr ? payload : &null_value;
-    switch (hit.kind) {
-        case EventCallback::Kind::NoPayload:
-            if (hit.func.no_payload != nullptr) {
-                hit.func.no_payload(hit.user_data);
-                return true;
-            }
-            return false;
-        case EventCallback::Kind::ValuePayload:
-            if (hit.func.value_payload != nullptr) {
-                hit.func.value_payload(hit.user_data, p);
-                return true;
-            }
-            return false;
-    }
-    return false;
+    return dispatcher(element_sign, event_name, p);
 }
 
 // ----------------------------------------------------------------------------
@@ -251,18 +201,10 @@ extern "C" WhiskerElement* whisker_bridge_create_element_by_name(
 
 extern "C" void whisker_bridge_release_element(WhiskerElement* element) {
     if (element == nullptr) return;
-    // Drop any registered native event callbacks for this element so
-    // its sign can't accidentally collide with a future element's id.
+    // Listeners + the sign→parent map are owned by the Rust driver's
+    // renderer now (it drops them in its own `release_element`, keyed
+    // by the same sign), so there's nothing to clean up here.
     if (element->handle != nullptr) {
-        int32_t sign = lynx_element_id(element->handle);
-        std::lock_guard<std::mutex> lock(RegistryMutex());
-        for (auto it = Registry().begin(); it != Registry().end(); ) {
-            if (it->first.element_sign == sign) {
-                it = Registry().erase(it);
-            } else {
-                ++it;
-            }
-        }
         lynx_element_release(element->handle);
     }
     delete element;
@@ -297,21 +239,20 @@ extern "C" void whisker_bridge_remove_child(WhiskerElement* parent,
     lynx_element_remove_child(parent->handle, child->handle);
 }
 
+// Superseded by Rust-side propagation reconstruction: listeners now
+// live in the `whisker-driver` renderer (keyed by element sign, with
+// their bind/catch/capture type), and dispatch runs through the
+// dispatcher registered below. These two symbols are retained as
+// no-ops for ABI stability (the iOS exported-symbols list still names
+// them); the Rust driver no longer calls them.
 extern "C" void whisker_bridge_set_event_listener(WhiskerElement* element,
                                                  const char* event_name,
                                                  WhiskerEventCallback callback,
                                                  void* user_data) {
-    if (element == nullptr || element->handle == nullptr ||
-        event_name == nullptr || callback == nullptr) {
-        return;
-    }
-    EventKey key{lynx_element_id(element->handle), std::string(event_name)};
-    EventCallback entry{};
-    entry.kind = EventCallback::Kind::NoPayload;
-    entry.func.no_payload = callback;
-    entry.user_data = user_data;
-    std::lock_guard<std::mutex> lock(RegistryMutex());
-    Registry()[key] = entry;
+    (void)element;
+    (void)event_name;
+    (void)callback;
+    (void)user_data;
 }
 
 extern "C" void whisker_bridge_set_event_listener_with_value(
@@ -319,17 +260,20 @@ extern "C" void whisker_bridge_set_event_listener_with_value(
     const char* event_name,
     WhiskerEventValueCallback callback,
     void* user_data) {
-    if (element == nullptr || element->handle == nullptr ||
-        event_name == nullptr || callback == nullptr) {
-        return;
-    }
-    EventKey key{lynx_element_id(element->handle), std::string(event_name)};
-    EventCallback entry{};
-    entry.kind = EventCallback::Kind::ValuePayload;
-    entry.func.value_payload = callback;
-    entry.user_data = user_data;
-    std::lock_guard<std::mutex> lock(RegistryMutex());
-    Registry()[key] = entry;
+    (void)element;
+    (void)event_name;
+    (void)callback;
+    (void)user_data;
+}
+
+extern "C" void whisker_bridge_register_event_dispatcher(
+    WhiskerEventDispatcher dispatcher) {
+    EventDispatcher() = dispatcher;
+}
+
+extern "C" int32_t whisker_bridge_element_sign(WhiskerElement* element) {
+    if (element == nullptr || element->handle == nullptr) return 0;
+    return lynx_element_id(element->handle);
 }
 
 // ----------------------------------------------------------------------------

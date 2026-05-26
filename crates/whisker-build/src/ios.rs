@@ -57,6 +57,11 @@ const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_bridge_remove_child",
     "_whisker_bridge_set_event_listener",
     "_whisker_bridge_set_event_listener_with_value",
+    // Phase 5: Rust-side event propagation. The driver registers a
+    // dispatcher the reporter hook forwards to, and queries element
+    // signs to key its tree + listener maps.
+    "_whisker_bridge_register_event_dispatcher",
+    "_whisker_bridge_element_sign",
     "_whisker_bridge_set_root",
     "_whisker_bridge_flush",
     "_whisker_bridge_invoke_module",

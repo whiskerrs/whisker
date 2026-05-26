@@ -576,13 +576,21 @@ fn prop_apply_call(p: &Prop) -> TokenStream2 {
         }
         PropKind::EventNoPayload { event } => {
             quote! {
-                ::whisker::runtime::event::bind_unit(__handle, #event, props.#i);
+                ::whisker::runtime::event::bind_unit(
+                    __handle,
+                    #event,
+                    ::whisker::runtime::event::BindType::Bind,
+                    props.#i,
+                );
             }
         }
         PropKind::EventTyped { event, payload } => {
             quote! {
                 ::whisker::runtime::event::bind_typed::<#payload, _>(
-                    __handle, #event, props.#i,
+                    __handle,
+                    #event,
+                    ::whisker::runtime::event::BindType::Bind,
+                    props.#i,
                 );
             }
         }

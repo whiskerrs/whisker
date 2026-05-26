@@ -592,6 +592,85 @@ pub fn measure_demo() -> Element {
     }
 }
 
+/// Phase 5 demo — event propagation (capture / bubble / catch).
+///
+/// Three nested boxes (outer → middle → inner) each register **both**
+/// a capture-phase and a bubble-phase `tap` handler. Tapping the inner
+/// box drives Whisker's reconstructed chain and appends each handler's
+/// tag to a reactive log, so the displayed order makes the phases
+/// concrete:
+///
+/// ```text
+/// ↓outer ↓middle ↓inner   ↑inner ↑middle ↑outer
+/// └────── capture ──────┘ └────── bubble ──────┘
+/// ```
+///
+/// Capture runs root→target, bubble runs target→root — exactly Lynx's
+/// model, reconstructed in Rust (`on_capture_tap` ↔ `capture-bindtap`,
+/// `on_tap` ↔ `bindtap`). Tapping the log line resets it. Swapping an
+/// `on_tap` for `on_tap_catch` on the middle box would stop the bubble
+/// at "middle" (no `↑outer`); `on_capture_tap_catch` on the outer box
+/// would swallow everything after `↓outer`.
+#[component]
+pub fn propagation_demo() -> Element {
+    let log = RwSignal::new(String::new());
+    let push = move |tag: &'static str| {
+        log.update(|s| {
+            if !s.is_empty() {
+                s.push(' ');
+            }
+            s.push_str(tag);
+        });
+    };
+    let label = computed(move || {
+        let s = log.get();
+        if s.is_empty() {
+            "tap the inner box →".to_string()
+        } else {
+            s
+        }
+    });
+
+    let box_style = |c: &str, pad: &str| {
+        format!(
+            "background-color: {c}; padding: {pad}; border-radius: 10px; \
+             display: flex; flex-direction: column; align-items: center; \
+             justify-content: center;"
+        )
+    };
+    render! {
+        view(style: "margin: 8px 16px; display: flex; flex-direction: column; gap: 8px;") {
+            text(
+                value: label,
+                on_tap: move |_| log.set(String::new()),
+                style: "color: #b9a9ff; font-size: 13px; font-weight: 600; \
+                        font-family: monospace; padding: 6px;",
+            )
+            view(
+                style: box_style("#241946", "20px"),
+                on_capture_tap: move |_| push("\u{2193}outer"),
+                on_tap: move |_| push("\u{2191}outer"),
+            ) {
+                text(value: "outer", style: "color: rgba(255,255,255,0.5); font-size: 11px;")
+                view(
+                    style: box_style("#3a2a6b", "20px"),
+                    on_capture_tap: move |_| push("\u{2193}middle"),
+                    on_tap: move |_| push("\u{2191}middle"),
+                ) {
+                    text(value: "middle", style: "color: rgba(255,255,255,0.6); font-size: 11px;")
+                    view(
+                        style: box_style("#5b43a8", "18px"),
+                        on_capture_tap: move |_| push("\u{2193}inner"),
+                        on_tap: move |_| push("\u{2191}inner"),
+                    ) {
+                        text(value: "inner", style: "color: white; font-size: 12px; font-weight: 700;")
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[whisker::main]
 fn app() -> Element {
     // Allocate every app-wide signal in the bootstrap owner. `AppState`
@@ -617,6 +696,7 @@ fn app() -> Element {
             Hello(style: "width: 100%; height: 8px;")
             VideoDemo()
             MeasureDemo()
+            PropagationDemo()
             Header()
             ScrollBody(state: state)
             NowPlaying(state: state)

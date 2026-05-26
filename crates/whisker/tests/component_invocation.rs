@@ -80,6 +80,7 @@ impl DynRenderer for Recorder {
         &mut self,
         _h: Element,
         _name: &str,
+        _bind_type: whisker::runtime::view::BindType,
         _cb: Box<dyn Fn(whisker::WhiskerValue) + 'static>,
     ) {
     }

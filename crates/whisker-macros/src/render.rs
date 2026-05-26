@@ -544,7 +544,8 @@ fn is_string_attr_method(tag: &str, attr: &str) -> bool {
 /// hatch. Mirrors the `on_*` methods on the trait in
 /// `whisker::__tags`.
 fn is_known_event_method(name: &str) -> bool {
-    matches!(
+    // Bubble-phase bind variant for every typed event …
+    let bind_variant = matches!(
         name,
         "on_tap"
             | "on_longpress"
@@ -563,7 +564,37 @@ fn is_known_event_method(name: &str) -> bool {
             | "on_transitionstart"
             | "on_transitionend"
             | "on_transitioncancel"
-    )
+    );
+    // … plus the catch / capture propagation variants for the touch
+    // family (`on_tap_catch`, `on_capture_tap`, `on_capture_tap_catch`,
+    // …). These map 1:1 to Lynx's `catchtap` / `capture-bindtap` /
+    // `capture-catchtap` handler kinds. Mirrors the `on_*` methods on
+    // `ElementBuilder` in `whisker::__tags`.
+    let propagation_variant = matches!(
+        name,
+        "on_tap_catch"
+            | "on_capture_tap"
+            | "on_capture_tap_catch"
+            | "on_longpress_catch"
+            | "on_capture_longpress"
+            | "on_capture_longpress_catch"
+            | "on_click_catch"
+            | "on_capture_click"
+            | "on_capture_click_catch"
+            | "on_touchstart_catch"
+            | "on_capture_touchstart"
+            | "on_capture_touchstart_catch"
+            | "on_touchmove_catch"
+            | "on_capture_touchmove"
+            | "on_capture_touchmove_catch"
+            | "on_touchend_catch"
+            | "on_capture_touchend"
+            | "on_capture_touchend_catch"
+            | "on_touchcancel_catch"
+            | "on_capture_touchcancel"
+            | "on_capture_touchcancel_catch"
+    );
+    bind_variant || propagation_variant
 }
 
 // ---- Control-flow (Show / For) ------------------------------------------
