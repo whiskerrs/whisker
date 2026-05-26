@@ -556,30 +556,29 @@ pub fn measure_demo() -> Element {
     let label = computed(move || {
         let d = dims.get();
         if d.is_empty() {
-            "measuring…".to_string()
+            "tap to measure".to_string()
         } else {
             d
         }
     });
-    // Measure once the ref binds (mount). The effect subscribes to
-    // `card.bound()` and re-fires when `__bind` flips it true, then
-    // schedules the async `boundingClientRect` — the bridge callback
-    // resolves (after layout, on the UI thread) and the result flows
-    // back through the binary `WhiskerValueRaw` wire to update `dims`.
-    effect(move || {
-        if !card.bound().get() {
-            return;
-        }
+    // Measure on tap — `boundingClientRect` is async (the result
+    // arrives via Lynx's UI-method callback after layout), so we
+    // `spawn_local` it and update `dims` reactively when it resolves.
+    // The result crosses back through the binary `WhiskerValueRaw`
+    // wire. Tap-triggered (rather than on-mount) so the platform UI
+    // is reliably laid out before we measure on both platforms.
+    let on_measure = move |_| {
         spawn_local(async move {
             match card.bounding_client_rect().await {
                 Ok(r) => dims.set(format!("{}×{} px", r.width as i32, r.height as i32)),
                 Err(e) => dims.set(format!("err: {e}")),
             }
         });
-    });
+    };
     render! {
         view(
             ref: card,
+            on_tap: on_measure,
             style: "width: 200px; height: 56px; margin: 8px 16px; \
                     background-color: #1a1330; border-radius: 8px; \
                     display: flex; flex-direction: column; \

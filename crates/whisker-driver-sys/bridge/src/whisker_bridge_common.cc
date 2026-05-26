@@ -573,6 +573,79 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
 }
 
 namespace {
+// Deep-copy a Lynx-neutral `lynx_ui_method_value_t` result tree into a
+// `WhiskerValueRaw` (heap-owned, matching `whisker_bridge_value_release`'s
+// free pattern). The capi tree itself is owned + freed by
+// `lynx_native_renderer.cc` after the callback returns.
+WhiskerValueRaw CapiValueToWhisker(const lynx_ui_method_value_t* v) {
+    WhiskerValueRaw out;
+    std::memset(&out, 0, sizeof(out));
+    if (v == nullptr) {
+        out.type = WHISKER_VALUE_NULL;
+        return out;
+    }
+    switch (v->type) {
+        case LYNX_UI_METHOD_VALUE_BOOL:
+            out.type = WHISKER_VALUE_BOOL;
+            out.v.b = v->v.b;
+            break;
+        case LYNX_UI_METHOD_VALUE_INT:
+            out.type = WHISKER_VALUE_INT;
+            out.v.i = v->v.i;
+            break;
+        case LYNX_UI_METHOD_VALUE_DOUBLE:
+            out.type = WHISKER_VALUE_FLOAT;
+            out.v.f = v->v.f;
+            break;
+        case LYNX_UI_METHOD_VALUE_STRING: {
+            const char* s = v->v.s != nullptr ? v->v.s : "";
+            size_t len = std::strlen(s);
+            char* buf = static_cast<char*>(std::malloc(len == 0 ? 1 : len));
+            if (len > 0) std::memcpy(buf, s, len);
+            out.type = WHISKER_VALUE_STRING;
+            out.v.s.ptr = buf;
+            out.v.s.len = len;
+            break;
+        }
+        case LYNX_UI_METHOD_VALUE_ARRAY: {
+            size_t n = v->v.array.count;
+            out.type = WHISKER_VALUE_ARRAY;
+            out.v.array.count = n;
+            out.v.array.items = n > 0 ? static_cast<WhiskerValueRaw*>(
+                                            std::malloc(sizeof(WhiskerValueRaw) * n))
+                                      : nullptr;
+            for (size_t i = 0; i < n; i++) {
+                out.v.array.items[i] = CapiValueToWhisker(&v->v.array.items[i]);
+            }
+            break;
+        }
+        case LYNX_UI_METHOD_VALUE_MAP: {
+            size_t n = v->v.map.count;
+            out.type = WHISKER_VALUE_MAP;
+            out.v.map.count = n;
+            out.v.map.entries = n > 0 ? static_cast<WhiskerKeyValueRaw*>(
+                                            std::malloc(sizeof(WhiskerKeyValueRaw) * n))
+                                      : nullptr;
+            for (size_t i = 0; i < n; i++) {
+                const char* k = v->v.map.entries[i].key != nullptr
+                                    ? v->v.map.entries[i].key
+                                    : "";
+                size_t klen = std::strlen(k);
+                char* kbuf = static_cast<char*>(std::malloc(klen == 0 ? 1 : klen));
+                if (klen > 0) std::memcpy(kbuf, k, klen);
+                out.v.map.entries[i].key.ptr = kbuf;
+                out.v.map.entries[i].key.len = klen;
+                out.v.map.entries[i].value = CapiValueToWhisker(&v->v.map.entries[i].value);
+            }
+            break;
+        }
+        default:
+            out.type = WHISKER_VALUE_NULL;
+            break;
+    }
+    return out;
+}
+
 // Carries the Rust callback + user_data across `lynx_ui_invoke_method_
 // async`'s `(code, result, user_data)` callback shape down to the
 // bridge's `(user_data, result)` shape. Heap-allocated, freed after
@@ -583,12 +656,14 @@ struct ElementMethodAsyncCtx {
 };
 
 void element_method_async_adapter(int32_t /*code*/,
-                                  const WhiskerValueRaw* result,
+                                  const lynx_ui_method_value_t* capi_result,
                                   void* user_data) {
     auto* ctx = static_cast<ElementMethodAsyncCtx*>(user_data);
     if (ctx == nullptr) return;
     if (ctx->rust_cb != nullptr) {
-        ctx->rust_cb(ctx->rust_user_data, result);
+        WhiskerValueRaw result = CapiValueToWhisker(capi_result);
+        ctx->rust_cb(ctx->rust_user_data, &result);
+        whisker_bridge_value_release(&result);
     }
     delete ctx;
 }
@@ -626,7 +701,9 @@ extern "C" bool whisker_bridge_invoke_element_method_async(
         return false;
     }
 
-#if defined(__APPLE__)
+    // `lynx_ui_invoke_method_async` is exported by liblynx.so on
+    // Android (Lynx fork v3.7.0-whisker.5+) and compiled into
+    // WhiskerDriver on iOS — same dispatch on both platforms.
     std::vector<lynx_ui_method_value_t> lynx_args;
     BuildLynxUiArgs(args, arg_count, lynx_args);
     auto* ctx = new ElementMethodAsyncCtx{callback, user_data};
@@ -644,19 +721,6 @@ extern "C" bool whisker_bridge_invoke_element_method_async(
         return false;
     }
     return true;
-#else
-    // Android: `lynx_ui_invoke_method_async` lives in liblynx.so,
-    // which the current Lynx fork pin doesn't export yet. Surface a
-    // clear error so `ElementRef::invoke_async` resolves to an Error
-    // rather than hanging. Lifted once the fork release lands.
-    (void)args;
-    (void)arg_count;
-    FailElementMethodAsync(
-        callback, user_data,
-        "element method results are not yet available on Android "
-        "(pending a Lynx fork release exporting lynx_ui_invoke_method_async)");
-    return false;
-#endif
 }
 
 extern "C" void whisker_bridge_value_release(WhiskerValueRaw* value) {

@@ -133,7 +133,30 @@ typedef enum lynx_ui_method_value_type_e {
   LYNX_UI_METHOD_VALUE_INT = 2,
   LYNX_UI_METHOD_VALUE_DOUBLE = 3,
   LYNX_UI_METHOD_VALUE_STRING = 4,
+  // Recursive variants — used for method *results* (a
+  // `boundingClientRect` map, etc.). Args only ever use the scalar
+  // variants above.
+  LYNX_UI_METHOD_VALUE_ARRAY = 5,
+  LYNX_UI_METHOD_VALUE_MAP = 6,
 } lynx_ui_method_value_type_e;
+
+// Forward-declared so `array`/`map` can hold them recursively. The
+// map holds a *pointer* to `kv` (incomplete-type OK), and `kv` holds
+// `value` *by value* — so `kv` is defined AFTER the full
+// `lynx_ui_method_value_t` below. Same ordering trick as
+// `WhiskerValueRec`/`WhiskerKeyValueRec` in `whisker_bridge.h`.
+struct lynx_ui_method_value_t;
+struct lynx_ui_method_kv_t;
+
+typedef struct lynx_ui_method_value_array_t {
+  struct lynx_ui_method_value_t* items;  // length = count
+  size_t count;
+} lynx_ui_method_value_array_t;
+
+typedef struct lynx_ui_method_value_map_t {
+  struct lynx_ui_method_kv_t* entries;  // length = count
+  size_t count;
+} lynx_ui_method_value_map_t;
 
 typedef struct lynx_ui_method_value_t {
   lynx_ui_method_value_type_e type;
@@ -141,9 +164,16 @@ typedef struct lynx_ui_method_value_t {
     bool b;
     int64_t i;
     double f;
-    const char* s;
+    const char* s;  // NUL-terminated UTF-8
+    lynx_ui_method_value_array_t array;
+    lynx_ui_method_value_map_t map;
   } v;
 } lynx_ui_method_value_t;
+
+typedef struct lynx_ui_method_kv_t {
+  const char* key;  // NUL-terminated UTF-8
+  lynx_ui_method_value_t value;
+} lynx_ui_method_kv_t;
 
 LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
     lynx_shell_t* shell,
@@ -156,19 +186,18 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
 // `boundingClientRect` / `takeScreenshot` etc. Lynx's
 // `Catalyzer::Invoke` callback fires (typically on the UI thread,
 // after the platform method runs); `lynx_native_renderer.cc` converts
-// the callback's `lynx::pub::Value` into a `WhiskerValueRaw` tree and
-// invokes `callback(code, &result, user_data)`. The `result` pointer
-// is borrowed for the duration of the callback only — the wrapper
-// frees it (via `whisker_bridge_value_release`) once `callback`
-// returns, so the callee must copy out before returning.
+// the callback's `lynx::pub::Value` into a `lynx_ui_method_value_t`
+// tree (Lynx-neutral — no dependency on the Whisker bridge, so this
+// translation unit compiles identically whether built into liblynx.so
+// for Android or into WhiskerDriver for iOS) and invokes
+// `callback(code, &result, user_data)`.
 //
-// `WhiskerValueRec` is the FFI value struct defined in
-// `whisker_bridge.h`; forward-declared here so this header stays
-// free of the bridge include (the .cc that implements this pulls in
-// `whisker_bridge.h` for the full definition + the converter).
-struct WhiskerValueRec;
+// `result` is owned by the wrapper and only valid for the duration of
+// the callback — the wrapper frees the tree once `callback` returns,
+// so the callee must copy out (the Whisker bridge converts it into a
+// `WhiskerValueRaw` before returning).
 typedef void (*lynx_ui_method_result_cb)(int32_t code,
-                                          const struct WhiskerValueRec* result,
+                                          const lynx_ui_method_value_t* result,
                                           void* user_data);
 LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async(
     lynx_shell_t* shell,

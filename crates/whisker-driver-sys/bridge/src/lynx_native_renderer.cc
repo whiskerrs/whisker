@@ -17,13 +17,6 @@
 #include <utility>
 #include <vector>
 
-// `WhiskerValueRaw` + `whisker_bridge_value_release` — the async
-// UI-method result crosses back as this FFI value tree. Including the
-// bridge header here couples this Lynx-side translation unit to the
-// bridge value type, but keeps the result conversion in the one place
-// that can see `lynx::pub::Value` (the Catalyzer callback).
-#include "whisker_bridge.h"
-
 #include "base/include/value/base_string.h"
 #include "base/include/value/array.h"
 #include "base/include/value/table.h"
@@ -290,6 +283,11 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
         args_array->emplace_back(lynx::lepus::Value(
             lynx::base::String(v.v.s != nullptr ? v.v.s : "")));
         break;
+      default:
+        // Array / map args aren't supported by the dispatch ABI;
+        // treat as null. (Results use the recursive variants.)
+        args_array->emplace_back(lynx::lepus::Value());
+        break;
     }
   }
   auto params_dict = lynx::lepus::Dictionary::Create();
@@ -317,93 +315,118 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
 
 namespace {
 
-// A heap-owned `WhiskerStringRef` copy (len-based, not NUL-terminated).
-// Released by `whisker_bridge_value_release`.
-WhiskerStringRef WhiskerDupString(const std::string& s) {
-  WhiskerStringRef ref{nullptr, 0};
-  char* buf = static_cast<char*>(std::malloc(s.empty() ? 1 : s.size()));
-  if (!s.empty()) std::memcpy(buf, s.data(), s.size());
-  ref.ptr = buf;
-  ref.len = s.size();
-  return ref;
+// `malloc` a NUL-terminated copy of `s` (freed by
+// `lynx_ui_method_value_free`).
+char* CapiDupCStr(const std::string& s) {
+  char* buf = static_cast<char*>(std::malloc(s.size() + 1));
+  std::memcpy(buf, s.c_str(), s.size() + 1);
+  return buf;
 }
 
 // Convert a Lynx `pub::Value` (the Catalyzer callback's result) into a
-// heap-owned `WhiskerValueRaw` tree. Mirrors the value model used by
-// module args/returns and events. Allocations match
-// `whisker_bridge_value_release`'s free pattern.
-WhiskerValueRaw PubValueToRaw(const lynx::pub::Value& v) {
-  WhiskerValueRaw out;
+// heap-owned `lynx_ui_method_value_t` tree. **Lynx-neutral** — no
+// dependency on the Whisker bridge, so this file compiles identically
+// into liblynx.so (Android) and WhiskerDriver (iOS). The Whisker side
+// converts this into a `WhiskerValueRaw`.
+lynx_ui_method_value_t PubValueToCapi(const lynx::pub::Value& v) {
+  lynx_ui_method_value_t out;
   std::memset(&out, 0, sizeof(out));
   if (v.IsNil() || v.IsUndefined()) {
-    out.type = WHISKER_VALUE_NULL;
+    out.type = LYNX_UI_METHOD_VALUE_NULL;
     return out;
   }
   if (v.IsBool()) {
-    out.type = WHISKER_VALUE_BOOL;
+    out.type = LYNX_UI_METHOD_VALUE_BOOL;
     out.v.b = v.Bool();
     return out;
   }
   if (v.IsInt64()) {
-    out.type = WHISKER_VALUE_INT;
+    out.type = LYNX_UI_METHOD_VALUE_INT;
     out.v.i = v.Int64();
     return out;
   }
   if (v.IsUInt64()) {
-    out.type = WHISKER_VALUE_INT;
+    out.type = LYNX_UI_METHOD_VALUE_INT;
     out.v.i = static_cast<int64_t>(v.UInt64());
     return out;
   }
   if (v.IsDouble()) {
-    out.type = WHISKER_VALUE_FLOAT;
+    out.type = LYNX_UI_METHOD_VALUE_DOUBLE;
     out.v.f = v.Double();
     return out;
   }
   if (v.IsNumber()) {
-    out.type = WHISKER_VALUE_FLOAT;
+    out.type = LYNX_UI_METHOD_VALUE_DOUBLE;
     out.v.f = v.Number();
     return out;
   }
   if (v.IsString()) {
-    out.type = WHISKER_VALUE_STRING;
-    out.v.s = WhiskerDupString(v.str());
+    out.type = LYNX_UI_METHOD_VALUE_STRING;
+    out.v.s = CapiDupCStr(v.str());
     return out;
   }
   if (v.IsArray()) {
     int n = v.Length();
     if (n < 0) n = 0;
-    out.type = WHISKER_VALUE_ARRAY;
+    out.type = LYNX_UI_METHOD_VALUE_ARRAY;
     out.v.array.count = static_cast<size_t>(n);
-    out.v.array.items = n > 0 ? static_cast<WhiskerValueRaw*>(
-                                    std::malloc(sizeof(WhiskerValueRaw) * n))
-                              : nullptr;
+    out.v.array.items =
+        n > 0 ? static_cast<lynx_ui_method_value_t*>(
+                    std::malloc(sizeof(lynx_ui_method_value_t) * n))
+              : nullptr;
     for (int i = 0; i < n; i++) {
       auto child = v.GetValueAtIndex(static_cast<uint32_t>(i));
       out.v.array.items[i] =
-          child ? PubValueToRaw(*child) : WhiskerValueRaw{};
+          child ? PubValueToCapi(*child) : lynx_ui_method_value_t{};
     }
     return out;
   }
   if (v.IsMap()) {
-    std::vector<std::pair<std::string, WhiskerValueRaw>> tmp;
+    std::vector<std::pair<std::string, lynx_ui_method_value_t>> tmp;
     v.ForeachMap([&tmp](const lynx::pub::Value& key,
                         const lynx::pub::Value& val) {
-      tmp.emplace_back(key.str(), PubValueToRaw(val));
+      tmp.emplace_back(key.str(), PubValueToCapi(val));
     });
     size_t n = tmp.size();
-    out.type = WHISKER_VALUE_MAP;
+    out.type = LYNX_UI_METHOD_VALUE_MAP;
     out.v.map.count = n;
-    out.v.map.entries = n > 0 ? static_cast<WhiskerKeyValueRaw*>(
-                                    std::malloc(sizeof(WhiskerKeyValueRaw) * n))
-                              : nullptr;
+    out.v.map.entries =
+        n > 0 ? static_cast<lynx_ui_method_kv_t*>(
+                    std::malloc(sizeof(lynx_ui_method_kv_t) * n))
+              : nullptr;
     for (size_t i = 0; i < n; i++) {
-      out.v.map.entries[i].key = WhiskerDupString(tmp[i].first);
+      out.v.map.entries[i].key = CapiDupCStr(tmp[i].first);
       out.v.map.entries[i].value = tmp[i].second;
     }
     return out;
   }
-  out.type = WHISKER_VALUE_NULL;
+  out.type = LYNX_UI_METHOD_VALUE_NULL;
   return out;
+}
+
+// Recursively free a tree produced by `PubValueToCapi`.
+void CapiValueFree(lynx_ui_method_value_t* v) {
+  if (v == nullptr) return;
+  switch (v->type) {
+    case LYNX_UI_METHOD_VALUE_STRING:
+      std::free(const_cast<char*>(v->v.s));
+      break;
+    case LYNX_UI_METHOD_VALUE_ARRAY:
+      for (size_t i = 0; i < v->v.array.count; i++) {
+        CapiValueFree(&v->v.array.items[i]);
+      }
+      std::free(v->v.array.items);
+      break;
+    case LYNX_UI_METHOD_VALUE_MAP:
+      for (size_t i = 0; i < v->v.map.count; i++) {
+        std::free(const_cast<char*>(v->v.map.entries[i].key));
+        CapiValueFree(&v->v.map.entries[i].value);
+      }
+      std::free(v->v.map.entries);
+      break;
+    default:
+      break;
+  }
 }
 
 }  // namespace
@@ -445,6 +468,11 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async(
         args_array->emplace_back(lynx::lepus::Value(
             lynx::base::String(v.v.s != nullptr ? v.v.s : "")));
         break;
+      default:
+        // Array / map args aren't supported by the dispatch ABI;
+        // treat as null. (Results use the recursive variants.)
+        args_array->emplace_back(lynx::lepus::Value());
+        break;
     }
   }
   auto params_dict = lynx::lepus::Dictionary::Create();
@@ -454,17 +482,17 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async(
 
   // The callback fires (typically on the UI thread) once the platform
   // method completes. Convert the result `pub::Value` into a
-  // heap-owned `WhiskerValueRaw`, hand it to the C callback, then free
-  // it once the callback returns (it copies out via the Rust
-  // `from_raw`).
+  // heap-owned `lynx_ui_method_value_t` tree, hand it to the C
+  // callback, then free it once the callback returns (the callee
+  // copies out — the Whisker bridge converts it to a `WhiskerValueRaw`).
   catalyzer->Invoke(
       static_cast<int64_t>(sign), std::string(method_name),
       lynx::pub::ValueImplLepus(params_lepus),
       [callback, user_data](int32_t code, const lynx::pub::Value& data) {
         if (callback == nullptr) return;
-        WhiskerValueRaw result = PubValueToRaw(data);
+        lynx_ui_method_value_t result = PubValueToCapi(data);
         callback(code, &result, user_data);
-        whisker_bridge_value_release(&result);
+        CapiValueFree(&result);
       });
   return 0;
 }
