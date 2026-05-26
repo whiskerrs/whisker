@@ -12,8 +12,6 @@ import com.lynx.tasm.event.LynxCustomEvent
 import com.lynx.tasm.event.LynxEvent
 import com.lynx.tasm.event.LynxInternalEvent
 import java.util.concurrent.atomic.AtomicBoolean
-import org.json.JSONArray
-import org.json.JSONObject
 
 /**
  * Hosts the Lynx engine and bridges it to the Rust runtime.
@@ -48,79 +46,19 @@ class WhiskerView @JvmOverloads constructor(
     private val eventReporter = object : EventEmitter.LynxEventReporter {
         override fun onLynxEvent(event: LynxEvent): Boolean {
             val name = event.name ?: return false
-            // Phase 7-Φ.C: serialise the event's params (if any) into
-            // a JSON string so the bridge can hand it through to Rust
-            // `on_<event>: String` callbacks declared via
-            // `#[whisker::platform_component]`. Mirrors what the iOS
-            // event reporter does with `LynxEvent.generateEventBody`
-            // + `NSJSONSerialization`.
-            //
-            // `LynxCustomEvent` is the only public LynxEvent subclass
-            // that carries a params dict; touch / mouse / wheel /
-            // keyboard events don't currently surface a payload
-            // through here. Pass empty payload for those — the
-            // bridge normalises NULL → "" anyway, but going through
-            // `""` keeps the JNI call's String non-null.
-            val payload = if (event is LynxCustomEvent) {
-                paramsToJson(event.eventParams())
-            } else {
-                ""
-            }
-            return nativeOnLynxEvent(engine, event.tag, name, payload)
+            // Hand the event body straight to native as a raw Java
+            // `Map<String, Any?>` — the bridge marshals it into a
+            // `WhiskerValueRaw` tree (no JSON round-trip), the same
+            // wire module args/returns use. `LynxCustomEvent` is the
+            // only public subclass carrying a params dict; touch /
+            // mouse / wheel / keyboard events surface no body here, so
+            // pass `null` (the bridge dispatches with no value, and the
+            // Rust typed-event layer falls back to a default).
+            val params: Map<String, Any?>? =
+                if (event is LynxCustomEvent) event.eventParams() else null
+            return nativeOnLynxEvent(engine, event.tag, name, params)
         }
         override fun onInternalEvent(event: LynxInternalEvent) {}
-    }
-
-    /**
-     * Best-effort serialise a Lynx event-params dict to a UTF-8 JSON
-     * string. `org.json.JSONObject` accepts heterogeneous value types
-     * (String / Number / Boolean / nested Map / List) at runtime via
-     * casting in `JSONObject.put(name, value)`, but `Map<String, Any?>`
-     * specifically needs each value individually wrapped or it ends up
-     * as `{"key":"java.util.HashMap@…"}` (toString fallback).
-     *
-     * Returns the empty string when [params] is null or empty — same
-     * as the iOS path's `""` default.
-     */
-    private fun paramsToJson(params: Map<String, Any?>?): String {
-        if (params.isNullOrEmpty()) return ""
-        return try {
-            mapToJsonObject(params).toString()
-        } catch (e: Throwable) {
-            // Swallow — degrade to empty payload rather than crash
-            // the event-reporter chain.
-            ""
-        }
-    }
-
-    private fun mapToJsonObject(map: Map<String, Any?>): JSONObject {
-        val out = JSONObject()
-        for ((k, v) in map) {
-            out.put(k, jsonifyValue(v))
-        }
-        return out
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun jsonifyValue(v: Any?): Any {
-        return when (v) {
-            null -> JSONObject.NULL
-            is Map<*, *> -> mapToJsonObject(v as Map<String, Any?>)
-            is List<*> -> {
-                val arr = JSONArray()
-                for (item in v) arr.put(jsonifyValue(item))
-                arr
-            }
-            is Array<*> -> {
-                val arr = JSONArray()
-                for (item in v) arr.put(jsonifyValue(item))
-                arr
-            }
-            // JSONObject.put accepts these directly.
-            is String, is Number, is Boolean -> v
-            // Fallback — let JSONObject use toString().
-            else -> v.toString()
-        }
     }
 
     init {
@@ -191,6 +129,6 @@ class WhiskerView @JvmOverloads constructor(
         engine: Long,
         tag: Int,
         name: String,
-        payloadJson: String,
+        params: Any?,
     ): Boolean
 }

@@ -310,30 +310,9 @@ Java_rs_whisker_runtime_WhiskerView_nativeTick(
 // `engine_raw` isn't strictly needed today (the registry is global) but
 // kept in the signature so future per-engine registries don't require
 // an ABI break.
-extern "C" JNIEXPORT jboolean JNICALL
-Java_rs_whisker_runtime_WhiskerView_nativeOnLynxEvent(
-    JNIEnv* env, jobject /*self*/, jlong /*engine_raw*/,
-    jint tag, jstring name_jstr, jstring payload_jstr) {
-    if (name_jstr == nullptr) return JNI_FALSE;
-    const char* name = env->GetStringUTFChars(name_jstr, nullptr);
-    if (name == nullptr) return JNI_FALSE;
-    // Phase 7-Φ.C: the Kotlin side now serialises event.params via
-    // org.json.JSONObject and hands the result here. Mirrors the iOS
-    // event reporter that goes through `[event generateEventBody]` +
-    // `NSJSONSerialization`. Empty string means "no detail" — same
-    // contract as iOS.
-    const char* payload = nullptr;
-    if (payload_jstr != nullptr) {
-        payload = env->GetStringUTFChars(payload_jstr, nullptr);
-    }
-    bool handled = whisker_bridge_internal_dispatch_event(
-        static_cast<int32_t>(tag), name, payload);
-    if (payload != nullptr) {
-        env->ReleaseStringUTFChars(payload_jstr, payload);
-    }
-    env->ReleaseStringUTFChars(name_jstr, name);
-    return handled ? JNI_TRUE : JNI_FALSE;
-}
+// `Java_..._nativeOnLynxEvent` is defined below, after the
+// `jobject_to_value` marshaller it depends on (which lives in the
+// anonymous namespace).
 
 // ---- Native module invocation (Phase 7-Φ.F, Android) ---------------------
 //
@@ -405,6 +384,20 @@ struct WhiskerValueJni {
     jmethodID iter_has_next = nullptr, iter_next = nullptr;
     jclass map_entry_cls = nullptr;
     jmethodID map_entry_key = nullptr, map_entry_val = nullptr;
+
+    // Generic Java boxing types — for marshalling a raw event-body
+    // `Map<String, Any?>` (Boolean / Number / String / Map / List)
+    // straight into `WhiskerValueRaw`, without a Kotlin `WhiskerValue`
+    // intermediary (the event reporter lives in the `whisker-runtime`
+    // Gradle module, which doesn't depend on the `module` project
+    // where `WhiskerValue` is declared).
+    jclass jbool_cls = nullptr;
+    jmethodID jbool_value = nullptr;
+    jclass jnumber_cls = nullptr;
+    jmethodID jnumber_long = nullptr, jnumber_double = nullptr;
+    jclass jdouble_cls = nullptr;
+    jclass jfloat_cls = nullptr;
+    jclass jstring_cls = nullptr;
 
     jclass registry_cls = nullptr;
     jmethodID registry_dispatch = nullptr;
@@ -484,6 +477,19 @@ bool init_wvjni(JNIEnv* env) {
     h.iter_next     = env->GetMethodID(h.iter_cls, "next", "()Ljava/lang/Object;");
     h.map_entry_key = env->GetMethodID(h.map_entry_cls, "getKey", "()Ljava/lang/Object;");
     h.map_entry_val = env->GetMethodID(h.map_entry_cls, "getValue", "()Ljava/lang/Object;");
+
+    h.jbool_cls   = make_global(env, "java/lang/Boolean");
+    h.jnumber_cls = make_global(env, "java/lang/Number");
+    h.jdouble_cls = make_global(env, "java/lang/Double");
+    h.jfloat_cls  = make_global(env, "java/lang/Float");
+    h.jstring_cls = make_global(env, "java/lang/String");
+    if (h.jbool_cls != nullptr) {
+        h.jbool_value = env->GetMethodID(h.jbool_cls, "booleanValue", "()Z");
+    }
+    if (h.jnumber_cls != nullptr) {
+        h.jnumber_long   = env->GetMethodID(h.jnumber_cls, "longValue", "()J");
+        h.jnumber_double = env->GetMethodID(h.jnumber_cls, "doubleValue", "()D");
+    }
 
     h.registry_dispatch = env->GetStaticMethodID(
         h.registry_cls, "invokeDispatch",
@@ -692,7 +698,123 @@ WhiskerValueRaw jvalue_to_value(JNIEnv* env, jobject obj) {
     v.v.s.ptr = dup_malloc(msg); v.v.s.len = std::strlen(msg); return v;
 }
 
+// Marshal a **raw Java** event-body object (the `Map<String, Any?>`
+// Lynx hands `LynxCustomEvent.eventParams()`, with Boolean / Number /
+// String / nested Map / List values) into a `WhiskerValueRaw` tree.
+// Distinct from `jvalue_to_value` (which expects Kotlin `WhiskerValue`
+// sealed-class instances) — the event reporter only has plain boxed
+// Java types. Unknown types degrade to `WHISKER_VALUE_NULL`.
+WhiskerValueRaw jobject_to_value(JNIEnv* env, jobject obj) {
+    WhiskerValueRaw v;
+    std::memset(&v, 0, sizeof(v));
+    auto& h = wvjni();
+    if (obj == nullptr) { v.type = WHISKER_VALUE_NULL; return v; }
+    if (h.jbool_cls != nullptr && env->IsInstanceOf(obj, h.jbool_cls)) {
+        v.type = WHISKER_VALUE_BOOL;
+        v.v.b = env->CallBooleanMethod(obj, h.jbool_value);
+        return v;
+    }
+    if ((h.jdouble_cls != nullptr && env->IsInstanceOf(obj, h.jdouble_cls)) ||
+        (h.jfloat_cls != nullptr && env->IsInstanceOf(obj, h.jfloat_cls))) {
+        v.type = WHISKER_VALUE_FLOAT;
+        v.v.f = env->CallDoubleMethod(obj, h.jnumber_double);
+        return v;
+    }
+    if (h.jnumber_cls != nullptr && env->IsInstanceOf(obj, h.jnumber_cls)) {
+        v.type = WHISKER_VALUE_INT;
+        v.v.i = env->CallLongMethod(obj, h.jnumber_long);
+        return v;
+    }
+    if (h.jstring_cls != nullptr && env->IsInstanceOf(obj, h.jstring_cls)) {
+        std::string s = jstr_to_str(env, static_cast<jstring>(obj));
+        v.type = WHISKER_VALUE_STRING;
+        v.v.s.ptr = dup_malloc(s); v.v.s.len = s.size();
+        return v;
+    }
+    if (env->IsInstanceOf(obj, h.list_cls)) {
+        jint sz = env->CallIntMethod(obj, h.list_size);
+        WhiskerValueRaw* items = static_cast<WhiskerValueRaw*>(
+            std::malloc(((size_t)sz > 0 ? (size_t)sz : 1) * sizeof(WhiskerValueRaw)));
+        for (jint i = 0; i < sz; i++) {
+            jobject elem = env->CallObjectMethod(obj, h.list_get, i);
+            items[i] = jobject_to_value(env, elem);
+            if (elem != nullptr) env->DeleteLocalRef(elem);
+        }
+        v.type = WHISKER_VALUE_ARRAY;
+        v.v.array.items = items; v.v.array.count = (size_t)sz;
+        return v;
+    }
+    if (env->IsInstanceOf(obj, h.map_iface)) {
+        jobject set = env->CallObjectMethod(obj, h.map_entry_set);
+        jobject it  = env->CallObjectMethod(set, h.set_iterator);
+        std::vector<std::pair<std::string, WhiskerValueRaw>> tmp;
+        while (env->CallBooleanMethod(it, h.iter_has_next)) {
+            jobject entry = env->CallObjectMethod(it, h.iter_next);
+            jobject ko = env->CallObjectMethod(entry, h.map_entry_key);
+            jobject vo = env->CallObjectMethod(entry, h.map_entry_val);
+            std::string k = (ko != nullptr && env->IsInstanceOf(ko, h.jstring_cls))
+                ? jstr_to_str(env, static_cast<jstring>(ko))
+                : std::string();
+            WhiskerValueRaw val = jobject_to_value(env, vo);
+            tmp.emplace_back(std::move(k), val);
+            if (ko != nullptr) env->DeleteLocalRef(ko);
+            if (vo != nullptr) env->DeleteLocalRef(vo);
+            env->DeleteLocalRef(entry);
+        }
+        env->DeleteLocalRef(it); env->DeleteLocalRef(set);
+        size_t n = tmp.size();
+        WhiskerKeyValueRaw* entries = static_cast<WhiskerKeyValueRaw*>(
+            std::malloc((n > 0 ? n : 1) * sizeof(WhiskerKeyValueRaw)));
+        for (size_t i = 0; i < n; i++) {
+            entries[i].key.ptr = dup_malloc(tmp[i].first);
+            entries[i].key.len = tmp[i].first.size();
+            entries[i].value = tmp[i].second;
+        }
+        v.type = WHISKER_VALUE_MAP;
+        v.v.map.entries = entries; v.v.map.count = n;
+        return v;
+    }
+    v.type = WHISKER_VALUE_NULL;
+    return v;
+}
+
 }  // namespace
+
+// Called from Kotlin's `EventEmitter.LynxEventReporter` for every
+// LynxEvent the engine fires. `params` is the event body as a raw
+// Java `Map<String, Any?>` (or null for bodyless events like touch);
+// we marshal it into a `WhiskerValueRaw` tree, dispatch to the
+// registered Rust callback, then release the tree. Returns true if a
+// callback was found and fired.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_rs_whisker_runtime_WhiskerView_nativeOnLynxEvent(
+    JNIEnv* env, jobject /*self*/, jlong /*engine_raw*/,
+    jint tag, jstring name_jstr, jobject params) {
+    if (name_jstr == nullptr) return JNI_FALSE;
+    const char* name = env->GetStringUTFChars(name_jstr, nullptr);
+    if (name == nullptr) return JNI_FALSE;
+
+    bool handled = false;
+    if (params == nullptr) {
+        // Bodyless event (touch / focus / …) — dispatch with no value.
+        handled = whisker_bridge_internal_dispatch_event(
+            static_cast<int32_t>(tag), name, nullptr);
+    } else if (init_wvjni(env)) {
+        WhiskerValueRaw value = jobject_to_value(env, params);
+        handled = whisker_bridge_internal_dispatch_event(
+            static_cast<int32_t>(tag), name, &value);
+        whisker_bridge_value_release(&value);
+    } else {
+        // JNI handles failed to init — fall back to bodyless dispatch
+        // so the handler still fires.
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        handled = whisker_bridge_internal_dispatch_event(
+            static_cast<int32_t>(tag), name, nullptr);
+    }
+
+    env->ReleaseStringUTFChars(name_jstr, name);
+    return handled ? JNI_TRUE : JNI_FALSE;
+}
 
 extern "C" WhiskerValueRaw whisker_bridge_invoke_module(
     const char* module_name, const char* method_name,
