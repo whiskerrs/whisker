@@ -236,25 +236,44 @@ typedef struct WhiskerKeyValueRec {
     WhiskerValueRaw value;
 } WhiskerKeyValueRaw;
 
-// Register a native event listener that receives the event body as a
-// `WhiskerValueRaw` tree — the same tagged-union wire as module
-// args/returns, no JSON round-trip. When the event fires the bridge
-// builds the value from the platform-side event body (Lynx's
-// `LynxEvent.generateEventBody` dict on iOS, the event-params map on
-// Android) and hands `callback(user_data, &value)` from the TASM
-// thread.
-//
-// `payload` is owned by the bridge and only valid for the duration of
-// the call (the callback copies out via the Rust `from_raw`). For a
-// bodyless event the bridge passes a `WHISKER_VALUE_NULL` value, never
-// NULL pointer. Calling more than once for the same `(element,
-// event_name)` replaces the prior listener.
+// NOTE (Phase 5): event listeners no longer live in the bridge. Lynx's
+// reporter hook fires once at the hit-tested target, *before* the
+// engine walks its capture/bubble chain (whose per-element firings go
+// to the absent JS runtime), so the bridge can't observe Lynx-native
+// propagation. Whisker instead reconstructs propagation in Rust: the
+// `whisker-driver` renderer owns the element tree + per-element
+// listeners (with their bind/catch/capture type) and replays
+// Lynx's capture→bubble→catch algorithm. The two functions below are
+// retained as no-op stubs for ABI stability; the Rust driver no longer
+// calls them. Dispatch flows through `whisker_bridge_register_event_dispatcher`.
 typedef void (*WhiskerEventValueCallback)(void* user_data, const WhiskerValueRaw* payload);
 WHISKER_BRIDGE_EXPORT void whisker_bridge_set_event_listener_with_value(
     WhiskerElement* element,
     const char* event_name,
     WhiskerEventValueCallback callback,
     void* user_data);
+
+// The Rust-side event dispatcher. The platform reporter hook calls it
+// (via `whisker_bridge_internal_dispatch_event`) with the hit-tested
+// target's element sign, the event name, and the event body. The
+// driver walks its own element tree from `target_sign` up to the root,
+// runs the capture phase (root→target) then the bubble phase
+// (target→root) honoring each listener's bind/catch/capture type, and
+// returns whether the event was consumed (so the reporter can tell
+// Lynx to skip its own native chain). `body` is borrowed for the call.
+typedef bool (*WhiskerEventDispatcher)(int32_t target_sign,
+                                       const char* event_name,
+                                       const WhiskerValueRaw* body);
+
+// Register (or clear, with NULL) the Rust event dispatcher. Called once
+// by the driver at bootstrap.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_register_event_dispatcher(
+    WhiskerEventDispatcher dispatcher);
+
+// The Lynx element sign (impl id) for `element` — the same identifier
+// the reporter reports as the event target, and the key the driver
+// uses for its tree + listener maps. Returns 0 for a null element.
+WHISKER_BRIDGE_EXPORT int32_t whisker_bridge_element_sign(WhiskerElement* element);
 
 // Per-module dispatch function — the platform-side Swift Macro or
 // KSP processor emits one of these per `@WhiskerModule`-annotated

@@ -37,6 +37,18 @@ pub type WhiskerEventCallback = extern "C" fn(user_data: *mut c_void);
 pub type WhiskerEventValueCallback =
     extern "C" fn(user_data: *mut c_void, payload: *const WhiskerValueRaw);
 
+/// The Rust event dispatcher the bridge calls when its reporter hook
+/// fires. Receives the hit-tested target's element sign, the event
+/// name (NUL-terminated), and the event body (`WhiskerValueRaw` tree,
+/// never NULL). Returns whether the event was consumed (so the
+/// reporter can tell Lynx to skip its native chain). See
+/// `whisker_bridge_register_event_dispatcher`.
+pub type WhiskerEventDispatcher = extern "C" fn(
+    target_sign: i32,
+    event_name: *const c_char,
+    body: *const WhiskerValueRaw,
+) -> bool;
+
 // ----- Platform module invocation (Phase 7-Φ.E) ------------------------------
 //
 // `#[repr(C)]` mirror of the C tagged-union in `whisker_bridge.h`.
@@ -202,6 +214,16 @@ extern "C" {
         callback: WhiskerEventValueCallback,
         user_data: *mut c_void,
     );
+
+    /// Register the Rust event dispatcher (the reporter hook forwards
+    /// to it). Called once by the driver at bootstrap. See
+    /// [`WhiskerEventDispatcher`].
+    pub fn whisker_bridge_register_event_dispatcher(dispatcher: WhiskerEventDispatcher);
+
+    /// The Lynx element sign for `element` — same id the reporter
+    /// reports as the event target, used as the key for the driver's
+    /// tree + listener maps. Returns 0 for a null element.
+    pub fn whisker_bridge_element_sign(element: *mut WhiskerElement) -> i32;
 
     pub fn whisker_bridge_set_root(engine: *mut WhiskerEngine, page: *mut WhiskerElement);
     pub fn whisker_bridge_flush(engine: *mut WhiskerEngine);

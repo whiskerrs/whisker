@@ -83,6 +83,7 @@ impl DynRenderer for Recorder {
         &mut self,
         h: Element,
         name: &str,
+        _bind_type: whisker::runtime::view::BindType,
         _cb: Box<dyn Fn(whisker::WhiskerValue) + 'static>,
     ) {
         self.log.borrow_mut().push(Op::Event {

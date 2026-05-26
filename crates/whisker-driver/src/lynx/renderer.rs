@@ -13,13 +13,22 @@
 //! we don't currently reuse them (cheap; can be revisited if
 //! per-frame churn ever matters).
 
-use std::ffi::{c_void, CString};
+use std::collections::{BTreeMap, HashMap};
+use std::ffi::CString;
 use std::ptr::NonNull;
+use std::rc::Rc;
 
 use whisker_driver_sys::{self as ffi, WhiskerElement, WhiskerElementTag, WhiskerEngine};
 use whisker_runtime::element::ElementTag;
 use whisker_runtime::value::WhiskerValue;
-use whisker_runtime::view::{DynRenderer, Element};
+use whisker_runtime::view::{BindType, DynRenderer, Element, EventDispatchPlan};
+
+use super::propagation;
+
+/// One registered listener: its propagation [`BindType`] plus the
+/// closure to fire. `Rc` so the planner can clone it into the firing
+/// list and the closure can run after the renderer borrow is released.
+type Listener = (BindType, Rc<dyn Fn(WhiskerValue) + 'static>);
 
 pub struct BridgeRenderer {
     engine: NonNull<WhiskerEngine>,
@@ -27,14 +36,22 @@ pub struct BridgeRenderer {
     /// released. Index assigned at `create_element` time, returned in
     /// the public `Element`.
     elements: Vec<Option<NonNull<WhiskerElement>>>,
-    /// Owned per-event listener closures. Double-boxed so the inner
-    /// `Box<dyn Fn>`'s fat-pointer address stays stable as the outer
-    /// `Vec` reallocates — that address is the `user_data` the C
-    /// bridge stores and hands back to the trampoline. Every event
-    /// now carries a [`WhiskerValue`] payload (the unit / typed
-    /// closures wrap into this single shape at the builder layer).
-    #[allow(clippy::vec_box, clippy::type_complexity)]
-    listeners: Vec<Box<Box<dyn Fn(WhiskerValue) + 'static>>>,
+    /// Child Lynx-sign → parent Lynx-sign, mirroring the attached
+    /// tree. Populated in [`append_child`](Self::append_child),
+    /// cleared in [`remove_child`](Self::remove_child) /
+    /// [`release_element`](Self::release_element). The event-dispatch
+    /// chain walk (`target → root`) follows these links — Lynx's
+    /// reporter only hands us the target, so we reconstruct the
+    /// ancestor chain ourselves.
+    parent_sign: HashMap<i32, i32>,
+    /// `(element sign, event name)` → listeners registered for it.
+    /// Keyed by Lynx sign so the reporter's target sign (and the
+    /// ancestor signs we walk to) look up directly. A given
+    /// `(element, event)` can hold more than one listener when capture
+    /// and bubble handlers are both registered (mirrors Lynx storing a
+    /// handler per type).
+    #[allow(clippy::type_complexity)]
+    listeners: HashMap<(i32, String), Vec<Listener>>,
 }
 
 impl BridgeRenderer {
@@ -47,7 +64,8 @@ impl BridgeRenderer {
         NonNull::new(engine).map(|engine| Self {
             engine,
             elements: Vec::new(),
-            listeners: Vec::new(),
+            parent_sign: HashMap::new(),
+            listeners: HashMap::new(),
         })
     }
 
@@ -59,6 +77,17 @@ impl BridgeRenderer {
         self.elements
             .get(handle.id() as usize)
             .and_then(|slot| *slot)
+    }
+
+    /// The Lynx element sign for `handle`, or `None` if the handle is
+    /// unknown / released. Routes through the bridge (the sign is
+    /// `lynx_element_id` of the underlying FiberElement).
+    fn sign_of(&self, handle: Element) -> Option<i32> {
+        let ptr = self.lookup(handle)?;
+        let sign = unsafe { ffi::whisker_bridge_element_sign(ptr.as_ptr()) };
+        // 0 is the bridge's "null element" sentinel; a real element
+        // sign is non-zero.
+        (sign != 0).then_some(sign)
     }
 }
 
@@ -101,10 +130,18 @@ impl DynRenderer for BridgeRenderer {
     }
 
     fn release_element(&mut self, handle: Element) {
+        // Resolve the sign before releasing so we can drop the element's
+        // listeners + parent link. After release the underlying pointer
+        // is gone, so `sign_of` would fail.
+        let sign = self.sign_of(handle);
         if let Some(slot) = self.elements.get_mut(handle.id() as usize) {
             if let Some(ptr) = slot.take() {
                 unsafe { ffi::whisker_bridge_release_element(ptr.as_ptr()) };
             }
+        }
+        if let Some(sign) = sign {
+            self.parent_sign.remove(&sign);
+            self.listeners.retain(|(s, _), _| *s != sign);
         }
     }
 
@@ -133,40 +170,88 @@ impl DynRenderer for BridgeRenderer {
         let Some(p) = self.lookup(parent) else { return };
         let Some(c) = self.lookup(child) else { return };
         unsafe { ffi::whisker_bridge_append_child(p.as_ptr(), c.as_ptr()) };
+        // Mirror the attachment in sign space for the event chain walk.
+        // (`insert_child_at` is built on append/remove, so it flows
+        // through here too.)
+        if let (Some(cs), Some(ps)) = (self.sign_of(child), self.sign_of(parent)) {
+            self.parent_sign.insert(cs, ps);
+        }
     }
 
     fn remove_child(&mut self, parent: Element, child: Element) {
         let Some(p) = self.lookup(parent) else { return };
         let Some(c) = self.lookup(child) else { return };
         unsafe { ffi::whisker_bridge_remove_child(p.as_ptr(), c.as_ptr()) };
+        if let Some(cs) = self.sign_of(child) {
+            self.parent_sign.remove(&cs);
+        }
     }
 
     fn set_event_listener(
         &mut self,
         handle: Element,
         event_name: &str,
+        bind_type: BindType,
         callback: Box<dyn Fn(WhiskerValue) + 'static>,
     ) {
-        let Some(ptr) = self.lookup(handle) else {
+        // Listeners live here in the driver (keyed by Lynx sign), not in
+        // the bridge: Whisker reconstructs propagation in Rust because
+        // Lynx's reporter hook fires once at the target, before — and
+        // bypassing — the engine's own capture/bubble chain (which
+        // targets the absent JS runtime). See `plan_event_dispatch`.
+        let Some(sign) = self.sign_of(handle) else {
             return;
         };
-        let Ok(name_c) = CString::new(event_name) else {
-            return;
-        };
-        let outer: Box<Box<dyn Fn(WhiskerValue) + 'static>> = Box::new(callback);
-        let raw = Box::as_ref(&outer) as *const Box<dyn Fn(WhiskerValue) + 'static> as *mut c_void;
-        self.listeners.push(outer);
-        // The bridge hands the event body across as a `WhiskerValueRaw`
-        // tree (same wire as module args); the trampoline copies it
-        // into an owned `WhiskerValue` via `from_raw`.
-        unsafe {
-            ffi::whisker_bridge_set_event_listener_with_value(
-                ptr.as_ptr(),
-                name_c.as_ptr(),
-                rust_event_trampoline,
-                raw,
-            )
-        };
+        let entry = self
+            .listeners
+            .entry((sign, event_name.to_string()))
+            .or_default();
+        // Replace any handler of the SAME bind/catch/capture type for
+        // this (element, event) — mirrors Lynx's per-type handler slot.
+        // A different type (e.g. capture + bubble on one element) is
+        // kept alongside.
+        entry.retain(|(bt, _)| *bt != bind_type);
+        entry.push((bind_type, Rc::from(callback)));
+    }
+
+    fn plan_event_dispatch(
+        &self,
+        target_sign: i32,
+        event_name: &str,
+        body: &WhiskerValue,
+    ) -> EventDispatchPlan {
+        // Reconstruct the response chain (target → root) from the
+        // parent mirror — Lynx's reporter only hands us the target.
+        let mut chain = vec![target_sign];
+        let mut cur = target_sign;
+        let mut guard = 0usize;
+        while let Some(&parent) = self.parent_sign.get(&cur) {
+            chain.push(parent);
+            cur = parent;
+            guard += 1;
+            // Defensive: a malformed tree shouldn't spin forever.
+            if guard > 4096 {
+                break;
+            }
+        }
+
+        let empty: Vec<Listener> = Vec::new();
+        let (consumed, ordered) = propagation::plan(&chain, |sign| {
+            self.listeners
+                .get(&(sign, event_name.to_string()))
+                .map(Vec::as_slice)
+                .unwrap_or(&empty)
+        });
+
+        // Each listener receives the body with its `currentTarget`
+        // rewritten to the element whose handler is firing (the
+        // reporter's body always names the original target).
+        let firings = ordered
+            .into_iter()
+            .map(|(sign, listener)| (listener, with_current_target(body, sign)))
+            .collect();
+
+        EventDispatchPlan { consumed, firings }
     }
 
     fn set_root(&mut self, page: Element) {
@@ -190,21 +275,68 @@ impl DynRenderer for BridgeRenderer {
     }
 }
 
-extern "C" fn rust_event_trampoline(user_data: *mut c_void, payload: *const ffi::WhiskerValueRaw) {
-    if user_data.is_null() {
-        return;
+/// Clone `body`, rewriting its `currentTarget.uid` to `sign` — the
+/// element whose handler is about to fire. Lynx's reporter only fills
+/// the original target, so as we replay propagation up the chain each
+/// listener gets a body naming *its* element as the current target.
+/// Non-map bodies (e.g. a bodyless event's `Null`) pass through.
+fn with_current_target(body: &WhiskerValue, sign: i32) -> WhiskerValue {
+    let mut cloned = body.clone();
+    if let WhiskerValue::Map(ref mut map) = cloned {
+        let ct = map
+            .entry("currentTarget".to_string())
+            .or_insert_with(|| WhiskerValue::Map(BTreeMap::new()));
+        match ct {
+            WhiskerValue::Map(ct_map) => {
+                ct_map.insert("uid".to_string(), WhiskerValue::Int(sign as i64));
+            }
+            other => {
+                let mut ct_map = BTreeMap::new();
+                ct_map.insert("uid".to_string(), WhiskerValue::Int(sign as i64));
+                *other = WhiskerValue::Map(ct_map);
+            }
+        }
     }
-    // The bridge hands the event body as a `WhiskerValueRaw` tree
-    // (NULL / `WHISKER_VALUE_NULL` = no body). Copy it into an owned
-    // `WhiskerValue` — same value model as module args/returns.
-    let value = if payload.is_null() {
+    cloned
+}
+
+/// C entry point the bridge reporter forwards every reported event to
+/// (registered via `whisker_bridge_register_event_dispatcher` at
+/// bootstrap). Reconstructs the [`WhiskerValue`] body, runs it through
+/// the installed renderer's propagation chain, and returns whether any
+/// listener consumed it (so the reporter can tell Lynx to skip its
+/// native chain).
+///
+/// Runs on the Lynx TASM thread, where the renderer is installed.
+extern "C" fn whisker_event_dispatch_entry(
+    target_sign: i32,
+    event_name: *const std::os::raw::c_char,
+    body: *const ffi::WhiskerValueRaw,
+) -> bool {
+    if event_name.is_null() {
+        return false;
+    }
+    // SAFETY: the bridge passes a valid NUL-terminated event name for
+    // the duration of the call.
+    let name = match unsafe { std::ffi::CStr::from_ptr(event_name) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    // The bridge normalises a missing body to `WHISKER_VALUE_NULL`, so
+    // `body` is non-null; guard anyway.
+    let value = if body.is_null() {
         WhiskerValue::Null
     } else {
-        // SAFETY: `payload` points to a valid `WhiskerValueRaw` owned
-        // by the bridge, valid for the duration of this call
-        // (documented contract). `from_raw` copies the data out.
-        unsafe { crate::module::from_raw(&*payload) }
+        // SAFETY: `body` points to a valid `WhiskerValueRaw` owned by
+        // the bridge, valid for this call. `from_raw` copies it out.
+        unsafe { crate::module::from_raw(&*body) }
     };
-    let cb = unsafe { &*(user_data as *const Box<dyn Fn(WhiskerValue) + 'static>) };
-    cb(value);
+    whisker_runtime::view::dispatch_event(target_sign, name, value)
+}
+
+/// Register [`whisker_event_dispatch_entry`] with the bridge so the
+/// platform reporter routes events through Whisker's reconstructed
+/// propagation. Idempotent; called once from bootstrap.
+pub(crate) fn register_event_dispatcher() {
+    unsafe { ffi::whisker_bridge_register_event_dispatcher(whisker_event_dispatch_entry) };
 }

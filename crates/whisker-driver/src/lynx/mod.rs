@@ -5,4 +5,5 @@
 //! in [`bootstrap`].
 
 pub mod bootstrap;
+mod propagation;
 pub mod renderer;

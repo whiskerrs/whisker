@@ -20,10 +20,57 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use super::handle::Element;
 use crate::element::ElementTag;
 use crate::value::WhiskerValue;
+
+/// Event-handler propagation type — a faithful 1:1 mapping to Lynx's
+/// four handler kinds (`bind` / `catch` / `capture-bind` /
+/// `capture-catch`). The variant chosen when registering a listener is
+/// what drives Lynx's native event chain:
+///
+///   - **phase**: capture handlers fire on the way *down* (root →
+///     target); bind/catch (bubble) handlers fire on the way *up*
+///     (target → root).
+///   - **stop**: a `catch` handler stops propagation after it fires;
+///     a `bind` handler lets the event continue along the chain.
+///
+/// The discriminants match `lynx_event_bind_type_e` in the C bridge,
+/// so the value crosses the FFI as a plain `i32`.
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BindType {
+    /// `bind` — bubble phase, does not stop propagation. The default
+    /// (what plain `on_<event>` registers).
+    #[default]
+    Bind = 0,
+    /// `catch` — bubble phase, stops propagation at this element.
+    Catch = 1,
+    /// `capture-bind` — capture phase, does not stop propagation.
+    CaptureBind = 2,
+    /// `capture-catch` — capture phase, stops propagation.
+    CaptureCatch = 3,
+}
+
+/// One planned listener firing: the listener plus the event value it
+/// should receive (its `currentTarget` already rewritten to that
+/// listener's element).
+pub type EventFiring = (Rc<dyn Fn(WhiskerValue) + 'static>, WhiskerValue);
+
+/// The ordered firing plan produced by
+/// [`DynRenderer::plan_event_dispatch`]. Separates *planning* (done
+/// under the renderer borrow) from *firing* (done after the borrow is
+/// released, since a handler may re-enter the renderer).
+#[derive(Default)]
+pub struct EventDispatchPlan {
+    /// Whether any listener matched — relayed to the platform reporter
+    /// so Lynx can skip its own native chain for this event.
+    pub consumed: bool,
+    /// Listeners to invoke, in propagation order.
+    pub firings: Vec<EventFiring>,
+}
 
 /// Object-safe renderer trait. The renderer owns whatever per-element
 /// state it needs and answers in `Element` IDs.
@@ -60,8 +107,35 @@ pub trait DynRenderer {
         &mut self,
         handle: Element,
         event_name: &str,
+        bind_type: BindType,
         callback: Box<dyn Fn(WhiskerValue) + 'static>,
     );
+
+    /// Plan how a reported event (`event_name` at `target_sign`,
+    /// carrying `body`) propagates through Whisker's reconstructed
+    /// chain — capture phase (root → target) then bubble phase
+    /// (target → root), honoring each registered listener's
+    /// [`BindType`] (catch stops bubbling; capture-catch stops
+    /// everything).
+    ///
+    /// Returns the listeners to fire **in order**, each paired with the
+    /// event value it should receive (its `currentTarget` set to that
+    /// listener's element), plus whether the event was consumed.
+    ///
+    /// Crucially this only *plans* — it does not fire the listeners,
+    /// because firing happens after the renderer borrow is released
+    /// (a handler may mutate signals → effects → re-enter the
+    /// renderer). [`dispatch_event`] does the firing. The default impl
+    /// plans nothing (renderers without a native event source); the
+    /// Lynx bridge renderer overrides it.
+    fn plan_event_dispatch(
+        &self,
+        _target_sign: i32,
+        _event_name: &str,
+        _body: &WhiskerValue,
+    ) -> EventDispatchPlan {
+        EventDispatchPlan::default()
+    }
 
     fn set_root(&mut self, page: Element);
     fn flush(&mut self);
@@ -307,9 +381,32 @@ pub fn __reset_children_mirror_for_tests() {
 pub fn set_event_listener(
     handle: Element,
     event_name: &str,
+    bind_type: BindType,
     callback: Box<dyn Fn(WhiskerValue) + 'static>,
 ) {
-    with_renderer(|r| r.set_event_listener(handle, event_name, callback), ())
+    with_renderer(
+        |r| r.set_event_listener(handle, event_name, bind_type, callback),
+        (),
+    )
+}
+
+/// Dispatch a reported event through the installed renderer's
+/// reconstructed propagation chain. The driver's C entry point (the
+/// bridge reporter forwards here) calls this. Returns whether the
+/// event was consumed.
+///
+/// Planning runs under the renderer borrow; the listeners then fire
+/// **after** the borrow is released, so a handler is free to mutate
+/// signals / re-enter `view::*` without a re-entrant borrow panic.
+pub fn dispatch_event(target_sign: i32, event_name: &str, body: WhiskerValue) -> bool {
+    let plan = with_renderer(
+        |r| r.plan_event_dispatch(target_sign, event_name, &body),
+        EventDispatchPlan::default(),
+    );
+    for (listener, event) in plan.firings {
+        listener(event);
+    }
+    plan.consumed
 }
 
 pub fn set_root(page: Element) {

@@ -54,7 +54,7 @@ pub use whisker_runtime::value::WhiskerValue;
 /// lifecycle / component-state events a [`CustomEvent`](event::CustomEvent).
 pub mod event {
     pub use whisker_runtime::event::{
-        AnimationEvent, CustomEvent, Event, Point, Target, Touch, TouchEvent,
+        AnimationEvent, BindType, CustomEvent, Event, Point, Target, Touch, TouchEvent,
     };
 }
 
@@ -124,7 +124,7 @@ pub mod __tags {
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
         append_child, apply_attr, apply_attr_owned, apply_styles, create_element,
-        set_event_listener, Element,
+        set_event_listener, BindType, Element,
     };
 
     // ---- The common builder surface -------------------------------------
@@ -281,46 +281,170 @@ pub mod __tags {
         }
 
         // ---- Events: touch / tap / click → `TouchEvent` -----------------
+        //
+        // Each touch event exposes the four Lynx handler kinds as a
+        // 1:1 naming convention (so `on_tap` ↔ `bindtap`,
+        // `on_tap_catch` ↔ `catchtap`, `on_capture_tap` ↔
+        // `capture-bindtap`, `on_capture_tap_catch` ↔
+        // `capture-catchtap`):
+        //
+        //   - `on_<event>`              — bubble phase, doesn't stop.
+        //   - `on_<event>_catch`        — bubble phase, stops here.
+        //   - `on_capture_<event>`      — capture phase, doesn't stop.
+        //   - `on_capture_<event>_catch`— capture phase, stops here.
+        //
+        // Capture handlers fire on the way *down* the element tree
+        // (root → target), bubble handlers on the way *up* (target →
+        // root); a `catch` handler stops the event from continuing
+        // along the chain after it fires. These set real Lynx handlers
+        // so the engine's native chain does the propagation.
 
         /// `tap` — single tap (won't fire if the finger moved far).
+        /// Bubble phase, lets the event continue up the chain.
         fn on_tap<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "tap", f);
+            bind_typed(self.__element(), "tap", BindType::Bind, f);
+            self
+        }
+        /// `tap`, bubble phase — **stops** propagation at this element.
+        fn on_tap_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "tap", BindType::Catch, f);
+            self
+        }
+        /// `tap`, capture phase (fires before descendants) — doesn't stop.
+        fn on_capture_tap<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "tap", BindType::CaptureBind, f);
+            self
+        }
+        /// `tap`, capture phase — **stops** propagation before it reaches
+        /// the target.
+        fn on_capture_tap_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "tap", BindType::CaptureCatch, f);
             self
         }
 
         /// `longpress` — ~500ms press (mutually exclusive with `tap`).
         fn on_longpress<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "longpress", f);
+            bind_typed(self.__element(), "longpress", BindType::Bind, f);
+            self
+        }
+        /// `longpress`, bubble phase — **stops** propagation here.
+        fn on_longpress_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "longpress", BindType::Catch, f);
+            self
+        }
+        /// `longpress`, capture phase — doesn't stop.
+        fn on_capture_longpress<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "longpress", BindType::CaptureBind, f);
+            self
+        }
+        /// `longpress`, capture phase — **stops** propagation.
+        fn on_capture_longpress_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "longpress", BindType::CaptureCatch, f);
             self
         }
 
         /// `click` — click on the nearest listening node.
         fn on_click<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "click", f);
+            bind_typed(self.__element(), "click", BindType::Bind, f);
+            self
+        }
+        /// `click`, bubble phase — **stops** propagation here.
+        fn on_click_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "click", BindType::Catch, f);
+            self
+        }
+        /// `click`, capture phase — doesn't stop.
+        fn on_capture_click<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "click", BindType::CaptureBind, f);
+            self
+        }
+        /// `click`, capture phase — **stops** propagation.
+        fn on_capture_click_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "click", BindType::CaptureCatch, f);
             self
         }
 
         /// `touchstart` — finger touches the surface.
         fn on_touchstart<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "touchstart", f);
+            bind_typed(self.__element(), "touchstart", BindType::Bind, f);
+            self
+        }
+        /// `touchstart`, bubble phase — **stops** propagation here.
+        fn on_touchstart_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchstart", BindType::Catch, f);
+            self
+        }
+        /// `touchstart`, capture phase — doesn't stop.
+        fn on_capture_touchstart<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchstart", BindType::CaptureBind, f);
+            self
+        }
+        /// `touchstart`, capture phase — **stops** propagation.
+        fn on_capture_touchstart_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchstart", BindType::CaptureCatch, f);
             self
         }
 
         /// `touchmove` — finger moves on the surface.
         fn on_touchmove<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "touchmove", f);
+            bind_typed(self.__element(), "touchmove", BindType::Bind, f);
+            self
+        }
+        /// `touchmove`, bubble phase — **stops** propagation here.
+        fn on_touchmove_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchmove", BindType::Catch, f);
+            self
+        }
+        /// `touchmove`, capture phase — doesn't stop.
+        fn on_capture_touchmove<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchmove", BindType::CaptureBind, f);
+            self
+        }
+        /// `touchmove`, capture phase — **stops** propagation.
+        fn on_capture_touchmove_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchmove", BindType::CaptureCatch, f);
             self
         }
 
         /// `touchend` — finger leaves the surface.
         fn on_touchend<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "touchend", f);
+            bind_typed(self.__element(), "touchend", BindType::Bind, f);
+            self
+        }
+        /// `touchend`, bubble phase — **stops** propagation here.
+        fn on_touchend_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchend", BindType::Catch, f);
+            self
+        }
+        /// `touchend`, capture phase — doesn't stop.
+        fn on_capture_touchend<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchend", BindType::CaptureBind, f);
+            self
+        }
+        /// `touchend`, capture phase — **stops** propagation.
+        fn on_capture_touchend_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchend", BindType::CaptureCatch, f);
             self
         }
 
         /// `touchcancel` — touch interrupted by the system / a gesture.
         fn on_touchcancel<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "touchcancel", f);
+            bind_typed(self.__element(), "touchcancel", BindType::Bind, f);
+            self
+        }
+        /// `touchcancel`, bubble phase — **stops** propagation here.
+        fn on_touchcancel_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchcancel", BindType::Catch, f);
+            self
+        }
+        /// `touchcancel`, capture phase — doesn't stop.
+        fn on_capture_touchcancel<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchcancel", BindType::CaptureBind, f);
+            self
+        }
+        /// `touchcancel`, capture phase — **stops** propagation.
+        fn on_capture_touchcancel_catch<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchcancel", BindType::CaptureCatch, f);
             self
         }
 
@@ -328,19 +452,19 @@ pub mod __tags {
 
         /// `layoutchange` — reports position after layout completes.
         fn on_layoutchange<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "layoutchange", f);
+            bind_typed(self.__element(), "layoutchange", BindType::Bind, f);
             self
         }
 
         /// `uiappear` — node entered the visible screen area.
         fn on_uiappear<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "uiappear", f);
+            bind_typed(self.__element(), "uiappear", BindType::Bind, f);
             self
         }
 
         /// `uidisappear` — node left the visible screen area.
         fn on_uidisappear<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "uidisappear", f);
+            bind_typed(self.__element(), "uidisappear", BindType::Bind, f);
             self
         }
 
@@ -348,43 +472,43 @@ pub mod __tags {
 
         /// `animationstart` — keyframe animation began.
         fn on_animationstart<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "animationstart", f);
+            bind_typed(self.__element(), "animationstart", BindType::Bind, f);
             self
         }
 
         /// `animationend` — keyframe animation completed.
         fn on_animationend<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "animationend", f);
+            bind_typed(self.__element(), "animationend", BindType::Bind, f);
             self
         }
 
         /// `animationcancel` — keyframe animation interrupted.
         fn on_animationcancel<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "animationcancel", f);
+            bind_typed(self.__element(), "animationcancel", BindType::Bind, f);
             self
         }
 
         /// `animationiteration` — keyframe animation cycle boundary.
         fn on_animationiteration<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "animationiteration", f);
+            bind_typed(self.__element(), "animationiteration", BindType::Bind, f);
             self
         }
 
         /// `transitionstart` — transition animation began.
         fn on_transitionstart<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "transitionstart", f);
+            bind_typed(self.__element(), "transitionstart", BindType::Bind, f);
             self
         }
 
         /// `transitionend` — transition animation completed.
         fn on_transitionend<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "transitionend", f);
+            bind_typed(self.__element(), "transitionend", BindType::Bind, f);
             self
         }
 
         /// `transitioncancel` — transition animation interrupted.
         fn on_transitioncancel<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.__element(), "transitioncancel", f);
+            bind_typed(self.__element(), "transitioncancel", BindType::Bind, f);
             self
         }
 
@@ -392,9 +516,30 @@ pub mod __tags {
 
         /// Bind any event by name, receiving the raw [`WhiskerValue`]
         /// body. For custom / dynamic event names not covered by a
-        /// typed `on_<event>` method above.
+        /// typed `on_<event>` method above. Bubble phase, doesn't stop
+        /// propagation — for the catch / capture variants use
+        /// [`bind`](Self::bind).
         fn on<F: Fn(WhiskerValue) + 'static>(self, event: &'static str, f: F) -> Self {
-            set_event_listener(self.__element(), event, ::std::boxed::Box::new(f));
+            self.bind(event, BindType::Bind, f)
+        }
+
+        /// Bind any event by name with an explicit propagation
+        /// [`BindType`] (bind / catch / capture-bind / capture-catch),
+        /// receiving the raw [`WhiskerValue`] body. The general escape
+        /// hatch behind the typed `on_<event>` / `on_<event>_catch` /
+        /// `on_capture_<event>[_catch]` methods.
+        fn bind<F: Fn(WhiskerValue) + 'static>(
+            self,
+            event: &'static str,
+            bind_type: BindType,
+            f: F,
+        ) -> Self {
+            set_event_listener(
+                self.__element(),
+                event,
+                bind_type,
+                ::std::boxed::Box::new(f),
+            );
             self
         }
 

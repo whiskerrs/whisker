@@ -82,6 +82,7 @@ impl DynRenderer for RecordingRenderer {
         &mut self,
         h: Element,
         name: &str,
+        _bind_type: super::BindType,
         _callback: Box<dyn Fn(crate::value::WhiskerValue) + 'static>,
     ) {
         self.ops.borrow_mut().push(Op::Event {
