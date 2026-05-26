@@ -60,6 +60,19 @@ const RA_VERSION: &str = "2026-05-18";
 
 // ----- Test cases ---------------------------------------------------------
 
+/// Whether RA surfaced a completion for builder method `name`.
+///
+/// The built-in builder methods (`style`, `class`, `on_tap`, …) live
+/// on the `ElementBuilder` trait now, and RA labels trait-provided
+/// methods as `name(as ElementBuilder)` to disambiguate them from
+/// inherent ones — selecting either inserts `name`. So accept the
+/// bare name or the trait-qualified form.
+fn surfaces_method(labels: &[String], name: &str) -> bool {
+    labels
+        .iter()
+        .any(|l| l == name || l.starts_with(&format!("{name}(")))
+}
+
 #[test]
 fn partial_kwarg_in_render_completes_builder_methods() {
     let source = r#"
@@ -74,11 +87,11 @@ fn probe() -> Element {
 "#;
     let labels = run_probe("partial_kwarg_in_render", source);
     assert!(
-        labels.contains(&"style".to_string()),
+        surfaces_method(&labels, "style"),
         "expected `style` in completions; got {labels:?}"
     );
     assert!(
-        labels.contains(&"class".to_string()),
+        surfaces_method(&labels, "class"),
         "expected `class` in completions; got {labels:?}"
     );
 }
@@ -100,7 +113,7 @@ fn probe() -> Element {
 "#;
     let labels = run_probe("partial_kwarg_in_component", source);
     assert!(
-        labels.contains(&"style".to_string()),
+        surfaces_method(&labels, "style"),
         "kwarg completion must work inside #[component]; got {labels:?}"
     );
 }

@@ -74,17 +74,11 @@ impl DynRenderer for Recorder {
         });
     }
     fn remove_child(&mut self, _p: Element, _c: Element) {}
-    fn set_event_listener(&mut self, h: Element, name: &str, _cb: Box<dyn Fn() + 'static>) {
-        self.log.borrow_mut().push(Op::Event {
-            id: h.id(),
-            name: name.into(),
-        });
-    }
-    fn set_event_listener_with_string_payload(
+    fn set_event_listener(
         &mut self,
         h: Element,
         name: &str,
-        _cb: Box<dyn Fn(String) + 'static>,
+        _cb: Box<dyn Fn(whisker::WhiskerValue) + 'static>,
     ) {
         self.log.borrow_mut().push(Op::Event {
             id: h.id(),
@@ -249,7 +243,7 @@ fn on_tap_emits_set_event_listener() {
         let fired = Rc::new(RefCell::new(false));
         let f = fired.clone();
         let _ = render! {
-            view(on_tap: move || *f.borrow_mut() = true)
+            view(on_tap: move |_| *f.borrow_mut() = true)
         };
         let ops = log.borrow();
         assert!(ops
@@ -265,7 +259,7 @@ fn on_tap_emits_set_event_listener() {
 fn camel_case_event_handler_lowercased() {
     with_recorder(|log| {
         let _ = render! {
-            view(onTap: || {})
+            view(onTap: |_| {})
         };
         let ops = log.borrow();
         assert!(ops

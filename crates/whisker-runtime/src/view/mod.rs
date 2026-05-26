@@ -31,7 +31,7 @@ pub mod renderer;
 #[cfg(test)]
 mod tests;
 
-pub use apply::{apply_attr, apply_styles};
+pub use apply::{apply_attr, apply_attr_owned, apply_styles};
 pub use control_flow::{for_each, show};
 pub use handle::Element;
 pub use into_view::{Children, IntoView, View};
@@ -41,6 +41,5 @@ pub use renderer::{
     append_child, child_index, children_of, create_element, create_element_by_name,
     current_renderer_id, flush, insert_child_at, install_renderer, module_component_ptr,
     previous_sibling, release_element, remove_child, set_attribute, set_event_listener,
-    set_event_listener_with_string_payload, set_inline_styles, set_root, uninstall_renderer,
-    with_installed_renderer, DynRenderer,
+    set_inline_styles, set_root, uninstall_renderer, with_installed_renderer, DynRenderer,
 };

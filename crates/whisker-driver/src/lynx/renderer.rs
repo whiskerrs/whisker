@@ -18,6 +18,7 @@ use std::ptr::NonNull;
 
 use whisker_driver_sys::{self as ffi, WhiskerElement, WhiskerElementTag, WhiskerEngine};
 use whisker_runtime::element::ElementTag;
+use whisker_runtime::value::WhiskerValue;
 use whisker_runtime::view::{DynRenderer, Element};
 
 pub struct BridgeRenderer {
@@ -26,18 +27,14 @@ pub struct BridgeRenderer {
     /// released. Index assigned at `create_element` time, returned in
     /// the public `Element`.
     elements: Vec<Option<NonNull<WhiskerElement>>>,
-    /// Owned per-event listener closures. See the type-shape comment
-    /// on the old `Renderer` impl for the double-box rationale —
-    /// unchanged because the bridge's C ABI is unchanged.
-    #[allow(clippy::vec_box)]
-    listeners: Vec<Box<Box<dyn Fn() + 'static>>>,
-    /// Same shape as `listeners`, but for the payload-aware
-    /// `set_event_listener_with_string_payload` path. Kept separate
-    /// (rather than `enum`-merging) because the two trampolines have
-    /// different ABIs and we want zero overhead on the no-payload
-    /// hot path that built-in tags exclusively use.
+    /// Owned per-event listener closures. Double-boxed so the inner
+    /// `Box<dyn Fn>`'s fat-pointer address stays stable as the outer
+    /// `Vec` reallocates — that address is the `user_data` the C
+    /// bridge stores and hands back to the trampoline. Every event
+    /// now carries a [`WhiskerValue`] payload (the unit / typed
+    /// closures wrap into this single shape at the builder layer).
     #[allow(clippy::vec_box, clippy::type_complexity)]
-    payload_listeners: Vec<Box<Box<dyn Fn(String) + 'static>>>,
+    listeners: Vec<Box<Box<dyn Fn(WhiskerValue) + 'static>>>,
 }
 
 impl BridgeRenderer {
@@ -51,7 +48,6 @@ impl BridgeRenderer {
             engine,
             elements: Vec::new(),
             listeners: Vec::new(),
-            payload_listeners: Vec::new(),
         })
     }
 
@@ -149,7 +145,7 @@ impl DynRenderer for BridgeRenderer {
         &mut self,
         handle: Element,
         event_name: &str,
-        callback: Box<dyn Fn() + 'static>,
+        callback: Box<dyn Fn(WhiskerValue) + 'static>,
     ) {
         let Some(ptr) = self.lookup(handle) else {
             return;
@@ -157,39 +153,17 @@ impl DynRenderer for BridgeRenderer {
         let Ok(name_c) = CString::new(event_name) else {
             return;
         };
-        let outer: Box<Box<dyn Fn() + 'static>> = Box::new(callback);
-        let raw = Box::as_ref(&outer) as *const Box<dyn Fn() + 'static> as *mut c_void;
+        let outer: Box<Box<dyn Fn(WhiskerValue) + 'static>> = Box::new(callback);
+        let raw = Box::as_ref(&outer) as *const Box<dyn Fn(WhiskerValue) + 'static> as *mut c_void;
         self.listeners.push(outer);
+        // The bridge hands the event body across as a `WhiskerValueRaw`
+        // tree (same wire as module args); the trampoline copies it
+        // into an owned `WhiskerValue` via `from_raw`.
         unsafe {
-            ffi::whisker_bridge_set_event_listener(
+            ffi::whisker_bridge_set_event_listener_with_value(
                 ptr.as_ptr(),
                 name_c.as_ptr(),
                 rust_event_trampoline,
-                raw,
-            )
-        };
-    }
-
-    fn set_event_listener_with_string_payload(
-        &mut self,
-        handle: Element,
-        event_name: &str,
-        callback: Box<dyn Fn(String) + 'static>,
-    ) {
-        let Some(ptr) = self.lookup(handle) else {
-            return;
-        };
-        let Ok(name_c) = CString::new(event_name) else {
-            return;
-        };
-        let outer: Box<Box<dyn Fn(String) + 'static>> = Box::new(callback);
-        let raw = Box::as_ref(&outer) as *const Box<dyn Fn(String) + 'static> as *mut c_void;
-        self.payload_listeners.push(outer);
-        unsafe {
-            ffi::whisker_bridge_set_event_listener_with_payload(
-                ptr.as_ptr(),
-                name_c.as_ptr(),
-                rust_event_payload_trampoline,
                 raw,
             )
         };
@@ -216,35 +190,21 @@ impl DynRenderer for BridgeRenderer {
     }
 }
 
-extern "C" fn rust_event_trampoline(user_data: *mut c_void) {
+extern "C" fn rust_event_trampoline(user_data: *mut c_void, payload: *const ffi::WhiskerValueRaw) {
     if user_data.is_null() {
         return;
     }
-    let cb = unsafe { &*(user_data as *const Box<dyn Fn() + 'static>) };
-    cb();
-}
-
-extern "C" fn rust_event_payload_trampoline(
-    user_data: *mut c_void,
-    payload_json: *const std::os::raw::c_char,
-) {
-    if user_data.is_null() {
-        return;
-    }
-    // Bridge contract: `payload_json` is never NULL — empty string
-    // means no payload. Still belt-and-suspenders, since a buggy
-    // bridge could pass NULL.
-    let s = if payload_json.is_null() {
-        String::new()
+    // The bridge hands the event body as a `WhiskerValueRaw` tree
+    // (NULL / `WHISKER_VALUE_NULL` = no body). Copy it into an owned
+    // `WhiskerValue` — same value model as module args/returns.
+    let value = if payload.is_null() {
+        WhiskerValue::Null
     } else {
-        // SAFETY: `payload_json` is a UTF-8 string owned by the
-        // bridge, valid for the duration of this call (the bridge's
-        // documented contract). We copy into an owned `String` so
-        // the callback can keep it past return.
-        unsafe { std::ffi::CStr::from_ptr(payload_json) }
-            .to_string_lossy()
-            .into_owned()
+        // SAFETY: `payload` points to a valid `WhiskerValueRaw` owned
+        // by the bridge, valid for the duration of this call
+        // (documented contract). `from_raw` copies the data out.
+        unsafe { crate::module::from_raw(&*payload) }
     };
-    let cb = unsafe { &*(user_data as *const Box<dyn Fn(String) + 'static>) };
-    cb(s);
+    let cb = unsafe { &*(user_data as *const Box<dyn Fn(WhiskerValue) + 'static>) };
+    cb(value);
 }

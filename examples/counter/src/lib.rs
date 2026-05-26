@@ -64,21 +64,21 @@ pub fn counter(state: AppState) -> whisker::runtime::view::Element {
             view(style: "display: flex; flex-direction: row; gap: 8px;") {
                 view(
                     style: "padding: 8px 16px; background: #e5e7eb; border-radius: 6px;",
-                    on_tap: move || state.count.update(|n| *n -= 1),
+                    on_tap: move |_| state.count.update(|n| *n -= 1),
                 ) {
                     text(value: "-1")
                 }
 
                 view(
                     style: "padding: 8px 16px; background: #e5e7eb; border-radius: 6px;",
-                    on_tap: move || state.count.set(0),
+                    on_tap: move |_| state.count.set(0),
                 ) {
                     text(value: "reset")
                 }
 
                 view(
                     style: "padding: 8px 16px; background: #3b82f6; color: white; border-radius: 6px;",
-                    on_tap: move || state.count.update(|n| *n += 1),
+                    on_tap: move |_| state.count.update(|n| *n += 1),
                 ) {
                     text(value: "+1")
                 }

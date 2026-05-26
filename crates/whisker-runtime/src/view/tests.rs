@@ -78,17 +78,11 @@ impl DynRenderer for RecordingRenderer {
             child: child.id(),
         });
     }
-    fn set_event_listener(&mut self, h: Element, name: &str, _callback: Box<dyn Fn() + 'static>) {
-        self.ops.borrow_mut().push(Op::Event {
-            id: h.id(),
-            name: name.into(),
-        });
-    }
-    fn set_event_listener_with_string_payload(
+    fn set_event_listener(
         &mut self,
         h: Element,
         name: &str,
-        _callback: Box<dyn Fn(String) + 'static>,
+        _callback: Box<dyn Fn(crate::value::WhiskerValue) + 'static>,
     ) {
         self.ops.borrow_mut().push(Op::Event {
             id: h.id(),

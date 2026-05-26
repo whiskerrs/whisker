@@ -33,6 +33,99 @@
 
 namespace {
 
+// ---- NSObject → WhiskerValueRaw marshalling -------------------------------
+//
+// The event reporter hands us the event body as an NSDictionary
+// (`[LynxEvent generateEventBody]`). We lower it into the same
+// `WhiskerValueRaw` tagged-union wire module args/returns use, so the
+// Rust side decodes events through one path (`from_raw`) with no JSON
+// round-trip. The tree is heap-owned (malloc); the public
+// `whisker_bridge_value_release` (recursive child-free, leaves the
+// stack-owned top struct) releases it after dispatch.
+
+WhiskerValueRaw WhiskerValueFromNSObject(id obj);
+
+WhiskerStringRef MakeStringRef(NSString* s) {
+    WhiskerStringRef ref{nullptr, 0};
+    if (s == nil) return ref;
+    const char* utf8 = [s UTF8String];
+    if (utf8 == nullptr) return ref;
+    size_t len = std::strlen(utf8);
+    char* buf = static_cast<char*>(std::malloc(len == 0 ? 1 : len));
+    if (len > 0) std::memcpy(buf, utf8, len);
+    ref.ptr = buf;
+    ref.len = len;
+    return ref;
+}
+
+WhiskerValueRaw WhiskerValueFromNSObject(id obj) {
+    WhiskerValueRaw v;
+    std::memset(&v, 0, sizeof(v));
+    if (obj == nil || [obj isKindOfClass:[NSNull class]]) {
+        v.type = WHISKER_VALUE_NULL;
+        return v;
+    }
+    if ([obj isKindOfClass:[NSString class]]) {
+        v.type = WHISKER_VALUE_STRING;
+        v.v.s = MakeStringRef(static_cast<NSString*>(obj));
+        return v;
+    }
+    if ([obj isKindOfClass:[NSNumber class]]) {
+        NSNumber* n = static_cast<NSNumber*>(obj);
+        // `__NSCFBoolean` reports as the CFBoolean type — distinguish
+        // it so JS-style booleans don't become Int 0/1.
+        if (CFGetTypeID((__bridge CFTypeRef)n) == CFBooleanGetTypeID()) {
+            v.type = WHISKER_VALUE_BOOL;
+            v.v.b = [n boolValue];
+            return v;
+        }
+        const char* t = [n objCType];
+        if (t != nullptr && (t[0] == 'f' || t[0] == 'd')) {
+            v.type = WHISKER_VALUE_FLOAT;
+            v.v.f = [n doubleValue];
+        } else {
+            v.type = WHISKER_VALUE_INT;
+            v.v.i = [n longLongValue];
+        }
+        return v;
+    }
+    if ([obj isKindOfClass:[NSArray class]]) {
+        NSArray* arr = static_cast<NSArray*>(obj);
+        size_t count = static_cast<size_t>(arr.count);
+        v.type = WHISKER_VALUE_ARRAY;
+        v.v.array.count = count;
+        v.v.array.items = count > 0
+            ? static_cast<WhiskerValueRaw*>(std::malloc(sizeof(WhiskerValueRaw) * count))
+            : nullptr;
+        for (size_t i = 0; i < count; i++) {
+            v.v.array.items[i] = WhiskerValueFromNSObject(arr[static_cast<NSUInteger>(i)]);
+        }
+        return v;
+    }
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        NSDictionary* dict = static_cast<NSDictionary*>(obj);
+        size_t count = static_cast<size_t>(dict.count);
+        v.type = WHISKER_VALUE_MAP;
+        v.v.map.count = count;
+        v.v.map.entries = count > 0
+            ? static_cast<WhiskerKeyValueRaw*>(std::malloc(sizeof(WhiskerKeyValueRaw) * count))
+            : nullptr;
+        size_t i = 0;
+        for (id key in dict) {
+            if (i >= count) break;
+            NSString* ks = [key isKindOfClass:[NSString class]]
+                ? static_cast<NSString*>(key)
+                : [key description];
+            v.v.map.entries[i].key = MakeStringRef(ks);
+            v.v.map.entries[i].value = WhiskerValueFromNSObject(dict[key]);
+            i++;
+        }
+        return v;
+    }
+    v.type = WHISKER_VALUE_NULL;
+    return v;
+}
+
 // LynxTemplateRender's `shell_` is a protected ivar of static type
 // `std::unique_ptr<lynx::shell::LynxShell>`. We can't `#include` Lynx
 // C++ headers any more (the new C ABI is the only thing the bridge
@@ -72,36 +165,32 @@ void InstallEventReporterIfNeeded(WhiskerEngine* engine, LynxView* view) {
     [emitter setEventReporterBlock:^BOOL(LynxEvent* event) {
         if (event == nil || event.eventName == nil) return NO;
         // `generateEventBody` is the public seam on `LynxEvent` (the
-        // base class), returning the dict that JS-side handlers would
-        // have received. For touch events the dict has the canonical
-        // touch points; for custom events (input / change / etc.) it
-        // contains the user-supplied params. Serialise via
-        // `NSJSONSerialization` so the bridge can hand it to the Rust
-        // callback as a UTF-8 string.
-        const char* payload_c = "";
-        std::string payload_storage;
+        // base class), returning the dict JS-side handlers would have
+        // received. For touch events the dict has the canonical touch
+        // points; for custom events (input / change / etc.) it carries
+        // the user-supplied params. Marshal it straight into a
+        // `WhiskerValueRaw` tree (no JSON) and hand the bridge a
+        // pointer; release the heap-owned tree after dispatch.
+        WhiskerValueRaw value;
+        bool have_value = false;
         @try {
             NSMutableDictionary* body = [event generateEventBody];
-            if (body != nil &&
-                [NSJSONSerialization isValidJSONObject:body]) {
-                NSError* err = nil;
-                NSData* data = [NSJSONSerialization dataWithJSONObject:body
-                                                              options:0
-                                                                error:&err];
-                if (data != nil && err == nil) {
-                    payload_storage.assign(
-                        (const char*)data.bytes, (size_t)data.length);
-                    payload_c = payload_storage.c_str();
-                }
+            if (body != nil) {
+                value = WhiskerValueFromNSObject(body);
+                have_value = true;
             }
         } @catch (NSException* exn) {
-            // Swallow — degrade to empty payload rather than crash
-            // the event-reporter chain.
+            // Swallow — degrade to "no body" rather than crash the
+            // event-reporter chain.
+            have_value = false;
         }
         bool handled = whisker_bridge_internal_dispatch_event(
             (int32_t)event.targetSign,
             [event.eventName UTF8String],
-            payload_c);
+            have_value ? &value : nullptr);
+        if (have_value) {
+            whisker_bridge_value_release(&value);
+        }
         return handled ? YES : NO;
     }];
     whisker_bridge_internal_mark_event_reporter_installed(engine);

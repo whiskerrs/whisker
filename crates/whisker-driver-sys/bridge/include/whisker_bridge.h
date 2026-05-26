@@ -134,24 +134,10 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_set_event_listener(WhiskerElement* ele
                                     WhiskerEventCallback callback,
                                     void* user_data);
 
-// Same as `whisker_bridge_set_event_listener` but also passes the event's
-// payload (the platform-side `event.detail` / `event.params` body
-// serialised as a JSON UTF-8 string) into `callback`. The payload
-// pointer is owned by the bridge and only valid for the duration of
-// the call — the callback MUST copy if it needs to retain it.
-//
-// For events that don't carry a payload (touch, focus, etc.) the
-// bridge passes `""` (empty string), never NULL.
-//
-// Used by `#[whisker::native_element]` for event-handler props
-// declared as `on_<event>: String` (e.g. `on_input: String` on an
-// `<input>` element receives the new text value).
-typedef void (*WhiskerEventPayloadCallback)(void* user_data, const char* payload_json);
-WHISKER_BRIDGE_EXPORT void whisker_bridge_set_event_listener_with_payload(
-    WhiskerElement* element,
-    const char* event_name,
-    WhiskerEventPayloadCallback callback,
-    void* user_data);
+// The value-carrying event-listener variant
+// (`whisker_bridge_set_event_listener_with_value`) is declared below,
+// after `WhiskerValueRaw` is defined — its callback hands the event
+// body across as a `WhiskerValueRaw` tree rather than a JSON string.
 
 // ---- Pipeline (TASM thread only) -----------------------------------------
 
@@ -249,6 +235,26 @@ typedef struct WhiskerKeyValueRec {
     WhiskerStringRef key;
     WhiskerValueRaw value;
 } WhiskerKeyValueRaw;
+
+// Register a native event listener that receives the event body as a
+// `WhiskerValueRaw` tree — the same tagged-union wire as module
+// args/returns, no JSON round-trip. When the event fires the bridge
+// builds the value from the platform-side event body (Lynx's
+// `LynxEvent.generateEventBody` dict on iOS, the event-params map on
+// Android) and hands `callback(user_data, &value)` from the TASM
+// thread.
+//
+// `payload` is owned by the bridge and only valid for the duration of
+// the call (the callback copies out via the Rust `from_raw`). For a
+// bodyless event the bridge passes a `WHISKER_VALUE_NULL` value, never
+// NULL pointer. Calling more than once for the same `(element,
+// event_name)` replaces the prior listener.
+typedef void (*WhiskerEventValueCallback)(void* user_data, const WhiskerValueRaw* payload);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_set_event_listener_with_value(
+    WhiskerElement* element,
+    const char* event_name,
+    WhiskerEventValueCallback callback,
+    void* user_data);
 
 // Per-module dispatch function — the platform-side Swift Macro or
 // KSP processor emits one of these per `@WhiskerModule`-annotated

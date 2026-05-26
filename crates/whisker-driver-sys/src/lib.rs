@@ -29,12 +29,13 @@ pub enum WhiskerElementTag {
 
 pub type WhiskerTasmCallback = extern "C" fn(user_data: *mut c_void);
 pub type WhiskerEventCallback = extern "C" fn(user_data: *mut c_void);
-/// String-payload event callback. `payload_json` is a UTF-8 string
-/// (never NULL — the bridge normalises NULL to ""), owned by the
-/// bridge and only valid for the duration of the call. See
-/// `whisker_bridge_set_event_listener_with_payload`.
-pub type WhiskerEventPayloadCallback =
-    extern "C" fn(user_data: *mut c_void, payload_json: *const c_char);
+/// Value-payload event callback. `payload` is a `WhiskerValueRaw`
+/// tree (never NULL — the bridge normalises a missing body to a
+/// `WHISKER_VALUE_NULL` value), owned by the bridge and only valid
+/// for the duration of the call (copy out via `from_raw`). See
+/// `whisker_bridge_set_event_listener_with_value`.
+pub type WhiskerEventValueCallback =
+    extern "C" fn(user_data: *mut c_void, payload: *const WhiskerValueRaw);
 
 // ----- Platform module invocation (Phase 7-Φ.E) ------------------------------
 //
@@ -195,10 +196,10 @@ extern "C" {
         user_data: *mut c_void,
     );
 
-    pub fn whisker_bridge_set_event_listener_with_payload(
+    pub fn whisker_bridge_set_event_listener_with_value(
         element: *mut WhiskerElement,
         event_name: *const c_char,
-        callback: WhiskerEventPayloadCallback,
+        callback: WhiskerEventValueCallback,
         user_data: *mut c_void,
     );
 

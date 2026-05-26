@@ -18,8 +18,8 @@
 //!     placeholder: Signal<String>,          // → SetAttribute("placeholder", …)
 //!     style: Signal<String>,                // → SetRawInlineStyles(…)
 //!     checked: Signal<bool>,                // → SetAttribute("checked", "true" / "false") via ToString
-//!     on_focus: (),                         // → set_event_listener("focus", Fn())
-//!     on_input: String,                     // → set_event_listener_with_string_payload("input", Fn(String))
+//!     on_focus: (),                         // → event::bind_unit("focus", Fn())
+//!     on_input: TouchEvent,                 // → event::bind_typed::<TouchEvent>("input", Fn(TouchEvent))
 //!     children: Children,                   // → child views attached to this element
 //! ) {}
 //! //  ^^
@@ -39,8 +39,8 @@
 //! | Name pattern | Type pattern         | Treated as                         |
 //! |--------------|----------------------|------------------------------------|
 //! | any          | `Children`           | Children block                     |
-//! | `on_*`       | `()`                 | Event handler, no payload          |
-//! | `on_*`       | `String`             | Event handler, string payload      |
+//! | `on_*`       | `()`                 | Event handler, payload ignored     |
+//! | `on_*`       | `E: Deserialize`     | Event handler, body deserialized into `E` (`TouchEvent`, `WhiskerValue`, …) |
 //! | `style`      | `Signal<String>` etc.| Inline-styles (SetRawInlineStyles) |
 //! | other        | `Signal<T>`          | Attribute, dispatch on Static/Dynamic |
 //! | other        | `T`                  | Attribute, static set-once         |
@@ -55,7 +55,7 @@
 //! ```ignore
 //! pub struct XInputProps {
 //!     pub value: Signal<String>,
-//!     pub on_input: ::std::boxed::Box<dyn ::std::ops::Fn(String) + 'static>,
+//!     pub on_input: ::std::boxed::Box<dyn ::std::ops::Fn(TouchEvent) + 'static>,
 //!     pub children: Children,
 //!     /* … */
 //! }
@@ -64,14 +64,14 @@
 //! }
 //! impl XInputPropsBuilder {
 //!     pub fn value(self, v: impl Into<Signal<String>>) -> Self { … }
-//!     pub fn on_input<F: Fn(String) + 'static>(self, f: F) -> Self { … }
+//!     pub fn on_input<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self { … }
 //!     pub fn children(self, c: Children) -> Self { … }
 //!     pub fn build(self) -> XInputProps { … }
 //! }
 //! pub fn XInput(props: XInputProps) -> Element {
 //!     let h = view::create_element_by_name("x-input");
 //!     apply_attr::<_, String>(h, "value", props.value);
-//!     set_event_listener_with_string_payload(h, "input", props.on_input);
+//!     event::bind_typed::<TouchEvent, _>(h, "input", props.on_input);
 //!     let view: View = (props.children)();
 //!     view.attach_to(h);
 //!     h
@@ -357,15 +357,17 @@ enum PropKind {
     /// writes.
     Children,
     /// `on_<event>: ()` — no-payload event handler. The macro
-    /// generates a `Box<dyn Fn() + 'static>` field and uses
-    /// `set_event_listener`.
+    /// generates a `Box<dyn Fn() + 'static>` field and wires it via
+    /// `event::bind_unit` (the value-carrying primitive, payload
+    /// ignored).
     EventNoPayload { event: String },
-    /// `on_<event>: String` — string-payload event handler. The
-    /// macro generates a `Box<dyn Fn(String) + 'static>` field and
-    /// uses `set_event_listener_with_string_payload`. The bridge
-    /// forwards Lynx's `event.detail` as a JSON-ish string to the
-    /// callback.
-    EventStringPayload { event: String },
+    /// `on_<event>: E` — typed-payload event handler. `E` is any
+    /// `serde::Deserialize` type (the typed event structs in
+    /// `whisker::event`, or `WhiskerValue` for the raw body). The
+    /// macro generates a `Box<dyn Fn(E) + 'static>` field and wires
+    /// it via `event::bind_typed`, which deserializes the
+    /// `WhiskerValue` event body into `E` before calling the handler.
+    EventTyped { event: String, payload: Type },
 }
 
 fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
@@ -378,29 +380,28 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
 
     // Event handler? The `on_<event>` naming convention picks these out.
     // Payload classification comes from the declared TYPE — `()` means
-    // no payload, `String` means string payload. Anything else under
-    // this prefix is rejected for now.
+    // the payload is ignored; any other type is deserialized from the
+    // event body via `bind_typed` (must be `serde::Deserialize`).
     if let Some(event) = name.strip_prefix("on_") {
         if event.is_empty() {
             return Err(syn::Error::new(
                 ident.span(),
                 "#[whisker::module_component]: event prop name `on_` is empty; \
-                 use e.g. `on_tap: ()` or `on_input: String`",
+                 use e.g. `on_tap: ()` or `on_input: TouchEvent`",
             ));
         }
         let event = event.to_string();
         if is_unit_type(ty) {
             return Ok(PropKind::EventNoPayload { event });
         }
-        if is_path_segment(ty, "String") {
-            return Ok(PropKind::EventStringPayload { event });
-        }
-        return Err(syn::Error::new(
-            ty.span(),
-            "#[whisker::module_component]: `on_<event>` props must be typed `()` \
-             (no payload) or `String` (Lynx's event-detail as a raw string). \
-             Typed-detail support is on the roadmap.",
-        ));
+        // Any other type → typed-payload handler. `E` must be
+        // `serde::Deserialize` (enforced at the `bind_typed` call
+        // site); the typed event structs in `whisker::event` and
+        // `WhiskerValue` (raw body) all qualify.
+        return Ok(PropKind::EventTyped {
+            event,
+            payload: ty.clone(),
+        });
     }
 
     // Style → SetRawInlineStyles. Inner type extraction is the same
@@ -442,16 +443,6 @@ fn is_unit_type(ty: &Type) -> bool {
     matches!(ty, Type::Tuple(TypeTuple { elems, .. }) if elems.is_empty())
 }
 
-fn is_path_segment(ty: &Type, expected_last: &str) -> bool {
-    let Type::Path(TypePath { path, qself: None }) = ty else {
-        return false;
-    };
-    path.segments
-        .last()
-        .map(|s| s.ident == expected_last)
-        .unwrap_or(false)
-}
-
 // ----- Codegen helpers ----------------------------------------------------
 
 fn prop_struct_field(p: &Prop) -> TokenStream2 {
@@ -467,8 +458,8 @@ fn prop_struct_field(p: &Prop) -> TokenStream2 {
         PropKind::EventNoPayload { .. } => {
             quote! { pub #i: ::std::boxed::Box<dyn ::std::ops::Fn() + 'static> }
         }
-        PropKind::EventStringPayload { .. } => {
-            quote! { pub #i: ::std::boxed::Box<dyn ::std::ops::Fn(::std::string::String) + 'static> }
+        PropKind::EventTyped { payload, .. } => {
+            quote! { pub #i: ::std::boxed::Box<dyn ::std::ops::Fn(#payload) + 'static> }
         }
     }
 }
@@ -486,8 +477,8 @@ fn prop_builder_field(p: &Prop) -> TokenStream2 {
         PropKind::EventNoPayload { .. } => {
             quote! { #i: ::std::option::Option<::std::boxed::Box<dyn ::std::ops::Fn() + 'static>> }
         }
-        PropKind::EventStringPayload { .. } => {
-            quote! { #i: ::std::option::Option<::std::boxed::Box<dyn ::std::ops::Fn(::std::string::String) + 'static>> }
+        PropKind::EventTyped { payload, .. } => {
+            quote! { #i: ::std::option::Option<::std::boxed::Box<dyn ::std::ops::Fn(#payload) + 'static>> }
         }
     }
 }
@@ -526,10 +517,10 @@ fn prop_setter(p: &Prop) -> TokenStream2 {
                 }
             }
         }
-        PropKind::EventStringPayload { .. } => {
+        PropKind::EventTyped { payload, .. } => {
             quote! {
                 #[allow(unused_mut)]
-                pub fn #i<F: ::std::ops::Fn(::std::string::String) + 'static>(mut self, f: F) -> Self {
+                pub fn #i<F: ::std::ops::Fn(#payload) + 'static>(mut self, f: F) -> Self {
                     self.#i = ::std::option::Option::Some(::std::boxed::Box::new(f));
                     self
                 }
@@ -562,7 +553,7 @@ fn prop_build_assignment(p: &Prop, tag_name: &str) -> TokenStream2 {
         PropKind::Style { .. } | PropKind::Attr { .. } => {
             quote! { #i: self.#i.unwrap_or_default() }
         }
-        PropKind::EventNoPayload { .. } | PropKind::EventStringPayload { .. } => {
+        PropKind::EventNoPayload { .. } | PropKind::EventTyped { .. } => {
             quote! { #i: self.#i.expect(#err) }
         }
     }
@@ -585,12 +576,12 @@ fn prop_apply_call(p: &Prop) -> TokenStream2 {
         }
         PropKind::EventNoPayload { event } => {
             quote! {
-                ::whisker::runtime::view::set_event_listener(__handle, #event, props.#i);
+                ::whisker::runtime::event::bind_unit(__handle, #event, props.#i);
             }
         }
-        PropKind::EventStringPayload { event } => {
+        PropKind::EventTyped { event, payload } => {
             quote! {
-                ::whisker::runtime::view::set_event_listener_with_string_payload(
+                ::whisker::runtime::event::bind_typed::<#payload, _>(
                     __handle, #event, props.#i,
                 );
             }
