@@ -325,6 +325,55 @@ pub fn invoke(name: &str, method: &str, args: Vec<WhiskerValue>) -> WhiskerValue
     result
 }
 
+/// A handle to a native Whisker (function-only) module, identified by
+/// its **fully-qualified** name (`<crate>:<Name>`).
+///
+/// Construct it with the [`whisker::module!`](../macro.module.html)
+/// macro — which prepends the calling crate's name so two crates can
+/// ship same-named modules without colliding — or with
+/// [`PlatformModule::named`] when you already hold the qualified name.
+///
+/// Mirrors Expo's `requireNativeModule(name)`: a lightweight,
+/// name-keyed reference. No registry lookup happens here; an
+/// unregistered module surfaces as a [`WhiskerValue::Error`] at
+/// [`invoke`](Self::invoke) time.
+///
+/// Module authors layer a typed wrapper on top (build the args,
+/// dispatch through `invoke`, lift the returned `WhiskerValue` into a
+/// typed `Result`). The raw `WhiskerValue` surface stays so a
+/// conversion mistake is loggable rather than silently lost.
+#[derive(Debug, Clone)]
+pub struct PlatformModule {
+    name: String,
+}
+
+impl PlatformModule {
+    /// Reference the module with the given **fully-qualified** name
+    /// (`<crate>:<Name>`). Prefer the `whisker::module!("Name")` macro,
+    /// which supplies the `<crate>:` prefix automatically from the
+    /// calling crate's `CARGO_PKG_NAME`.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+
+    /// The fully-qualified module name this handle dispatches to.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Dispatch `function` with `args` to the native module. Returns
+    /// the raw [`WhiskerValue`] (with [`WhiskerValue::Error`] on
+    /// dispatch failure); the typed wrapper converts it.
+    pub fn invoke(&self, function: &str, args: Vec<WhiskerValue>) -> WhiskerValue {
+        invoke(&self.name, function, args)
+    }
+
+    /// Async variant of [`invoke`](Self::invoke).
+    pub async fn invoke_async(&self, function: &str, args: Vec<WhiskerValue>) -> WhiskerValue {
+        invoke_async(&self.name, function, args).await
+    }
+}
+
 /// Async variant. Resolves once the bridge fires the C callback
 /// with the result.
 ///

@@ -46,11 +46,12 @@ final class SmokeModule: Module {
         ModuleDefinition {
             Name("SmokeVideo")
             View(SmokeFakeVideoView.self) {
-                Prop("src") { (view: SmokeFakeVideoView, value: String) in
-                    view.lastSrc = value
+                Prop("src") { (view: SmokeFakeVideoView, value: WhiskerValue) in
+                    view.lastSrc = value.asString
                 }
-                Function("play") { (view: SmokeFakeVideoView) in
+                Function("play") { (view: SmokeFakeVideoView, _: [WhiskerValue]) in
                     view.playCount += 1
+                    return .null
                 }
             }
         }

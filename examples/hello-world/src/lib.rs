@@ -489,7 +489,7 @@ fn scroll_body(state: AppState) -> Element {
 // would use.
 //
 // Phase 7-Φ.H.2: the actual Lynx tag string is namespaced as
-// `whisker-hello-element:Hello` — the `#[whisker::platform_component]`
+// `whisker-hello-element:Hello` — the `#[whisker::module_component]`
 // proc macro auto-prepends `env!("CARGO_PKG_NAME")` on the call
 // site, and the SwiftPM build plugin / KSP processor do the same
 // on the platform side. From the author's perspective the name
@@ -502,14 +502,11 @@ fn scroll_body(state: AppState) -> Element {
 // emission site — wildcard import keeps the line short and
 // matches the pattern third-party module crates will follow.
 use whisker_hello_element::*;
-// `Video` (call-site alias) + `VideoProps` (Props struct + ref
-// marker type) + `VideoControls` (typed trait — `r.play()`,
-// `r.seek(10.0)`). `VideoSys` is intentionally NOT imported —
-// it's the `-sys` raw `Vec<WhiskerValue>` trait that
-// `#[whisker::element_methods]` emits the impl onto, and bringing
-// it into scope here would make `r.play()` ambiguous between the
-// two trait methods.
-use whisker_video::{Video, VideoControls, VideoProps};
+// `Video` (the element for `render!`) + `VideoProps` (the builder
+// Props struct `render!` emits) + `VideoHandle` (the typed
+// imperative API — `handle.play()`, `handle.seek(10.0)`). The handle
+// wraps an `ElementRef`; pass `handle.r()` to the element's `ref:`.
+use whisker_video::{Video, VideoHandle, VideoProps};
 
 // Phase 7-Φ.H.2.7 demo — Big Buck Bunny in a Whisker Video
 // element, with imperative play/pause/seek dispatched from Rust
@@ -525,13 +522,7 @@ const BIG_BUCK_BUNNY_URL: &str =
 
 #[component]
 pub fn video_demo() -> Element {
-    let video_ref = element_ref::<VideoProps>();
-    // Phase N — `ElementRef` is `Copy` (slotmap-handle backed),
-    // so the per-closure aliases are just copies of the same handle.
-    let r_play = video_ref;
-    let r_pause = video_ref;
-    let r_seek = video_ref;
-
+    let video = VideoHandle::new();
     let row_style = "flex-direction: row; align-items: center; padding: 8px; \
          background-color: #1a1a1a; gap: 12px;";
     let btn_style = "padding: 8px 16px; background-color: #6c5ce7; \
@@ -539,14 +530,14 @@ pub fn video_demo() -> Element {
     render! {
         view(style: "flex-direction: column;") {
             Video(
-                ref: video_ref,
+                ref: video.r(),
                 src: BIG_BUCK_BUNNY_URL,
                 style: "width: 100%; height: 220px;"
             )
             view(style: row_style) {
-                text(value: "▶ Play",  style: btn_style, on_tap: move || { r_play.play(); })
-                text(value: "⏸ Pause", style: btn_style, on_tap: move || { r_pause.pause(); })
-                text(value: "+10s",    style: btn_style, on_tap: move || { r_seek.seek(10.0); })
+                text(value: "▶ Play",  style: btn_style, on_tap: move || { video.play(); })
+                text(value: "⏸ Pause", style: btn_style, on_tap: move || { video.pause(); })
+                text(value: "+10s",    style: btn_style, on_tap: move || { video.seek(10.0); })
             }
         }
     }

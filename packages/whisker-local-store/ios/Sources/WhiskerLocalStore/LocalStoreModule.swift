@@ -22,16 +22,19 @@ public final class LocalStoreModule: Module {
             Name("WhiskerLocalStore")
 
             // save(key, value) -> Bool
-            Function("save") { (key: String, value: String) -> Bool in
-                LocalStore.save(key, value)
+            Function("save") { (args: [WhiskerValue]) -> WhiskerValue in
+                let key = args.first?.asString ?? ""
+                let value = args.count > 1 ? (args[1].asString ?? "") : ""
+                return .bool(LocalStore.save(key, value))
             }
-            // load(key) -> String? | nil  (Rust lifts nil into Option::None)
-            Function("load") { (key: String) -> String? in
-                LocalStore.load(key)
+            // load(key) -> String | Null (Rust lifts Null into Option::None)
+            Function("load") { (args: [WhiskerValue]) -> WhiskerValue in
+                LocalStore.load(args.first?.asString ?? "").map { WhiskerValue.string($0) } ?? .null
             }
-            // remove(key) -> Void  (collapses to .null → ())
-            Function("remove") { (key: String) in
-                LocalStore.remove(key)
+            // remove(key) -> Null
+            Function("remove") { (args: [WhiskerValue]) -> WhiskerValue in
+                LocalStore.remove(args.first?.asString ?? "")
+                return .null
             }
         }
     }

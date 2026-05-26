@@ -29,13 +29,14 @@ internal object ModuleDefinitionSamples {
         Constants("maxResolution" to "1080p")
 
         View(FakeVideoView::class.java) {
-            Prop("src") { view: FakeVideoView, value: String ->
-                view.setSrc(value)
+            Prop("src") { view: FakeVideoView, value ->
+                view.setSrc(value.asString() ?: "")
             }
-            Function("play") { view: FakeVideoView -> view.play() }
-            Function("pause") { view: FakeVideoView -> view.pause() }
-            Function("seek") { view: FakeVideoView, seconds: Double ->
-                view.seek(seconds)
+            Function("play") { view: FakeVideoView, _ -> view.play(); WhiskerValue.Null }
+            Function("pause") { view: FakeVideoView, _ -> view.pause(); WhiskerValue.Null }
+            Function("seek") { view: FakeVideoView, args ->
+                view.seek(args.getOrNull(0)?.asDouble() ?: 0.0)
+                WhiskerValue.Null
             }
             Events("onCompleted")
         }
@@ -46,12 +47,13 @@ internal object ModuleDefinitionSamples {
     internal fun localStoreModuleDefinition(): ModuleDefinition = ModuleDefinition {
         Name("WhiskerLocalStore")
 
-        Function("save") { key: String, value: String ->
-            // Pretend to save somewhere.
-            key.isNotEmpty() && value.isNotEmpty()
+        Function("save") { args ->
+            val key = args.getOrNull(0)?.asString() ?: ""
+            val value = args.getOrNull(1)?.asString() ?: ""
+            WhiskerValue.Bool(key.isNotEmpty() && value.isNotEmpty())
         }
-        Function("load") { key: String ->
-            "stub-value-for-$key"
+        Function("load") { args ->
+            WhiskerValue.Str("stub-value-for-${args.getOrNull(0)?.asString() ?: ""}")
         }
     }
 

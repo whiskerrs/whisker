@@ -19,7 +19,7 @@ use std::ffi::CString;
 
 use whisker_driver_sys as ffi;
 use whisker_driver_sys::WhiskerElement;
-use whisker_runtime::view::{platform_component_ptr, Element};
+use whisker_runtime::view::{module_component_ptr, Element};
 
 use crate::module::{from_raw, RawBuilder, WhiskerValue};
 
@@ -37,7 +37,7 @@ pub fn invoke_element_method(
     method: &str,
     args: Vec<WhiskerValue>,
 ) -> WhiskerValue {
-    let ptr_usize = platform_component_ptr(handle);
+    let ptr_usize = module_component_ptr(handle);
     if ptr_usize == 0 {
         return WhiskerValue::Error(format!(
             "invoke_element_method({method}): no platform component for handle {} \

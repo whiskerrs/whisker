@@ -1,10 +1,10 @@
 //! [`Signal<T>`] — the unified prop-value type used by built-in tags,
-//! `#[component]`, and `#[whisker::platform_component]` builders.
+//! `#[component]`, and `#[whisker::module_component]` builders.
 //!
 //! ## Why this type exists
 //!
 //! Whisker's three "component" surfaces — built-in tags (`view`,
-//! `text`, …), user `#[component]`s, and `#[whisker::platform_component]`
+//! `text`, …), user `#[component]`s, and `#[whisker::module_component]`
 //! — share a single calling convention for props:
 //!
 //! ```ignore
@@ -76,7 +76,7 @@ use super::signal::{ReadSignal, RwSignal};
 /// Prop value: either a static `T` or a reactive [`ReadSignal<T>`].
 ///
 /// Built-in tag builders / `#[component]` generated builders /
-/// `#[whisker::platform_component]` generated builders all accept
+/// `#[whisker::module_component]` generated builders all accept
 /// `impl Into<Signal<T>>`. The variant determines whether the
 /// builder sets the attribute once ([`Static`]) or wraps the read
 /// in an `effect` ([`Dynamic`]).
@@ -119,7 +119,7 @@ impl<T: 'static + Clone> Signal<T> {
     ///   stack. Outside any tracking scope this is just a value
     ///   read.
     ///
-    /// User-facing `#[component]` / `#[whisker::platform_component]`
+    /// User-facing `#[component]` / `#[whisker::module_component]`
     /// bodies use this to read a `Signal<T>` prop:
     ///
     /// ```ignore
@@ -159,7 +159,7 @@ impl<T: 'static> From<T> for Signal<T> {
 }
 
 // `Signal<T: Default>::default() -> Signal::Static(T::default())`.
-// Used by `#[whisker::platform_component]`'s builder: a prop the caller
+// Used by `#[whisker::module_component]`'s builder: a prop the caller
 // omits falls back to `unwrap_or_default()`, which produces a
 // reasonable "attribute not set" value (`""` for `Signal<String>`,
 // `false` for `Signal<bool>`, etc.). Phase 7-Φ.H.2 follow-up.

@@ -25,15 +25,38 @@ pub use whisker_runtime as runtime;
 // the same enum.
 pub use whisker_runtime::element::ElementTag;
 
-pub use whisker_macros::{
-    component, element_methods, main, platform_component, platform_module, render,
-};
+pub use whisker_macros::{component, main, module_component, render};
 
 // Phase 7-Φ.H.2 — `ElementRef<T>` is the Rust-side handle for
 // invoking methods on a mounted platform component. `element_ref::<T>()`
-// allocates a fresh, unbound ref; the `#[whisker::platform_component]`
+// allocates a fresh, unbound ref; the `#[whisker::module_component]`
 // macro binds it on mount when passed as the `ref:` prop.
 pub use whisker_driver::{element_ref, ElementRef, RefError};
+
+// Function-only module dispatch. `PlatformModule` is the name-keyed
+// handle (≈ Expo `requireNativeModule`); the `module!` macro builds
+// one with the calling crate's name auto-prefixed for collision-free
+// dispatch (mirrors how `#[whisker::module_component]` namespaces
+// element tags).
+pub use whisker_driver::module::PlatformModule;
+
+/// Build a [`PlatformModule`] handle for the native module named
+/// `$name`, with the calling crate's name prepended
+/// (`<crate>:<$name>`) so two crates can ship same-named modules
+/// without colliding in the dispatch registry. `env!("CARGO_PKG_NAME")`
+/// resolves in the *calling* crate, so the prefix is always the
+/// crate that wrote the `module!(...)` call.
+///
+/// ```ignore
+/// let store = whisker::module!("WhiskerLocalStore"); // -> <crate>:WhiskerLocalStore
+/// let v = store.invoke("save", vec![key.into(), value.into()]);
+/// ```
+#[macro_export]
+macro_rules! module {
+    ($name:literal) => {
+        $crate::PlatformModule::named(concat!(env!("CARGO_PKG_NAME"), ":", $name))
+    };
+}
 
 // Phase 6.5a reactive surface, lifted to the top-level namespace so
 // user code can `use whisker::*` and reach the typical primitives
@@ -106,7 +129,7 @@ pub mod __tags {
     // `whisker_runtime::view::apply` (Phase J). Re-export here for
     // any caller that still routes through
     // `::whisker::__tags::apply_styles` — the
-    // `#[whisker::platform_component]` macro emits
+    // `#[whisker::module_component]` macro emits
     // `::whisker::runtime::view::apply_styles` directly now.
     pub use whisker_runtime::view::{apply_attr, apply_styles};
 

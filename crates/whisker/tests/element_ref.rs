@@ -2,7 +2,7 @@
 //!
 //! Covers:
 //! - `ElementRef::new()` allocates an unbound ref.
-//! - Passing `ref:` on a `#[platform_component]` call site binds the
+//! - Passing `ref:` on a `#[module_component]` call site binds the
 //!   ref to the freshly-created element on mount.
 //! - Disposing the surrounding owner clears the binding (the macro
 //!   emits `on_cleanup(move || r.__unbind())`).
@@ -83,7 +83,7 @@ fn with_test_env<R>(f: impl FnOnce() -> R) -> R {
 
 // ---- Platform component declaration ---------------------------------------
 
-#[whisker::platform_component("x-ref-target")]
+#[whisker::module_component("x-ref-target")]
 pub fn x_ref_target(value: Signal<String>) {}
 
 // ---- Tests -----------------------------------------------------------------

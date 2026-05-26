@@ -208,7 +208,11 @@ func render(
                             LynxComponentRegistry.registerUI(view.viewClass, withName: "\(tagPrefix)" + name)
                             module.registerWithLynx()
                         } else {
-                            whisker_bridge_register_module_dispatch(name, \(shim))
+                            // Namespace the dispatch key with the crate
+                            // (`<crate>:Name`) so two crates can ship
+                            // same-named function-only modules — matches
+                            // the Rust `module!("Name")` prefix.
+                            whisker_bridge_register_module_dispatch("\(tagPrefix)" + name, \(shim))
                         }
                     }
                 }

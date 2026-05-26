@@ -15,6 +15,7 @@ package rs.whisker.elements.video
 import rs.whisker.annotations.WhiskerModule
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
+import rs.whisker.runtime.WhiskerValue
 
 /**
  * DSL-driven module. `@WhiskerModule` marks it for registration;
@@ -32,13 +33,14 @@ class VideoModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Video")
         View(VideoView::class.java) {
-            Prop("src") { view: VideoView, value: String ->
-                view.setSrc(value)
+            Prop("src") { view: VideoView, value ->
+                view.setSrc(value.asString() ?: "")
             }
-            Function("play") { view: VideoView -> view.play() }
-            Function("pause") { view: VideoView -> view.pause() }
-            Function("seek") { view: VideoView, seconds: Double ->
-                view.seek(seconds)
+            Function("play") { view: VideoView, _ -> view.play(); WhiskerValue.Null }
+            Function("pause") { view: VideoView, _ -> view.pause(); WhiskerValue.Null }
+            Function("seek") { view: VideoView, args ->
+                view.seek(args.getOrNull(0)?.asDouble() ?: 0.0)
+                WhiskerValue.Null
             }
         }
     }

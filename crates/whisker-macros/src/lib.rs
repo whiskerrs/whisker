@@ -16,9 +16,7 @@ use quote::quote;
 use syn::{parse_macro_input, ItemFn};
 
 mod component;
-mod element_methods;
-mod platform_component;
-mod platform_module;
+mod module_component;
 mod render;
 
 /// Annotates the user's app function (returning `whisker::Element`) and
@@ -203,10 +201,10 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     component::expand(item.into()).into()
 }
 
-/// Declare a Whisker-side wrapper for a Lynx-registered platform component.
+/// Declare a Whisker-side wrapper for a Lynx-registered view module's element.
 ///
 /// ```ignore
-/// #[whisker::platform_component("Hello")]
+/// #[whisker::module_component("Hello")]
 /// pub fn hello(style: Signal<String>) -> Element;
 /// ```
 ///
@@ -219,13 +217,18 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// helpers built-in tags use, so a `Signal::Dynamic` prop transparently
 /// effect-wraps the attribute write.
 ///
-/// Phase 7-Φ.H.2: the tag string passed to Lynx at runtime is
+/// The tag string passed to Lynx at runtime is
 /// `<cargo-crate-name>:<attr-tag>` — the macro auto-prepends
 /// `env!("CARGO_PKG_NAME")` so two unrelated module packages can
 /// both declare a component named `Hello` without colliding in
 /// Lynx's behaviour registry. The matching platform-side
-/// registrations (`@WhiskerComponent` Swift Macro / Kotlin
-/// annotation) prepend the crate name the same way.
+/// `@WhiskerModule` DSL `Name(...)` is namespaced the same way by
+/// the per-platform codegen.
+///
+/// Imperative methods on a mounted element are dispatched through
+/// the element's `ElementRef` (`ref:` prop) via
+/// `ElementRef::invoke(method, args)` — there is no separate
+/// element-method declaration macro.
 ///
 /// Call-site shape mirrors built-in tags + user components:
 ///
@@ -235,85 +238,10 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// See `crates/whisker-macros/src/platform_component.rs` for the
-/// emission details (children + event-handler props are NOT yet
-/// supported; tracked in Phase 7-Φ follow-ups).
+/// See `crates/whisker-macros/src/module_component.rs` for the
+/// emission details (children props are NOT yet supported; tracked
+/// in follow-ups).
 #[proc_macro_attribute]
-pub fn platform_component(attr: TokenStream, item: TokenStream) -> TokenStream {
-    platform_component::expand(attr.into(), item.into()).into()
-}
-
-/// Declare a typed Rust proxy for a Lynx-registered platform module.
-///
-/// ```ignore
-/// #[whisker::platform_module(name = "WhiskerStorage")]
-/// pub trait WhiskerStorage {
-///     fn save(key: String, value: String) -> bool;
-///     fn load(key: String) -> Option<String>;
-///     async fn fetch(url: String) -> Vec<u8>;
-/// }
-/// ```
-///
-/// Emits a same-named unit struct with associated functions
-/// matching each trait method. Each function marshals its args
-/// into [`whisker::platform_module::WhiskerValue`], invokes the
-/// bridge via [`invoke`](whisker::platform_module::invoke) (sync)
-/// or [`invoke_async`](whisker::platform_module::invoke_async)
-/// (`async fn`), then converts the returned `WhiskerValue` back
-/// into the declared return type. Mismatched return shapes
-/// (bridge returned `Bool` but the method declared `String`,
-/// platform raised an error, etc.) surface as
-/// `Err(WhiskerModuleError(_))`.
-///
-/// **Module name**: `name = "..."` overrides the trait name as
-/// the registration string. The platform-side class registers
-/// against `WhiskerModuleRegistry` using this same name.
-///
-/// **Supported types** (args + returns):
-/// - Scalars: `bool`, `i32`/`i64`/`u32`/`u64`, `f32`/`f64`.
-/// - `String`.
-/// - `Vec<u8>` (bytes — zero-copy on the platform side for
-///   large blobs).
-/// - `Option<T>` where T is any of the above (maps to
-///   `WhiskerValue::Null` for None).
-/// - `WhiskerValue` (raw passthrough — useful for module methods
-///   that return polymorphic data).
-///
-/// Sync methods (no `async` keyword) generate
-/// `pub fn NAME(...) -> Result<RET, WhiskerModuleError>`. Async
-/// methods generate `pub async fn NAME(...) -> Result<RET,
-/// WhiskerModuleError>` that awaits the bridge's callback.
-///
-/// See `crates/whisker-macros/src/platform_module.rs` for the
-/// emission details.
-#[proc_macro_attribute]
-pub fn platform_module(attr: TokenStream, item: TokenStream) -> TokenStream {
-    platform_module::expand(attr.into(), item.into()).into()
-}
-
-/// Declare element-method dispatch on an `ElementRef<T>`.
-/// Phase 7-Φ.H.2.3.
-///
-/// ```ignore
-/// #[whisker::element_methods(Video)]
-/// pub trait VideoExt {
-///     fn play(&self, args: Vec<WhiskerValue>) -> WhiskerValue;
-///     fn seek(&self, args: Vec<WhiskerValue>) -> WhiskerValue;
-/// }
-/// ```
-///
-/// Emits the trait verbatim plus an `impl VideoExt for
-/// ::whisker::ElementRef<Video>` block whose method bodies call
-/// `self.invoke("play", args)` / `self.invoke("seek", args)` —
-/// dispatching through the C bridge's
-/// `whisker_bridge_invoke_element_method`. Module authors write a
-/// typed wrapper (`fn play(&self)`, `fn seek(&self, pos: f64)`)
-/// on top of this `-sys` trait — same discipline as
-/// `#[whisker::platform_module]`.
-///
-/// See `crates/whisker-macros/src/element_methods.rs` for the
-/// emission details + diagnostics.
-#[proc_macro_attribute]
-pub fn element_methods(attr: TokenStream, item: TokenStream) -> TokenStream {
-    element_methods::expand(attr.into(), item.into()).into()
+pub fn module_component(attr: TokenStream, item: TokenStream) -> TokenStream {
+    module_component::expand(attr.into(), item.into()).into()
 }

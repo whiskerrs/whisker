@@ -48,6 +48,41 @@ public enum WhiskerValue: Equatable {
     case error(String)
 }
 
+// MARK: - Convenience accessors (case ② arg destructuring)
+
+/// Typed reads for module authors destructuring raw `WhiskerValue`
+/// args (`args[0].asDouble()`, `value.asString()`, …). Numeric
+/// reads coerce between `.int` / `.float`; everything else returns
+/// `nil` on a case mismatch.
+public extension WhiskerValue {
+    var asString: String? {
+        if case .string(let s) = self { return s }
+        return nil
+    }
+    var asBool: Bool? {
+        if case .bool(let b) = self { return b }
+        return nil
+    }
+    var asInt: Int64? {
+        switch self {
+        case .int(let i): return i
+        case .float(let f): return Int64(f)
+        default: return nil
+        }
+    }
+    var asDouble: Double? {
+        switch self {
+        case .float(let f): return f
+        case .int(let i): return Double(i)
+        default: return nil
+        }
+    }
+    var asBytes: Data? {
+        if case .bytes(let d) = self { return d }
+        return nil
+    }
+}
+
 // MARK: - WhiskerValueRaw <-> WhiskerValue
 
 public extension WhiskerValue {

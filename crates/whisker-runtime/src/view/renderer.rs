@@ -56,7 +56,7 @@ pub trait DynRenderer {
     /// Variant that also passes the platform-side event-detail body
     /// (Lynx's `LynxEvent.generateEventBody` dict, serialised to a
     /// UTF-8 JSON string) to the callback. Used by
-    /// `#[whisker::platform_component]` for `on_<event>: String`
+    /// `#[whisker::module_component]` for `on_<event>: String`
     /// prop declarations — `on_input` on `<input>` receives the
     /// updated text via this path.
     ///
@@ -86,7 +86,7 @@ pub trait DynRenderer {
     /// driver surfaces as `WhiskerValue::Error` to the caller.
     ///
     /// Phase 7-Φ.H.2.3.
-    fn platform_component_ptr(&self, _handle: Element) -> usize {
+    fn module_component_ptr(&self, _handle: Element) -> usize {
         0
     }
 }
@@ -341,9 +341,9 @@ pub fn flush() {
 /// runtime crate's public surface. Returns `0` if no renderer is
 /// installed or the renderer doesn't have a native pointer for
 /// `handle`.
-pub fn platform_component_ptr(handle: Element) -> usize {
+pub fn module_component_ptr(handle: Element) -> usize {
     CURRENT_RENDERER.with_borrow(|slot| match slot.as_ref() {
-        Some(r) => r.platform_component_ptr(handle),
+        Some(r) => r.module_component_ptr(handle),
         None => 0,
     })
 }

@@ -29,13 +29,14 @@ public final class VideoModule: Module {
         ModuleDefinition {
             Name("Video")
             View(VideoView.self) {
-                Prop("src") { (view: VideoView, value: String) in
-                    view.setSrc(value)
+                Prop("src") { (view: VideoView, value: WhiskerValue) in
+                    view.setSrc(value.asString ?? "")
                 }
-                Function("play")  { (view: VideoView) in view.play()  }
-                Function("pause") { (view: VideoView) in view.pause() }
-                Function("seek")  { (view: VideoView, seconds: Double) in
-                    view.seek(seconds)
+                Function("play")  { (view: VideoView, _: [WhiskerValue]) in view.play();  return .null }
+                Function("pause") { (view: VideoView, _: [WhiskerValue]) in view.pause(); return .null }
+                Function("seek")  { (view: VideoView, args: [WhiskerValue]) in
+                    view.seek(args.first?.asDouble ?? 0)
+                    return .null
                 }
             }
         }

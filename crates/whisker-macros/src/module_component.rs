@@ -1,4 +1,4 @@
-//! `#[whisker::platform_component]` proc-macro.
+//! `#[whisker::module_component]` proc-macro.
 //!
 //! Generates a builder-style API for a custom Lynx element identified
 //! by a tag-name string. The macro shape mirrors `#[component]` —
@@ -12,7 +12,7 @@
 //! ## User syntax
 //!
 //! ```ignore
-//! #[whisker::platform_component("x-input")]
+//! #[whisker::module_component("x-input")]
 //! pub fn x_input(
 //!     value: Signal<String>,                // → SetAttribute("value", …) — Static / Dynamic dispatch
 //!     placeholder: Signal<String>,          // → SetAttribute("placeholder", …)
@@ -108,7 +108,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         Err(_) => {
             return syn::Error::new(
                 attr.span(),
-                "#[whisker::platform_component(\"<tag-name>\")] requires a \
+                "#[whisker::module_component(\"<tag-name>\")] requires a \
                  string-literal tag name (e.g. `\"Hello\"`, `\"Input\"`)",
             )
             .to_compile_error();
@@ -129,7 +129,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     if !sig.generics.params.is_empty() {
         return syn::Error::new(
             sig.generics.span(),
-            "#[whisker::platform_component] does not support generic parameters \
+            "#[whisker::module_component] does not support generic parameters \
              — platform components are tag-name driven, not type-parameterised. \
              Each tag is a distinct registered Lynx UI class.",
         )
@@ -143,7 +143,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             FnArg::Receiver(r) => {
                 return syn::Error::new(
                     r.span(),
-                    "#[whisker::platform_component] does not support method receivers",
+                    "#[whisker::module_component] does not support method receivers",
                 )
                 .to_compile_error();
             }
@@ -153,7 +153,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             other => {
                 return syn::Error::new(
                     other.span(),
-                    "#[whisker::platform_component] parameters must be plain identifiers",
+                    "#[whisker::module_component] parameters must be plain identifiers",
                 )
                 .to_compile_error();
             }
@@ -305,7 +305,7 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                 // Tag string is namespaced by the cargo crate name to
                 // avoid collisions between elements from independent
                 // module packages. Two unrelated crates that both
-                // declare `#[whisker::platform_component("Video")]` end up
+                // declare `#[whisker::module_component("Video")]` end up
                 // with distinct platform-side registrations
                 // (`crate-a:Video` vs `crate-b:Video`). The platform
                 // SwiftPM plugin / KSP processor prepends the same
@@ -384,7 +384,7 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
         if event.is_empty() {
             return Err(syn::Error::new(
                 ident.span(),
-                "#[whisker::platform_component]: event prop name `on_` is empty; \
+                "#[whisker::module_component]: event prop name `on_` is empty; \
                  use e.g. `on_tap: ()` or `on_input: String`",
             ));
         }
@@ -397,7 +397,7 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
         }
         return Err(syn::Error::new(
             ty.span(),
-            "#[whisker::platform_component]: `on_<event>` props must be typed `()` \
+            "#[whisker::module_component]: `on_<event>` props must be typed `()` \
              (no payload) or `String` (Lynx's event-detail as a raw string). \
              Typed-detail support is on the roadmap.",
         ));

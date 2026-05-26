@@ -163,35 +163,63 @@ for the reference shapes.
 
 ### 4. Write the Rust shim
 
+A **view module** (element + imperative methods):
+
 ```rust
 // src/lib.rs
 use whisker::platform_module::WhiskerValue;
 use whisker::{ElementRef, Signal};
 
-#[whisker::platform_component("Foo")]
+// The element for `render!`. Methods on a mounted instance dispatch
+// through its `ElementRef` (the `ref:` prop, bound on mount).
+#[whisker::module_component("Foo")]
 pub fn foo(src: Signal<String>, style: Signal<String>) {}
 
-#[whisker::element_methods(FooProps)]
-pub trait FooSys {
-    fn play(&self, args: Vec<WhiskerValue>) -> WhiskerValue;
+// Typed imperative handle end-users hold. Wraps an `ElementRef`;
+// each method dispatches via `ElementRef::invoke(method, args)` over
+// the raw `Vec<WhiskerValue>` wire.
+#[derive(Copy, Clone)]
+pub struct FooHandle { r: ElementRef }
+impl FooHandle {
+    pub fn new() -> Self { Self { r: ElementRef::new() } }
+    pub fn r(&self) -> ElementRef { self.r }   // pass to `Foo(ref: …)`
+    pub fn play(&self) { let _ = self.r.invoke("play", vec![]); }
+    pub fn seek(&self, t: f64) { let _ = self.r.invoke("seek", vec![WhiskerValue::Float(t)]); }
 }
+```
 
-pub trait FooControls {
-    fn play(&self);
-}
+A **function-only module** (service, no element):
 
-impl FooControls for ElementRef<FooProps> {
-    fn play(&self) {
-        let _ = FooSys::play(self, vec![]);
+```rust
+use whisker::platform_module::{WhiskerModuleError, WhiskerValue};
+
+pub struct FooStore;
+impl FooStore {
+    pub fn save(key: String, value: String) -> Result<bool, WhiskerModuleError> {
+        // `module!` prepends this crate's name → `<crate>:FooStore`,
+        // dispatching to the native module registered under that key.
+        match whisker::module!("FooStore").invoke(
+            "save", vec![WhiskerValue::String(key), WhiskerValue::String(value)],
+        ) {
+            WhiskerValue::Bool(b)  => Ok(b),
+            WhiskerValue::Error(m) => Err(WhiskerModuleError(m)),
+            o => Err(WhiskerModuleError(format!("expected Bool, got {o:?}"))),
+        }
     }
 }
 ```
 
-The proc macro auto-prepends `env!("CARGO_PKG_NAME")` to the local
-tag name so the registration string becomes `whisker-foo:Foo` — two
-unrelated modules can both declare a `Foo` component without colliding
-in Lynx's behavior registry. The platform-side DSL `Name("Foo")` is
-namespaced the same way by the codegen.
+`#[whisker::module_component]` auto-prepends `env!("CARGO_PKG_NAME")` to
+the tag (`whisker-foo:Foo`), and `whisker::module!` does the same for
+function-only module names (`whisker-foo:FooStore`) — so two unrelated
+crates can ship same-named elements/modules without colliding. The
+platform-side DSL `Name("Foo")` is namespaced the same way by the
+per-platform codegen.
+
+There are no binding-generating macros: the wire is raw
+`Vec<WhiskerValue>`, and the typed handle / wrapper is hand-written so
+a conversion mistake surfaces as a loggable `WhiskerValue` rather than
+silently producing nothing.
 
 ### 5. Write the Swift + Kotlin module
 

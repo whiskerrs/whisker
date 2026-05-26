@@ -15,6 +15,7 @@ package rs.whisker.modules.localstore
 import rs.whisker.annotations.WhiskerModule
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
+import rs.whisker.runtime.WhiskerValue
 
 @WhiskerModule
 class LocalStoreModule : Module() {
@@ -22,16 +23,20 @@ class LocalStoreModule : Module() {
         Name("WhiskerLocalStore")
 
         // save(key, value) -> Bool
-        Function("save") { key: String, value: String ->
-            LocalStore.save(key, value)
+        Function("save") { args ->
+            val key = args.getOrNull(0)?.asString() ?: ""
+            val value = args.getOrNull(1)?.asString() ?: ""
+            WhiskerValue.Bool(LocalStore.save(key, value))
         }
         // load(key) -> Str | Null  (Rust lifts Null into Option::None)
-        Function("load") { key: String ->
-            LocalStore.load(key)
+        Function("load") { args ->
+            LocalStore.load(args.getOrNull(0)?.asString() ?: "")
+                ?.let { WhiskerValue.Str(it) } ?: WhiskerValue.Null
         }
-        // remove(key) -> Null  (Unit return collapses to Null → ())
-        Function("remove") { key: String ->
-            LocalStore.remove(key)
+        // remove(key) -> Null
+        Function("remove") { args ->
+            LocalStore.remove(args.getOrNull(0)?.asString() ?: "")
+            WhiskerValue.Null
         }
     }
 }

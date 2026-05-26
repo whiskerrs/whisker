@@ -48,6 +48,25 @@ public sealed class WhiskerValue {
     public data class Map(val value: kotlin.collections.Map<String, WhiskerValue>) : WhiskerValue()
     public data class Err(val message: String) : WhiskerValue()
 
+    // ----- Convenience accessors (case ② arg destructuring) -----
+    // Typed reads for module authors destructuring raw `WhiskerValue`
+    // args (`args[0].asDouble()`, `value.asString()`). Numeric reads
+    // coerce between Int/Float; mismatches return null.
+
+    public fun asString(): String? = (this as? Str)?.value
+    public fun asBool(): Boolean? = (this as? Bool)?.value
+    public fun asInt(): Long? = when (this) {
+        is Int -> value
+        is Float -> value.toLong()
+        else -> null
+    }
+    public fun asDouble(): Double? = when (this) {
+        is Float -> value
+        is Int -> value.toDouble()
+        else -> null
+    }
+    public fun asBytes(): ByteArray? = (this as? Bytes)?.value
+
     public companion object {
         /**
          * Convert a Java Object[] (from the JNI bridge) into a
