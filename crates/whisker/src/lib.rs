@@ -406,6 +406,17 @@ pub mod __tags {
             self
         }
 
+        // ---- Ref --------------------------------------------------------
+
+        /// Bind an [`ElementRef`](crate::ElementRef) to this element so
+        /// its methods (`bounding_client_rect`, `take_screenshot`, …)
+        /// can be invoked after mount. `render!` routes the `ref:`
+        /// kwarg here (`view(ref: my_ref) { … }`).
+        fn bind_ref(self, r: crate::ElementRef) -> Self {
+            r.__bind(self.__element());
+            self
+        }
+
         /// Finish building and return the underlying handle.
         #[doc(hidden)]
         fn __h(self) -> Element {

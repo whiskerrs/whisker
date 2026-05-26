@@ -33,5 +33,9 @@ whisker-driver-sys = { workspace = true }
 # oneshot channel. Pulled directly rather than full `futures` to
 # keep the dep graph small (no executor, no Stream, no Sink).
 futures-channel = "0.3"
+# Typed element-method results (`BoundingClientRect`, …) derive
+# `Deserialize` and decode out of the `WhiskerValue` the async invoke
+# returns via `WhiskerValue::deserialize_into`.
+serde = { workspace = true }
 subsecond = { workspace = true, optional = true }
 whisker-dev-runtime = { workspace = true, optional = true }

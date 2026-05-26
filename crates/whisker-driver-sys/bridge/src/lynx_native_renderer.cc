@@ -11,8 +11,11 @@
 
 #include "lynx_native_renderer_capi.h"
 
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "base/include/value/base_string.h"
 #include "base/include/value/array.h"
@@ -30,6 +33,7 @@
 #include "core/renderer/utils/base/tasm_constants.h"
 #include "core/renderer/ui_wrapper/painting/catalyzer.h"
 #include "core/shell/lynx_shell.h"
+#include "core/public/pub_value.h"
 #include "core/template_bundle/template_codec/binary_decoder/page_config.h"
 #include "core/value_wrapper/value_impl_lepus.h"
 
@@ -279,6 +283,11 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
         args_array->emplace_back(lynx::lepus::Value(
             lynx::base::String(v.v.s != nullptr ? v.v.s : "")));
         break;
+      default:
+        // Array / map args aren't supported by the dispatch ABI;
+        // treat as null. (Results use the recursive variants.)
+        args_array->emplace_back(lynx::lepus::Value());
+        break;
     }
   }
   auto params_dict = lynx::lepus::Dictionary::Create();
@@ -299,6 +308,192 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
                     std::string(method_name),
                     lynx::pub::ValueImplLepus(params_lepus),
                     noop_callback);
+  return 0;
+}
+
+// ----- Async UI-method dispatch (result-returning) --------------------------
+
+namespace {
+
+// `malloc` a NUL-terminated copy of `s` (freed by
+// `lynx_ui_method_value_free`).
+char* CapiDupCStr(const std::string& s) {
+  char* buf = static_cast<char*>(std::malloc(s.size() + 1));
+  std::memcpy(buf, s.c_str(), s.size() + 1);
+  return buf;
+}
+
+// Convert a Lynx `pub::Value` (the Catalyzer callback's result) into a
+// heap-owned `lynx_ui_method_value_t` tree. **Lynx-neutral** — no
+// dependency on the Whisker bridge, so this file compiles identically
+// into liblynx.so (Android) and WhiskerDriver (iOS). The Whisker side
+// converts this into a `WhiskerValueRaw`.
+lynx_ui_method_value_t PubValueToCapi(const lynx::pub::Value& v) {
+  lynx_ui_method_value_t out;
+  std::memset(&out, 0, sizeof(out));
+  if (v.IsNil() || v.IsUndefined()) {
+    out.type = LYNX_UI_METHOD_VALUE_NULL;
+    return out;
+  }
+  if (v.IsBool()) {
+    out.type = LYNX_UI_METHOD_VALUE_BOOL;
+    out.v.b = v.Bool();
+    return out;
+  }
+  if (v.IsInt64()) {
+    out.type = LYNX_UI_METHOD_VALUE_INT;
+    out.v.i = v.Int64();
+    return out;
+  }
+  if (v.IsUInt64()) {
+    out.type = LYNX_UI_METHOD_VALUE_INT;
+    out.v.i = static_cast<int64_t>(v.UInt64());
+    return out;
+  }
+  if (v.IsDouble()) {
+    out.type = LYNX_UI_METHOD_VALUE_DOUBLE;
+    out.v.f = v.Double();
+    return out;
+  }
+  if (v.IsNumber()) {
+    out.type = LYNX_UI_METHOD_VALUE_DOUBLE;
+    out.v.f = v.Number();
+    return out;
+  }
+  if (v.IsString()) {
+    out.type = LYNX_UI_METHOD_VALUE_STRING;
+    out.v.s = CapiDupCStr(v.str());
+    return out;
+  }
+  if (v.IsArray()) {
+    int n = v.Length();
+    if (n < 0) n = 0;
+    out.type = LYNX_UI_METHOD_VALUE_ARRAY;
+    out.v.array.count = static_cast<size_t>(n);
+    out.v.array.items =
+        n > 0 ? static_cast<lynx_ui_method_value_t*>(
+                    std::malloc(sizeof(lynx_ui_method_value_t) * n))
+              : nullptr;
+    for (int i = 0; i < n; i++) {
+      auto child = v.GetValueAtIndex(static_cast<uint32_t>(i));
+      out.v.array.items[i] =
+          child ? PubValueToCapi(*child) : lynx_ui_method_value_t{};
+    }
+    return out;
+  }
+  if (v.IsMap()) {
+    std::vector<std::pair<std::string, lynx_ui_method_value_t>> tmp;
+    v.ForeachMap([&tmp](const lynx::pub::Value& key,
+                        const lynx::pub::Value& val) {
+      tmp.emplace_back(key.str(), PubValueToCapi(val));
+    });
+    size_t n = tmp.size();
+    out.type = LYNX_UI_METHOD_VALUE_MAP;
+    out.v.map.count = n;
+    out.v.map.entries =
+        n > 0 ? static_cast<lynx_ui_method_kv_t*>(
+                    std::malloc(sizeof(lynx_ui_method_kv_t) * n))
+              : nullptr;
+    for (size_t i = 0; i < n; i++) {
+      out.v.map.entries[i].key = CapiDupCStr(tmp[i].first);
+      out.v.map.entries[i].value = tmp[i].second;
+    }
+    return out;
+  }
+  out.type = LYNX_UI_METHOD_VALUE_NULL;
+  return out;
+}
+
+// Recursively free a tree produced by `PubValueToCapi`.
+void CapiValueFree(lynx_ui_method_value_t* v) {
+  if (v == nullptr) return;
+  switch (v->type) {
+    case LYNX_UI_METHOD_VALUE_STRING:
+      std::free(const_cast<char*>(v->v.s));
+      break;
+    case LYNX_UI_METHOD_VALUE_ARRAY:
+      for (size_t i = 0; i < v->v.array.count; i++) {
+        CapiValueFree(&v->v.array.items[i]);
+      }
+      std::free(v->v.array.items);
+      break;
+    case LYNX_UI_METHOD_VALUE_MAP:
+      for (size_t i = 0; i < v->v.map.count; i++) {
+        std::free(const_cast<char*>(v->v.map.entries[i].key));
+        CapiValueFree(&v->v.map.entries[i].value);
+      }
+      std::free(v->v.map.entries);
+      break;
+    default:
+      break;
+  }
+}
+
+}  // namespace
+
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async(
+    lynx_shell_t* shell,
+    int32_t sign,
+    const char* method_name,
+    const lynx_ui_method_value_t* args,
+    size_t arg_count,
+    lynx_ui_method_result_cb callback,
+    void* user_data) {
+  if (shell == nullptr || shell->manager == nullptr ||
+      method_name == nullptr) {
+    return -1;
+  }
+  auto* catalyzer = shell->manager->catalyzer();
+  if (catalyzer == nullptr) {
+    return -2;
+  }
+
+  auto args_array = lynx::lepus::CArray::Create();
+  for (size_t i = 0; args != nullptr && i < arg_count; i++) {
+    const lynx_ui_method_value_t& v = args[i];
+    switch (v.type) {
+      case LYNX_UI_METHOD_VALUE_NULL:
+        args_array->emplace_back(lynx::lepus::Value());
+        break;
+      case LYNX_UI_METHOD_VALUE_BOOL:
+        args_array->emplace_back(lynx::lepus::Value(v.v.b));
+        break;
+      case LYNX_UI_METHOD_VALUE_INT:
+        args_array->emplace_back(lynx::lepus::Value(v.v.i));
+        break;
+      case LYNX_UI_METHOD_VALUE_DOUBLE:
+        args_array->emplace_back(lynx::lepus::Value(v.v.f));
+        break;
+      case LYNX_UI_METHOD_VALUE_STRING:
+        args_array->emplace_back(lynx::lepus::Value(
+            lynx::base::String(v.v.s != nullptr ? v.v.s : "")));
+        break;
+      default:
+        // Array / map args aren't supported by the dispatch ABI;
+        // treat as null. (Results use the recursive variants.)
+        args_array->emplace_back(lynx::lepus::Value());
+        break;
+    }
+  }
+  auto params_dict = lynx::lepus::Dictionary::Create();
+  BASE_STATIC_STRING_DECL(kArgs, "args");
+  params_dict->SetValue(kArgs, lynx::lepus::Value(std::move(args_array)));
+  lynx::lepus::Value params_lepus(std::move(params_dict));
+
+  // The callback fires (typically on the UI thread) once the platform
+  // method completes. Convert the result `pub::Value` into a
+  // heap-owned `lynx_ui_method_value_t` tree, hand it to the C
+  // callback, then free it once the callback returns (the callee
+  // copies out — the Whisker bridge converts it to a `WhiskerValueRaw`).
+  catalyzer->Invoke(
+      static_cast<int64_t>(sign), std::string(method_name),
+      lynx::pub::ValueImplLepus(params_lepus),
+      [callback, user_data](int32_t code, const lynx::pub::Value& data) {
+        if (callback == nullptr) return;
+        lynx_ui_method_value_t result = PubValueToCapi(data);
+        callback(code, &result, user_data);
+        CapiValueFree(&result);
+      });
   return 0;
 }
 

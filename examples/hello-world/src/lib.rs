@@ -543,6 +543,55 @@ pub fn video_demo() -> Element {
     }
 }
 
+/// Phase 4 demo — built-in element method invocation. Binds an
+/// `ElementRef` to a sized box, then measures it via the async
+/// `boundingClientRect` UI method once the box appears on screen
+/// (`on_uiappear` fires post-layout, so no tap needed). The result
+/// flows back through the binary `WhiskerValueRaw` wire and updates
+/// the label reactively.
+#[component]
+pub fn measure_demo() -> Element {
+    let card = ElementRef::new();
+    let dims = RwSignal::new(String::new());
+    let label = computed(move || {
+        let d = dims.get();
+        if d.is_empty() {
+            "tap to measure".to_string()
+        } else {
+            d
+        }
+    });
+    // Measure on tap — `boundingClientRect` is async (the result
+    // arrives via Lynx's UI-method callback after layout), so we
+    // `spawn_local` it and update `dims` reactively when it resolves.
+    // The result crosses back through the binary `WhiskerValueRaw`
+    // wire. Tap-triggered (rather than on-mount) so the platform UI
+    // is reliably laid out before we measure on both platforms.
+    let on_measure = move |_| {
+        spawn_local(async move {
+            match card.bounding_client_rect().await {
+                Ok(r) => dims.set(format!("{}×{} px", r.width as i32, r.height as i32)),
+                Err(e) => dims.set(format!("err: {e}")),
+            }
+        });
+    };
+    render! {
+        view(
+            ref: card,
+            on_tap: on_measure,
+            style: "width: 200px; height: 56px; margin: 8px 16px; \
+                    background-color: #1a1330; border-radius: 8px; \
+                    display: flex; flex-direction: column; \
+                    align-items: center; justify-content: center;",
+        ) {
+            text(
+                value: label,
+                style: "color: #b9a9ff; font-size: 14px; font-weight: 600;",
+            )
+        }
+    }
+}
+
 #[whisker::main]
 fn app() -> Element {
     // Allocate every app-wide signal in the bootstrap owner. `AppState`
@@ -567,6 +616,7 @@ fn app() -> Element {
         page(style: page_style) {
             Hello(style: "width: 100%; height: 8px;")
             VideoDemo()
+            MeasureDemo()
             Header()
             ScrollBody(state: state)
             NowPlaying(state: state)

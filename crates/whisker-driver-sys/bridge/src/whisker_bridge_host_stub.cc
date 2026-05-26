@@ -119,6 +119,23 @@ extern "C" bool whisker_bridge_invoke_module_async(
     return true;
 }
 
+extern "C" bool whisker_bridge_invoke_element_method_async(
+    WhiskerElement* /*element*/,
+    const char* /*method_name*/,
+    const WhiskerValueRaw* /*args*/,
+    size_t /*arg_count*/,
+    WhiskerModuleCallback callback,
+    void* user_data) {
+    // Host build has no Lynx — resolve to an error so the Rust future
+    // completes rather than hanging.
+    if (callback == nullptr) return false;
+    WhiskerValueRaw result = MakeHostStubError(
+        "whisker_bridge_invoke_element_method_async: host build has no Lynx");
+    callback(user_data, &result);
+    whisker_bridge_value_release(&result);
+    return false;
+}
+
 extern "C" void whisker_bridge_value_release(WhiskerValueRaw* value) {
     if (value == nullptr) return;
     switch (value->type) {

@@ -498,6 +498,44 @@ extern "C" bool whisker_bridge_invoke_module_async(
 // Returns `WHISKER_VALUE_NULL` on dispatch-scheduled-OK, or an
 // Error if preconditions fail (NULL element, NULL shell, NUL byte
 // in method name, manager not initialised).
+// Convert WhiskerValueRaw[] → lynx_ui_method_value_t[]. Lynx owns
+// string buffers transiently — they're copied into `base::String`
+// inside the wrapper before returning, so the pointers we hand over
+// only need to outlive the call. Arrays / maps / bytes / errors
+// aren't representable in the scalar `lynx_ui_method_value_t` arg ABI
+// (they'd need a recursive lepus builder); treated as NULL.
+static void BuildLynxUiArgs(const WhiskerValueRaw* args, size_t arg_count,
+                            std::vector<lynx_ui_method_value_t>& lynx_args) {
+    lynx_args.reserve(arg_count);
+    for (size_t i = 0; i < arg_count; i++) {
+        lynx_ui_method_value_t out;
+        std::memset(&out, 0, sizeof(out));
+        const WhiskerValueRaw& v = args[i];
+        switch (v.type) {
+            case WHISKER_VALUE_BOOL:
+                out.type = LYNX_UI_METHOD_VALUE_BOOL;
+                out.v.b = v.v.b;
+                break;
+            case WHISKER_VALUE_INT:
+                out.type = LYNX_UI_METHOD_VALUE_INT;
+                out.v.i = v.v.i;
+                break;
+            case WHISKER_VALUE_FLOAT:
+                out.type = LYNX_UI_METHOD_VALUE_DOUBLE;
+                out.v.f = v.v.f;
+                break;
+            case WHISKER_VALUE_STRING:
+                out.type = LYNX_UI_METHOD_VALUE_STRING;
+                out.v.s = v.v.s.ptr;  // borrowed for the call
+                break;
+            default:
+                out.type = LYNX_UI_METHOD_VALUE_NULL;
+                break;
+        }
+        lynx_args.push_back(out);
+    }
+}
+
 extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
     WhiskerElement* element,
     const char* method_name,
@@ -515,46 +553,8 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
             "(was it flushed into the tree?)");
     }
 
-    // Convert WhiskerValueRaw[] → lynx_ui_method_value_t[]. Lynx
-    // owns string buffers transiently — they're copied into
-    // `base::String` inside the wrapper before returning, so the
-    // pointers we hand over only need to outlive the call.
     std::vector<lynx_ui_method_value_t> lynx_args;
-    lynx_args.reserve(arg_count);
-    for (size_t i = 0; i < arg_count; i++) {
-        lynx_ui_method_value_t out;
-        std::memset(&out, 0, sizeof(out));
-        const WhiskerValueRaw& v = args[i];
-        switch (v.type) {
-            case WHISKER_VALUE_NULL:
-                out.type = LYNX_UI_METHOD_VALUE_NULL;
-                break;
-            case WHISKER_VALUE_BOOL:
-                out.type = LYNX_UI_METHOD_VALUE_BOOL;
-                out.v.b = v.v.b;
-                break;
-            case WHISKER_VALUE_INT:
-                out.type = LYNX_UI_METHOD_VALUE_INT;
-                out.v.i = v.v.i;
-                break;
-            case WHISKER_VALUE_FLOAT:
-                out.type = LYNX_UI_METHOD_VALUE_DOUBLE;
-                out.v.f = v.v.f;
-                break;
-            case WHISKER_VALUE_STRING:
-                out.type = LYNX_UI_METHOD_VALUE_STRING;
-                out.v.s = v.v.s.ptr;  // borrowed for the call
-                break;
-            // Arrays / maps / bytes / errors aren't supported by the
-            // sync v1 ABI — they'd need a recursive lepus::Value
-            // builder. Skip silently (treat as NULL). Author code
-            // ranges for play/pause/seek don't hit this.
-            default:
-                out.type = LYNX_UI_METHOD_VALUE_NULL;
-                break;
-        }
-        lynx_args.push_back(out);
-    }
+    BuildLynxUiArgs(args, arg_count, lynx_args);
 
     int32_t code = lynx_ui_invoke_method(
         element->shell, sign, method_name,
@@ -570,6 +570,157 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
     std::memset(&ok, 0, sizeof(ok));
     ok.type = WHISKER_VALUE_NULL;
     return ok;
+}
+
+namespace {
+// Deep-copy a Lynx-neutral `lynx_ui_method_value_t` result tree into a
+// `WhiskerValueRaw` (heap-owned, matching `whisker_bridge_value_release`'s
+// free pattern). The capi tree itself is owned + freed by
+// `lynx_native_renderer.cc` after the callback returns.
+WhiskerValueRaw CapiValueToWhisker(const lynx_ui_method_value_t* v) {
+    WhiskerValueRaw out;
+    std::memset(&out, 0, sizeof(out));
+    if (v == nullptr) {
+        out.type = WHISKER_VALUE_NULL;
+        return out;
+    }
+    switch (v->type) {
+        case LYNX_UI_METHOD_VALUE_BOOL:
+            out.type = WHISKER_VALUE_BOOL;
+            out.v.b = v->v.b;
+            break;
+        case LYNX_UI_METHOD_VALUE_INT:
+            out.type = WHISKER_VALUE_INT;
+            out.v.i = v->v.i;
+            break;
+        case LYNX_UI_METHOD_VALUE_DOUBLE:
+            out.type = WHISKER_VALUE_FLOAT;
+            out.v.f = v->v.f;
+            break;
+        case LYNX_UI_METHOD_VALUE_STRING: {
+            const char* s = v->v.s != nullptr ? v->v.s : "";
+            size_t len = std::strlen(s);
+            char* buf = static_cast<char*>(std::malloc(len == 0 ? 1 : len));
+            if (len > 0) std::memcpy(buf, s, len);
+            out.type = WHISKER_VALUE_STRING;
+            out.v.s.ptr = buf;
+            out.v.s.len = len;
+            break;
+        }
+        case LYNX_UI_METHOD_VALUE_ARRAY: {
+            size_t n = v->v.array.count;
+            out.type = WHISKER_VALUE_ARRAY;
+            out.v.array.count = n;
+            out.v.array.items = n > 0 ? static_cast<WhiskerValueRaw*>(
+                                            std::malloc(sizeof(WhiskerValueRaw) * n))
+                                      : nullptr;
+            for (size_t i = 0; i < n; i++) {
+                out.v.array.items[i] = CapiValueToWhisker(&v->v.array.items[i]);
+            }
+            break;
+        }
+        case LYNX_UI_METHOD_VALUE_MAP: {
+            size_t n = v->v.map.count;
+            out.type = WHISKER_VALUE_MAP;
+            out.v.map.count = n;
+            out.v.map.entries = n > 0 ? static_cast<WhiskerKeyValueRaw*>(
+                                            std::malloc(sizeof(WhiskerKeyValueRaw) * n))
+                                      : nullptr;
+            for (size_t i = 0; i < n; i++) {
+                const char* k = v->v.map.entries[i].key != nullptr
+                                    ? v->v.map.entries[i].key
+                                    : "";
+                size_t klen = std::strlen(k);
+                char* kbuf = static_cast<char*>(std::malloc(klen == 0 ? 1 : klen));
+                if (klen > 0) std::memcpy(kbuf, k, klen);
+                out.v.map.entries[i].key.ptr = kbuf;
+                out.v.map.entries[i].key.len = klen;
+                out.v.map.entries[i].value = CapiValueToWhisker(&v->v.map.entries[i].value);
+            }
+            break;
+        }
+        default:
+            out.type = WHISKER_VALUE_NULL;
+            break;
+    }
+    return out;
+}
+
+// Carries the Rust callback + user_data across `lynx_ui_invoke_method_
+// async`'s `(code, result, user_data)` callback shape down to the
+// bridge's `(user_data, result)` shape. Heap-allocated, freed after
+// the (single) result callback fires.
+struct ElementMethodAsyncCtx {
+    WhiskerModuleCallback rust_cb;
+    void* rust_user_data;
+};
+
+void element_method_async_adapter(int32_t /*code*/,
+                                  const lynx_ui_method_value_t* capi_result,
+                                  void* user_data) {
+    auto* ctx = static_cast<ElementMethodAsyncCtx*>(user_data);
+    if (ctx == nullptr) return;
+    if (ctx->rust_cb != nullptr) {
+        WhiskerValueRaw result = CapiValueToWhisker(capi_result);
+        ctx->rust_cb(ctx->rust_user_data, &result);
+        whisker_bridge_value_release(&result);
+    }
+    delete ctx;
+}
+
+// Synchronously hand `callback` a `WHISKER_VALUE_ERROR(message)` and
+// release it. For precondition / unsupported-platform failures.
+void FailElementMethodAsync(WhiskerModuleCallback callback, void* user_data,
+                            const char* message) {
+    if (callback == nullptr) return;
+    WhiskerValueRaw err = MakeBridgeErrorValue(message);
+    callback(user_data, &err);
+    whisker_bridge_value_release(&err);
+}
+}  // namespace
+
+extern "C" bool whisker_bridge_invoke_element_method_async(
+    WhiskerElement* element,
+    const char* method_name,
+    const WhiskerValueRaw* args,
+    size_t arg_count,
+    WhiskerModuleCallback callback,
+    void* user_data) {
+    if (element == nullptr || element->handle == nullptr ||
+        element->shell == nullptr || method_name == nullptr) {
+        FailElementMethodAsync(
+            callback, user_data,
+            "whisker_bridge_invoke_element_method_async: NULL element / shell / method");
+        return false;
+    }
+    int32_t sign = lynx_element_id(element->handle);
+    if (sign <= 0) {
+        FailElementMethodAsync(
+            callback, user_data,
+            "whisker_bridge_invoke_element_method_async: element has no sign yet");
+        return false;
+    }
+
+    // `lynx_ui_invoke_method_async` is exported by liblynx.so on
+    // Android (Lynx fork v3.7.0-whisker.5+) and compiled into
+    // WhiskerDriver on iOS — same dispatch on both platforms.
+    std::vector<lynx_ui_method_value_t> lynx_args;
+    BuildLynxUiArgs(args, arg_count, lynx_args);
+    auto* ctx = new ElementMethodAsyncCtx{callback, user_data};
+    int32_t code = lynx_ui_invoke_method_async(
+        element->shell, sign, method_name,
+        lynx_args.empty() ? nullptr : lynx_args.data(), lynx_args.size(),
+        element_method_async_adapter, ctx);
+    if (code != 0) {
+        delete ctx;
+        FailElementMethodAsync(
+            callback, user_data,
+            ("lynx_ui_invoke_method_async returned non-zero (code=" +
+             std::to_string(code) + ")")
+                .c_str());
+        return false;
+    }
+    return true;
 }
 
 extern "C" void whisker_bridge_value_release(WhiskerValueRaw* value) {
