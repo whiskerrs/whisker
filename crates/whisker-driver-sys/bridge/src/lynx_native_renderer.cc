@@ -11,8 +11,18 @@
 
 #include "lynx_native_renderer_capi.h"
 
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <utility>
+#include <vector>
+
+// `WhiskerValueRaw` + `whisker_bridge_value_release` — the async
+// UI-method result crosses back as this FFI value tree. Including the
+// bridge header here couples this Lynx-side translation unit to the
+// bridge value type, but keeps the result conversion in the one place
+// that can see `lynx::pub::Value` (the Catalyzer callback).
+#include "whisker_bridge.h"
 
 #include "base/include/value/base_string.h"
 #include "base/include/value/array.h"
@@ -30,6 +40,7 @@
 #include "core/renderer/utils/base/tasm_constants.h"
 #include "core/renderer/ui_wrapper/painting/catalyzer.h"
 #include "core/shell/lynx_shell.h"
+#include "core/public/pub_value.h"
 #include "core/template_bundle/template_codec/binary_decoder/page_config.h"
 #include "core/value_wrapper/value_impl_lepus.h"
 
@@ -299,6 +310,162 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
                     std::string(method_name),
                     lynx::pub::ValueImplLepus(params_lepus),
                     noop_callback);
+  return 0;
+}
+
+// ----- Async UI-method dispatch (result-returning) --------------------------
+
+namespace {
+
+// A heap-owned `WhiskerStringRef` copy (len-based, not NUL-terminated).
+// Released by `whisker_bridge_value_release`.
+WhiskerStringRef WhiskerDupString(const std::string& s) {
+  WhiskerStringRef ref{nullptr, 0};
+  char* buf = static_cast<char*>(std::malloc(s.empty() ? 1 : s.size()));
+  if (!s.empty()) std::memcpy(buf, s.data(), s.size());
+  ref.ptr = buf;
+  ref.len = s.size();
+  return ref;
+}
+
+// Convert a Lynx `pub::Value` (the Catalyzer callback's result) into a
+// heap-owned `WhiskerValueRaw` tree. Mirrors the value model used by
+// module args/returns and events. Allocations match
+// `whisker_bridge_value_release`'s free pattern.
+WhiskerValueRaw PubValueToRaw(const lynx::pub::Value& v) {
+  WhiskerValueRaw out;
+  std::memset(&out, 0, sizeof(out));
+  if (v.IsNil() || v.IsUndefined()) {
+    out.type = WHISKER_VALUE_NULL;
+    return out;
+  }
+  if (v.IsBool()) {
+    out.type = WHISKER_VALUE_BOOL;
+    out.v.b = v.Bool();
+    return out;
+  }
+  if (v.IsInt64()) {
+    out.type = WHISKER_VALUE_INT;
+    out.v.i = v.Int64();
+    return out;
+  }
+  if (v.IsUInt64()) {
+    out.type = WHISKER_VALUE_INT;
+    out.v.i = static_cast<int64_t>(v.UInt64());
+    return out;
+  }
+  if (v.IsDouble()) {
+    out.type = WHISKER_VALUE_FLOAT;
+    out.v.f = v.Double();
+    return out;
+  }
+  if (v.IsNumber()) {
+    out.type = WHISKER_VALUE_FLOAT;
+    out.v.f = v.Number();
+    return out;
+  }
+  if (v.IsString()) {
+    out.type = WHISKER_VALUE_STRING;
+    out.v.s = WhiskerDupString(v.str());
+    return out;
+  }
+  if (v.IsArray()) {
+    int n = v.Length();
+    if (n < 0) n = 0;
+    out.type = WHISKER_VALUE_ARRAY;
+    out.v.array.count = static_cast<size_t>(n);
+    out.v.array.items = n > 0 ? static_cast<WhiskerValueRaw*>(
+                                    std::malloc(sizeof(WhiskerValueRaw) * n))
+                              : nullptr;
+    for (int i = 0; i < n; i++) {
+      auto child = v.GetValueAtIndex(static_cast<uint32_t>(i));
+      out.v.array.items[i] =
+          child ? PubValueToRaw(*child) : WhiskerValueRaw{};
+    }
+    return out;
+  }
+  if (v.IsMap()) {
+    std::vector<std::pair<std::string, WhiskerValueRaw>> tmp;
+    v.ForeachMap([&tmp](const lynx::pub::Value& key,
+                        const lynx::pub::Value& val) {
+      tmp.emplace_back(key.str(), PubValueToRaw(val));
+    });
+    size_t n = tmp.size();
+    out.type = WHISKER_VALUE_MAP;
+    out.v.map.count = n;
+    out.v.map.entries = n > 0 ? static_cast<WhiskerKeyValueRaw*>(
+                                    std::malloc(sizeof(WhiskerKeyValueRaw) * n))
+                              : nullptr;
+    for (size_t i = 0; i < n; i++) {
+      out.v.map.entries[i].key = WhiskerDupString(tmp[i].first);
+      out.v.map.entries[i].value = tmp[i].second;
+    }
+    return out;
+  }
+  out.type = WHISKER_VALUE_NULL;
+  return out;
+}
+
+}  // namespace
+
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async(
+    lynx_shell_t* shell,
+    int32_t sign,
+    const char* method_name,
+    const lynx_ui_method_value_t* args,
+    size_t arg_count,
+    lynx_ui_method_result_cb callback,
+    void* user_data) {
+  if (shell == nullptr || shell->manager == nullptr ||
+      method_name == nullptr) {
+    return -1;
+  }
+  auto* catalyzer = shell->manager->catalyzer();
+  if (catalyzer == nullptr) {
+    return -2;
+  }
+
+  auto args_array = lynx::lepus::CArray::Create();
+  for (size_t i = 0; args != nullptr && i < arg_count; i++) {
+    const lynx_ui_method_value_t& v = args[i];
+    switch (v.type) {
+      case LYNX_UI_METHOD_VALUE_NULL:
+        args_array->emplace_back(lynx::lepus::Value());
+        break;
+      case LYNX_UI_METHOD_VALUE_BOOL:
+        args_array->emplace_back(lynx::lepus::Value(v.v.b));
+        break;
+      case LYNX_UI_METHOD_VALUE_INT:
+        args_array->emplace_back(lynx::lepus::Value(v.v.i));
+        break;
+      case LYNX_UI_METHOD_VALUE_DOUBLE:
+        args_array->emplace_back(lynx::lepus::Value(v.v.f));
+        break;
+      case LYNX_UI_METHOD_VALUE_STRING:
+        args_array->emplace_back(lynx::lepus::Value(
+            lynx::base::String(v.v.s != nullptr ? v.v.s : "")));
+        break;
+    }
+  }
+  auto params_dict = lynx::lepus::Dictionary::Create();
+  BASE_STATIC_STRING_DECL(kArgs, "args");
+  params_dict->SetValue(kArgs, lynx::lepus::Value(std::move(args_array)));
+  lynx::lepus::Value params_lepus(std::move(params_dict));
+
+  // The callback fires (typically on the UI thread) once the platform
+  // method completes. Convert the result `pub::Value` into a
+  // heap-owned `WhiskerValueRaw`, hand it to the C callback, then free
+  // it once the callback returns (it copies out via the Rust
+  // `from_raw`).
+  catalyzer->Invoke(
+      static_cast<int64_t>(sign), std::string(method_name),
+      lynx::pub::ValueImplLepus(params_lepus),
+      [callback, user_data](int32_t code, const lynx::pub::Value& data) {
+        if (callback == nullptr) return;
+        WhiskerValueRaw result = PubValueToRaw(data);
+        callback(code, &result, user_data);
+        whisker_bridge_value_release(&result);
+      });
   return 0;
 }
 

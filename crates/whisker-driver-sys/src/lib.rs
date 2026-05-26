@@ -274,4 +274,19 @@ extern "C" {
         args: *const WhiskerValueRaw,
         arg_count: usize,
     ) -> WhiskerValueRaw;
+
+    /// Async, result-returning element-method dispatch
+    /// (`boundingClientRect` / `takeScreenshot`). Returns immediately;
+    /// `callback(user_data, &result)` fires once the method completes
+    /// (typically on the UI thread). On precondition failure / an
+    /// unsupported platform the bridge invokes `callback` synchronously
+    /// with a `WHISKER_VALUE_ERROR` and returns `false`.
+    pub fn whisker_bridge_invoke_element_method_async(
+        element: *mut WhiskerElement,
+        method_name: *const c_char,
+        args: *const WhiskerValueRaw,
+        arg_count: usize,
+        callback: WhiskerModuleCallback,
+        user_data: *mut c_void,
+    ) -> bool;
 }

@@ -152,6 +152,33 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
     const lynx_ui_method_value_t* args,
     size_t arg_count);
 
+// Async UI-method dispatch — the result-returning variant used for
+// `boundingClientRect` / `takeScreenshot` etc. Lynx's
+// `Catalyzer::Invoke` callback fires (typically on the UI thread,
+// after the platform method runs); `lynx_native_renderer.cc` converts
+// the callback's `lynx::pub::Value` into a `WhiskerValueRaw` tree and
+// invokes `callback(code, &result, user_data)`. The `result` pointer
+// is borrowed for the duration of the callback only — the wrapper
+// frees it (via `whisker_bridge_value_release`) once `callback`
+// returns, so the callee must copy out before returning.
+//
+// `WhiskerValueRec` is the FFI value struct defined in
+// `whisker_bridge.h`; forward-declared here so this header stays
+// free of the bridge include (the .cc that implements this pulls in
+// `whisker_bridge.h` for the full definition + the converter).
+struct WhiskerValueRec;
+typedef void (*lynx_ui_method_result_cb)(int32_t code,
+                                          const struct WhiskerValueRec* result,
+                                          void* user_data);
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async(
+    lynx_shell_t* shell,
+    int32_t sign,
+    const char* method_name,
+    const lynx_ui_method_value_t* args,
+    size_t arg_count,
+    lynx_ui_method_result_cb callback,
+    void* user_data);
+
 // ----- subsecond ASLR anchor ------------------------------------------------
 
 // Whisker's subsecond hot-patcher dlsym's this symbol on startup to

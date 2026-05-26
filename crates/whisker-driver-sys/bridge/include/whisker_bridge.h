@@ -347,6 +347,29 @@ WHISKER_BRIDGE_EXPORT WhiskerValueRaw whisker_bridge_invoke_element_method(
     const WhiskerValueRaw* args,
     size_t arg_count);
 
+// Async variant — the **result-returning** element-method path used
+// for `boundingClientRect` / `takeScreenshot` etc. Lynx routes the UI
+// method to the main thread and the result arrives via a callback, so
+// (unlike the sync fire-and-forget variant above) this is the only
+// way to read a method's return value. Returns immediately; the
+// bridge calls `callback(user_data, &result)` once the method
+// completes (typically on the UI thread). `result` is borrowed inside
+// the callback only — the bridge frees it once the callback returns
+// (same ownership as `whisker_bridge_invoke_module_async`).
+//
+// Returns `true` if the call was scheduled. On a precondition failure
+// (NULL element/shell, no sign) or where the platform lacks the
+// result-async wrapper (Android, pending a Lynx fork release), the
+// bridge invokes `callback` synchronously with a
+// `WHISKER_VALUE_ERROR` and returns `false`.
+WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_element_method_async(
+    WhiskerElement* element,
+    const char* method_name,
+    const WhiskerValueRaw* args,
+    size_t arg_count,
+    WhiskerModuleCallback callback,
+    void* user_data);
+
 // ---- Phase 0–3 leftovers (kept temporarily for compatibility) ------------
 
 WHISKER_BRIDGE_EXPORT void whisker_bridge_log_hello(void);

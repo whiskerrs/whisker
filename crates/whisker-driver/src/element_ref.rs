@@ -27,10 +27,36 @@
 //! app-level code see `VideoHandle`, `TextInputHandle`, ..., never
 //! `ElementRef` directly.
 
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use whisker_runtime::reactive::{computed, RwSignal, Signal};
 use whisker_runtime::view::Element;
 
 use crate::module::WhiskerValue;
+
+// ---------------------------------------------------------------------------
+// Typed element-method results
+// ---------------------------------------------------------------------------
+
+/// Result of [`ElementRef::bounding_client_rect`] — the element's
+/// layout box in LynxView coordinates (Lynx's `boundingClientRect`
+/// UI method). Every field is `#[serde(default)]`, so any key the
+/// platform omits reads back as `0.0` rather than failing the decode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+pub struct BoundingClientRect {
+    #[serde(default)]
+    pub left: f64,
+    #[serde(default)]
+    pub top: f64,
+    #[serde(default)]
+    pub right: f64,
+    #[serde(default)]
+    pub bottom: f64,
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
+}
 
 // ---------------------------------------------------------------------------
 // RefError — explicit error surface for `try_invoke` / `invoke_typed`.
@@ -194,6 +220,76 @@ impl ElementRef {
         crate::invoke_element_method(elem, method, args)
     }
 
+    /// Async, **result-returning** invoke — for UI methods whose
+    /// return value arrives via Lynx's callback (`boundingClientRect`,
+    /// `takeScreenshot`, …) rather than synchronously. Returns the raw
+    /// [`WhiskerValue`], with `WhiskerValue::Error` standing in for
+    /// "not bound" / dispatch failure. Typed wrappers (e.g.
+    /// [`bounding_client_rect`](Self::bounding_client_rect)) build on
+    /// this.
+    ///
+    /// Run it from an event handler / effect via `spawn_local`:
+    /// `spawn_local(async move { let v = r.invoke_async("m", vec![]).await; })`.
+    pub async fn invoke_async(&self, method: &str, args: Vec<WhiskerValue>) -> WhiskerValue {
+        let Some(elem) = self.inner.get_untracked() else {
+            return WhiskerValue::Error(format!(
+                "ElementRef::invoke_async(\"{method}\"): ref is not bound to a \
+                 mounted element"
+            ));
+        };
+        crate::invoke_element_method_async(elem, method, args).await
+    }
+
+    /// Async invoke that deserializes the result into `T`. `NotBound`
+    /// when unbound; `DispatchFailed` on a platform error or a
+    /// result-shape mismatch. The building block for the typed
+    /// method wrappers below.
+    pub async fn invoke_typed_async<T: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        args: Vec<WhiskerValue>,
+    ) -> Result<T, RefError> {
+        if !self.is_bound() {
+            return Err(RefError::NotBound);
+        }
+        match self.invoke_async(method, args).await {
+            WhiskerValue::Error(message) => Err(RefError::DispatchFailed {
+                method: method.into(),
+                message,
+            }),
+            other => other
+                .deserialize_into::<T>()
+                .map_err(|message| RefError::DispatchFailed {
+                    method: method.into(),
+                    message,
+                }),
+        }
+    }
+
+    /// `boundingClientRect` — the element's layout box in LynxView
+    /// coordinates. Async: the result arrives via Lynx's UI-method
+    /// callback (typically on the UI thread).
+    ///
+    /// ```ignore
+    /// let card = ElementRef::new();   // view(ref: card) { … }
+    /// spawn_local(async move {
+    ///     if let Ok(rect) = card.bounding_client_rect().await {
+    ///         // rect.width, rect.height, …
+    ///     }
+    /// });
+    /// ```
+    pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
+        self.invoke_typed_async::<BoundingClientRect>("boundingClientRect", vec![])
+            .await
+    }
+
+    /// `takeScreenshot` — a base64-encoded image of the element
+    /// (async). Returns the encoded string.
+    pub async fn take_screenshot(&self) -> Result<String, RefError> {
+        self.invoke_typed_async::<String>("takeScreenshot", vec![])
+            .await
+    }
+
     /// Bind the ref to `handle`. Invoked by `#[whisker::platform_
     /// component]`-generated code after `create_element_by_name`.
     ///
@@ -281,4 +377,37 @@ impl std::fmt::Debug for ElementRef {
 pub fn element_ref<T: ?Sized>() -> ElementRef {
     let _ = std::marker::PhantomData::<*const T>;
     ElementRef::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounding_client_rect_deserializes_from_value_map() {
+        // Shape mirrors what Lynx's `boundingClientRect` UI method
+        // returns through the async invoke path.
+        let v = WhiskerValue::map([
+            ("left", WhiskerValue::Float(10.0)),
+            ("top", WhiskerValue::Float(20.0)),
+            ("right", WhiskerValue::Float(110.0)),
+            ("bottom", WhiskerValue::Float(70.0)),
+            ("width", WhiskerValue::Float(100.0)),
+            ("height", WhiskerValue::Float(50.0)),
+        ]);
+        let rect: BoundingClientRect = v.deserialize_into().expect("deserialize rect");
+        assert_eq!(rect.left, 10.0);
+        assert_eq!(rect.width, 100.0);
+        assert_eq!(rect.height, 50.0);
+    }
+
+    #[test]
+    fn bounding_client_rect_missing_fields_default_to_zero() {
+        // Integer-valued numbers + a partial body still decode (Int
+        // widens to f64, missing keys default to 0.0).
+        let v = WhiskerValue::map([("width", WhiskerValue::Int(42))]);
+        let rect: BoundingClientRect = v.deserialize_into().expect("partial rect");
+        assert_eq!(rect.width, 42.0);
+        assert_eq!(rect.height, 0.0);
+    }
 }

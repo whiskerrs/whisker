@@ -489,6 +489,12 @@ impl ElementNode {
             // (`From<T>` for static / `From<ReadSignal<T>>` etc.
             // for reactive).
             quote_spanned! {span=> .#name(#value) }
+        } else if name_str == "ref" {
+            // `ref: <ElementRef>` on a built-in element → bind the ref
+            // to this element so its UI methods are invokable after
+            // mount. (`ref` is a keyword, so the builder method is
+            // `bind_ref`.)
+            quote_spanned! {span=> .bind_ref(#value) }
         } else if is_known_event_method(&name_str) {
             // Typed event helper on `ElementBuilder` — `.on_tap(f)`,
             // `.on_longpress(f)`, … — where `f` receives a typed
@@ -840,6 +846,23 @@ mod tests {
         assert!(
             output.contains(". __h ()"),
             "builder chain must finalise with `.__h()`; output was: {output}"
+        );
+    }
+
+    #[test]
+    fn ref_kwarg_on_builtin_routes_to_bind_ref() {
+        // `ref:` on a built-in element binds an ElementRef to the
+        // element (vs the catch-all `.attr("ref", …)`), so its UI
+        // methods (bounding_client_rect, …) are invokable after mount.
+        let input: TokenStream2 = quote::quote! { view(ref: my_ref) };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains(". bind_ref"),
+            "ref: on a built-in must emit `.bind_ref(value)`; output was: {output}"
+        );
+        assert!(
+            !output.contains("\"ref\""),
+            "ref: must NOT fall through to `.attr(\"ref\", …)`; output was: {output}"
         );
     }
 

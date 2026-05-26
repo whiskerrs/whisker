@@ -212,7 +212,16 @@ pub async fn invoke_async(name: &str, method: &str, args: Vec<WhiskerValue>) -> 
         .unwrap_or_else(|_| WhiskerValue::Error("async callback never fired".into()))
 }
 
-extern "C" fn async_trampoline(user_data: *mut c_void, result: *const ffi::WhiskerValueRaw) {
+/// C callback for the async invoke paths (`invoke_async` /
+/// `invoke_element_method_async`). Reconstructs the boxed oneshot
+/// sender from `user_data`, decodes the result, and resolves the
+/// channel. The bridge guarantees exactly one call per dispatch (sync
+/// on failure, async on success), so the box is consumed here and
+/// never recovered by the caller.
+pub(crate) extern "C" fn async_trampoline(
+    user_data: *mut c_void,
+    result: *const ffi::WhiskerValueRaw,
+) {
     if user_data.is_null() || result.is_null() {
         return;
     }
