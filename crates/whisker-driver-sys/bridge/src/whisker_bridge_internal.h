@@ -10,6 +10,11 @@
 
 #include <cstdint>
 
+// `WhiskerValueRaw` is the FFI tagged-union (defined in the public
+// `whisker_bridge.h`); event payloads cross to the dispatch registry
+// as a pointer to one.
+struct WhiskerValueRec;
+
 // Opaque to platform glue — internals defined in whisker_bridge_common.cc.
 struct WhiskerEngine;
 
@@ -27,17 +32,18 @@ void whisker_bridge_internal_mark_event_reporter_installed(WhiskerEngine* engine
 bool whisker_bridge_internal_is_event_reporter_installed(const WhiskerEngine* engine);
 
 // Look up a registered (element_sign, event_name) callback and invoke
-// it. `payload_json` is the event body serialised as a UTF-8 JSON
-// string (or empty string when the event carries no detail); the
+// it. `payload` is the event body as a `WhiskerValueRaw` tree (or a
+// `WHISKER_VALUE_NULL` value when the event carries no detail); the
 // bridge does NOT take ownership and the pointer is only valid for
-// the duration of this call. Returns true if a callback was found
-// and fired (caller should consume the event in the host event chain).
+// the duration of this call. `payload` may be NULL, treated as "no
+// body". Returns true if a callback was found and fired (caller
+// should consume the event in the host event chain).
 //
 // Each registered listener is either a no-payload (`WhiskerEventCallback`)
-// or string-payload (`WhiskerEventPayloadCallback`) variant; the
-// bridge routes the call to the matching arm.
+// or value-payload (`WhiskerEventValueCallback`) variant; the bridge
+// routes the call to the matching arm.
 bool whisker_bridge_internal_dispatch_event(int32_t element_sign,
                                         const char* event_name,
-                                        const char* payload_json);
+                                        const struct WhiskerValueRec* payload);
 
 #endif  // WHISKER_BRIDGE_INTERNAL_H_

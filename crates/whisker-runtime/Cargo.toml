@@ -24,3 +24,9 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # worker thread completing sync work and the main-thread future
 # awaiting the result.
 futures-channel = "0.3"
+# `WhiskerValue` carries `#[derive(Deserialize)]` event structs and
+# deserializes typed events out of the recursive value tree. The
+# `serde_json::Value` bridge is the conversion target for
+# `WhiskerValue::deserialize_into::<T>()`.
+serde = { workspace = true }
+serde_json = { workspace = true }

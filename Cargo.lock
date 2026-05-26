@@ -1901,6 +1901,8 @@ dependencies = [
  "futures-channel",
  "futures-executor",
  "futures-util",
+ "serde",
+ "serde_json",
  "slotmap",
 ]
 

@@ -50,3 +50,20 @@ where
         }
     }
 }
+
+/// Same as [`apply_attr`] but with an **owned** attribute name, for
+/// names computed at the call site (`data-<key>`). The `Dynamic`
+/// branch moves the `String` into the `effect` closure so the
+/// reactive re-apply keeps the name alive.
+pub fn apply_attr_owned<V, T>(h: Element, name: String, v: V)
+where
+    V: ::std::convert::Into<Signal<T>>,
+    T: ::std::string::ToString + ::std::clone::Clone + 'static,
+{
+    match v.into() {
+        Signal::Static(t) => set_attribute(h, &name, &t.to_string()),
+        Signal::Dynamic(sig) => {
+            effect(move || set_attribute(h, &name, &sig.get().to_string()));
+        }
+    }
+}

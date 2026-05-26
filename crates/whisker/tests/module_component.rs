@@ -79,17 +79,11 @@ impl DynRenderer for Recorder {
         });
     }
     fn remove_child(&mut self, _p: Element, _c: Element) {}
-    fn set_event_listener(&mut self, h: Element, name: &str, _cb: Box<dyn Fn() + 'static>) {
-        self.log.borrow_mut().push(Op::Event {
-            id: h.id(),
-            name: name.into(),
-        });
-    }
-    fn set_event_listener_with_string_payload(
+    fn set_event_listener(
         &mut self,
         h: Element,
         name: &str,
-        _cb: Box<dyn Fn(String) + 'static>,
+        _cb: Box<dyn Fn(whisker::WhiskerValue) + 'static>,
     ) {
         self.log.borrow_mut().push(Op::Event {
             id: h.id(),
@@ -131,7 +125,10 @@ pub fn x_typed_checkbox(checked: Signal<bool>, count: Signal<i32>) {}
 pub fn x_button(label: Signal<String>, on_tap: ()) {}
 
 #[whisker::module_component("x-input-payload")]
-pub fn x_input_payload(value: Signal<String>, on_input: String) {}
+pub fn x_input_payload(value: Signal<String>, on_input: ::whisker::WhiskerValue) {}
+
+#[whisker::module_component("x-typed-input")]
+pub fn x_typed_input(on_change: ::whisker::event::TouchEvent) {}
 
 #[whisker::module_component("x-container")]
 pub fn x_container(style: Signal<String>, children: ::whisker::Children) {}
@@ -313,14 +310,14 @@ fn no_payload_event_handler_registers_listener() {
 }
 
 #[test]
-fn payload_event_handler_registers_listener() {
-    // `on_input: String` → builder takes `Fn(String) + 'static`, body
-    // wires through `set_event_listener_with_string_payload`. The test
-    // recorder's stub doesn't carry the payload through, but it does
-    // log the event-name registration so we can verify the wiring.
+fn raw_payload_event_handler_registers_listener() {
+    // `on_input: WhiskerValue` → builder takes `Fn(WhiskerValue) +
+    // 'static`, body wires through `event::bind_typed` (the raw
+    // body, no field deserialization). The recorder logs the
+    // event-name registration so we can verify the wiring.
     with_recorder_and_owner(|log| {
         let _h = render! {
-            XInputPayload(value: "", on_input: |_new_value| {})
+            XInputPayload(value: "", on_input: |_raw: ::whisker::WhiskerValue| {})
         };
         let events: Vec<_> = log
             .borrow()
@@ -331,6 +328,27 @@ fn payload_event_handler_registers_listener() {
             })
             .collect();
         assert_eq!(events, vec!["input".to_string()]);
+    });
+}
+
+#[test]
+fn typed_payload_event_handler_registers_listener() {
+    // `on_change: TouchEvent` → builder takes `Fn(TouchEvent) +
+    // 'static`, body wires through `event::bind_typed::<TouchEvent>`
+    // which deserializes the event body before calling the handler.
+    with_recorder_and_owner(|log| {
+        let _h = render! {
+            XTypedInput(on_change: |_e: ::whisker::event::TouchEvent| {})
+        };
+        let events: Vec<_> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::Event { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(events, vec!["change".to_string()]);
     });
 }
 

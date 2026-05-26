@@ -84,19 +84,19 @@ struct EventKeyHash {
     }
 };
 // Tagged union covering both the no-payload event-listener
-// (`whisker_bridge_set_event_listener`) and the string-payload variant
-// (`whisker_bridge_set_event_listener_with_payload`). Each registry
+// (`whisker_bridge_set_event_listener`) and the value-payload variant
+// (`whisker_bridge_set_event_listener_with_value`). Each registry
 // slot is one or the other; dispatch picks the right arm based on
 // `kind`.
 struct EventCallback {
     enum class Kind {
         NoPayload,
-        StringPayload,
+        ValuePayload,
     };
     Kind kind;
     union {
         WhiskerEventCallback no_payload;
-        WhiskerEventPayloadCallback string_payload;
+        WhiskerEventValueCallback value_payload;
     } func;
     void* user_data;
 };
@@ -134,7 +134,7 @@ bool whisker_bridge_internal_is_event_reporter_installed(const WhiskerEngine* en
 
 bool whisker_bridge_internal_dispatch_event(int32_t element_sign,
                                             const char* event_name,
-                                            const char* payload_json) {
+                                            const WhiskerValueRaw* payload) {
     if (event_name == nullptr) return false;
     EventCallback hit{};
     bool found = false;
@@ -148,9 +148,11 @@ bool whisker_bridge_internal_dispatch_event(int32_t element_sign,
         }
     }
     if (!found) return false;
-    // `payload_json` is the bridge's contract — it normalises NULL
-    // to the empty string so callbacks never have to NULL-check.
-    const char* payload = payload_json != nullptr ? payload_json : "";
+    // Normalise a NULL payload to a stack `WHISKER_VALUE_NULL` so the
+    // value callback always receives a valid pointer ("no body").
+    WhiskerValueRaw null_value{};
+    null_value.type = WHISKER_VALUE_NULL;
+    const WhiskerValueRaw* p = payload != nullptr ? payload : &null_value;
     switch (hit.kind) {
         case EventCallback::Kind::NoPayload:
             if (hit.func.no_payload != nullptr) {
@@ -158,9 +160,9 @@ bool whisker_bridge_internal_dispatch_event(int32_t element_sign,
                 return true;
             }
             return false;
-        case EventCallback::Kind::StringPayload:
-            if (hit.func.string_payload != nullptr) {
-                hit.func.string_payload(hit.user_data, payload);
+        case EventCallback::Kind::ValuePayload:
+            if (hit.func.value_payload != nullptr) {
+                hit.func.value_payload(hit.user_data, p);
                 return true;
             }
             return false;
@@ -312,10 +314,10 @@ extern "C" void whisker_bridge_set_event_listener(WhiskerElement* element,
     Registry()[key] = entry;
 }
 
-extern "C" void whisker_bridge_set_event_listener_with_payload(
+extern "C" void whisker_bridge_set_event_listener_with_value(
     WhiskerElement* element,
     const char* event_name,
-    WhiskerEventPayloadCallback callback,
+    WhiskerEventValueCallback callback,
     void* user_data) {
     if (element == nullptr || element->handle == nullptr ||
         event_name == nullptr || callback == nullptr) {
@@ -323,8 +325,8 @@ extern "C" void whisker_bridge_set_event_listener_with_payload(
     }
     EventKey key{lynx_element_id(element->handle), std::string(event_name)};
     EventCallback entry{};
-    entry.kind = EventCallback::Kind::StringPayload;
-    entry.func.string_payload = callback;
+    entry.kind = EventCallback::Kind::ValuePayload;
+    entry.func.value_payload = callback;
     entry.user_data = user_data;
     std::lock_guard<std::mutex> lock(RegistryMutex());
     Registry()[key] = entry;

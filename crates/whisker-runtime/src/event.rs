@@ -1,0 +1,286 @@
+//! Typed event objects deserialized from the [`WhiskerValue`] body
+//! Lynx hands an event handler.
+//!
+//! Mirrors Lynx's event hierarchy (see
+//! <https://lynxjs.org/api/lynx-api/event/event.html>):
+//!
+//!   - [`Event`] — base shape every event carries (`type`,
+//!     `timestamp`, `target`, `currentTarget`).
+//!   - [`TouchEvent`] — `tap` / `longpress` / `touchstart` /
+//!     `touchmove` / `touchend` / `touchcancel` / `click`. Adds the
+//!     primary-touch [`Point`] `detail` plus `touches` /
+//!     `changedTouches` arrays.
+//!   - [`AnimationEvent`] — `animationstart` / `animationend` / … /
+//!     `transitionend`. Adds the animation `detail`.
+//!   - [`CustomEvent`] — component state-change events (`scroll`,
+//!     input `change`, …). Carries an opaque [`WhiskerValue`]
+//!     `detail`.
+//!
+//! A built-in builder's `on_<event>` method, or a
+//! `#[whisker::module_component]` `on_<event>: TouchEvent` prop,
+//! receives the event body as a [`WhiskerValue`] and recovers the
+//! struct via [`WhiskerValue::deserialize_into`]. Every field is
+//! `#[serde(default)]` so a body missing an optional key (or an
+//! engine that names one slightly differently) degrades to a
+//! zero-valued field rather than dropping the handler call.
+
+use std::collections::BTreeMap;
+
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
+
+use crate::value::WhiskerValue;
+use crate::view::{set_event_listener, Element};
+
+/// Register a **typed** event handler on `handle`.
+///
+/// The event body crosses the bridge as a [`WhiskerValue`]; this
+/// deserializes it into `E` before calling `handler`. Used by the
+/// built-in builders' `on_<event>` methods and by
+/// `#[whisker::module_component]` for typed `on_<event>: E` props.
+///
+/// **The handler always fires when the event fires.** "The event
+/// happened" is the primary signal; the typed payload is
+/// supplementary. So if the body is absent (a bodyless event arrives
+/// as [`WhiskerValue::Null`]) or its shape doesn't match `E`, the
+/// handler is still called with `E::default()` — and the mismatch is
+/// logged with the raw value so it stays diagnosable (the Case ②
+/// philosophy: conversion mistakes are loggable, not invisible)
+/// rather than silently swallowing the whole event.
+pub fn bind_typed<E, F>(handle: Element, event_name: &'static str, handler: F)
+where
+    E: DeserializeOwned + Default + 'static,
+    F: Fn(E) + 'static,
+{
+    set_event_listener(
+        handle,
+        event_name,
+        Box::new(move |value: WhiskerValue| {
+            let ev = value.deserialize_into::<E>().unwrap_or_else(|err| {
+                eprintln!(
+                    "[whisker] event `{event_name}`: payload did not deserialize into `{}`: \
+                     {err} (raw: {value:?}); calling handler with default",
+                    std::any::type_name::<E>(),
+                );
+                E::default()
+            });
+            handler(ev);
+        }),
+    );
+}
+
+/// Register an event handler that ignores the payload.
+///
+/// For `on_<event>: ()` props / call sites that only care that the
+/// event fired. Wraps a `Fn()` into the value-carrying primitive.
+pub fn bind_unit<F>(handle: Element, event_name: &str, handler: F)
+where
+    F: Fn() + 'static,
+{
+    set_event_listener(
+        handle,
+        event_name,
+        Box::new(move |_value: WhiskerValue| handler()),
+    );
+}
+
+/// The element an event targets / is listening on. Shared by
+/// `target` (where the event originated) and `currentTarget` (the
+/// element whose handler is firing).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Target {
+    /// The element's `id` attribute (empty when unset).
+    #[serde(default)]
+    pub id: String,
+    /// Lynx Engine's unique element identifier.
+    #[serde(default)]
+    pub uid: i64,
+    /// `data-*` attributes attached to the element, keyed without
+    /// the `data-` prefix.
+    #[serde(default)]
+    pub dataset: BTreeMap<String, WhiskerValue>,
+}
+
+/// A 2-D point in LynxView coordinates — the `detail` of a
+/// [`TouchEvent`] (position of the first touch point).
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub struct Point {
+    #[serde(default)]
+    pub x: f64,
+    #[serde(default)]
+    pub y: f64,
+}
+
+/// A single active touch point inside a [`TouchEvent`].
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Touch {
+    /// Stable id for the lifetime of one finger's touch sequence.
+    #[serde(default)]
+    pub identifier: i64,
+    /// Position in the touched element's coordinate space.
+    #[serde(default)]
+    pub x: f64,
+    #[serde(default)]
+    pub y: f64,
+    /// Position in LynxView coordinates.
+    #[serde(default)]
+    pub page_x: f64,
+    #[serde(default)]
+    pub page_y: f64,
+    /// Position in window coordinates.
+    #[serde(default)]
+    pub client_x: f64,
+    #[serde(default)]
+    pub client_y: f64,
+}
+
+/// Base event shape — fields present on every Lynx event.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Event {
+    /// Event name (`"tap"`, `"touchstart"`, …).
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    /// Milliseconds since the event was generated.
+    #[serde(default)]
+    pub timestamp: f64,
+    /// The element the event originated on.
+    #[serde(default)]
+    pub target: Target,
+    /// The element whose listener is firing.
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+}
+
+/// Touch / tap / click event. The `detail` is the first touch
+/// point's LynxView-coordinate position; `touches` /
+/// `changed_touches` carry the full per-finger detail.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TouchEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(default)]
+    pub current_target: Target,
+    /// Position of the first touch point (LynxView coordinates).
+    #[serde(default)]
+    pub detail: Point,
+    /// All touch points currently on the surface.
+    #[serde(default)]
+    pub touches: Vec<Touch>,
+    /// Touch points whose state changed in this event.
+    #[serde(default)]
+    pub changed_touches: Vec<Touch>,
+}
+
+/// Keyframe / transition animation lifecycle event.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AnimationEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+    /// `"keyframe-animation"` or `"transition-animation"`.
+    #[serde(rename = "animation_type", default)]
+    pub animation_type: String,
+    /// `@keyframes` name or the transitioned CSS property.
+    #[serde(rename = "animation_name", default)]
+    pub animation_name: String,
+    #[serde(rename = "new_animator", default)]
+    pub new_animator: bool,
+}
+
+/// A component state-change event (`scroll`, input `change`, …).
+/// The payload shape is component-specific, so `detail` stays an
+/// opaque [`WhiskerValue`] the handler inspects itself.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CustomEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+    /// Component-supplied state. `WhiskerValue::Null` when absent.
+    #[serde(default)]
+    pub detail: WhiskerValue,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn touch_event_from_value_tree() {
+        // Shape mirrors Lynx's `generateEventBody` for a tap.
+        let v = WhiskerValue::map([
+            ("type", WhiskerValue::String("tap".into())),
+            ("timestamp", WhiskerValue::Float(123.0)),
+            (
+                "detail",
+                WhiskerValue::map([
+                    ("x", WhiskerValue::Float(10.5)),
+                    ("y", WhiskerValue::Float(20.0)),
+                ]),
+            ),
+            (
+                "target",
+                WhiskerValue::map([
+                    ("id", WhiskerValue::String("btn".into())),
+                    ("uid", WhiskerValue::Int(7)),
+                ]),
+            ),
+            (
+                "touches",
+                WhiskerValue::Array(vec![WhiskerValue::map([
+                    ("identifier", WhiskerValue::Int(0)),
+                    ("pageX", WhiskerValue::Float(10.5)),
+                    ("pageY", WhiskerValue::Float(20.0)),
+                ])]),
+            ),
+        ]);
+
+        let e: TouchEvent = v.deserialize_into().expect("deserialize TouchEvent");
+        assert_eq!(e.kind, "tap");
+        assert_eq!(e.detail.x, 10.5);
+        assert_eq!(e.target.id, "btn");
+        assert_eq!(e.target.uid, 7);
+        assert_eq!(e.touches.len(), 1);
+        assert_eq!(e.touches[0].page_x, 10.5);
+    }
+
+    #[test]
+    fn missing_fields_default_rather_than_fail() {
+        // A body with only some keys (e.g. an event Lynx fills
+        // partially) must still deserialize — every field defaults.
+        let e: TouchEvent = WhiskerValue::map([("type", WhiskerValue::String("touchend".into()))])
+            .deserialize_into()
+            .expect("partial body deserializes");
+        assert_eq!(e.kind, "touchend");
+        assert!(e.touches.is_empty());
+        assert_eq!(e.detail.x, 0.0);
+    }
+
+    #[test]
+    fn custom_event_keeps_opaque_detail() {
+        let v = WhiskerValue::map([(
+            "detail",
+            WhiskerValue::map([("scrollTop", WhiskerValue::Int(42))]),
+        )]);
+        let e: CustomEvent = v.deserialize_into().expect("deserialize CustomEvent");
+        match e.detail {
+            WhiskerValue::Map(m) => assert_eq!(m.get("scrollTop"), Some(&WhiskerValue::Int(42))),
+            other => panic!("expected Map detail, got {other:?}"),
+        }
+    }
+}

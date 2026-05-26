@@ -21,8 +21,10 @@
 //! imperative `view::*` calls driven by reactive effects.
 
 pub mod element;
+pub mod event;
 pub mod host_wake;
 pub mod main_thread;
 pub mod reactive;
 pub mod tasks;
+pub mod value;
 pub mod view;

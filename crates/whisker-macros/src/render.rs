@@ -399,6 +399,7 @@ impl ElementNode {
         if child_calls.is_empty() && ident_refs.is_empty() {
             return quote! {
                 {
+                    use ::whisker::__tags::ElementBuilder as _;
                     ::whisker::__tags::#ctor_ident() #(#setter_calls)* .__h()
                 }
             };
@@ -422,12 +423,14 @@ impl ElementNode {
         if ident_refs.is_empty() {
             quote! {
                 {
+                    use ::whisker::__tags::ElementBuilder as _;
                     ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
                 }
             }
         } else {
             quote! {
                 {
+                    use ::whisker::__tags::ElementBuilder as _;
                     #ident_refs_block
                     ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
                 }
@@ -486,10 +489,16 @@ impl ElementNode {
             // (`From<T>` for static / `From<ReadSignal<T>>` etc.
             // for reactive).
             quote_spanned! {span=> .#name(#value) }
-        } else if name_str == "on_tap" {
-            // Handler closure passed through.
+        } else if is_known_event_method(&name_str) {
+            // Typed event helper on `ElementBuilder` — `.on_tap(f)`,
+            // `.on_longpress(f)`, … — where `f` receives a typed
+            // `TouchEvent` / `CustomEvent` / `AnimationEvent`. The
+            // closure flows through unchanged; the builder method
+            // fixes the event type.
             quote_spanned! {span=> .#name(#value) }
         } else if let Some(event) = strip_on_prefix(&name_str) {
+            // Unknown event name → raw `WhiskerValue` escape hatch
+            // (`.on("name", |e: WhiskerValue| …)`).
             let event_lit = LitStr::new(&event, span);
             quote_spanned! {span=> .on(#event_lit, #value) }
         } else {
@@ -519,6 +528,35 @@ fn is_string_attr_method(tag: &str, attr: &str) -> bool {
             | ("scroll_view", "scroll_orientation")
             | ("raw_text", "text")
             | ("text", "value")
+    )
+}
+
+/// Event kwargs that map to a **typed** `ElementBuilder::on_<event>`
+/// method (the closure receives a typed `TouchEvent` /
+/// `CustomEvent` / `AnimationEvent`). Any other `on_*` kwarg falls
+/// through to the raw `.on("name", |e: WhiskerValue| …)` escape
+/// hatch. Mirrors the `on_*` methods on the trait in
+/// `whisker::__tags`.
+fn is_known_event_method(name: &str) -> bool {
+    matches!(
+        name,
+        "on_tap"
+            | "on_longpress"
+            | "on_click"
+            | "on_touchstart"
+            | "on_touchmove"
+            | "on_touchend"
+            | "on_touchcancel"
+            | "on_layoutchange"
+            | "on_uiappear"
+            | "on_uidisappear"
+            | "on_animationstart"
+            | "on_animationend"
+            | "on_animationcancel"
+            | "on_animationiteration"
+            | "on_transitionstart"
+            | "on_transitionend"
+            | "on_transitioncancel"
     )
 }
 

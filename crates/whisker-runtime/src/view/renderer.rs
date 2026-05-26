@@ -23,6 +23,7 @@ use std::collections::HashMap;
 
 use super::handle::Element;
 use crate::element::ElementTag;
+use crate::value::WhiskerValue;
 
 /// Object-safe renderer trait. The renderer owns whatever per-element
 /// state it needs and answers in `Element` IDs.
@@ -46,29 +47,20 @@ pub trait DynRenderer {
     fn append_child(&mut self, parent: Element, child: Element);
     fn remove_child(&mut self, parent: Element, child: Element);
 
+    /// Register `callback` for `event_name` on `handle`.
+    ///
+    /// The callback receives the event body Lynx hands the handler
+    /// as a [`WhiskerValue`] tree (the same wire as module
+    /// args/returns). A built-in builder's `on_<event>` method or a
+    /// `#[whisker::module_component]` `on_<event>` prop wraps a
+    /// typed-event / unit / raw-value closure into this single
+    /// shape, deserializing the payload as needed. An event with no
+    /// body fires the callback with [`WhiskerValue::Null`].
     fn set_event_listener(
         &mut self,
         handle: Element,
         event_name: &str,
-        callback: Box<dyn Fn() + 'static>,
-    );
-
-    /// Variant that also passes the platform-side event-detail body
-    /// (Lynx's `LynxEvent.generateEventBody` dict, serialised to a
-    /// UTF-8 JSON string) to the callback. Used by
-    /// `#[whisker::module_component]` for `on_<event>: String`
-    /// prop declarations — `on_input` on `<input>` receives the
-    /// updated text via this path.
-    ///
-    /// Renderers that don't support event payloads (in-memory test
-    /// recorders, etc.) should forward to `set_event_listener` and
-    /// invoke `callback` with an empty `String` when the event fires
-    /// — same semantic as "empty payload" from the iOS bridge.
-    fn set_event_listener_with_string_payload(
-        &mut self,
-        handle: Element,
-        event_name: &str,
-        callback: Box<dyn Fn(String) + 'static>,
+        callback: Box<dyn Fn(WhiskerValue) + 'static>,
     );
 
     fn set_root(&mut self, page: Element);
@@ -312,19 +304,12 @@ pub fn __reset_children_mirror_for_tests() {
     CHILDREN_OF.with_borrow_mut(|map| map.clear());
 }
 
-pub fn set_event_listener(handle: Element, event_name: &str, callback: Box<dyn Fn() + 'static>) {
-    with_renderer(|r| r.set_event_listener(handle, event_name, callback), ())
-}
-
-pub fn set_event_listener_with_string_payload(
+pub fn set_event_listener(
     handle: Element,
     event_name: &str,
-    callback: Box<dyn Fn(String) + 'static>,
+    callback: Box<dyn Fn(WhiskerValue) + 'static>,
 ) {
-    with_renderer(
-        |r| r.set_event_listener_with_string_payload(handle, event_name, callback),
-        (),
-    )
+    with_renderer(|r| r.set_event_listener(handle, event_name, callback), ())
 }
 
 pub fn set_root(page: Element) {

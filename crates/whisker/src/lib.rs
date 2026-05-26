@@ -40,6 +40,24 @@ pub use whisker_driver::{element_ref, ElementRef, RefError};
 // element tags).
 pub use whisker_driver::module::PlatformModule;
 
+/// The universal tagged-union value model. Crosses the native
+/// boundary as both module args/returns and event payloads, so it
+/// lives at the crate root rather than buried under
+/// `platform_module` (where it's also re-exported for back-compat).
+pub use whisker_runtime::value::WhiskerValue;
+
+/// Typed event objects handed to `on_<event>` handlers on built-in
+/// elements and `#[whisker::module_component]` view methods.
+///
+/// A `view(on_tap: |e| …)` handler receives a [`TouchEvent`](event::TouchEvent);
+/// `on_animationend` an [`AnimationEvent`](event::AnimationEvent);
+/// lifecycle / component-state events a [`CustomEvent`](event::CustomEvent).
+pub mod event {
+    pub use whisker_runtime::event::{
+        AnimationEvent, CustomEvent, Event, Point, Target, Touch, TouchEvent,
+    };
+}
+
 /// Build a [`PlatformModule`] handle for the native module named
 /// `$name`, with the calling crate's name prepended
 /// (`<crate>:<$name>`) so two crates can ship same-named modules
@@ -101,41 +119,303 @@ pub use whisker_runtime::view::Children;
 #[doc(hidden)]
 pub mod __tags {
     use crate::ElementTag;
+    use whisker_runtime::event::{bind_typed, AnimationEvent, CustomEvent, TouchEvent};
     use whisker_runtime::reactive::Signal;
-    use whisker_runtime::view::{append_child, create_element, set_event_listener, Element};
+    use whisker_runtime::value::WhiskerValue;
+    use whisker_runtime::view::{
+        append_child, apply_attr, apply_attr_owned, apply_styles, create_element,
+        set_event_listener, Element,
+    };
 
-    // Each built-in tag is a struct + a hand-written inherent
-    // `impl` block listing every method explicitly. **No
-    // `macro_rules!` is used to emit methods.** Earlier
-    // experiments (kept as integration tests in
-    // `crates/whisker-macros/tests/ra_completion.rs`) showed
-    // that rust-analyzer's method-completion engine doesn't
-    // surface methods that came from a `macro_rules!` expansion
-    // inside an `impl` block — even though the same methods
-    // compile and pass type-check fine. Inline definitions fix
-    // the completion path; the duplication across six tags is
-    // the cost.
+    // ---- The common builder surface -------------------------------------
     //
-    // **Body dispatch via free functions.** Each `.style(v)` /
-    // `.attr(name, v)` / etc. delegates to a free helper that
-    // matches on `Signal<T>` and either calls the underlying
-    // `set_attribute` / `set_inline_styles` once (Static) or
-    // wraps the call in `effect(move || …)` (Dynamic). Helpers
-    // are free fns, not associated methods, so the inline impl
-    // blocks stay terse without macro-rules expansion getting
-    // in the way of RA.
+    // Styling, the universal Lynx attributes, the full built-in event
+    // set, and children — every built-in tag shares these, so they
+    // live **once** on the `ElementBuilder` trait as provided
+    // methods rather than being copy-pasted across six structs.
+    //
+    // ## Why a trait (and not `macro_rules!`)
+    //
+    // An earlier note here recorded that rust-analyzer's
+    // method-completion engine does *not* surface methods produced
+    // by a `macro_rules!` expansion inside an `impl` block — which
+    // is why the per-tag methods used to be hand-inlined. A trait is
+    // different: trait methods are first-class items RA indexes and
+    // completes normally, **provided the trait is in scope**. The
+    // `render!` / `#[component]` expansions bring it into scope with
+    // `use ::whisker::__tags::ElementBuilder as _;` right before the
+    // builder chain, so `view(on_|…)` kwarg completion still works.
+    // (`crates/whisker-macros/tests/ra_completion.rs` is the
+    // end-to-end guard.)
+    //
+    // Tag-specific value attributes (`image::src`, `text::value`, …)
+    // stay as inherent methods on each struct, below.
 
-    // `apply_styles` / `apply_attr` live in
-    // `whisker_runtime::view::apply` (Phase J). Re-export here for
-    // any caller that still routes through
-    // `::whisker::__tags::apply_styles` — the
-    // `#[whisker::module_component]` macro emits
-    // `::whisker::runtime::view::apply_styles` directly now.
-    pub use whisker_runtime::view::{apply_attr, apply_styles};
+    /// Shared builder methods for every built-in element tag.
+    ///
+    /// Each method consumes `self` and returns it, so calls chain:
+    /// `view().style(…).on_tap(…).child(…)`. Reactive-capable
+    /// attributes accept any `Into<Signal<T>>` (a static value, a
+    /// `ReadSignal`, an `RwSignal`, …) and re-apply on change.
+    pub trait ElementBuilder: Sized {
+        /// The underlying Lynx element handle. Implemented by each
+        /// tag struct as `self.handle`.
+        #[doc(hidden)]
+        fn __element(&self) -> Element;
 
-    /// `<page>` — top-level container Lynx mounts as the root of
-    /// an app. Holds the screen-level `style=` (background, flex
-    /// direction) and a single content subtree.
+        // ---- Styling ----------------------------------------------------
+
+        /// Inline CSS (`SetRawInlineStyles`).
+        fn style<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_styles(self.__element(), v);
+            self
+        }
+
+        /// Lynx `class` attribute.
+        fn class<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "class", v);
+            self
+        }
+
+        /// Catch-all for any Lynx attribute not covered by a named
+        /// method. Name is taken verbatim (already kebab-cased by
+        /// the `render!` lowering).
+        fn attr<V>(self, name: &'static str, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), name, v);
+            self
+        }
+
+        // ---- Common attributes (shared by all built-in elements) --------
+
+        /// `id` — element identifier for selection / events.
+        fn id<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "id", v);
+            self
+        }
+
+        /// `name` — for native-side `findViewByName` lookup.
+        fn name<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "name", v);
+            self
+        }
+
+        /// `data-<key>` custom attribute, surfaced back on events via
+        /// `Target::dataset`.
+        fn data<V>(self, key: &str, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr_owned(self.__element(), format!("data-{key}"), v);
+            self
+        }
+
+        /// `accessibility-label` — VoiceOver / TalkBack text.
+        fn accessibility_label<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "accessibility-label", v);
+            self
+        }
+
+        /// `accessibility-trait` — `"button"` / `"image"` / `"text"`
+        /// / `"none"`.
+        fn accessibility_trait<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "accessibility-trait", v);
+            self
+        }
+
+        /// `accessibility-element` — enable/disable a11y for this node.
+        fn accessibility_element<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<bool>>,
+        {
+            apply_attr(self.__element(), "accessibility-element", v);
+            self
+        }
+
+        /// `user-interaction-enabled` — whether the node responds to
+        /// touch events.
+        fn user_interaction_enabled<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<bool>>,
+        {
+            apply_attr(self.__element(), "user-interaction-enabled", v);
+            self
+        }
+
+        /// `event-through` — display-only mode (pass touches through).
+        fn event_through<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<bool>>,
+        {
+            apply_attr(self.__element(), "event-through", v);
+            self
+        }
+
+        /// `exposure-id` — opt the node into exposure detection.
+        fn exposure_id<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "exposure-id", v);
+            self
+        }
+
+        // ---- Events: touch / tap / click → `TouchEvent` -----------------
+
+        /// `tap` — single tap (won't fire if the finger moved far).
+        fn on_tap<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "tap", f);
+            self
+        }
+
+        /// `longpress` — ~500ms press (mutually exclusive with `tap`).
+        fn on_longpress<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "longpress", f);
+            self
+        }
+
+        /// `click` — click on the nearest listening node.
+        fn on_click<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "click", f);
+            self
+        }
+
+        /// `touchstart` — finger touches the surface.
+        fn on_touchstart<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchstart", f);
+            self
+        }
+
+        /// `touchmove` — finger moves on the surface.
+        fn on_touchmove<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchmove", f);
+            self
+        }
+
+        /// `touchend` — finger leaves the surface.
+        fn on_touchend<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchend", f);
+            self
+        }
+
+        /// `touchcancel` — touch interrupted by the system / a gesture.
+        fn on_touchcancel<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "touchcancel", f);
+            self
+        }
+
+        // ---- Events: lifecycle → `CustomEvent` --------------------------
+
+        /// `layoutchange` — reports position after layout completes.
+        fn on_layoutchange<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "layoutchange", f);
+            self
+        }
+
+        /// `uiappear` — node entered the visible screen area.
+        fn on_uiappear<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "uiappear", f);
+            self
+        }
+
+        /// `uidisappear` — node left the visible screen area.
+        fn on_uidisappear<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "uidisappear", f);
+            self
+        }
+
+        // ---- Events: animation / transition → `AnimationEvent` ----------
+
+        /// `animationstart` — keyframe animation began.
+        fn on_animationstart<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "animationstart", f);
+            self
+        }
+
+        /// `animationend` — keyframe animation completed.
+        fn on_animationend<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "animationend", f);
+            self
+        }
+
+        /// `animationcancel` — keyframe animation interrupted.
+        fn on_animationcancel<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "animationcancel", f);
+            self
+        }
+
+        /// `animationiteration` — keyframe animation cycle boundary.
+        fn on_animationiteration<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "animationiteration", f);
+            self
+        }
+
+        /// `transitionstart` — transition animation began.
+        fn on_transitionstart<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "transitionstart", f);
+            self
+        }
+
+        /// `transitionend` — transition animation completed.
+        fn on_transitionend<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "transitionend", f);
+            self
+        }
+
+        /// `transitioncancel` — transition animation interrupted.
+        fn on_transitioncancel<F: Fn(AnimationEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.__element(), "transitioncancel", f);
+            self
+        }
+
+        // ---- Events: raw escape hatch -----------------------------------
+
+        /// Bind any event by name, receiving the raw [`WhiskerValue`]
+        /// body. For custom / dynamic event names not covered by a
+        /// typed `on_<event>` method above.
+        fn on<F: Fn(WhiskerValue) + 'static>(self, event: &'static str, f: F) -> Self {
+            set_event_listener(self.__element(), event, ::std::boxed::Box::new(f));
+            self
+        }
+
+        // ---- Children ---------------------------------------------------
+
+        /// Append a child handle.
+        fn child(self, child: Element) -> Self {
+            append_child(self.__element(), child);
+            self
+        }
+
+        /// Finish building and return the underlying handle.
+        #[doc(hidden)]
+        fn __h(self) -> Element {
+            self.__element()
+        }
+    }
+
+    /// `<page>` — top-level container Lynx mounts as the root of an
+    /// app. Holds the screen-level `style=` and a single content
+    /// subtree.
     #[allow(non_camel_case_types)]
     pub struct page {
         handle: Element,
@@ -146,76 +426,15 @@ pub mod __tags {
             handle: create_element(ElementTag::Page),
         }
     }
-    impl page {
-        /// Inline CSS — value-via-closure so signal-reading
-        /// expressions re-apply on each dep change.
-        /// Inline CSS. Accepts a static value (`String`),
-        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
-        /// reactive updates, or any other `Into<Signal<String>>`
-        /// source.
-        ///
-        /// `T` is fixed to `String` (rather than a generic
-        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
-        /// path unambiguous: with a generic T, `ReadSignal<String>`
-        /// could match both `From<T>` (with T=ReadSignal<String>)
-        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
-        /// the call site removes the ambiguity entirely.
-        ///
-        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
-        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
-        pub fn style<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_styles(self.handle, v);
-            self
-        }
-        /// Tap handler (Lynx `tap` event).
-        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
-            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
-            self
-        }
-        /// Generic event handler.
-        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
-            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
-            self
-        }
-        /// Lynx class name.
-        /// Lynx `class` attribute. Same Signal<String> contract as
-        /// [`style`](Self::style).
-        pub fn class<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "class", v);
-            self
-        }
-        /// Catch-all for any other Lynx attribute.
-        /// Catch-all for any other Lynx attribute. Same Signal<String>
-        /// contract as [`style`](Self::style).
-        pub fn attr<V>(self, name: &'static str, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, name, v);
-            self
-        }
-        /// Append a child handle.
-        pub fn child(self, child: Element) -> Self {
-            append_child(self.handle, child);
-            self
-        }
-        /// Finish building and return the underlying handle.
-        #[allow(non_snake_case)]
-        pub fn __h(self) -> Element {
+    impl ElementBuilder for page {
+        fn __element(&self) -> Element {
             self.handle
         }
     }
 
-    /// `<view>` — Lynx's flex container. The most basic layout
-    /// primitive in Whisker: a rectangular box that lays out its
-    /// children with CSS flexbox. Equivalent to `<View>` in
-    /// React Native or `<div>` in the web.
+    /// `<view>` — Lynx's flex container. The basic layout primitive:
+    /// a rectangular box that lays out children with CSS flexbox
+    /// (`<View>` in React Native, `<div>` on the web).
     #[allow(non_camel_case_types)]
     pub struct view {
         handle: Element,
@@ -226,75 +445,14 @@ pub mod __tags {
             handle: create_element(ElementTag::View),
         }
     }
-    impl view {
-        /// Inline CSS — value-via-closure so signal-reading
-        /// expressions re-apply on each dep change.
-        /// Inline CSS. Accepts a static value (`String`),
-        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
-        /// reactive updates, or any other `Into<Signal<String>>`
-        /// source.
-        ///
-        /// `T` is fixed to `String` (rather than a generic
-        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
-        /// path unambiguous: with a generic T, `ReadSignal<String>`
-        /// could match both `From<T>` (with T=ReadSignal<String>)
-        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
-        /// the call site removes the ambiguity entirely.
-        ///
-        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
-        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
-        pub fn style<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_styles(self.handle, v);
-            self
-        }
-        /// Tap handler (Lynx `tap` event).
-        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
-            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
-            self
-        }
-        /// Generic event handler.
-        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
-            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
-            self
-        }
-        /// Lynx class name.
-        /// Lynx `class` attribute. Same Signal<String> contract as
-        /// [`style`](Self::style).
-        pub fn class<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "class", v);
-            self
-        }
-        /// Catch-all for any other Lynx attribute.
-        /// Catch-all for any other Lynx attribute. Same Signal<String>
-        /// contract as [`style`](Self::style).
-        pub fn attr<V>(self, name: &'static str, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, name, v);
-            self
-        }
-        /// Append a child handle.
-        pub fn child(self, child: Element) -> Self {
-            append_child(self.handle, child);
-            self
-        }
-        /// Finish building and return the underlying handle.
-        #[allow(non_snake_case)]
-        pub fn __h(self) -> Element {
+    impl ElementBuilder for view {
+        fn __element(&self) -> Element {
             self.handle
         }
     }
 
-    /// `<text>` — text container. The actual glyphs live in
-    /// `raw_text` child elements that the macro creates from
-    /// string-literal children.
+    /// `<text>` — text container. The glyphs live in `raw_text`
+    /// children the macro creates from string-literal children.
     #[allow(non_camel_case_types)]
     pub struct text {
         handle: Element,
@@ -305,68 +463,15 @@ pub mod __tags {
             handle: create_element(ElementTag::Text),
         }
     }
+    impl ElementBuilder for text {
+        fn __element(&self) -> Element {
+            self.handle
+        }
+    }
     impl text {
-        /// Inline CSS. Accepts a static value (`String`),
-        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
-        /// reactive updates, or any other `Into<Signal<String>>`
-        /// source.
-        ///
-        /// `T` is fixed to `String` (rather than a generic
-        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
-        /// path unambiguous: with a generic T, `ReadSignal<String>`
-        /// could match both `From<T>` (with T=ReadSignal<String>)
-        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
-        /// the call site removes the ambiguity entirely.
-        ///
-        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
-        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
-        pub fn style<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_styles(self.handle, v);
-            self
-        }
-        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
-            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
-            self
-        }
-        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
-            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
-            self
-        }
-        /// Lynx `class` attribute. Same Signal<String> contract as
-        /// [`style`](Self::style).
-        pub fn class<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "class", v);
-            self
-        }
-        /// Catch-all for any other Lynx attribute. Same Signal<String>
-        /// contract as [`style`](Self::style).
-        pub fn attr<V>(self, name: &'static str, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, name, v);
-            self
-        }
-        pub fn child(self, child: Element) -> Self {
-            append_child(self.handle, child);
-            self
-        }
-        /// Text content. Creates a `raw_text` child element under
-        /// the hood and reactively keeps its `text` attribute in
-        /// sync with the closure's return value. This is the
-        /// kwarg-styled replacement for the old bare-`"hi"`
-        /// string-literal child support — see render.rs for why
-        /// (rust-analyzer fixup needs every children item to be
-        /// kwarg-shape).
-        /// Text content. Creates a `raw_text` child element under
-        /// the hood and applies its `text` attribute via the
-        /// [`Signal<String>`] machinery.
+        /// `value` — the text string. Lynx renders `<text>` content
+        /// from a child `<raw-text text="…">`, so this creates that
+        /// child and sets its `text` attribute (reactive-capable).
         pub fn value<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<::std::string::String>>,
@@ -376,15 +481,10 @@ pub mod __tags {
             apply_attr(raw, "text", v);
             self
         }
-        #[allow(non_snake_case)]
-        pub fn __h(self) -> Element {
-            self.handle
-        }
     }
 
-    /// `<raw_text>` — leaf text node with a `text` attribute.
-    /// Normally the macro creates these automatically from
-    /// string-literal children of `text` / `view`.
+    /// `<raw-text>` — leaf text node carrying actual glyphs. Created
+    /// by the macro from string-literal children of `<text>`.
     #[allow(non_camel_case_types)]
     pub struct raw_text {
         handle: Element,
@@ -395,64 +495,13 @@ pub mod __tags {
             handle: create_element(ElementTag::RawText),
         }
     }
-    impl raw_text {
-        /// Inline CSS. Accepts a static value (`String`),
-        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
-        /// reactive updates, or any other `Into<Signal<String>>`
-        /// source.
-        ///
-        /// `T` is fixed to `String` (rather than a generic
-        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
-        /// path unambiguous: with a generic T, `ReadSignal<String>`
-        /// could match both `From<T>` (with T=ReadSignal<String>)
-        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
-        /// the call site removes the ambiguity entirely.
-        ///
-        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
-        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
-        pub fn style<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_styles(self.handle, v);
-            self
-        }
-        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
-            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
-            self
-        }
-        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
-            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
-            self
-        }
-        /// Lynx `class` attribute. Same Signal<String> contract as
-        /// [`style`](Self::style).
-        pub fn class<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "class", v);
-            self
-        }
-        /// Catch-all for any other Lynx attribute. Same Signal<String>
-        /// contract as [`style`](Self::style).
-        pub fn attr<V>(self, name: &'static str, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, name, v);
-            self
-        }
-        pub fn child(self, child: Element) -> Self {
-            append_child(self.handle, child);
-            self
-        }
-        #[allow(non_snake_case)]
-        pub fn __h(self) -> Element {
+    impl ElementBuilder for raw_text {
+        fn __element(&self) -> Element {
             self.handle
         }
-
-        /// The literal text content. Lynx's `text` attribute.
+    }
+    impl raw_text {
+        /// `text` — the glyph string. Reactive-capable.
         pub fn text<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<::std::string::String>>,
@@ -462,8 +511,7 @@ pub mod __tags {
         }
     }
 
-    /// `<image>` — bitmap from a URL. Set `src=` (required) and
-    /// optionally `style=` for sizing.
+    /// `<image>` — bitmap element. `src` is the image URL / resource.
     #[allow(non_camel_case_types)]
     pub struct image {
         handle: Element,
@@ -474,64 +522,13 @@ pub mod __tags {
             handle: create_element(ElementTag::Image),
         }
     }
-    impl image {
-        /// Inline CSS. Accepts a static value (`String`),
-        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
-        /// reactive updates, or any other `Into<Signal<String>>`
-        /// source.
-        ///
-        /// `T` is fixed to `String` (rather than a generic
-        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
-        /// path unambiguous: with a generic T, `ReadSignal<String>`
-        /// could match both `From<T>` (with T=ReadSignal<String>)
-        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
-        /// the call site removes the ambiguity entirely.
-        ///
-        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
-        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
-        pub fn style<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_styles(self.handle, v);
-            self
-        }
-        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
-            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
-            self
-        }
-        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
-            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
-            self
-        }
-        /// Lynx `class` attribute. Same Signal<String> contract as
-        /// [`style`](Self::style).
-        pub fn class<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "class", v);
-            self
-        }
-        /// Catch-all for any other Lynx attribute. Same Signal<String>
-        /// contract as [`style`](Self::style).
-        pub fn attr<V>(self, name: &'static str, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, name, v);
-            self
-        }
-        pub fn child(self, child: Element) -> Self {
-            append_child(self.handle, child);
-            self
-        }
-        #[allow(non_snake_case)]
-        pub fn __h(self) -> Element {
+    impl ElementBuilder for image {
+        fn __element(&self) -> Element {
             self.handle
         }
-
-        /// Image source URL — Lynx's `src` attribute.
+    }
+    impl image {
+        /// `src` — image URL or resource name. Reactive-capable.
         pub fn src<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<::std::string::String>>,
@@ -541,8 +538,7 @@ pub mod __tags {
         }
     }
 
-    /// `<scroll_view>` — scrollable container. Set
-    /// `scroll_orientation=` to `"vertical"` or `"horizontal"`.
+    /// `<scroll-view>` — scrollable container.
     #[allow(non_camel_case_types)]
     pub struct scroll_view {
         handle: Element,
@@ -553,66 +549,12 @@ pub mod __tags {
             handle: create_element(ElementTag::ScrollView),
         }
     }
-    impl scroll_view {
-        /// Inline CSS. Accepts a static value (`String`),
-        /// a [`ReadSignal<String>`] / [`RwSignal<String>`] for
-        /// reactive updates, or any other `Into<Signal<String>>`
-        /// source.
-        ///
-        /// `T` is fixed to `String` (rather than a generic
-        /// `T: ToString`) to keep the `Into<Signal<T>>` inference
-        /// path unambiguous: with a generic T, `ReadSignal<String>`
-        /// could match both `From<T>` (with T=ReadSignal<String>)
-        /// and `From<ReadSignal<T>>` (with T=String). Fixing T at
-        /// the call site removes the ambiguity entirely.
-        ///
-        /// [`ReadSignal<String>`]: ::whisker_runtime::reactive::ReadSignal
-        /// [`RwSignal<String>`]: ::whisker_runtime::reactive::RwSignal
-        pub fn style<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_styles(self.handle, v);
-            self
-        }
-        pub fn on_tap<F: ::std::ops::Fn() + 'static>(self, f: F) -> Self {
-            set_event_listener(self.handle, "tap", ::std::boxed::Box::new(f));
-            self
-        }
-        pub fn on<F: ::std::ops::Fn() + 'static>(self, event: &'static str, f: F) -> Self {
-            set_event_listener(self.handle, event, ::std::boxed::Box::new(f));
-            self
-        }
-        /// Lynx `class` attribute. Same Signal<String> contract as
-        /// [`style`](Self::style).
-        pub fn class<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "class", v);
-            self
-        }
-        /// Catch-all for any other Lynx attribute. Same Signal<String>
-        /// contract as [`style`](Self::style).
-        pub fn attr<V>(self, name: &'static str, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, name, v);
-            self
-        }
-        pub fn child(self, child: Element) -> Self {
-            append_child(self.handle, child);
-            self
-        }
-        #[allow(non_snake_case)]
-        pub fn __h(self) -> Element {
+    impl ElementBuilder for scroll_view {
+        fn __element(&self) -> Element {
             self.handle
         }
-
-        /// Scroll direction — `"vertical"` (default) or
-        /// `"horizontal"`. Maps to Lynx's `scroll-orientation`
-        /// attribute.
+    }
+    impl scroll_view {
         /// Scroll direction — `"vertical"` (default) or
         /// `"horizontal"`. Lynx's `scroll-orientation` attribute.
         pub fn scroll_orientation<V>(self, v: V) -> Self

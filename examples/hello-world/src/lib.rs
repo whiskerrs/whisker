@@ -165,7 +165,7 @@ fn grid_tile(
 ) -> Element {
     let bitmask = state.liked_mixes;
     let liked_bit = 1u8 << index;
-    let on_heart = move || bitmask.update(|b| *b ^= liked_bit);
+    let on_heart = move |_| bitmask.update(|b| *b ^= liked_bit);
 
     // Heart appearance — driven reactively off the bitmask signal.
     // Φ.B removed the render! macro's `move ||` auto-wrap, so a bare
@@ -250,7 +250,7 @@ fn activity_row(
 #[component]
 fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppState) -> Element {
     let tab = state.selected_tab;
-    let on_pick = move || tab.set(index);
+    let on_pick = move |_| tab.set(index);
     let glyph_style = computed(move || {
         let color = if tab.get() == index {
             ACCENT
@@ -299,7 +299,7 @@ fn tab_bar(state: AppState) -> Element {
 #[component]
 fn now_playing(state: AppState) -> Element {
     let playing = state.is_playing;
-    let toggle = move || playing.update(|p| *p = !*p);
+    let toggle = move |_| playing.update(|p| *p = !*p);
     let glyph = computed(move || {
         if playing.get() {
             "▌▌".to_string()
@@ -535,9 +535,9 @@ pub fn video_demo() -> Element {
                 style: "width: 100%; height: 220px;"
             )
             view(style: row_style) {
-                text(value: "▶ Play",  style: btn_style, on_tap: move || { video.play(); })
-                text(value: "⏸ Pause", style: btn_style, on_tap: move || { video.pause(); })
-                text(value: "+10s",    style: btn_style, on_tap: move || { video.seek(10.0); })
+                text(value: "▶ Play",  style: btn_style, on_tap: move |_| { video.play(); })
+                text(value: "⏸ Pause", style: btn_style, on_tap: move |_| { video.pause(); })
+                text(value: "+10s",    style: btn_style, on_tap: move |_| { video.seek(10.0); })
             }
         }
     }
