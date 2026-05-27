@@ -526,10 +526,12 @@ fn scroll_demo() -> Element {
                 ScrollCard(n: 7_i32, color: "#ff7e5f")
                 ScrollCard(n: 8_i32, color: "#9b6bff")
             }
-            view(style: "display: flex; flex-direction: row; gap: 8px;") {
+            view(style: "display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px;") {
                 text(value: "→ 300", style: btn, on_tap: move |_| { row.scroll_to(300.0, true); })
                 text(value: "⇤ start", style: btn, on_tap: move |_| { row.scroll_to(0.0, true); })
                 text(value: "+120", style: btn, on_tap: move |_| { row.scroll_by(120.0); })
+                text(value: "▶ auto", style: btn, on_tap: move |_| { row.auto_scroll(120.0); })
+                text(value: "■ stop", style: btn, on_tap: move |_| { row.stop_auto_scroll(); })
                 text(value: "ℹ info", style: btn, on_tap: move |_| {
                     spawn_local(async move {
                         match row.get_scroll_info().await {

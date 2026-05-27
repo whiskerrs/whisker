@@ -33,7 +33,7 @@ pub use whisker_macros::{component, main, module_component, render};
 // macro binds it on mount when passed as the `ref:` prop.
 pub use whisker_driver::{
     element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError, ScrollInfo,
-    ScrollViewHandle, TextBoundingRect, TextHandle,
+    ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo,
 };
 
 // Function-only module dispatch. `PlatformModule` is the name-keyed

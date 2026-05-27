@@ -13,7 +13,7 @@ pub mod module;
 
 pub use element_ref::{
     element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError, ScrollInfo,
-    ScrollViewHandle, TextBoundingRect, TextHandle,
+    ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo,
 };
 pub use lynx::bootstrap;
 pub use lynx::renderer::BridgeRenderer;
