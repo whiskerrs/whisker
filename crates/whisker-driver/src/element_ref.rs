@@ -526,11 +526,16 @@ impl ScrollViewHandle {
 
     /// `scrollTo` — scroll to an absolute `offset` (logical pixels)
     /// along the scroll axis. `smooth` animates the scroll.
+    ///
+    /// `offset` is sent as a number, not a `"<n>px"` string: Android's
+    /// `UIScrollView.scrollTo` reads it with `params.getDouble("offset")`
+    /// (a string decodes to 0), and iOS's `toPtFromIDUnitValue` accepts
+    /// a bare number as points — so a number is the one form both honor.
     pub fn scroll_to(&self, offset: f64, smooth: bool) {
         let _ = self.r.invoke_with_params(
             "scrollTo",
             WhiskerValue::map([
-                ("offset", WhiskerValue::String(format!("{offset}px"))),
+                ("offset", WhiskerValue::Float(offset)),
                 ("smooth", WhiskerValue::Bool(smooth)),
             ]),
         );
@@ -552,36 +557,25 @@ impl ScrollViewHandle {
     /// from the current position along the scroll axis. Always instant
     /// (Lynx's `scrollBy` doesn't honor a `smooth` flag — use
     /// [`scroll_to`](Self::scroll_to) for animated moves).
+    ///
+    /// `offset` is a number for the same cross-platform reason as
+    /// [`scroll_to`](Self::scroll_to) (Android `getDouble` + iOS
+    /// `dipToPx` / `toPtFromIDUnitValue`).
     pub fn scroll_by(&self, offset: f64) {
         let _ = self.r.invoke_with_params(
             "scrollBy",
-            WhiskerValue::map([("offset", WhiskerValue::String(format!("{offset}px")))]),
-        );
-    }
-
-    /// `autoScroll` — start auto-scrolling at `rate` (logical pixels
-    /// per frame) along the scroll axis. Pair with
-    /// [`stop_auto_scroll`](Self::stop_auto_scroll) to halt.
-    pub fn auto_scroll(&self, rate: f64, smooth: bool) {
-        let _ = self.r.invoke_with_params(
-            "autoScroll",
-            WhiskerValue::map([
-                ("start", WhiskerValue::Bool(true)),
-                ("rate", WhiskerValue::String(format!("{rate}px"))),
-                ("smooth", WhiskerValue::Bool(smooth)),
-            ]),
-        );
-    }
-
-    /// `autoScroll` with `start: false` — stop an in-progress
-    /// auto-scroll started by [`auto_scroll`](Self::auto_scroll).
-    pub fn stop_auto_scroll(&self) {
-        let _ = self.r.invoke_with_params(
-            "autoScroll",
-            WhiskerValue::map([("start", WhiskerValue::Bool(false))]),
+            WhiskerValue::map([("offset", WhiskerValue::Float(offset))]),
         );
     }
 }
+
+// NOTE: `autoScroll` is intentionally not exposed. Its `rate` param is
+// read as a *number* on Android (`AndroidScrollView.autoScroll` →
+// `params.getDouble("rate")`) but as a *unit string* on iOS
+// (`LynxUIScroller`/`LynxUIScrollViewInternal` → `toPtWithUnitValue:`,
+// which only accepts `NSString`). No single wire value satisfies both,
+// so rather than ship a method that silently no-ops on one platform we
+// leave it out until the fork's readers converge.
 
 impl Default for ScrollViewHandle {
     fn default() -> Self {
