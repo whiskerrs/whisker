@@ -24,6 +24,7 @@
 #include "core/renderer/dom/element_manager.h"
 #include "core/renderer/dom/fiber/fiber_element.h"
 #include "core/renderer/dom/fiber/page_element.h"
+#include "core/renderer/events/events.h"
 #include "core/renderer/dom/fiber/raw_text_element.h"
 #include "core/renderer/dom/fiber/scroll_element.h"
 #include "core/renderer/dom/fiber/text_element.h"
@@ -191,6 +192,24 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_attribute(
   element->ref->SetAttribute(
       lynx::base::String(key),
       lynx::lepus::Value(lynx::base::String(value)));
+}
+
+LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_event_handler(
+    lynx_fiber_element_t* element,
+    const char* event_name) {
+  if (element == nullptr || !element->ref || event_name == nullptr) {
+    return;
+  }
+  // Bind a bubble-phase (`bindEvent`) handler. The function name is a
+  // sentinel — Whisker observes the fire via the reporter, not by
+  // calling a JS function (there is no JS runtime). Registering the
+  // handler is what puts the event in the element's event set, which is
+  // what makes Lynx's UI components emit their component-specific events
+  // (scroll, layout, uiappear, …) in the first place.
+  element->ref->SetJSEventHandler(
+      lynx::base::String(event_name),
+      lynx::base::String(lynx::tasm::kEventBindEvent),
+      lynx::base::String("__whisker_native__"));
 }
 
 LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_inline_styles(

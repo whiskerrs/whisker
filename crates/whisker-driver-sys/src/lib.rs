@@ -225,6 +225,15 @@ extern "C" {
     /// tree + listener maps. Returns 0 for a null element.
     pub fn whisker_bridge_element_sign(element: *mut WhiskerElement) -> i32;
 
+    /// Register a bubble-phase event handler for `event_name` on
+    /// `element`, populating its Lynx event set so the UI component
+    /// emits the event. The driver calls this for non-gesture
+    /// (component) events; touch/gesture events don't need it.
+    pub fn whisker_bridge_set_native_event_handler(
+        element: *mut WhiskerElement,
+        event_name: *const c_char,
+    );
+
     pub fn whisker_bridge_set_root(engine: *mut WhiskerEngine, page: *mut WhiskerElement);
     pub fn whisker_bridge_flush(engine: *mut WhiskerEngine);
 

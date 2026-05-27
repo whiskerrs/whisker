@@ -275,6 +275,18 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_register_event_dispatcher(
 // uses for its tree + listener maps. Returns 0 for a null element.
 WHISKER_BRIDGE_EXPORT int32_t whisker_bridge_element_sign(WhiskerElement* element);
 
+// Register a bubble-phase event handler for `event_name` on `element`,
+// populating its Lynx event set. Lynx's UI components only EMIT their
+// component-specific events (scroll / layout / uiappear / …) when a
+// handler is bound for that name — so the driver calls this for
+// non-gesture events. (Touch/gesture events reach the reporter through
+// the gesture pipeline regardless, so they don't need this.) The
+// handler is a sentinel; Whisker still observes the fire via the
+// reporter → dispatcher path.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_set_native_event_handler(
+    WhiskerElement* element,
+    const char* event_name);
+
 // Per-module dispatch function — the platform-side Swift Macro or
 // KSP processor emits one of these per `@WhiskerModule`-annotated
 // class. The bridge stores `(module_name → dispatch_fn)` in an

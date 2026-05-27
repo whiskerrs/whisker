@@ -25,8 +25,9 @@
 //! zero-valued field rather than dropping the handler call.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
-use serde::de::DeserializeOwned;
+use serde::de::{self, DeserializeOwned, Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 
 use crate::value::WhiskerValue;
@@ -94,18 +95,84 @@ where
 /// The element an event targets / is listening on. Shared by
 /// `target` (where the event originated) and `currentTarget` (the
 /// element whose handler is firing).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct Target {
     /// The element's `id` attribute (empty when unset).
-    #[serde(default)]
     pub id: String,
-    /// Lynx Engine's unique element identifier.
-    #[serde(default)]
+    /// Lynx Engine's unique element identifier (its "sign").
     pub uid: i64,
     /// `data-*` attributes attached to the element, keyed without
     /// the `data-` prefix.
-    #[serde(default)]
     pub dataset: BTreeMap<String, WhiskerValue>,
+}
+
+// The platform reporter hands us the *raw* event body, where `target`
+// and `currentTarget` are plain integer signs (Lynx
+// `LynxEvent.generateEventBody`: `body["target"] = targetSign`). The
+// richer `{id, dataset, uid}` object is only synthesized downstream in
+// the JS layer, which Whisker bypasses. So `Target` must deserialize
+// from EITHER an integer (→ `uid`, with empty `id`/`dataset`) or a
+// `{id, uid, dataset}` object — a hard "expected struct, got number"
+// error here would otherwise fail the *whole* event struct and blank
+// every field (including `detail`).
+impl<'de> Deserialize<'de> for Target {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct TargetVisitor;
+        impl<'de> Visitor<'de> for TargetVisitor {
+            type Value = Target;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("an element sign (integer) or a target object")
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<Target, E> {
+                Ok(Target {
+                    uid: v,
+                    ..Default::default()
+                })
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<Target, E> {
+                Ok(Target {
+                    uid: v as i64,
+                    ..Default::default()
+                })
+            }
+            fn visit_f64<E: de::Error>(self, v: f64) -> Result<Target, E> {
+                Ok(Target {
+                    uid: v as i64,
+                    ..Default::default()
+                })
+            }
+            fn visit_unit<E: de::Error>(self) -> Result<Target, E> {
+                Ok(Target::default())
+            }
+            fn visit_none<E: de::Error>(self) -> Result<Target, E> {
+                Ok(Target::default())
+            }
+            fn visit_map<A>(self, map: A) -> Result<Target, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                #[derive(Deserialize)]
+                struct Obj {
+                    #[serde(default)]
+                    id: String,
+                    #[serde(default)]
+                    uid: i64,
+                    #[serde(default)]
+                    dataset: BTreeMap<String, WhiskerValue>,
+                }
+                let o = Obj::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                Ok(Target {
+                    id: o.id,
+                    uid: o.uid,
+                    dataset: o.dataset,
+                })
+            }
+        }
+        deserializer.deserialize_any(TargetVisitor)
+    }
 }
 
 /// A 2-D point in LynxView coordinates — the `detail` of a
@@ -520,5 +587,57 @@ mod tests {
         assert_eq!(e.detail.lines.len(), 2);
         assert_eq!(e.detail.lines[1].end, 18);
         assert_eq!(e.detail.lines[1].ellipsis_count, 3);
+    }
+
+    #[test]
+    fn integer_target_signs_dont_blank_the_event() {
+        // The REAL reporter body: `target` / `currentTarget` are plain
+        // integer signs (LynxEvent.generateEventBody), not objects.
+        // Target's int-or-object deserialize must accept that so the
+        // sibling `detail` still populates (a type mismatch here used
+        // to fail the whole struct → all-zero payload).
+        let v = WhiskerValue::map([
+            ("type", WhiskerValue::String("scroll".into())),
+            ("target", WhiskerValue::Int(33)),
+            ("currentTarget", WhiskerValue::Int(33)),
+            (
+                "detail",
+                WhiskerValue::map([
+                    ("scrollLeft", WhiskerValue::Float(640.0)),
+                    ("scrollWidth", WhiskerValue::Float(832.0)),
+                    ("isDragging", WhiskerValue::Bool(true)),
+                ]),
+            ),
+        ]);
+        let e: ScrollEvent = v
+            .deserialize_into()
+            .expect("deserialize with integer target");
+        assert_eq!(e.target.uid, 33); // sign mapped to uid
+        assert_eq!(e.target.id, ""); // raw body carries no id
+        assert_eq!(e.current_target.uid, 33);
+        // The sibling detail must survive the integer target.
+        assert_eq!(e.detail.scroll_left, 640.0);
+        assert_eq!(e.detail.scroll_width, 832.0);
+        assert!(e.detail.is_dragging);
+    }
+
+    #[test]
+    fn touch_event_integer_target() {
+        let v = WhiskerValue::map([
+            ("type", WhiskerValue::String("tap".into())),
+            ("target", WhiskerValue::Int(7)),
+            (
+                "detail",
+                WhiskerValue::map([
+                    ("x", WhiskerValue::Float(10.0)),
+                    ("y", WhiskerValue::Float(20.0)),
+                ]),
+            ),
+        ]);
+        let e: TouchEvent = v
+            .deserialize_into()
+            .expect("deserialize TouchEvent int target");
+        assert_eq!(e.target.uid, 7);
+        assert_eq!(e.detail.x, 10.0);
     }
 }
