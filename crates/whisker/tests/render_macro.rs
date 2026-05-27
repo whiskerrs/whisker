@@ -313,6 +313,74 @@ fn tap_propagation_variants_route_to_bind_types() {
 }
 
 #[test]
+fn component_specific_events_route_bind_only() {
+    // Phase 6 coverage: tag-specific CustomEvents (scroll_view / image /
+    // text) register their named listener as BindType::Bind. They have
+    // no catch/capture variants (Lynx CustomEvent = target-only).
+    with_recorder(|log| {
+        let _ = render! {
+            scroll_view {
+                image(on_load: |_| {}, on_error: |_| {})
+                text(on_layout: |_| {}, on_selectionchange: |_| {})
+            }
+        };
+        // attach scroll handlers on the scroll_view itself via a second
+        // render (kwargs + children on one element are both fine, but
+        // keep this focused).
+        let names: Vec<(String, BindType)> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::Event {
+                    name, bind_type, ..
+                } => Some((name.clone(), *bind_type)),
+                _ => None,
+            })
+            .collect();
+        for n in ["load", "error", "layout", "selectionchange"] {
+            assert!(
+                names.contains(&(n.to_string(), BindType::Bind)),
+                "missing bind listener for {n}; got {names:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn scroll_view_scroll_events_route_bind() {
+    with_recorder(|log| {
+        let _ = render! {
+            scroll_view(
+                on_scroll: |_| {},
+                on_scrolltoupper: |_| {},
+                on_scrolltolower: |_| {},
+                on_scrollend: |_| {},
+                on_contentsizechanged: |_| {},
+            )
+        };
+        let names: Vec<String> = log
+            .borrow()
+            .iter()
+            .filter_map(|op| match op {
+                Op::Event {
+                    name, bind_type, ..
+                } if *bind_type == BindType::Bind => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        for n in [
+            "scroll",
+            "scrolltoupper",
+            "scrolltolower",
+            "scrollend",
+            "contentsizechanged",
+        ] {
+            assert!(names.contains(&n.to_string()), "missing {n}; got {names:?}");
+        }
+    });
+}
+
+#[test]
 fn camel_case_event_handler_lowercased() {
     with_recorder(|log| {
         let _ = render! {

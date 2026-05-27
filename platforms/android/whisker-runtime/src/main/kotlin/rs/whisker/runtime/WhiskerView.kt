@@ -46,17 +46,31 @@ class WhiskerView @JvmOverloads constructor(
     private val eventReporter = object : EventEmitter.LynxEventReporter {
         override fun onLynxEvent(event: LynxEvent): Boolean {
             val name = event.name ?: return false
-            // Hand the event body straight to native as a raw Java
-            // `Map<String, Any?>` — the bridge marshals it into a
-            // `WhiskerValueRaw` tree (no JSON round-trip), the same
-            // wire module args/returns use. `LynxCustomEvent` is the
-            // only public subclass carrying a params dict; touch /
-            // mouse / wheel / keyboard events surface no body here, so
-            // pass `null` (the bridge dispatches with no value, and the
-            // Rust typed-event layer falls back to a default).
-            val params: Map<String, Any?>? =
+            // Normalize the body to the same shape iOS's
+            // `LynxEvent.generateEventBody` produces —
+            // `{type, target, currentTarget, detail}` — so the typed
+            // event structs in `whisker_runtime::event` deserialize
+            // identically on both platforms. Android's reporter
+            // otherwise hands us only the raw params dict
+            // (`LynxCustomEvent.eventParams()`, where component events
+            // like `scroll` put their fields directly via `addDetail`),
+            // which has no `detail` wrapper or target keys — leaving the
+            // typed `detail` (and `target`) blank. `target`/`currentTarget`
+            // are the integer sign (the Rust `Target` deserializes an
+            // int → `uid`). `detail` is the params dict for
+            // `LynxCustomEvent` (scroll / layout / …), null otherwise
+            // (touch events carry no body on Android). The marshaller
+            // turns this Java map into a `WhiskerValueRaw` tree (no JSON).
+            val detail: Map<String, Any?>? =
                 if (event is LynxCustomEvent) event.eventParams() else null
-            return nativeOnLynxEvent(engine, event.tag, name, params)
+            val body: Map<String, Any?> =
+                mapOf(
+                    "type" to name,
+                    "target" to event.tag,
+                    "currentTarget" to event.tag,
+                    "detail" to detail,
+                )
+            return nativeOnLynxEvent(engine, event.tag, name, body)
         }
         override fun onInternalEvent(event: LynxInternalEvent) {}
     }

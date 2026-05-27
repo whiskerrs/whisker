@@ -57,33 +57,38 @@ use std::path::{Path, PathBuf};
 /// Schema: `<lynx-upstream-version>-whisker.<patch-iteration>` so a
 /// reader can tell at a glance which upstream Lynx is wrapped, and
 /// our own patch iterations bump independently.
-pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.5";
+pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.6";
 
 /// Version segment that appears in cache paths + tarball filenames.
 /// Derived from [`LYNX_FORK_TAG`] minus the leading `v`.
-pub const LYNX_VERSION: &str = "3.7.0-whisker.5";
+pub const LYNX_VERSION: &str = "3.7.0-whisker.6";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
 /// produced by the fork's CI. Pinned to the
-/// [v3.7.0-whisker.5 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.5).
+/// [v3.7.0-whisker.6 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.6).
 ///
-/// Bump from `.4`: rebuilds Android `liblynx.so` against
-/// whiskerrs/lynx#4, which adds `lynx_ui_invoke_method_async` to
-/// `core/native_renderer_capi/` (result-returning UI-method dispatch).
-/// Required so `ElementRef::invoke_async` / `bounding_client_rect()` /
-/// `take_screenshot()` work on Android — the prior pin's liblynx.so
-/// only exported the fire-and-forget `lynx_ui_invoke_method`.
+/// Bump from `.5`: rebuilds Android `liblynx.so` against
+/// whiskerrs/lynx#6, which adds `lynx_element_set_event_handler` to
+/// `core/native_renderer_capi/`. The driver calls it to populate an
+/// element's Lynx event set so the UI components actually EMIT their
+/// component-specific events (scroll / layout / uiappear / image load /
+/// …) — without a bound handler Lynx never fires them. Required for the
+/// Phase 6 component-event coverage on Android.
 pub const LYNX_ANDROID_SHA256: &str =
-    "e0239e4099daeb0ff5fc568e78450d49b37ce12b96bd21844b7e4493fab00fb0";
+    "14ad8ffafda503d41777df38ee84d464926e1edc91cf6e9769e52d87ec5b7eaa";
 
-/// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`. Pinned to
-/// the same release as Android — the fork's CI builds both halves
-/// in parallel and uploads them as a pair.
+/// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`.
 ///
-/// The iOS xcframework doesn't carry `core/native_renderer_capi/`
-/// (Whisker compiles `lynx_native_renderer.cc` itself on iOS), so
-/// the `.5` `lynx_ui_invoke_method_async` addition is Android-only;
-/// but both halves stay on the same Lynx tag to avoid version skew.
+/// **Republished from `.5`, byte-identical.** The `.6` change lives
+/// entirely in `core/native_renderer_capi/`, which only the Android
+/// build compiles (iOS compiles `lynx_native_renderer.cc` from the
+/// Whisker repo, and the xcframework doesn't carry it). So the iOS
+/// Lynx engine for `.6` is identical to `.5`. The fork's `.6` iOS CI
+/// build hit an unrelated environmental break (a `macos-14` runner
+/// toolchain drift surfacing a `modp_b64` symbol error in Lynx core),
+/// so rather than skew versions across platforms we republished the
+/// known-good `.5` xcframework under the `.6` filename — same content,
+/// same hash. iOS + Android therefore stay on a single Lynx version.
 pub const LYNX_IOS_SHA256: &str =
     "21fafd09a7c2018bb9b90b65efaef4c35aa88398c363e634058c9aeae7db3fa4";
 

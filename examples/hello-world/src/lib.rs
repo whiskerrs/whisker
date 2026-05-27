@@ -455,6 +455,70 @@ fn activity_feed() -> Element {
     }
 }
 
+/// Phase 6 demo — scroll event payload. A horizontal `scroll_view`
+/// whose `on_scroll` reads the typed [`ScrollEvent`] and prints the
+/// `detail` fields live, so we can confirm the payload (scroll offset,
+/// content width, per-event delta, drag state) actually arrives across
+/// the bridge. Lives inside the vertical page scroll — the orthogonal
+/// directions don't conflict.
+#[component]
+fn scroll_card(n: i32, color: &'static str) -> Element {
+    let style = format!(
+        "width: 96px; height: 56px; flex-shrink: 0; margin-right: 8px; \
+         border-radius: 10px; background-color: {color}; \
+         display: flex; align-items: center; justify-content: center;"
+    );
+    render! {
+        view(style: style) {
+            text(value: format!("{n}"), style: "color: white; font-size: 18px; font-weight: 700;")
+        }
+    }
+}
+
+#[component]
+fn scroll_demo() -> Element {
+    let info = RwSignal::new(String::new());
+    let label = computed(move || {
+        let s = info.get();
+        if s.is_empty() {
+            "← swipe the row to read ScrollEvent →".to_string()
+        } else {
+            s
+        }
+    });
+    render! {
+        view(style: "margin: 4px 20px 8px; display: flex; flex-direction: column; gap: 6px;") {
+            text(
+                value: label,
+                style: "color: #b9a9ff; font-size: 12px; font-family: monospace;",
+            )
+            scroll_view(
+                scroll_orientation: "horizontal",
+                on_scroll: move |e| {
+                    info.set(format!(
+                        "left={:.0}  width={:.0}  dx={:.0}  drag={}",
+                        e.detail.scroll_left,
+                        e.detail.scroll_width,
+                        e.detail.delta_x,
+                        e.detail.is_dragging,
+                    ))
+                },
+                style: "height: 64px; display: flex; flex-direction: row; \
+                        background-color: #1a1330; border-radius: 12px; padding: 4px;",
+            ) {
+                ScrollCard(n: 1_i32, color: "#667eea")
+                ScrollCard(n: 2_i32, color: "#f093fb")
+                ScrollCard(n: 3_i32, color: "#4facfe")
+                ScrollCard(n: 4_i32, color: "#43e97b")
+                ScrollCard(n: 5_i32, color: "#fa709a")
+                ScrollCard(n: 6_i32, color: "#30cfd0")
+                ScrollCard(n: 7_i32, color: "#ff7e5f")
+                ScrollCard(n: 8_i32, color: "#9b6bff")
+            }
+        }
+    }
+}
+
 #[component]
 fn scroll_body(state: AppState) -> Element {
     let style = format!(
@@ -463,6 +527,7 @@ fn scroll_body(state: AppState) -> Element {
     );
     render! {
         scroll_view(scroll_orientation: "vertical", style: style) {
+            ScrollDemo()
             Chips()
             SectionHeader(title: "Recently Played")
             Recents()

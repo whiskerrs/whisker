@@ -276,6 +276,21 @@ extern "C" int32_t whisker_bridge_element_sign(WhiskerElement* element) {
     return lynx_element_id(element->handle);
 }
 
+extern "C" void whisker_bridge_set_native_event_handler(WhiskerElement* element,
+                                                        const char* event_name) {
+    if (element == nullptr || element->handle == nullptr || event_name == nullptr) {
+        return;
+    }
+    // Populate the element's Lynx event set so its UI component emits the
+    // event (scroll / layout / uiappear / …). The fire is still observed
+    // via the reporter → dispatcher path.
+    //
+    // `lynx_element_set_event_handler` ships in the Lynx fork's liblynx
+    // as of v3.7.0-whisker.6 (whiskerrs/lynx#6), so this works on both
+    // platforms now.
+    lynx_element_set_event_handler(element->handle, event_name);
+}
+
 // ----------------------------------------------------------------------------
 // Pipeline
 // ----------------------------------------------------------------------------

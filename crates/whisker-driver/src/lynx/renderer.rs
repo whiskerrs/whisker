@@ -199,9 +199,26 @@ impl DynRenderer for BridgeRenderer {
         // Lynx's reporter hook fires once at the target, before — and
         // bypassing — the engine's own capture/bubble chain (which
         // targets the absent JS runtime). See `plan_event_dispatch`.
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
         let Some(sign) = self.sign_of(handle) else {
             return;
         };
+        // Component-specific events (scroll / layout / uiappear / …) are
+        // only EMITTED by Lynx's UI components when the element has a
+        // handler bound for that name (they're gated on its event set).
+        // Touch/gesture events bypass the event set — they flow through
+        // the gesture pipeline to the reporter regardless — so we only
+        // register a native handler for the non-gesture events, both to
+        // unblock their emission and to avoid any double-fire on touch.
+        if !is_gesture_event(event_name) {
+            if let Ok(name_c) = CString::new(event_name) {
+                unsafe {
+                    ffi::whisker_bridge_set_native_event_handler(ptr.as_ptr(), name_c.as_ptr())
+                };
+            }
+        }
         let entry = self
             .listeners
             .entry((sign, event_name.to_string()))
@@ -273,6 +290,17 @@ impl DynRenderer for BridgeRenderer {
             .map(|p| p.as_ptr() as usize)
             .unwrap_or(0)
     }
+}
+
+/// Whether `event_name` is a touch/gesture event that Lynx delivers to
+/// the reporter through its gesture pipeline regardless of the
+/// element's event set. These need no native handler registration;
+/// every other (component-emitted) event does, or Lynx never fires it.
+fn is_gesture_event(event_name: &str) -> bool {
+    matches!(
+        event_name,
+        "tap" | "longpress" | "click" | "touchstart" | "touchmove" | "touchend" | "touchcancel"
+    )
 }
 
 /// Clone `body`, rewriting its `currentTarget.uid` to `sign` — the

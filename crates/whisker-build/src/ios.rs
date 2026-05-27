@@ -62,6 +62,7 @@ const BRIDGE_EXPORTS: &[&str] = &[
     // signs to key its tree + listener maps.
     "_whisker_bridge_register_event_dispatcher",
     "_whisker_bridge_element_sign",
+    "_whisker_bridge_set_native_event_handler",
     "_whisker_bridge_set_root",
     "_whisker_bridge_flush",
     "_whisker_bridge_invoke_module",

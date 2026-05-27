@@ -54,7 +54,9 @@ pub use whisker_runtime::value::WhiskerValue;
 /// lifecycle / component-state events a [`CustomEvent`](event::CustomEvent).
 pub mod event {
     pub use whisker_runtime::event::{
-        AnimationEvent, BindType, CustomEvent, Event, Point, Target, Touch, TouchEvent,
+        AnimationEvent, BindType, CustomEvent, Event, ImageLoadDetail, ImageLoadEvent, Point,
+        ScrollDetail, ScrollEvent, SelectionChangeEvent, SelectionDetail, Size, Target,
+        TextLayoutDetail, TextLayoutEvent, TextLineInfo, Touch, TouchEvent,
     };
 }
 
@@ -119,7 +121,10 @@ pub use whisker_runtime::view::Children;
 #[doc(hidden)]
 pub mod __tags {
     use crate::ElementTag;
-    use whisker_runtime::event::{bind_typed, AnimationEvent, CustomEvent, TouchEvent};
+    use whisker_runtime::event::{
+        bind_typed, AnimationEvent, CustomEvent, ImageLoadEvent, ScrollEvent, SelectionChangeEvent,
+        TextLayoutEvent, TouchEvent,
+    };
     use whisker_runtime::reactive::Signal;
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
@@ -637,6 +642,23 @@ pub mod __tags {
             apply_attr(raw, "text", v);
             self
         }
+
+        // ---- text-specific events (CustomEvent → bind only) ---------
+
+        /// `layout` — fired after text layout completes. The
+        /// [`TextLayoutEvent`] reports line count, per-line ranges, and
+        /// the laid-out size.
+        pub fn on_layout<F: Fn(TextLayoutEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "layout", BindType::Bind, f);
+            self
+        }
+
+        /// `selectionchange` — fired when the selected text range
+        /// changes (requires text selection to be enabled).
+        pub fn on_selectionchange<F: Fn(SelectionChangeEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "selectionchange", BindType::Bind, f);
+            self
+        }
     }
 
     /// `<raw-text>` — leaf text node carrying actual glyphs. Created
@@ -692,6 +714,42 @@ pub mod __tags {
             apply_attr(self.handle, "src", v);
             self
         }
+
+        // ---- image-specific events (CustomEvent → bind only) --------
+
+        /// `load` — the image request succeeded. The
+        /// [`ImageLoadEvent`] carries the intrinsic pixel size.
+        pub fn on_load<F: Fn(ImageLoadEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "load", BindType::Bind, f);
+            self
+        }
+
+        /// `error` — the image failed to load. The [`CustomEvent`]
+        /// `detail` carries component-specific error info.
+        pub fn on_error<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "error", BindType::Bind, f);
+            self
+        }
+
+        /// `startplay` — an animated image (APNG/GIF) started playing.
+        pub fn on_startplay<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "startplay", BindType::Bind, f);
+            self
+        }
+
+        /// `currentloopcomplete` — one loop of an animated image
+        /// finished playing.
+        pub fn on_currentloopcomplete<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "currentloopcomplete", BindType::Bind, f);
+            self
+        }
+
+        /// `finalloopcomplete` — an animated image finished all its
+        /// `loop-count` loops.
+        pub fn on_finalloopcomplete<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "finalloopcomplete", BindType::Bind, f);
+            self
+        }
     }
 
     /// `<scroll-view>` — scrollable container.
@@ -718,6 +776,42 @@ pub mod __tags {
             V: ::std::convert::Into<Signal<::std::string::String>>,
         {
             apply_attr(self.handle, "scroll-orientation", v);
+            self
+        }
+
+        // ---- scroll events (CustomEvent → bind only) ----------------
+
+        /// `scroll` — fired continuously while scrolling. The
+        /// [`ScrollEvent`] `detail` carries the current offset, content
+        /// size, per-event delta, and drag state.
+        pub fn on_scroll<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scroll", BindType::Bind, f);
+            self
+        }
+
+        /// `scrolltoupper` — the upper/left edge reached the
+        /// `upper-threshold` visible area.
+        pub fn on_scrolltoupper<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scrolltoupper", BindType::Bind, f);
+            self
+        }
+
+        /// `scrolltolower` — the lower/right edge reached the
+        /// `lower-threshold` visible area.
+        pub fn on_scrolltolower<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scrolltolower", BindType::Bind, f);
+            self
+        }
+
+        /// `scrollend` — scrolling came to rest.
+        pub fn on_scrollend<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scrollend", BindType::Bind, f);
+            self
+        }
+
+        /// `contentsizechanged` — the scrollable content size changed.
+        pub fn on_contentsizechanged<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "contentsizechanged", BindType::Bind, f);
             self
         }
     }

@@ -564,6 +564,22 @@ fn is_known_event_method(name: &str) -> bool {
             | "on_transitionstart"
             | "on_transitionend"
             | "on_transitioncancel"
+            // Component-specific events (CustomEvent → bind only). These
+            // are inherent methods on a single tag's builder (scroll_view
+            // / image / text), so the macro emits `.on_scroll(f)` etc.;
+            // using one on the wrong tag is a clear "no method" error.
+            | "on_scroll"
+            | "on_scrolltoupper"
+            | "on_scrolltolower"
+            | "on_scrollend"
+            | "on_contentsizechanged"
+            | "on_load"
+            | "on_error"
+            | "on_startplay"
+            | "on_currentloopcomplete"
+            | "on_finalloopcomplete"
+            | "on_layout"
+            | "on_selectionchange"
     );
     // … plus the catch / capture propagation variants for the touch
     // family (`on_tap_catch`, `on_capture_tap`, `on_capture_tap_catch`,
