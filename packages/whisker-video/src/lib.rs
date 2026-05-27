@@ -79,19 +79,19 @@ impl VideoHandle {
 
     /// Start or resume playback.
     pub fn play(&self) {
-        let _ = self.r.invoke("play", vec![]);
+        let _ = self.r.invoke("play", WhiskerValue::args([]));
     }
 
     /// Pause playback at the current position.
     pub fn pause(&self) {
-        let _ = self.r.invoke("pause", vec![]);
+        let _ = self.r.invoke("pause", WhiskerValue::args([]));
     }
 
     /// Seek to an absolute position (seconds from the start).
     pub fn seek(&self, position_seconds: f64) {
         let _ = self
             .r
-            .invoke("seek", vec![WhiskerValue::Float(position_seconds)]);
+            .invoke("seek", WhiskerValue::args([WhiskerValue::Float(position_seconds)]));
     }
 }
 

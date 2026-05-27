@@ -415,6 +415,20 @@ WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_element_method_async(
     WhiskerModuleCallback callback,
     void* user_data);
 
+// The unified element-method dispatch: `params` (a single
+// `WHISKER_VALUE_MAP`) is passed through as the method's params object
+// directly (named fields for built-in Lynx methods, or `{"args": […]}`
+// for Whisker module elements — the caller builds the shape), and the
+// result arrives via `callback`. This is the one entry the Rust
+// `ElementRef::invoke` family builds on; both fire-and-forget actions
+// (callback ignored) and result methods route through it.
+WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_element_method_async_with_params(
+    WhiskerElement* element,
+    const char* method_name,
+    const WhiskerValueRaw* params,
+    WhiskerModuleCallback callback,
+    void* user_data);
+
 // ---- Phase 0–3 leftovers (kept temporarily for compatibility) ------------
 
 WHISKER_BRIDGE_EXPORT void whisker_bridge_log_hello(void);

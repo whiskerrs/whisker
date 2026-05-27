@@ -12,11 +12,14 @@
 //!   that `effect(...)` / `computed(...)` / `text(value: ...)` can
 //!   observe. The hot-path `invoke()` reads via `get_untracked()` so
 //!   imperative dispatch never accidentally subscribes its caller.
-//! - **`Result<_, RefError>`** — `try_invoke` / `invoke_typed<T>`
-//!   surface "not bound" and "platform-side error" as distinct error
-//!   variants. The legacy `invoke()` returns
-//!   `WhiskerValue` (with `WhiskerValue::Error` on failure) for
-//!   transitional `#[whisker::element_methods]` compatibility.
+//! - **One invoke shape** — `invoke(method, args: WhiskerValue) ->
+//!   WhiskerValue` (sync, fire-and-forget) + `invoke_async` /
+//!   `invoke_typed<T>` (async, result-returning), mirroring
+//!   `PlatformModule::invoke` / `invoke_async`. `args` is a single
+//!   `WhiskerValue` passed straight through as the method's params
+//!   object; the result comes back as a `WhiskerValue`. `invoke_typed`
+//!   surfaces "not bound" / "platform-side error" as `RefError`
+//!   variants; `invoke` collapses both into `WhiskerValue::Error`.
 //!
 //! ## Where `ElementRef` appears
 //!
@@ -38,7 +41,7 @@ use crate::module::WhiskerValue;
 // Typed element-method results
 // ---------------------------------------------------------------------------
 
-/// Result of [`ElementRef::bounding_client_rect`] — the element's
+/// Result of [`ElementHandle::bounding_client_rect`] — the element's
 /// layout box in LynxView coordinates (Lynx's `boundingClientRect`
 /// UI method). Every field is `#[serde(default)]`, so any key the
 /// platform omits reads back as `0.0` rather than failing the decode.
@@ -80,15 +83,39 @@ pub struct ScrollInfo {
     pub scroll_height: f64,
 }
 
+/// Result of [`TextHandle::get_text_bounding_rect`] — the layout boxes
+/// of a `<text>` substring (Lynx's `getTextBoundingRect`). `bounding_rect`
+/// is the union box covering `[start, end)`; `boxes` is the per-line
+/// box list. All rects are in LynxView coordinates (same shape as
+/// [`BoundingClientRect`]).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextBoundingRect {
+    #[serde(default)]
+    pub bounding_rect: BoundingClientRect,
+    #[serde(default)]
+    pub boxes: Vec<BoundingClientRect>,
+}
+
+/// Internal decode target for `getSelectedText` — the platform returns
+/// `{ "selectedText": "…" }`; [`TextHandle::get_selected_text`] unwraps
+/// it to the bare `String`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectedTextResult {
+    #[serde(default)]
+    selected_text: String,
+}
+
 // ---------------------------------------------------------------------------
-// RefError — explicit error surface for `try_invoke` / `invoke_typed`.
+// RefError — explicit error surface for `invoke_typed`.
 // ---------------------------------------------------------------------------
 
 /// Errors that can surface from imperative element-method dispatch.
 ///
-/// Returned by [`ElementRef::try_invoke`] and
-/// [`ElementRef::invoke_typed`]. The legacy `invoke()` collapses both
-/// variants into `WhiskerValue::Error` for backward compat.
+/// Returned by [`ElementRef::invoke_typed`]. The fire-and-forget
+/// [`ElementRef::invoke`] collapses both variants into
+/// `WhiskerValue::Error` instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefError {
     /// Ref isn't bound to a mounted element. Either the component
@@ -182,110 +209,56 @@ impl ElementRef {
         Signal::Dynamic(computed(move || inner.with(|opt| opt.is_some())))
     }
 
-    /// Strict invoke: returns `Err(RefError)` when unbound or when
-    /// the platform side surfaces a `WhiskerValue::Error`.
+    /// Invoke a UI method on the bound element, **fire-and-forget**.
+    /// `args` is a single [`WhiskerValue`] passed straight through as the
+    /// method's params object — a [`map`](WhiskerValue::map) of named
+    /// fields for built-in Lynx methods (`scrollTo`'s `offset` /
+    /// `smooth`, …), or [`WhiskerValue::args`] for Whisker module
+    /// elements (`@WhiskerUIMethod` reads `params.args`). The platform
+    /// result isn't available synchronously, so this returns immediately
+    /// with `WhiskerValue::Null` (or `WhiskerValue::Error` when unbound);
+    /// use [`invoke_typed`](Self::invoke_typed) when you need the result.
     ///
-    /// Bridge `effect(...)` blocks inside Handle wrapper components
-    /// typically swallow the error: `let _ = sys.try_invoke(...);`.
-    /// Authors that want explicit error surfacing call this directly.
-    pub fn try_invoke(
-        &self,
-        method: &'static str,
-        args: Vec<WhiskerValue>,
-    ) -> Result<WhiskerValue, RefError> {
-        let elem = self.inner.get_untracked().ok_or(RefError::NotBound)?;
-        match crate::invoke_element_method(elem, method, args) {
-            WhiskerValue::Error(message) => Err(RefError::DispatchFailed {
-                method: method.into(),
-                message,
-            }),
-            v => Ok(v),
-        }
-    }
-
-    /// Strict typed invoke: dispatches and converts the result via
-    /// `TryFrom<WhiskerValue>`. Type-mismatch errors collapse into
-    /// `RefError::DispatchFailed` with a synthesised message.
-    ///
-    /// `T::Error` must convert into `String` so the macro can
-    /// uniformly surface the mismatch as a dispatch failure.
-    pub fn invoke_typed<T>(
-        &self,
-        method: &'static str,
-        args: Vec<WhiskerValue>,
-    ) -> Result<T, RefError>
-    where
-        T: TryFrom<WhiskerValue>,
-        T::Error: std::fmt::Display,
-    {
-        let v = self.try_invoke(method, args)?;
-        T::try_from(v).map_err(|e| RefError::DispatchFailed {
-            method: method.into(),
-            message: e.to_string(),
-        })
-    }
-
-    /// Invoke a platform method on the bound element. Returns the raw
-    /// `WhiskerValue`, with `WhiskerValue::Error("…")` standing in for
-    /// both "not bound" and "platform-side error" (loggable either
-    /// way). This is the primitive a typed handle wrapper builds on
-    /// (`VideoHandle::play` → `self.r.invoke("play", vec![])`);
-    /// `try_invoke` / `invoke_typed` are the `Result`-returning
-    /// variants for callers that want to branch on failure.
-    pub fn invoke(&self, method: &str, args: Vec<WhiskerValue>) -> WhiskerValue {
+    /// Mirrors `PlatformModule::invoke` — the same
+    /// `(method, WhiskerValue) -> WhiskerValue` shape, so element and
+    /// module dispatch read alike.
+    pub fn invoke(&self, method: &str, args: WhiskerValue) -> WhiskerValue {
         let Some(elem) = self.inner.get_untracked() else {
             return WhiskerValue::Error(format!(
                 "ElementRef::invoke(\"{method}\"): ref is not bound to a \
                  mounted element"
             ));
         };
-        crate::invoke_element_method(elem, method, args)
+        crate::invoke_element_method_with_params(elem, method, args)
     }
 
-    /// Fire-and-forget invoke of a built-in Lynx UI method whose
-    /// arguments are *named fields* of a params object (`scrollTo`'s
-    /// `offset` / `smooth`, …). `params` is a single `WhiskerValue`
-    /// (typically a [`WhiskerValue::map`]) passed straight through as
-    /// the params object — not wrapped in `{"args": […]}` like
-    /// [`invoke`](Self::invoke). The typed handle wrappers
-    /// (`ScrollViewHandle::scroll_to`, …) build on this.
-    pub fn invoke_with_params(&self, method: &str, params: WhiskerValue) -> WhiskerValue {
-        let Some(elem) = self.inner.get_untracked() else {
-            return WhiskerValue::Error(format!(
-                "ElementRef::invoke_with_params(\"{method}\"): ref is not bound \
-                 to a mounted element"
-            ));
-        };
-        crate::invoke_element_method_with_params(elem, method, params)
-    }
-
-    /// Async, **result-returning** invoke — for UI methods whose
-    /// return value arrives via Lynx's callback (`boundingClientRect`,
-    /// `takeScreenshot`, …) rather than synchronously. Returns the raw
-    /// [`WhiskerValue`], with `WhiskerValue::Error` standing in for
-    /// "not bound" / dispatch failure. The typed handle wrappers
-    /// (`ElementHandle::bounding_client_rect`, …) build on this.
+    /// Async, **result-returning** invoke — the platform method's return
+    /// value arrives via Lynx's UI-method callback (typically on the UI
+    /// thread). `args` is the same single [`WhiskerValue`] params object
+    /// as [`invoke`](Self::invoke). Returns the raw result
+    /// [`WhiskerValue`], with `WhiskerValue::Error` for "not bound" /
+    /// dispatch failure. Mirrors `PlatformModule::invoke_async`.
     ///
-    /// Run it from an event handler / effect via `spawn_local`:
-    /// `spawn_local(async move { let v = r.invoke_async("m", vec![]).await; })`.
-    pub async fn invoke_async(&self, method: &str, args: Vec<WhiskerValue>) -> WhiskerValue {
+    /// Run from an event handler / effect via `spawn_local`, or use the
+    /// typed [`invoke_typed`](Self::invoke_typed).
+    pub async fn invoke_async(&self, method: &str, args: WhiskerValue) -> WhiskerValue {
         let Some(elem) = self.inner.get_untracked() else {
             return WhiskerValue::Error(format!(
                 "ElementRef::invoke_async(\"{method}\"): ref is not bound to a \
                  mounted element"
             ));
         };
-        crate::invoke_element_method_async(elem, method, args).await
+        crate::invoke_element_method_async_with_params(elem, method, args).await
     }
 
     /// Async invoke that deserializes the result into `T`. `NotBound`
     /// when unbound; `DispatchFailed` on a platform error or a
-    /// result-shape mismatch. The building block for the typed
-    /// method wrappers below.
-    pub async fn invoke_typed_async<T: DeserializeOwned>(
+    /// result-shape mismatch. The building block the typed handle
+    /// methods (`ScrollViewHandle::get_scroll_info`, …) build on.
+    pub async fn invoke_typed<T: DeserializeOwned>(
         &self,
-        method: &'static str,
-        args: Vec<WhiskerValue>,
+        method: &str,
+        args: WhiskerValue,
     ) -> Result<T, RefError> {
         if !self.is_bound() {
             return Err(RefError::NotBound);
@@ -328,7 +301,7 @@ impl ElementRef {
 
     /// Clear the ref. Invoked at element unmount via the
     /// `on_cleanup(...)` hook emitted by `#[module_component]`
-    /// so subsequent `try_invoke` calls return
+    /// so subsequent `invoke_typed` calls return
     /// `Err(RefError::NotBound)` rather than dispatching against a
     /// recycled `Element` ID.
     ///
@@ -389,8 +362,8 @@ impl std::fmt::Debug for ElementRef {
 // written out on each handle rather than shared via `Deref` / a trait —
 // the small duplication keeps every handle's surface explicit and
 // jump-to-definition direct. Action methods dispatch through the
-// synchronous fire-and-forget `invoke` / `invoke_with_params`; result
-// methods use the async `invoke_typed_async` path.
+// synchronous fire-and-forget `invoke`; result methods use the async
+// `invoke_typed` path.
 // ---------------------------------------------------------------------------
 
 /// Imperative handle to any mounted element — the generic Lynx UI
@@ -431,7 +404,7 @@ impl ElementHandle {
     /// ```
     pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
         self.r
-            .invoke_typed_async::<BoundingClientRect>("boundingClientRect", vec![])
+            .invoke_typed::<BoundingClientRect>("boundingClientRect", WhiskerValue::Null)
             .await
     }
 
@@ -439,7 +412,7 @@ impl ElementHandle {
     /// (async). Returns the encoded string.
     pub async fn take_screenshot(&self) -> Result<String, RefError> {
         self.r
-            .invoke_typed_async::<String>("takeScreenshot", vec![])
+            .invoke_typed::<String>("takeScreenshot", WhiskerValue::Null)
             .await
     }
 }
@@ -477,37 +450,37 @@ impl ImageHandle {
     /// coordinates (async).
     pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
         self.r
-            .invoke_typed_async::<BoundingClientRect>("boundingClientRect", vec![])
+            .invoke_typed::<BoundingClientRect>("boundingClientRect", WhiskerValue::Null)
             .await
     }
 
     /// `takeScreenshot` — a base64-encoded image of the element (async).
     pub async fn take_screenshot(&self) -> Result<String, RefError> {
         self.r
-            .invoke_typed_async::<String>("takeScreenshot", vec![])
+            .invoke_typed::<String>("takeScreenshot", WhiskerValue::Null)
             .await
     }
 
     /// `pauseAnimation` — pause a playing animated image, holding the
     /// current frame.
     pub fn pause_animation(&self) {
-        let _ = self.r.invoke("pauseAnimation", vec![]);
+        let _ = self.r.invoke("pauseAnimation", WhiskerValue::Null);
     }
 
     /// `resumeAnimation` — resume a paused animated image from the
     /// held frame.
     pub fn resume_animation(&self) {
-        let _ = self.r.invoke("resumeAnimation", vec![]);
+        let _ = self.r.invoke("resumeAnimation", WhiskerValue::Null);
     }
 
     /// `stopAnimation` — stop playback and reset to the first frame.
     pub fn stop_animation(&self) {
-        let _ = self.r.invoke("stopAnimation", vec![]);
+        let _ = self.r.invoke("stopAnimation", WhiskerValue::Null);
     }
 
     /// `startAnimate` — (re)start playback from the first frame.
     pub fn start_animate(&self) {
-        let _ = self.r.invoke("startAnimate", vec![]);
+        let _ = self.r.invoke("startAnimate", WhiskerValue::Null);
     }
 }
 
@@ -544,14 +517,14 @@ impl ScrollViewHandle {
     /// coordinates (async).
     pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
         self.r
-            .invoke_typed_async::<BoundingClientRect>("boundingClientRect", vec![])
+            .invoke_typed::<BoundingClientRect>("boundingClientRect", WhiskerValue::Null)
             .await
     }
 
     /// `takeScreenshot` — a base64-encoded image of the element (async).
     pub async fn take_screenshot(&self) -> Result<String, RefError> {
         self.r
-            .invoke_typed_async::<String>("takeScreenshot", vec![])
+            .invoke_typed::<String>("takeScreenshot", WhiskerValue::Null)
             .await
     }
 
@@ -560,7 +533,7 @@ impl ScrollViewHandle {
     /// the values back over the bridge.
     pub async fn get_scroll_info(&self) -> Result<ScrollInfo, RefError> {
         self.r
-            .invoke_typed_async::<ScrollInfo>("getScrollInfo", vec![])
+            .invoke_typed::<ScrollInfo>("getScrollInfo", WhiskerValue::Null)
             .await
     }
 
@@ -572,7 +545,7 @@ impl ScrollViewHandle {
     /// (a string decodes to 0), and iOS's `toPtFromIDUnitValue` accepts
     /// a bare number as points — so a number is the one form both honor.
     pub fn scroll_to(&self, offset: f64, smooth: bool) {
-        let _ = self.r.invoke_with_params(
+        let _ = self.r.invoke(
             "scrollTo",
             WhiskerValue::map([
                 ("offset", WhiskerValue::Float(offset)),
@@ -584,7 +557,7 @@ impl ScrollViewHandle {
     /// `scrollTo` by child `index` — scroll so the child at `index`
     /// aligns to the scroll start. `smooth` animates the scroll.
     pub fn scroll_to_index(&self, index: i32, smooth: bool) {
-        let _ = self.r.invoke_with_params(
+        let _ = self.r.invoke(
             "scrollTo",
             WhiskerValue::map([
                 ("index", WhiskerValue::Int(index as i64)),
@@ -602,7 +575,7 @@ impl ScrollViewHandle {
     /// [`scroll_to`](Self::scroll_to) (Android `getDouble` + iOS
     /// `dipToPx` / `toPtFromIDUnitValue`).
     pub fn scroll_by(&self, offset: f64) {
-        let _ = self.r.invoke_with_params(
+        let _ = self.r.invoke(
             "scrollBy",
             WhiskerValue::map([("offset", WhiskerValue::Float(offset))]),
         );
@@ -618,6 +591,98 @@ impl ScrollViewHandle {
 // leave it out until the fork's readers converge.
 
 impl Default for ScrollViewHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Imperative handle to a mounted `<text>`. Allocate with
+/// [`TextHandle::new`], bind via `text(ref: handle.r())` in `render!`,
+/// then drive / read text selection.
+///
+/// `Copy` (the inner `ElementRef` is an arena handle), so it can be
+/// captured by value into multiple event closures.
+#[derive(Copy, Clone)]
+pub struct TextHandle {
+    r: ElementRef,
+}
+
+impl TextHandle {
+    /// Allocate a fresh, unbound text handle.
+    pub fn new() -> Self {
+        Self { r: ElementRef::new() }
+    }
+
+    /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind it
+    /// on mount (`text(ref: handle.r())`).
+    pub fn r(&self) -> ElementRef {
+        self.r
+    }
+
+    /// `boundingClientRect` — the element's layout box in LynxView
+    /// coordinates (async).
+    pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
+        self.r
+            .invoke_typed::<BoundingClientRect>("boundingClientRect", WhiskerValue::Null)
+            .await
+    }
+
+    /// `takeScreenshot` — a base64-encoded image of the element (async).
+    pub async fn take_screenshot(&self) -> Result<String, RefError> {
+        self.r
+            .invoke_typed::<String>("takeScreenshot", WhiskerValue::Null)
+            .await
+    }
+
+    /// `getSelectedText` — the currently-selected substring of the text
+    /// (empty if nothing is selected). Async result.
+    pub async fn get_selected_text(&self) -> Result<String, RefError> {
+        self.r
+            .invoke_typed::<SelectedTextResult>("getSelectedText", WhiskerValue::Null)
+            .await
+            .map(|r| r.selected_text)
+    }
+
+    /// `getTextBoundingRect` — the layout box(es) of the substring
+    /// `[start, end)` (character indices). Async result; the union box
+    /// is `bounding_rect`, per-line boxes are `boxes`.
+    pub async fn get_text_bounding_rect(
+        &self,
+        start: i32,
+        end: i32,
+    ) -> Result<TextBoundingRect, RefError> {
+        self.r
+            .invoke_typed::<TextBoundingRect>(
+                "getTextBoundingRect",
+                WhiskerValue::map([
+                    ("start", WhiskerValue::Int(start as i64)),
+                    ("end", WhiskerValue::Int(end as i64)),
+                ]),
+            )
+            .await
+    }
+
+    /// `setTextSelection` — highlight the text between
+    /// `(start_x, start_y)` and `(end_x, end_y)` (logical pixels,
+    /// relative to the text component). Fire-and-forget.
+    ///
+    /// Coordinates are sent as numbers: Android reads them with
+    /// `params.getDouble`, iOS with `toPtFromIDUnitValue` (which takes a
+    /// bare number as points) — a number is the form both honor.
+    pub fn set_text_selection(&self, start_x: f64, start_y: f64, end_x: f64, end_y: f64) {
+        let _ = self.r.invoke(
+            "setTextSelection",
+            WhiskerValue::map([
+                ("startX", WhiskerValue::Float(start_x)),
+                ("startY", WhiskerValue::Float(start_y)),
+                ("endX", WhiskerValue::Float(end_x)),
+                ("endY", WhiskerValue::Float(end_y)),
+            ]),
+        );
+    }
+}
+
+impl Default for TextHandle {
     fn default() -> Self {
         Self::new()
     }

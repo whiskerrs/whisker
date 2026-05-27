@@ -33,7 +33,7 @@ pub use whisker_macros::{component, main, module_component, render};
 // macro binds it on mount when passed as the `ref:` prop.
 pub use whisker_driver::{
     element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError, ScrollInfo,
-    ScrollViewHandle,
+    ScrollViewHandle, TextBoundingRect, TextHandle,
 };
 
 // Function-only module dispatch. `PlatformModule` is the name-keyed
@@ -1305,7 +1305,7 @@ pub mod prelude {
     };
     pub use crate::{
         element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError,
-        ScrollInfo, ScrollViewHandle,
+        ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle,
     };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is

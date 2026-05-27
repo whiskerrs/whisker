@@ -803,6 +803,57 @@ extern "C" bool whisker_bridge_invoke_element_method_async(
     return true;
 }
 
+// The unified element-method path: a single `params` value (a
+// `WHISKER_VALUE_MAP`, passed through as the params object directly) +
+// an async result callback. Built on `lynx_ui_invoke_method_async_with_params`.
+// Reuses the `CapiArena` recursive converter (shared with the
+// fire-and-forget params path) and the async result adapter. The arena
+// only needs to outlive the call: the capi converts the value_t tree
+// into lepus synchronously before scheduling, and the result callback
+// reads only that lepus copy.
+extern "C" bool whisker_bridge_invoke_element_method_async_with_params(
+    WhiskerElement* element,
+    const char* method_name,
+    const WhiskerValueRaw* params,
+    WhiskerModuleCallback callback,
+    void* user_data) {
+    if (element == nullptr || element->handle == nullptr ||
+        element->shell == nullptr || method_name == nullptr) {
+        FailElementMethodAsync(callback, user_data,
+                               "whisker_bridge_invoke_element_method_async_with_params: "
+                               "NULL element / shell / method");
+        return false;
+    }
+    int32_t sign = lynx_element_id(element->handle);
+    if (sign <= 0) {
+        FailElementMethodAsync(callback, user_data,
+                               "whisker_bridge_invoke_element_method_async_with_params: "
+                               "element has no sign yet");
+        return false;
+    }
+
+    CapiArena arena;
+    lynx_ui_method_value_t root;
+    std::memset(&root, 0, sizeof(root));
+    if (params != nullptr) {
+        root = BuildCapiParamValue(*params, arena);
+    }
+    auto* ctx = new ElementMethodAsyncCtx{callback, user_data};
+    int32_t code = lynx_ui_invoke_method_async_with_params(
+        element->shell, sign, method_name, params != nullptr ? &root : nullptr,
+        element_method_async_adapter, ctx);
+    if (code != 0) {
+        delete ctx;
+        FailElementMethodAsync(
+            callback, user_data,
+            ("lynx_ui_invoke_method_async_with_params returned non-zero (code=" +
+             std::to_string(code) + ")")
+                .c_str());
+        return false;
+    }
+    return true;
+}
+
 extern "C" void whisker_bridge_value_release(WhiskerValueRaw* value) {
     if (value == nullptr) return;
     switch (value->type) {

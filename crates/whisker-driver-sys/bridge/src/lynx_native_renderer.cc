@@ -599,6 +599,49 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async(
   return 0;
 }
 
+// ----- Unified params-map + result dispatch ---------------------------------
+//
+// The general element-method path: a single MAP value passed through as
+// the params object directly (named fields for built-in Lynx methods;
+// `{"args": [...]}` for Whisker module elements — the caller builds the
+// shape) PLUS the async result callback. This is the one capi the
+// Whisker `ElementRef::invoke` / `invoke_typed` build on, so new methods
+// never need a new capi. Combines `WhiskerCapiValueToLepus` (params,
+// shared with the fire-and-forget `lynx_ui_invoke_method_with_params`)
+// with the result conversion from `lynx_ui_invoke_method_async`.
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async_with_params(
+    lynx_shell_t* shell,
+    int32_t sign,
+    const char* method_name,
+    const lynx_ui_method_value_t* params,
+    lynx_ui_method_result_cb callback,
+    void* user_data) {
+  if (shell == nullptr || shell->manager == nullptr ||
+      method_name == nullptr) {
+    return -1;
+  }
+  auto* catalyzer = shell->manager->catalyzer();
+  if (catalyzer == nullptr) {
+    return -2;
+  }
+
+  lynx::lepus::Value params_lepus =
+      (params != nullptr && params->type == LYNX_UI_METHOD_VALUE_MAP)
+          ? WhiskerCapiValueToLepus(*params)
+          : lynx::lepus::Value(lynx::lepus::Dictionary::Create());
+
+  catalyzer->Invoke(
+      static_cast<int64_t>(sign), std::string(method_name),
+      lynx::pub::ValueImplLepus(params_lepus),
+      [callback, user_data](int32_t code, const lynx::pub::Value& data) {
+        if (callback == nullptr) return;
+        lynx_ui_method_value_t result = PubValueToCapi(data);
+        callback(code, &result, user_data);
+        CapiValueFree(&result);
+      });
+  return 0;
+}
+
 // ----- subsecond ASLR anchor ------------------------------------------------
 
 // Intentionally non-empty so the linker doesn't merge it with other

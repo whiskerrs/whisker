@@ -335,4 +335,17 @@ extern "C" {
         callback: WhiskerModuleCallback,
         user_data: *mut c_void,
     ) -> bool;
+
+    /// The unified element-method dispatch: `params` (a single
+    /// `WHISKER_VALUE_MAP`) is passed through as the method's params
+    /// object directly, and the result arrives via `callback`. The one
+    /// entry `ElementRef::invoke` / `invoke_typed` build on — both
+    /// fire-and-forget actions (callback ignored) and result methods.
+    pub fn whisker_bridge_invoke_element_method_async_with_params(
+        element: *mut WhiskerElement,
+        method_name: *const c_char,
+        params: *const WhiskerValueRaw,
+        callback: WhiskerModuleCallback,
+        user_data: *mut c_void,
+    ) -> bool;
 }
