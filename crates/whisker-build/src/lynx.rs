@@ -57,37 +57,38 @@ use std::path::{Path, PathBuf};
 /// Schema: `<lynx-upstream-version>-whisker.<patch-iteration>` so a
 /// reader can tell at a glance which upstream Lynx is wrapped, and
 /// our own patch iterations bump independently.
-pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.7";
+pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.8";
 
 /// Version segment that appears in cache paths + tarball filenames.
 /// Derived from [`LYNX_FORK_TAG`] minus the leading `v`.
-pub const LYNX_VERSION: &str = "3.7.0-whisker.7";
+pub const LYNX_VERSION: &str = "3.7.0-whisker.8";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
 /// produced by the fork's CI. Pinned to the
-/// [v3.7.0-whisker.7 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.7).
+/// [v3.7.0-whisker.8 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.8).
 ///
-/// Bump from `.6`: rebuilds Android `liblynx.so` against
-/// whiskerrs/lynx#7, which adds `lynx_ui_invoke_method_with_params` to
-/// `core/native_renderer_capi/`. It passes a single MAP value through as
-/// a UI method's params object directly (no `{"args": […]}` wrapper), so
-/// built-in Lynx methods that read named fields (`scrollTo`'s
-/// `params.getDouble("offset")`, …) get their arguments. Required for
-/// the built-in `ScrollViewHandle` methods (`scroll_to` /
-/// `scroll_to_index` / `scroll_by`) on Android.
+/// Bump from `.7`: rebuilds Android `liblynx.so` against
+/// whiskerrs/lynx#8, which adds `lynx_ui_invoke_method_async_with_params`
+/// to `core/native_renderer_capi/` — the unified element-method capi
+/// (params object passed through directly, plus an async result
+/// callback). It backs `ElementRef::invoke` / `invoke_typed`, so every
+/// result-returning method with named params (`getScrollInfo`,
+/// `getTextBoundingRect`, `getSelectedText`, `boundingClientRect`, …)
+/// works on Android — and no future method needs another capi / release.
 pub const LYNX_ANDROID_SHA256: &str =
-    "24c95c98e5691f59c1f048cc67ec2f84c27e3c3491176bad2477808a4fe66bc8";
+    "9db9de9ef53706aac8d1a39bed7374176aa36692c37e6fc7efb2fd2759be83e3";
 
 /// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`.
 ///
 /// **Republished from `.5`, byte-identical (unchanged across `.6` /
-/// `.7`).** Every `native_renderer_capi` change — `.6`'s
+/// `.7` / `.8`).** Every `native_renderer_capi` change — `.6`'s
 /// `lynx_element_set_event_handler`, `.7`'s
-/// `lynx_ui_invoke_method_with_params` — lives in
+/// `lynx_ui_invoke_method_with_params`, `.8`'s
+/// `lynx_ui_invoke_method_async_with_params` — lives in
 /// `core/native_renderer_capi/`, which only the Android build compiles
 /// (iOS compiles `lynx_native_renderer.cc` from the Whisker repo, and
 /// the xcframework doesn't carry it). So the iOS Lynx engine is
-/// identical from `.5` onward. The fork's `.6` + `.7` iOS CI builds both
+/// identical from `.5` onward. The fork's `.6`–`.8` iOS CI builds all
 /// hit the same unrelated environmental break (a `macos-14` runner
 /// toolchain drift surfacing a `modp_b64` symbol error in Lynx core), so
 /// rather than skew versions across platforms we republish the
