@@ -600,6 +600,12 @@ impl Default for ScrollViewHandle {
 /// [`TextHandle::new`], bind via `text(ref: handle.r())` in `render!`,
 /// then drive / read text selection.
 ///
+/// **Android note:** the geometry methods (`get_text_bounding_rect`,
+/// `set_text_selection`, `get_selected_text`) need a real text `Layout`,
+/// which a *flattened* text doesn't have — they come back empty / error.
+/// Set `flatten: false` on the `<text>` if you call them on Android. iOS
+/// extracts boxes regardless.
+///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
 /// captured by value into multiple event closures.
 #[derive(Copy, Clone)]

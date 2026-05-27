@@ -715,6 +715,11 @@ fn text_methods_demo() -> Element {
             text(
                 ref: txt.r(),
                 on_tap: measure,
+                // `getTextBoundingRect` needs a real text Layout on Android
+                // (`mTextLayout`); a flattened text has none, so the boxes
+                // come back empty. `flatten: false` keeps the text as its
+                // own UI so the boxes are extractable on both platforms.
+                flatten: false,
                 value: "Hello Whisker text methods",
                 style: "color: #e8e3ff; font-size: 15px; font-weight: 600;",
             )

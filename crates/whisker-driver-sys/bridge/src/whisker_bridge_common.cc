@@ -735,13 +735,30 @@ struct ElementMethodAsyncCtx {
     void* rust_user_data;
 };
 
-void element_method_async_adapter(int32_t /*code*/,
+void element_method_async_adapter(int32_t code,
                                   const lynx_ui_method_value_t* capi_result,
                                   void* user_data) {
     auto* ctx = static_cast<ElementMethodAsyncCtx*>(user_data);
     if (ctx == nullptr) return;
     if (ctx->rust_cb != nullptr) {
-        WhiskerValueRaw result = CapiValueToWhisker(capi_result);
+        WhiskerValueRaw result;
+        if (code != 0) {
+            // Non-SUCCESS UI-method code (UNKNOWN=1, PARAM_INVALID=4,
+            // NO_UI_FOR_NODE=6, …). The result data on the error path is
+            // often null, so surface a real error instead of letting it
+            // deserialize into a misleading "invalid type: null". Append
+            // the platform's message when it rides along as a string.
+            std::string msg = "UI method failed (code " + std::to_string(code) + ")";
+            if (capi_result != nullptr &&
+                capi_result->type == LYNX_UI_METHOD_VALUE_STRING &&
+                capi_result->v.s != nullptr) {
+                msg += ": ";
+                msg += capi_result->v.s;
+            }
+            result = MakeBridgeErrorValue(msg.c_str());
+        } else {
+            result = CapiValueToWhisker(capi_result);
+        }
         ctx->rust_cb(ctx->rust_user_data, &result);
         whisker_bridge_value_release(&result);
     }
