@@ -685,17 +685,17 @@ pub fn measure_demo() -> Element {
 }
 
 /// Method-coverage demo — `TextHandle` over the unified `invoke` path.
-/// `on_uiappear` fires post-layout, so we auto-measure the substring
-/// `[0, 5)` ("Hello") via `get_text_bounding_rect` *without a tap* — the
-/// result lands in the label on load, exercising the unified
-/// params-map + async-result dispatch (`whisker.8`) end-to-end (the same
-/// path `get_scroll_info` / `get_selected_text` now use).
+/// Tap the text to measure its substring `[0, 5)` ("Hello") via
+/// `get_text_bounding_rect`, which rides the unified params-map +
+/// async-result dispatch (`whisker.8`) — the same path
+/// `get_scroll_info` / `get_selected_text` / `bounding_client_rect` now
+/// use. The result lands in the readout below.
 #[component]
 fn text_methods_demo() -> Element {
-    let out = RwSignal::new(String::from("measuring…"));
+    let out = RwSignal::new(String::from("tap the text to measure “Hello” →"));
     let txt = TextHandle::new();
     let display = computed(move || out.get());
-    let on_appear = move |_| {
+    let measure = move |_| {
         spawn_local(async move {
             match txt.get_text_bounding_rect(0, 5).await {
                 Ok(r) => out.set(format!(
@@ -711,10 +711,10 @@ fn text_methods_demo() -> Element {
         });
     };
     render! {
-        view(style: "margin: 4px 16px 8px; display: flex; flex-direction: column; gap: 4px;") {
+        view(style: "margin: 4px 16px 8px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;") {
             text(
                 ref: txt.r(),
-                on_uiappear: on_appear,
+                on_tap: measure,
                 value: "Hello Whisker text methods",
                 style: "color: #e8e3ff; font-size: 15px; font-weight: 600;",
             )
