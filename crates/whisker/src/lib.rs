@@ -32,7 +32,7 @@ pub use whisker_macros::{component, main, module_component, render};
 // allocates a fresh, unbound ref; the `#[whisker::module_component]`
 // macro binds it on mount when passed as the `ref:` prop.
 pub use whisker_driver::{
-    element_ref, BoundingClientRect, ElementRef, ImageHandle, RefError, ScrollInfo,
+    element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError, ScrollInfo,
     ScrollViewHandle,
 };
 
@@ -1304,8 +1304,8 @@ pub mod prelude {
         ReadSignal, Resource, ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
     };
     pub use crate::{
-        element_ref, BoundingClientRect, ElementRef, ImageHandle, RefError, ScrollInfo,
-        ScrollViewHandle,
+        element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError,
+        ScrollInfo, ScrollViewHandle,
     };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is

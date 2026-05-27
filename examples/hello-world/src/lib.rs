@@ -643,7 +643,7 @@ pub fn video_demo() -> Element {
 /// the label reactively.
 #[component]
 pub fn measure_demo() -> Element {
-    let card = ElementRef::new();
+    let card = ElementHandle::new();
     let dims = RwSignal::new(String::new());
     let label = computed(move || {
         let d = dims.get();
@@ -669,7 +669,7 @@ pub fn measure_demo() -> Element {
     };
     render! {
         view(
-            ref: card,
+            ref: card.r(),
             on_tap: on_measure,
             style: "width: 200px; height: 56px; margin: 8px 16px; \
                     background-color: #1a1330; border-radius: 8px; \

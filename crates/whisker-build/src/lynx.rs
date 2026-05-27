@@ -72,9 +72,9 @@ pub const LYNX_VERSION: &str = "3.7.0-whisker.7";
 /// `core/native_renderer_capi/`. It passes a single MAP value through as
 /// a UI method's params object directly (no `{"args": […]}` wrapper), so
 /// built-in Lynx methods that read named fields (`scrollTo`'s
-/// `params.getString("offset")`, …) get their arguments. Required for
-/// the built-in `ScrollViewHandle` methods (`scroll_to` / `scroll_by` /
-/// `auto_scroll`) + `scroll_into_view` on Android.
+/// `params.getDouble("offset")`, …) get their arguments. Required for
+/// the built-in `ScrollViewHandle` methods (`scroll_to` /
+/// `scroll_to_index` / `scroll_by`) on Android.
 pub const LYNX_ANDROID_SHA256: &str =
     "24c95c98e5691f59c1f048cc67ec2f84c27e3c3491176bad2477808a4fe66bc8";
 

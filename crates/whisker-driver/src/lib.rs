@@ -12,7 +12,7 @@ pub mod lynx;
 pub mod module;
 
 pub use element_ref::{
-    element_ref, BoundingClientRect, ElementRef, ImageHandle, RefError, ScrollInfo,
+    element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError, ScrollInfo,
     ScrollViewHandle,
 };
 pub use lynx::bootstrap;

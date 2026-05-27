@@ -243,8 +243,8 @@ impl ElementRef {
     }
 
     /// Fire-and-forget invoke of a built-in Lynx UI method whose
-    /// arguments are *named fields* of a params object (`scrollTo`,
-    /// `scrollIntoView`, …). `params` is a single `WhiskerValue`
+    /// arguments are *named fields* of a params object (`scrollTo`'s
+    /// `offset` / `smooth`, …). `params` is a single `WhiskerValue`
     /// (typically a [`WhiskerValue::map`]) passed straight through as
     /// the params object — not wrapped in `{"args": […]}` like
     /// [`invoke`](Self::invoke). The typed handle wrappers
@@ -259,30 +259,12 @@ impl ElementRef {
         crate::invoke_element_method_with_params(elem, method, params)
     }
 
-    /// `scrollIntoView` — scroll this element into the visible area of
-    /// its nearest scrollable ancestor. `behavior` is `"smooth"` and
-    /// `block` is `"nearest"` (minimal scroll). Generic: available on
-    /// any element handle.
-    pub fn scroll_into_view(&self) {
-        let _ = self.invoke_with_params(
-            "scrollIntoView",
-            WhiskerValue::map([(
-                "scrollIntoViewOptions",
-                WhiskerValue::map([
-                    ("behavior", WhiskerValue::String("smooth".into())),
-                    ("block", WhiskerValue::String("nearest".into())),
-                ]),
-            )]),
-        );
-    }
-
     /// Async, **result-returning** invoke — for UI methods whose
     /// return value arrives via Lynx's callback (`boundingClientRect`,
     /// `takeScreenshot`, …) rather than synchronously. Returns the raw
     /// [`WhiskerValue`], with `WhiskerValue::Error` standing in for
-    /// "not bound" / dispatch failure. Typed wrappers (e.g.
-    /// [`bounding_client_rect`](Self::bounding_client_rect)) build on
-    /// this.
+    /// "not bound" / dispatch failure. The typed handle wrappers
+    /// (`ElementHandle::bounding_client_rect`, …) build on this.
     ///
     /// Run it from an event handler / effect via `spawn_local`:
     /// `spawn_local(async move { let v = r.invoke_async("m", vec![]).await; })`.
@@ -320,30 +302,6 @@ impl ElementRef {
                     message,
                 }),
         }
-    }
-
-    /// `boundingClientRect` — the element's layout box in LynxView
-    /// coordinates. Async: the result arrives via Lynx's UI-method
-    /// callback (typically on the UI thread).
-    ///
-    /// ```ignore
-    /// let card = ElementRef::new();   // view(ref: card) { … }
-    /// spawn_local(async move {
-    ///     if let Ok(rect) = card.bounding_client_rect().await {
-    ///         // rect.width, rect.height, …
-    ///     }
-    /// });
-    /// ```
-    pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
-        self.invoke_typed_async::<BoundingClientRect>("boundingClientRect", vec![])
-            .await
-    }
-
-    /// `takeScreenshot` — a base64-encoded image of the element
-    /// (async). Returns the encoded string.
-    pub async fn take_screenshot(&self) -> Result<String, RefError> {
-        self.invoke_typed_async::<String>("takeScreenshot", vec![])
-            .await
     }
 
     /// Bind the ref to `handle`. Invoked by `#[whisker::platform_
@@ -418,20 +376,79 @@ impl std::fmt::Debug for ElementRef {
 // ---------------------------------------------------------------------------
 // Built-in element handles
 //
-// Typed wrappers around `ElementRef` (the VideoHandle pattern, applied
-// to Lynx built-ins). Each handle exposes only the imperative methods
-// that element type actually supports, so author code can't call
-// `pause_animation()` on a `<scroll-view>`. Both `Deref` to
-// `ElementRef`, so the generic methods (`bounding_client_rect`,
-// `take_screenshot`, …) are callable directly on the handle. Bind with
+// `ElementRef` is the bare invoke API (bind state + `invoke*`). The
+// user-facing imperative surface lives on typed handles that wrap an
+// `ElementRef` and call its invoke methods: `ElementHandle` for the
+// generic UI methods any element supports, plus per-element handles that
+// add that element's own methods. A handle exposes only what its element
+// supports, so author code can't call `pause_animation()` on a
+// `<scroll-view>`. Bind with `view(ref: handle.r())` /
 // `image(ref: handle.r())` / `scroll_view(ref: handle.r())`.
 //
-// Action methods (no result) dispatch through the synchronous,
-// fire-and-forget `invoke`. Result methods (`get_scroll_info`) use the
-// async `invoke_typed_async` path. Methods that take a Lynx params
-// object (`scrollTo`, …) are gated on the params-map bridge path and
-// land separately.
+// The generic methods (`bounding_client_rect`, `take_screenshot`) are
+// written out on each handle rather than shared via `Deref` / a trait —
+// the small duplication keeps every handle's surface explicit and
+// jump-to-definition direct. Action methods dispatch through the
+// synchronous fire-and-forget `invoke` / `invoke_with_params`; result
+// methods use the async `invoke_typed_async` path.
 // ---------------------------------------------------------------------------
+
+/// Imperative handle to any mounted element — the generic Lynx UI
+/// methods that work regardless of tag. Allocate with
+/// [`ElementHandle::new`], bind via `view(ref: handle.r())` (or `text`,
+/// `page`, …) in `render!`, then call the methods below.
+///
+/// `Copy` (the inner `ElementRef` is an arena handle), so it can be
+/// captured by value into multiple event closures.
+#[derive(Copy, Clone)]
+pub struct ElementHandle {
+    r: ElementRef,
+}
+
+impl ElementHandle {
+    /// Allocate a fresh, unbound element handle.
+    pub fn new() -> Self {
+        Self { r: ElementRef::new() }
+    }
+
+    /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind it
+    /// on mount (`view(ref: handle.r())`).
+    pub fn r(&self) -> ElementRef {
+        self.r
+    }
+
+    /// `boundingClientRect` — the element's layout box in LynxView
+    /// coordinates. Async: the result arrives via Lynx's UI-method
+    /// callback (typically on the UI thread).
+    ///
+    /// ```ignore
+    /// let card = ElementHandle::new();   // view(ref: card.r()) { … }
+    /// spawn_local(async move {
+    ///     if let Ok(rect) = card.bounding_client_rect().await {
+    ///         // rect.width, rect.height, …
+    ///     }
+    /// });
+    /// ```
+    pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
+        self.r
+            .invoke_typed_async::<BoundingClientRect>("boundingClientRect", vec![])
+            .await
+    }
+
+    /// `takeScreenshot` — a base64-encoded image of the element
+    /// (async). Returns the encoded string.
+    pub async fn take_screenshot(&self) -> Result<String, RefError> {
+        self.r
+            .invoke_typed_async::<String>("takeScreenshot", vec![])
+            .await
+    }
+}
+
+impl Default for ElementHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Imperative handle to a mounted `<image>`. Allocate with
 /// [`ImageHandle::new`], bind via `image(ref: handle.r())` in
@@ -454,6 +471,21 @@ impl ImageHandle {
     /// it on mount (`image(ref: handle.r())`).
     pub fn r(&self) -> ElementRef {
         self.r
+    }
+
+    /// `boundingClientRect` — the element's layout box in LynxView
+    /// coordinates (async).
+    pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
+        self.r
+            .invoke_typed_async::<BoundingClientRect>("boundingClientRect", vec![])
+            .await
+    }
+
+    /// `takeScreenshot` — a base64-encoded image of the element (async).
+    pub async fn take_screenshot(&self) -> Result<String, RefError> {
+        self.r
+            .invoke_typed_async::<String>("takeScreenshot", vec![])
+            .await
     }
 
     /// `pauseAnimation` — pause a playing animated image, holding the
@@ -485,13 +517,6 @@ impl Default for ImageHandle {
     }
 }
 
-impl std::ops::Deref for ImageHandle {
-    type Target = ElementRef;
-    fn deref(&self) -> &ElementRef {
-        &self.r
-    }
-}
-
 /// Imperative handle to a mounted `<scroll-view>`. Allocate with
 /// [`ScrollViewHandle::new`], bind via `scroll_view(ref: handle.r())`
 /// in `render!`, then query scroll state.
@@ -513,6 +538,21 @@ impl ScrollViewHandle {
     /// it on mount (`scroll_view(ref: handle.r())`).
     pub fn r(&self) -> ElementRef {
         self.r
+    }
+
+    /// `boundingClientRect` — the element's layout box in LynxView
+    /// coordinates (async).
+    pub async fn bounding_client_rect(&self) -> Result<BoundingClientRect, RefError> {
+        self.r
+            .invoke_typed_async::<BoundingClientRect>("boundingClientRect", vec![])
+            .await
+    }
+
+    /// `takeScreenshot` — a base64-encoded image of the element (async).
+    pub async fn take_screenshot(&self) -> Result<String, RefError> {
+        self.r
+            .invoke_typed_async::<String>("takeScreenshot", vec![])
+            .await
     }
 
     /// `getScrollInfo` — current scroll offset (`scroll_x`/`scroll_y`)
@@ -580,13 +620,6 @@ impl ScrollViewHandle {
 impl Default for ScrollViewHandle {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl std::ops::Deref for ScrollViewHandle {
-    type Target = ElementRef;
-    fn deref(&self) -> &ElementRef {
-        &self.r
     }
 }
 
