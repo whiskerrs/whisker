@@ -684,6 +684,48 @@ pub fn measure_demo() -> Element {
     }
 }
 
+/// Method-coverage demo — `TextHandle` over the unified `invoke` path.
+/// `on_uiappear` fires post-layout, so we auto-measure the substring
+/// `[0, 5)` ("Hello") via `get_text_bounding_rect` *without a tap* — the
+/// result lands in the label on load, exercising the unified
+/// params-map + async-result dispatch (`whisker.8`) end-to-end (the same
+/// path `get_scroll_info` / `get_selected_text` now use).
+#[component]
+fn text_methods_demo() -> Element {
+    let out = RwSignal::new(String::from("measuring…"));
+    let txt = TextHandle::new();
+    let display = computed(move || out.get());
+    let on_appear = move |_| {
+        spawn_local(async move {
+            match txt.get_text_bounding_rect(0, 5).await {
+                Ok(r) => out.set(format!(
+                    "getTextBoundingRect[0..5] → {:.0}×{:.0} @({:.0},{:.0})  boxes={}",
+                    r.bounding_rect.width,
+                    r.bounding_rect.height,
+                    r.bounding_rect.left,
+                    r.bounding_rect.top,
+                    r.boxes.len(),
+                )),
+                Err(e) => out.set(format!("err: {e}")),
+            }
+        });
+    };
+    render! {
+        view(style: "margin: 4px 16px 8px; display: flex; flex-direction: column; gap: 4px;") {
+            text(
+                ref: txt.r(),
+                on_uiappear: on_appear,
+                value: "Hello Whisker text methods",
+                style: "color: #e8e3ff; font-size: 15px; font-weight: 600;",
+            )
+            text(
+                value: display,
+                style: "color: #b9a9ff; font-size: 12px; font-family: monospace;",
+            )
+        }
+    }
+}
+
 /// Phase 5 demo — event propagation (capture / bubble / catch).
 ///
 /// Three nested boxes (outer → middle → inner) each register **both**
@@ -788,6 +830,7 @@ fn app() -> Element {
             Hello(style: "width: 100%; height: 8px;")
             VideoDemo()
             MeasureDemo()
+            TextMethodsDemo()
             PropagationDemo()
             Header()
             ScrollBody(state: state)
