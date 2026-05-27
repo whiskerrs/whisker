@@ -381,7 +381,9 @@ pub struct ElementHandle {
 impl ElementHandle {
     /// Allocate a fresh, unbound element handle.
     pub fn new() -> Self {
-        Self { r: ElementRef::new() }
+        Self {
+            r: ElementRef::new(),
+        }
     }
 
     /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind it
@@ -437,7 +439,9 @@ pub struct ImageHandle {
 impl ImageHandle {
     /// Allocate a fresh, unbound image handle.
     pub fn new() -> Self {
-        Self { r: ElementRef::new() }
+        Self {
+            r: ElementRef::new(),
+        }
     }
 
     /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind
@@ -504,7 +508,9 @@ pub struct ScrollViewHandle {
 impl ScrollViewHandle {
     /// Allocate a fresh, unbound scroll-view handle.
     pub fn new() -> Self {
-        Self { r: ElementRef::new() }
+        Self {
+            r: ElementRef::new(),
+        }
     }
 
     /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind
@@ -616,7 +622,9 @@ pub struct TextHandle {
 impl TextHandle {
     /// Allocate a fresh, unbound text handle.
     pub fn new() -> Self {
-        Self { r: ElementRef::new() }
+        Self {
+            r: ElementRef::new(),
+        }
     }
 
     /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind it

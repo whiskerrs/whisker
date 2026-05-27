@@ -89,9 +89,10 @@ impl VideoHandle {
 
     /// Seek to an absolute position (seconds from the start).
     pub fn seek(&self, position_seconds: f64) {
-        let _ = self
-            .r
-            .invoke("seek", WhiskerValue::args([WhiskerValue::Float(position_seconds)]));
+        let _ = self.r.invoke(
+            "seek",
+            WhiskerValue::args([WhiskerValue::Float(position_seconds)]),
+        );
     }
 }
 
