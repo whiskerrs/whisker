@@ -223,6 +223,169 @@ pub struct CustomEvent {
     pub detail: WhiskerValue,
 }
 
+/// A 2-D size — `width` / `height` in px.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub struct Size {
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
+}
+
+// ---- scroll_view -----------------------------------------------------------
+
+/// `<scroll_view>` scroll events — `scroll`, `scrolltoupper`,
+/// `scrolltolower`, `scrollend`, `contentsizechanged`. The `detail`
+/// carries the current scroll geometry. (CustomEvent → target-only, so
+/// these have no catch/capture variants — see Lynx `CustomEvent`
+/// defaults `Capture::kNo, Bubbles::kNo`.)
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ScrollEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+    #[serde(default)]
+    pub detail: ScrollDetail,
+}
+
+/// Scroll geometry carried by a [`ScrollEvent`] (the event body's
+/// `detail` dict — see Lynx `LynxScrollEventManager`).
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScrollDetail {
+    /// Horizontal content offset (px).
+    #[serde(default)]
+    pub scroll_left: f64,
+    /// Vertical content offset (px).
+    #[serde(default)]
+    pub scroll_top: f64,
+    /// Total scrollable content width (px).
+    #[serde(default)]
+    pub scroll_width: f64,
+    /// Total scrollable content height (px).
+    #[serde(default)]
+    pub scroll_height: f64,
+    /// Horizontal delta since the previous scroll event (px).
+    #[serde(default)]
+    pub delta_x: f64,
+    /// Vertical delta since the previous scroll event (px).
+    #[serde(default)]
+    pub delta_y: f64,
+    /// Whether the user's finger is currently dragging the scroll view.
+    #[serde(default)]
+    pub is_dragging: bool,
+}
+
+// ---- image -----------------------------------------------------------------
+
+/// `load` on `<image>` — the image request succeeded; `detail` gives
+/// the intrinsic pixel size. (`error` / animated-image events surface
+/// as [`CustomEvent`] — their detail is component-specific.)
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ImageLoadEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+    #[serde(default)]
+    pub detail: ImageLoadDetail,
+}
+
+/// Intrinsic image size carried by an [`ImageLoadEvent`].
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub struct ImageLoadDetail {
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
+}
+
+// ---- text ------------------------------------------------------------------
+
+/// `layout` on `<text>` — fired after text layout completes.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TextLayoutEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+    #[serde(default)]
+    pub detail: TextLayoutDetail,
+}
+
+/// Layout info carried by a [`TextLayoutEvent`].
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextLayoutDetail {
+    /// Number of laid-out lines.
+    #[serde(default)]
+    pub line_count: i64,
+    /// Per-line ranges (and ellipsis info for truncated lines).
+    #[serde(default)]
+    pub lines: Vec<TextLineInfo>,
+    /// Laid-out content size.
+    #[serde(default)]
+    pub size: Size,
+}
+
+/// One laid-out text line inside a [`TextLayoutDetail`].
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextLineInfo {
+    /// Character index of the line's first glyph.
+    #[serde(default)]
+    pub start: i64,
+    /// Character index just past the line's last glyph.
+    #[serde(default)]
+    pub end: i64,
+    /// Number of characters replaced by the truncation ellipsis (0 if
+    /// the line isn't truncated).
+    #[serde(default)]
+    pub ellipsis_count: i64,
+}
+
+/// `selectionchange` on `<text>` — the selected text range changed.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SelectionChangeEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+    #[serde(default)]
+    pub detail: SelectionDetail,
+}
+
+/// Selection range carried by a [`SelectionChangeEvent`].
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SelectionDetail {
+    /// Start character index, or -1 when there's no selection.
+    #[serde(default)]
+    pub start: i64,
+    /// End character index, or -1 when there's no selection.
+    #[serde(default)]
+    pub end: i64,
+    /// `"forward"` or `"backward"`.
+    #[serde(default)]
+    pub direction: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +452,73 @@ mod tests {
             WhiskerValue::Map(m) => assert_eq!(m.get("scrollTop"), Some(&WhiskerValue::Int(42))),
             other => panic!("expected Map detail, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn scroll_event_detail_camel_case_mapping() {
+        // Mirrors Lynx's LynxScrollEventManager detail dict.
+        let v = WhiskerValue::map([
+            ("type", WhiskerValue::String("scroll".into())),
+            (
+                "detail",
+                WhiskerValue::map([
+                    ("scrollLeft", WhiskerValue::Float(0.0)),
+                    ("scrollTop", WhiskerValue::Float(120.0)),
+                    ("scrollHeight", WhiskerValue::Float(2000.0)),
+                    ("scrollWidth", WhiskerValue::Float(375.0)),
+                    ("deltaY", WhiskerValue::Float(12.0)),
+                    ("isDragging", WhiskerValue::Bool(true)),
+                ]),
+            ),
+        ]);
+        let e: ScrollEvent = v.deserialize_into().expect("deserialize ScrollEvent");
+        assert_eq!(e.kind, "scroll");
+        assert_eq!(e.detail.scroll_top, 120.0);
+        assert_eq!(e.detail.scroll_height, 2000.0);
+        assert_eq!(e.detail.delta_y, 12.0);
+        assert!(e.detail.is_dragging);
+        // Absent key degrades to default rather than failing.
+        assert_eq!(e.detail.delta_x, 0.0);
+    }
+
+    #[test]
+    fn text_layout_event_nested_lines_and_size() {
+        let v = WhiskerValue::map([
+            ("type", WhiskerValue::String("layout".into())),
+            (
+                "detail",
+                WhiskerValue::map([
+                    ("lineCount", WhiskerValue::Int(2)),
+                    (
+                        "size",
+                        WhiskerValue::map([
+                            ("width", WhiskerValue::Float(300.0)),
+                            ("height", WhiskerValue::Float(40.0)),
+                        ]),
+                    ),
+                    (
+                        "lines",
+                        WhiskerValue::Array(vec![
+                            WhiskerValue::map([
+                                ("start", WhiskerValue::Int(0)),
+                                ("end", WhiskerValue::Int(10)),
+                                ("ellipsisCount", WhiskerValue::Int(0)),
+                            ]),
+                            WhiskerValue::map([
+                                ("start", WhiskerValue::Int(10)),
+                                ("end", WhiskerValue::Int(18)),
+                                ("ellipsisCount", WhiskerValue::Int(3)),
+                            ]),
+                        ]),
+                    ),
+                ]),
+            ),
+        ]);
+        let e: TextLayoutEvent = v.deserialize_into().expect("deserialize TextLayoutEvent");
+        assert_eq!(e.detail.line_count, 2);
+        assert_eq!(e.detail.size.width, 300.0);
+        assert_eq!(e.detail.lines.len(), 2);
+        assert_eq!(e.detail.lines[1].end, 18);
+        assert_eq!(e.detail.lines[1].ellipsis_count, 3);
     }
 }
