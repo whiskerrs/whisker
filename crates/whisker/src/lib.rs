@@ -132,7 +132,7 @@ pub mod __tags {
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
         append_child, apply_attr, apply_attr_owned, apply_styles, create_element,
-        set_event_listener, BindType, Element,
+        create_element_by_name, set_event_listener, BindType, Element,
     };
 
     // ---- The common builder surface -------------------------------------
@@ -1187,6 +1187,92 @@ pub mod __tags {
             self
         }
     }
+
+    // ---- list / list-item (Lynx's virtualized list) ---------------------
+    //
+    // The standard Lynx `list` creates its items through lepus
+    // `componentAtIndex` callbacks the JS framework registers — Whisker
+    // has no such runtime. So the `list` builder always opts into Lynx's
+    // *decoupled* native list (`enable-decoupled-list`): it virtualizes /
+    // recycles the actual `<list-item>` children present in the element
+    // tree (via the native `ListChildrenHelper`), with no framework
+    // callbacks. That fits Whisker's direct-tree model — author code
+    // writes `list { list_item { … } … }` like any other container.
+
+    #[allow(non_camel_case_types)]
+    pub struct list {
+        handle: Element,
+    }
+    #[allow(non_snake_case)]
+    pub fn __list_ctor() -> list {
+        let handle = create_element_by_name("list");
+        // Required: drive the list natively from its tree children rather
+        // than through (absent) JS `componentAtIndex` callbacks.
+        apply_attr(handle, "enable-decoupled-list", true);
+        list { handle }
+    }
+    impl ElementBuilder for list {
+        fn __element(&self) -> Element {
+            self.handle
+        }
+    }
+    impl list {
+        /// `list-type` — `"single"` (default, one column), `"flow"`, or
+        /// `"waterfall"`.
+        pub fn list_type<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "list-type", v);
+            self
+        }
+
+        /// `column-count` — number of columns (default 1).
+        pub fn column_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr(self.handle, "column-count", v);
+            self
+        }
+
+        /// `vertical-orientation` — `true` (default) scrolls vertically,
+        /// `false` horizontally.
+        pub fn vertical_orientation<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "vertical-orientation", v);
+            self
+        }
+    }
+
+    #[allow(non_camel_case_types)]
+    pub struct list_item {
+        handle: Element,
+    }
+    #[allow(non_snake_case)]
+    pub fn __list_item_ctor() -> list_item {
+        list_item {
+            handle: create_element_by_name("list-item"),
+        }
+    }
+    impl ElementBuilder for list_item {
+        fn __element(&self) -> Element {
+            self.handle
+        }
+    }
+    impl list_item {
+        /// `item-key` — stable identity for this item, used by the list
+        /// for recycling / diffing. Should be unique among siblings.
+        pub fn item_key<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "item-key", v);
+            self
+        }
+    }
 }
 
 // Worker-thread → main-thread marshaling. The typical use case is
@@ -1322,5 +1408,5 @@ pub mod prelude {
     // these blocked kwarg completion was a separate bug — the
     // prefix-match heuristic that's since been removed.)
     #[doc(hidden)]
-    pub use crate::__tags::{image, page, raw_text, scroll_view, text, view};
+    pub use crate::__tags::{image, list, list_item, page, raw_text, scroll_view, text, view};
 }

@@ -733,6 +733,39 @@ fn text_methods_demo() -> Element {
     }
 }
 
+/// `list` demo — Lynx's virtualized list driven from a static element
+/// tree via the *decoupled* native list (`enable-decoupled-list`, set by
+/// the `list` builder). The `<list-item>` children are written directly
+/// (no JS data source); the native list virtualizes / recycles them.
+/// The fixed height makes it scroll internally.
+#[component]
+fn list_demo() -> Element {
+    let card = "height: 52px; margin: 4px 16px; border-radius: 8px; \
+                background-color: #1a1330; display: flex; flex-direction: row; \
+                align-items: center; padding-left: 16px;";
+    let txt = "color: #e8e3ff; font-size: 15px; font-weight: 600;";
+    render! {
+        view(style: "flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;") {
+            text(
+                value: "list (decoupled · virtualized)",
+                style: "color: #b9a9ff; font-size: 12px; margin: 4px 16px;",
+            )
+            list(list_type: "single", column_count: 1_i32, style: "height: 220px;") {
+                list_item(item_key: "i0", style: card) { text(value: "List item 0", style: txt) }
+                list_item(item_key: "i1", style: card) { text(value: "List item 1", style: txt) }
+                list_item(item_key: "i2", style: card) { text(value: "List item 2", style: txt) }
+                list_item(item_key: "i3", style: card) { text(value: "List item 3", style: txt) }
+                list_item(item_key: "i4", style: card) { text(value: "List item 4", style: txt) }
+                list_item(item_key: "i5", style: card) { text(value: "List item 5", style: txt) }
+                list_item(item_key: "i6", style: card) { text(value: "List item 6", style: txt) }
+                list_item(item_key: "i7", style: card) { text(value: "List item 7", style: txt) }
+                list_item(item_key: "i8", style: card) { text(value: "List item 8", style: txt) }
+                list_item(item_key: "i9", style: card) { text(value: "List item 9", style: txt) }
+            }
+        }
+    }
+}
+
 /// Phase 5 demo — event propagation (capture / bubble / catch).
 ///
 /// Three nested boxes (outer → middle → inner) each register **both**
@@ -838,6 +871,7 @@ fn app() -> Element {
             VideoDemo()
             MeasureDemo()
             TextMethodsDemo()
+            ListDemo()
             PropagationDemo()
             Header()
             ScrollBody(state: state)
