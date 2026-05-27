@@ -476,18 +476,16 @@ impl ElementNode {
             return Some(quote_spanned! {span=> .#name(()) });
         }
 
-        let call = if is_string_attr_method(&tag_name, &name_str) {
-            // String-shaped attr (`style`, `class`, plus tag-
-            // specific ones like `image::src`,
-            // `scroll_view::scroll_orientation`,
-            // `raw_text::text`, `text::value`). Phase 7-Φ.B
-            // pivot: the builder method now takes
-            // `impl Into<Signal<T>>` and handles Static / Dynamic
-            // dispatch internally. The macro no longer wraps in
-            // `move || …to_string()` — the value flows as-is and
-            // type inference picks the correct `From` impl
-            // (`From<T>` for static / `From<ReadSignal<T>>` etc.
-            // for reactive).
+        let call = if is_known_attr_method(&tag_name, &name_str) {
+            // Named builder attribute method (`style`, `class`, the
+            // universal trait attrs, and per-tag ones like `image::mode`,
+            // `scroll_view::bounces`, `text::text_maxline`). The method
+            // takes `impl Into<Signal<T>>` for its semantic `T` and
+            // handles Static / Dynamic dispatch internally; the value
+            // flows as-is and type inference picks the right `From`
+            // (`From<T>` static / `From<ReadSignal<T>>` reactive) — so
+            // `bounces: true` / `text_maxline: 3` / `mode: "aspectFit"`
+            // all just work.
             quote_spanned! {span=> .#name(#value) }
         } else if name_str == "ref" {
             // `ref: <ElementRef>` on a built-in element → bind the ref
@@ -521,19 +519,80 @@ impl ElementNode {
     }
 }
 
-/// String-attribute methods on the builder (take `Fn() -> impl
-/// ToString`). The catch-all `.attr(name, …)` path uses the same
-/// shape for unknown attrs.
-fn is_string_attr_method(tag: &str, attr: &str) -> bool {
-    if matches!(attr, "style" | "class") {
+/// Kwargs that map to a **named** builder attribute method
+/// (`.#name(value)`) rather than the catch-all `.attr("kebab", value)`.
+/// Each method takes `impl Into<Signal<T>>` for its semantic `T`
+/// (bool / number / String), so the value flows through unchanged and
+/// type inference picks the right `From` — crucial for bool/number
+/// attrs, which `.attr` (String-only) couldn't accept. Mirrors the
+/// methods on `ElementBuilder` + the per-tag inherent impls in
+/// `whisker::__tags`; tag-specific names only match their tag, so using
+/// one on the wrong element is a clear "no method" error.
+fn is_known_attr_method(tag: &str, attr: &str) -> bool {
+    // Universal attributes (the `ElementBuilder` trait — any tag).
+    let common = matches!(
+        attr,
+        "style"
+            | "class"
+            | "id"
+            | "name"
+            | "event_through"
+            | "exposure_id"
+            | "exposure_scene"
+            | "exposure_area"
+            | "accessibility_label"
+            | "accessibility_trait"
+            | "accessibility_element"
+            | "accessibility_elements"
+            | "accessibility_elements_hidden"
+            | "accessibility_exclusive_focus"
+            | "a11y_id"
+            | "user_interaction_enabled"
+            | "native_interaction_enabled"
+            | "block_native_event"
+            | "consume_slide_event"
+            | "pan_intercept_direction"
+            | "pan_intercept_scope"
+            | "hit_slop"
+            | "flatten"
+    );
+    if common {
         return true;
     }
+    // Tag-specific inherent attributes.
     matches!(
         (tag, attr),
-        ("image", "src")
-            | ("scroll_view", "scroll_orientation")
-            | ("raw_text", "text")
+        ("raw_text", "text")
             | ("text", "value")
+            | ("text", "text_maxline")
+            | ("text", "text_selection")
+            | ("text", "include_font_padding")
+            | ("text", "tail_color_convert")
+            | ("text", "text_single_line_vertical_align")
+            | ("text", "custom_context_menu")
+            | ("text", "custom_text_selection")
+            | ("image", "src")
+            | ("image", "mode")
+            | ("image", "placeholder")
+            | ("image", "blur_radius")
+            | ("image", "auto_size")
+            | ("image", "tint_color")
+            | ("image", "cap_insets")
+            | ("image", "cap_insets_scale")
+            | ("image", "loop_count")
+            | ("image", "autoplay")
+            | ("image", "prefetch_width")
+            | ("image", "prefetch_height")
+            | ("image", "image_config")
+            | ("image", "defer_src_invalidation")
+            | ("scroll_view", "scroll_orientation")
+            | ("scroll_view", "bounces")
+            | ("scroll_view", "enable_scroll")
+            | ("scroll_view", "scroll_bar_enable")
+            | ("scroll_view", "initial_scroll_offset")
+            | ("scroll_view", "initial_scroll_to_index")
+            | ("scroll_view", "upper_threshold")
+            | ("scroll_view", "lower_threshold")
     )
 }
 

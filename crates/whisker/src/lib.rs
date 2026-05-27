@@ -285,6 +285,145 @@ pub mod __tags {
             self
         }
 
+        /// `exposure-scene` — exposure scene identifier (pairs with
+        /// `exposure-id` for scoping exposure monitoring).
+        fn exposure_scene<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "exposure-scene", v);
+            self
+        }
+
+        /// `exposure-area` — viewport-intersection ratio threshold that
+        /// counts as "exposed" (e.g. `"0.5"` or `"50%"`).
+        fn exposure_area<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "exposure-area", v);
+            self
+        }
+
+        /// `a11y-id` — separate identifier for accessibility nodes.
+        fn a11y_id<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "a11y-id", v);
+            self
+        }
+
+        /// `accessibility-elements` — customize child focus order by a
+        /// comma-separated list of element ids.
+        fn accessibility_elements<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "accessibility-elements", v);
+            self
+        }
+
+        /// `accessibility-elements-hidden` — hide this node and its
+        /// children from accessibility.
+        fn accessibility_elements_hidden<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<bool>>,
+        {
+            apply_attr(self.__element(), "accessibility-elements-hidden", v);
+            self
+        }
+
+        /// `accessibility-exclusive-focus` — restrict accessibility
+        /// focus to this node's children.
+        fn accessibility_exclusive_focus<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<bool>>,
+        {
+            apply_attr(self.__element(), "accessibility-exclusive-focus", v);
+            self
+        }
+
+        // ---- Native touch / gesture coordination ------------------------
+        //
+        // Whisker delivers events through Lynx's hit-testing + reporter,
+        // so these tune what reaches it: expand the hit area, hand
+        // gestures to / withhold them from Lynx's native scroll, etc.
+        // Advanced — most apps never need them.
+
+        /// `hit-slop` — expand the touch-responsive area beyond the
+        /// element's bounds (e.g. `"10px"`, or per-side
+        /// `"{top:10,bottom:10}"`).
+        fn hit_slop<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "hit-slop", v);
+            self
+        }
+
+        /// `native-interaction-enabled` — let the platform layer consume
+        /// gestures on this node.
+        fn native_interaction_enabled<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<bool>>,
+        {
+            apply_attr(self.__element(), "native-interaction-enabled", v);
+            self
+        }
+
+        /// `block-native-event` — block platform gestures (e.g. an
+        /// underlying native scroll) from firing outside Lynx while a
+        /// touch is on this node.
+        fn block_native_event<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<bool>>,
+        {
+            apply_attr(self.__element(), "block-native-event", v);
+            self
+        }
+
+        /// `consume-slide-event` — consume swipes within given angle
+        /// ranges so an ancestor scroll doesn't also act on them
+        /// (e.g. `"[[0,45]]"`).
+        fn consume_slide_event<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "consume-slide-event", v);
+            self
+        }
+
+        /// `pan-intercept-direction` — block swipe gestures in a
+        /// direction: `horizontal` / `vertical` / `none`.
+        fn pan_intercept_direction<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "pan-intercept-direction", v);
+            self
+        }
+
+        /// `pan-intercept-scope` — scope of [`pan_intercept_direction`]:
+        /// `self` / `ancestors` / `descendants` / ….
+        fn pan_intercept_scope<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<String>>,
+        {
+            apply_attr(self.__element(), "pan-intercept-scope", v);
+            self
+        }
+
+        /// `flatten` — Android-only: force a real Android View for this
+        /// node (opts out of flattening). `false` lets Lynx flatten it.
+        fn flatten<V>(self, v: V) -> Self
+        where
+            V: Into<Signal<bool>>,
+        {
+            apply_attr(self.__element(), "flatten", v);
+            self
+        }
+
         // ---- Events: touch / tap / click → `TouchEvent` -----------------
         //
         // Each touch event exposes the four Lynx handler kinds as a
@@ -643,6 +782,66 @@ pub mod __tags {
             self
         }
 
+        // ---- text attributes (reactive-capable) ---------------------
+
+        /// `text-maxline` — max displayed lines (-1 = unlimited).
+        pub fn text_maxline<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr(self.handle, "text-maxline", v);
+            self
+        }
+        /// `text-selection` — allow the user to select the text.
+        pub fn text_selection<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "text-selection", v);
+            self
+        }
+        /// `include-font-padding` — add font padding (Android).
+        pub fn include_font_padding<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "include-font-padding", v);
+            self
+        }
+        /// `tail-color-convert` — control ellipsis color inheritance.
+        pub fn tail_color_convert<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "tail-color-convert", v);
+            self
+        }
+        /// `text-single-line-vertical-align` — `normal` (default) /
+        /// `top` / `center` / `bottom`.
+        pub fn text_single_line_vertical_align<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "text-single-line-vertical-align", v);
+            self
+        }
+        /// `custom-context-menu` — enable a custom selection context menu.
+        pub fn custom_context_menu<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "custom-context-menu", v);
+            self
+        }
+        /// `custom-text-selection` — developer-controlled selection logic.
+        pub fn custom_text_selection<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "custom-text-selection", v);
+            self
+        }
+
         // ---- text-specific events (CustomEvent → bind only) ---------
 
         /// `layout` — fired after text layout completes. The
@@ -715,6 +914,115 @@ pub mod __tags {
             self
         }
 
+        // ---- image attributes (every method reactive-capable) -------
+
+        /// `mode` — crop/scale: `scaleToFill` (default) / `aspectFit` /
+        /// `aspectFill` / `center`.
+        pub fn mode<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "mode", v);
+            self
+        }
+        /// `placeholder` — fallback image shown while loading.
+        pub fn placeholder<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "placeholder", v);
+            self
+        }
+        /// `blur-radius` — blur intensity, e.g. `"10px"`.
+        pub fn blur_radius<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "blur-radius", v);
+            self
+        }
+        /// `auto-size` — size the element to the image's intrinsic size.
+        pub fn auto_size<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "auto-size", v);
+            self
+        }
+        /// `tint-color` — recolor non-transparent pixels.
+        pub fn tint_color<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "tint-color", v);
+            self
+        }
+        /// `cap-insets` — 9-patch stretchable area (`"top right bottom left"`).
+        pub fn cap_insets<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "cap-insets", v);
+            self
+        }
+        /// `cap-insets-scale` — scale of the 9-patch stretchable area.
+        pub fn cap_insets_scale<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<f64>>,
+        {
+            apply_attr(self.handle, "cap-insets-scale", v);
+            self
+        }
+        /// `loop-count` — animated-image play count (0 = infinite).
+        pub fn loop_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr(self.handle, "loop-count", v);
+            self
+        }
+        /// `autoplay` — start an animated image automatically on load.
+        pub fn autoplay<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "autoplay", v);
+            self
+        }
+        /// `prefetch-width` — load even when element width is 0, e.g. `"100px"`.
+        pub fn prefetch_width<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "prefetch-width", v);
+            self
+        }
+        /// `prefetch-height` — load even when element height is 0, e.g. `"100px"`.
+        pub fn prefetch_height<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "prefetch-height", v);
+            self
+        }
+        /// `image-config` — bitmap memory format: `ARGB_8888` / `RGB_565`.
+        pub fn image_config<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "image-config", v);
+            self
+        }
+        /// `defer-src-invalidation` — keep the old image until the new
+        /// one loads successfully.
+        pub fn defer_src_invalidation<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "defer-src-invalidation", v);
+            self
+        }
+
         // ---- image-specific events (CustomEvent → bind only) --------
 
         /// `load` — the image request succeeded. The
@@ -776,6 +1084,67 @@ pub mod __tags {
             V: ::std::convert::Into<Signal<::std::string::String>>,
         {
             apply_attr(self.handle, "scroll-orientation", v);
+            self
+        }
+
+        // ---- scroll_view attributes (reactive-capable) --------------
+
+        /// `bounces` — bounce effect at the scroll edges.
+        pub fn bounces<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "bounces", v);
+            self
+        }
+        /// `enable-scroll` — allow the user to drag-scroll.
+        pub fn enable_scroll<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "enable-scroll", v);
+            self
+        }
+        /// `scroll-bar-enable` — show the scrollbar indicator.
+        pub fn scroll_bar_enable<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "scroll-bar-enable", v);
+            self
+        }
+        /// `initial-scroll-offset` — starting scroll position (px).
+        pub fn initial_scroll_offset<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr(self.handle, "initial-scroll-offset", v);
+            self
+        }
+        /// `initial-scroll-to-index` — child index to jump to on load.
+        pub fn initial_scroll_to_index<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr(self.handle, "initial-scroll-to-index", v);
+            self
+        }
+        /// `upper-threshold` — distance (px) from the top/left edge that
+        /// triggers `scrolltoupper`.
+        pub fn upper_threshold<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr(self.handle, "upper-threshold", v);
+            self
+        }
+        /// `lower-threshold` — distance (px) from the bottom/right edge
+        /// that triggers `scrolltolower`.
+        pub fn lower_threshold<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr(self.handle, "lower-threshold", v);
             self
         }
 

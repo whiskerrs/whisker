@@ -259,6 +259,63 @@ fn arbitrary_attribute_emits_set_attribute() {
 }
 
 #[test]
+fn typed_attribute_methods_route_to_named_setters() {
+    // Phase: built-in attribute coverage. Named attribute methods route
+    // to `.method(v)` (not the String-only `.attr`), so bool / number /
+    // enum-string values stringify to the right Lynx attribute name.
+    let has = |ops: &[Op], key: &str, val: &str| {
+        ops.iter()
+            .any(|op| matches!(op, Op::SetAttr { key: k, value: v, .. } if k == key && v == val))
+    };
+
+    // scroll_view: bool + number attrs.
+    with_recorder(|log| {
+        let _ = render! {
+            scroll_view(bounces: true, enable_scroll: false, upper_threshold: 50)
+        };
+        let ops = log.borrow();
+        assert!(has(&ops, "bounces", "true"), "got {ops:?}");
+        assert!(has(&ops, "enable-scroll", "false"), "got {ops:?}");
+        assert!(has(&ops, "upper-threshold", "50"), "got {ops:?}");
+    });
+
+    // image: enum-string + bool + number(0).
+    with_recorder(|log| {
+        let _ = render! {
+            image(mode: "aspectFit", auto_size: true, loop_count: 0)
+        };
+        let ops = log.borrow();
+        assert!(has(&ops, "mode", "aspectFit"), "got {ops:?}");
+        assert!(has(&ops, "auto-size", "true"), "got {ops:?}");
+        assert!(has(&ops, "loop-count", "0"), "got {ops:?}");
+    });
+
+    // text: number + bool.
+    with_recorder(|log| {
+        let _ = render! {
+            text(value: "hi", text_maxline: 2, text_selection: true)
+        };
+        let ops = log.borrow();
+        assert!(has(&ops, "text-maxline", "2"), "got {ops:?}");
+        assert!(has(&ops, "text-selection", "true"), "got {ops:?}");
+    });
+
+    // common (trait) attrs on a plain view: bool + string.
+    with_recorder(|log| {
+        let _ = render! {
+            view(flatten: true, hit_slop: "10px", pan_intercept_direction: "horizontal")
+        };
+        let ops = log.borrow();
+        assert!(has(&ops, "flatten", "true"), "got {ops:?}");
+        assert!(has(&ops, "hit-slop", "10px"), "got {ops:?}");
+        assert!(
+            has(&ops, "pan-intercept-direction", "horizontal"),
+            "got {ops:?}"
+        );
+    });
+}
+
+#[test]
 fn on_tap_emits_set_event_listener() {
     with_recorder(|log| {
         let fired = Rc::new(RefCell::new(false));
