@@ -104,6 +104,18 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
         "dispatch (which itself is currently a stub pending Phase 7-Φ.H.2.7)");
 }
 
+extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method_with_params(
+    WhiskerElement* /*element*/,
+    const char* /*method_name*/,
+    const WhiskerValueRaw* /*params*/) {
+    // Host builds (cargo test) have no Lynx — the params-map dispatch is
+    // a pure error path, same shape as the scalar-arg stub above.
+    return MakeHostStubError(
+        "whisker_bridge_invoke_element_method_with_params: host build has no "
+        "Lynx — link against the iOS / Android bridge for real built-in "
+        "UI-method dispatch");
+}
+
 extern "C" bool whisker_bridge_invoke_module_async(
     const char* module_name,
     const char* method_name,
@@ -116,6 +128,23 @@ extern "C" bool whisker_bridge_invoke_module_async(
         module_name, method_name, args, arg_count);
     callback(user_data, &result);
     whisker_bridge_value_release(&result);
+    return true;
+}
+
+extern "C" bool whisker_bridge_invoke_element_method_async_with_params(
+    WhiskerElement* /*element*/,
+    const char* /*method_name*/,
+    const WhiskerValueRaw* /*params*/,
+    WhiskerModuleCallback callback,
+    void* user_data) {
+    // Host build has no Lynx — resolve to an error so the Rust future
+    // completes (mirrors the args-array async stub below).
+    if (callback == nullptr) return false;
+    WhiskerValueRaw err = MakeHostStubError(
+        "whisker_bridge_invoke_element_method_async_with_params: host build "
+        "has no Lynx");
+    callback(user_data, &err);
+    whisker_bridge_value_release(&err);
     return true;
 }
 

@@ -195,6 +195,20 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
     const lynx_ui_method_value_t* args,
     size_t arg_count);
 
+// Params-map UI-method dispatch (fire-and-forget) — for built-in Lynx
+// UI methods (`scrollTo`, `scrollBy`, `autoScroll`, `scrollIntoView`,
+// `requestUIInfo`, ...) that read their arguments as *named fields* of
+// the params object rather than from the `{"args": [...]}` wrapper
+// `lynx_ui_invoke_method` builds. `params` must be a single MAP value;
+// it's passed through as the params object directly (nested maps /
+// arrays round-trip). A null / non-map `params` degrades to an empty
+// object so the platform method runs with its defaults.
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_with_params(
+    lynx_shell_t* shell,
+    int32_t sign,
+    const char* method_name,
+    const lynx_ui_method_value_t* params);
+
 // Async UI-method dispatch — the result-returning variant used for
 // `boundingClientRect` / `takeScreenshot` etc. Lynx's
 // `Catalyzer::Invoke` callback fires (typically on the UI thread,
@@ -218,6 +232,22 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async(
     const char* method_name,
     const lynx_ui_method_value_t* args,
     size_t arg_count,
+    lynx_ui_method_result_cb callback,
+    void* user_data);
+
+// Unified params-map + result dispatch — `params` (a single MAP value)
+// is passed through as the params object directly (no `{"args": [...]}`
+// wrapper; the caller builds named fields for built-in methods, or an
+// `{"args": [...]}` map for Whisker module elements), and the result
+// arrives via `callback`. This is the one capi the Whisker
+// `ElementRef::invoke` family builds on, so adding a new built-in /
+// module method never needs a new capi. A null / non-map `params`
+// degrades to an empty object.
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async_with_params(
+    lynx_shell_t* shell,
+    int32_t sign,
+    const char* method_name,
+    const lynx_ui_method_value_t* params,
     lynx_ui_method_result_cb callback,
     void* user_data);
 

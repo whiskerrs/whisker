@@ -475,17 +475,27 @@ fn scroll_card(n: i32, color: &'static str) -> Element {
     }
 }
 
+/// Phase 6 scroll-event readout + the imperative `ScrollViewHandle`
+/// methods. The buttons drive the same horizontal `scroll_view` the
+/// `on_scroll` reads: `scrollTo` / `scrollBy` (Phase B — params-map
+/// dispatch through the bridge) move it programmatically, and
+/// `getScrollInfo` (Phase A — async result) reads the offset / range
+/// back. Watching the row jump on tap (and the label update) confirms
+/// both dispatch paths end-to-end.
 #[component]
 fn scroll_demo() -> Element {
     let info = RwSignal::new(String::new());
+    let row = ScrollViewHandle::new();
     let label = computed(move || {
         let s = info.get();
         if s.is_empty() {
-            "← swipe the row to read ScrollEvent →".to_string()
+            "← swipe, or use the buttons →".to_string()
         } else {
             s
         }
     });
+    let btn = "padding: 6px 10px; background-color: #6c5ce7; border-radius: 6px; \
+               color: #fff; font-size: 12px; font-weight: 600;";
     render! {
         view(style: "margin: 4px 20px 8px; display: flex; flex-direction: column; gap: 6px;") {
             text(
@@ -493,6 +503,7 @@ fn scroll_demo() -> Element {
                 style: "color: #b9a9ff; font-size: 12px; font-family: monospace;",
             )
             scroll_view(
+                ref: row.r(),
                 scroll_orientation: "horizontal",
                 on_scroll: move |e| {
                     info.set(format!(
@@ -514,6 +525,24 @@ fn scroll_demo() -> Element {
                 ScrollCard(n: 6_i32, color: "#30cfd0")
                 ScrollCard(n: 7_i32, color: "#ff7e5f")
                 ScrollCard(n: 8_i32, color: "#9b6bff")
+            }
+            view(style: "display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px;") {
+                text(value: "→ 300", style: btn, on_tap: move |_| { row.scroll_to(300.0, true); })
+                text(value: "⇤ start", style: btn, on_tap: move |_| { row.scroll_to(0.0, true); })
+                text(value: "+120", style: btn, on_tap: move |_| { row.scroll_by(120.0); })
+                text(value: "▶ auto", style: btn, on_tap: move |_| { row.auto_scroll(120.0); })
+                text(value: "■ stop", style: btn, on_tap: move |_| { row.stop_auto_scroll(); })
+                text(value: "ℹ info", style: btn, on_tap: move |_| {
+                    spawn_local(async move {
+                        match row.get_scroll_info().await {
+                            Ok(i) => info.set(format!(
+                                "getScrollInfo  x={:.0}  range={:.0}",
+                                i.scroll_x, i.scroll_range,
+                            )),
+                            Err(e) => info.set(format!("err: {e}")),
+                        }
+                    });
+                })
             }
         }
     }
@@ -616,7 +645,7 @@ pub fn video_demo() -> Element {
 /// the label reactively.
 #[component]
 pub fn measure_demo() -> Element {
-    let card = ElementRef::new();
+    let card = ElementHandle::new();
     let dims = RwSignal::new(String::new());
     let label = computed(move || {
         let d = dims.get();
@@ -642,7 +671,7 @@ pub fn measure_demo() -> Element {
     };
     render! {
         view(
-            ref: card,
+            ref: card.r(),
             on_tap: on_measure,
             style: "width: 200px; height: 56px; margin: 8px 16px; \
                     background-color: #1a1330; border-radius: 8px; \
@@ -652,6 +681,53 @@ pub fn measure_demo() -> Element {
             text(
                 value: label,
                 style: "color: #b9a9ff; font-size: 14px; font-weight: 600;",
+            )
+        }
+    }
+}
+
+/// Method-coverage demo — `TextHandle` over the unified `invoke` path.
+/// Tap the text to measure its substring `[0, 5)` ("Hello") via
+/// `get_text_bounding_rect`, which rides the unified params-map +
+/// async-result dispatch (`whisker.8`) — the same path
+/// `get_scroll_info` / `get_selected_text` / `bounding_client_rect` now
+/// use. The result lands in the readout below.
+#[component]
+fn text_methods_demo() -> Element {
+    let out = RwSignal::new(String::from("tap the text to measure “Hello” →"));
+    let txt = TextHandle::new();
+    let display = computed(move || out.get());
+    let measure = move |_| {
+        spawn_local(async move {
+            match txt.get_text_bounding_rect(0, 5).await {
+                Ok(r) => out.set(format!(
+                    "getTextBoundingRect[0..5] → {:.0}×{:.0} @({:.0},{:.0})  boxes={}",
+                    r.bounding_rect.width,
+                    r.bounding_rect.height,
+                    r.bounding_rect.left,
+                    r.bounding_rect.top,
+                    r.boxes.len(),
+                )),
+                Err(e) => out.set(format!("err: {e}")),
+            }
+        });
+    };
+    render! {
+        view(style: "margin: 4px 16px 8px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;") {
+            text(
+                ref: txt.r(),
+                on_tap: measure,
+                // `getTextBoundingRect` needs a real text Layout on Android
+                // (`mTextLayout`); a flattened text has none, so the boxes
+                // come back empty. `flatten: false` keeps the text as its
+                // own UI so the boxes are extractable on both platforms.
+                flatten: false,
+                value: "Hello Whisker text methods",
+                style: "color: #e8e3ff; font-size: 15px; font-weight: 600;",
+            )
+            text(
+                value: display,
+                style: "color: #b9a9ff; font-size: 12px; font-family: monospace;",
             )
         }
     }
@@ -761,6 +837,7 @@ fn app() -> Element {
             Hello(style: "width: 100%; height: 8px;")
             VideoDemo()
             MeasureDemo()
+            TextMethodsDemo()
             PropagationDemo()
             Header()
             ScrollBody(state: state)

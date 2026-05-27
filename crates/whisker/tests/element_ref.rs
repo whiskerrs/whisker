@@ -191,20 +191,11 @@ fn bound_signal_is_reactive() {
 }
 
 #[test]
-fn try_invoke_on_unbound_ref_returns_not_bound() {
-    with_test_env(|| {
-        let r = ElementRef::new();
-        let err = r.try_invoke("play", vec![]).unwrap_err();
-        assert_eq!(err, RefError::NotBound);
-    });
-}
-
-#[test]
-fn legacy_invoke_on_unbound_ref_returns_error_variant() {
+fn invoke_on_unbound_ref_returns_error_variant() {
     use whisker::platform_module::WhiskerValue;
     with_test_env(|| {
         let r = ElementRef::new();
-        let v = r.invoke("play", vec![]);
+        let v = r.invoke("play", WhiskerValue::Null);
         match v {
             WhiskerValue::Error(msg) => {
                 assert!(
@@ -218,24 +209,18 @@ fn legacy_invoke_on_unbound_ref_returns_error_variant() {
 }
 
 #[test]
-fn invoke_typed_routes_dispatch_failure_message() {
+fn try_from_whisker_value_f64_rejects_string() {
     use whisker::platform_module::WhiskerValue;
-    with_test_env(|| {
-        let r = ElementRef::new();
-        // Unbound → NotBound, not a dispatch failure.
-        let err: RefError = r.invoke_typed::<f64>("currentTime", vec![]).unwrap_err();
-        assert_eq!(err, RefError::NotBound);
-
-        // Cover the dispatch-failure → typed-error path by going
-        // through WhiskerValue::try_from directly:
-        let bad_payload = WhiskerValue::String("not-a-number".into());
-        let result: Result<f64, _> = f64::try_from(bad_payload);
-        let msg = result.expect_err("String can't convert to f64");
-        assert!(
-            msg.contains("expected Float"),
-            "TryFrom<WhiskerValue> for f64 should reject String: {msg}"
-        );
-    });
+    // `invoke_typed::<T>` now deserializes results via serde, but the
+    // `TryFrom<WhiskerValue>` primitive conversions remain a public
+    // surface — a String must not silently coerce to f64.
+    let bad_payload = WhiskerValue::String("not-a-number".into());
+    let result: Result<f64, _> = f64::try_from(bad_payload);
+    let msg = result.expect_err("String can't convert to f64");
+    assert!(
+        msg.contains("expected Float"),
+        "TryFrom<WhiskerValue> for f64 should reject String: {msg}"
+    );
 }
 
 #[test]

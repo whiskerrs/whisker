@@ -378,6 +378,20 @@ WHISKER_BRIDGE_EXPORT WhiskerValueRaw whisker_bridge_invoke_element_method(
     const WhiskerValueRaw* args,
     size_t arg_count);
 
+// Invoke a built-in Lynx UI method (`scrollTo`, `scrollBy`,
+// `autoScroll`, `scrollIntoView`, `requestUIInfo`, ...) whose arguments
+// are read as *named fields* of the params object rather than from the
+// `{"args": [...]}` wrapper `whisker_bridge_invoke_element_method`
+// builds. `params` is a single `WHISKER_VALUE_MAP` value — it (and any
+// nested maps / arrays) is passed through as the params object
+// directly. Fire-and-forget; returns `WHISKER_VALUE_NULL` once dispatch
+// is scheduled, or `WHISKER_VALUE_ERROR`. NULL / non-map `params`
+// degrades to an empty object so the method runs with its defaults.
+WHISKER_BRIDGE_EXPORT WhiskerValueRaw whisker_bridge_invoke_element_method_with_params(
+    WhiskerElement* element,
+    const char* method_name,
+    const WhiskerValueRaw* params);
+
 // Async variant — the **result-returning** element-method path used
 // for `boundingClientRect` / `takeScreenshot` etc. Lynx routes the UI
 // method to the main thread and the result arrives via a callback, so
@@ -398,6 +412,20 @@ WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_element_method_async(
     const char* method_name,
     const WhiskerValueRaw* args,
     size_t arg_count,
+    WhiskerModuleCallback callback,
+    void* user_data);
+
+// The unified element-method dispatch: `params` (a single
+// `WHISKER_VALUE_MAP`) is passed through as the method's params object
+// directly (named fields for built-in Lynx methods, or `{"args": […]}`
+// for Whisker module elements — the caller builds the shape), and the
+// result arrives via `callback`. This is the one entry the Rust
+// `ElementRef::invoke` family builds on; both fire-and-forget actions
+// (callback ignored) and result methods route through it.
+WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_element_method_async_with_params(
+    WhiskerElement* element,
+    const char* method_name,
+    const WhiskerValueRaw* params,
     WhiskerModuleCallback callback,
     void* user_data);
 

@@ -80,6 +80,19 @@ impl WhiskerValue {
         WhiskerValue::Map(m)
     }
 
+    /// Build the `{ "args": [ … ] }` params object that Whisker module
+    /// element methods (`@WhiskerUIMethod`) decode — their forwarders
+    /// read positional arguments from `params.args`. Built-in Lynx
+    /// methods read named fields directly and use [`map`](Self::map)
+    /// instead; this helper is for module-element handles like
+    /// `VideoHandle` invoking through the unified `ElementRef::invoke`.
+    pub fn args<I>(items: I) -> Self
+    where
+        I: IntoIterator<Item = WhiskerValue>,
+    {
+        WhiskerValue::map([("args", WhiskerValue::Array(items.into_iter().collect()))])
+    }
+
     /// Returns the Error message if `self` is the Error variant.
     /// Convenience for callers that want to bail on any failure
     /// without matching the variant manually.
