@@ -58,6 +58,28 @@ pub struct BoundingClientRect {
     pub height: f64,
 }
 
+/// Result of [`ScrollViewHandle::get_scroll_info`] — the current
+/// scroll offset and scrollable range of a `<scroll-view>` (Lynx's
+/// `getScrollInfo` UI method). Every field is `#[serde(default)]`, so
+/// whichever subset the platform's scroll UI reports populates and
+/// the rest read back `0.0`: `UIScrollView` fills
+/// `scroll_x`/`scroll_y`/`scroll_range`; the internal scroller fills
+/// `scroll_x`/`scroll_y` plus `scroll_width`/`scroll_height`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScrollInfo {
+    #[serde(default)]
+    pub scroll_x: f64,
+    #[serde(default)]
+    pub scroll_y: f64,
+    #[serde(default)]
+    pub scroll_range: f64,
+    #[serde(default)]
+    pub scroll_width: f64,
+    #[serde(default)]
+    pub scroll_height: f64,
+}
+
 // ---------------------------------------------------------------------------
 // RefError — explicit error surface for `try_invoke` / `invoke_typed`.
 // ---------------------------------------------------------------------------
@@ -220,6 +242,40 @@ impl ElementRef {
         crate::invoke_element_method(elem, method, args)
     }
 
+    /// Fire-and-forget invoke of a built-in Lynx UI method whose
+    /// arguments are *named fields* of a params object (`scrollTo`,
+    /// `scrollIntoView`, …). `params` is a single `WhiskerValue`
+    /// (typically a [`WhiskerValue::map`]) passed straight through as
+    /// the params object — not wrapped in `{"args": […]}` like
+    /// [`invoke`](Self::invoke). The typed handle wrappers
+    /// (`ScrollViewHandle::scroll_to`, …) build on this.
+    pub fn invoke_with_params(&self, method: &str, params: WhiskerValue) -> WhiskerValue {
+        let Some(elem) = self.inner.get_untracked() else {
+            return WhiskerValue::Error(format!(
+                "ElementRef::invoke_with_params(\"{method}\"): ref is not bound \
+                 to a mounted element"
+            ));
+        };
+        crate::invoke_element_method_with_params(elem, method, params)
+    }
+
+    /// `scrollIntoView` — scroll this element into the visible area of
+    /// its nearest scrollable ancestor. `behavior` is `"smooth"` and
+    /// `block` is `"nearest"` (minimal scroll). Generic: available on
+    /// any element handle.
+    pub fn scroll_into_view(&self) {
+        let _ = self.invoke_with_params(
+            "scrollIntoView",
+            WhiskerValue::map([(
+                "scrollIntoViewOptions",
+                WhiskerValue::map([
+                    ("behavior", WhiskerValue::String("smooth".into())),
+                    ("block", WhiskerValue::String("nearest".into())),
+                ]),
+            )]),
+        );
+    }
+
     /// Async, **result-returning** invoke — for UI methods whose
     /// return value arrives via Lynx's callback (`boundingClientRect`,
     /// `takeScreenshot`, …) rather than synchronously. Returns the raw
@@ -356,6 +412,187 @@ impl std::fmt::Debug for ElementRef {
         f.debug_struct("ElementRef")
             .field("element", &self.inner.get_untracked())
             .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Built-in element handles
+//
+// Typed wrappers around `ElementRef` (the VideoHandle pattern, applied
+// to Lynx built-ins). Each handle exposes only the imperative methods
+// that element type actually supports, so author code can't call
+// `pause_animation()` on a `<scroll-view>`. Both `Deref` to
+// `ElementRef`, so the generic methods (`bounding_client_rect`,
+// `take_screenshot`, …) are callable directly on the handle. Bind with
+// `image(ref: handle.r())` / `scroll_view(ref: handle.r())`.
+//
+// Action methods (no result) dispatch through the synchronous,
+// fire-and-forget `invoke`. Result methods (`get_scroll_info`) use the
+// async `invoke_typed_async` path. Methods that take a Lynx params
+// object (`scrollTo`, …) are gated on the params-map bridge path and
+// land separately.
+// ---------------------------------------------------------------------------
+
+/// Imperative handle to a mounted `<image>`. Allocate with
+/// [`ImageHandle::new`], bind via `image(ref: handle.r())` in
+/// `render!`, then drive animated-image (GIF / APNG) playback.
+///
+/// `Copy` (the inner `ElementRef` is an arena handle), so it can be
+/// captured by value into multiple event closures.
+#[derive(Copy, Clone)]
+pub struct ImageHandle {
+    r: ElementRef,
+}
+
+impl ImageHandle {
+    /// Allocate a fresh, unbound image handle.
+    pub fn new() -> Self {
+        Self { r: ElementRef::new() }
+    }
+
+    /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind
+    /// it on mount (`image(ref: handle.r())`).
+    pub fn r(&self) -> ElementRef {
+        self.r
+    }
+
+    /// `pauseAnimation` — pause a playing animated image, holding the
+    /// current frame.
+    pub fn pause_animation(&self) {
+        let _ = self.r.invoke("pauseAnimation", vec![]);
+    }
+
+    /// `resumeAnimation` — resume a paused animated image from the
+    /// held frame.
+    pub fn resume_animation(&self) {
+        let _ = self.r.invoke("resumeAnimation", vec![]);
+    }
+
+    /// `stopAnimation` — stop playback and reset to the first frame.
+    pub fn stop_animation(&self) {
+        let _ = self.r.invoke("stopAnimation", vec![]);
+    }
+
+    /// `startAnimate` — (re)start playback from the first frame.
+    pub fn start_animate(&self) {
+        let _ = self.r.invoke("startAnimate", vec![]);
+    }
+}
+
+impl Default for ImageHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::ops::Deref for ImageHandle {
+    type Target = ElementRef;
+    fn deref(&self) -> &ElementRef {
+        &self.r
+    }
+}
+
+/// Imperative handle to a mounted `<scroll-view>`. Allocate with
+/// [`ScrollViewHandle::new`], bind via `scroll_view(ref: handle.r())`
+/// in `render!`, then query scroll state.
+///
+/// `Copy` (the inner `ElementRef` is an arena handle), so it can be
+/// captured by value into multiple event closures.
+#[derive(Copy, Clone)]
+pub struct ScrollViewHandle {
+    r: ElementRef,
+}
+
+impl ScrollViewHandle {
+    /// Allocate a fresh, unbound scroll-view handle.
+    pub fn new() -> Self {
+        Self { r: ElementRef::new() }
+    }
+
+    /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind
+    /// it on mount (`scroll_view(ref: handle.r())`).
+    pub fn r(&self) -> ElementRef {
+        self.r
+    }
+
+    /// `getScrollInfo` — current scroll offset (`scroll_x`/`scroll_y`)
+    /// and scrollable range. Async: resolves once the platform reports
+    /// the values back over the bridge.
+    pub async fn get_scroll_info(&self) -> Result<ScrollInfo, RefError> {
+        self.r
+            .invoke_typed_async::<ScrollInfo>("getScrollInfo", vec![])
+            .await
+    }
+
+    /// `scrollTo` — scroll to an absolute `offset` (logical pixels)
+    /// along the scroll axis. `smooth` animates the scroll.
+    pub fn scroll_to(&self, offset: f64, smooth: bool) {
+        let _ = self.r.invoke_with_params(
+            "scrollTo",
+            WhiskerValue::map([
+                ("offset", WhiskerValue::String(format!("{offset}px"))),
+                ("smooth", WhiskerValue::Bool(smooth)),
+            ]),
+        );
+    }
+
+    /// `scrollTo` by child `index` — scroll so the child at `index`
+    /// aligns to the scroll start. `smooth` animates the scroll.
+    pub fn scroll_to_index(&self, index: i32, smooth: bool) {
+        let _ = self.r.invoke_with_params(
+            "scrollTo",
+            WhiskerValue::map([
+                ("index", WhiskerValue::Int(index as i64)),
+                ("smooth", WhiskerValue::Bool(smooth)),
+            ]),
+        );
+    }
+
+    /// `scrollBy` — scroll by a relative `offset` (logical pixels)
+    /// from the current position along the scroll axis. Always instant
+    /// (Lynx's `scrollBy` doesn't honor a `smooth` flag — use
+    /// [`scroll_to`](Self::scroll_to) for animated moves).
+    pub fn scroll_by(&self, offset: f64) {
+        let _ = self.r.invoke_with_params(
+            "scrollBy",
+            WhiskerValue::map([("offset", WhiskerValue::String(format!("{offset}px")))]),
+        );
+    }
+
+    /// `autoScroll` — start auto-scrolling at `rate` (logical pixels
+    /// per frame) along the scroll axis. Pair with
+    /// [`stop_auto_scroll`](Self::stop_auto_scroll) to halt.
+    pub fn auto_scroll(&self, rate: f64, smooth: bool) {
+        let _ = self.r.invoke_with_params(
+            "autoScroll",
+            WhiskerValue::map([
+                ("start", WhiskerValue::Bool(true)),
+                ("rate", WhiskerValue::String(format!("{rate}px"))),
+                ("smooth", WhiskerValue::Bool(smooth)),
+            ]),
+        );
+    }
+
+    /// `autoScroll` with `start: false` — stop an in-progress
+    /// auto-scroll started by [`auto_scroll`](Self::auto_scroll).
+    pub fn stop_auto_scroll(&self) {
+        let _ = self.r.invoke_with_params(
+            "autoScroll",
+            WhiskerValue::map([("start", WhiskerValue::Bool(false))]),
+        );
+    }
+}
+
+impl Default for ScrollViewHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::ops::Deref for ScrollViewHandle {
+    type Target = ElementRef;
+    fn deref(&self) -> &ElementRef {
+        &self.r
     }
 }
 

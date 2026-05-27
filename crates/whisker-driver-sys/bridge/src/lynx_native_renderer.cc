@@ -330,6 +330,89 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
   return 0;
 }
 
+// ----- Params-map UI-method dispatch (fire-and-forget) ----------------------
+//
+// Built-in Lynx UI methods (`scrollTo`, `scrollIntoView`, ...) read
+// their arguments as *named fields* of the params object
+// (`params.getString("offset")`, `params.getBoolean("smooth")`, ...) —
+// not from the `{"args": [...]}` wrapper `lynx_ui_invoke_method` builds
+// for Whisker module methods. This entry takes a single MAP value and
+// passes it through as the params object directly, so the named fields
+// land where the platform method looks for them. Nested maps / arrays
+// (e.g. `scrollIntoView`'s `scrollIntoViewOptions`) round-trip via the
+// recursive converter.
+
+namespace {
+
+// Recursively convert a Whisker UI-method value into a lepus value.
+// Mirrors the scalar arg handling in `lynx_ui_invoke_method`, plus the
+// MAP / ARRAY variants the params path needs.
+lynx::lepus::Value WhiskerCapiValueToLepus(const lynx_ui_method_value_t& v) {
+  switch (v.type) {
+    case LYNX_UI_METHOD_VALUE_BOOL:
+      return lynx::lepus::Value(v.v.b);
+    case LYNX_UI_METHOD_VALUE_INT:
+      return lynx::lepus::Value(v.v.i);
+    case LYNX_UI_METHOD_VALUE_DOUBLE:
+      return lynx::lepus::Value(v.v.f);
+    case LYNX_UI_METHOD_VALUE_STRING:
+      return lynx::lepus::Value(
+          lynx::base::String(v.v.s != nullptr ? v.v.s : ""));
+    case LYNX_UI_METHOD_VALUE_ARRAY: {
+      auto arr = lynx::lepus::CArray::Create();
+      for (size_t i = 0; i < v.v.array.count; i++) {
+        arr->emplace_back(WhiskerCapiValueToLepus(v.v.array.items[i]));
+      }
+      return lynx::lepus::Value(std::move(arr));
+    }
+    case LYNX_UI_METHOD_VALUE_MAP: {
+      auto dict = lynx::lepus::Dictionary::Create();
+      for (size_t i = 0; i < v.v.map.count; i++) {
+        const lynx_ui_method_kv_t& kv = v.v.map.entries[i];
+        dict->SetValue(lynx::base::String(kv.key != nullptr ? kv.key : ""),
+                       WhiskerCapiValueToLepus(kv.value));
+      }
+      return lynx::lepus::Value(std::move(dict));
+    }
+    case LYNX_UI_METHOD_VALUE_NULL:
+    default:
+      return lynx::lepus::Value();
+  }
+}
+
+}  // namespace
+
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_with_params(
+    lynx_shell_t* shell,
+    int32_t sign,
+    const char* method_name,
+    const lynx_ui_method_value_t* params) {
+  if (shell == nullptr || shell->manager == nullptr ||
+      method_name == nullptr) {
+    return -1;
+  }
+  auto* catalyzer = shell->manager->catalyzer();
+  if (catalyzer == nullptr) {
+    return -2;
+  }
+
+  // Pass the MAP through as the params object directly (no `{"args":
+  // [...]}` wrapper). A null / non-map `params` degrades to an empty
+  // object so the platform method still runs with its defaults.
+  lynx::lepus::Value params_lepus =
+      (params != nullptr && params->type == LYNX_UI_METHOD_VALUE_MAP)
+          ? WhiskerCapiValueToLepus(*params)
+          : lynx::lepus::Value(lynx::lepus::Dictionary::Create());
+
+  auto noop_callback = [](int32_t /*code*/, const lynx::pub::Value& /*data*/) {};
+
+  catalyzer->Invoke(static_cast<int64_t>(sign),
+                    std::string(method_name),
+                    lynx::pub::ValueImplLepus(params_lepus),
+                    noop_callback);
+  return 0;
+}
+
 // ----- Async UI-method dispatch (result-returning) --------------------------
 
 namespace {

@@ -195,6 +195,20 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method(
     const lynx_ui_method_value_t* args,
     size_t arg_count);
 
+// Params-map UI-method dispatch (fire-and-forget) — for built-in Lynx
+// UI methods (`scrollTo`, `scrollBy`, `autoScroll`, `scrollIntoView`,
+// `requestUIInfo`, ...) that read their arguments as *named fields* of
+// the params object rather than from the `{"args": [...]}` wrapper
+// `lynx_ui_invoke_method` builds. `params` must be a single MAP value;
+// it's passed through as the params object directly (nested maps /
+// arrays round-trip). A null / non-map `params` degrades to an empty
+// object so the platform method runs with its defaults.
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_with_params(
+    lynx_shell_t* shell,
+    int32_t sign,
+    const char* method_name,
+    const lynx_ui_method_value_t* params);
+
 // Async UI-method dispatch — the result-returning variant used for
 // `boundingClientRect` / `takeScreenshot` etc. Lynx's
 // `Catalyzer::Invoke` callback fires (typically on the UI thread,

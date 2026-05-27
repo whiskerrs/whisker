@@ -306,6 +306,21 @@ extern "C" {
         arg_count: usize,
     ) -> WhiskerValueRaw;
 
+    /// Fire-and-forget dispatch of a built-in Lynx UI method whose
+    /// arguments are named fields of the params object (`scrollTo`,
+    /// `scrollBy`, `autoScroll`, `scrollIntoView`, `requestUIInfo`, …)
+    /// rather than the `{"args": […]}` wrapper
+    /// `whisker_bridge_invoke_element_method` builds. `params` is a
+    /// single `WHISKER_VALUE_MAP`; it (and any nested maps / arrays) is
+    /// passed through as the params object directly. Returns
+    /// `WHISKER_VALUE_NULL` once dispatch is scheduled (caller still
+    /// passes it to `whisker_bridge_value_release`).
+    pub fn whisker_bridge_invoke_element_method_with_params(
+        element: *mut WhiskerElement,
+        method_name: *const c_char,
+        params: *const WhiskerValueRaw,
+    ) -> WhiskerValueRaw;
+
     /// Async, result-returning element-method dispatch
     /// (`boundingClientRect` / `takeScreenshot`). Returns immediately;
     /// `callback(user_data, &result)` fires once the method completes

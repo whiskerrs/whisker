@@ -475,17 +475,27 @@ fn scroll_card(n: i32, color: &'static str) -> Element {
     }
 }
 
+/// Phase 6 scroll-event readout + the imperative `ScrollViewHandle`
+/// methods. The buttons drive the same horizontal `scroll_view` the
+/// `on_scroll` reads: `scrollTo` / `scrollBy` (Phase B — params-map
+/// dispatch through the bridge) move it programmatically, and
+/// `getScrollInfo` (Phase A — async result) reads the offset / range
+/// back. Watching the row jump on tap (and the label update) confirms
+/// both dispatch paths end-to-end.
 #[component]
 fn scroll_demo() -> Element {
     let info = RwSignal::new(String::new());
+    let row = ScrollViewHandle::new();
     let label = computed(move || {
         let s = info.get();
         if s.is_empty() {
-            "← swipe the row to read ScrollEvent →".to_string()
+            "← swipe, or use the buttons →".to_string()
         } else {
             s
         }
     });
+    let btn = "padding: 6px 10px; background-color: #6c5ce7; border-radius: 6px; \
+               color: #fff; font-size: 12px; font-weight: 600;";
     render! {
         view(style: "margin: 4px 20px 8px; display: flex; flex-direction: column; gap: 6px;") {
             text(
@@ -493,6 +503,7 @@ fn scroll_demo() -> Element {
                 style: "color: #b9a9ff; font-size: 12px; font-family: monospace;",
             )
             scroll_view(
+                ref: row.r(),
                 scroll_orientation: "horizontal",
                 on_scroll: move |e| {
                     info.set(format!(
@@ -514,6 +525,22 @@ fn scroll_demo() -> Element {
                 ScrollCard(n: 6_i32, color: "#30cfd0")
                 ScrollCard(n: 7_i32, color: "#ff7e5f")
                 ScrollCard(n: 8_i32, color: "#9b6bff")
+            }
+            view(style: "display: flex; flex-direction: row; gap: 8px;") {
+                text(value: "→ 300", style: btn, on_tap: move |_| { row.scroll_to(300.0, true); })
+                text(value: "⇤ start", style: btn, on_tap: move |_| { row.scroll_to(0.0, true); })
+                text(value: "+120", style: btn, on_tap: move |_| { row.scroll_by(120.0); })
+                text(value: "ℹ info", style: btn, on_tap: move |_| {
+                    spawn_local(async move {
+                        match row.get_scroll_info().await {
+                            Ok(i) => info.set(format!(
+                                "getScrollInfo  x={:.0}  range={:.0}",
+                                i.scroll_x, i.scroll_range,
+                            )),
+                            Err(e) => info.set(format!("err: {e}")),
+                        }
+                    });
+                })
             }
         }
     }

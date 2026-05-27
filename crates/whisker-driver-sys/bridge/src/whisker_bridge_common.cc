@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -525,6 +526,126 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
     }
     // Success: dispatch was scheduled. Return Null since the actual
     // method's return value isn't synchronously available.
+    WhiskerValueRaw ok;
+    std::memset(&ok, 0, sizeof(ok));
+    ok.type = WHISKER_VALUE_NULL;
+    return ok;
+}
+
+namespace {
+// Recursive `WhiskerValueRaw` → `lynx_ui_method_value_t` for the
+// params-map path. Unlike `BuildLynxUiArgs` (scalar-only), this carries
+// maps / arrays through so built-in methods see their nested params.
+//
+// `value_t` strings / keys are borrowed `const char*` that must be
+// NUL-terminated and outlive the capi call; `array.items` / `map.entries`
+// are borrowed pointers into contiguous storage. The `CapiArena` owns
+// all of it: NUL-terminated `std::string` copies plus per-node child
+// vectors. A `std::deque` keeps element addresses stable as nested
+// nodes append, and `reserve()` keeps each child vector's buffer fixed
+// while it fills — so every `const char*` / pointer we hand over stays
+// valid until the arena drops, which is after the (synchronous) capi
+// value_t → lepus conversion has copied everything out.
+struct CapiArena {
+    std::deque<std::string> strings;
+    std::deque<std::vector<lynx_ui_method_value_t>> arrays;
+    std::deque<std::vector<lynx_ui_method_kv_t>> maps;
+};
+
+lynx_ui_method_value_t BuildCapiParamValue(const WhiskerValueRaw& v,
+                                           CapiArena& arena) {
+    lynx_ui_method_value_t out;
+    std::memset(&out, 0, sizeof(out));
+    switch (v.type) {
+        case WHISKER_VALUE_BOOL:
+            out.type = LYNX_UI_METHOD_VALUE_BOOL;
+            out.v.b = v.v.b;
+            break;
+        case WHISKER_VALUE_INT:
+            out.type = LYNX_UI_METHOD_VALUE_INT;
+            out.v.i = v.v.i;
+            break;
+        case WHISKER_VALUE_FLOAT:
+            out.type = LYNX_UI_METHOD_VALUE_DOUBLE;
+            out.v.f = v.v.f;
+            break;
+        case WHISKER_VALUE_STRING: {
+            arena.strings.emplace_back(
+                v.v.s.ptr != nullptr ? v.v.s.ptr : "", v.v.s.len);
+            out.type = LYNX_UI_METHOD_VALUE_STRING;
+            out.v.s = arena.strings.back().c_str();
+            break;
+        }
+        case WHISKER_VALUE_ARRAY: {
+            arena.arrays.emplace_back();
+            std::vector<lynx_ui_method_value_t>& items = arena.arrays.back();
+            items.reserve(v.v.array.count);
+            for (size_t i = 0; i < v.v.array.count; i++) {
+                items.push_back(BuildCapiParamValue(v.v.array.items[i], arena));
+            }
+            out.type = LYNX_UI_METHOD_VALUE_ARRAY;
+            out.v.array.items = items.empty() ? nullptr : items.data();
+            out.v.array.count = items.size();
+            break;
+        }
+        case WHISKER_VALUE_MAP: {
+            arena.maps.emplace_back();
+            std::vector<lynx_ui_method_kv_t>& entries = arena.maps.back();
+            entries.reserve(v.v.map.count);
+            for (size_t i = 0; i < v.v.map.count; i++) {
+                const WhiskerKeyValueRaw& src = v.v.map.entries[i];
+                arena.strings.emplace_back(
+                    src.key.ptr != nullptr ? src.key.ptr : "", src.key.len);
+                lynx_ui_method_kv_t kv;
+                std::memset(&kv, 0, sizeof(kv));
+                kv.key = arena.strings.back().c_str();
+                kv.value = BuildCapiParamValue(src.value, arena);
+                entries.push_back(kv);
+            }
+            out.type = LYNX_UI_METHOD_VALUE_MAP;
+            out.v.map.entries = entries.empty() ? nullptr : entries.data();
+            out.v.map.count = entries.size();
+            break;
+        }
+        default:
+            out.type = LYNX_UI_METHOD_VALUE_NULL;
+            break;
+    }
+    return out;
+}
+}  // namespace
+
+extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method_with_params(
+    WhiskerElement* element,
+    const char* method_name,
+    const WhiskerValueRaw* params) {
+    if (element == nullptr || element->handle == nullptr ||
+        element->shell == nullptr || method_name == nullptr) {
+        return MakeBridgeErrorValue(
+            "whisker_bridge_invoke_element_method_with_params: NULL element / "
+            "shell / method");
+    }
+    int32_t sign = lynx_element_id(element->handle);
+    if (sign <= 0) {
+        return MakeBridgeErrorValue(
+            "whisker_bridge_invoke_element_method_with_params: element has no "
+            "sign yet (was it flushed into the tree?)");
+    }
+
+    CapiArena arena;
+    lynx_ui_method_value_t root;
+    std::memset(&root, 0, sizeof(root));
+    if (params != nullptr) {
+        root = BuildCapiParamValue(*params, arena);
+    }
+
+    int32_t code = lynx_ui_invoke_method_with_params(
+        element->shell, sign, method_name, params != nullptr ? &root : nullptr);
+    if (code != 0) {
+        return MakeBridgeErrorValue(
+            ("lynx_ui_invoke_method_with_params returned non-zero (code=" +
+             std::to_string(code) + ")").c_str());
+    }
     WhiskerValueRaw ok;
     std::memset(&ok, 0, sizeof(ok));
     ok.type = WHISKER_VALUE_NULL;

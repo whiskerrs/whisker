@@ -31,7 +31,10 @@ pub use whisker_macros::{component, main, module_component, render};
 // invoking methods on a mounted platform component. `element_ref::<T>()`
 // allocates a fresh, unbound ref; the `#[whisker::module_component]`
 // macro binds it on mount when passed as the `ref:` prop.
-pub use whisker_driver::{element_ref, ElementRef, RefError};
+pub use whisker_driver::{
+    element_ref, BoundingClientRect, ElementRef, ImageHandle, RefError, ScrollInfo,
+    ScrollViewHandle,
+};
 
 // Function-only module dispatch. `PlatformModule` is the name-keyed
 // handle (≈ Expo `requireNativeModule`); the `module!` macro builds
@@ -1300,7 +1303,10 @@ pub mod prelude {
         run_blocking, run_on_main_thread, show, signal, spawn_local, use_context, with_context,
         ReadSignal, Resource, ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
     };
-    pub use crate::{element_ref, ElementRef, RefError};
+    pub use crate::{
+        element_ref, BoundingClientRect, ElementRef, ImageHandle, RefError, ScrollInfo,
+        ScrollViewHandle,
+    };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
     // typing a tag name inside render! (the macro source position

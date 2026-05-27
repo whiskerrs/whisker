@@ -11,7 +11,10 @@ pub mod element_ref;
 pub mod lynx;
 pub mod module;
 
-pub use element_ref::{element_ref, ElementRef, RefError};
+pub use element_ref::{
+    element_ref, BoundingClientRect, ElementRef, ImageHandle, RefError, ScrollInfo,
+    ScrollViewHandle,
+};
 pub use lynx::bootstrap;
 pub use lynx::renderer::BridgeRenderer;
 
@@ -63,6 +66,52 @@ pub fn invoke_element_method(
                 raw_args.as_ptr()
             },
             raw_args.len(),
+        )
+    };
+
+    let result = unsafe { from_raw(&raw_result) };
+    unsafe {
+        let mut mutable = raw_result;
+        ffi::whisker_bridge_value_release(&mut mutable as *mut _);
+    }
+    drop(builder);
+    result
+}
+
+/// Fire-and-forget invoke of a built-in Lynx UI method whose arguments
+/// are read as *named fields* of the params object (`scrollTo`,
+/// `scrollBy`, `autoScroll`, `scrollIntoView`, …) rather than from the
+/// `{"args": […]}` wrapper [`invoke_element_method`] builds for Whisker
+/// module methods. `params` is a single `WhiskerValue` — typically a
+/// [`WhiskerValue::map`] — passed through (with any nested maps /
+/// arrays) as the params object directly. Routes through
+/// `whisker_bridge_invoke_element_method_with_params`.
+pub fn invoke_element_method_with_params(
+    handle: Element,
+    method: &str,
+    params: WhiskerValue,
+) -> WhiskerValue {
+    let ptr_usize = module_component_ptr(handle);
+    if ptr_usize == 0 {
+        return WhiskerValue::Error(format!(
+            "invoke_element_method_with_params({method}): no platform component \
+             for handle {} (renderer not installed, or element released)",
+            handle.id()
+        ));
+    }
+    let method_c = match CString::new(method) {
+        Ok(c) => c,
+        Err(_) => return WhiskerValue::Error("method name contained NUL byte".into()),
+    };
+
+    let mut builder = RawBuilder::default();
+    let raw_params = builder.encode(&params);
+
+    let raw_result = unsafe {
+        ffi::whisker_bridge_invoke_element_method_with_params(
+            ptr_usize as *mut WhiskerElement,
+            method_c.as_ptr(),
+            &raw_params as *const _,
         )
     };
 
