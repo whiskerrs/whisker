@@ -1192,12 +1192,23 @@ pub mod __tags {
     //
     // The standard Lynx `list` creates its items through lepus
     // `componentAtIndex` callbacks the JS framework registers — Whisker
-    // has no such runtime. So the `list` builder always opts into Lynx's
-    // *decoupled* native list (`enable-decoupled-list`): it virtualizes /
-    // recycles the actual `<list-item>` children present in the element
-    // tree (via the native `ListChildrenHelper`), with no framework
-    // callbacks. That fits Whisker's direct-tree model — author code
-    // writes `list { list_item { … } … }` like any other container.
+    // has no such runtime. So the `list` builder opts into Lynx's
+    // *decoupled native* list: it virtualizes / recycles the actual
+    // `<list-item>` children present in the element tree (via the native
+    // `ListChildrenHelper`), with no framework callbacks. That fits
+    // Whisker's direct-tree model — author code writes
+    // `list { list_item { … } … }` like any other container.
+    //
+    // Two flags gate that mode (see `list_element.cc`):
+    //   • `custom-list-name="list-container"` → `ResolveEnableNativeList`
+    //     Case 2 sets `disable_list_platform_implementation_ = true`. This
+    //     is a *string* compare, so it survives `apply_attr`'s
+    //     stringification.
+    //   • the decoupled mediator additionally needs `enable_decoupled_list_`,
+    //     which `ResolveEnableDecoupledList` only reads from the attr when
+    //     the value `IsBool()` — a stringified attr never is, so it falls
+    //     back to `LynxEnv::EnableDecoupledList()`, which defaults to
+    //     `true`. So `custom-list-name` alone activates the decoupled path.
 
     #[allow(non_camel_case_types)]
     pub struct list {
@@ -1206,9 +1217,11 @@ pub mod __tags {
     #[allow(non_snake_case)]
     pub fn __list_ctor() -> list {
         let handle = create_element_by_name("list");
-        // Required: drive the list natively from its tree children rather
-        // than through (absent) JS `componentAtIndex` callbacks.
-        apply_attr(handle, "enable-decoupled-list", true);
+        // Drive the list natively from its tree children rather than through
+        // (absent) JS `componentAtIndex` callbacks. `custom-list-name` is the
+        // string-compare flag that disables the platform list impl; the
+        // decoupled mediator then activates via the env default (true).
+        apply_attr::<_, ::std::string::String>(handle, "custom-list-name", "list-container");
         list { handle }
     }
     impl ElementBuilder for list {

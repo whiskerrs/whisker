@@ -600,6 +600,10 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("scroll_view", "initial_scroll_to_index")
             | ("scroll_view", "upper_threshold")
             | ("scroll_view", "lower_threshold")
+            | ("list", "list_type")
+            | ("list", "column_count")
+            | ("list", "vertical_orientation")
+            | ("list_item", "item_key")
     )
 }
 

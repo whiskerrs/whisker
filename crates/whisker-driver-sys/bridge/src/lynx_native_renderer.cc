@@ -11,6 +11,13 @@
 
 #include "lynx_native_renderer_capi.h"
 
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define WLOG(...) __android_log_print(ANDROID_LOG_ERROR, "WHISKER_LIST", __VA_ARGS__)
+#else
+#define WLOG(...) ((void)0)
+#endif
+
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -100,6 +107,25 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT bool lynx_shell_run_on_tasm_thread(
         auto* page_proxy = tasm->page_proxy();
         if (page_proxy != nullptr) {
           capture->manager = page_proxy->element_manager().get();
+          // Propagate the PageConfig to the ElementManager itself.
+          // `tasm->SetPageConfig` alone leaves `manager->GetConfig()`
+          // null in this template-less fiber-arch path, and a
+          // `ListElement` dereferences it at construction
+          // (`GetConfig()->GetPipelineSchedulerConfig()`), so without
+          // this every `<list>` would EXC_BAD_ACCESS on creation.
+          capture->manager->SetConfig(config);
+          // Force Lynx's *native* (C++) list implementation for every
+          // `<list>` in this engine. This is `ResolveEnableNativeList`
+          // Case 1 (shell flag, highest priority): it sets
+          // `disable_list_platform_implementation_ = true`, so the list
+          // is driven by the decoupled `ListMediator` (which virtualizes
+          // the real `<list-item>` element-tree children) instead of the
+          // platform `UIList`, whose `componentAtIndex` diff data the JS
+          // framework supplies and Whisker — having no JS runtime — does
+          // not, which otherwise NPEs in `UIList.onLayoutCompleted`.
+          capture->manager->SetEnableNativeListFromShell(true);
+          WLOG("init: SetEnableNativeListFromShell(true); get=%d",
+               capture->manager->GetEnableNativeListFromShell() ? 1 : 0);
         }
       }
       capture->fiber_arch_initialized = true;
@@ -165,7 +191,28 @@ lynx_create_fiber_element_by_name(lynx_shell_t* shell, const char* tag_name) {
   // `scroll-view`) and custom (`x-input` / `x-refresh` / …) alike.
   // For tags Lynx's behaviour registry doesn't know, it returns
   // nullptr and we surface that to the Rust caller.
-  auto ref = shell->manager->CreateFiberNode(lynx::base::String(tag_name));
+  //
+  // `list` is special: `CreateFiberNode` only builds a *generic*
+  // `FiberElement`, which carries none of the list machinery (the
+  // decoupled adapter / children helper live in the typed
+  // `ListElement` C++ class). So we route it through the enum-mapped
+  // `CreateFiberElement(tag)` — which resolves `"list"` →
+  // `ELEMENT_LIST` and constructs a real `ListElement` with empty
+  // lepus `componentAtIndex` / `enqueueComponent` callbacks (same as
+  // the `ELEMENT_LIST` path). With no JS callbacks the element falls
+  // to Lynx's decoupled native list, which virtualizes the real
+  // `<list-item>` children present in the element tree. (We call the
+  // string overload, which returns a base `RefPtr<FiberElement>`, so
+  // the bridge needn't pull in the heavyweight `list_element.h` — its
+  // transitive lepus / quickjs headers aren't in the iOS header set.)
+  fml::RefPtr<lynx::tasm::FiberElement> ref;
+  if (std::strcmp(tag_name, "list") == 0) {
+    WLOG("create list: enable_native_list_from_shell=%d",
+         shell->manager->GetEnableNativeListFromShell() ? 1 : 0);
+    ref = shell->manager->CreateFiberElement(lynx::base::String(tag_name));
+  } else {
+    ref = shell->manager->CreateFiberNode(lynx::base::String(tag_name));
+  }
   if (!ref) return nullptr;
   return new lynx_fiber_element_t{std::move(ref)};
 }
