@@ -285,13 +285,10 @@ extern "C" void whisker_bridge_set_native_event_handler(WhiskerElement* element,
     // event (scroll / layout / uiappear / …). The fire is still observed
     // via the reporter → dispatcher path.
     //
-    // Android: `lynx_element_set_event_handler` lives in the Lynx fork's
-    // liblynx — guard it out until the fork ships the capi (whisker.6).
-    // Until then, component events stay dark on Android (touch/gesture
-    // events are unaffected — they don't go through the event set).
-#if !defined(__ANDROID__)
+    // `lynx_element_set_event_handler` ships in the Lynx fork's liblynx
+    // as of v3.7.0-whisker.6 (whiskerrs/lynx#6), so this works on both
+    // platforms now.
     lynx_element_set_event_handler(element->handle, event_name);
-#endif
 }
 
 // ----------------------------------------------------------------------------
