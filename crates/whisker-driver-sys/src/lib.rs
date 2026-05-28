@@ -60,10 +60,13 @@ pub type LynxListEnqueueComponentFn = extern "C" fn(sign: i32, user_data: *mut c
 /// `Box<dyn FnMut>` packed into `user_data` can be dropped.
 pub type LynxUserDataFreeFn = extern "C" fn(user_data: *mut c_void);
 
-/// Mirror of `LYNX_LIST_INVALID_INDEX` — returned by
+/// Mirror of `LYNX_LIST_INVALID_INDEX` (the C macro in
+/// `lynx_native_renderer_capi.h`) — returned by
 /// [`LynxListComponentAtIndexFn`] to signal "no element could be
-/// produced for this index".
-pub const LYNX_LIST_INVALID_INDEX: i32 = 0;
+/// produced for this index". Matches Lynx's
+/// `lynx::tasm::list::kInvalidIndex`; 0 is a real `impl_id` and
+/// would be silently consumed.
+pub const LYNX_LIST_INVALID_INDEX: i32 = -1;
 /// Value-payload event callback. `payload` is a `WhiskerValueRaw`
 /// tree (never NULL — the bridge normalises a missing body to a
 /// `WHISKER_VALUE_NULL` value), owned by the bridge and only valid
@@ -242,6 +245,10 @@ extern "C" {
         user_data: *mut c_void,
         user_data_free: LynxUserDataFreeFn,
     );
+
+    // Diagnostic only (Android bridge logs the int as ERROR-level under
+    // the given tag). Stub on iOS — symbol present but no-op.
+    pub fn whisker_bridge_debug_log_i32(tag: *const c_char, value: i32);
 
     pub fn whisker_bridge_append_child(parent: *mut WhiskerElement, child: *mut WhiskerElement);
     pub fn whisker_bridge_remove_child(parent: *mut WhiskerElement, child: *mut WhiskerElement);

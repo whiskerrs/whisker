@@ -16,8 +16,11 @@
 
 /// Value returned by [`NativeItemProvider::component_at_index`] to
 /// signal "no element produced for this index" — the list will skip
-/// the slot. Matches `LYNX_LIST_INVALID_INDEX`.
-pub const INVALID_ITEM_INDEX: i32 = 0;
+/// the slot. Matches Lynx's `lynx::tasm::list::kInvalidIndex` (and
+/// `LYNX_LIST_INVALID_INDEX`); 0 is a real FiberElement `impl_id` so
+/// would be silently consumed by the C++ list as a missing-node
+/// lookup, not skipped.
+pub const INVALID_ITEM_INDEX: i32 = -1;
 
 /// Callbacks Lynx's `<list>` invokes on demand:
 ///

@@ -129,6 +129,13 @@ impl DynRenderer for BridgeRenderer {
         Element::from_raw(id)
     }
 
+    fn element_sign(&self, handle: Element) -> i32 {
+        // The list provider closure needs the Lynx `impl_id` to
+        // return from `componentAtIndex`; Whisker's `Element` is
+        // a Vec index inside this renderer, not the same number.
+        self.sign_of(handle).unwrap_or(0)
+    }
+
     fn release_element(&mut self, handle: Element) {
         // Resolve the sign before releasing so we can drop the element's
         // listeners + parent link. After release the underlying pointer

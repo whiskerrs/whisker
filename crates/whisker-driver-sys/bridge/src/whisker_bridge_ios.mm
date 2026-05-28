@@ -216,5 +216,15 @@ extern "C" void whisker_bridge_log_hello(void) {
     NSLog(@"[WhiskerBridge] Hello from the Obj-C++ bridge");
 }
 
+// iOS counterpart to the Android `__android_log_print` diag helper.
+// Routes through `NSLog` so a "diag value=N" line shows up in
+// `xcrun simctl spawn ... log` / Console.app under the given tag.
+// Keeps the symbol present even when no Rust caller currently uses
+// it, so a `whisker_bridge_debug_log_i32(b"FOO\0".as_ptr(), n)`
+// added during a debugging session links on both platforms.
+extern "C" void whisker_bridge_debug_log_i32(const char* tag, int32_t value) {
+    NSLog(@"[%s] diag value=%d", tag != nullptr ? tag : "WHISKER", value);
+}
+
 
 #endif  // __APPLE__

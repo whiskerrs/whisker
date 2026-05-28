@@ -132,12 +132,9 @@ pub mod __tags {
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
         append_child, apply_attr, apply_attr_owned, apply_styles, create_element,
-        create_element_by_name, set_event_listener, BindType, Element,
+        create_element_by_name, install_list_native_item_provider, set_event_listener,
+        set_update_list_info, BindType, Element,
     };
-    // Kept available for the disabled `list::__h` trigger — see the
-    // comment there. Once the fork-side SSR-mode hook lands, re-import.
-    #[allow(unused_imports)]
-    use whisker_runtime::view::set_update_list_info;
 
     // ---- The common builder surface -------------------------------------
     //
@@ -1217,10 +1214,12 @@ pub mod __tags {
     #[allow(non_camel_case_types)]
     pub struct list {
         handle: Element,
-        // Position counter incremented by `child()` so each appended
-        // `list_item` gets a matching positional `item-key` (`w_<i>`)
-        // and `__h()` can hand the final count to the bridge.
-        item_count: i32,
+        // Children captured by `child()`, paired with the Lynx
+        // `impl_id` (sign) we eagerly computed for each. The closure
+        // installed in `__h` returns the sign verbatim from this
+        // cache — see the `child()` comment for why we can't re-
+        // enter the renderer from inside the closure.
+        items: ::std::vec::Vec<(Element, i32)>,
     }
     #[allow(non_snake_case)]
     pub fn __list_ctor() -> list {
@@ -1232,52 +1231,70 @@ pub mod __tags {
         apply_attr::<_, ::std::string::String>(handle, "custom-list-name", "list-container");
         list {
             handle,
-            item_count: 0,
+            items: ::std::vec::Vec::new(),
         }
     }
     impl ElementBuilder for list {
         fn __element(&self) -> Element {
             self.handle
         }
-        // Tag the appended `<list-item>` with a positional `item-key`
-        // (`w_<i>`) that matches the `update-list-info` entry the bridge
-        // will emit at `__h()`. Any user-supplied `item_key` from
-        // `list_item` is overwritten — that field is a scaffold for the
-        // future stable-keys path (e.g. once `For` lands).
-        fn child(self, child: Element) -> Self {
+        // Attach the item eagerly + cache its Lynx `impl_id` (sign).
+        //
+        // The native item provider closure (installed in `__h`) is
+        // invoked from inside the Lynx layout C++ — which is itself
+        // running inside our `with_renderer` borrow on the renderer's
+        // `RefCell`. Any call from the closure that re-enters
+        // `with_renderer` (`append_child`, `element_sign`, …) would
+        // panic on the re-entrant `borrow_mut`; that panic is caught
+        // at the C trampoline and turned into a sentinel return,
+        // leaving the list permanently empty. So instead: attach now
+        // (one `with_renderer` from a safe scope) and capture the
+        // sign so the closure only needs to read from a cached Vec.
+        fn child(mut self, child: Element) -> Self {
             apply_attr_owned::<_, ::std::string::String>(
                 child,
                 ::std::string::String::from("item-key"),
-                ::std::format!("w_{}", self.item_count),
+                ::std::format!("w_{}", self.items.len()),
             );
             append_child(self.handle, child);
-            list {
-                handle: self.handle,
-                item_count: self.item_count + 1,
-            }
+            let sign = ::whisker_runtime::view::element_sign(child);
+            self.items.push((child, sign));
+            self
         }
-        // Hand Lynx's decoupled native list its `update-list-info` map
-        // once all children have been counted by `child()`.
-        //
-        // **Disabled** until Lynx-fork SSR-mode access lands: setting
-        // `update-list-info` triggers the layout pass, which then asks
-        // `ListMediator::ComponentAtIndex` for each item, which in turn
-        // calls `tasm_->CallLepusMethod(component_at_index_, …)`.
-        // Whisker has no lepus runtime + an empty `component_at_index_`
-        // → EXC_BAD_ACCESS inside `TemplateEntryHolder::FindEntry`. The
-        // only callback-free path in `ListElement::ComponentAtIndex` is
-        // the `ssr_helper_` early-return (pre-created items returned by
-        // index, no lepus), and `SetSsrHelper(ListElementSSRHelper)`
-        // takes a value of a type defined in `list_element.h` — whose
-        // transitive lepus/quickjs headers aren't in the iOS header
-        // set. Resolving needs the fork to either expose an SSR-mode
-        // setter that doesn't drag the SSR-helper type, or a native
-        // (non-lepus) `componentAtIndex` path. Plumbing is kept so
-        // re-enabling becomes a one-line flip once that lands.
+        // Wire the `<list>` for Lynx's native-driven path:
+        //   1. install a `NativeItemProvider` so when Lynx's list
+        //      machinery calls `componentAtIndex(i)`, our closure
+        //      attaches the captured child to the list and returns
+        //      its `Element::id` (sign) — no lepus, no crash. Re-
+        //      entrant calls for the same index are deduped via
+        //      `attached`.
+        //   2. broadcast the item count via `update-list-info` so
+        //      Lynx knows how many slots to lay out.
         fn __h(self) -> Element {
-            let _ = self.item_count;
-            // set_update_list_info(self.handle, self.item_count);
-            self.handle
+            let handle = self.handle;
+            let count = self.items.len() as i32;
+            let items = self.items;
+            let provider = ::whisker_runtime::view::list_provider::NativeItemProvider {
+                component_at_index: ::std::boxed::Box::new(move |index, _op, _reuse| {
+                    // Read the pre-computed (handle, sign) cache —
+                    // every Lynx-facing side effect already ran in
+                    // `child()` so this closure stays
+                    // re-entrancy-safe (no `with_renderer` from
+                    // inside the layout C++).
+                    items
+                        .get(index as usize)
+                        .map(|&(_, sign)| sign)
+                        .unwrap_or(
+                            ::whisker_runtime::view::list_provider::INVALID_ITEM_INDEX,
+                        )
+                }),
+                // Static list: no recycling notification needed — items
+                // stay attached for the list's lifetime.
+                enqueue_component: ::std::option::Option::None,
+            };
+            install_list_native_item_provider(handle, provider);
+            set_update_list_info(handle, count);
+            handle
         }
     }
     impl list {

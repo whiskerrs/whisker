@@ -257,6 +257,21 @@ fn compile_ios() -> Result<()> {
         // need ARC. cc-rs doesn't enable it by default — SPM's
         // Obj-C/Obj-C++ defaults did, so we have to opt back in.
         .flag("-fobjc-arc")
+        // The vendored `lynx_native_renderer.cc` pulls in the fork's
+        // `list_element.h`, which marks several `*CommittedStyle*`
+        // methods `override`. iOS xframework builds against
+        // upstream Lynx 3.7.0 — whose `element.h` doesn't declare
+        // those virtuals — and gates them with
+        // `LYNX_WHISKER_UPSTREAM_307_COMPAT` (Lynx fork PR #16).
+        // Define the same macro here so the bridge's compile of
+        // the same header agrees with the xframework's.
+        .define("LYNX_WHISKER_UPSTREAM_307_COMPAT", "1")
+        // Lynx's `jsvalue_helper.h` picks the trace-gc.h variant
+        // by platform: `gc/trace-gc.h` for iOS, `quickjs/include/trace-gc.h`
+        // elsewhere. The bridge's staged PrimJS headers ship the
+        // iOS-pathed variant only (`PrimJS/src/gc/trace-gc.h`), so
+        // tell jsvalue_helper which branch to take.
+        .define("OS_IOS", "1")
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_ios.mm"))
         .file(bridge_src.join("lynx_native_renderer.cc"))

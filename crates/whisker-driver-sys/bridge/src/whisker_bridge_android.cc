@@ -142,6 +142,14 @@ void* ExtractShell(JNIEnv* env, jobject lynx_view) {
     return reinterpret_cast<void*>(static_cast<intptr_t>(native));
 }
 
+// Temporary diagnostic — log a single integer + tag from Rust callers
+// so we can see whether the native item-provider trampoline fires.
+extern "C" void whisker_bridge_debug_log_i32(const char* tag, int32_t value) {
+    __android_log_print(ANDROID_LOG_ERROR,
+                        tag != nullptr ? tag : "WHISKER",
+                        "diag value=%d", value);
+}
+
 // Trampoline the Rust runtime calls when a signal update needs a frame.
 // `user_data` is a `WhiskerEngine*` we keep paired with the Kotlin view in
 // the JavaStateFor map.

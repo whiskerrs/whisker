@@ -148,7 +148,10 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_remove_child(
 // these through `whisker_bridge_list_set_native_item_provider`; users of
 // the Rust crate don't call them directly.
 
-#define LYNX_LIST_INVALID_INDEX 0
+// Matches `lynx::tasm::list::kInvalidIndex`. Must NOT be 0 — that's a
+// real `impl_id` and would be silently consumed by the C++ list as a
+// missing-node lookup instead of "skip this slot".
+#define LYNX_LIST_INVALID_INDEX (-1)
 
 typedef int32_t (*lynx_list_component_at_index_fn)(uint32_t index,
                                                     int64_t operation_id,
