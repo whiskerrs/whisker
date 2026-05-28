@@ -1247,7 +1247,7 @@ pub mod __tags {
         fn child(self, child: Element) -> Self {
             apply_attr_owned::<_, ::std::string::String>(
                 child,
-                ::std::format!("item-key"),
+                ::std::string::String::from("item-key"),
                 ::std::format!("w_{}", self.item_count),
             );
             append_child(self.handle, child);

@@ -98,6 +98,23 @@ pub trait DynRenderer {
     /// test renderers that don't model list virtualisation.
     fn set_update_list_info(&mut self, _handle: Element, _count: i32) {}
 
+    /// Install a native item provider on a `<list>` element. The
+    /// `provider`'s callbacks are invoked by Lynx's list machinery to
+    /// fetch / recycle item elements on demand. Returns `true` if the
+    /// install reached the bridge — `false` is reported when the
+    /// renderer has no live native handle for `_handle` or doesn't
+    /// model list virtualisation (test renderers default here).
+    /// The default drops `provider` so test code doesn't leak boxed
+    /// closures.
+    fn install_list_native_item_provider(
+        &mut self,
+        _handle: Element,
+        provider: super::list_provider::NativeItemProvider,
+    ) -> bool {
+        drop(provider);
+        false
+    }
+
     fn append_child(&mut self, parent: Element, child: Element);
     fn remove_child(&mut self, parent: Element, child: Element);
 
@@ -295,6 +312,16 @@ pub fn set_inline_styles(handle: Element, css: &str) {
 
 pub fn set_update_list_info(handle: Element, count: i32) {
     with_renderer(|r| r.set_update_list_info(handle, count), ())
+}
+
+pub fn install_list_native_item_provider(
+    handle: Element,
+    provider: super::list_provider::NativeItemProvider,
+) -> bool {
+    with_renderer(
+        |r| r.install_list_native_item_provider(handle, provider),
+        false,
+    )
 }
 
 pub fn append_child(parent: Element, child: Element) {

@@ -26,6 +26,8 @@ pub mod apply;
 pub mod control_flow;
 pub mod handle;
 pub mod into_view;
+pub mod list_mount;
+pub mod list_provider;
 pub mod renderer;
 
 #[cfg(test)]
@@ -35,12 +37,14 @@ pub use apply::{apply_attr, apply_attr_owned, apply_styles};
 pub use control_flow::{for_each, show};
 pub use handle::Element;
 pub use into_view::{Children, IntoView, View};
+pub use list_mount::list_mount;
+pub use list_provider::{NativeItemProvider, INVALID_ITEM_INDEX};
 #[doc(hidden)]
 pub use renderer::__reset_children_mirror_for_tests;
 pub use renderer::{
     append_child, child_index, children_of, create_element, create_element_by_name,
-    current_renderer_id, dispatch_event, flush, insert_child_at, install_renderer,
-    module_component_ptr, previous_sibling, release_element, remove_child, set_attribute,
-    set_event_listener, set_inline_styles, set_root, set_update_list_info, uninstall_renderer,
-    with_installed_renderer, BindType, DynRenderer, EventDispatchPlan,
+    current_renderer_id, dispatch_event, flush, insert_child_at, install_list_native_item_provider,
+    install_renderer, module_component_ptr, previous_sibling, release_element, remove_child,
+    set_attribute, set_event_listener, set_inline_styles, set_root, set_update_list_info,
+    uninstall_renderer, with_installed_renderer, BindType, DynRenderer, EventDispatchPlan,
 };

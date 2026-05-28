@@ -173,6 +173,17 @@ impl DynRenderer for BridgeRenderer {
         unsafe { ffi::whisker_bridge_list_set_item_count(ptr.as_ptr(), count) };
     }
 
+    fn install_list_native_item_provider(
+        &mut self,
+        handle: Element,
+        provider: whisker_runtime::view::list_provider::NativeItemProvider,
+    ) -> bool {
+        // Delegate to the inherent impl in `crate::lynx::list_provider`,
+        // which holds the C trampolines + `Box<dyn FnMut>` lifetime
+        // plumbing (kept there so the FFI machinery stays clustered).
+        BridgeRenderer::install_list_native_item_provider(self, handle, provider)
+    }
+
     fn append_child(&mut self, parent: Element, child: Element) {
         let Some(p) = self.lookup(parent) else { return };
         let Some(c) = self.lookup(child) else { return };

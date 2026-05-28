@@ -34,31 +34,22 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use whisker_driver_sys::{
     self as ffi, LynxListComponentAtIndexFn, LynxListEnqueueComponentFn, LynxUserDataFreeFn,
 };
+use whisker_runtime::view::list_provider::NativeItemProvider;
 use whisker_runtime::view::Element;
 
 use crate::lynx::renderer::BridgeRenderer;
 
-/// A native item provider for a Whisker-driven `<list>`. Holds the
-/// two callbacks Lynx's list machinery will invoke on demand:
-///
-/// - `component_at_index(index, op_id, reuse)` — return the
-///   `Element::sign` of the FiberElement to use for `index`, or
-///   [`INVALID_INDEX`] on failure.
-/// - `enqueue_component(sign)` — called when the item at `sign`
-///   leaves the viewport so the provider can pool / drop it.
-///
-/// The closures are `FnMut` and `'static` because they live for as
-/// long as the list element, mutating their own pool state across
-/// calls.
-pub struct NativeItemProvider {
-    pub component_at_index: Box<dyn FnMut(u32, i64, bool) -> i32 + 'static>,
-    pub enqueue_component: Option<Box<dyn FnMut(i32) + 'static>>,
-}
+// `NativeItemProvider` lives in `whisker-runtime` so view-layer code
+// (`ListMount` etc.) can build one without depending on the FFI layer.
+// The FFI-specific machinery — trampolines, `Box<dyn FnMut>` <-> raw
+// pointer, lifetime via `trampoline_free` — stays here.
 
-/// Mirror of `LYNX_LIST_INVALID_INDEX` — returned by
-/// `component_at_index` to signal "no element produced". The list will
-/// skip the slot.
-pub const INVALID_INDEX: i32 = ffi::LYNX_LIST_INVALID_INDEX;
+/// Sanity check: our two crates agree on what "no element produced"
+/// means at the Rust layer. The FFI value is asserted at use-site via
+/// the same constant from `whisker-driver-sys`.
+const _: () = assert!(
+    whisker_runtime::view::list_provider::INVALID_ITEM_INDEX == ffi::LYNX_LIST_INVALID_INDEX
+);
 
 // ---- Trampoline ---------------------------------------------------------
 //
@@ -66,7 +57,7 @@ pub const INVALID_INDEX: i32 = ffi::LYNX_LIST_INVALID_INDEX;
 // c_void` on every callback. The trampolines reconstruct a `&mut`
 // reference and dispatch to the appropriate closure. Panics inside
 // the closures are caught so they don't unwind across the FFI
-// boundary (which is UB) — they become `INVALID_INDEX` returns or
+// boundary (which is UB) — they become `ffi::LYNX_LIST_INVALID_INDEX` returns or
 // silent no-ops, with a `tracing::error!` for diagnosis.
 
 extern "C" fn trampoline_component_at_index(
@@ -76,7 +67,7 @@ extern "C" fn trampoline_component_at_index(
     user_data: *mut c_void,
 ) -> i32 {
     if user_data.is_null() {
-        return INVALID_INDEX;
+        return ffi::LYNX_LIST_INVALID_INDEX;
     }
     // SAFETY: `user_data` is the cookie we handed to the bridge in
     // `install`; the bridge guarantees exclusive access during the
@@ -90,7 +81,7 @@ extern "C" fn trampoline_component_at_index(
         Ok(sign) => sign,
         Err(_) => {
             eprintln!("whisker: native list provider panicked in component_at_index");
-            INVALID_INDEX
+            ffi::LYNX_LIST_INVALID_INDEX
         }
     }
 }
@@ -174,7 +165,7 @@ mod tests {
             enqueue_component: None,
         })) as *mut c_void;
         let sign = trampoline_component_at_index(0, 0, 0, provider);
-        assert_eq!(sign, INVALID_INDEX);
+        assert_eq!(sign, ffi::LYNX_LIST_INVALID_INDEX);
         unsafe { trampoline_free(provider) };
     }
 
