@@ -140,6 +140,32 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_remove_child(
     lynx_fiber_element_t* parent,
     lynx_fiber_element_t* child);
 
+// ----- List native item provider -------------------------------------------
+//
+// Lets a non-JS embedder (e.g. Whisker) drive Lynx's `<list>` directly,
+// keeping its full virtualisation / recycling / layout behaviour. Mirrors
+// the upstream capi added in `whiskerrs/lynx#9`. The Whisker bridge wires
+// these through `whisker_bridge_list_set_native_item_provider`; users of
+// the Rust crate don't call them directly.
+
+#define LYNX_LIST_INVALID_INDEX 0
+
+typedef int32_t (*lynx_list_component_at_index_fn)(uint32_t index,
+                                                    int64_t operation_id,
+                                                    int reuse_notification,
+                                                    void* user_data);
+
+typedef void (*lynx_list_enqueue_component_fn)(int32_t sign, void* user_data);
+
+typedef void (*lynx_user_data_free_fn)(void* user_data);
+
+LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_list_set_native_item_provider(
+    lynx_fiber_element_t* element,
+    lynx_list_component_at_index_fn component_at_index,
+    lynx_list_enqueue_component_fn enqueue_component,
+    void* user_data,
+    lynx_user_data_free_fn user_data_free);
+
 // ----- Pipeline -------------------------------------------------------------
 
 LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_shell_set_root_element(

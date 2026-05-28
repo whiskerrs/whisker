@@ -73,7 +73,7 @@ impl BridgeRenderer {
         self.engine.as_ptr()
     }
 
-    fn lookup(&self, handle: Element) -> Option<NonNull<WhiskerElement>> {
+    pub(crate) fn lookup(&self, handle: Element) -> Option<NonNull<WhiskerElement>> {
         self.elements
             .get(handle.id() as usize)
             .and_then(|slot| *slot)

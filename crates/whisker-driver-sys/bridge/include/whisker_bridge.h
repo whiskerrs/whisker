@@ -120,6 +120,26 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_set_inline_styles(WhiskerElement* elem
 // each child appended via its `child()` override.
 WHISKER_BRIDGE_EXPORT void whisker_bridge_list_set_item_count(WhiskerElement* element, int32_t count);
 
+// Install a native item provider on a `<list>` element. The provider's
+// `component_at_index` callback is invoked on demand by Lynx's list
+// machinery for each item the viewport needs; `enqueue_component` is
+// invoked when an item leaves the viewport so the provider can pool or
+// release it. `user_data` is opaque; the bridge holds it until the
+// list is destroyed (or another provider replaces this one), then
+// calls `user_data_free` to release it. Passing `component_at_index =
+// NULL` clears any previously installed provider.
+//
+// Provides Lynx's full `<list>` virtualisation to non-JS embedders
+// (e.g. Whisker's `ListMount`). See `whiskerrs/lynx#9` for the
+// underlying capi this wraps.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_list_set_native_item_provider(
+    WhiskerElement* element,
+    int32_t (*component_at_index)(uint32_t index, int64_t operation_id,
+                                  int reuse_notification, void* user_data),
+    void (*enqueue_component)(int32_t sign, void* user_data),
+    void* user_data,
+    void (*user_data_free)(void* user_data));
+
 // Append `child` after the parent's last child.
 WHISKER_BRIDGE_EXPORT void whisker_bridge_append_child(WhiskerElement* parent, WhiskerElement* child);
 

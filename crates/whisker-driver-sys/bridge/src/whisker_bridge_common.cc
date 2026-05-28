@@ -233,6 +233,38 @@ extern "C" void whisker_bridge_list_set_item_count(WhiskerElement* element,
     lynx_element_set_update_list_info(element->handle, count);
 }
 
+// Install a native item provider on a `<list>` element so Whisker can
+// drive Lynx's list virtualisation directly.
+//
+// **Stub until `v3.7.0-whisker.9` ships** (`whiskerrs/lynx#9`): the
+// `lynx_list_set_native_item_provider` capi the body below will call
+// doesn't exist in the pinned `whisker.8` artifact yet. Today the
+// function is a no-op that immediately frees `user_data` so callers
+// don't leak; once the version pin bumps, the body becomes a single
+// pass-through to `lynx_list_set_native_item_provider`. The Rust /
+// macro / `ListMount` plumbing above this is built in parallel against
+// the no-op so the wiring is ready the moment the release lands.
+extern "C" void whisker_bridge_list_set_native_item_provider(
+    WhiskerElement* element,
+    int32_t (*component_at_index)(uint32_t index, int64_t operation_id,
+                                  int reuse_notification, void* user_data),
+    void (*enqueue_component)(int32_t sign, void* user_data),
+    void* user_data,
+    void (*user_data_free)(void* user_data)) {
+    (void)element;
+    (void)component_at_index;
+    (void)enqueue_component;
+    // Release the cookie so the Rust `Box<dyn FnMut>` packed inside
+    // doesn't leak while the bridge is still a stub.
+    if (user_data != nullptr && user_data_free != nullptr) {
+        user_data_free(user_data);
+    }
+    // TODO(P3-post-release): replace with
+    //   lynx_list_set_native_item_provider(element->handle,
+    //       component_at_index, enqueue_component, user_data,
+    //       user_data_free);
+}
+
 extern "C" void whisker_bridge_set_inline_styles(WhiskerElement* element,
                                                 const char* css) {
     if (element == nullptr || element->handle == nullptr) return;
