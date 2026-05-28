@@ -222,6 +222,17 @@ extern "C" void whisker_bridge_set_attribute(WhiskerElement* element,
     lynx_element_set_attribute(element->handle, key, value);
 }
 
+// Feed a `<list>` element its item-count so Lynx's decoupled native
+// list can build its `update-list-info` map of positional item-keys.
+// Called by the `list` builder's `__h()` finalize after all children
+// have been appended; the builder also writes the matching `item-key`
+// attr (`w_<i>`) onto each child via `child()`.
+extern "C" void whisker_bridge_list_set_item_count(WhiskerElement* element,
+                                                  int32_t count) {
+    if (element == nullptr || element->handle == nullptr) return;
+    lynx_element_set_update_list_info(element->handle, count);
+}
+
 extern "C" void whisker_bridge_set_inline_styles(WhiskerElement* element,
                                                 const char* css) {
     if (element == nullptr || element->handle == nullptr) return;

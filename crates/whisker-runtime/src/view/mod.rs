@@ -41,6 +41,7 @@ pub use renderer::{
     append_child, child_index, children_of, create_element, create_element_by_name,
     current_renderer_id, dispatch_event, flush, insert_child_at, install_renderer,
     module_component_ptr, previous_sibling, release_element, remove_child, set_attribute,
-    set_event_listener, set_inline_styles, set_root, uninstall_renderer, with_installed_renderer,
+    set_event_listener, set_inline_styles, set_root, set_update_list_info, uninstall_renderer,
+    with_installed_renderer,
     BindType, DynRenderer, EventDispatchPlan,
 };

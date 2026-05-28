@@ -76,10 +76,6 @@ class WhiskerView @JvmOverloads constructor(
     }
 
     init {
-        // TEMP(list-debug): surface Lynx's native LLOG (incl. the
-        // `[List]` resolve trace) to logcat so the decoupled-list
-        // investigation can see enable_native_list / decoupled values.
-        com.lynx.tasm.base.LLog.setMinimumLoggingLevel(com.lynx.tasm.base.LLog.VERBOSE)
         engine = nativeEngineAttach(this)
         if (engine != 0L) {
             nativeBindWhiskerView(engine)

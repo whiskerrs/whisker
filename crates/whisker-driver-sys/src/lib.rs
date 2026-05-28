@@ -198,6 +198,8 @@ extern "C" {
     );
     pub fn whisker_bridge_set_inline_styles(element: *mut WhiskerElement, css: *const c_char);
 
+    pub fn whisker_bridge_list_set_item_count(element: *mut WhiskerElement, count: i32);
+
     pub fn whisker_bridge_append_child(parent: *mut WhiskerElement, child: *mut WhiskerElement);
     pub fn whisker_bridge_remove_child(parent: *mut WhiskerElement, child: *mut WhiskerElement);
 

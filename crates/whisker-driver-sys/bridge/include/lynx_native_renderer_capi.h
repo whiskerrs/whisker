@@ -106,6 +106,19 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_inline_styles(
     lynx_fiber_element_t* element,
     const char* css);
 
+// Set the `update-list-info` map attribute on a `<list>` element.
+// Lynx's decoupled native list is data-source-driven — it reads its
+// items from the `insertAction` array of this map, not from the
+// element-tree children. The framework normally computes the map from
+// the children at diff-time; Whisker has no diff layer, so the bridge
+// synthesises a static insert-all map with positional item-keys
+// (`w_<i>`) and the `list` builder writes the matching `item-key` attr
+// to each child. Without this call, even a `<list>` with `<list-item>`
+// children renders zero items.
+LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_update_list_info(
+    lynx_fiber_element_t* element,
+    int32_t count);
+
 // Register a (bubble-phase, `bindEvent`) event handler for
 // `event_name` on `element`. Whisker has no JS runtime, so the handler
 // function is a sentinel — the actual fire is observed via the

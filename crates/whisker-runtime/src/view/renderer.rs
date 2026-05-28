@@ -91,6 +91,13 @@ pub trait DynRenderer {
     fn set_attribute(&mut self, handle: Element, key: &str, value: &str);
     fn set_inline_styles(&mut self, handle: Element, css: &str);
 
+    /// Hand a `<list>` element its item count so the bridge can build
+    /// the `update-list-info` map (positional item-keys `w_<i>`) that
+    /// Lynx's decoupled native list reads its items from. The `list`
+    /// builder calls this once at `__h()` finalize. Default no-op for
+    /// test renderers that don't model list virtualisation.
+    fn set_update_list_info(&mut self, _handle: Element, _count: i32) {}
+
     fn append_child(&mut self, parent: Element, child: Element);
     fn remove_child(&mut self, parent: Element, child: Element);
 
@@ -284,6 +291,10 @@ pub fn set_attribute(handle: Element, key: &str, value: &str) {
 
 pub fn set_inline_styles(handle: Element, css: &str) {
     with_renderer(|r| r.set_inline_styles(handle, css), ())
+}
+
+pub fn set_update_list_info(handle: Element, count: i32) {
+    with_renderer(|r| r.set_update_list_info(handle, count), ())
 }
 
 pub fn append_child(parent: Element, child: Element) {

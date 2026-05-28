@@ -11,13 +11,6 @@
 
 #include "lynx_native_renderer_capi.h"
 
-#if defined(__ANDROID__)
-#include <android/log.h>
-#define WLOG(...) __android_log_print(ANDROID_LOG_ERROR, "WHISKER_LIST", __VA_ARGS__)
-#else
-#define WLOG(...) ((void)0)
-#endif
-
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -124,8 +117,6 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT bool lynx_shell_run_on_tasm_thread(
           // framework supplies and Whisker — having no JS runtime — does
           // not, which otherwise NPEs in `UIList.onLayoutCompleted`.
           capture->manager->SetEnableNativeListFromShell(true);
-          WLOG("init: SetEnableNativeListFromShell(true); get=%d",
-               capture->manager->GetEnableNativeListFromShell() ? 1 : 0);
         }
       }
       capture->fiber_arch_initialized = true;
@@ -207,8 +198,6 @@ lynx_create_fiber_element_by_name(lynx_shell_t* shell, const char* tag_name) {
   // transitive lepus / quickjs headers aren't in the iOS header set.)
   fml::RefPtr<lynx::tasm::FiberElement> ref;
   if (std::strcmp(tag_name, "list") == 0) {
-    WLOG("create list: enable_native_list_from_shell=%d",
-         shell->manager->GetEnableNativeListFromShell() ? 1 : 0);
     ref = shell->manager->CreateFiberElement(lynx::base::String(tag_name));
   } else {
     ref = shell->manager->CreateFiberNode(lynx::base::String(tag_name));
@@ -239,6 +228,43 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_attribute(
   element->ref->SetAttribute(
       lynx::base::String(key),
       lynx::lepus::Value(lynx::base::String(value)));
+}
+
+LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_update_list_info(
+    lynx_fiber_element_t* element,
+    int32_t count) {
+  // Feed Lynx's decoupled native list its item descriptors. The list
+  // is data-source-driven (`decoupled_list_container_impl::SetAttribute`
+  // routes `update-list-info` → `ListAdapter::UpdateFiberDataSource`),
+  // not children-driven — without this attr, even a tree full of
+  // `<list-item>` elements renders zero items.
+  //
+  // The map has the shape ReactLynx's framework would compute from the
+  // children at diff-time:
+  //
+  //   { insertAction: [ {position: 0, item-key: "w_0"}, … ] }
+  //
+  // Whisker auto-generates positional item-keys (`w_<i>`) and sets the
+  // matching `item-key` on each child in the `list` builder's `child()`
+  // override. (Static-list scope — when dynamic lists with `For` land,
+  // stable user-supplied keys will need a Rust-side tracking map.)
+  if (element == nullptr || !element->ref || count < 0) {
+    return;
+  }
+  auto insert_array = lynx::lepus::CArray::Create();
+  for (int32_t i = 0; i < count; ++i) {
+    auto entry = lynx::lepus::Dictionary::Create();
+    entry->SetValue(lynx::base::String("position"), lynx::lepus::Value(i));
+    entry->SetValue(
+        lynx::base::String("item-key"),
+        lynx::lepus::Value(lynx::base::String("w_" + std::to_string(i))));
+    insert_array->emplace_back(lynx::lepus::Value(std::move(entry)));
+  }
+  auto update_info = lynx::lepus::Dictionary::Create();
+  update_info->SetValue(lynx::base::String("insertAction"),
+                        lynx::lepus::Value(std::move(insert_array)));
+  element->ref->SetAttribute(lynx::base::String("update-list-info"),
+                              lynx::lepus::Value(std::move(update_info)));
 }
 
 LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_event_handler(

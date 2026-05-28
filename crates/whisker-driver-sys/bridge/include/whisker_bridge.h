@@ -113,6 +113,13 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_set_attribute(WhiskerElement* element,
 // Apply a raw inline-style string ("font-size: 32px; color: black;").
 WHISKER_BRIDGE_EXPORT void whisker_bridge_set_inline_styles(WhiskerElement* element, const char* css);
 
+// Tell a `<list>` element how many items it has so Lynx's decoupled
+// native list can build its `update-list-info` insert-all map (with
+// positional item-keys `w_<i>`). The list builder calls this once at
+// `__h()` finalize and pairs it with matching `item-key` attrs on
+// each child appended via its `child()` override.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_list_set_item_count(WhiskerElement* element, int32_t count);
+
 // Append `child` after the parent's last child.
 WHISKER_BRIDGE_EXPORT void whisker_bridge_append_child(WhiskerElement* parent, WhiskerElement* child);
 

@@ -134,6 +134,10 @@ pub mod __tags {
         append_child, apply_attr, apply_attr_owned, apply_styles, create_element,
         create_element_by_name, set_event_listener, BindType, Element,
     };
+    // Kept available for the disabled `list::__h` trigger — see the
+    // comment there. Once the fork-side SSR-mode hook lands, re-import.
+    #[allow(unused_imports)]
+    use whisker_runtime::view::set_update_list_info;
 
     // ---- The common builder surface -------------------------------------
     //
@@ -1213,6 +1217,10 @@ pub mod __tags {
     #[allow(non_camel_case_types)]
     pub struct list {
         handle: Element,
+        // Position counter incremented by `child()` so each appended
+        // `list_item` gets a matching positional `item-key` (`w_<i>`)
+        // and `__h()` can hand the final count to the bridge.
+        item_count: i32,
     }
     #[allow(non_snake_case)]
     pub fn __list_ctor() -> list {
@@ -1222,10 +1230,53 @@ pub mod __tags {
         // string-compare flag that disables the platform list impl; the
         // decoupled mediator then activates via the env default (true).
         apply_attr::<_, ::std::string::String>(handle, "custom-list-name", "list-container");
-        list { handle }
+        list {
+            handle,
+            item_count: 0,
+        }
     }
     impl ElementBuilder for list {
         fn __element(&self) -> Element {
+            self.handle
+        }
+        // Tag the appended `<list-item>` with a positional `item-key`
+        // (`w_<i>`) that matches the `update-list-info` entry the bridge
+        // will emit at `__h()`. Any user-supplied `item_key` from
+        // `list_item` is overwritten — that field is a scaffold for the
+        // future stable-keys path (e.g. once `For` lands).
+        fn child(self, child: Element) -> Self {
+            apply_attr_owned::<_, ::std::string::String>(
+                child,
+                ::std::format!("item-key"),
+                ::std::format!("w_{}", self.item_count),
+            );
+            append_child(self.handle, child);
+            list {
+                handle: self.handle,
+                item_count: self.item_count + 1,
+            }
+        }
+        // Hand Lynx's decoupled native list its `update-list-info` map
+        // once all children have been counted by `child()`.
+        //
+        // **Disabled** until Lynx-fork SSR-mode access lands: setting
+        // `update-list-info` triggers the layout pass, which then asks
+        // `ListMediator::ComponentAtIndex` for each item, which in turn
+        // calls `tasm_->CallLepusMethod(component_at_index_, …)`.
+        // Whisker has no lepus runtime + an empty `component_at_index_`
+        // → EXC_BAD_ACCESS inside `TemplateEntryHolder::FindEntry`. The
+        // only callback-free path in `ListElement::ComponentAtIndex` is
+        // the `ssr_helper_` early-return (pre-created items returned by
+        // index, no lepus), and `SetSsrHelper(ListElementSSRHelper)`
+        // takes a value of a type defined in `list_element.h` — whose
+        // transitive lepus/quickjs headers aren't in the iOS header
+        // set. Resolving needs the fork to either expose an SSR-mode
+        // setter that doesn't drag the SSR-helper type, or a native
+        // (non-lepus) `componentAtIndex` path. Plumbing is kept so
+        // re-enabling becomes a one-line flip once that lands.
+        fn __h(self) -> Element {
+            let _ = self.item_count;
+            // set_update_list_info(self.handle, self.item_count);
             self.handle
         }
     }

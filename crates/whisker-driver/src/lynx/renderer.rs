@@ -166,6 +166,13 @@ impl DynRenderer for BridgeRenderer {
         unsafe { ffi::whisker_bridge_set_inline_styles(ptr.as_ptr(), css_c.as_ptr()) };
     }
 
+    fn set_update_list_info(&mut self, handle: Element, count: i32) {
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
+        unsafe { ffi::whisker_bridge_list_set_item_count(ptr.as_ptr(), count) };
+    }
+
     fn append_child(&mut self, parent: Element, child: Element) {
         let Some(p) = self.lookup(parent) else { return };
         let Some(c) = self.lookup(child) else { return };
