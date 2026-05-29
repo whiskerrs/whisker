@@ -7,7 +7,6 @@
 // ## Target syntax
 //
 // ```kotlin
-// @WhiskerModule
 // class VideoModule : Module() {
 //     override fun definition() = ModuleDefinition {
 //         Name("Video")
@@ -28,7 +27,6 @@
 // Function-only modules omit the inner `View(...)` block:
 //
 // ```kotlin
-// @WhiskerModule
 // class LocalStoreModule : Module() {
 //     override fun definition() = ModuleDefinition {
 //         Name("WhiskerLocalStore")
@@ -45,8 +43,8 @@
 //
 // Type surface only. The `Module` base + DSL types compile and
 // authors write modules using the syntax above; the KSP codegen
-// (L-2c) keyed on the `@WhiskerModule` annotation turns
-// `definition()` into Lynx prop / method registrations.
+// (L-2c) walks every `Module` subclass and turns `definition()`
+// into Lynx prop / method registrations.
 
 package rs.whisker.runtime
 

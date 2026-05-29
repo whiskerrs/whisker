@@ -1,7 +1,7 @@
 // WhiskerValue — Swift mirror of the Rust `whisker::platform_module::
-// WhiskerValue` tagged union. Used by `@WhiskerModule`-annotated
-// classes' methods as the universal arg/return type, replacing the
-// previous `NSArray` + Foundation type marshalling.
+// WhiskerValue` tagged union. Used by `Module`-subclass methods as
+// the universal arg/return type, replacing the previous `NSArray` +
+// Foundation type marshalling.
 //
 // ## Why a Swift enum
 //
@@ -31,7 +31,7 @@ import Foundation
 // `@_exported` so module-author Swift files can `import WhiskerRuntime`
 // alone and still see the C ABI types (`WhiskerValueRaw`,
 // `WhiskerStringRef`, `whisker_bridge_register_module_dispatch`, …)
-// that the `@WhiskerModule`-emitted `@_cdecl` dispatch shim references.
+// that the codegen-emitted `@_cdecl` dispatch shim references.
 // Without re-exporting, every module .swift file would need its own
 // `import WhiskerDriver`.
 @_exported import WhiskerDriver

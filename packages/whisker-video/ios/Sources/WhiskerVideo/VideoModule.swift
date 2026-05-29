@@ -10,12 +10,12 @@
 // `VideoView.swift`. Same split on Android (`VideoModule.kt` +
 // `VideoView.kt`).
 
-import WhiskerModuleMacros   // @WhiskerModule
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
-/// DSL-driven module. `@WhiskerModule` marks it for registration;
-/// the SwiftPM codegen plugin (L-3) discovers the attribute, then
-/// emits a registration block in `<Target>+Generated.swift` that:
+/// DSL-driven module. Subclassing `Module` is the registration
+/// signal — the SwiftPM codegen plugin (L-3) scans the target's
+/// sources for any concrete subclass of `Module` and emits a
+/// registration block in `<Target>+Generated.swift` that:
 ///
 ///   - Reads `definitionLazy.view!.viewClass` (== `VideoView`).
 ///   - Calls `LynxComponentRegistry.registerUI(viewClass, withName:
@@ -23,7 +23,6 @@ import WhiskerModule    // Module, ModuleDefinition, DSL
 ///   - Calls `module.registerWithLynx()` so the DSL's `Prop("src")`
 ///     + `Function("play"/"pause"/"seek")` install via the
 ///     Obj-C-runtime path (L-2b).
-@WhiskerModule
 public final class VideoModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

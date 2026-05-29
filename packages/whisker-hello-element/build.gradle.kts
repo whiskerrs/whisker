@@ -70,14 +70,14 @@ dependencies {
     // Whisker runtime provides the `WhiskerValue` sealed class,
     // `WhiskerModuleRegistry`, plus the Lynx AAR (via api(…))
     // for `LynxUI`, `LynxComponentRegistry`, etc.
-    // Phase J — single Whisker runtime dep. `:module` re-exports
-    // `rs.whisker:annotations` transitively, so no separate dep on
-    // the annotation JAR is needed. `ksp("rs.whisker:ksp")` stays
-    // separate (it is a build-time processor, not on the runtime
-    // classpath).
+    // Phase J — single Whisker runtime dep. Phase M (Issue #59)
+    // dropped the `:annotations` JAR: the KSP processor finds
+    // Module subclasses by inheritance, so no marker annotation
+    // is required.
     implementation(project(":module"))
-    // `@WhiskerComponent` / `@WhiskerModule` annotations + KSP
-    // processor. Resolved through the user-app gradle's
-    // composite-build entry for `platforms/android/ksp`.
+    // KSP processor — discovers `rs.whisker.runtime.Module` subclasses
+    // and emits `WhiskerHelloElementBehaviors.registerAll()`. Resolved
+    // through the user-app gradle's composite-build entry for
+    // `platforms/android/ksp`.
     ksp("rs.whisker:ksp")
 }

@@ -28,8 +28,8 @@ import com.lynx.tasm.LynxEnv
 open class WhiskerApplication : Application() {
     public companion object {
         /**
-         * The ApplicationContext, set in [onCreate]. Module classes
-         * (`@WhiskerModule(...)`) reach this lazily because the bridge
+         * The ApplicationContext, set in [onCreate]. `Module`
+         * subclasses reach this lazily because the bridge
          * instantiates them with a zero-arg ctor — there's no Context
          * to inject at construction time.
          *

@@ -52,9 +52,9 @@ let package = Package(
         // Re-export the binary `WhiskerDriver` framework so external
         // packages can `import WhiskerDriver` to see the C ABI
         // declarations (`whisker_bridge_register_module_dispatch`,
-        // `WhiskerValueRaw`, …) the `@WhiskerModule` macro-emitted
-        // dispatch shim references. Without this product the binary
-        // target stays scoped to WhiskerRuntime's own sources.
+        // `WhiskerValueRaw`, …) the codegen-emitted dispatch shim
+        // references. Without this product the binary target stays
+        // scoped to WhiskerRuntime's own sources.
         .library(name: "WhiskerDriver", targets: ["WhiskerDriver"]),
         // Phase 7-Φ.G: each module package is now its own SwiftPM
         // library and needs to `import Lynx` (etc.) directly to

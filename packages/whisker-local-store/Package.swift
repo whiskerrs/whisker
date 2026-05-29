@@ -49,7 +49,6 @@ let package = Package(
         .target(
             name: "WhiskerLocalStore",
             dependencies: [
-                .product(name: "WhiskerModuleMacros", package: "macros"),
                 .product(name: "WhiskerModule", package: "WhiskerRuntime"),
                 .product(name: "OrderedCollections", package: "swift-collections"),
             ],

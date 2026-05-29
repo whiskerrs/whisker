@@ -61,7 +61,6 @@ let package = Package(
         .target(
             name: "WhiskerHelloElement",
             dependencies: [
-                .product(name: "WhiskerModuleMacros", package: "macros"),
                 .product(name: "WhiskerModule", package: "WhiskerRuntime"),
             ],
             // Swift sources under the package's `ios/` directory

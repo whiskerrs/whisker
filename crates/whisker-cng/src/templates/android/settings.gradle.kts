@@ -29,13 +29,13 @@ project(":module").projectDir = file("{{whisker_module_android_path}}")
 include(":whisker-runtime")
 project(":whisker-runtime").projectDir = file("{{whisker_runtime_android_path}}")
 
-// Phase 7-Φ.H.2: `ksp` brings the `@WhiskerComponent`
-// annotation + KSP processor into the build via Gradle's
-// composite-build mechanism. The included build resolves
-// `rs.whisker:annotations` and `rs.whisker:ksp` against its own
-// subprojects (see `platforms/android/ksp/settings.gradle.kts`),
-// so the app's `build.gradle.kts` references them by group:artifact
-// like any regular external dep.
+// Phase 7-Φ.H.2: `ksp` brings the Whisker KSP processor into
+// the build via Gradle's composite-build mechanism. The included
+// build resolves `rs.whisker:ksp` against its own subproject (see
+// `platforms/android/ksp/settings.gradle.kts`), so the app's
+// `build.gradle.kts` references it by group:artifact like any
+// regular external dep. Phase M (Issue #59) dropped the marker
+// annotation; discovery is inheritance-based now.
 //
 // Composite builds run in their own daemon-internal classloader, so
 // pinning the included build's Kotlin version to match the consuming
