@@ -12,23 +12,20 @@
 
 package rs.whisker.elements.video
 
-import rs.whisker.annotations.WhiskerModule
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
 /**
- * DSL-driven module. `@WhiskerModule` marks it for registration;
- * it subclasses [Module] and declares:
+ * DSL-driven module. Subclassing [Module] is the registration
+ * signal — the KSP processor finds every concrete subclass and
+ * emits the registration block into
+ * `WhiskerVideoBehaviors.registerAll()`. This module declares:
  *   - Tag name `Video` (registers as `whisker-video:Video`).
  *   - View class [VideoView].
  *   - One prop setter (`src`).
  *   - Three sync method dispatchers (`play`, `pause`, `seek`).
- *
- * The KSP processor finds the `@WhiskerModule` annotation and emits
- * the registration block into `WhiskerVideoBehaviors.registerAll()`.
  */
-@WhiskerModule
 class VideoModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Video")

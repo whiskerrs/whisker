@@ -6,9 +6,9 @@ import com.lynx.react.bridge.ReadableType
 
 /**
  * WhiskerValue — Kotlin mirror of the Rust `whisker::platform_module::
- * WhiskerValue` tagged union. Used by `@WhiskerModule`-annotated
- * classes' methods as the universal arg/return type, replacing the
- * previous `Array<Any?>` + boxed-Java-type marshalling.
+ * WhiskerValue` tagged union. Used by `Module`-subclass methods as
+ * the universal arg/return type, replacing the previous
+ * `Array<Any?>` + boxed-Java-type marshalling.
  *
  * Phase 7-Φ.F: the platform_module bridge now exchanges typed Whisker
  * values directly. Author code pattern-matches on sealed-class

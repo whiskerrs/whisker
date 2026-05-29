@@ -15,11 +15,12 @@
 //! element under `<crate-name>:<tag>` (`whisker-foo:Foo`).
 //!
 //! Modules are authored with the ModuleDefinition DSL: a class
-//! annotated `@WhiskerModule` (Swift) / `@WhiskerModule` (Kotlin
-//! KSP) subclasses `Module` and overrides `definition()`. The
-//! `@WhiskerModule` attribute is the registration trigger — the
-//! per-platform codegen (SwiftPM build plugin / KSP) discovers it
-//! and emits the Lynx registration.
+//! subclasses `Module` and overrides `definition()`. Subclassing
+//! the base IS the registration trigger — the per-platform
+//! codegen (SwiftPM build plugin / KSP) finds every concrete
+//! `Module` subclass and emits the Lynx registration. Phase M
+//! (Issue #59) dropped the previously-companion `@WhiskerModule`
+//! marker annotation.
 //!
 //! This is a minimal scaffolder — it copies a small set of inline
 //! templates and substitutes a handful of variables. For a richer
@@ -314,7 +315,6 @@ let package = Package(
         .target(
             name: "{spm}",
             dependencies: [
-                .product(name: "WhiskerModuleMacros", package: "macros"),
                 .product(name: "WhiskerModule", package: "WhiskerRuntime"),
             ],
             path: "ios/Sources/{spm}",
@@ -372,9 +372,10 @@ ksp {{
 }}
 
 dependencies {{
-    // Single Whisker runtime dep — :module re-exports
-    // rs.whisker:annotations transitively. ksp(rs.whisker:ksp)
-    // stays separate because it's build-time, not runtime.
+    // Single Whisker runtime dep. ksp(rs.whisker:ksp) stays
+    // separate because it's a build-time processor, not on the
+    // runtime classpath. The KSP processor discovers Module
+    // subclasses by inheritance (no marker annotation needed).
     implementation(project(":module"))
     ksp("rs.whisker:ksp")
 }}
@@ -449,15 +450,13 @@ fn swift_view_module(v: &Vars) -> String {
         r#"// `{module_class}` — iOS side of the `{name}:{tag}` Whisker module.
 //
 // Declares the Lynx element `{name}:{tag}` via the ModuleDefinition
-// DSL. `@WhiskerModule` marks it for registration; the SwiftPM
-// codegen plugin discovers the attribute and emits the Lynx
+// DSL. Subclassing `Module` is the registration signal — the SwiftPM
+// codegen plugin walks every `Module` subclass and emits the Lynx
 // behavior registration. The `{view_class}` Lynx UI subclass lives
 // in `{view_class}.swift`.
 
-import WhiskerModuleMacros   // @WhiskerModule
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
-@WhiskerModule
 public final class {module_class}: Module {{
     public override func definition() -> ModuleDefinition {{
         ModuleDefinition {{
@@ -510,9 +509,10 @@ fn kotlin_view_module(v: &Vars) -> String {
     format!(
         r#"// `{module_class}` -- Android side of the `{name}:{tag}` Whisker module.
 //
-// `@WhiskerModule` marks it for registration; the KSP processor
-// discovers the annotation and emits the Lynx behavior registration.
-// The `{view_class}` Lynx UI subclass lives in `{view_class}.kt`.
+// Subclassing `Module` is the registration signal — the KSP processor
+// walks every concrete subclass and emits the Lynx behavior
+// registration. The `{view_class}` Lynx UI subclass lives in
+// `{view_class}.kt`.
 //
 // Note the explicit `import rs.whisker.runtime.Module` — without it
 // the unqualified `Module` resolves to `java.lang.Module` (a Kotlin
@@ -520,11 +520,9 @@ fn kotlin_view_module(v: &Vars) -> String {
 
 package rs.whisker.modules.{ns}
 
-import rs.whisker.annotations.WhiskerModule
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
 
-@WhiskerModule
 class {module_class} : Module() {{
     override fun definition() = ModuleDefinition {{
         Name("{tag}")
@@ -582,15 +580,13 @@ fn swift_function_module(v: &Vars) -> String {
         r#"// `{module_class}` — iOS side of the `{name}` Whisker function-only module.
 //
 // A view-less DSL module: `definition()` has no `View(...)` block,
-// just module-level `Function`s. `@WhiskerModule` marks it for
-// registration; the SwiftPM codegen plugin emits a dispatch shim
-// registered under the `Name("...")`, so
+// just module-level `Function`s. Subclassing `Module` is the
+// registration signal — the SwiftPM codegen plugin emits a dispatch
+// shim registered under the `Name("...")`, so
 // `Whisker{tag}::placeholder()` on the Rust side routes here.
 
-import WhiskerModuleMacros   // @WhiskerModule
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
-@WhiskerModule
 public final class {module_class}: Module {{
     public override func definition() -> ModuleDefinition {{
         ModuleDefinition {{
@@ -615,16 +611,14 @@ fn kotlin_function_module(v: &Vars) -> String {
         r#"// `{module_class}` -- Android side of the `{name}` Whisker function-only module.
 //
 // A view-less DSL module: module-level `Function`s, no `View(...)`.
-// `@WhiskerModule` marks it for registration. See the note in the
-// view-bearing template re: the explicit `Module` import.
+// Subclassing `Module` is the registration signal. See the note in
+// the view-bearing template re: the explicit `Module` import.
 
 package rs.whisker.modules.{ns}
 
-import rs.whisker.annotations.WhiskerModule
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
 
-@WhiskerModule
 class {module_class} : Module() {{
     override fun definition() = ModuleDefinition {{
         // The Name MUST match the Rust sys trait's

@@ -1,21 +1,17 @@
 // Phase L-3 — `whisker-local-store` ModuleDefinition (iOS).
 //
-// Replaces the pre-L-3 `@WhiskerModule("WhiskerLocalStore")`-
-// annotated `WhiskerLocalStoreImpl`. A view-less DSL module:
-// `definition()` has no `View(...)` block, just module-level
-// `Function`s. The SwiftPM codegen plugin discovers the
-// `@WhiskerModule` attribute, emits a `@_cdecl` dispatch shim, and
-// registers it via `whisker_bridge_register_module_dispatch(
-// "WhiskerLocalStore", shim)` — so
-// `whisker::platform_module::invoke("WhiskerLocalStore", ...)`
-// from Rust routes into these handlers.
+// A view-less DSL module: `definition()` has no `View(...)` block,
+// just module-level `Function`s. The SwiftPM codegen plugin
+// discovers the `Module` subclass, emits a `@_cdecl` dispatch
+// shim, and registers it via
+// `whisker_bridge_register_module_dispatch("WhiskerLocalStore",
+// shim)` — so `whisker::platform_module::invoke(
+// "WhiskerLocalStore", ...)` from Rust routes into these handlers.
 //
 // The storage logic lives in `LocalStore.swift`.
 
-import WhiskerModuleMacros   // @WhiskerModule
 import WhiskerModule    // Module, ModuleDefinition, DSL
 
-@WhiskerModule
 public final class LocalStoreModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {

@@ -1,12 +1,12 @@
 // Composite-build root for the Whisker Android KSP package.
 //
-// Two modules:
-// - `annotations` — public `@WhiskerModule` Kotlin annotation, the
-//   companion to iOS's `@WhiskerModule` Swift macro.
-// - `ksp` — KSP processor that consumes `@WhiskerModule`
-//   applications and generates `<Module>Behaviors.kt` in the
-//   user app's source set. Replaces the manual whisker-build-time
-//   Kotlin generation from Phase 7-Φ.C.
+// Single module:
+// - `ksp` — KSP processor that scans the user app's compilation
+//   for `rs.whisker.runtime.Module` subclasses and generates
+//   `<Module>Behaviors.kt`. Discovery is inheritance-based — Phase
+//   M (Issue #59) dropped the `@WhiskerModule` marker annotation
+//   that previously gated registration, so the `annotations`
+//   subproject is gone.
 //
 // Consumed by the generated user app via `includeBuild("...")` in
 // `gen/android/settings.gradle.kts` — composite-build dep, no Maven
@@ -35,5 +35,4 @@ dependencyResolutionManagement {
 // unique in composite: can be provided by [project :ksp, project :ksp:ksp]".
 rootProject.name = "whisker-android-ksp"
 
-include(":annotations")
 include(":ksp")

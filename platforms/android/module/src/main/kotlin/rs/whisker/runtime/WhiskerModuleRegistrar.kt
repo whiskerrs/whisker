@@ -51,8 +51,7 @@ import com.lynx.tasm.behavior.utils.PropsUpdater
  *  - **View-less** (module-level `Function`s, no `View(...)`):
  *    registers a dispatch closure with [WhiskerModuleRegistry]
  *    under the module's `Name(...)`, so `whisker_bridge_invoke_module`
- *    from Rust routes into the DSL handlers — the same path the
- *    legacy `@WhiskerModule` annotation used.
+ *    from Rust routes into the DSL handlers.
  *
  * Idempotent — re-registering replaces the prior entry
  * (last-write-wins on both maps).

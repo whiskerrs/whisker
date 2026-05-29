@@ -38,11 +38,11 @@ ksp {
 }
 
 dependencies {
-    // Phase J — single Whisker runtime dep. `:module` re-exports
-    // `rs.whisker:annotations` transitively, so no separate dep on
-    // the annotation JAR is needed. `ksp("rs.whisker:ksp")` stays
-    // separate (it is a build-time processor, not on the runtime
-    // classpath).
+    // Phase J — single Whisker runtime dep. `ksp("rs.whisker:ksp")`
+    // stays separate (it is a build-time processor, not on the
+    // runtime classpath). Phase M (Issue #59) dropped the
+    // `:annotations` JAR: the KSP processor finds Module subclasses
+    // by inheritance now, so no marker annotation is needed.
     implementation(project(":module"))
     ksp("rs.whisker:ksp")
 

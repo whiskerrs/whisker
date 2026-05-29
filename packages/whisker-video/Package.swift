@@ -44,7 +44,6 @@ let package = Package(
         .target(
             name: "WhiskerVideo",
             dependencies: [
-                .product(name: "WhiskerModuleMacros", package: "macros"),
                 // WhiskerModule re-exports Lynx transitively, so
                 // no separate `Lynx` product dep is needed.
                 .product(name: "WhiskerModule", package: "WhiskerRuntime"),

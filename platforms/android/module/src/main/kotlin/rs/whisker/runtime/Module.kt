@@ -1,17 +1,14 @@
 // `Module` base class (Android) — the API a Whisker module
-// subclasses. Mark the subclass with `@WhiskerModule` (from
-// `rs.whisker.annotations`) so the KSP processor discovers it and
-// generates the Lynx registration. (Modeled after Expo's `Module`
-// base class; the `@WhiskerModule` marker plays the role of Expo's
-// `expo-module.config.json` entry — but inline at the declaration.)
+// subclasses. **Subclassing is the registration signal** — the
+// KSP processor (`rs.whisker.ksp.WhiskerModuleProcessor`) walks
+// every concrete subclass and emits the Lynx registration. No
+// marker annotation is required at the declaration site.
 //
 // ```kotlin
-// import rs.whisker.annotations.WhiskerModule
 // import rs.whisker.runtime.Module        // ← explicit import: bare
 //                                         //   `Module` would resolve
 //                                         //   to java.lang.Module
 //
-// @WhiskerModule
 // class VideoModule : Module() {
 //     override fun definition() = ModuleDefinition {
 //         Name("Video")

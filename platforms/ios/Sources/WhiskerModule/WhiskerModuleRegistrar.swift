@@ -56,9 +56,10 @@ extension Module {
     ///
     /// Idempotent — a second call against the same view class
     /// re-installs over the previous registration (last-write-wins).
-    /// Module-level (view-less) `Function`s are not yet wired
-    /// up here; the module-level dispatch path stays on the
-    /// `@WhiskerModule` annotation API through L-2b.
+    /// Module-level (view-less) `Function`s are not wired up here;
+    /// the module-level dispatch path lives in the codegen-emitted
+    /// `@_cdecl` shim + `whisker_bridge_register_module_dispatch`
+    /// (Phase L-3).
     public func registerWithLynx() {
         let def = self.definitionLazy
 

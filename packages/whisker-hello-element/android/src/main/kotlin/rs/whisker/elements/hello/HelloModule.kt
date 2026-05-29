@@ -11,13 +11,13 @@
 
 package rs.whisker.elements.hello
 
-import rs.whisker.annotations.WhiskerModule
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
 
 /**
- * DSL-driven module. The KSP processor finds the `@WhiskerModule`
- * annotation and emits a registration call into
+ * DSL-driven module. Subclassing [Module] is the registration
+ * signal — the KSP processor finds every concrete subclass and
+ * emits a registration call into
  * `WhiskerHelloElementBehaviors.registerAll()` that:
  *
  *   - Registers a `Behavior("whisker-hello-element:Hello")` whose
@@ -25,7 +25,6 @@ import rs.whisker.runtime.ModuleDefinition
  *   - Calls `module.registerWithLynx()` so any Prop / Function
  *     declared below installs via L-1's registration APIs.
  */
-@WhiskerModule
 class HelloModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Hello")

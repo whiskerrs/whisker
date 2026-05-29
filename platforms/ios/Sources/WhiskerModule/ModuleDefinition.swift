@@ -10,7 +10,6 @@
 // ## Target syntax
 //
 // ```swift
-// @WhiskerModule
 // public final class VideoModule: Module {
 //     public override func definition() -> ModuleDefinition {
 //         Name("Video")
@@ -36,7 +35,6 @@
 // inner `View(...)` block:
 //
 // ```swift
-// @WhiskerModule
 // public final class LocalStoreModule: Module {
 //     public override func definition() -> ModuleDefinition {
 //         Name("WhiskerLocalStore")
@@ -56,7 +54,7 @@
 // This file defines the **DSL surface and value model**. The
 // `Module` base class collects the `ModuleDefinition` at init time;
 // the iOS dispatch glue (L-2b) + the `WhiskerModuleCodegen`
-// plugin's `@WhiskerModule` discovery wire it into Lynx's prop /
+// plugin's `Module`-subclass discovery wire it into Lynx's prop /
 // method dispatch tables.
 
 import Foundation

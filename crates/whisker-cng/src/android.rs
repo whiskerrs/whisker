@@ -92,10 +92,10 @@ pub struct AndroidInputs {
     pub whisker_lynx_aar_dir: PathBuf,
     /// Absolute path to `<workspace>/platforms/android/ksp/`.
     /// Pulled into the generated `settings.gradle.kts` via
-    /// Gradle's `includeBuild(...)` so the app's `ksp(...)` +
-    /// `implementation(...)` deps on `rs.whisker:annotations` /
-    /// `rs.whisker:ksp` resolve against the composite-build's
-    /// subprojects. Phase 7-Φ.H.2.
+    /// Gradle's `includeBuild(...)` so the app's `ksp(...)` deps
+    /// on `rs.whisker:ksp` resolve against the composite-build's
+    /// subproject. Phase 7-Φ.H.2 (Phase M / Issue #59 dropped the
+    /// previously-companion `rs.whisker:annotations` JAR).
     pub whisker_android_ksp_path: PathBuf,
     /// Bumped whenever the template *shape* changes (added file,
     /// renamed placeholder, …). The fingerprint mixes this in so

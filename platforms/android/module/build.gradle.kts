@@ -6,10 +6,10 @@
 // `WhiskerView`, or `WhiskerModuleRegistry`.
 //
 // The module-author dep surface is exactly this AAR + the
-// composite-build `rs.whisker:ksp` for build-time annotation
-// processing. The `:annotations` JAR (from the KSP composite) is
-// re-exported here via `api(...)` so consumers don't have to add
-// it separately.
+// composite-build `rs.whisker:ksp` for build-time inheritance-
+// based discovery. Phase M (Issue #59) dropped the
+// `:annotations` JAR — discovery is now subclass-of-Module so
+// no marker annotation is required.
 
 plugins {
     id("com.android.library")
@@ -55,9 +55,8 @@ dependencies {
     api(":ServiceAPI@aar")
     api("org.lynxsdk.lynx:primjs:3.7.0")
 
-    // Re-export the Whisker annotation set (from the KSP composite
-    // build) so a module's `build.gradle.kts` only needs one
-    // runtime dep on `:module`. The `ksp(...)` processor dep
-    // stays separate — it's build-time, not a runtime classpath.
-    api("rs.whisker:annotations")
+    // No annotation re-export needed (Phase M / Issue #59): a
+    // module's `build.gradle.kts` depends on this AAR alone for
+    // runtime types; the `ksp(...)` processor stays separate as
+    // a build-time dep.
 }
