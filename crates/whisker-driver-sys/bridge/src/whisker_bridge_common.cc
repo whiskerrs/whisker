@@ -234,17 +234,12 @@ extern "C" void whisker_bridge_list_set_item_count(WhiskerElement* element,
 }
 
 // Install a native item provider on a `<list>` element so Whisker can
-// drive Lynx's list virtualisation directly.
-//
-// On Android this resolves to liblynx.so's
-// `lynx_list_set_native_item_provider` (added in whiskerrs/lynx#9,
-// shipped in v3.7.0-whisker.11). On iOS the same name is satisfied
-// by a no-op stub compiled into the bridge from
-// `lynx_native_renderer.cc` — iOS is still pinned to the .5 byte-
-// identical xcframework which lacks the native-provider hook in
-// `ListElement::ComponentAtIndex`, so installs are accepted (the
-// boxed closures get freed cleanly) but do nothing. See the long
-// note above `LYNX_IOS_SHA256` for the iOS build-infra plan.
+// drive Lynx's list virtualisation directly. On both platforms this
+// resolves to Lynx's `lynx_list_set_native_item_provider` (Android:
+// inside liblynx.so; iOS: inside Lynx.framework, fork-built since
+// v3.7.0-whisker.21 — whiskerrs/lynx#19). The boxed closures the
+// Rust trampoline hands off are owned by the C++ ListElement via a
+// `std::shared_ptr` with `user_data_free` as deleter.
 extern "C" void whisker_bridge_list_set_native_item_provider(
     WhiskerElement* element,
     int32_t (*component_at_index)(uint32_t index, int64_t operation_id,
