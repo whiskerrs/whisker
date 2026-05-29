@@ -57,82 +57,49 @@ use std::path::{Path, PathBuf};
 /// Schema: `<lynx-upstream-version>-whisker.<patch-iteration>` so a
 /// reader can tell at a glance which upstream Lynx is wrapped, and
 /// our own patch iterations bump independently.
-pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.21";
+pub const LYNX_FORK_TAG: &str = "v3.8.0-whisker.1";
 
 /// Version segment that appears in cache paths + tarball filenames.
 /// Derived from [`LYNX_FORK_TAG`] minus the leading `v`.
-pub const LYNX_VERSION: &str = "3.7.0-whisker.21";
+pub const LYNX_VERSION: &str = "3.8.0-whisker.1";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
 /// produced by the fork's CI. Pinned to the
-/// [v3.7.0-whisker.21 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.21).
+/// [v3.8.0-whisker.1 release](https://github.com/whiskerrs/lynx/releases/tag/v3.8.0-whisker.1).
 ///
-/// Bump from `.8`: rebuilds Android `liblynx.so` against:
-///   - whiskerrs/lynx#9 (`ListNativeItemProvider` +
-///     `lynx_list_set_native_item_provider`, the native non-lepus
-///     callback contract that lets a JS-runtime-less embedder drive
-///     `<list>`'s virtualisation),
-///   - #10 (`lynx_element_set_update_list_info`, the matching
-///     count-broadcast capi the Map-attr `update-list-info` requires),
-///   - #11 (engine-init: `manager->SetConfig(config)` + native-list
-///     shell-flag + `lynx_create_fiber_element_by_name("list")`
-///     routes to the typed `ListElement` instead of a generic
-///     `FiberElement`),
-///   - #15 (`ListElement::ComponentAtIndex`'s native_provider branch
-///     fires `OnPatchFinish` + `OnComponentFinished` per item,
-///     which is what propagates through `ListMediator` →
-///     `DefaultListAdapter::OnFinishBindItemHolder` →
-///     `AttachChild` → `InsertListItemPaintingNode` → the JNI
-///     call that finally attaches item Views to the Android
-///     `UIListContainer`. Items now render end-to-end.).
+/// `v3.8.0-whisker.1` is the first release on top of upstream Lynx
+/// 3.8.0. The fork's history was rebased + reorganised into 11
+/// logical commits (chore/feat/build/ci/docs); pre-rebase 3.7.0
+/// history is preserved under tag `whisker/main-pre-rebase-3.8.0`.
+/// Functionality is equivalent to `v3.7.0-whisker.21`:
+///   - `ListNativeItemProvider` + `OnComponentFinished` chain
+///     (`feat(list_element): ...`),
+///   - `core/native_renderer_capi/` C ABI surface (Android binds
+///     to it via `lynx_android_lib` dep + dropped
+///     `--exclude-libs,ALL` linker flag),
+///   - Java `registerMethodInvoker(Class, ...)` /
+///     `registerSetter(Class, ...)` overloads.
 ///
-/// `.9` – `.14` skipped because that branch went through several
-/// `OnPatchFinish` / `updated_list_elements_` revert iterations
-/// before #15 landed the correct shape. `.16` – `.19` skipped
-/// because the iOS publish path needed several iterations of
-/// build-script fixes (#16 `override`-on-non-virtual gating, #17
-/// modp_b64 drift patches, #18 fork-only call-site gating). `.20`
-/// is the first release where both platforms built cleanly with
-/// the overlay-onto-upstream-CocoaPods approach.
-///
-/// `.21` (whiskerrs/lynx#19) is the first release built from fork
-/// source directly on the iOS side too — Android binary is
-/// substantively unchanged in `.21`, the bump exists so the iOS
-/// xcframework can ship without overlay warts. See [`LYNX_IOS_SHA256`].
+/// Upstream 3.8.0 brought a `core/runtime/{lepus → common}`
+/// refactor and renamed `LynxDevToolUtils` → `LynxDevToolEnvUtils`;
+/// the fork-controlled podspecs (`Lynx.podspec.json`,
+/// `LynxBase.podspec.json`, `LynxServiceAPI.podspec.json`) were
+/// synced to the trunk 3.8.0 source/header lists in the same release.
 pub const LYNX_ANDROID_SHA256: &str =
-    "122f7589799cb040980097e3aac7511e3b9af70ce67e4b1d1c433a268e9621bb";
+    "541d586cc60ce68eb00eb984e2709d862a38caee9ff449e1410801e7e3e3d4c6";
 
 /// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`.
 ///
-/// **`.21` builds the iOS xcframework from fork source directly.** Through
-/// `.5` – `.20` the iOS tarball was produced by overlaying a few
-/// fork-modified files on top of upstream Lynx 3.7.0 CocoaPods source
-/// — which accumulated several maintenance warts: a
-/// `LYNX_WHISKER_UPSTREAM_307_COMPAT` macro gate inside
-/// `list_element.{h,cc}` to silence fork-only `override`s, perl
-/// substitutions for `modp_b64_*` symbol drift, an `HEADER_SEARCH_PATHS`
-/// `sed` rewrite, and the overlay step itself. Each new Lynx-tree
-/// change risked adding another wart.
-///
-/// `.21` (whiskerrs/lynx#19) switches to three fork-controlled
-/// podspecs at the fork root (`Lynx.podspec.json`,
-/// `LynxBase.podspec.json`, `LynxServiceAPI.podspec.json`) that point
-/// all source globs at the fork tree itself via
-/// `source: {path: "."}` and a `Podfile` of
-/// `pod 'Lynx', :path => '$FORK_ROOT'`. All four warts above are gone;
-/// every fork change to `core/` ships into the xcframework
-/// automatically.
-///
-/// The Whisker-side knock-on (this PR): the vendored copy of
-/// `lynx_native_renderer.cc` at
-/// `crates/whisker-driver-sys/bridge/src/` is deleted — its symbols
-/// (`lynx_list_set_native_item_provider`, `lynx_element_*`, etc.) now
-/// live inside `Lynx.framework/Lynx` itself. The
-/// `LYNX_WHISKER_UPSTREAM_307_COMPAT=1` define on the bridge's
-/// `cc::Build` is also gone, since the fork's `list_element.h` is now
-/// the one being compiled at both ends.
+/// Built from fork source directly via three fork-controlled
+/// podspecs (`Lynx.podspec.json`, `LynxBase.podspec.json`,
+/// `LynxServiceAPI.podspec.json`) at the fork root that point all
+/// source globs at the fork tree itself via `source: {path: "."}`.
+/// `Lynx.framework/Lynx` exports the native renderer C API symbols
+/// (`lynx_list_set_native_item_provider`, `lynx_element_*`, etc.)
+/// from `core/native_renderer_capi/`, so the bridge in
+/// `crates/whisker-driver-sys/` no longer vendors them.
 pub const LYNX_IOS_SHA256: &str =
-    "7782e61a934bb0cfa3ffb9f6be00c85345f5af070aa44b8573dc883d3138726f";
+    "2ecbd8be9fbfea54d4144e64d3b3c0a93c8a8bb3d6ed59bfff9ffdff5944a6b0";
 
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
 /// placeholders are filled by [`download_url`].
