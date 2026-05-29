@@ -1284,9 +1284,7 @@ pub mod __tags {
                     items
                         .get(index as usize)
                         .map(|&(_, sign)| sign)
-                        .unwrap_or(
-                            ::whisker_runtime::view::list_provider::INVALID_ITEM_INDEX,
-                        )
+                        .unwrap_or(::whisker_runtime::view::list_provider::INVALID_ITEM_INDEX)
                 }),
                 // Static list: no recycling notification needed — items
                 // stay attached for the list's lifetime.

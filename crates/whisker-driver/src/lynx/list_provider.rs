@@ -166,7 +166,7 @@ mod tests {
         })) as *mut c_void;
         let sign = trampoline_component_at_index(0, 0, 0, provider);
         assert_eq!(sign, ffi::LYNX_LIST_INVALID_INDEX);
-        unsafe { trampoline_free(provider) };
+        trampoline_free(provider);
     }
 
     #[test]
@@ -177,7 +177,7 @@ mod tests {
         })) as *mut c_void;
         // Should not unwind / abort.
         trampoline_enqueue_component(42, provider);
-        unsafe { trampoline_free(provider) };
+        trampoline_free(provider);
     }
 
     #[test]
@@ -203,6 +203,6 @@ mod tests {
         assert_eq!(calls[0], (3, 100, true));
         assert_eq!(calls[1], (5, 200, false));
         drop(calls);
-        unsafe { trampoline_free(provider) };
+        trampoline_free(provider);
     }
 }
