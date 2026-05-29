@@ -305,7 +305,7 @@ fn snake_to_pascal(name: &str) -> String {
 fn is_builtin_tag(name: &str) -> bool {
     matches!(
         name,
-        "page" | "view" | "text" | "raw_text" | "image" | "scroll_view"
+        "page" | "view" | "text" | "raw_text" | "image" | "scroll_view" | "list" | "list_item"
     )
 }
 
@@ -593,6 +593,10 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("scroll_view", "initial_scroll_to_index")
             | ("scroll_view", "upper_threshold")
             | ("scroll_view", "lower_threshold")
+            | ("list", "list_type")
+            | ("list", "column_count")
+            | ("list", "vertical_orientation")
+            | ("list_item", "item_key")
     )
 }
 

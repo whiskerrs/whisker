@@ -1,14 +1,32 @@
-// Vendored from whiskerrs/lynx:core/native_renderer_capi/lynx_native_renderer.cc.
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
 //
-// On Android this file is built INSIDE liblynx.so by the Lynx fork's
-// CI (see lynx_android_lib's public_deps); the version in this
-// repository is only compiled into the Whisker bridge on iOS, where
-// upstream Lynx 3.7.0's CocoaPods spec doesn't include the
-// `core/native_renderer_capi/` subtree.
+// Vendored from `whiskerrs/lynx:core/native_renderer_capi/lynx_native_renderer.cc`.
+// MUST stay in sync with the fork's copy — bump in lockstep whenever
+// the capi surface or behaviour changes. On Android this file is
+// built INSIDE liblynx.so by the Lynx fork's CI; the version in
+// this repository is only compiled into the Whisker bridge on iOS,
+// where upstream Lynx 3.7.0's CocoaPods spec doesn't include the
+// `core/native_renderer_capi/` subtree at all.
 //
-// MUST stay in sync with the fork's copy — see the header sibling
-// for the duplication rationale.
+// Implementation of `lynx_native_renderer_capi.h`.
+//
+// Thin wrappers around the internal C++ classes — every `extern "C"`
+// function casts an opaque handle to the corresponding C++ pointer
+// and forwards. By living inside liblynx.so itself, the wrappers
+// retain access to the internal classes without forcing
+// `-fvisibility=default` on the entire engine: only the
+// LYNX_NATIVE_RENDERER_CAPI_EXPORT-tagged functions in this file land in `.dynsym`.
+//
+// Shell extraction (JNI reflection on Android, Obj-C ivar access on
+// iOS) stays on the embedder side — this file just wraps a raw
+// pointer the embedder hands over, so it doesn't need JNIEnv or any
+// platform headers.
 
+// In the fork, this is `"core/native_renderer_capi/public/lynx_native_renderer_capi.h"`.
+// The bridge ships the same header at the flat `include/` root, so
+// drop the directory prefix when vendoring.
 #include "lynx_native_renderer_capi.h"
 
 #include <cstdlib>
@@ -21,20 +39,21 @@
 #include "base/include/value/array.h"
 #include "base/include/value/table.h"
 #include "core/public/pipeline_option.h"
+#include "core/public/pub_value.h"
 #include "core/renderer/dom/element_manager.h"
 #include "core/renderer/dom/fiber/fiber_element.h"
+#include "core/renderer/dom/fiber/list_element.h"
 #include "core/renderer/dom/fiber/page_element.h"
-#include "core/renderer/events/events.h"
 #include "core/renderer/dom/fiber/raw_text_element.h"
 #include "core/renderer/dom/fiber/scroll_element.h"
 #include "core/renderer/dom/fiber/text_element.h"
 #include "core/renderer/dom/fiber/view_element.h"
+#include "core/renderer/events/events.h"
 #include "core/renderer/page_proxy.h"
 #include "core/renderer/template_assembler.h"
 #include "core/renderer/utils/base/tasm_constants.h"
 #include "core/renderer/ui_wrapper/painting/catalyzer.h"
 #include "core/shell/lynx_shell.h"
-#include "core/public/pub_value.h"
 #include "core/template_bundle/template_codec/binary_decoder/page_config.h"
 #include "core/value_wrapper/value_impl_lepus.h"
 
@@ -100,6 +119,24 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT bool lynx_shell_run_on_tasm_thread(
         auto* page_proxy = tasm->page_proxy();
         if (page_proxy != nullptr) {
           capture->manager = page_proxy->element_manager().get();
+          // Propagate the PageConfig to the ElementManager itself.
+          // `tasm->SetPageConfig` alone leaves `manager->GetConfig()`
+          // null in this template-less fiber-arch path, and a
+          // `ListElement` dereferences it at construction
+          // (`GetConfig()->GetPipelineSchedulerConfig()`), so without
+          // this every `<list>` would EXC_BAD_ACCESS on creation.
+          capture->manager->SetConfig(config);
+          // Force Lynx's *native* (C++) list implementation for every
+          // `<list>` in this engine. This is `ResolveEnableNativeList`
+          // Case 1 (shell flag, highest priority): it sets
+          // `disable_list_platform_implementation_ = true`, so the list
+          // is driven by the decoupled `ListMediator` (which talks to
+          // the installed `ListNativeItemProvider`) instead of the
+          // platform `UIList`, whose `componentAtIndex` diff data the
+          // JS framework supplies and Whisker — having no JS runtime —
+          // does not, which otherwise NPEs in
+          // `UIList.onLayoutCompleted`.
+          capture->manager->SetEnableNativeListFromShell(true);
         }
       }
       capture->fiber_arch_initialized = true;
@@ -164,8 +201,25 @@ lynx_create_fiber_element_by_name(lynx_shell_t* shell, const char* tag_name) {
   // for any registered tag — built-ins (`view` / `text` / `image` /
   // `scroll-view`) and custom (`x-input` / `x-refresh` / …) alike.
   // For tags Lynx's behaviour registry doesn't know, it returns
-  // nullptr and we surface that to the Rust caller.
-  auto ref = shell->manager->CreateFiberNode(lynx::base::String(tag_name));
+  // nullptr and we surface that to the embedder.
+  //
+  // `list` is special: `CreateFiberNode` only builds a *generic*
+  // `FiberElement`, which carries none of the list machinery (the
+  // decoupled adapter / item provider live in the typed `ListElement`
+  // C++ class). So we route it through the enum-mapped
+  // `CreateFiberElement(tag)` — which resolves `"list"` →
+  // `ELEMENT_LIST` and constructs a real `ListElement` with empty
+  // lepus `componentAtIndex` / `enqueueComponent` callbacks. With
+  // no JS callbacks the element relies on the native item provider
+  // installed via `lynx_list_set_native_item_provider` (and falls
+  // back to the SSR helper / lepus paths if the embedder never
+  // installs one), which is exactly the contract Whisker needs.
+  fml::RefPtr<lynx::tasm::FiberElement> ref;
+  if (std::strcmp(tag_name, "list") == 0) {
+    ref = shell->manager->CreateFiberElement(lynx::base::String(tag_name));
+  } else {
+    ref = shell->manager->CreateFiberNode(lynx::base::String(tag_name));
+  }
   if (!ref) return nullptr;
   return new lynx_fiber_element_t{std::move(ref)};
 }
@@ -201,11 +255,11 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_event_handler(
     return;
   }
   // Bind a bubble-phase (`bindEvent`) handler. The function name is a
-  // sentinel — Whisker observes the fire via the reporter, not by
-  // calling a JS function (there is no JS runtime). Registering the
-  // handler is what puts the event in the element's event set, which is
-  // what makes Lynx's UI components emit their component-specific events
-  // (scroll, layout, uiappear, …) in the first place.
+  // sentinel — the embedder (Whisker) has no JS runtime and observes
+  // the fire via the event-reporter hook, not by calling a JS function.
+  // Registering the handler is what puts the event in the element's
+  // event set, which is what makes Lynx's UI components emit their
+  // component-specific events (scroll, layout, uiappear, …) at all.
   element->ref->SetJSEventHandler(
       lynx::base::String(event_name),
       lynx::base::String(lynx::tasm::kEventBindEvent),
@@ -235,6 +289,96 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_remove_child(
     return;
   }
   parent->ref->RemoveNode(child->ref);
+}
+
+// ----- List native item provider -------------------------------------------
+
+LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_list_set_native_item_provider(
+    lynx_fiber_element_t* element,
+    lynx_list_component_at_index_fn component_at_index_fn,
+    lynx_list_enqueue_component_fn enqueue_component_fn,
+    void* user_data,
+    lynx_user_data_free_fn user_data_free) {
+  if (element == nullptr || !element->ref || !element->ref->is_list()) {
+    // Caller mistake (or NULL); silently no-op. Also free the cookie
+    // since we won't be taking ownership.
+    if (user_data != nullptr && user_data_free != nullptr) {
+      user_data_free(user_data);
+    }
+    return;
+  }
+  auto* list = static_cast<lynx::tasm::ListElement*>(element->ref.get());
+
+  // Clear path: NULL `component_at_index` means "remove provider". We
+  // also free the caller's cookie since they explicitly handed it off.
+  if (component_at_index_fn == nullptr) {
+    list->ClearNativeItemProvider();
+    if (user_data != nullptr && user_data_free != nullptr) {
+      user_data_free(user_data);
+    }
+    return;
+  }
+
+  // Pin `user_data` lifetime to the captured lambdas via a
+  // shared_ptr with a custom deleter that calls `user_data_free`.
+  // When the ListElement is destroyed (or a later
+  // SetNativeItemProvider replaces this one), the captured
+  // shared_ptr refcount drops to zero and the deleter fires — which
+  // is what releases e.g. a Rust `Box<dyn FnMut>` on the other side.
+  std::shared_ptr<void> ctx(user_data, [user_data_free](void* p) {
+    if (p != nullptr && user_data_free != nullptr) {
+      user_data_free(p);
+    }
+  });
+
+  lynx::tasm::ListNativeItemProvider provider;
+  provider.component_at_index =
+      [component_at_index_fn, ctx](uint32_t index, int64_t op_id,
+                                   bool reuse_notification) -> int32_t {
+        return component_at_index_fn(index, op_id,
+                                     reuse_notification ? 1 : 0, ctx.get());
+      };
+  if (enqueue_component_fn != nullptr) {
+    provider.enqueue_component = [enqueue_component_fn, ctx](int32_t sign) {
+      enqueue_component_fn(sign, ctx.get());
+    };
+  }
+  list->SetNativeItemProvider(std::move(provider));
+}
+
+LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_update_list_info(
+    lynx_fiber_element_t* element,
+    int32_t count) {
+  if (element == nullptr || !element->ref || count < 0) {
+    return;
+  }
+  // Build `{insertAction: [{position:i, item-key:"w_<i>"}, …]}` —
+  // the schema `ListAdapter::UpdateFiberDataSource` expects. The
+  // attribute setter on `decoupled_list_container_impl` requires a
+  // Map value (string attrs go through a different branch), which
+  // can't be expressed through the string-only
+  // `lynx_element_set_attribute` capi — hence this dedicated entry.
+  auto insert_array = lynx::lepus::CArray::Create();
+  for (int32_t i = 0; i < count; ++i) {
+    auto entry = lynx::lepus::Dictionary::Create();
+    entry->SetValue(lynx::base::String("position"), lynx::lepus::Value(i));
+    entry->SetValue(
+        lynx::base::String("item-key"),
+        lynx::lepus::Value(lynx::base::String("w_" + std::to_string(i))));
+    // Intentionally NOT setting `estimated-main-axis-size-px`.
+    // Lynx's documented default — "size of <list> in the main axis
+    // direction" — applies: the first item's item_holder budgets
+    // the full viewport, Fill exits after one iter, the item is
+    // bound + measured, and the next layout pass advances. Whisker
+    // will surface per-`list_item` overrides via a typed builder
+    // method.
+    insert_array->emplace_back(lynx::lepus::Value(std::move(entry)));
+  }
+  auto update_info = lynx::lepus::Dictionary::Create();
+  update_info->SetValue(lynx::base::String("insertAction"),
+                        lynx::lepus::Value(std::move(insert_array)));
+  element->ref->SetAttribute(lynx::base::String("update-list-info"),
+                              lynx::lepus::Value(std::move(update_info)));
 }
 
 // ----- Pipeline -------------------------------------------------------------
@@ -641,6 +785,7 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async_with_params
       });
   return 0;
 }
+
 
 // ----- subsecond ASLR anchor ------------------------------------------------
 

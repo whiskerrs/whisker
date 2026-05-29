@@ -57,45 +57,77 @@ use std::path::{Path, PathBuf};
 /// Schema: `<lynx-upstream-version>-whisker.<patch-iteration>` so a
 /// reader can tell at a glance which upstream Lynx is wrapped, and
 /// our own patch iterations bump independently.
-pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.8";
+pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.20";
 
 /// Version segment that appears in cache paths + tarball filenames.
 /// Derived from [`LYNX_FORK_TAG`] minus the leading `v`.
-pub const LYNX_VERSION: &str = "3.7.0-whisker.8";
+pub const LYNX_VERSION: &str = "3.7.0-whisker.20";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
 /// produced by the fork's CI. Pinned to the
-/// [v3.7.0-whisker.8 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.8).
+/// [v3.7.0-whisker.20 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.20).
 ///
-/// Bump from `.7`: rebuilds Android `liblynx.so` against
-/// whiskerrs/lynx#8, which adds `lynx_ui_invoke_method_async_with_params`
-/// to `core/native_renderer_capi/` — the unified element-method capi
-/// (params object passed through directly, plus an async result
-/// callback). It backs `ElementRef::invoke` / `invoke_typed`, so every
-/// result-returning method with named params (`getScrollInfo`,
-/// `getTextBoundingRect`, `getSelectedText`, `boundingClientRect`, …)
-/// works on Android — and no future method needs another capi / release.
+/// Bump from `.8`: rebuilds Android `liblynx.so` against:
+///   - whiskerrs/lynx#9 (`ListNativeItemProvider` +
+///     `lynx_list_set_native_item_provider`, the native non-lepus
+///     callback contract that lets a JS-runtime-less embedder drive
+///     `<list>`'s virtualisation),
+///   - #10 (`lynx_element_set_update_list_info`, the matching
+///     count-broadcast capi the Map-attr `update-list-info` requires),
+///   - #11 (engine-init: `manager->SetConfig(config)` + native-list
+///     shell-flag + `lynx_create_fiber_element_by_name("list")`
+///     routes to the typed `ListElement` instead of a generic
+///     `FiberElement`),
+///   - #15 (`ListElement::ComponentAtIndex`'s native_provider branch
+///     fires `OnPatchFinish` + `OnComponentFinished` per item,
+///     which is what propagates through `ListMediator` →
+///     `DefaultListAdapter::OnFinishBindItemHolder` →
+///     `AttachChild` → `InsertListItemPaintingNode` → the JNI
+///     call that finally attaches item Views to the Android
+///     `UIListContainer`. Items now render end-to-end.).
+///
+/// `.9` – `.14` skipped because that branch went through several
+/// `OnPatchFinish` / `updated_list_elements_` revert iterations
+/// before #15 landed the correct shape. `.16` – `.19` skipped
+/// because the iOS publish path needed several iterations of
+/// build-script fixes (#16 `override`-on-non-virtual gating, #17
+/// modp_b64 drift patches, #18 fork-only call-site gating). `.20`
+/// is the first release where both platforms build cleanly.
 pub const LYNX_ANDROID_SHA256: &str =
-    "9db9de9ef53706aac8d1a39bed7374176aa36692c37e6fc7efb2fd2759be83e3";
+    "743296518f35b65df5fa8fa70913345b1c3d0e948a632814074c3469985652ba";
 
 /// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`.
 ///
-/// **Republished from `.5`, byte-identical (unchanged across `.6` /
-/// `.7` / `.8`).** Every `native_renderer_capi` change — `.6`'s
-/// `lynx_element_set_event_handler`, `.7`'s
-/// `lynx_ui_invoke_method_with_params`, `.8`'s
-/// `lynx_ui_invoke_method_async_with_params` — lives in
-/// `core/native_renderer_capi/`, which only the Android build compiles
-/// (iOS compiles `lynx_native_renderer.cc` from the Whisker repo, and
-/// the xcframework doesn't carry it). So the iOS Lynx engine is
-/// identical from `.5` onward. The fork's `.6`–`.8` iOS CI builds all
-/// hit the same unrelated environmental break (a `macos-14` runner
-/// toolchain drift surfacing a `modp_b64` symbol error in Lynx core), so
-/// rather than skew versions across platforms we republish the
-/// known-good `.5` xcframework under each filename — same content, same
-/// hash. iOS + Android therefore stay on a single Lynx version.
+/// **Republished as a real iOS build, no longer byte-identical to `.5`.**
+/// Through `.5` – `.19` the iOS tarball was a verbatim re-upload of
+/// `.5` because every fork change lived in `core/native_renderer_capi/`,
+/// which iOS doesn't compile from CocoaPods, and the rare changes that
+/// touched `core/renderer/dom/fiber/` (#9 `ListNativeItemProvider`)
+/// hit clang errors when the fork's `list_element.{h,cc}` was overlayed
+/// onto upstream 3.7.0's `element.h` (override against missing virtuals,
+/// undeclared identifiers for fork-only style-pipeline helpers, etc.).
+///
+/// `.20` is the first iOS tarball with the fork's `list_element.cc`
+/// (and the matching `OnComponentFinished` chain from fork PR #15)
+/// actually compiled in. Three CI-script fixes made this possible:
+///
+///   - whiskerrs/lynx#16: gate the four `*CommittedStyleFromAttributes`
+///     overrides on `LYNX_WHISKER_UPSTREAM_307_COMPAT` and define the
+///     macro for the xcodebuild + bridge cc::Build compiles.
+///   - #17: extend the existing `modp_b64_decode` drift patch to cover
+///     `modp_b64_encode_len` / `modp_b64_decode_len` / `modp_b64_encode`
+///     in `prop_bundle_darwin.mm`, `jsc_helper.cc`, `jsc_runtime.cc`.
+///   - #18: gate two more fork-only call sites
+///     (`ShouldFallbackToSerialForNewStylingPipeline`,
+///     `RemoveStyleFromAttributes`) inside `list_element.cc`.
+///
+/// The vendored copy of `lynx_native_renderer.cc` in
+/// `crates/whisker-driver-sys/bridge/src/` was re-synced from the
+/// fork's `.20` source so `lynx_list_set_native_item_provider` on iOS
+/// is the real impl (calling `SetNativeItemProvider` on the
+/// `ListElement`), not the no-op stub it used to be.
 pub const LYNX_IOS_SHA256: &str =
-    "21fafd09a7c2018bb9b90b65efaef4c35aa88398c363e634058c9aeae7db3fa4";
+    "90e976feadb716ceb745f3deefb25db9a1c4075970a000a87737a88b2e6265ef";
 
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
 /// placeholders are filled by [`download_url`].

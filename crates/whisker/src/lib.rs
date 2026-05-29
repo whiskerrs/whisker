@@ -132,7 +132,8 @@ pub mod __tags {
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
         append_child, apply_attr, apply_attr_owned, apply_styles, create_element,
-        set_event_listener, BindType, Element,
+        create_element_by_name, install_list_native_item_provider, set_event_listener,
+        set_update_list_info, BindType, Element,
     };
 
     // ---- The common builder surface -------------------------------------
@@ -1187,6 +1188,170 @@ pub mod __tags {
             self
         }
     }
+
+    // ---- list / list-item (Lynx's virtualized list) ---------------------
+    //
+    // The standard Lynx `list` creates its items through lepus
+    // `componentAtIndex` callbacks the JS framework registers — Whisker
+    // has no such runtime. So the `list` builder opts into Lynx's
+    // *decoupled native* list: it virtualizes / recycles the actual
+    // `<list-item>` children present in the element tree (via the native
+    // `ListChildrenHelper`), with no framework callbacks. That fits
+    // Whisker's direct-tree model — author code writes
+    // `list { list_item { … } … }` like any other container.
+    //
+    // Two flags gate that mode (see `list_element.cc`):
+    //   • `custom-list-name="list-container"` → `ResolveEnableNativeList`
+    //     Case 2 sets `disable_list_platform_implementation_ = true`. This
+    //     is a *string* compare, so it survives `apply_attr`'s
+    //     stringification.
+    //   • the decoupled mediator additionally needs `enable_decoupled_list_`,
+    //     which `ResolveEnableDecoupledList` only reads from the attr when
+    //     the value `IsBool()` — a stringified attr never is, so it falls
+    //     back to `LynxEnv::EnableDecoupledList()`, which defaults to
+    //     `true`. So `custom-list-name` alone activates the decoupled path.
+
+    #[allow(non_camel_case_types)]
+    pub struct list {
+        handle: Element,
+        // Children captured by `child()`, paired with the Lynx
+        // `impl_id` (sign) we eagerly computed for each. The closure
+        // installed in `__h` returns the sign verbatim from this
+        // cache — see the `child()` comment for why we can't re-
+        // enter the renderer from inside the closure.
+        items: ::std::vec::Vec<(Element, i32)>,
+    }
+    #[allow(non_snake_case)]
+    pub fn __list_ctor() -> list {
+        let handle = create_element_by_name("list");
+        // Drive the list natively from its tree children rather than through
+        // (absent) JS `componentAtIndex` callbacks. `custom-list-name` is the
+        // string-compare flag that disables the platform list impl; the
+        // decoupled mediator then activates via the env default (true).
+        apply_attr::<_, ::std::string::String>(handle, "custom-list-name", "list-container");
+        list {
+            handle,
+            items: ::std::vec::Vec::new(),
+        }
+    }
+    impl ElementBuilder for list {
+        fn __element(&self) -> Element {
+            self.handle
+        }
+        // Attach the item eagerly + cache its Lynx `impl_id` (sign).
+        //
+        // The native item provider closure (installed in `__h`) is
+        // invoked from inside the Lynx layout C++ — which is itself
+        // running inside our `with_renderer` borrow on the renderer's
+        // `RefCell`. Any call from the closure that re-enters
+        // `with_renderer` (`append_child`, `element_sign`, …) would
+        // panic on the re-entrant `borrow_mut`; that panic is caught
+        // at the C trampoline and turned into a sentinel return,
+        // leaving the list permanently empty. So instead: attach now
+        // (one `with_renderer` from a safe scope) and capture the
+        // sign so the closure only needs to read from a cached Vec.
+        fn child(mut self, child: Element) -> Self {
+            apply_attr_owned::<_, ::std::string::String>(
+                child,
+                ::std::string::String::from("item-key"),
+                ::std::format!("w_{}", self.items.len()),
+            );
+            append_child(self.handle, child);
+            let sign = ::whisker_runtime::view::element_sign(child);
+            self.items.push((child, sign));
+            self
+        }
+        // Wire the `<list>` for Lynx's native-driven path:
+        //   1. install a `NativeItemProvider` so when Lynx's list
+        //      machinery calls `componentAtIndex(i)`, our closure
+        //      attaches the captured child to the list and returns
+        //      its `Element::id` (sign) — no lepus, no crash. Re-
+        //      entrant calls for the same index are deduped via
+        //      `attached`.
+        //   2. broadcast the item count via `update-list-info` so
+        //      Lynx knows how many slots to lay out.
+        fn __h(self) -> Element {
+            let handle = self.handle;
+            let count = self.items.len() as i32;
+            let items = self.items;
+            let provider = ::whisker_runtime::view::list_provider::NativeItemProvider {
+                component_at_index: ::std::boxed::Box::new(move |index, _op, _reuse| {
+                    // Read the pre-computed (handle, sign) cache —
+                    // every Lynx-facing side effect already ran in
+                    // `child()` so this closure stays
+                    // re-entrancy-safe (no `with_renderer` from
+                    // inside the layout C++).
+                    items
+                        .get(index as usize)
+                        .map(|&(_, sign)| sign)
+                        .unwrap_or(::whisker_runtime::view::list_provider::INVALID_ITEM_INDEX)
+                }),
+                // Static list: no recycling notification needed — items
+                // stay attached for the list's lifetime.
+                enqueue_component: ::std::option::Option::None,
+            };
+            install_list_native_item_provider(handle, provider);
+            set_update_list_info(handle, count);
+            handle
+        }
+    }
+    impl list {
+        /// `list-type` — `"single"` (default, one column), `"flow"`, or
+        /// `"waterfall"`.
+        pub fn list_type<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "list-type", v);
+            self
+        }
+
+        /// `column-count` — number of columns (default 1).
+        pub fn column_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr(self.handle, "column-count", v);
+            self
+        }
+
+        /// `vertical-orientation` — `true` (default) scrolls vertically,
+        /// `false` horizontally.
+        pub fn vertical_orientation<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr(self.handle, "vertical-orientation", v);
+            self
+        }
+    }
+
+    #[allow(non_camel_case_types)]
+    pub struct list_item {
+        handle: Element,
+    }
+    #[allow(non_snake_case)]
+    pub fn __list_item_ctor() -> list_item {
+        list_item {
+            handle: create_element_by_name("list-item"),
+        }
+    }
+    impl ElementBuilder for list_item {
+        fn __element(&self) -> Element {
+            self.handle
+        }
+    }
+    impl list_item {
+        /// `item-key` — stable identity for this item, used by the list
+        /// for recycling / diffing. Should be unique among siblings.
+        pub fn item_key<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<::std::string::String>>,
+        {
+            apply_attr(self.handle, "item-key", v);
+            self
+        }
+    }
 }
 
 // Worker-thread → main-thread marshaling. The typical use case is
@@ -1322,5 +1487,5 @@ pub mod prelude {
     // these blocked kwarg completion was a separate bug — the
     // prefix-match heuristic that's since been removed.)
     #[doc(hidden)]
-    pub use crate::__tags::{image, page, raw_text, scroll_view, text, view};
+    pub use crate::__tags::{image, list, list_item, page, raw_text, scroll_view, text, view};
 }

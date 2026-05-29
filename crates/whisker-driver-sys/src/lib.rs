@@ -4,7 +4,7 @@
 //! `whisker_app_main` / `whisker_tick` exports) live in `whisker-driver`. Users
 //! never depend on this crate directly.
 
-use std::ffi::{c_char, c_void};
+use std::ffi::{c_char, c_int, c_void};
 
 #[repr(C)]
 pub struct WhiskerEngine {
@@ -29,6 +29,44 @@ pub enum WhiskerElementTag {
 
 pub type WhiskerTasmCallback = extern "C" fn(user_data: *mut c_void);
 pub type WhiskerEventCallback = extern "C" fn(user_data: *mut c_void);
+
+// ----- List native item provider --------------------------------------------
+//
+// C-ABI callback set for `whisker_bridge_list_set_native_item_provider`.
+// Mirrors `lynx_list_*` typedefs in `whiskerrs/lynx#9` — the bridge wires
+// these through to `ListNativeItemProvider` on the C++ ListElement.
+//
+// Whisker users do NOT construct these directly. A higher-level safe
+// wrapper in `whisker-driver::lynx::list_provider` (boxed `FnMut` +
+// lifetime management) is the supported surface.
+
+/// Called by Lynx's list machinery when it needs the element for `index`.
+/// Returns the FiberElement's `impl_id` (sign) or
+/// [`LYNX_LIST_INVALID_INDEX`] on failure. `reuse_notification` is 1 if
+/// the embedder may reuse an existing element for this index.
+pub type LynxListComponentAtIndexFn = extern "C" fn(
+    index: u32,
+    operation_id: i64,
+    reuse_notification: c_int,
+    user_data: *mut c_void,
+) -> i32;
+
+/// Called when the element at `sign` leaves the viewport. The provider
+/// may pool or release it.
+pub type LynxListEnqueueComponentFn = extern "C" fn(sign: i32, user_data: *mut c_void);
+
+/// Free-callback for the `user_data` cookie. Invoked by the bridge when
+/// the list element is destroyed (or the provider is replaced) so a Rust
+/// `Box<dyn FnMut>` packed into `user_data` can be dropped.
+pub type LynxUserDataFreeFn = extern "C" fn(user_data: *mut c_void);
+
+/// Mirror of `LYNX_LIST_INVALID_INDEX` (the C macro in
+/// `lynx_native_renderer_capi.h`) — returned by
+/// [`LynxListComponentAtIndexFn`] to signal "no element could be
+/// produced for this index". Matches Lynx's
+/// `lynx::tasm::list::kInvalidIndex`; 0 is a real `impl_id` and
+/// would be silently consumed.
+pub const LYNX_LIST_INVALID_INDEX: i32 = -1;
 /// Value-payload event callback. `payload` is a `WhiskerValueRaw`
 /// tree (never NULL — the bridge normalises a missing body to a
 /// `WHISKER_VALUE_NULL` value), owned by the bridge and only valid
@@ -197,6 +235,20 @@ extern "C" {
         value: *const c_char,
     );
     pub fn whisker_bridge_set_inline_styles(element: *mut WhiskerElement, css: *const c_char);
+
+    pub fn whisker_bridge_list_set_item_count(element: *mut WhiskerElement, count: i32);
+
+    pub fn whisker_bridge_list_set_native_item_provider(
+        element: *mut WhiskerElement,
+        component_at_index: LynxListComponentAtIndexFn,
+        enqueue_component: LynxListEnqueueComponentFn,
+        user_data: *mut c_void,
+        user_data_free: LynxUserDataFreeFn,
+    );
+
+    // Diagnostic only (Android bridge logs the int as ERROR-level under
+    // the given tag). Stub on iOS — symbol present but no-op.
+    pub fn whisker_bridge_debug_log_i32(tag: *const c_char, value: i32);
 
     pub fn whisker_bridge_append_child(parent: *mut WhiskerElement, child: *mut WhiskerElement);
     pub fn whisker_bridge_remove_child(parent: *mut WhiskerElement, child: *mut WhiskerElement);

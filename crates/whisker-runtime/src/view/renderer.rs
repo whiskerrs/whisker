@@ -91,6 +91,40 @@ pub trait DynRenderer {
     fn set_attribute(&mut self, handle: Element, key: &str, value: &str);
     fn set_inline_styles(&mut self, handle: Element, css: &str);
 
+    /// Underlying Lynx sign (`impl_id`) for `handle`, or 0 if the
+    /// renderer doesn't model signs (test renderers) or the handle
+    /// is unknown. The list provider closure needs this to tell the
+    /// C++ list which FiberElement to bind to an `index`. Whisker's
+    /// own [`Element`] is a Vec index inside the renderer and is
+    /// **not** the same number as Lynx's `impl_id`.
+    fn element_sign(&self, _handle: Element) -> i32 {
+        0
+    }
+
+    /// Hand a `<list>` element its item count so the bridge can build
+    /// the `update-list-info` map (positional item-keys `w_<i>`) that
+    /// Lynx's decoupled native list reads its items from. The `list`
+    /// builder calls this once at `__h()` finalize. Default no-op for
+    /// test renderers that don't model list virtualisation.
+    fn set_update_list_info(&mut self, _handle: Element, _count: i32) {}
+
+    /// Install a native item provider on a `<list>` element. The
+    /// `provider`'s callbacks are invoked by Lynx's list machinery to
+    /// fetch / recycle item elements on demand. Returns `true` if the
+    /// install reached the bridge — `false` is reported when the
+    /// renderer has no live native handle for `_handle` or doesn't
+    /// model list virtualisation (test renderers default here).
+    /// The default drops `provider` so test code doesn't leak boxed
+    /// closures.
+    fn install_list_native_item_provider(
+        &mut self,
+        _handle: Element,
+        provider: super::list_provider::NativeItemProvider,
+    ) -> bool {
+        drop(provider);
+        false
+    }
+
     fn append_child(&mut self, parent: Element, child: Element);
     fn remove_child(&mut self, parent: Element, child: Element);
 
@@ -284,6 +318,26 @@ pub fn set_attribute(handle: Element, key: &str, value: &str) {
 
 pub fn set_inline_styles(handle: Element, css: &str) {
     with_renderer(|r| r.set_inline_styles(handle, css), ())
+}
+
+/// See [`DynRenderer::element_sign`]. Returns 0 when no renderer is
+/// installed (e.g. test setups using the mock renderer).
+pub fn element_sign(handle: Element) -> i32 {
+    with_renderer(|r| r.element_sign(handle), 0)
+}
+
+pub fn set_update_list_info(handle: Element, count: i32) {
+    with_renderer(|r| r.set_update_list_info(handle, count), ())
+}
+
+pub fn install_list_native_item_provider(
+    handle: Element,
+    provider: super::list_provider::NativeItemProvider,
+) -> bool {
+    with_renderer(
+        |r| r.install_list_native_item_provider(handle, provider),
+        false,
+    )
 }
 
 pub fn append_child(parent: Element, child: Element) {

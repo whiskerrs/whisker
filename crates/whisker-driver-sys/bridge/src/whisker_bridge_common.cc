@@ -222,6 +222,47 @@ extern "C" void whisker_bridge_set_attribute(WhiskerElement* element,
     lynx_element_set_attribute(element->handle, key, value);
 }
 
+// Feed a `<list>` element its item-count so Lynx's decoupled native
+// list can build its `update-list-info` map of positional item-keys.
+// Called by the `list` builder's `__h()` finalize after all children
+// have been appended; the builder also writes the matching `item-key`
+// attr (`w_<i>`) onto each child via `child()`.
+extern "C" void whisker_bridge_list_set_item_count(WhiskerElement* element,
+                                                  int32_t count) {
+    if (element == nullptr || element->handle == nullptr) return;
+    lynx_element_set_update_list_info(element->handle, count);
+}
+
+// Install a native item provider on a `<list>` element so Whisker can
+// drive Lynx's list virtualisation directly.
+//
+// On Android this resolves to liblynx.so's
+// `lynx_list_set_native_item_provider` (added in whiskerrs/lynx#9,
+// shipped in v3.7.0-whisker.11). On iOS the same name is satisfied
+// by a no-op stub compiled into the bridge from
+// `lynx_native_renderer.cc` — iOS is still pinned to the .5 byte-
+// identical xcframework which lacks the native-provider hook in
+// `ListElement::ComponentAtIndex`, so installs are accepted (the
+// boxed closures get freed cleanly) but do nothing. See the long
+// note above `LYNX_IOS_SHA256` for the iOS build-infra plan.
+extern "C" void whisker_bridge_list_set_native_item_provider(
+    WhiskerElement* element,
+    int32_t (*component_at_index)(uint32_t index, int64_t operation_id,
+                                  int reuse_notification, void* user_data),
+    void (*enqueue_component)(int32_t sign, void* user_data),
+    void* user_data,
+    void (*user_data_free)(void* user_data)) {
+    if (element == nullptr || element->handle == nullptr) {
+        if (user_data != nullptr && user_data_free != nullptr) {
+            user_data_free(user_data);
+        }
+        return;
+    }
+    lynx_list_set_native_item_provider(element->handle, component_at_index,
+                                       enqueue_component, user_data,
+                                       user_data_free);
+}
+
 extern "C" void whisker_bridge_set_inline_styles(WhiskerElement* element,
                                                 const char* css) {
     if (element == nullptr || element->handle == nullptr) return;
