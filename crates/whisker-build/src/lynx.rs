@@ -57,15 +57,15 @@ use std::path::{Path, PathBuf};
 /// Schema: `<lynx-upstream-version>-whisker.<patch-iteration>` so a
 /// reader can tell at a glance which upstream Lynx is wrapped, and
 /// our own patch iterations bump independently.
-pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.20";
+pub const LYNX_FORK_TAG: &str = "v3.7.0-whisker.21";
 
 /// Version segment that appears in cache paths + tarball filenames.
 /// Derived from [`LYNX_FORK_TAG`] minus the leading `v`.
-pub const LYNX_VERSION: &str = "3.7.0-whisker.20";
+pub const LYNX_VERSION: &str = "3.7.0-whisker.21";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
 /// produced by the fork's CI. Pinned to the
-/// [v3.7.0-whisker.20 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.20).
+/// [v3.7.0-whisker.21 release](https://github.com/whiskerrs/lynx/releases/tag/v3.7.0-whisker.21).
 ///
 /// Bump from `.8`: rebuilds Android `liblynx.so` against:
 ///   - whiskerrs/lynx#9 (`ListNativeItemProvider` +
@@ -92,42 +92,47 @@ pub const LYNX_VERSION: &str = "3.7.0-whisker.20";
 /// because the iOS publish path needed several iterations of
 /// build-script fixes (#16 `override`-on-non-virtual gating, #17
 /// modp_b64 drift patches, #18 fork-only call-site gating). `.20`
-/// is the first release where both platforms build cleanly.
+/// is the first release where both platforms built cleanly with
+/// the overlay-onto-upstream-CocoaPods approach.
+///
+/// `.21` (whiskerrs/lynx#19) is the first release built from fork
+/// source directly on the iOS side too — Android binary is
+/// substantively unchanged in `.21`, the bump exists so the iOS
+/// xcframework can ship without overlay warts. See [`LYNX_IOS_SHA256`].
 pub const LYNX_ANDROID_SHA256: &str =
-    "743296518f35b65df5fa8fa70913345b1c3d0e948a632814074c3469985652ba";
+    "122f7589799cb040980097e3aac7511e3b9af70ce67e4b1d1c433a268e9621bb";
 
 /// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`.
 ///
-/// **Republished as a real iOS build, no longer byte-identical to `.5`.**
-/// Through `.5` – `.19` the iOS tarball was a verbatim re-upload of
-/// `.5` because every fork change lived in `core/native_renderer_capi/`,
-/// which iOS doesn't compile from CocoaPods, and the rare changes that
-/// touched `core/renderer/dom/fiber/` (#9 `ListNativeItemProvider`)
-/// hit clang errors when the fork's `list_element.{h,cc}` was overlayed
-/// onto upstream 3.7.0's `element.h` (override against missing virtuals,
-/// undeclared identifiers for fork-only style-pipeline helpers, etc.).
+/// **`.21` builds the iOS xcframework from fork source directly.** Through
+/// `.5` – `.20` the iOS tarball was produced by overlaying a few
+/// fork-modified files on top of upstream Lynx 3.7.0 CocoaPods source
+/// — which accumulated several maintenance warts: a
+/// `LYNX_WHISKER_UPSTREAM_307_COMPAT` macro gate inside
+/// `list_element.{h,cc}` to silence fork-only `override`s, perl
+/// substitutions for `modp_b64_*` symbol drift, an `HEADER_SEARCH_PATHS`
+/// `sed` rewrite, and the overlay step itself. Each new Lynx-tree
+/// change risked adding another wart.
 ///
-/// `.20` is the first iOS tarball with the fork's `list_element.cc`
-/// (and the matching `OnComponentFinished` chain from fork PR #15)
-/// actually compiled in. Three CI-script fixes made this possible:
+/// `.21` (whiskerrs/lynx#19) switches to three fork-controlled
+/// podspecs at the fork root (`Lynx.podspec.json`,
+/// `LynxBase.podspec.json`, `LynxServiceAPI.podspec.json`) that point
+/// all source globs at the fork tree itself via
+/// `source: {path: "."}` and a `Podfile` of
+/// `pod 'Lynx', :path => '$FORK_ROOT'`. All four warts above are gone;
+/// every fork change to `core/` ships into the xcframework
+/// automatically.
 ///
-///   - whiskerrs/lynx#16: gate the four `*CommittedStyleFromAttributes`
-///     overrides on `LYNX_WHISKER_UPSTREAM_307_COMPAT` and define the
-///     macro for the xcodebuild + bridge cc::Build compiles.
-///   - #17: extend the existing `modp_b64_decode` drift patch to cover
-///     `modp_b64_encode_len` / `modp_b64_decode_len` / `modp_b64_encode`
-///     in `prop_bundle_darwin.mm`, `jsc_helper.cc`, `jsc_runtime.cc`.
-///   - #18: gate two more fork-only call sites
-///     (`ShouldFallbackToSerialForNewStylingPipeline`,
-///     `RemoveStyleFromAttributes`) inside `list_element.cc`.
-///
-/// The vendored copy of `lynx_native_renderer.cc` in
-/// `crates/whisker-driver-sys/bridge/src/` was re-synced from the
-/// fork's `.20` source so `lynx_list_set_native_item_provider` on iOS
-/// is the real impl (calling `SetNativeItemProvider` on the
-/// `ListElement`), not the no-op stub it used to be.
+/// The Whisker-side knock-on (this PR): the vendored copy of
+/// `lynx_native_renderer.cc` at
+/// `crates/whisker-driver-sys/bridge/src/` is deleted — its symbols
+/// (`lynx_list_set_native_item_provider`, `lynx_element_*`, etc.) now
+/// live inside `Lynx.framework/Lynx` itself. The
+/// `LYNX_WHISKER_UPSTREAM_307_COMPAT=1` define on the bridge's
+/// `cc::Build` is also gone, since the fork's `list_element.h` is now
+/// the one being compiled at both ends.
 pub const LYNX_IOS_SHA256: &str =
-    "90e976feadb716ceb745f3deefb25db9a1c4075970a000a87737a88b2e6265ef";
+    "7782e61a934bb0cfa3ffb9f6be00c85345f5af070aa44b8573dc883d3138726f";
 
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
 /// placeholders are filled by [`download_url`].

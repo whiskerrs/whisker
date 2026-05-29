@@ -69,19 +69,16 @@ fn lynx_staged_headers() -> PathBuf {
 
 // --- Lynx C++ header path tree (iOS only) ----------------------------
 //
-// Phase 6-α: the bridge proper (whisker_bridge_common.cc + the
-// platform-specific .cc/.mm) only needs `lynx_native_renderer_capi.h`,
-// which is vendored under `bridge/include/`. On Android, the C API
-// symbols live inside liblynx.so (compiled by the Lynx fork CI from
-// `core/native_renderer_capi/lynx_native_renderer.cc`), so the
-// bridge needs zero Lynx C++ headers at all.
+// The bridge proper (whisker_bridge_common.cc + whisker_bridge_ios.mm)
+// only needs `lynx_native_renderer_capi.h`, which is vendored under
+// `bridge/include/`. On both platforms the `lynx_*` capi symbols live
+// inside Lynx itself (Android: liblynx.so; iOS:
+// Lynx.xcframework/Lynx — fork-built since `v3.7.0-whisker.21`, see
+// whiskerrs/lynx#19), so the bridge needs zero Lynx C++ headers.
 //
-// On iOS, upstream Lynx 3.7.0's CocoaPods spec doesn't include the
-// new `core/native_renderer_capi/` subtree — so we compile
-// `lynx_native_renderer.cc` ourselves into WhiskerDriver.framework.
-// THAT file pokes Lynx C++ internals (LynxShell, ElementManager,
-// FiberElement family), so the deep header tree is still required
-// for the iOS build.
+// However: `lynx_native_renderer_capi.h` itself includes
+// `lynx_value_api.h` and a few other transitively-needed Lynx headers,
+// so the staged tree is still set up as -I paths.
 fn add_lynx_includes_for_capi_impl(build: &mut cc::Build) {
     let staged = lynx_staged_headers();
     let primjs = staged.join("PrimJS/src");
@@ -233,14 +230,12 @@ fn compile_ios() -> Result<()> {
     // --- Bridge compile ---------------------------------------------
     //
     // The bridge proper (whisker_bridge_common.cc + whisker_bridge_ios.mm)
-    // only includes the vendored C API header. But the iOS Lynx
-    // distribution (CocoaPods upstream 3.7.0) doesn't carry the new
-    // `core/native_renderer_capi/` subtree the Whisker fork adds — so
-    // we compile its impl ourselves into WhiskerDriver.framework
-    // (`lynx_native_renderer.cc`). That file still touches Lynx C++
-    // internals (LynxShell, ElementManager, FiberElement family), so
-    // the deep header tree from `add_lynx_includes_for_capi_impl` is
-    // still required.
+    // only includes the vendored C API header. The `lynx_*` symbols
+    // it references live inside `Lynx.framework/Lynx` itself — the
+    // fork's `core/native_renderer_capi/lynx_native_renderer.cc` is
+    // compiled into the xcframework directly since v3.7.0-whisker.21
+    // (whiskerrs/lynx#19). The bridge no longer carries a vendored
+    // copy of it.
     let bridge_src = bridge_root().join("src");
     let mut build = cc::Build::new();
     // Silence cc::Build's auto `cargo:rustc-link-lib=static=…`; we
@@ -257,15 +252,6 @@ fn compile_ios() -> Result<()> {
         // need ARC. cc-rs doesn't enable it by default — SPM's
         // Obj-C/Obj-C++ defaults did, so we have to opt back in.
         .flag("-fobjc-arc")
-        // The vendored `lynx_native_renderer.cc` pulls in the fork's
-        // `list_element.h`, which marks several `*CommittedStyle*`
-        // methods `override`. iOS xframework builds against
-        // upstream Lynx 3.7.0 — whose `element.h` doesn't declare
-        // those virtuals — and gates them with
-        // `LYNX_WHISKER_UPSTREAM_307_COMPAT` (Lynx fork PR #16).
-        // Define the same macro here so the bridge's compile of
-        // the same header agrees with the xframework's.
-        .define("LYNX_WHISKER_UPSTREAM_307_COMPAT", "1")
         // Lynx's `jsvalue_helper.h` picks the trace-gc.h variant
         // by platform: `gc/trace-gc.h` for iOS, `quickjs/include/trace-gc.h`
         // elsewhere. The bridge's staged PrimJS headers ship the
@@ -274,7 +260,6 @@ fn compile_ios() -> Result<()> {
         .define("OS_IOS", "1")
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_ios.mm"))
-        .file(bridge_src.join("lynx_native_renderer.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);
 
