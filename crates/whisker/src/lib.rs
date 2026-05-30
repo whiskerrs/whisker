@@ -693,9 +693,24 @@ pub mod __tags {
 
         // ---- Children ---------------------------------------------------
 
-        /// Append a child handle.
-        fn child(self, child: Element) -> Self {
-            append_child(self.__element(), child);
+        /// Attach a child view. Accepts anything that implements
+        /// [`IntoView`](::whisker_runtime::view::IntoView): a bare
+        /// `Element` handle, a `For` / `Show` control flow (which
+        /// allocates its own phantom anchor under this parent and
+        /// installs its reactive effect), a `View::Fragment` of
+        /// children, or `View::Text` / primitives.
+        ///
+        /// The list builder overrides this to route
+        /// `View::ControlFlow` through
+        /// [`attach_to_list`](::whisker_runtime::view::ControlFlow::attach_to_list)
+        /// instead of the generic anchor path so the items end up in
+        /// the list's shared items Vec (the native-item provider
+        /// closure reads from there).
+        fn child<V>(self, child: V) -> Self
+        where
+            V: ::whisker_runtime::view::IntoView,
+        {
+            child.into_view().attach_to(self.__element());
             self
         }
 
@@ -1214,12 +1229,14 @@ pub mod __tags {
     #[allow(non_camel_case_types)]
     pub struct list {
         handle: Element,
-        // Children captured by `child()`, paired with the Lynx
-        // `impl_id` (sign) we eagerly computed for each. The closure
-        // installed in `__h` returns the sign verbatim from this
-        // cache — see the `child()` comment for why we can't re-
-        // enter the renderer from inside the closure.
-        items: ::std::vec::Vec<(Element, i32)>,
+        // Items live behind a shared `Rc<RefCell<…>>` so a `For` /
+        // `Show` control flow (handed via `.child(For(...))`) can
+        // mutate the same Vec the native-item provider closure
+        // installed in `__h` reads from. The provider closure
+        // captures `items.clone()` and reads by index; the control
+        // flow's effect captures another clone and rewrites the Vec
+        // + re-broadcasts the count on each reactive update.
+        items: ::whisker_runtime::view::ListItemsHandle,
     }
     #[allow(non_snake_case)]
     pub fn __list_ctor() -> list {
@@ -1231,68 +1248,116 @@ pub mod __tags {
         apply_attr::<_, ::std::string::String>(handle, "custom-list-name", "list-container");
         list {
             handle,
-            items: ::std::vec::Vec::new(),
+            items: ::std::rc::Rc::new(::std::cell::RefCell::new(::std::vec::Vec::new())),
         }
     }
     impl ElementBuilder for list {
         fn __element(&self) -> Element {
             self.handle
         }
-        // Attach the item eagerly + cache its Lynx `impl_id` (sign).
+        // `list`'s `.child(...)` dispatches on the View enum:
         //
-        // The native item provider closure (installed in `__h`) is
-        // invoked from inside the Lynx layout C++ — which is itself
-        // running inside our `with_renderer` borrow on the renderer's
-        // `RefCell`. Any call from the closure that re-enters
-        // `with_renderer` (`append_child`, `element_sign`, …) would
-        // panic on the re-entrant `borrow_mut`; that panic is caught
-        // at the C trampoline and turned into a sentinel return,
-        // leaving the list permanently empty. So instead: attach now
-        // (one `with_renderer` from a safe scope) and capture the
-        // sign so the closure only needs to read from a cached Vec.
-        fn child(mut self, child: Element) -> Self {
-            apply_attr_owned::<_, ::std::string::String>(
-                child,
-                ::std::string::String::from("item-key"),
-                ::std::format!("w_{}", self.items.len()),
-            );
-            append_child(self.handle, child);
-            let sign = ::whisker_runtime::view::element_sign(child);
-            self.items.push((child, sign));
-            self
+        //   • `View::Element` — a static `<list-item>` (or other
+        //     item-shaped element). Attach eagerly + cache its Lynx
+        //     `impl_id` (sign). The native-item provider closure
+        //     installed in `__h` is invoked from inside Lynx's
+        //     layout C++, which is itself already inside
+        //     `with_renderer`'s `RefCell` borrow — any call from the
+        //     closure that re-enters `with_renderer`
+        //     (`append_child`, `element_sign`, …) would panic on
+        //     the re-entrant borrow_mut. The panic is caught at the
+        //     C trampoline + turned into a sentinel return, leaving
+        //     the list permanently empty. So we attach + capture
+        //     the sign HERE (one `with_renderer` from a safe scope)
+        //     and the closure only reads from the cached Vec.
+        //
+        //   • `View::ControlFlow` — a `For` / `Show` reactive items
+        //     source. Route to `attach_to_list` which installs an
+        //     effect that mutates the same items Vec on every
+        //     reactive update and broadcasts `update-list-info`.
+        //
+        //   • `View::Fragment` / `View::Text` / `View::Empty` —
+        //     unusual inside a list; fall through to the generic
+        //     attach path. `View::Fragment` recurses, treating
+        //     each child as if it were its own `.child(...)` arg.
+        fn child<VV>(self, child: VV) -> Self
+        where
+            VV: ::whisker_runtime::view::IntoView,
+        {
+            self.child_view_impl(child.into_view())
         }
         // Wire the `<list>` for Lynx's native-driven path:
         //   1. install a `NativeItemProvider` so when Lynx's list
         //      machinery calls `componentAtIndex(i)`, our closure
-        //      attaches the captured child to the list and returns
-        //      its `Element::id` (sign) — no lepus, no crash. Re-
-        //      entrant calls for the same index are deduped via
-        //      `attached`.
+        //      reads the cached (handle, sign) from `items` and
+        //      returns the sign — no lepus, no crash.
         //   2. broadcast the item count via `update-list-info` so
         //      Lynx knows how many slots to lay out.
         fn __h(self) -> Element {
             let handle = self.handle;
-            let count = self.items.len() as i32;
-            let items = self.items;
+            let items_for_provider = self.items.clone();
+            let initial_count = self.items.borrow().len() as i32;
             let provider = ::whisker_runtime::view::list_provider::NativeItemProvider {
                 component_at_index: ::std::boxed::Box::new(move |index, _op, _reuse| {
-                    // Read the pre-computed (handle, sign) cache —
-                    // every Lynx-facing side effect already ran in
-                    // `child()` so this closure stays
-                    // re-entrancy-safe (no `with_renderer` from
-                    // inside the layout C++).
-                    items
+                    // Read the (handle, sign) cache — every
+                    // Lynx-facing side effect already ran in
+                    // `child_view_impl` / the control-flow effect
+                    // so this closure stays re-entrancy-safe (no
+                    // `with_renderer` from inside the layout C++).
+                    items_for_provider
+                        .borrow()
                         .get(index as usize)
                         .map(|&(_, sign)| sign)
                         .unwrap_or(::whisker_runtime::view::list_provider::INVALID_ITEM_INDEX)
                 }),
-                // Static list: no recycling notification needed — items
-                // stay attached for the list's lifetime.
+                // Recycling notifications not used yet — items
+                // stay attached for the list's lifetime, and the
+                // control-flow effect handles removal itself.
                 enqueue_component: ::std::option::Option::None,
             };
             install_list_native_item_provider(handle, provider);
-            set_update_list_info(handle, count);
+            set_update_list_info(handle, initial_count);
             handle
+        }
+    }
+    impl list {
+        /// Internal `View` dispatcher used by the
+        /// [`ElementBuilder::child`] override above. Lives here as
+        /// an associated method (rather than inline in the trait
+        /// override) so the View pattern-match is easy to read and
+        /// can be extended without touching the trait signature.
+        fn child_view_impl(self, view: ::whisker_runtime::view::View) -> Self {
+            use ::whisker_runtime::view::View;
+            match view {
+                View::Element(handle) => {
+                    let idx = self.items.borrow().len();
+                    apply_attr_owned::<_, ::std::string::String>(
+                        handle,
+                        ::std::string::String::from("item-key"),
+                        ::std::format!("w_{}", idx),
+                    );
+                    append_child(self.handle, handle);
+                    let sign = ::whisker_runtime::view::element_sign(handle);
+                    self.items.borrow_mut().push((handle, sign));
+                    self
+                }
+                View::ControlFlow(cf) => {
+                    // Hand the control flow a clone of the items
+                    // Rc. Its effect rewrites the Vec + broadcasts
+                    // the new count via `update-list-info` on
+                    // every reactive update.
+                    cf.attach_to_list(self.handle, self.items.clone());
+                    self
+                }
+                View::Fragment(children) => {
+                    let mut s = self;
+                    for c in children {
+                        s = s.child_view_impl(c);
+                    }
+                    s
+                }
+                View::Text(_) | View::Empty => self,
+            }
         }
     }
     impl list {
