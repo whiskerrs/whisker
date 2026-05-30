@@ -18,8 +18,8 @@
 //! In production the bridge driver installs the Lynx-backed renderer
 //! once at startup and keeps it for the life of the process.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use super::handle::Element;
@@ -213,6 +213,116 @@ thread_local! {
     /// shimming when we ship the wrapper-less remount path).
     static CHILDREN_OF: RefCell<HashMap<Element, Vec<Element>>> =
         RefCell::new(HashMap::new());
+
+    /// IDs the runtime has handed out as phantom (`Whisker`-side-only)
+    /// elements. A phantom occupies a slot in [`CHILDREN_OF`] but is
+    /// **not** present in the Lynx tree; the FFI dispatchers skip
+    /// every phantom they're handed. See [`create_phantom_element`]
+    /// for the use case (zero-cost positional markers for `For` /
+    /// `Show` control flow).
+    static PHANTOM_ELEMENTS: RefCell<HashSet<Element>> =
+        RefCell::new(HashSet::new());
+
+    /// Monotonic counter for phantom IDs. Starts above
+    /// [`PHANTOM_BASE`] (`1 << 31`) so phantom IDs are guaranteed
+    /// disjoint from the bridge renderer's allocations (which start
+    /// at 0 and increment one per real element creation — a session
+    /// would need 2 billion real elements to reach the phantom
+    /// range).
+    static NEXT_PHANTOM_ID: Cell<u32> = const { Cell::new(PHANTOM_BASE) };
+}
+
+/// Phantom IDs start at the high half of `u32`. The bridge renderer
+/// allocates real IDs from 0 upward (one per `create_element` call),
+/// so the two ranges can't collide in any realistic session.
+pub const PHANTOM_BASE: u32 = 1 << 31;
+
+/// Allocate a phantom [`Element`] — an opaque positional marker the
+/// runtime can attach to a parent in [`CHILDREN_OF`] without telling
+/// Lynx anything about it. All bridge-touching dispatchers
+/// ([`append_child`], [`remove_child`], [`insert_child_at`],
+/// [`release_element`], …) detect phantom IDs and skip the FFI step,
+/// so a phantom contributes zero Lynx elements + zero layout cost
+/// while still serving as a stable index reference for the mirror.
+///
+/// Intended for the wrapper-less `For` / `Show` control flow: each
+/// `attach_generic` call creates one phantom to mark "where my range
+/// of items lives" inside the parent's mirror child list, then
+/// inserts items via [`insert_child_at`] using
+/// [`child_index`]`(parent, anchor)` as the position.
+///
+/// **No effect for**:
+///
+///   - [`set_attribute`] / [`set_inline_styles`] — silently no-op on
+///     phantoms (there's no Lynx element to style).
+///   - [`set_event_listener`] — silently no-op (nothing fires).
+///   - [`element_sign`] — returns 0 (phantoms have no Lynx
+///     `impl_id`).
+///   - [`set_update_list_info`] /
+///     [`install_list_native_item_provider`] — silently no-op.
+///
+/// A phantom is owner-tracked exactly like a real element: it's
+/// added to the current reactive owner's `elements` list, and
+/// [`release_element`] (which the owner cascade calls on dispose)
+/// removes it from [`CHILDREN_OF`] + [`PHANTOM_ELEMENTS`].
+pub fn create_phantom_element() -> Element {
+    let id = NEXT_PHANTOM_ID.with(|c| {
+        let id = c.get();
+        c.set(id.wrapping_add(1));
+        id
+    });
+    let handle = Element::from_raw(id);
+    PHANTOM_ELEMENTS.with_borrow_mut(|s| {
+        s.insert(handle);
+    });
+    crate::reactive::with_runtime(|rt| {
+        if let Some(owner_id) = rt.current_owner() {
+            if let Some(owner) = rt.owners.get_mut(owner_id) {
+                owner.elements.push(handle);
+            }
+        }
+    });
+    handle
+}
+
+/// Whether `handle` was allocated by [`create_phantom_element`].
+/// Cheap thread-local set lookup — the dispatchers below call this
+/// on every tree mutation to decide whether to skip the FFI step.
+pub fn is_phantom(handle: Element) -> bool {
+    if handle.id() < PHANTOM_BASE {
+        return false;
+    }
+    PHANTOM_ELEMENTS.with_borrow(|s| s.contains(&handle))
+}
+
+/// Count the **real** (non-phantom) children of `parent` strictly
+/// before `mirror_idx`. Used by [`insert_child_at`] to translate a
+/// mirror-side index (which counts phantoms) into the Lynx-side
+/// index the bridge FFI expects (which does not). Cheap O(mirror_idx)
+/// scan; the rotation already inside `insert_child_at` is the
+/// dominant cost.
+fn real_index_before(parent: Element, mirror_idx: usize) -> usize {
+    CHILDREN_OF.with_borrow(|m| {
+        m.get(&parent)
+            .map(|children| {
+                children
+                    .iter()
+                    .take(mirror_idx)
+                    .filter(|h| !is_phantom_unchecked(**h))
+                    .count()
+            })
+            .unwrap_or(0)
+    })
+}
+
+/// Cheaper [`is_phantom`] for hot-loop callers that already borrowed
+/// [`CHILDREN_OF`] / similar — only checks the ID range, missing the
+/// PHANTOM_ELEMENTS set membership. Safe to use inside an existing
+/// borrow because it touches a different thread_local. The high
+/// bit unambiguously marks phantoms in the documented protocol so
+/// the set membership check is belt-and-braces in production.
+fn is_phantom_unchecked(handle: Element) -> bool {
+    handle.id() >= PHANTOM_BASE
 }
 
 /// Install `r` as the current renderer for this thread, returning
@@ -309,24 +419,48 @@ pub fn create_element(tag: ElementTag) -> Element {
 }
 
 pub fn release_element(handle: Element) {
+    if is_phantom(handle) {
+        // Phantom never reached Lynx; tear down the mirror-side
+        // state and skip the bridge call.
+        PHANTOM_ELEMENTS.with_borrow_mut(|s| {
+            s.remove(&handle);
+        });
+        CHILDREN_OF.with_borrow_mut(|map| {
+            map.remove(&handle);
+        });
+        return;
+    }
     with_renderer(|r| r.release_element(handle), ())
 }
 
 pub fn set_attribute(handle: Element, key: &str, value: &str) {
+    if is_phantom(handle) {
+        return; // phantoms carry no styling — silently no-op
+    }
     with_renderer(|r| r.set_attribute(handle, key, value), ())
 }
 
 pub fn set_inline_styles(handle: Element, css: &str) {
+    if is_phantom(handle) {
+        return;
+    }
     with_renderer(|r| r.set_inline_styles(handle, css), ())
 }
 
 /// See [`DynRenderer::element_sign`]. Returns 0 when no renderer is
-/// installed (e.g. test setups using the mock renderer).
+/// installed (e.g. test setups using the mock renderer) or `handle`
+/// is a phantom (phantoms have no Lynx `impl_id`).
 pub fn element_sign(handle: Element) -> i32 {
+    if is_phantom(handle) {
+        return 0;
+    }
     with_renderer(|r| r.element_sign(handle), 0)
 }
 
 pub fn set_update_list_info(handle: Element, count: i32) {
+    if is_phantom(handle) {
+        return;
+    }
     with_renderer(|r| r.set_update_list_info(handle, count), ())
 }
 
@@ -334,6 +468,10 @@ pub fn install_list_native_item_provider(
     handle: Element,
     provider: super::list_provider::NativeItemProvider,
 ) -> bool {
+    if is_phantom(handle) {
+        drop(provider);
+        return false;
+    }
     with_renderer(
         |r| r.install_list_native_item_provider(handle, provider),
         false,
@@ -341,7 +479,17 @@ pub fn install_list_native_item_provider(
 }
 
 pub fn append_child(parent: Element, child: Element) {
-    with_renderer(|r| r.append_child(parent, child), ());
+    // The mirror update always happens. The Lynx call is skipped when
+    // either side of the edge is a phantom — phantom children must
+    // never reach the bridge (no Lynx element to attach), and a
+    // phantom parent can't host real Lynx children (it has no Lynx
+    // tree position to host them in). The latter shouldn't happen in
+    // well-formed code — phantoms are leaf-only by convention — but
+    // we guard against it anyway so a misuse can't pollute Lynx
+    // state.
+    if !is_phantom(parent) && !is_phantom(child) {
+        with_renderer(|r| r.append_child(parent, child), ());
+    }
     CHILDREN_OF.with_borrow_mut(|map| {
         map.entry(parent).or_default().push(child);
     });
@@ -352,7 +500,9 @@ pub fn append_child(parent: Element, child: Element) {
 }
 
 pub fn remove_child(parent: Element, child: Element) {
-    with_renderer(|r| r.remove_child(parent, child), ());
+    if !is_phantom(parent) && !is_phantom(child) {
+        with_renderer(|r| r.remove_child(parent, child), ());
+    }
     CHILDREN_OF.with_borrow_mut(|map| {
         if let Some(children) = map.get_mut(&parent) {
             children.retain(|c| *c != child);
@@ -360,8 +510,8 @@ pub fn remove_child(parent: Element, child: Element) {
     });
 }
 
-/// Insert `child` into `parent`'s child list at position `index`.
-/// If `index >= current_len`, behaves like [`append_child`].
+/// Insert `child` into `parent`'s mirror child list at position
+/// `index`. If `index >= current_len`, behaves like [`append_child`].
 ///
 /// First-pass implementation: Lynx's C ABI doesn't yet expose
 /// `insert_before` / `insert_at`, so we simulate ordered insertion
@@ -370,6 +520,13 @@ pub fn remove_child(parent: Element, child: Element) {
 /// O(N) cost is fine for `<For>` reorders and #[component] remounts
 /// where N is the parent's current child count. Replace with a
 /// direct Lynx API once the bridge gains one.
+///
+/// **Phantom handling**: `index` is a **mirror-side** index — it
+/// counts phantom siblings. Phantoms in the rotation snapshot are
+/// re-appended through [`append_child`], which is itself
+/// phantom-aware and skips the bridge FFI for phantom edges, so
+/// they stay invisible to Lynx through the rotation. Inserting a
+/// phantom is a mirror-only edit by the same mechanism.
 pub fn insert_child_at(parent: Element, child: Element, index: usize) {
     let to_re_append: Vec<Element> = CHILDREN_OF.with_borrow(|map| {
         map.get(&parent)
@@ -389,6 +546,12 @@ pub fn insert_child_at(parent: Element, child: Element, index: usize) {
     for c in to_re_append {
         append_child(parent, c);
     }
+    // `real_index_before` is intentionally unused for now — the
+    // detach/reappend rotation handles phantom invariants
+    // implicitly. Kept around so a future direct-insert FFI can
+    // translate mirror_idx → lynx_idx without re-deriving the
+    // logic.
+    let _ = real_index_before;
 }
 
 /// Return the element handle that appears immediately before `child`
@@ -438,6 +601,12 @@ pub fn set_event_listener(
     bind_type: BindType,
     callback: Box<dyn Fn(WhiskerValue) + 'static>,
 ) {
+    if is_phantom(handle) {
+        // Phantoms aren't in Lynx's event chain. Drop the callback
+        // to free it; matches the no-renderer-installed fallback.
+        drop(callback);
+        return;
+    }
     with_renderer(
         |r| r.set_event_listener(handle, event_name, bind_type, callback),
         (),
@@ -478,6 +647,9 @@ pub fn flush() {
 /// installed or the renderer doesn't have a native pointer for
 /// `handle`.
 pub fn module_component_ptr(handle: Element) -> usize {
+    if is_phantom(handle) {
+        return 0;
+    }
     CURRENT_RENDERER.with_borrow(|slot| match slot.as_ref() {
         Some(r) => r.module_component_ptr(handle),
         None => 0,
