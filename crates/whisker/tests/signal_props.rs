@@ -234,12 +234,17 @@ fn show_flips_when_signal_holding_option_transitions() {
     // tests don't exercise.
     with_recorder_and_owner(|log| {
         let (state, set_state) = signal::<Option<&'static str>>(None);
+        // Wrap in `view` so the wrapper-less `Show` has a parent to
+        // anchor against (the phantom anchor never reaches Lynx, so
+        // the log only records the inner branch's ops).
         let _h = render! {
-            Show(
-                when: move || state.get().is_some(),
-                fallback: move || render! { ColoredTile(color: "loading") },
-            ) {
-                ColoredTile(color: "loaded")
+            view {
+                Show(
+                    when: move || state.get().is_some(),
+                    fallback: move || render! { ColoredTile(color: "loading") },
+                ) {
+                    ColoredTile(color: "loaded")
+                }
             }
         };
         // Initial: fallback mounted → "loading" attribute set.

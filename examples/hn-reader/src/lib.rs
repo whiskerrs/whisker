@@ -180,6 +180,10 @@ pub fn hn_reader() -> Element {
     // boilerplate collapses into this one call.
     let stories = resource(fetch_stories);
 
+    // Native `<list>` virtualises off-screen items + scroll for us.
+    // `flex-grow: 1` lets it expand to fill the page below the
+    // header; `flex-direction: column` puts items in a vertical
+    // stack (Lynx defaults to row).
     let list_style: &'static str =
         "flex-grow: 1; flex-shrink: 1; width: 100%; display: flex; flex-direction: column;";
 
@@ -207,7 +211,16 @@ pub fn hn_reader() -> Element {
                     render! { status_banner(message: msg) }
                 },
             ) {
-                scroll_view(scroll_orientation: "vertical", style: list_style) {
+                // Native `<list>` virtualisation. The `For` returns a
+                // `View::ControlFlow`; the list builder's
+                // `.child(impl IntoView)` detects that and routes via
+                // `attach_to_list`, which writes each item's
+                // (handle, sign) directly into the list's shared
+                // items Vec + broadcasts the count to Lynx via
+                // `update-list-info`. No wrapper element, no
+                // anchor — Whisker's phantom anchor mechanism keeps
+                // the positional bookkeeping mirror-side only.
+                list(style: list_style) {
                     For(
                         // `stories` is a Copy Resource handle, so the
                         // closure can re-read on each effect run.
@@ -216,7 +229,14 @@ pub fn hn_reader() -> Element {
                         // call and reuses item owners.
                         each: move || stories.get().unwrap_or_default(),
                         key: |s: &Story| s.object_id.clone(),
-                        children: |s: Story| render! { story_row(story: s) },
+                        // Each item must be a `<list-item>` (or
+                        // similar) for Lynx's list machinery to
+                        // accept it as a slot.
+                        children: |s: Story| render! {
+                            list_item {
+                                story_row(story: s)
+                            }
+                        },
                     )
                 }
             }
