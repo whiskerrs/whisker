@@ -163,19 +163,16 @@ fn with_default_prop(#[prop(default = 5)] count: i32) -> Element {
 #[component]
 fn with_children(label: String, children: Children) -> Element {
     push_capture(format!("with_children:label={label}"));
-    // Materialise the children imperatively. We can't write the
-    // ergonomic `view { {children()} }` here because `render!`'s
-    // `{expr}` interpolation wraps the expression in a `Fn + 'static`
-    // effect closure that moves `children` (`Rc<dyn Fn() -> View>`,
-    // not `Copy`) out of `with_children`'s FnMut outer closure. Real
-    // apps that need static-children mounting use the same shape;
-    // dynamic-children patterns go through a signal + reactive
-    // wrapper. (Tracked: tightening this ergonomics gap is a
-    // follow-up to issue #18.)
-    let h = whisker::runtime::view::create_element(ElementTag::View);
-    let view = children();
-    view.attach_to(h);
-    h
+    // The `children()` slot is the canonical way to mount a
+    // `children: Children` prop inside `render!`. It lowers to
+    // `view::mount_children(&children)` — borrows the Rc (no move,
+    // so the surrounding FnMut can re-run) and attaches the
+    // children's view to a phantom element at this position.
+    render! {
+        view() {
+            children()
+        }
+    }
 }
 
 #[component]

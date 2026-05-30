@@ -15,6 +15,11 @@
 //!   `::whisker::__tags::__<tag>_ctor().style(…).…__h()`.
 //! - `Show` / `For` → lowered to the matching `whisker::show` /
 //!   `whisker::for_each` helper.
+//! - `children()` (lowercase ident + empty parens, no block) → lowered
+//!   to `view::mount_children(&children)`. Mounts the surrounding
+//!   `#[component]`'s `children: Children` prop at this position.
+//!   Anywhere a regular node would go; can appear multiple times for
+//!   multi-projection. See `mount_children` in `whisker-runtime`.
 //! - Anything else → user `#[component]` invocation; lowered to
 //!   `name(<Name>Props::builder().k(v)…build())`.
 //!
@@ -103,6 +108,16 @@ impl Parse for Root {
 enum Node {
     Element(ElementNode),
     UserComponent(UserComponentNode),
+    /// `children()` — the lone special-cased ident in the children
+    /// grammar. Lowers to
+    /// `::whisker::runtime::view::mount_children(&children)` so the
+    /// surrounding `#[component]`'s `children: Children` prop gets
+    /// realised at this position. See `mount_children` in
+    /// `crates/whisker-runtime/src/view/into_view.rs` for the
+    /// phantom-mount mechanics.
+    ChildrenSlot {
+        span: proc_macro2::Span,
+    },
 }
 
 struct ElementNode {
@@ -162,6 +177,39 @@ impl Parse for Node {
         }
 
         let tag: Ident = input.parse()?;
+
+        // Special-case the `children()` slot before the regular
+        // kwarg path runs. Shape requirements:
+        //   - ident `children`
+        //   - immediately followed by an EMPTY paren group `()`
+        //   - no `{ … }` block after it
+        // Anything else (`children(arg)`, `children { … }`, bare
+        // `children`) falls through to the standard tag path, so a
+        // user `#[component] fn children(…)` would still resolve
+        // correctly via the snake_case → PascalCase route. The
+        // empty-paren requirement keeps RA's "you typed `children` —
+        // suggest completions" behaviour usable; the `()` is the
+        // explicit signal "this is the slot, not an arbitrary ident".
+        if tag == "children" && input.peek(token::Paren) {
+            // Speculative parse of the paren body — we only commit
+            // to the slot interpretation if the body is empty AND
+            // no `{}` block follows.
+            let fork = input.fork();
+            let body;
+            parenthesized!(body in fork);
+            if body.is_empty() && !fork.peek(token::Brace) {
+                // Consume the same tokens off the real input cursor
+                // now that we've decided.
+                let consume;
+                parenthesized!(consume in input);
+                debug_assert!(consume.is_empty());
+                return Ok(Node::ChildrenSlot { span: tag.span() });
+            }
+            // Not a slot — fall through to the regular tag path.
+            // The paren tokens are still on `input` for the
+            // `parenthesized!` call below to consume.
+        }
+
         let mut kwargs = Vec::new();
         if input.peek(token::Paren) {
             let body;
@@ -329,6 +377,17 @@ impl Node {
         match self {
             Node::Element(el) => el.to_tokens(),
             Node::UserComponent(u) => u.to_tokens(),
+            // `children()` resolves the surrounding `#[component]`'s
+            // `children: Children` prop by name. The body of a
+            // `#[component]` fn always destructures `children` into
+            // scope when the prop is declared, so this is a plain
+            // local-ident reference — no closure capture, no `move`,
+            // and (crucially) no `Rc::clone` either: `mount_children`
+            // takes `&Children` so the outer `FnMut` body can re-run
+            // (e.g. hot-reload remount) without `cannot move out`.
+            Node::ChildrenSlot { span } => quote_spanned! {*span=>
+                ::whisker::runtime::view::mount_children(&children)
+            },
         }
     }
 
@@ -1020,6 +1079,118 @@ mod tests {
         assert!(
             !output.contains("let __h"),
             "children-bearing emission should stay inline-chain; \
+             output was: {output}"
+        );
+    }
+
+    // ---- `children()` slot ---------------------------------------------
+
+    #[test]
+    fn children_slot_lowers_to_mount_children() {
+        // `children()` inside a `render!` body should resolve to
+        // `view::mount_children(&children)`, where `children` is the
+        // surrounding `#[component]`'s `children: Children` prop in
+        // local scope.
+        let input: TokenStream2 = quote::quote! {
+            view(style: "x") {
+                children()
+            }
+        };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains("mount_children"),
+            "children() must lower to mount_children(&children); \
+             output was: {output}"
+        );
+        assert!(
+            output.contains("& children"),
+            "children() must borrow (not move) the `children` ident; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn children_slot_can_appear_multiple_times() {
+        // Multi-projection: `children()` appearing N times produces
+        // N independent `mount_children(&children)` calls. The Rc
+        // is borrowed, never moved, so all N calls succeed.
+        let input: TokenStream2 = quote::quote! {
+            view(style: "x") {
+                children()
+                view(class: "sep")
+                children()
+            }
+        };
+        let output = super::expand_test(input).to_string();
+        let mounts = output.matches("mount_children").count();
+        assert_eq!(
+            mounts, 2,
+            "expected 2 mount_children calls, got {mounts}; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn children_slot_sits_inside_child_method_call() {
+        // The slot lowers to a `.child(mount_children(&children))`
+        // call on the parent builder — i.e. it goes through the
+        // exact same shape as any other child node, so the parent's
+        // builder chain stays a single expression.
+        let input: TokenStream2 = quote::quote! {
+            view(style: "x") {
+                children()
+            }
+        };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains(". child") && output.contains("mount_children"),
+            "children() must be wrapped in `.child(mount_children(&children))`; \
+             output was: {output}"
+        );
+        assert!(
+            !output.contains("let __h"),
+            "children-slot-bearing emission should stay inline-chain; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn children_with_args_is_not_a_slot() {
+        // `children(arg: x)` is NOT the slot — falls through to the
+        // regular user-component path so a user fn named `children`
+        // with props still resolves correctly. (Esoteric, but the
+        // grammar must not steal the identifier.)
+        let input: TokenStream2 = quote::quote! {
+            children(title: "x")
+        };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            output.contains("ChildrenProps"),
+            "children(arg: x) should route through the user-component \
+             path → ChildrenProps::builder(); output was: {output}"
+        );
+        assert!(
+            !output.contains("mount_children"),
+            "children(arg: …) must NOT lower to mount_children; \
+             output was: {output}"
+        );
+    }
+
+    #[test]
+    fn children_with_block_is_not_a_slot() {
+        // `children() { … }` is also NOT the slot — that's a tag
+        // invocation with empty kwargs and a children block. The
+        // user is using a component literally named `children`; let
+        // the regular path handle it.
+        let input: TokenStream2 = quote::quote! {
+            children() {
+                text(value: "y")
+            }
+        };
+        let output = super::expand_test(input).to_string();
+        assert!(
+            !output.contains("mount_children"),
+            "children() with a `{{ … }}` block must not be a slot; \
              output was: {output}"
         );
     }

@@ -1646,8 +1646,13 @@ pub mod __main_runtime {
         // that slot, so every lookup misses with a stack-shaped key.
         // `move` forces by-value capture so the slot holds the actual
         // `f` fn pointer, which is the runtime address the JumpTable's
-        // keys match against.
-        ::subsecond::call(move || f())
+        // keys match against. Clippy's `redundant_closure` lint
+        // suggests replacing `move || f()` with `f` — load-bearing
+        // wrong, see comment above.
+        #[allow(clippy::redundant_closure)]
+        {
+            ::subsecond::call(move || f())
+        }
     }
 
     #[cfg(not(feature = "hot-reload"))]

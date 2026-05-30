@@ -879,6 +879,64 @@ fn fragment_demo() -> Element {
     }
 }
 
+/// One pill — used by `ChildrenDemo` below to fill the `pill_group`
+/// slot. Defined as a separate component so the slot demo exercises
+/// real `#[component]` invocations as children (not just bare `text`
+/// nodes).
+#[component]
+fn pill(label: &'static str) -> Element {
+    let style = "padding: 6px 12px; border-radius: 999px; \
+                 color: #fff; font-size: 12px; font-weight: 600; \
+                 background-color: #00b894;";
+    render! {
+        text(value: label, style: style)
+    }
+}
+
+/// Row container with a `children: Children` prop. The slot's
+/// `children()` mounts whatever the caller put inside the braces at
+/// the row position, with header / footer text before and after.
+#[component]
+fn pill_group(children: Children) -> Element {
+    let row = "display: flex; flex-direction: row; gap: 6px; flex-wrap: wrap; \
+               align-items: center;";
+    let label = "color: #b9a9ff; font-size: 11px; margin-right: 4px;";
+    render! {
+        view(style: row) {
+            text(value: "tags:", style: label)
+            children()
+        }
+    }
+}
+
+/// Phase 6.5 demo — `children()` slot on a user component.
+///
+/// `pill_group` exposes a `children: Children` prop; `children()`
+/// inside its body mounts whatever the caller wrote in the braces.
+/// The two `pill_group { … }` blocks below pass three and two pills
+/// respectively, demonstrating that the same component handles
+/// arbitrary slot content without bespoke per-child wiring.
+#[component]
+fn children_demo() -> Element {
+    render! {
+        view(style: "margin: 8px 16px; display: flex; flex-direction: column; gap: 8px;") {
+            text(
+                value: "children() slot (user component with a Children prop)",
+                style: "color: #b9a9ff; font-size: 12px;",
+            )
+            pill_group {
+                Pill(label: "rust")
+                Pill(label: "lynx")
+                Pill(label: "ios")
+            }
+            pill_group {
+                Pill(label: "android")
+                Pill(label: "hot-reload")
+            }
+        }
+    }
+}
+
 /// Phase 5 demo — event propagation (capture / bubble / catch).
 ///
 /// Three nested boxes (outer → middle → inner) each register **both**
@@ -992,6 +1050,7 @@ fn app() -> Element {
             ShowDemo()
             ForEachDemo()
             FragmentDemo()
+            ChildrenDemo()
             ListDemo()
             PropagationDemo()
             Header()

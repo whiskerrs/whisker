@@ -36,6 +36,30 @@ pub trait IntoView {
 ///   handle — `Rc<dyn Fn>` is one machine word.
 pub type Children = ::std::rc::Rc<dyn ::std::ops::Fn() -> View + 'static>;
 
+/// Mount a `Children` prop at the current position in the tree.
+///
+/// Returns a phantom element (no on-screen footprint — `is_phantom`
+/// is true) with the children's view attached. The caller (typically
+/// the `render!` macro lowering for the `children()` special node)
+/// hands this back to the parent's `.child(...)` chain so the parent
+/// sees a single Element handle, exactly like any other child node.
+///
+/// `&Children` (not `Children`) on purpose — `Rc::clone` would also
+/// work, but a borrow makes the FnMut re-invocation case unambiguous:
+/// nothing here moves out of the surrounding `#[component]` body,
+/// so the hot-reload outer can re-call without `cannot move out of`.
+///
+/// Calling the children closure here is a `Fn::call(&self, ())`,
+/// which only takes `&Rc<…>` — the children Rc itself is left
+/// untouched and can be passed to additional `mount_children` calls
+/// at other positions (multi-projection a la Leptos `ChildrenFn`).
+pub fn mount_children(children: &Children) -> Element {
+    let ph = super::create_phantom_element();
+    let view = children();
+    view.attach_to(ph);
+    ph
+}
+
 // ---------------------------------------------------------------------------
 // Function-shaped prop types for control-flow components
 // ---------------------------------------------------------------------------
