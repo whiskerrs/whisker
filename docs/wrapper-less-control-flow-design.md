@@ -207,7 +207,23 @@ Same builder pattern, same `Children` body slot, same prop types.
 Nothing in the macro or runtime treats user control flow
 differently from `Show`.
 
-## 4.3 `<list-item>` auto-wrap
+## 4.3 `<list-item>` auto-wrap + removal from user surface
+
+`list_item` is no longer a user-writable tag in the `render!`
+macro nor a prelude re-export. The `list` render-props builder
+calls `create_element_by_name("list-item")` directly from its
+`__h()` effect and wraps every `children(item)` result in a fresh
+`<list-item>` before attaching it to the `<list>` parent.
+
+The `list_item` struct in `crates/whisker/src/__tags` is now
+`pub(crate)`; the macro's `is_builtin_tag` whitelist drops it, and
+the prelude no longer re-exports it. Source compatibility with any
+user code that previously wrote `render! { list { list_item { … } … } }`
+is intentionally broken — the migration is mechanical (drop the
+body, pass an `each` / `key` / `children` closure triple instead),
+and the doc above describes the new shape.
+
+
 
 User code passes a `children: |item| render! { … }` closure that
 returns the *content* of one list slot (a `story_row` view, a

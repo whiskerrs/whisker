@@ -1499,12 +1499,20 @@ pub mod __tags {
     // block so they're available regardless of which setters have
     // been called yet.)
 
-    #[allow(non_camel_case_types)]
-    pub struct list_item {
+    // `list_item` is an internal Lynx-side wrapper the `list`
+    // render-props builder auto-creates around each item slot. It
+    // realises the platform UI layer's `UIComponent` contract
+    // (`LynxUIListItem : LynxUIComponent` on iOS, `UIListItem extends
+    // UIComponent` on Android) that the list recycler / sticky /
+    // virtualisation machinery depends on. The list builder calls
+    // `create_element_by_name("list-item")` directly from its
+    // `__h()` effect; user code never reaches this builder.
+    #[allow(non_camel_case_types, dead_code)]
+    pub(crate) struct list_item {
         handle: Element,
     }
-    #[allow(non_snake_case)]
-    pub fn __list_item_ctor() -> list_item {
+    #[allow(non_snake_case, dead_code)]
+    pub(crate) fn __list_item_ctor() -> list_item {
         list_item {
             handle: create_element_by_name("list-item"),
         }
@@ -1514,6 +1522,7 @@ pub mod __tags {
             self.handle
         }
     }
+    #[allow(dead_code)]
     impl list_item {
         /// `item-key` — stable identity for this item, used by the list
         /// for recycling / diffing. Should be unique among siblings.
@@ -1702,5 +1711,10 @@ pub mod prelude {
     // these blocked kwarg completion was a separate bug — the
     // prefix-match heuristic that's since been removed.)
     #[doc(hidden)]
-    pub use crate::__tags::{image, list, list_item, page, raw_text, scroll_view, text, view};
+    pub use crate::__tags::{
+        fragment, image, list, page, raw_text, scroll_view, text, view,
+    };
+    // `list_item` intentionally absent — the `list` render-props
+    // builder auto-wraps every item internally; user code never
+    // reaches for `list_item` directly.
 }

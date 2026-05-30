@@ -733,11 +733,15 @@ fn text_methods_demo() -> Element {
     }
 }
 
-/// `list` demo — Lynx's virtualized list driven from a static element
-/// tree via the *decoupled* native list (`enable-decoupled-list`, set by
-/// the `list` builder). The `<list-item>` children are written directly
-/// (no JS data source); the native list virtualizes / recycles them.
-/// The fixed height makes it scroll internally.
+/// `list` demo — Lynx's virtualized list via the render-props builder
+/// (`each` / `key` / `children` kwargs, no body). Items are managed by
+/// the list's own reactive effect: the closure passed to `each` is
+/// re-evaluated on every signal change the closure reads, and the
+/// builder diffs against per-key entries (so identity-stable items
+/// keep their reactive state). The list builder auto-wraps each
+/// child in `<list-item>` for Lynx's platform UI layer, which is
+/// what realises the recycler / sticky / virtualization machinery —
+/// users never write `list_item` themselves.
 #[component]
 fn list_demo() -> Element {
     let card = "height: 52px; margin: 4px 16px; border-radius: 8px; \
@@ -750,17 +754,126 @@ fn list_demo() -> Element {
                 value: "list (decoupled · virtualized)",
                 style: "color: #b9a9ff; font-size: 12px; margin: 4px 16px;",
             )
-            list(list_type: "single", column_count: 1_i32, style: "height: 220px;") {
-                list_item(item_key: "i0", style: card) { text(value: "List item 0", style: txt) }
-                list_item(item_key: "i1", style: card) { text(value: "List item 1", style: txt) }
-                list_item(item_key: "i2", style: card) { text(value: "List item 2", style: txt) }
-                list_item(item_key: "i3", style: card) { text(value: "List item 3", style: txt) }
-                list_item(item_key: "i4", style: card) { text(value: "List item 4", style: txt) }
-                list_item(item_key: "i5", style: card) { text(value: "List item 5", style: txt) }
-                list_item(item_key: "i6", style: card) { text(value: "List item 6", style: txt) }
-                list_item(item_key: "i7", style: card) { text(value: "List item 7", style: txt) }
-                list_item(item_key: "i8", style: card) { text(value: "List item 8", style: txt) }
-                list_item(item_key: "i9", style: card) { text(value: "List item 9", style: txt) }
+            list(
+                each: || (0_i32..10).collect::<::std::vec::Vec<i32>>(),
+                key: |i: &i32| *i,
+                children: move |i: i32| render! {
+                    view(style: card) {
+                        text(value: format!("List item {}", i), style: txt)
+                    }
+                },
+                list_type: "single",
+                column_count: 1_i32,
+                style: "height: 220px;",
+            )
+        }
+    }
+}
+
+/// `Show` demo — toggle a button to flip the conditional. `Show` is a
+/// regular `#[component]` (defined in `whisker::control_flow`) that
+/// returns a fragment; the macro routes it through the standard
+/// `UserComponent` path. The body becomes the truthy branch's
+/// `Children`, the `fallback:` kwarg the false branch's element.
+#[component]
+fn show_demo() -> Element {
+    let visible = RwSignal::new(true);
+    let toggle = move |_| visible.update(|v| *v = !*v);
+    let btn = "padding: 8px 16px; background-color: #6c5ce7; \
+               border-radius: 6px; color: #fff; font-size: 14px; \
+               font-weight: 600;";
+    render! {
+        view(style: "margin: 8px 16px; display: flex; flex-direction: column; gap: 8px;") {
+            text(
+                value: "Show (toggle the condition)",
+                style: "color: #b9a9ff; font-size: 12px;",
+            )
+            text(value: "Toggle", style: btn, on_tap: toggle)
+            Show(
+                when: move || visible.get(),
+                fallback: || render! {
+                    text(
+                        value: "Hidden — flip the toggle",
+                        style: "color: #888; font-size: 14px; padding: 12px; \
+                                background-color: #1a1330; border-radius: 8px;",
+                    )
+                },
+            ) {
+                text(
+                    value: "Visible — the truthy branch is mounted",
+                    style: "color: #e8e3ff; font-size: 14px; padding: 12px; \
+                            background-color: #2a1f4a; border-radius: 8px;",
+                )
+            }
+        }
+    }
+}
+
+/// `ForEach` demo — render-props equivalent of React `.map`, but
+/// keyed against per-item reactive entries. Used inside `scroll_view`
+/// (no list-virtualisation needed for ~5 items). The +/- buttons
+/// mutate the `count` signal; `ForEach`'s effect diffs the new range
+/// against the previous one, keeping survivors' element handles +
+/// reactive state intact and only creating / disposing the delta.
+#[component]
+fn for_each_demo() -> Element {
+    let count = RwSignal::new(3_usize);
+    let btn = "padding: 8px 16px; background-color: #6c5ce7; \
+               border-radius: 6px; color: #fff; font-size: 14px; \
+               font-weight: 600;";
+    let card = "padding: 10px; background-color: #1a1330; border-radius: 8px; \
+                color: #e8e3ff; font-size: 14px;";
+    render! {
+        view(style: "margin: 8px 16px; display: flex; flex-direction: column; gap: 8px;") {
+            text(
+                value: "ForEach (reactive item count)",
+                style: "color: #b9a9ff; font-size: 12px;",
+            )
+            view(style: "display: flex; flex-direction: row; gap: 8px;") {
+                text(value: "+", style: btn, on_tap: move |_| count.update(|n| *n += 1))
+                text(value: "-", style: btn, on_tap: move |_| count.update(|n| *n = n.saturating_sub(1)))
+            }
+            view(style: "display: flex; flex-direction: column; gap: 6px;") {
+                ForEach(
+                    each: move || (0_usize..count.get()).collect::<::std::vec::Vec<usize>>(),
+                    key: |i: &usize| *i,
+                    children: move |i: usize| render! {
+                        view(style: card) {
+                            text(value: format!("Item {}", i), style: "color: #e8e3ff;")
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/// `fragment` demo — the user-facing primitive behind `ForEach` /
+/// `Show`. `fragment { … }` groups children without emitting a Lynx
+/// element of its own; the children land as siblings of the
+/// fragment's parent. Visible identical to inlining the children
+/// directly, but the grouping makes the source code (and any
+/// `#[component]` body) read more cleanly when the children are
+/// conditionally / dynamically combined.
+#[component]
+fn fragment_demo() -> Element {
+    let pill = "padding: 6px 12px; border-radius: 999px; \
+                color: #fff; font-size: 12px; font-weight: 600; \
+                background-color: #6c5ce7;";
+    render! {
+        view(style: "margin: 8px 16px; display: flex; flex-direction: column; gap: 8px;") {
+            text(
+                value: "fragment (transparent grouping, no DOM element)",
+                style: "color: #b9a9ff; font-size: 12px;",
+            )
+            view(style: "display: flex; flex-direction: row; gap: 6px; flex-wrap: wrap;") {
+                fragment {
+                    text(value: "A", style: pill)
+                    text(value: "B", style: pill)
+                    text(value: "C", style: pill)
+                }
+                // A / B / C appear as direct children of the row view
+                // above — no <fragment> in the rendered tree.
             }
         }
     }
@@ -871,6 +984,14 @@ fn app() -> Element {
             VideoDemo()
             MeasureDemo()
             TextMethodsDemo()
+            // Control-flow demos — Show / ForEach / fragment / list,
+            // all wired through the fragment-based primitive shipped in
+            // #92. Each one is a regular `#[component]` so its source
+            // code is the same shape a user would write for their own
+            // control-flow primitive.
+            ShowDemo()
+            ForEachDemo()
+            FragmentDemo()
             ListDemo()
             PropagationDemo()
             Header()

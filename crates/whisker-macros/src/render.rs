@@ -297,8 +297,23 @@ fn snake_to_pascal(name: &str) -> String {
 fn is_builtin_tag(name: &str) -> bool {
     matches!(
         name,
-        "page" | "view" | "text" | "raw_text" | "image" | "scroll_view" | "list" | "list_item"
+        "page"
+            | "view"
+            | "text"
+            | "raw_text"
+            | "image"
+            | "scroll_view"
+            | "list"
+            | "fragment"
     )
+    // `list_item` is intentionally NOT exposed as a user-writable
+    // tag. The `list` render-props builder auto-wraps every
+    // `children(item)` result in a `<list-item>` for the Lynx
+    // platform UI layer's UIComponent contract — there's no path
+    // for user code to reach a list-item, so surfacing it would
+    // only invite confusion. The `__list_item_ctor` builder is
+    // kept in `__tags` as a `pub(crate)` runtime helper the list
+    // builder calls directly.
 }
 
 /// `true` if `name`'s first character is ASCII uppercase. Used to
@@ -598,7 +613,9 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("list", "each")
             | ("list", "key")
             | ("list", "children")
-            | ("list_item", "item_key")
+            // (`list_item` is no longer a user-writable tag; the
+            // list builder owns the wrap. `item_key` is set by the
+            // list's effect, not by author code.)
     )
 }
 
