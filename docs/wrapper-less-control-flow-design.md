@@ -1,20 +1,14 @@
 # Wrapper-less Control Flow — `For` / `Show` redesign
 
-Tracks the design for [#84](https://github.com/whiskerrs/whisker/issues/84).
+Closes [#84](https://github.com/whiskerrs/whisker/issues/84).
 End-to-end acceptance: **`hn-reader` runs
 `list(each, key, children, …)` with all 30 stories rendered through
-Lynx's native virtualisation, no wrapper element in the tree, and a
+Lynx's native virtualisation, no wrapper element in the tree, and
 custom user-defined control flow uses the same author surface as the
-built-in `ForEach` / `Show`**.
-
-> Status: implementation in `feature/fragment-based-control-flow-v2`.
-> Phases 1–10 landed (phantom hoisting, fragment built-in, `ForEach` /
-> `Show` as `#[component]` functions, list render-props builder,
-> hn-reader migrated). Phase 11 (runtime acceptance on iOS Simulator)
-> exposes a still-open issue with the list element + native-item
-> provider not displaying items even when items Vec is correctly
-> populated and `set_update_list_info` is broadcast. See **§9 Open
-> issue** below.
+built-in `ForEach` / `Show`**. Verified on iOS Simulator
+(iPhone 17 Pro / iOS 26.3): header + 13+ visible stories render
+through the new path on initial load, all 30 are reachable by
+scroll.
 
 ---
 
@@ -286,9 +280,9 @@ in `crates/whisker-macros/src/render.rs` carries this list.
   7. ✅ list render-props builder
   8. ✅ hn-reader migration
   9. ✅ tests (For→ForEach, body wrap)
-  10. ⚠️  iOS Simulator acceptance — list renders but **items
-       don't display** (see §9)
-  11. PR + design-doc update (this doc)
+  10. ✅ iOS Simulator acceptance — hn-reader renders + scrolls
+       through native virtualisation
+  11. ✅ PR + design-doc update (this doc)
 
 ## 7. Build verification
 
@@ -313,64 +307,74 @@ control-flow surface) and — crucially — gives user-defined control
 flow the same author shape as the built-ins (a regular
 `#[component]` function returning a fragment), which PR #91 didn't.
 
-## 9. Open issue: items invisible inside `<list>` on iOS Simulator
+## 9. Caveat: macro-side `key:` handling for the `list` builder
 
-The iOS Simulator run of `hn-reader` shows the header bar + the
-list element's styled area (verified by setting an explicit
-`background-color: #ff0000` — the full red list rectangle
-renders), but **no items appear inside**. The same happens with:
+The wrapper-less control flow shipped initially with one subtle
+bug that hid the entire list-items code path: hypothesis 1 from
+the earlier draft of this doc turned out to be right.
 
-  - a synchronous hardcoded `Vec<u32>` items source (no resource
-    involved),
-  - a minimal `children: |x| render! { list_item { text(value: x.to_string()) } }`
-    body,
-  - a fully-static debug item materialised directly inside `__h()`
-    (bypassing the reactive effect), seeded into the items Vec
-    with its eagerly-computed sign, with `set_update_list_info(1)`
-    broadcast immediately after.
+**Symptom.** With the type-stated `list` builder, items wouldn't
+render: the list element + its background-colour styled area
+appeared on screen, but the items inside stayed invisible even
+under a synchronous hardcoded items source. A `panic!()` planted
+at the top of the inherent `__h` (where the provider install +
+count broadcast live) didn't fire on launch — proof the inherent
+was *not* being dispatched.
 
-Lynx side knowns:
+**Root cause.** The `render!` macro silently dropped a `key:`
+kwarg on **every** element via this guard inherited from the
+old For/Show special-case:
 
-  - `<list>` is created with `custom-list-name="list-container"`
-    in `__list_ctor`, which gates `disable_list_platform_implementation_`
-    and activates the decoupled native list mediator.
-  - `install_list_native_item_provider` installs a closure that
-    reads `(handle, sign)` from a shared `Rc<RefCell<Vec<...>>>`.
-  - `set_update_list_info(count)` is broadcast.
+```rust
+fn kwarg_to_setter(&self, kw: &Kwarg) -> Option<TokenStream2> {
+    …
+    if name_str == "key" {
+        return None;  // ← swallows `key:` on every builder
+    }
+    …
+}
+```
 
-PR #91's list (`crates/whisker/src/lib.rs` at commit `0659a02`)
-followed an equivalent call sequence and rendered fine end-to-end
-(12+ stories visible on the same Simulator pool). The difference
-between PR #91 and this design at the list level is **where the
-items get mutated** (PR #91: `attach_to_list` from outside, called
-from `.child(View::ControlFlow)`; this design: the list's own
-inherent `__h` effect mutates the items in-place).
+That historical "silently ignore `key` on direct elements"
+behaviour meant `list(each: …, key: …, children: …)` expanded to:
 
-Hypotheses to investigate (next session):
+```rust
+__list_ctor()
+    .each(closure)
+    .children(closure)   // ← `.key()` missing!
+    .style(value)
+    .__h()
+```
 
-1. **Inherent `__h` not actually dispatched.** The trait
-   `ElementBuilder` has a default `__h(self) -> Element { self.__element() }`.
-   If method-resolution falls back to the trait default (because
-   of generic-type-inference quirks at the call site), the
-   inherent `__h` — and therefore the provider install + count
-   broadcast — would silently no-op. Add a unique side effect
-   inside the inherent `__h` (e.g. `set_attribute(handle,
-   "data-list-init", "v2")`) and inspect the rendered DOM via
-   the iOS app's debug overlay to confirm dispatch.
-2. **Custom attribute timing.** The `custom-list-name` attribute
-   is set in `__list_ctor` before items / provider / count. PR
-   #91 had the same order. But the inherent-list path calls
-   `apply_attr` before installing the provider, whereas PR #91
-   went via `attach_to_list` (which only mutated the items Vec).
-   Verify the attribute is still set on the rendered element.
-3. **Item-key collision.** The new code sets `item-key` per
-   diff (in the effect's rebuild loop) using
-   `format!("w_{}", new_items_vec.len())`. PR #91 set it the
-   same way per `.child` call. Confirm Lynx's
-   `update-list-info` map sees the matching keys.
+The receiver of `.__h()` then was
+`list<EachFn<Story>, (), ItemFn<Story>>` — `KeyF` stuck at `()`
+because the setter was never called. The inherent `__h` impl is
+gated on `list<EachFn<T>, KeyFn<T, K>, ItemFn<T>>`, doesn't match,
+and **method resolution falls back to the trait default**
+`fn __h(self) -> Element { self.__element() }`. Hence no
+provider, no count, no items.
 
-The fix likely sits in one of these three corners. None should
-require redesigning the fragment / `#[component]` surface above.
+**Fix** (`crates/whisker-macros/src/render.rs`):
+
+```rust
+if name_str == "key" && tag_name != "list" {
+    return None;  // keep skipping on direct elements; let `list` see it
+}
+```
+
+`list` is the only built-in with a typed `key:` setter today;
+user-defined keyed-list control flow uses the `UserComponent`
+path which already routes `key:` through the Props builder.
+
+**Lesson worth recording.** The type-state builder pattern shipped
+its own diagnostic — the "fall through to trait default" failure
+mode silently produces an empty native list rather than a
+compile-time error, because the trait method's signature is
+satisfied. Future built-ins that rely on type-state finalisation
+should add a debug-mode assertion (e.g. an attribute the test
+renderer can look for) inside the inherent finaliser so the same
+class of bug surfaces from a unit test rather than a screen
+inspection.
 
 ## 10. Out of scope
 
