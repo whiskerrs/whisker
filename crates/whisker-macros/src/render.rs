@@ -439,9 +439,12 @@ impl ElementNode {
         let span = name.span();
         let tag_name = self.tag.to_string();
 
-        if name_str == "key" {
-            // `key:` is a For-reconciliation hint. Silently ignore
-            // on direct elements — matches legacy behaviour.
+        if name_str == "key" && tag_name != "list" {
+            // `key:` was a For-reconciliation hint historically and
+            // is silently ignored on direct elements. The `list`
+            // render-props builder has its own typed `key` setter
+            // (the key extractor closure for the keyed-list effect),
+            // so we keep the kwarg there.
             return None;
         }
 
