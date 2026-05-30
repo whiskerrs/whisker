@@ -578,12 +578,11 @@ pub fn append_child(parent: Element, child: Element) {
         // be its grandparent or higher). If there isn't one (the
         // phantom chain is still detached) we leave the bridge
         // untouched and let the next attach replay things.
-        if let Some(real_anc) = nearest_real_ancestor(parent).or_else(|| {
-            // Edge case: phantom's parent_of entry doesn't exist
-            // yet (`parent` is a top-level phantom being treated as
-            // a root). Then there's no real ancestor to hoist to.
-            None
-        }) {
+        // `nearest_real_ancestor` already returns `None` when the
+        // phantom chain has no real ancestor (the topmost phantom is
+        // detached). The if-let just skips the bridge step in that
+        // case; the next attach replays things.
+        if let Some(real_anc) = nearest_real_ancestor(parent) {
             // Replay real descendants of `child` (or `child` itself
             // if it's real) into `real_anc` at the right positions.
             let to_attach: Vec<Element> = if child_is_phantom {
@@ -637,14 +636,12 @@ pub fn remove_child(parent: Element, child: Element) {
                 with_renderer(|r| r.remove_child(real_anc, real), ());
             }
         }
-    } else {
-        if child_is_phantom {
-            for real in collect_transparent_real_descendants(child) {
-                with_renderer(|r| r.remove_child(parent, real), ());
-            }
-        } else {
-            with_renderer(|r| r.remove_child(parent, child), ());
+    } else if child_is_phantom {
+        for real in collect_transparent_real_descendants(child) {
+            with_renderer(|r| r.remove_child(parent, real), ());
         }
+    } else {
+        with_renderer(|r| r.remove_child(parent, child), ());
     }
 
     CHILDREN_OF.with_borrow_mut(|map| {

@@ -86,9 +86,7 @@ impl<T: 'static> EachFn<T> {
 /// `Fn(&T) -> K` — the "key extractor" closure for a keyed-list
 /// control flow. Items whose keys match across reactive reruns
 /// reuse their owners + per-item state.
-pub struct KeyFn<T: 'static, K: 'static>(
-    pub ::std::rc::Rc<dyn ::std::ops::Fn(&T) -> K + 'static>,
-);
+pub struct KeyFn<T: 'static, K: 'static>(pub ::std::rc::Rc<dyn ::std::ops::Fn(&T) -> K + 'static>);
 
 impl<T: 'static, K: 'static> Clone for KeyFn<T, K> {
     fn clone(&self) -> Self {
@@ -171,19 +169,8 @@ impl WhenFn {
 /// component invocation like `|| render! { status_banner(...) }`,
 /// which evaluates to `Element`. The implementation re-wraps it
 /// into a `View::Element` before attaching.)
+#[derive(Clone, Default)]
 pub struct Fallback(pub Option<::std::rc::Rc<dyn ::std::ops::Fn() -> Element + 'static>>);
-
-impl Clone for Fallback {
-    fn clone(&self) -> Self {
-        Fallback(self.0.clone())
-    }
-}
-
-impl Default for Fallback {
-    fn default() -> Self {
-        Fallback(None)
-    }
-}
 
 impl<F: Fn() -> Element + 'static> From<F> for Fallback {
     fn from(f: F) -> Self {

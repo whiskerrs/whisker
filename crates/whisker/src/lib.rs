@@ -1320,7 +1320,10 @@ pub mod __tags {
     // any order — the render! macro emits them in whatever order
     // they appear in the source.
     impl<KeyF, ChildF> list<(), KeyF, ChildF> {
-        pub fn each<T: 'static, F>(self, f: F) -> list<::whisker_runtime::view::EachFn<T>, KeyF, ChildF>
+        pub fn each<T: 'static, F>(
+            self,
+            f: F,
+        ) -> list<::whisker_runtime::view::EachFn<T>, KeyF, ChildF>
         where
             F: ::std::convert::Into<::whisker_runtime::view::EachFn<T>>,
         {
@@ -1365,11 +1368,12 @@ pub mod __tags {
         }
     }
     // ---- Finaliser, only on fully-populated state ----
-    impl<T, K> list<
-        ::whisker_runtime::view::EachFn<T>,
-        ::whisker_runtime::view::KeyFn<T, K>,
-        ::whisker_runtime::view::ItemFn<T>,
-    >
+    impl<T, K>
+        list<
+            ::whisker_runtime::view::EachFn<T>,
+            ::whisker_runtime::view::KeyFn<T, K>,
+            ::whisker_runtime::view::ItemFn<T>,
+        >
     where
         T: 'static,
         K: ::std::cmp::Eq + ::std::hash::Hash + ::std::clone::Clone + 'static,
@@ -1422,15 +1426,14 @@ pub mod __tags {
             }
             let entries: ::std::rc::Rc<
                 ::std::cell::RefCell<::std::collections::HashMap<K, ListEntry>>,
-            > = ::std::rc::Rc::new(::std::cell::RefCell::new(
-                ::std::collections::HashMap::new(),
-            ));
+            > = ::std::rc::Rc::new(::std::cell::RefCell::new(::std::collections::HashMap::new()));
 
             ::whisker_runtime::reactive::effect(move || {
                 let new_items = each.call();
                 let mut new_entries: ::std::collections::HashMap<K, ListEntry> =
                     ::std::collections::HashMap::new();
-                let mut new_keys: ::std::vec::Vec<K> = ::std::vec::Vec::with_capacity(new_items.len());
+                let mut new_keys: ::std::vec::Vec<K> =
+                    ::std::vec::Vec::with_capacity(new_items.len());
 
                 let mut old = ::std::mem::take(&mut *entries.borrow_mut());
 
@@ -1456,7 +1459,13 @@ pub mod __tags {
                             append_child(handle, li);
                             li
                         });
-                        new_entries.insert(k.clone(), ListEntry { owner: item_owner, handle: li });
+                        new_entries.insert(
+                            k.clone(),
+                            ListEntry {
+                                owner: item_owner,
+                                handle: li,
+                            },
+                        );
                     }
                     new_keys.push(k);
                 }
@@ -1691,11 +1700,11 @@ pub mod prelude {
     // `#[component]` on `for_each` / `show` in `control_flow.rs`).
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};
     // Function-shaped prop types for control-flow components.
-    pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
     pub use crate::{
         element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError,
         ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle,
     };
+    pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
     // typing a tag name inside render! (the macro source position
@@ -1711,9 +1720,7 @@ pub mod prelude {
     // these blocked kwarg completion was a separate bug — the
     // prefix-match heuristic that's since been removed.)
     #[doc(hidden)]
-    pub use crate::__tags::{
-        fragment, image, list, page, raw_text, scroll_view, text, view,
-    };
+    pub use crate::__tags::{fragment, image, list, page, raw_text, scroll_view, text, view};
     // `list_item` intentionally absent — the `list` render-props
     // builder auto-wraps every item internally; user code never
     // reaches for `list_item` directly.

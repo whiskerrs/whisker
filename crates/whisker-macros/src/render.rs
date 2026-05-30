@@ -297,14 +297,7 @@ fn snake_to_pascal(name: &str) -> String {
 fn is_builtin_tag(name: &str) -> bool {
     matches!(
         name,
-        "page"
-            | "view"
-            | "text"
-            | "raw_text"
-            | "image"
-            | "scroll_view"
-            | "list"
-            | "fragment"
+        "page" | "view" | "text" | "raw_text" | "image" | "scroll_view" | "list" | "fragment"
     )
     // `list_item` is intentionally NOT exposed as a user-writable
     // tag. The `list` render-props builder auto-wraps every
@@ -612,10 +605,9 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             // fallback would try `Into<Signal<String>>`).
             | ("list", "each")
             | ("list", "key")
-            | ("list", "children")
-            // (`list_item` is no longer a user-writable tag; the
-            // list builder owns the wrap. `item_key` is set by the
-            // list's effect, not by author code.)
+            | ("list", "children") // (`list_item` is no longer a user-writable tag; the
+                                   // list builder owns the wrap. `item_key` is set by the
+                                   // list's effect, not by author code.)
     )
 }
 

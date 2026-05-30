@@ -170,7 +170,8 @@ pub fn show(
 
     // Track the currently-mounted (owner, leaf handles) pair so we
     // can dispose + detach on every flip.
-    let mounted: Rc<RefCell<Option<(OwnerId, Vec<Element>)>>> = Rc::new(RefCell::new(None));
+    type Mounted = Rc<RefCell<Option<(OwnerId, Vec<Element>)>>>;
+    let mounted: Mounted = Rc::new(RefCell::new(None));
 
     // Clone props into the effect's capture set so the outer body
     // (a `FnMut` per `#[component]`'s hot-reload wrapper) never has
