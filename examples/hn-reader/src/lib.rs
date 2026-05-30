@@ -198,27 +198,22 @@ pub fn hn_reader() -> Element {
             header()
             Show(
                 when: move || stories.get().is_some(),
-                fallback: move || {
-                    let msg = if stories.error().is_some() {
+                fallback: move || render! {
+                    status_banner(message: if stories.error().is_some() {
                         "Failed to load — check your connection"
                     } else {
                         "Loading top stories…"
-                    };
-                    render! { status_banner(message: msg) }
+                    })
                 },
             ) {
-                scroll_view(scroll_orientation: "vertical", style: list_style) {
-                    For(
-                        // `stories` is a Copy Resource handle, so the
-                        // closure can re-read on each effect run.
-                        // Once Ready, the underlying signal value is
-                        // stable — For receives the same Vec every
-                        // call and reuses item owners.
-                        each: move || stories.get().unwrap_or_default(),
-                        key: |s: &Story| s.object_id.clone(),
-                        children: |s: Story| render! { story_row(story: s) },
-                    )
-                }
+                list(
+                    each: move || stories.get().unwrap_or_default(),
+                    key: |s: &Story| s.object_id.clone(),
+                    children: |s: Story| render! {
+                        list_item { story_row(story: s) }
+                    },
+                    style: list_style,
+                )
             }
         }
     }

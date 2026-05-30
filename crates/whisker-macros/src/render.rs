@@ -102,18 +102,11 @@ impl Parse for Root {
 
 enum Node {
     Element(ElementNode),
-    ControlFlow(ControlFlowNode),
     UserComponent(UserComponentNode),
 }
 
 struct ElementNode {
     tag: Ident,
-    kwargs: Vec<Kwarg>,
-    children: Vec<Node>,
-}
-
-struct ControlFlowNode {
-    name: Ident,
     kwargs: Vec<Kwarg>,
     children: Vec<Node>,
 }
@@ -224,8 +217,7 @@ impl Parse for Node {
         // Classification by casing + whitelist:
         //
         //   snake_case + in built-in whitelist  → Element (Lynx tag)
-        //   PascalCase, name ∈ {"Show", "For"}  → ControlFlow
-        //   PascalCase (other)                   → UserComponent
+        //   PascalCase (anything)                → UserComponent
         //                                          (preferred: PascalCase
         //                                          alias from #[component])
         //   snake_case + not in whitelist        → UserComponent
@@ -238,15 +230,15 @@ impl Parse for Node {
         //   (1) mid-typing partials (`vie|`) don't blow up the macro
         //       — RA needs the expansion to succeed for completion,
         //   (2) older code calling snake_case names keeps compiling.
+        //
+        // Built-in control flow (`ForEach` / `Show`) is no longer
+        // special-cased: those are `#[component]` functions in the
+        // `whisker` crate (see `crates/whisker/src/control_flow.rs`)
+        // and resolve through the UserComponent path just like a
+        // user-implemented control flow.
         if is_builtin_tag(&name) {
             Ok(Node::Element(ElementNode {
                 tag,
-                kwargs,
-                children,
-            }))
-        } else if (name == "Show" || name == "For") && is_pascal_case(&name) {
-            Ok(Node::ControlFlow(ControlFlowNode {
-                name: tag,
                 kwargs,
                 children,
             }))
@@ -328,7 +320,6 @@ impl Node {
     fn to_tokens_returning_handle(&self) -> TokenStream2 {
         match self {
             Node::Element(el) => el.to_tokens(),
-            Node::ControlFlow(c) => c.to_tokens(),
             Node::UserComponent(u) => u.to_tokens(),
         }
     }
@@ -596,6 +587,14 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("list", "list_type")
             | ("list", "column_count")
             | ("list", "vertical_orientation")
+            // Render-props setters on `list` — type-stated, take
+            // closure literals via `Into<EachFn<T>>` etc. The
+            // typed-setter route is what makes the closure flow
+            // through the right `Into` impl (the generic `attr`
+            // fallback would try `Into<Signal<String>>`).
+            | ("list", "each")
+            | ("list", "key")
+            | ("list", "children")
             | ("list_item", "item_key")
     )
 }
@@ -678,126 +677,8 @@ fn is_known_event_method(name: &str) -> bool {
 
 // ---- Control-flow (Show / For) ------------------------------------------
 
-impl ControlFlowNode {
-    fn to_tokens(&self) -> TokenStream2 {
-        match self.name.to_string().as_str() {
-            "Show" => self.emit_show(),
-            "For" => self.emit_for(),
-            other => unreachable!("ControlFlowNode constructed with name `{other}`"),
-        }
-    }
-
-    fn kwarg(&self, name: &str) -> Option<&Expr> {
-        self.kwargs
-            .iter()
-            .find(|k| !k.partial && k.name == name)
-            .map(|k| &k.value)
-    }
-
-    fn emit_show(&self) -> TokenStream2 {
-        let Some(when_expr) = self.kwarg("when") else {
-            let err = LitStr::new("Show requires `when:` kwarg", self.name.span());
-            return quote! { ::std::compile_error!(#err) };
-        };
-
-        for k in &self.kwargs {
-            let n = k.name.to_string();
-            if n != "when" && n != "fallback" {
-                let err = LitStr::new(
-                    &format!("unknown kwarg `{n}` on Show; allowed: when, fallback"),
-                    k.name.span(),
-                );
-                return quote! { ::std::compile_error!(#err) };
-            }
-        }
-
-        let children_views: Vec<TokenStream2> = self
-            .children
-            .iter()
-            .map(|c| c.to_tokens_as_view())
-            .collect();
-
-        let children_body = if children_views.len() == 1 {
-            let only = &children_views[0];
-            quote! { #only }
-        } else {
-            quote! {
-                ::whisker::runtime::view::View::Fragment(
-                    ::std::vec![#(#children_views),*]
-                )
-            }
-        };
-
-        let fallback_arg = match self.kwarg("fallback") {
-            Some(expr) => quote! {
-                ::std::option::Option::Some(::std::boxed::Box::new({
-                    let __whisker_user_fallback = #expr;
-                    move || ::whisker::runtime::view::IntoView::into_view(
-                        __whisker_user_fallback()
-                    )
-                }))
-            },
-            None => quote! { ::std::option::Option::<
-                ::std::boxed::Box<dyn ::std::ops::Fn() -> ::whisker::runtime::view::View>,
-            >::None },
-        };
-
-        quote! {
-            ::whisker::show(
-                #when_expr,
-                move || #children_body,
-                #fallback_arg,
-            )
-        }
-    }
-
-    fn emit_for(&self) -> TokenStream2 {
-        let Some(each_expr) = self.kwarg("each") else {
-            let err = LitStr::new("For requires `each:` kwarg", self.name.span());
-            return quote! { ::std::compile_error!(#err) };
-        };
-        let Some(key_expr) = self.kwarg("key") else {
-            let err = LitStr::new("For requires `key:` kwarg", self.name.span());
-            return quote! { ::std::compile_error!(#err) };
-        };
-        let Some(children_expr) = self.kwarg("children") else {
-            let err = LitStr::new("For requires `children:` kwarg", self.name.span());
-            return quote! { ::std::compile_error!(#err) };
-        };
-
-        for k in &self.kwargs {
-            let n = k.name.to_string();
-            if n != "each" && n != "key" && n != "children" {
-                let err = LitStr::new(
-                    &format!("unknown kwarg `{n}` on For; allowed: each, key, children"),
-                    k.name.span(),
-                );
-                return quote! { ::std::compile_error!(#err) };
-            }
-        }
-
-        if !self.children.is_empty() {
-            let err = LitStr::new(
-                "For takes no positional children; pass them via `children:`",
-                self.name.span(),
-            );
-            return quote! { ::std::compile_error!(#err) };
-        }
-
-        quote! {
-            ::whisker::for_each(
-                #each_expr,
-                #key_expr,
-                {
-                    let __whisker_user_children = #children_expr;
-                    move |__item| ::whisker::runtime::view::IntoView::into_view(
-                        __whisker_user_children(__item)
-                    )
-                },
-            )
-        }
-    }
-}
+// (Old `ControlFlowNode` codegen removed — `ForEach` / `Show` now
+// take the standard UserComponent path via `#[component]`.)
 
 // ---- User-component codegen ---------------------------------------------
 
@@ -835,16 +716,11 @@ impl UserComponentNode {
             })
             .collect();
 
-        for kw in &self.kwargs {
-            if kw.name == "key" {
-                let err = LitStr::new(
-                    "`key` is only valid on direct children of `For`, \
-                     not on user components",
-                    kw.name.span(),
-                );
-                return quote! { ::std::compile_error!(#err) };
-            }
-        }
+        // `key` was previously restricted to direct children of
+        // `For`. With `ForEach` now a regular `#[component]` (and
+        // user-defined keyed-list control flow following the same
+        // shape), `key` is just a normal `Props` field — let it
+        // through.
 
         let children_call = if self.children.is_empty() {
             quote! {}
