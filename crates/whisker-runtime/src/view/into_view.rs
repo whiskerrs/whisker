@@ -36,6 +36,161 @@ pub trait IntoView {
 ///   handle — `Rc<dyn Fn>` is one machine word.
 pub type Children = ::std::rc::Rc<dyn ::std::ops::Fn() -> View + 'static>;
 
+// ---------------------------------------------------------------------------
+// Function-shaped prop types for control-flow components
+// ---------------------------------------------------------------------------
+//
+// These newtypes let `#[component]` annotated control-flow functions
+// (`For`, `Show`, user-defined ones) accept closure literals via
+// `Into` in the `Props` builder. Each one wraps a `Box<dyn Fn>` so
+// the Props field has a concrete type, and a blanket `From<F>` impl
+// converts any closure with the right signature.
+//
+// The user writes:
+//   ```ignore
+//   For(each: move || items.get(), key: |i| i.id, children: |i| render! { ... })
+//   ```
+// and the macro emits `.each(closure).key(closure).children(closure)`.
+// The `setter(into)` (default in typed-builder) does the boxing.
+
+// Each one wraps `Rc<dyn Fn>` (not `Box<dyn Fn>`) so the newtype is
+// `Clone` — that's a hard requirement of `#[component]` props
+// (which the `#[component]` macro re-clones on every render).
+// `Rc<dyn Fn>` is also what [`Children`] uses for the same reason.
+
+/// `Fn() -> Vec<T>` — the "what items to render" closure for a
+/// keyed-list control flow. Wrapping in a newtype gives typed-builder
+/// a concrete Props field type plus an `Into` path from any matching
+/// closure literal.
+pub struct EachFn<T: 'static>(pub ::std::rc::Rc<dyn ::std::ops::Fn() -> Vec<T> + 'static>);
+
+impl<T: 'static> Clone for EachFn<T> {
+    fn clone(&self) -> Self {
+        EachFn(::std::rc::Rc::clone(&self.0))
+    }
+}
+
+impl<T: 'static, F: Fn() -> Vec<T> + 'static> From<F> for EachFn<T> {
+    fn from(f: F) -> Self {
+        EachFn(::std::rc::Rc::new(f))
+    }
+}
+
+impl<T: 'static> EachFn<T> {
+    /// Invoke the wrapped closure.
+    pub fn call(&self) -> Vec<T> {
+        (self.0)()
+    }
+}
+
+/// `Fn(&T) -> K` — the "key extractor" closure for a keyed-list
+/// control flow. Items whose keys match across reactive reruns
+/// reuse their owners + per-item state.
+pub struct KeyFn<T: 'static, K: 'static>(
+    pub ::std::rc::Rc<dyn ::std::ops::Fn(&T) -> K + 'static>,
+);
+
+impl<T: 'static, K: 'static> Clone for KeyFn<T, K> {
+    fn clone(&self) -> Self {
+        KeyFn(::std::rc::Rc::clone(&self.0))
+    }
+}
+
+impl<T: 'static, K: 'static, F: Fn(&T) -> K + 'static> From<F> for KeyFn<T, K> {
+    fn from(f: F) -> Self {
+        KeyFn(::std::rc::Rc::new(f))
+    }
+}
+
+impl<T: 'static, K: 'static> KeyFn<T, K> {
+    /// Invoke the wrapped closure on `item`.
+    pub fn call(&self, item: &T) -> K {
+        (self.0)(item)
+    }
+}
+
+/// `Fn(T) -> Element` — the "render one item" closure for a
+/// keyed-list control flow. The returned [`Element`] is what gets
+/// attached to the surrounding fragment / list.
+pub struct ItemFn<T: 'static>(pub ::std::rc::Rc<dyn ::std::ops::Fn(T) -> Element + 'static>);
+
+impl<T: 'static> Clone for ItemFn<T> {
+    fn clone(&self) -> Self {
+        ItemFn(::std::rc::Rc::clone(&self.0))
+    }
+}
+
+impl<T: 'static, F: Fn(T) -> Element + 'static> From<F> for ItemFn<T> {
+    fn from(f: F) -> Self {
+        ItemFn(::std::rc::Rc::new(f))
+    }
+}
+
+impl<T: 'static> ItemFn<T> {
+    /// Invoke the wrapped closure on `item`.
+    pub fn call(&self, item: T) -> Element {
+        (self.0)(item)
+    }
+}
+
+/// `Fn() -> bool` — the predicate closure for a `show`-style
+/// conditional control flow. Wrapping in a newtype gives
+/// typed-builder a concrete Props field type plus an `Into` path
+/// from any matching closure literal.
+pub struct WhenFn(pub ::std::rc::Rc<dyn ::std::ops::Fn() -> bool + 'static>);
+
+impl Clone for WhenFn {
+    fn clone(&self) -> Self {
+        WhenFn(::std::rc::Rc::clone(&self.0))
+    }
+}
+
+impl<F: Fn() -> bool + 'static> From<F> for WhenFn {
+    fn from(f: F) -> Self {
+        WhenFn(::std::rc::Rc::new(f))
+    }
+}
+
+impl WhenFn {
+    /// Invoke the wrapped predicate.
+    pub fn call(&self) -> bool {
+        (self.0)()
+    }
+}
+
+/// The fallback branch of a `show`-style conditional. Wraps an
+/// optional `Fn() -> Element` closure — `None` means "render
+/// nothing on false"; `Some(closure)` is what the user typed as
+/// `fallback: || …`.
+///
+/// `From<F: Fn() -> Element + 'static>` lets a closure literal flow
+/// through typed-builder's `Into<Fallback>` path; `Default` (used
+/// via `#[prop(default)]`) is `None`. (`Fallback` uses an
+/// element-returning closure rather than `Children`'s
+/// view-returning shape because the typical fallback is a single
+/// component invocation like `|| render! { status_banner(...) }`,
+/// which evaluates to `Element`. The implementation re-wraps it
+/// into a `View::Element` before attaching.)
+pub struct Fallback(pub Option<::std::rc::Rc<dyn ::std::ops::Fn() -> Element + 'static>>);
+
+impl Clone for Fallback {
+    fn clone(&self) -> Self {
+        Fallback(self.0.clone())
+    }
+}
+
+impl Default for Fallback {
+    fn default() -> Self {
+        Fallback(None)
+    }
+}
+
+impl<F: Fn() -> Element + 'static> From<F> for Fallback {
+    fn from(f: F) -> Self {
+        Fallback(Some(::std::rc::Rc::new(f)))
+    }
+}
+
 /// A rendered (or about-to-be-rendered) tree fragment.
 #[derive(Debug, Clone)]
 pub enum View {
