@@ -654,8 +654,10 @@ fn show_renders_children_when_true() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(true);
         let _h = render! {
-            Show(when: move || cond.get()) {
-                text(value: "main")
+            view {
+                Show(when: move || cond.get()) {
+                    text(value: "main")
+                }
             }
         };
         let texts: Vec<_> = log
@@ -675,11 +677,13 @@ fn show_renders_fallback_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false);
         let _h = render! {
-            Show(
-                when: move || cond.get(),
-                fallback: || render! { text(value: "fallback") },
-            ) {
-                text(value: "main")
+            view {
+                Show(
+                    when: move || cond.get(),
+                    fallback: || render! { text(value: "fallback") },
+                ) {
+                    text(value: "main")
+                }
             }
         };
         let texts: Vec<_> = log
@@ -699,11 +703,13 @@ fn show_swaps_on_condition_flip() {
     with_recorder_and_owner(|log| {
         let (cond, set_cond) = signal(true);
         let _h = render! {
-            Show(
-                when: move || cond.get(),
-                fallback: || render! { text(value: "fb") },
-            ) {
-                text(value: "main")
+            view {
+                Show(
+                    when: move || cond.get(),
+                    fallback: || render! { text(value: "fb") },
+                ) {
+                    text(value: "main")
+                }
             }
         };
         log.borrow_mut().clear();
@@ -728,8 +734,10 @@ fn show_without_fallback_renders_nothing_when_false() {
     with_recorder_and_owner(|log| {
         let (cond, _set) = signal(false);
         let _h = render! {
-            Show(when: move || cond.get()) {
-                text(value: "only")
+            view {
+                Show(when: move || cond.get()) {
+                    text(value: "only")
+                }
             }
         };
         let texts: Vec<_> = log
@@ -761,11 +769,13 @@ fn for_renders_initial_items() {
             Item { id: 3, name: "c" },
         ]);
         let _h = render! {
-            For(
-                each: move || items.get(),
-                key: |i: &Item| i.id,
-                children: move |i: Item| render! { text(value: i.name) },
-            )
+            view {
+                ForEach(
+                    each: move || items.get(),
+                    key: |i: &Item| i.id,
+                    children: move |i: Item| render! { text(value: i.name) },
+                )
+            }
         };
 
         let texts: Vec<_> = log
@@ -788,11 +798,13 @@ fn for_adds_new_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2]);
         let _h = render! {
-            For(
-                each: move || items.get(),
-                key: |x: &u32| *x,
-                children: move |x: u32| render! { text(value: x.to_string()) },
-            )
+            view {
+                ForEach(
+                    each: move || items.get(),
+                    key: |x: &u32| *x,
+                    children: move |x: u32| render! { text(value: x.to_string()) },
+                )
+            }
         };
         log.borrow_mut().clear();
 
@@ -827,11 +839,13 @@ fn for_reorders_existing_items_visually() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]);
         let _h = render! {
-            For(
-                each: move || items.get(),
-                key: |x: &u32| *x,
-                children: move |x: u32| render! { text(value: x.to_string()) },
-            )
+            view {
+                ForEach(
+                    each: move || items.get(),
+                    key: |x: &u32| *x,
+                    children: move |x: u32| render! { text(value: x.to_string()) },
+                )
+            }
         };
         log.borrow_mut().clear();
 
@@ -855,11 +869,13 @@ fn for_removes_items_on_update() {
     with_recorder_and_owner(|log| {
         let (items, set_items) = signal(vec![1_u32, 2, 3]);
         let _h = render! {
-            For(
-                each: move || items.get(),
-                key: |x: &u32| *x,
-                children: move |x: u32| render! { text(value: x.to_string()) },
-            )
+            view {
+                ForEach(
+                    each: move || items.get(),
+                    key: |x: &u32| *x,
+                    children: move |x: u32| render! { text(value: x.to_string()) },
+                )
+            }
         };
         log.borrow_mut().clear();
 

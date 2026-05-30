@@ -17,6 +17,16 @@
 //! }
 //! ```
 
+// `#[whisker::component]` (and other macros in this crate) emit
+// `::whisker::…` paths. From inside the whisker crate itself those
+// paths don't resolve naturally — Rust treats `whisker` as the
+// implicit `crate::` keyword's snake-case parallel only at the
+// edition's discretion. `extern crate self as whisker;` makes the
+// crate's own items reachable through `::whisker::…`, which is what
+// the macros expand to. Required for built-in `#[component]`-shaped
+// items (e.g. `ForEach` / `Show` in `control_flow.rs`).
+extern crate self as whisker;
+
 pub use whisker_app_config as app_config;
 pub use whisker_runtime as runtime;
 
@@ -96,11 +106,20 @@ pub use whisker_runtime::reactive::{
 // through `spawn_local`, and `run_blocking` is the standard escape
 // hatch for sync IO inside `async fn` bodies.
 pub use whisker_runtime::tasks::{run_blocking, run_until_stalled, spawn_local};
-// Control-flow components used by the `render!` macro.
-pub use whisker_runtime::view::{for_each, show};
+mod control_flow;
+
+// Built-in control flow — same `#[component]` form as anything a user
+// could implement. The PascalCase aliases `ForEach` / `Show` are
+// what `render!` resolves to.
+pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
 // `Children` is the conventional prop type for components that wrap
 // non-kwarg child nodes in their `render!` invocation.
 pub use whisker_runtime::view::Children;
+// Function-shaped prop types for control-flow components — the
+// `each` / `key` / `children` triple `ForEach` takes, the
+// `Fallback` newtype `Show` accepts as its `fallback:` kwarg, and
+// anything similar a user would have on their own component.
+pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
 
 /// Built-in tag builders. The `render!` macro lowers each built-in
 /// element invocation (`view { style: "x", on_tap: || {} }`) into a
@@ -132,8 +151,8 @@ pub mod __tags {
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
         append_child, apply_attr, apply_attr_owned, apply_styles, create_element,
-        create_element_by_name, install_list_native_item_provider, set_event_listener,
-        set_update_list_info, BindType, Element,
+        create_element_by_name, create_phantom_element, install_list_native_item_provider,
+        set_event_listener, set_update_list_info, BindType, Element,
     };
 
     // ---- The common builder surface -------------------------------------
@@ -1211,18 +1230,37 @@ pub mod __tags {
     //     back to `LynxEnv::EnableDecoupledList()`, which defaults to
     //     `true`. So `custom-list-name` alone activates the decoupled path.
 
+    /// `<list>` — Lynx native-virtualised, *render-props* shape. The
+    /// list builder takes its items source as three kwargs (`each`,
+    /// `key`, `children`) and **does not accept a body** — the macro
+    /// rejects `list { … }` invocations because items can only come
+    /// through the reactive props.
+    ///
+    /// The three setters are **type-stated**: `__h()` is only
+    /// callable when all three have been supplied. Missing any of
+    /// them surfaces as a compile-time error at the close of the
+    /// builder chain (rather than a runtime panic).
+    ///
+    /// `__h()` installs:
+    ///   1. an `effect` that diffs `each()` against per-key
+    ///      bookkeeping, materialises new items + detaches removed
+    ///      ones under the list element, eagerly computes each
+    ///      item's Lynx `impl_id` (sign), and updates the shared
+    ///      items Vec the native-item provider closure reads from.
+    ///   2. the `NativeItemProvider` so Lynx's list machinery can
+    ///      call `componentAtIndex(i)` and get a sign back without
+    ///      re-entering the renderer (the sign is already cached).
+    ///   3. `set_update_list_info(handle, count)` on every reactive
+    ///      update — what tells Lynx how many slots to lay out.
     #[allow(non_camel_case_types)]
-    pub struct list {
+    pub struct list<EachF = (), KeyF = (), ChildF = ()> {
         handle: Element,
-        // Children captured by `child()`, paired with the Lynx
-        // `impl_id` (sign) we eagerly computed for each. The closure
-        // installed in `__h` returns the sign verbatim from this
-        // cache — see the `child()` comment for why we can't re-
-        // enter the renderer from inside the closure.
-        items: ::std::vec::Vec<(Element, i32)>,
+        each: EachF,
+        key: KeyF,
+        children: ChildF,
     }
     #[allow(non_snake_case)]
-    pub fn __list_ctor() -> list {
+    pub fn __list_ctor() -> list<(), (), ()> {
         let handle = create_element_by_name("list");
         // Drive the list natively from its tree children rather than through
         // (absent) JS `componentAtIndex` callbacks. `custom-list-name` is the
@@ -1231,73 +1269,24 @@ pub mod __tags {
         apply_attr::<_, ::std::string::String>(handle, "custom-list-name", "list-container");
         list {
             handle,
-            items: ::std::vec::Vec::new(),
+            each: (),
+            key: (),
+            children: (),
         }
     }
-    impl ElementBuilder for list {
+    impl<EachF, KeyF, ChildF> ElementBuilder for list<EachF, KeyF, ChildF> {
         fn __element(&self) -> Element {
             self.handle
         }
-        // Attach the item eagerly + cache its Lynx `impl_id` (sign).
-        //
-        // The native item provider closure (installed in `__h`) is
-        // invoked from inside the Lynx layout C++ — which is itself
-        // running inside our `with_renderer` borrow on the renderer's
-        // `RefCell`. Any call from the closure that re-enters
-        // `with_renderer` (`append_child`, `element_sign`, …) would
-        // panic on the re-entrant `borrow_mut`; that panic is caught
-        // at the C trampoline and turned into a sentinel return,
-        // leaving the list permanently empty. So instead: attach now
-        // (one `with_renderer` from a safe scope) and capture the
-        // sign so the closure only needs to read from a cached Vec.
-        fn child(mut self, child: Element) -> Self {
-            apply_attr_owned::<_, ::std::string::String>(
-                child,
-                ::std::string::String::from("item-key"),
-                ::std::format!("w_{}", self.items.len()),
-            );
-            append_child(self.handle, child);
-            let sign = ::whisker_runtime::view::element_sign(child);
-            self.items.push((child, sign));
-            self
-        }
-        // Wire the `<list>` for Lynx's native-driven path:
-        //   1. install a `NativeItemProvider` so when Lynx's list
-        //      machinery calls `componentAtIndex(i)`, our closure
-        //      attaches the captured child to the list and returns
-        //      its `Element::id` (sign) — no lepus, no crash. Re-
-        //      entrant calls for the same index are deduped via
-        //      `attached`.
-        //   2. broadcast the item count via `update-list-info` so
-        //      Lynx knows how many slots to lay out.
-        fn __h(self) -> Element {
-            let handle = self.handle;
-            let count = self.items.len() as i32;
-            let items = self.items;
-            let provider = ::whisker_runtime::view::list_provider::NativeItemProvider {
-                component_at_index: ::std::boxed::Box::new(move |index, _op, _reuse| {
-                    // Read the pre-computed (handle, sign) cache —
-                    // every Lynx-facing side effect already ran in
-                    // `child()` so this closure stays
-                    // re-entrancy-safe (no `with_renderer` from
-                    // inside the layout C++).
-                    items
-                        .get(index as usize)
-                        .map(|&(_, sign)| sign)
-                        .unwrap_or(::whisker_runtime::view::list_provider::INVALID_ITEM_INDEX)
-                }),
-                // Static list: no recycling notification needed — items
-                // stay attached for the list's lifetime.
-                enqueue_component: ::std::option::Option::None,
-            };
-            install_list_native_item_provider(handle, provider);
-            set_update_list_info(handle, count);
-            handle
-        }
+        // `list` doesn't accept body children — the macro is
+        // responsible for rejecting `list { … }` at parse time.
+        // Should the user reach this through a non-macro path, the
+        // default `.child()` semantics (a regular `append_child`)
+        // would still work but is not the supported shape.
     }
-    impl list {
-        /// `list-type` — `"single"` (default, one column), `"flow"`, or
-        /// `"waterfall"`.
+    impl<EachF, KeyF, ChildF> list<EachF, KeyF, ChildF> {
+        /// `list-type` — `"single"` (default, one column), `"flow"`,
+        /// or `"waterfall"`.
         pub fn list_type<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<::std::string::String>>,
@@ -1305,7 +1294,6 @@ pub mod __tags {
             apply_attr(self.handle, "list-type", v);
             self
         }
-
         /// `column-count` — number of columns (default 1).
         pub fn column_count<V>(self, v: V) -> Self
         where
@@ -1314,9 +1302,8 @@ pub mod __tags {
             apply_attr(self.handle, "column-count", v);
             self
         }
-
-        /// `vertical-orientation` — `true` (default) scrolls vertically,
-        /// `false` horizontally.
+        /// `vertical-orientation` — `true` (default) scrolls
+        /// vertically, `false` horizontally.
         pub fn vertical_orientation<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<bool>>,
@@ -1325,13 +1312,216 @@ pub mod __tags {
             self
         }
     }
+    // ---- Type-stated render-props setters ----
+    //
+    // Each setter advances one type parameter from `()` to the
+    // function-shaped newtype; the `__h()` finaliser is only impl'd
+    // on the fully-populated state. The user can call the three in
+    // any order — the render! macro emits them in whatever order
+    // they appear in the source.
+    impl<KeyF, ChildF> list<(), KeyF, ChildF> {
+        pub fn each<T: 'static, F>(
+            self,
+            f: F,
+        ) -> list<::whisker_runtime::view::EachFn<T>, KeyF, ChildF>
+        where
+            F: ::std::convert::Into<::whisker_runtime::view::EachFn<T>>,
+        {
+            list {
+                handle: self.handle,
+                each: f.into(),
+                key: self.key,
+                children: self.children,
+            }
+        }
+    }
+    impl<EachF, ChildF> list<EachF, (), ChildF> {
+        pub fn key<T: 'static, K: 'static, F>(
+            self,
+            f: F,
+        ) -> list<EachF, ::whisker_runtime::view::KeyFn<T, K>, ChildF>
+        where
+            F: ::std::convert::Into<::whisker_runtime::view::KeyFn<T, K>>,
+        {
+            list {
+                handle: self.handle,
+                each: self.each,
+                key: f.into(),
+                children: self.children,
+            }
+        }
+    }
+    impl<EachF, KeyF> list<EachF, KeyF, ()> {
+        pub fn children<T: 'static, F>(
+            self,
+            f: F,
+        ) -> list<EachF, KeyF, ::whisker_runtime::view::ItemFn<T>>
+        where
+            F: ::std::convert::Into<::whisker_runtime::view::ItemFn<T>>,
+        {
+            list {
+                handle: self.handle,
+                each: self.each,
+                key: self.key,
+                children: f.into(),
+            }
+        }
+    }
+    // ---- Finaliser, only on fully-populated state ----
+    impl<T, K>
+        list<
+            ::whisker_runtime::view::EachFn<T>,
+            ::whisker_runtime::view::KeyFn<T, K>,
+            ::whisker_runtime::view::ItemFn<T>,
+        >
+    where
+        T: 'static,
+        K: ::std::cmp::Eq + ::std::hash::Hash + ::std::clone::Clone + 'static,
+    {
+        /// Finalise the builder: install the reactive-items effect +
+        /// the native-item provider + the initial count broadcast.
+        #[allow(non_snake_case)]
+        pub fn __h(self) -> Element {
+            let handle = self.handle;
+            let each = self.each;
+            let key = self.key;
+            let children = self.children;
 
-    #[allow(non_camel_case_types)]
-    pub struct list_item {
+            // Shared items Vec — the provider closure (installed
+            // below, reads-only) and the effect (rewrites on every
+            // diff) both clone the Rc.
+            let items: ::std::rc::Rc<::std::cell::RefCell<::std::vec::Vec<(Element, i32)>>> =
+                ::std::rc::Rc::new(::std::cell::RefCell::new(::std::vec::Vec::new()));
+
+            // Native item provider — reads sign by index from the
+            // shared items Vec. Must NOT call back into the renderer
+            // (Lynx's layout C++ that invokes this closure is itself
+            // inside `with_renderer`'s RefCell borrow).
+            let items_for_provider = items.clone();
+            let provider = ::whisker_runtime::view::list_provider::NativeItemProvider {
+                component_at_index: ::std::boxed::Box::new(move |index, _op, _reuse| {
+                    items_for_provider
+                        .borrow()
+                        .get(index as usize)
+                        .map(|&(_, sign)| sign)
+                        .unwrap_or(::whisker_runtime::view::list_provider::INVALID_ITEM_INDEX)
+                }),
+                enqueue_component: ::std::option::Option::None,
+            };
+            install_list_native_item_provider(handle, provider);
+
+            // Reactive items effect. Diffs `each()` against
+            // per-key bookkeeping, materialises new items + detaches
+            // removed ones under `handle`, sets `item-key` on each,
+            // rebuilds the items Vec + broadcasts the new count.
+            //
+            // Owner cascade: per-item owners are detached
+            // (`create_owner(None)`); the effect explicitly disposes
+            // them on diff. When the surrounding component disposes,
+            // the released list element + items are torn down
+            // through their respective owner releases.
+            struct ListEntry {
+                owner: ::whisker_runtime::reactive::OwnerId,
+                handle: Element,
+            }
+            let entries: ::std::rc::Rc<
+                ::std::cell::RefCell<::std::collections::HashMap<K, ListEntry>>,
+            > = ::std::rc::Rc::new(::std::cell::RefCell::new(::std::collections::HashMap::new()));
+
+            ::whisker_runtime::reactive::effect(move || {
+                let new_items = each.call();
+                let mut new_entries: ::std::collections::HashMap<K, ListEntry> =
+                    ::std::collections::HashMap::new();
+                let mut new_keys: ::std::vec::Vec<K> =
+                    ::std::vec::Vec::with_capacity(new_items.len());
+
+                let mut old = ::std::mem::take(&mut *entries.borrow_mut());
+
+                for item in new_items {
+                    let k = key.call(&item);
+                    if let ::std::option::Option::Some(existing) = old.remove(&k) {
+                        new_entries.insert(k.clone(), existing);
+                    } else {
+                        let item_owner = ::whisker_runtime::reactive::create_owner(None);
+                        let li = ::whisker_runtime::reactive::with_owner(item_owner, || {
+                            // Auto-wrap: the user's `children(item)` returns
+                            // arbitrary content (a story_row view, a custom
+                            // component, etc.). Lynx's <list> requires its
+                            // direct children to be UIComponent on the
+                            // platform side (LynxUIListItem on iOS,
+                            // UIListItem on Android — both
+                            // UIComponent-typed). Wrapping in <list-item>
+                            // is what realises that contract; user code
+                            // never has to write list_item itself.
+                            let li = create_element_by_name("list-item");
+                            let content = children.call(item);
+                            append_child(li, content);
+                            append_child(handle, li);
+                            li
+                        });
+                        new_entries.insert(
+                            k.clone(),
+                            ListEntry {
+                                owner: item_owner,
+                                handle: li,
+                            },
+                        );
+                    }
+                    new_keys.push(k);
+                }
+
+                // Disappeared items: detach + dispose.
+                for (_, entry) in old.drain() {
+                    ::whisker_runtime::view::remove_child(handle, entry.handle);
+                    ::whisker_runtime::reactive::dispose_owner(entry.owner);
+                }
+
+                // Rebuild items Vec in new key order, capturing
+                // each leaf handle's Lynx sign (eager, from a safe
+                // scope — provider closure stays re-entrancy-safe).
+                let mut new_items_vec: ::std::vec::Vec<(Element, i32)> =
+                    ::std::vec::Vec::with_capacity(new_keys.len());
+                for k in &new_keys {
+                    if let ::std::option::Option::Some(entry) = new_entries.get(k) {
+                        apply_attr_owned::<_, ::std::string::String>(
+                            entry.handle,
+                            ::std::string::String::from("item-key"),
+                            ::std::format!("w_{}", new_items_vec.len()),
+                        );
+                        let sign = ::whisker_runtime::view::element_sign(entry.handle);
+                        new_items_vec.push((entry.handle, sign));
+                    }
+                }
+
+                let count = new_items_vec.len() as i32;
+                *items.borrow_mut() = new_items_vec;
+                *entries.borrow_mut() = new_entries;
+
+                set_update_list_info(handle, count);
+            });
+
+            handle
+        }
+    }
+    // (The list_type / column_count / vertical_orientation methods
+    // moved up into the type-state-generic `impl<E, K, C> list<E, K, C>`
+    // block so they're available regardless of which setters have
+    // been called yet.)
+
+    // `list_item` is an internal Lynx-side wrapper the `list`
+    // render-props builder auto-creates around each item slot. It
+    // realises the platform UI layer's `UIComponent` contract
+    // (`LynxUIListItem : LynxUIComponent` on iOS, `UIListItem extends
+    // UIComponent` on Android) that the list recycler / sticky /
+    // virtualisation machinery depends on. The list builder calls
+    // `create_element_by_name("list-item")` directly from its
+    // `__h()` effect; user code never reaches this builder.
+    #[allow(non_camel_case_types, dead_code)]
+    pub(crate) struct list_item {
         handle: Element,
     }
-    #[allow(non_snake_case)]
-    pub fn __list_item_ctor() -> list_item {
+    #[allow(non_snake_case, dead_code)]
+    pub(crate) fn __list_item_ctor() -> list_item {
         list_item {
             handle: create_element_by_name("list-item"),
         }
@@ -1341,6 +1531,7 @@ pub mod __tags {
             self.handle
         }
     }
+    #[allow(dead_code)]
     impl list_item {
         /// `item-key` — stable identity for this item, used by the list
         /// for recycling / diffing. Should be unique among siblings.
@@ -1350,6 +1541,43 @@ pub mod __tags {
         {
             apply_attr(self.handle, "item-key", v);
             self
+        }
+    }
+
+    /// `<fragment>` — *transparent grouping container*. Mounts as a
+    /// phantom element ([`create_phantom_element`]) the runtime
+    /// tracks in its mirror but never forwards to Lynx. Children
+    /// appended under a fragment are hoisted to the fragment's
+    /// nearest non-phantom ancestor in the Lynx tree, in source
+    /// order — so on screen the fragment is *invisible*, while in
+    /// user code it serves as a stable grouping point for reactive
+    /// children.
+    ///
+    /// **What it's for**: Whisker's `For` / `Show` control flow
+    /// (`for_each` / `show`) both `return` a fragment. Any
+    /// user-defined control flow follows the same pattern — a
+    /// function that allocates a fragment, installs an effect, and
+    /// mutates the fragment's children — so a custom control flow
+    /// looks and feels exactly like the built-in `For` / `Show`.
+    ///
+    /// **Restrictions**: a fragment carries no styling, attributes,
+    /// or event listeners — those would have no Lynx element to
+    /// attach to. The builder exposes only `.child(...)`. Fragments
+    /// inside a `<list>` are not supported (use the list builder's
+    /// `each` / `key` / `children` render-props instead).
+    #[allow(non_camel_case_types)]
+    pub struct fragment {
+        handle: Element,
+    }
+    #[allow(non_snake_case)]
+    pub fn __fragment_ctor() -> fragment {
+        fragment {
+            handle: create_phantom_element(),
+        }
+    }
+    impl ElementBuilder for fragment {
+        fn __element(&self) -> Element {
+            self.handle
         }
     }
 }
@@ -1464,14 +1692,19 @@ pub mod prelude {
     // Phase 7-Φ.H.2 — `ElementRef<T>` + `element_ref::<T>()` for
     // imperative element-method dispatch (video.play(), etc.).
     pub use crate::{
-        computed, effect, for_each, on_cleanup, on_mount, provide_context, resource, resource_sync,
-        run_blocking, run_on_main_thread, show, signal, spawn_local, use_context, with_context,
+        computed, effect, on_cleanup, on_mount, provide_context, resource, resource_sync,
+        run_blocking, run_on_main_thread, signal, spawn_local, use_context, with_context,
         ReadSignal, Resource, ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
     };
+    // Built-in control flow (PascalCase aliases generated by
+    // `#[component]` on `for_each` / `show` in `control_flow.rs`).
+    pub use crate::{ForEach, ForEachProps, Show, ShowProps};
+    // Function-shaped prop types for control-flow components.
     pub use crate::{
         element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError,
         ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle,
     };
+    pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
     // typing a tag name inside render! (the macro source position
@@ -1487,5 +1720,8 @@ pub mod prelude {
     // these blocked kwarg completion was a separate bug — the
     // prefix-match heuristic that's since been removed.)
     #[doc(hidden)]
-    pub use crate::__tags::{image, list, list_item, page, raw_text, scroll_view, text, view};
+    pub use crate::__tags::{fragment, image, list, page, raw_text, scroll_view, text, view};
+    // `list_item` intentionally absent — the `list` render-props
+    // builder auto-wraps every item internally; user code never
+    // reaches for `list_item` directly.
 }
