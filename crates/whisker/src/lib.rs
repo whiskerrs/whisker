@@ -1440,12 +1440,23 @@ pub mod __tags {
                         new_entries.insert(k.clone(), existing);
                     } else {
                         let item_owner = ::whisker_runtime::reactive::create_owner(None);
-                        let h = ::whisker_runtime::reactive::with_owner(item_owner, || {
-                            let h = children.call(item);
-                            append_child(handle, h);
-                            h
+                        let li = ::whisker_runtime::reactive::with_owner(item_owner, || {
+                            // Auto-wrap: the user's `children(item)` returns
+                            // arbitrary content (a story_row view, a custom
+                            // component, etc.). Lynx's <list> requires its
+                            // direct children to be UIComponent on the
+                            // platform side (LynxUIListItem on iOS,
+                            // UIListItem on Android — both
+                            // UIComponent-typed). Wrapping in <list-item>
+                            // is what realises that contract; user code
+                            // never has to write list_item itself.
+                            let li = create_element_by_name("list-item");
+                            let content = children.call(item);
+                            append_child(li, content);
+                            append_child(handle, li);
+                            li
                         });
-                        new_entries.insert(k.clone(), ListEntry { owner: item_owner, handle: h });
+                        new_entries.insert(k.clone(), ListEntry { owner: item_owner, handle: li });
                     }
                     new_keys.push(k);
                 }

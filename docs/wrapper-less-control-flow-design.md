@@ -207,6 +207,79 @@ Same builder pattern, same `Children` body slot, same prop types.
 Nothing in the macro or runtime treats user control flow
 differently from `Show`.
 
+## 4.3 `<list-item>` auto-wrap
+
+User code passes a `children: |item| render! { … }` closure that
+returns the *content* of one list slot (a `story_row` view, a
+custom component, whatever). The list builder wraps each returned
+`Element` in a fresh `<list-item>` before attaching it to the
+`<list>` parent.
+
+### Why the wrap is mandatory
+
+The Whisker fork's list machinery has two layers:
+
+  - **C++ fiber layer** (`core/renderer/dom/fiber/list_element.cc`):
+    when a child is appended to `<list>`, the element calls
+    `child->MarkAsListItem()` *regardless of tag*. The fiber side
+    treats any direct child as a list-item.
+  - **Platform UI layer** (iOS `LynxUIListContainer.mm`, Android
+    `UIListContainer.java` + `UIList.java`): the list cell APIs
+    are strongly typed on `LynxUIComponent` (iOS) /
+    `UIComponent` (Android) — that's what realises layout,
+    sticky, recycling, item-key tracking. `<list-item>`'s
+    platform behavior (`LynxUIListItem` / `UIListItem`) inherits
+    from `LynxUIComponent` / `UIComponent`; a plain `<view>`
+    produces a `LynxUI` / `UIView` and the
+    `instanceof UIComponent` check in Android's `UIList.java`
+    (or the iOS analogue) fails. The empirical proof: setting
+    `children: |s| render! { story_row(story: s) }` *without*
+    the wrap broke the entire view hierarchy (not just the
+    items — even the header bar disappeared) on iOS Simulator.
+
+So `<list-item>` must remain in the rendered tree as the cell
+anchor. The auto-wrap simply hides it from user code.
+
+### Implementation
+
+In the list builder's `__h()` effect, per new keyed item:
+
+```rust
+let li = with_owner(item_owner, || {
+    let li = create_element_by_name("list-item");
+    let content = children.call(item);
+    append_child(li, content);
+    append_child(handle, li);  // li is the list's direct child
+    li                          // sign + item-key get applied to li
+});
+```
+
+The list's items Vec stores `(li, sign)` — not `(content, sign)` —
+so `componentAtIndex` returns the list-item's sign, which is what
+Lynx's mediator expects.
+
+### Trade-off
+
+The user loses the ability to set `<list-item>`-specific
+attributes (`sticky-top`, `sticky-bottom`, `full-span`,
+`estimated-main-axis-size-px`) from the `children:` closure.
+Whisker addresses this on demand via opt-in props on the `list`
+builder itself when those features are needed:
+
+  - `sticky_top_keys: &[K]` / `sticky_bottom_keys: &[K]` — the
+    list builder reads these and sets the corresponding attributes
+    on the wrapping `<list-item>` before broadcasting count.
+  - `full_span_keys: &[K]` for waterfall / flow layouts.
+  - `estimated_main_axis_size: |item: &T| -> f32` for upfront
+    layout hints.
+
+None of these are implemented in v1 — when a real use case
+materialises we add the prop. The auto-wrap fork-side comment
+`TODO(hujing.1): separate UIListItem with UIComponent` hints that
+upstream is also reconsidering the cell-wrapper coupling; if
+that lands, Whisker can pass the bare content through and skip
+the wrap.
+
 ## 5. `<list>` as a render-props builder
 
 `<list>` virtualisation requires Whisker to broadcast item count

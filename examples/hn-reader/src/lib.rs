@@ -209,9 +209,12 @@ pub fn hn_reader() -> Element {
                 list(
                     each: move || stories.get().unwrap_or_default(),
                     key: |s: &Story| s.object_id.clone(),
-                    children: |s: Story| render! {
-                        list_item { story_row(story: s) }
-                    },
+                    // No explicit `list_item` wrap — the `list` builder
+                    // auto-wraps each child in <list-item> so the Lynx
+                    // platform layer sees the UIComponent slot anchor
+                    // it needs without leaking that detail into user
+                    // code.
+                    children: |s: Story| render! { story_row(story: s) },
                     style: list_style,
                 )
             }
