@@ -1764,10 +1764,10 @@ name = "whisker"
 version = "0.1.0"
 dependencies = [
  "whisker-app-config",
+ "whisker-css",
  "whisker-driver",
  "whisker-macros",
  "whisker-runtime",
- "whisker-style",
  "whisker-subsecond",
 ]
 
@@ -1819,6 +1819,10 @@ dependencies = [
  "serde_json",
  "whisker-app-config",
 ]
+
+[[package]]
+name = "whisker-css"
+version = "0.1.0"
 
 [[package]]
 name = "whisker-dev-runtime"
@@ -1907,10 +1911,6 @@ dependencies = [
  "serde_json",
  "slotmap",
 ]
-
-[[package]]
-name = "whisker-style"
-version = "0.1.0"
 
 [[package]]
 name = "whisker-subsecond"

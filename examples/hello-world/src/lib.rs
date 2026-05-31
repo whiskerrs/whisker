@@ -25,16 +25,16 @@
 //!   the component tree.
 //! - `render!` with `text(value: …)` kwargs, `style:` and other
 //!   attributes, `on_tap:` handlers.
-//! - `whisker_style::Style` builder (replaces all CSS string literals).
+//! - `whisker_css::Css` builder (replaces all CSS string literals).
 
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-// Pull in every Style helper without per-name imports. `Style` and
+// Pull in every Css helper without per-name imports. `Css` and
 // the common keyword enums already come in via `whisker::prelude`,
 // but the long tail (`BackgroundRepeat`, `Gradient`, `ColorStop`,
 // `BorderRadius`, `MarginValue`, `Padding`, …) lives here.
-use whisker::style::keyword::{BorderStyle, FontWeight, TextAlign, TextTransform};
-use whisker::style::{ColorStop, Gradient, ImageRef, LinearDirection, PositionKind, Size};
+use whisker::css::keyword::{BorderStyle, FontWeight, TextAlign, TextTransform};
+use whisker::css::{ColorStop, Gradient, ImageRef, LinearDirection, PositionKind, Size};
 
 // ---- App state --------------------------------------------------------------
 
@@ -110,7 +110,7 @@ fn linear_gradient_180(c1: Color, c2: Color) -> ImageRef {
 
 #[component]
 fn art_tile(c1: Color, c2: Color, width: Size, radius: Length) -> Element {
-    let style = Style::new()
+    let style = Css::new()
         .width(width.clone())
         .aspect_ratio(1.0, 1.0)
         .border_radius(radius)
@@ -127,7 +127,7 @@ fn chip(label: &'static str, accented: bool) -> Element {
     } else {
         Color::rgba(255, 255, 255, 0.08)
     };
-    let style = Style::new()
+    let style = Css::new()
         .font_size(13.px())
         .color(TEXT_PRIMARY)
         .padding((8.px(), 16.px()))
@@ -141,11 +141,11 @@ fn chip(label: &'static str, accented: bool) -> Element {
 
 #[component]
 fn section_header(title: &'static str) -> Element {
-    let title_style = Style::new()
+    let title_style = Css::new()
         .font_size(20.px())
         .font_weight(FontWeight::Numeric(700))
         .color(TEXT_PRIMARY);
-    let more_style = Style::new()
+    let more_style = Css::new()
         .font_size(13.px())
         .color(Color::rgba(255, 255, 255, 0.5));
     render! {
@@ -158,17 +158,17 @@ fn section_header(title: &'static str) -> Element {
 
 #[component]
 fn recent_card(title: &'static str, sub: &'static str, c1: Color, c2: Color) -> Element {
-    let outer = Style::new()
+    let outer = Css::new()
         .width(140.px())
         .margin_right(14.px())
         .display_flex()
         .flex_direction(FlexDirection::Column);
-    let title_style = Style::new()
+    let title_style = Css::new()
         .font_size(14.px())
         .font_weight(FontWeight::Numeric(600))
         .color(TEXT_PRIMARY)
         .margin_top(8.px());
-    let sub_style = Style::new()
+    let sub_style = Css::new()
         .font_size(12.px())
         .color(TEXT_SECONDARY)
         .margin_top(2.px());
@@ -206,7 +206,7 @@ fn grid_tile(
         } else {
             TEXT_MUTED
         };
-        Style::new()
+        Css::new()
             .position(PositionKind::Absolute)
             .top(8.px())
             .right(8.px())
@@ -220,7 +220,7 @@ fn grid_tile(
             .line_height(28.px())
     });
 
-    let tile_style = Style::new()
+    let tile_style = Css::new()
         .width(48.percent())
         .margin_bottom(16.px())
         .background_color(SURFACE)
@@ -229,15 +229,15 @@ fn grid_tile(
         .box_shadow(0.px(), 4.px(), 12.px(), 0.px(), Color::rgba(0, 0, 0, 0.25))
         .display_flex()
         .flex_direction(FlexDirection::Column);
-    let art_wrap_style = Style::new()
+    let art_wrap_style = Css::new()
         .position(PositionKind::Relative)
         .width(100.percent());
-    let title_style = Style::new()
+    let title_style = Css::new()
         .font_size(14.px())
         .font_weight(FontWeight::Numeric(600))
         .color(TEXT_PRIMARY)
         .margin_top(10.px());
-    let sub_style = Style::new()
+    let sub_style = Css::new()
         .font_size(11.px())
         .color(TEXT_SECONDARY)
         .margin_top(2.px());
@@ -262,7 +262,7 @@ fn activity_row(
     sub: &'static str,
     when: &'static str,
 ) -> Element {
-    let row_style = Style::new()
+    let row_style = Css::new()
         .width(100.percent())
         .display_flex()
         .flex_direction(FlexDirection::Row)
@@ -274,7 +274,7 @@ fn activity_row(
                 .style(BorderStyle::Solid)
                 .color(Color::rgba(255, 255, 255, 0.06)),
         );
-    let avatar_style = Style::new()
+    let avatar_style = Css::new()
         .width(44.px())
         .height(44.px())
         .border_radius(22.px())
@@ -283,24 +283,24 @@ fn activity_row(
         .align_items(AlignItems::Center)
         .justify_content(JustifyContent::Center)
         .margin_right(12.px());
-    let initial_style = Style::new()
+    let initial_style = Css::new()
         .font_size(18.px())
         .color(Color::Named(NamedColor::White))
         .font_weight(FontWeight::Numeric(700));
-    let mid_style = Style::new()
+    let mid_style = Css::new()
         .flex_grow(1.0)
         .flex_shrink(1.0)
         .display_flex()
         .flex_direction(FlexDirection::Column);
-    let title_style = Style::new()
+    let title_style = Css::new()
         .font_size(15.px())
         .color(TEXT_PRIMARY)
         .font_weight(FontWeight::Numeric(600));
-    let sub_style = Style::new()
+    let sub_style = Css::new()
         .font_size(12.px())
         .color(TEXT_SECONDARY)
         .margin_top(2.px());
-    let stamp_style = Style::new().font_size(11.px()).color(TEXT_MUTED);
+    let stamp_style = Css::new().font_size(11.px()).color(TEXT_MUTED);
     render! {
         view(style: row_style) {
             view(style: avatar_style) {
@@ -321,18 +321,18 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppSt
     let on_pick = move |_| tab.set(index);
     let glyph_style = computed(move || {
         let tab_color = if tab.get() == index { ACCENT } else { TEXT_MUTED };
-        Style::new().font_size(22.px()).color(tab_color)
+        Css::new().font_size(22.px()).color(tab_color)
     });
     let label_style = computed(move || {
         let selected = tab.get() == index;
         let tab_color = if selected { ACCENT } else { TEXT_MUTED };
         let weight = if selected { 700 } else { 500 };
-        Style::new()
+        Css::new()
             .font_size(11.px())
             .color(tab_color)
             .font_weight(FontWeight::Numeric(weight))
     });
-    let container_style = Style::new()
+    let container_style = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .align_items(AlignItems::Center)
@@ -348,7 +348,7 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppSt
 
 #[component]
 fn tab_bar(state: AppState) -> Element {
-    let style = Style::new()
+    let style = Css::new()
         .position(PositionKind::Absolute)
         .left(0.px())
         .right(0.px())
@@ -392,7 +392,7 @@ fn now_playing(state: AppState) -> Element {
             "Lo-Fi Beats · paused".to_string()
         }
     });
-    let container_style = Style::new()
+    let container_style = Css::new()
         .position(PositionKind::Absolute)
         .left(12.px())
         .right(12.px())
@@ -404,20 +404,20 @@ fn now_playing(state: AppState) -> Element {
         .background_color(SURFACE_2)
         .border_radius(14.px())
         .box_shadow(0.px(), 6.px(), 16.px(), 0.px(), Color::rgba(0, 0, 0, 0.35));
-    let mid_style = Style::new()
+    let mid_style = Css::new()
         .flex(Flex::Number(1.0))
         .padding((0.px(), 12.px()))
         .display_flex()
         .flex_direction(FlexDirection::Column);
-    let title_style = Style::new()
+    let title_style = Css::new()
         .font_size(14.px())
         .color(TEXT_PRIMARY)
         .font_weight(FontWeight::Numeric(600));
-    let sub_style = Style::new()
+    let sub_style = Css::new()
         .font_size(11.px())
         .color(TEXT_SECONDARY)
         .margin_top(2.px());
-    let btn_style = Style::new()
+    let btn_style = Css::new()
         .width(40.px())
         .height(40.px())
         .border_radius(20.px())
@@ -440,7 +440,7 @@ fn now_playing(state: AppState) -> Element {
 
 #[component]
 fn header() -> Element {
-    let bg_style = Style::new()
+    let bg_style = Css::new()
         .width(100.percent())
         .padding((60.px(), 20.px(), 18.px()))
         .background_image(linear_gradient_180(Color::hex(0x2C1860), BG))
@@ -448,13 +448,13 @@ fn header() -> Element {
         .flex_direction(FlexDirection::Row)
         .align_items(AlignItems::Center)
         .justify_content(JustifyContent::SpaceBetween);
-    let small = Style::new().font_size(12.px()).color(TEXT_SECONDARY);
-    let big = Style::new()
+    let small = Css::new().font_size(12.px()).color(TEXT_SECONDARY);
+    let big = Css::new()
         .font_size(18.px())
         .color(TEXT_PRIMARY)
         .font_weight(FontWeight::Numeric(700));
     let icon = || {
-        Style::new()
+        Css::new()
             .width(40.px())
             .height(40.px())
             .border_radius(20.px())
@@ -464,11 +464,11 @@ fn header() -> Element {
             .text_align(TextAlign::Center)
             .line_height(40.px())
     };
-    let avatar = Style::new()
+    let avatar = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Row)
         .align_items(AlignItems::Center);
-    let avatar_circle = Style::new()
+    let avatar_circle = Css::new()
         .width(44.px())
         .height(44.px())
         .border_radius(22.px())
@@ -477,14 +477,14 @@ fn header() -> Element {
         .align_items(AlignItems::Center)
         .justify_content(JustifyContent::Center)
         .margin_right(12.px());
-    let avatar_letter = Style::new()
+    let avatar_letter = Css::new()
         .font_size(18.px())
         .color(Color::Named(NamedColor::White))
         .font_weight(FontWeight::Numeric(700));
-    let labels = Style::new()
+    let labels = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Column);
-    let icons_row = Style::new()
+    let icons_row = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Row);
     render! {
@@ -509,11 +509,11 @@ fn header() -> Element {
 
 #[component]
 fn chips() -> Element {
-    let row = Style::new()
+    let row = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Row)
         .padding((0.px(), 20.px(), 8.px()))
-        .flex_wrap(whisker::style::FlexWrap::Nowrap);
+        .flex_wrap(whisker::css::FlexWrap::Nowrap);
     render! {
         view(style: row) {
             Chip(label: "All",        accented: true)
@@ -526,7 +526,7 @@ fn chips() -> Element {
 
 #[component]
 fn recents() -> Element {
-    let scroll_style = Style::new()
+    let scroll_style = Css::new()
         .padding((4.px(), 20.px(), 8.px()))
         .height(200.px());
     render! {
@@ -542,21 +542,21 @@ fn recents() -> Element {
 
 #[component]
 fn featured() -> Element {
-    let cap = Style::new()
+    let cap = Css::new()
         .font_size(12.px())
         .color(TEXT_SECONDARY)
         .text_transform(TextTransform::Uppercase)
         .letter_spacing(1.5.px());
-    let title = Style::new()
+    let title = Css::new()
         .font_size(26.px())
         .font_weight(FontWeight::Numeric(700))
         .color(TEXT_PRIMARY)
         .margin_top(6.px());
-    let sub = Style::new()
+    let sub = Css::new()
         .font_size(13.px())
         .color(TEXT_SECONDARY)
         .margin_top(4.px());
-    let box_style = Style::new()
+    let box_style = Css::new()
         .margin((0.px(), 20.px()))
         .height(180.px())
         .border_radius(18.px())
@@ -577,11 +577,11 @@ fn featured() -> Element {
 
 #[component]
 fn grid(state: AppState) -> Element {
-    let style = Style::new()
+    let style = Css::new()
         .padding((4.px(), 20.px(), 0.px()))
         .display_flex()
         .flex_direction(FlexDirection::Row)
-        .flex_wrap(whisker::style::FlexWrap::Wrap)
+        .flex_wrap(whisker::css::FlexWrap::Wrap)
         .justify_content(JustifyContent::SpaceBetween);
     render! {
         view(style: style) {
@@ -597,7 +597,7 @@ fn grid(state: AppState) -> Element {
 
 #[component]
 fn activity_feed() -> Element {
-    let style = Style::new()
+    let style = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .padding((0.px(), 0.px(), 8.px()));
@@ -614,7 +614,7 @@ fn activity_feed() -> Element {
 
 #[component]
 fn scroll_card(n: i32, color: Color) -> Element {
-    let style = Style::new()
+    let style = Css::new()
         .width(96.px())
         .height(56.px())
         .flex_shrink(0.0)
@@ -624,7 +624,7 @@ fn scroll_card(n: i32, color: Color) -> Element {
         .display_flex()
         .align_items(AlignItems::Center)
         .justify_content(JustifyContent::Center);
-    let num_style = Style::new()
+    let num_style = Css::new()
         .color(Color::Named(NamedColor::White))
         .font_size(18.px())
         .font_weight(FontWeight::Numeric(700));
@@ -648,7 +648,7 @@ fn scroll_demo() -> Element {
         }
     });
     let btn_style = || {
-        Style::new()
+        Css::new()
             .padding((6.px(), 10.px()))
             .background_color(Color::hex(0x6C5CE7))
             .border_radius(6.px())
@@ -656,26 +656,26 @@ fn scroll_demo() -> Element {
             .font_size(12.px())
             .font_weight(FontWeight::Numeric(600))
     };
-    let outer = Style::new()
+    let outer = Css::new()
         .margin((4.px(), 20.px(), 8.px()))
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .gap(6.px());
-    let label_style = Style::new()
+    let label_style = Css::new()
         .color(Color::hex(0xB9A9FF))
         .font_size(12.px())
         .font_family("monospace");
-    let row_style = Style::new()
+    let row_style = Css::new()
         .height(64.px())
         .display_flex()
         .flex_direction(FlexDirection::Row)
         .background_color(SURFACE)
         .border_radius(12.px())
         .padding(4.px());
-    let buttons = Style::new()
+    let buttons = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Row)
-        .flex_wrap(whisker::style::FlexWrap::Wrap)
+        .flex_wrap(whisker::css::FlexWrap::Wrap)
         .gap(8.px());
     render! {
         view(style: outer) {
@@ -727,14 +727,14 @@ fn scroll_demo() -> Element {
 
 #[component]
 fn scroll_body(state: AppState) -> Element {
-    let style = Style::new()
+    let style = Css::new()
         .flex_grow(1.0)
         .flex_shrink(1.0)
         .width(100.percent())
         .background_color(BG)
         .display_flex()
         .flex_direction(FlexDirection::Column);
-    let spacer = Style::new().height(160.px());
+    let spacer = Css::new().height(160.px());
     render! {
         scroll_view(scroll_orientation: "vertical", style: style) {
             ScrollDemo()
@@ -763,22 +763,22 @@ const BIG_BUCK_BUNNY_URL: &str =
 #[component]
 pub fn video_demo() -> Element {
     let video = VideoHandle::new();
-    let row_style = Style::new()
+    let row_style = Css::new()
         .flex_direction(FlexDirection::Row)
         .align_items(AlignItems::Center)
         .padding(8.px())
         .background_color(Color::hex(0x1A1A1A))
         .gap(12.px());
     let btn_style = || {
-        Style::new()
+        Css::new()
             .padding((8.px(), 16.px()))
             .background_color(Color::hex(0x6C5CE7))
             .border_radius(6.px())
             .color(Color::hex(0xFFFFFF))
             .font_size(14.px())
     };
-    let container = Style::new().flex_direction(FlexDirection::Column);
-    let video_style = Style::new().width(100.percent()).height(220.px());
+    let container = Css::new().flex_direction(FlexDirection::Column);
+    let video_style = Css::new().width(100.percent()).height(220.px());
     render! {
         view(style: container) {
             // `Video` is a module component (separate crate); its
@@ -814,7 +814,7 @@ pub fn measure_demo() -> Element {
             }
         });
     };
-    let outer = Style::new()
+    let outer = Css::new()
         .width(200.px())
         .height(56.px())
         .margin((8.px(), 16.px()))
@@ -824,7 +824,7 @@ pub fn measure_demo() -> Element {
         .flex_direction(FlexDirection::Column)
         .align_items(AlignItems::Center)
         .justify_content(JustifyContent::Center);
-    let lbl = Style::new()
+    let lbl = Css::new()
         .color(Color::hex(0xB9A9FF))
         .font_size(14.px())
         .font_weight(FontWeight::Numeric(600));
@@ -855,17 +855,17 @@ fn text_methods_demo() -> Element {
             }
         });
     };
-    let outer = Style::new()
+    let outer = Css::new()
         .margin((4.px(), 16.px(), 8.px()))
         .flex_shrink(0.0)
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .gap(4.px());
-    let big_text = Style::new()
+    let big_text = Css::new()
         .color(Color::hex(0xE8E3FF))
         .font_size(15.px())
         .font_weight(FontWeight::Numeric(600));
-    let mono = Style::new()
+    let mono = Css::new()
         .color(Color::hex(0xB9A9FF))
         .font_size(12.px())
         .font_family("monospace");
@@ -885,7 +885,7 @@ fn text_methods_demo() -> Element {
 
 #[component]
 fn list_demo() -> Element {
-    let card = Style::new()
+    let card = Css::new()
         .height(52.px())
         .margin((4.px(), 16.px()))
         .border_radius(8.px())
@@ -894,20 +894,20 @@ fn list_demo() -> Element {
         .flex_direction(FlexDirection::Row)
         .align_items(AlignItems::Center)
         .padding_left(16.px());
-    let txt = Style::new()
+    let txt = Css::new()
         .color(Color::hex(0xE8E3FF))
         .font_size(15.px())
         .font_weight(FontWeight::Numeric(600));
-    let outer = Style::new()
+    let outer = Css::new()
         .flex_shrink(0.0)
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .gap(4.px());
-    let hdr = Style::new()
+    let hdr = Css::new()
         .color(Color::hex(0xB9A9FF))
         .font_size(12.px())
         .margin((4.px(), 16.px()));
-    let list_style = Style::new().height(220.px());
+    let list_style = Css::new().height(220.px());
     render! {
         view(style: outer) {
             text(value: "list (decoupled · virtualized)", style: hdr)
@@ -931,26 +931,26 @@ fn list_demo() -> Element {
 fn show_demo() -> Element {
     let visible = RwSignal::new(true);
     let toggle = move |_| visible.update(|v| *v = !*v);
-    let btn = Style::new()
+    let btn = Css::new()
         .padding((8.px(), 16.px()))
         .background_color(Color::hex(0x6C5CE7))
         .border_radius(6.px())
         .color(Color::hex(0xFFFFFF))
         .font_size(14.px())
         .font_weight(FontWeight::Numeric(600));
-    let outer = Style::new()
+    let outer = Css::new()
         .margin((8.px(), 16.px()))
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .gap(8.px());
-    let header_lbl = Style::new().color(Color::hex(0xB9A9FF)).font_size(12.px());
-    let hidden_lbl = Style::new()
+    let header_lbl = Css::new().color(Color::hex(0xB9A9FF)).font_size(12.px());
+    let hidden_lbl = Css::new()
         .color(Color::hex(0x888888))
         .font_size(14.px())
         .padding(12.px())
         .background_color(SURFACE)
         .border_radius(8.px());
-    let visible_lbl = Style::new()
+    let visible_lbl = Css::new()
         .color(Color::hex(0xE8E3FF))
         .font_size(14.px())
         .padding(12.px())
@@ -975,34 +975,34 @@ fn show_demo() -> Element {
 #[component]
 fn for_each_demo() -> Element {
     let count = RwSignal::new(3_usize);
-    let btn = Style::new()
+    let btn = Css::new()
         .padding((8.px(), 16.px()))
         .background_color(Color::hex(0x6C5CE7))
         .border_radius(6.px())
         .color(Color::hex(0xFFFFFF))
         .font_size(14.px())
         .font_weight(FontWeight::Numeric(600));
-    let card = Style::new()
+    let card = Css::new()
         .padding(10.px())
         .background_color(SURFACE)
         .border_radius(8.px())
         .color(Color::hex(0xE8E3FF))
         .font_size(14.px());
-    let outer = Style::new()
+    let outer = Css::new()
         .margin((8.px(), 16.px()))
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .gap(8.px());
-    let hdr = Style::new().color(Color::hex(0xB9A9FF)).font_size(12.px());
-    let buttons = Style::new()
+    let hdr = Css::new().color(Color::hex(0xB9A9FF)).font_size(12.px());
+    let buttons = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Row)
         .gap(8.px());
-    let body = Style::new()
+    let body = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .gap(6.px());
-    let item_color = Style::new().color(Color::hex(0xE8E3FF));
+    let item_color = Css::new().color(Color::hex(0xE8E3FF));
     render! {
         view(style: outer) {
             text(value: "ForEach (reactive item count)", style: hdr)
@@ -1027,24 +1027,24 @@ fn for_each_demo() -> Element {
 
 #[component]
 fn fragment_demo() -> Element {
-    let pill = Style::new()
+    let pill = Css::new()
         .padding((6.px(), 12.px()))
         .border_radius(999.px())
         .color(Color::hex(0xFFFFFF))
         .font_size(12.px())
         .font_weight(FontWeight::Numeric(600))
         .background_color(Color::hex(0x6C5CE7));
-    let outer = Style::new()
+    let outer = Css::new()
         .margin((8.px(), 16.px()))
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .gap(8.px());
-    let hdr = Style::new().color(Color::hex(0xB9A9FF)).font_size(12.px());
-    let row = Style::new()
+    let hdr = Css::new().color(Color::hex(0xB9A9FF)).font_size(12.px());
+    let row = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Row)
         .gap(6.px())
-        .flex_wrap(whisker::style::FlexWrap::Wrap);
+        .flex_wrap(whisker::css::FlexWrap::Wrap);
     render! {
         view(style: outer) {
             text(value: "fragment (transparent grouping, no DOM element)", style: hdr)
@@ -1061,7 +1061,7 @@ fn fragment_demo() -> Element {
 
 #[component]
 fn pill(label: &'static str) -> Element {
-    let style = Style::new()
+    let style = Css::new()
         .padding((6.px(), 12.px()))
         .border_radius(999.px())
         .color(Color::hex(0xFFFFFF))
@@ -1075,13 +1075,13 @@ fn pill(label: &'static str) -> Element {
 
 #[component]
 fn pill_group(children: Children) -> Element {
-    let row = Style::new()
+    let row = Css::new()
         .display_flex()
         .flex_direction(FlexDirection::Row)
         .gap(6.px())
-        .flex_wrap(whisker::style::FlexWrap::Wrap)
+        .flex_wrap(whisker::css::FlexWrap::Wrap)
         .align_items(AlignItems::Center);
-    let label = Style::new()
+    let label = Css::new()
         .color(Color::hex(0xB9A9FF))
         .font_size(11.px())
         .margin_right(4.px());
@@ -1095,7 +1095,7 @@ fn pill_group(children: Children) -> Element {
 
 #[component]
 fn children_demo() -> Element {
-    let outer = Style::new()
+    let outer = Css::new()
         .margin((8.px(), 16.px()))
         .padding(12.px())
         .background_color(Color::hex(0x1A1A2E))
@@ -1105,7 +1105,7 @@ fn children_demo() -> Element {
         .gap(8.px())
         .flex_shrink(0.0)
         .min_height(130.px());
-    let title = Style::new()
+    let title = Css::new()
         .color(Color::hex(0x00B894))
         .font_size(13.px())
         .font_weight(FontWeight::Numeric(600));
@@ -1148,7 +1148,7 @@ pub fn propagation_demo() -> Element {
         }
     });
     let box_style = |c: Color, pad: Length| {
-        Style::new()
+        Css::new()
             .background_color(c)
             .padding(pad)
             .border_radius(10.px())
@@ -1157,24 +1157,24 @@ pub fn propagation_demo() -> Element {
             .align_items(AlignItems::Center)
             .justify_content(JustifyContent::Center)
     };
-    let outer = Style::new()
+    let outer = Css::new()
         .margin((8.px(), 16.px()))
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .gap(8.px());
-    let log_style = Style::new()
+    let log_style = Css::new()
         .color(Color::hex(0xB9A9FF))
         .font_size(13.px())
         .font_weight(FontWeight::Numeric(600))
         .font_family("monospace")
         .padding(6.px());
-    let outer_lbl = Style::new()
+    let outer_lbl = Css::new()
         .color(Color::rgba(255, 255, 255, 0.5))
         .font_size(11.px());
-    let mid_lbl = Style::new()
+    let mid_lbl = Css::new()
         .color(Color::rgba(255, 255, 255, 0.6))
         .font_size(11.px());
-    let inner_lbl = Style::new()
+    let inner_lbl = Css::new()
         .color(Color::Named(NamedColor::White))
         .font_size(12.px())
         .font_weight(FontWeight::Numeric(700));
@@ -1220,14 +1220,14 @@ fn app() -> Element {
             whisker_local_store::WhiskerLocalStore::save(LIKED_MIXES_KEY.into(), bits.to_string());
     });
 
-    let page_style = Style::new()
+    let page_style = Css::new()
         .width(100.vw())
         .height(100.vh())
         .background_color(BG)
         .display_flex()
         .flex_direction(FlexDirection::Column)
         .position(PositionKind::Relative);
-    let hello_style = Style::new().width(100.percent()).height(8.px());
+    let hello_style = Css::new().width(100.percent()).height(8.px());
     render! {
         page(style: page_style) {
             // `Hello` is a module component (separate crate); see Video above.

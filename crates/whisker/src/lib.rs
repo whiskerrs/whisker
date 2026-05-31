@@ -30,11 +30,11 @@ extern crate self as whisker;
 pub use whisker_app_config as app_config;
 pub use whisker_runtime as runtime;
 
-// Type-safe CSS Style builder. Accessible as `whisker::style::*`
-// (the namespaced form for explicit qualification) or by reaching
+// Type-safe CSS builder. Accessible as `whisker::css::*` (the
+// namespaced form for explicit qualification) or by reaching
 // through `whisker::prelude::*` (which re-exports the most common
 // pieces).
-pub use whisker_style as style;
+pub use whisker_css as css;
 
 // Re-export the element tag enum the macro emit references through
 // `::whisker::ElementTag`. The C bridge keys element creation off
@@ -113,9 +113,9 @@ pub use whisker_runtime::reactive::{
 // hatch for sync IO inside `async fn` bodies.
 pub use whisker_runtime::tasks::{run_blocking, run_until_stalled, spawn_local};
 mod control_flow;
-mod dyn_style;
+mod style;
 
-pub use dyn_style::{apply_dyn_style, DynStyle};
+pub use style::{apply_style, Style};
 
 // Built-in control flow — same `#[component]` form as anything a user
 // could implement. The PascalCase aliases `ForEach` / `Show` are
@@ -204,17 +204,17 @@ pub mod __tags {
 
         /// Inline CSS (`SetRawInlineStyles`).
         ///
-        /// Accepts any value that converts into [`crate::DynStyle`]
-        /// — a [`whisker_style::Style`] builder, a `String` / `&str`
-        /// raw CSS literal, or a reactive
-        /// [`ReadSignal`] / [`RwSignal`] of either form. Reactive
-        /// variants re-apply the CSS via the element's internal
-        /// `effect` whenever the underlying signal changes.
+        /// Accepts any value that converts into [`crate::Style`] — a
+        /// [`whisker_css::Css`] builder, a `String` / `&str` raw CSS
+        /// literal, or a reactive [`ReadSignal`] / [`RwSignal`] of
+        /// either form. Reactive variants re-apply the CSS via the
+        /// element's internal `effect` whenever the underlying
+        /// signal changes.
         fn style<V>(self, v: V) -> Self
         where
-            V: Into<crate::DynStyle>,
+            V: Into<crate::Style>,
         {
-            crate::apply_dyn_style(self.__element(), v);
+            crate::apply_style(self.__element(), v);
             self
         }
 
@@ -1726,15 +1726,15 @@ pub mod prelude {
         ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle,
     };
     pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
-    // Type-safe CSS Style builder. Pulled into the prelude so
-    // `Style::new().display_flex().padding(px(8))` is reachable
+    // Type-safe CSS builder. Pulled into the prelude so
+    // `Css::new().display_flex().padding(px(8))` is reachable
     // without explicit imports. Numeric-literal extension traits
     // (`px(8)`, `8.px()`, `45.deg()`, …) come in via the wildcard
     // `ext::*` re-export.
-    pub use crate::style::ext::*;
-    pub use crate::style::{
-        AlignItems, Border, Color, Display, Flex, FlexDirection, FlexWrap, JustifyContent, Length,
-        NamedColor, Style, ToCss,
+    pub use crate::css::ext::*;
+    pub use crate::css::{
+        AlignItems, Border, Color, Css, Display, Flex, FlexDirection, FlexWrap, JustifyContent,
+        Length, NamedColor, ToCss,
     };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
