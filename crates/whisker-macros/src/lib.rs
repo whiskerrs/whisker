@@ -16,6 +16,7 @@ use quote::quote;
 use syn::{parse_macro_input, ItemFn};
 
 mod component;
+mod css;
 mod module_component;
 mod render;
 
@@ -151,6 +152,38 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn render(input: TokenStream) -> TokenStream {
     render::expand(input)
+}
+
+/// `css!(name: value, …)` — kwarg syntax for the [`Css`] builder.
+///
+/// Lowers to a [`Css::new()`] method chain (`Css::new().name(value)
+/// .…`). `Css` is taken from the call site's scope, so
+/// `use whisker::prelude::*` (which re-exports `Css`) is the only
+/// import callers need.
+///
+/// The proc-macro implementation tolerates partial input from
+/// rust-analyzer's completion engine: a kwarg whose value hasn't
+/// been typed yet (`css!(back|`) is expanded as
+/// `.<name>(())` so RA still sees a real method-call site and
+/// fires its method-name completion. The unit `()` is intentionally
+/// type-incorrect; the program already doesn't compile while the
+/// user is mid-typing.
+///
+/// ```ignore
+/// use whisker::prelude::*;
+///
+/// let s = css!(
+///     background_color: Color::hex(0x1A1330),
+///     padding: (px(8), px(16)),
+///     border: Border::new().width(px(1)).style(BorderStyle::Solid),
+/// );
+/// ```
+///
+/// [`Css`]: whisker_css::Css
+/// [`Css::new()`]: whisker_css::Css::new
+#[proc_macro]
+pub fn css(input: TokenStream) -> TokenStream {
+    css::expand(input.into()).into()
 }
 
 /// Mark a function as a Whisker reactive component.

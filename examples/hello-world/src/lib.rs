@@ -202,13 +202,7 @@ fn recent_card(title: &'static str, sub: &'static str, c1: Color, c2: Color) -> 
 }
 
 #[component]
-fn grid_tile(
-    index: usize,
-    title: &'static str,
-    c1: Color,
-    c2: Color,
-    state: AppState,
-) -> Element {
+fn grid_tile(index: usize, title: &'static str, c1: Color, c2: Color, state: AppState) -> Element {
     let bitmask = state.liked_mixes;
     let liked_bit = 1u8 << index;
     let on_heart = move |_| bitmask.update(|b| *b ^= liked_bit);
@@ -366,7 +360,11 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppSt
     let tab = state.selected_tab;
     let on_pick = move |_| tab.set(index);
     let glyph_style = computed(move || {
-        let tab_color = if tab.get() == index { ACCENT } else { TEXT_MUTED };
+        let tab_color = if tab.get() == index {
+            ACCENT
+        } else {
+            TEXT_MUTED
+        };
         css!(font_size: 22.px(), color: tab_color)
     });
     let label_style = computed(move || {

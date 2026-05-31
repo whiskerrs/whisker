@@ -9,3 +9,4 @@ authors.workspace = true
 description = "Type-safe CSS builder for Whisker. Mirrors the Lynx CSS surface."
 
 [dependencies]
+whisker-macros = { workspace = true }

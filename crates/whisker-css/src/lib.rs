@@ -46,12 +46,19 @@ pub mod data_type;
 pub mod data_type_ext;
 pub mod ext;
 pub mod keyword;
-mod macros;
 pub mod prop;
 pub mod shorthand;
 mod css;
 mod to_css;
 pub mod value;
+
+// `css!(name: value, …)` — kwarg syntax for the [`Css`] builder.
+// Lives in `whisker-macros` so it can be a proc macro (the
+// partial-input recovery driving rust-analyzer completion needs
+// fine-grained control over the expansion). Re-exported here so
+// callers can spell `whisker_css::css!` without a direct dep on
+// the macros crate.
+pub use whisker_macros::css;
 
 pub use crate::data_type::{
     Angle, CalcExpr, Color, ColorStop, CssString, FitContent, Gradient, Length, LengthPercentage,

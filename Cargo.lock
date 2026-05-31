@@ -1823,6 +1823,9 @@ dependencies = [
 [[package]]
 name = "whisker-css"
 version = "0.1.0"
+dependencies = [
+ "whisker-macros",
+]
 
 [[package]]
 name = "whisker-dev-runtime"
