@@ -1,12 +1,12 @@
 //! Text-content properties: alignment, decoration, transform,
 //! overflow, vertical alignment, whitespace handling.
 
+use crate::css::Css;
 use crate::data_type::{Color, Length, LengthPercentage};
 use crate::keyword::{
     TextAlign, TextDecorationLine, TextDecorationStyle, TextOverflow, TextTransform, VerticalAlign,
     WhiteSpace, WordBreak, WordWrap,
 };
-use crate::css::Css;
 
 impl Css {
     /// Sets `text-align`. **`justify` is not supported by Lynx**.

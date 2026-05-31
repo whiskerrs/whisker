@@ -1,8 +1,8 @@
 //! `border` shorthand builder.
 
+use crate::css::Css;
 use crate::data_type::{Color, LengthPercentage};
 use crate::keyword::BorderStyle;
-use crate::css::Css;
 
 /// Builder for the `border` family. Any subset of width/style/color
 /// can be set; only the populated dimensions are pushed to the
@@ -143,7 +143,12 @@ mod tests {
 
     #[test]
     fn border_full() {
-        let s = Css::new().border(Border::new().width(px(1)).solid().color(Color::hex(0xCCCCCC)));
+        let s = Css::new().border(
+            Border::new()
+                .width(px(1))
+                .solid()
+                .color(Color::hex(0xCCCCCC)),
+        );
         assert_eq!(
             s.to_string(),
             "border-top-width: 1px; border-top-style: solid; border-top-color: rgb(204, 204, 204); border-right-width: 1px; border-right-style: solid; border-right-color: rgb(204, 204, 204); border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: rgb(204, 204, 204); border-left-width: 1px; border-left-style: solid; border-left-color: rgb(204, 204, 204);"
@@ -162,7 +167,12 @@ mod tests {
     #[test]
     fn border_bottom_overrides_border() {
         let s = Css::new()
-            .border(Border::new().width(px(1)).solid().color(Color::hex(0x000000)))
+            .border(
+                Border::new()
+                    .width(px(1))
+                    .solid()
+                    .color(Color::hex(0x000000)),
+            )
             .border_bottom(Border::new().width(px(3)).color(Color::hex(0xFF0000)));
         // Last-write-wins keeps the first 3 sides at width 1px and
         // overrides bottom to 3px / red.

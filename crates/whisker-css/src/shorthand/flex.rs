@@ -40,7 +40,11 @@ impl Flex {
                 1.0,
                 FlexBasis::LengthPercentage(crate::data_type::Percentage(0.0).into()),
             ),
-            Flex::Full { grow, shrink, basis } => (grow, shrink, basis),
+            Flex::Full {
+                grow,
+                shrink,
+                basis,
+            } => (grow, shrink, basis),
         }
     }
 }

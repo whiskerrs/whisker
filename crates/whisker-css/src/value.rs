@@ -235,10 +235,7 @@ impl BorderRadius {
     }
 
     /// Elliptical radius: horizontal and vertical components.
-    pub fn elliptical(
-        horizontal: [LengthPercentage; 4],
-        vertical: [LengthPercentage; 4],
-    ) -> Self {
+    pub fn elliptical(horizontal: [LengthPercentage; 4], vertical: [LengthPercentage; 4]) -> Self {
         Self {
             horizontal,
             vertical: Some(vertical),

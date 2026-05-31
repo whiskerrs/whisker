@@ -2,8 +2,8 @@
 
 use core::fmt;
 
-use crate::data_type::{Angle, Length, LengthPercentage};
 use crate::css::Css;
+use crate::data_type::{Angle, Length, LengthPercentage};
 use crate::to_css::{write_number, ToCss};
 
 /// One CSS transform function. Lynx supports the 2-D and 3-D
@@ -246,11 +246,7 @@ mod tests {
         );
         assert_eq!(
             Css::new()
-                .transform(TransformFn::Translate3d(
-                    px(1).into(),
-                    px(2).into(),
-                    px(3),
-                ))
+                .transform(TransformFn::Translate3d(px(1).into(), px(2).into(), px(3),))
                 .to_string(),
             "transform: translate3d(1px, 2px, 3px);"
         );
@@ -321,9 +317,6 @@ mod tests {
             .push(TransformFn::TranslateX(px(10).into()))
             .push(TransformFn::Rotate(45.deg()));
         let s = Css::new().transform(t);
-        assert_eq!(
-            s.to_string(),
-            "transform: translateX(10px) rotate(45deg);"
-        );
+        assert_eq!(s.to_string(), "transform: translateX(10px) rotate(45deg);");
     }
 }

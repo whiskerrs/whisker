@@ -1,10 +1,10 @@
 //! Position properties: `position`, edges (`top`/`right`/`bottom`/
 //! `left`), `z-index`, `inset*`.
 
+use crate::css::Css;
 use crate::data_type::LengthPercentage;
 use crate::data_type_ext::Integer;
 use crate::keyword::PositionKind;
-use crate::css::Css;
 
 impl Css {
     /// Sets `position`. Lynx default: `relative`.
@@ -85,9 +85,7 @@ mod tests {
 
     #[test]
     fn inset_inline_logical_edges() {
-        let s = Css::new()
-            .inset_inline_start(px(4))
-            .inset_inline_end(px(8));
+        let s = Css::new().inset_inline_start(px(4)).inset_inline_end(px(8));
         assert_eq!(
             s.to_string(),
             "inset-inline-start: 4px; inset-inline-end: 8px;"

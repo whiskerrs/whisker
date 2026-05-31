@@ -191,7 +191,10 @@ mod tests {
 
     #[test]
     fn hsl_opaque() {
-        assert_eq!(Color::hsl(120.0, 50.0, 25.0).to_css_string(), "hsl(120deg, 50%, 25%)");
+        assert_eq!(
+            Color::hsl(120.0, 50.0, 25.0).to_css_string(),
+            "hsl(120deg, 50%, 25%)"
+        );
     }
 
     #[test]

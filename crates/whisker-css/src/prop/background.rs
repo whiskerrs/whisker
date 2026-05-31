@@ -1,11 +1,11 @@
 //! Background longhand properties.
 
+use crate::css::Css;
 use crate::data_type::{Color, LengthPercentage};
 use crate::data_type_ext::Position;
 use crate::keyword::{
     BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundRepeat, BackgroundSize,
 };
-use crate::css::Css;
 use crate::value::ImageRef;
 
 impl Css {

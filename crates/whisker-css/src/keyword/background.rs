@@ -199,10 +199,7 @@ mod tests {
         assert_eq!(BackgroundSize::Auto.to_css_string(), "auto");
         assert_eq!(BackgroundSize::Cover.to_css_string(), "cover");
         assert_eq!(BackgroundSize::Contain.to_css_string(), "contain");
-        let explicit = BackgroundSize::Explicit(
-            Length::Px(100.0).into(),
-            Percentage(50.0).into(),
-        );
+        let explicit = BackgroundSize::Explicit(Length::Px(100.0).into(), Percentage(50.0).into());
         assert_eq!(explicit.to_css_string(), "100px 50%");
     }
 }

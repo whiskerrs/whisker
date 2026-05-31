@@ -1,9 +1,9 @@
 //! Visual-effect properties: opacity, visibility, overflow, shadow,
 //! filter, cursor, pointer-events, clip-path.
 
+use crate::css::Css;
 use crate::data_type::{Color, Length, LengthPercentage};
 use crate::keyword::{Cursor, Overflow, PointerEvents, Visibility};
-use crate::css::Css;
 
 impl Css {
     /// Sets `opacity`. Lynx clamps to `0.0..=1.0`. Default: `1`.
@@ -22,7 +22,6 @@ impl Css {
     /// Sets `overflow`. Lynx accepts only `visible` and `hidden`.
     /// <https://lynxjs.org/api/css/properties/overflow>
     pub fn overflow(self, v: Overflow) -> Self {
-        let v = v;
         self.push("overflow-x", v).push("overflow-y", v)
     }
 
@@ -231,10 +230,7 @@ mod tests {
         let s = Css::new()
             .cursor(Cursor::Pointer)
             .pointer_events(PointerEvents::None);
-        assert_eq!(
-            s.to_string(),
-            "cursor: pointer; pointer-events: none;"
-        );
+        assert_eq!(s.to_string(), "cursor: pointer; pointer-events: none;");
     }
 
     #[test]
@@ -246,10 +242,7 @@ mod tests {
             crate::data_type::Length::Zero,
             Color::hex(0x000000),
         );
-        assert_eq!(
-            s.to_string(),
-            "box-shadow: 2px 4px 8px 0 rgb(0, 0, 0);"
-        );
+        assert_eq!(s.to_string(), "box-shadow: 2px 4px 8px 0 rgb(0, 0, 0);");
     }
 
     #[test]

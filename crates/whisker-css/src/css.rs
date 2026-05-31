@@ -75,9 +75,7 @@ pub struct Css {
 impl Css {
     /// An empty style.
     pub fn new() -> Self {
-        Self {
-            props: Vec::new(),
-        }
+        Self { props: Vec::new() }
     }
 
     /// Push a property, taking ownership of `self` to return it. All
@@ -204,10 +202,7 @@ mod tests {
         let s = Css::new()
             .raw("color", "red")
             .raw("background-color", "blue");
-        assert_eq!(
-            s.to_css_string(),
-            "color: red; background-color: blue;"
-        );
+        assert_eq!(s.to_css_string(), "color: red; background-color: blue;");
     }
 
     #[test]
@@ -232,17 +227,12 @@ mod tests {
             .raw("color", "red")
             .raw("background-color", "white")
             .raw("color", "blue");
-        assert_eq!(
-            s.to_css_string(),
-            "background-color: white; color: blue;"
-        );
+        assert_eq!(s.to_css_string(), "background-color: white; color: blue;");
     }
 
     #[test]
     fn entries_iterates_all_in_order() {
-        let s = Css::new()
-            .raw("color", "red")
-            .raw("color", "blue");
+        let s = Css::new().raw("color", "red").raw("color", "blue");
         let names: Vec<&str> = s.entries().map(|p| p.name()).collect();
         assert_eq!(names, ["color", "color"]);
     }

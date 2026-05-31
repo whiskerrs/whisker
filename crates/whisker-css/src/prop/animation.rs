@@ -1,11 +1,11 @@
 //! Animation longhand properties.
 
+use crate::css::Css;
 use crate::data_type::Time;
 use crate::data_type_ext::EasingFunction;
 use crate::keyword::{
     AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
 };
-use crate::css::Css;
 
 impl Css {
     /// Sets `animation-name` — references a `@keyframes` block.

@@ -101,10 +101,7 @@ fn method_call_chain_value() {
     let s = css!(
         background_color: Color::hex(0xABCDEF),
     );
-    assert_eq!(
-        s.to_css_string(),
-        "background-color: rgb(171, 205, 239);"
-    );
+    assert_eq!(s.to_css_string(), "background-color: rgb(171, 205, 239);");
 }
 
 #[test]
@@ -133,6 +130,7 @@ fn block_expr_value() {
 #[test]
 fn match_expr_value() {
     #[derive(Copy, Clone)]
+    #[allow(dead_code)] // `Light` is reached only through the match arm.
     enum Theme {
         Dark,
         Light,
@@ -149,10 +147,24 @@ fn match_expr_value() {
 
 #[test]
 fn computed_inside_block() {
-    fn pick() -> Color {
+    fn dark() -> Color {
         Color::Named(NamedColor::Red)
     }
-    let s = css!(color: { pick() });
+    fn light() -> Color {
+        Color::Named(NamedColor::Blue)
+    }
+    // The block holds a load-bearing local + a conditional — the
+    // `{ … }` is genuinely a block expr, not a redundant brace
+    // around a single call (which would trip `unused_braces`).
+    let theme = "dark";
+    let s = css!(color: {
+        // Two statements + the trailing expr so the block expression
+        // form is actually load-bearing (and `unused_braces` /
+        // `let_and_return` stay silent).
+        let primary = dark();
+        let secondary = light();
+        if theme == "dark" { primary } else { secondary }
+    });
     assert_eq!(s.to_css_string(), "color: red;");
 }
 

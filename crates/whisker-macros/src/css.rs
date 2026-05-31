@@ -52,10 +52,7 @@ impl Parse for Input {
                 // mid-typing and the parse fails, fall through with
                 // `None`; the emitter uses `()` so the method-call
                 // shape survives for RA's completion.
-                match input.parse::<Expr>() {
-                    Ok(e) => Some(e),
-                    Err(_) => None,
-                }
+                input.parse::<Expr>().ok()
             } else {
                 // No `:` yet — cursor sits right after the ident.
                 None
@@ -176,10 +173,7 @@ mod tests {
     fn complete_value_with_tuple_passes_through() {
         let out = expand(quote! { padding: (px(8), px(16)) });
         // Whitespace-normalised; the `:` etc. is fine inside the call.
-        assert_eq!(
-            norm(out),
-            "Css::new().padding((px(8),px(16)))"
-        );
+        assert_eq!(norm(out), "Css::new().padding((px(8),px(16)))");
     }
 
     #[test]

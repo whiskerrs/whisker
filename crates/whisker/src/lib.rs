@@ -159,9 +159,9 @@ pub mod __tags {
     use whisker_runtime::reactive::Signal;
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
-        append_child, apply_attr, apply_attr_owned, create_element,
-        create_element_by_name, create_phantom_element, install_list_native_item_provider,
-        set_event_listener, set_update_list_info, BindType, Element,
+        append_child, apply_attr, apply_attr_owned, create_element, create_element_by_name,
+        create_phantom_element, install_list_native_item_provider, set_event_listener,
+        set_update_list_info, BindType, Element,
     };
 
     // ---- The common builder surface -------------------------------------

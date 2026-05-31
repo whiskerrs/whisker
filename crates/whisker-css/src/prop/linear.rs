@@ -1,10 +1,8 @@
 //! Lynx-only `linear-*` layout extensions. Used when
 //! `display: linear` (Lynx's default for `<view>`).
 
-use crate::keyword::{
-    LinearCrossGravity, LinearGravity, LinearLayoutGravity, LinearOrientation,
-};
 use crate::css::Css;
+use crate::keyword::{LinearCrossGravity, LinearGravity, LinearLayoutGravity, LinearOrientation};
 
 impl Css {
     /// Sets `linear-orientation` — Lynx's analogue of `flex-direction`.
@@ -82,9 +80,6 @@ mod tests {
     #[test]
     fn linear_weights() {
         let s = Css::new().linear_weight(1.0).linear_weight_sum(3.0);
-        assert_eq!(
-            s.to_string(),
-            "linear-weight: 1; linear-weight-sum: 3;"
-        );
+        assert_eq!(s.to_string(), "linear-weight: 1; linear-weight-sum: 3;");
     }
 }

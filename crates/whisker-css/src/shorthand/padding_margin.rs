@@ -4,8 +4,8 @@
 //! four per-side longhands. `margin` additionally accepts `auto` for
 //! centering.
 
-use crate::data_type::LengthPercentage;
 use crate::css::Css;
+use crate::data_type::LengthPercentage;
 
 /// Argument to [`Css::padding`]. Built via `impl From` for common
 /// shapes:
@@ -298,9 +298,10 @@ mod tests {
     fn margin_value_from_length_percentage() {
         let v: MarginValue = px(4).into();
         let v2: MarginValue = 25.percent().into();
-        let v3: MarginValue = crate::data_type::LengthPercentage::Length(crate::data_type::Length::Px(8.0)).into();
-        assert_eq!(matches!(v, MarginValue::LengthPercentage(_)), true);
-        assert_eq!(matches!(v2, MarginValue::LengthPercentage(_)), true);
-        assert_eq!(matches!(v3, MarginValue::LengthPercentage(_)), true);
+        let v3: MarginValue =
+            crate::data_type::LengthPercentage::Length(crate::data_type::Length::Px(8.0)).into();
+        assert!(matches!(v, MarginValue::LengthPercentage(_)));
+        assert!(matches!(v2, MarginValue::LengthPercentage(_)));
+        assert!(matches!(v3, MarginValue::LengthPercentage(_)));
     }
 }

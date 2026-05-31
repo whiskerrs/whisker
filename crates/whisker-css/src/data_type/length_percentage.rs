@@ -109,22 +109,27 @@ impl CalcExpr {
         Self::Number(v)
     }
 
-    /// `self + rhs`.
+    /// `self + rhs`. Builder method intentionally named the same as
+    /// the CSS operator; not a [`std::ops::Add`] implementation.
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, rhs: CalcExpr) -> Self {
         Self::Add(Box::new(self), Box::new(rhs))
     }
 
     /// `self - rhs`.
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, rhs: CalcExpr) -> Self {
         Self::Sub(Box::new(self), Box::new(rhs))
     }
 
     /// `self * rhs`.
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, rhs: CalcExpr) -> Self {
         Self::Mul(Box::new(self), Box::new(rhs))
     }
 
     /// `self / rhs`.
+    #[allow(clippy::should_implement_trait)]
     pub fn div(self, rhs: CalcExpr) -> Self {
         Self::Div(Box::new(self), Box::new(rhs))
     }
@@ -204,7 +209,10 @@ mod tests {
     #[test]
     fn calc_add_two_lengths() {
         let expr = CalcExpr::value(Length::Px(10.0)).add(CalcExpr::value(Percentage(50.0)));
-        assert_eq!(LengthPercentage::calc(expr).to_css_string(), "calc(10px + 50%)");
+        assert_eq!(
+            LengthPercentage::calc(expr).to_css_string(),
+            "calc(10px + 50%)"
+        );
     }
 
     #[test]

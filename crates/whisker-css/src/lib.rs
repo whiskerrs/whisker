@@ -42,13 +42,13 @@
 
 #![warn(missing_docs)]
 
+mod css;
 pub mod data_type;
 pub mod data_type_ext;
 pub mod ext;
 pub mod keyword;
 pub mod prop;
 pub mod shorthand;
-mod css;
 mod to_css;
 pub mod value;
 
@@ -60,6 +60,7 @@ pub mod value;
 // the macros crate.
 pub use whisker_macros::css;
 
+pub use crate::css::{Css, CssProp};
 pub use crate::data_type::{
     Angle, CalcExpr, Color, ColorStop, CssString, FitContent, Gradient, Length, LengthPercentage,
     LinearDirection, MaxContent, NamedColor, Number, Percentage, RadialShape, StopPosition, Time,
@@ -70,7 +71,6 @@ pub use crate::shorthand::{
     Animation, Background, BackgroundLayer, Border, Flex, Margin, MarginValue, Padding, Transform,
     TransformFn, Transition,
 };
-pub use crate::css::{Css, CssProp};
 pub use crate::to_css::ToCss;
 pub use crate::value::{
     BorderRadius, FlexBasis, GridLine, GridTemplate, ImageRef, LineHeight, Repeated, Size,

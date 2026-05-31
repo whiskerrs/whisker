@@ -345,10 +345,7 @@ mod tests {
             shape: RadialShape::EllipseSized(Length::Px(100.0).into(), Percentage(50.0).into()),
             stops: vec![ColorStop::new(red())],
         };
-        assert_eq!(
-            g.to_css_string(),
-            "radial-gradient(ellipse 100px 50%, red)"
-        );
+        assert_eq!(g.to_css_string(), "radial-gradient(ellipse 100px 50%, red)");
     }
 
     #[test]

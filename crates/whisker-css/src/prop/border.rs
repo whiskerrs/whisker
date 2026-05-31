@@ -1,8 +1,8 @@
 //! Border longhand properties + `border-radius` corners.
 
+use crate::css::Css;
 use crate::data_type::{Color, LengthPercentage};
 use crate::keyword::BorderStyle;
-use crate::css::Css;
 
 impl Css {
     // ---------- border-width longhands ----------

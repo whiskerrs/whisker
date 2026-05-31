@@ -2,12 +2,12 @@
 
 use core::fmt;
 
+use crate::css::Css;
 use crate::data_type::Color;
 use crate::data_type_ext::Position;
 use crate::keyword::{
     BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundRepeat, BackgroundSize,
 };
-use crate::css::Css;
 use crate::to_css::ToCss;
 use crate::value::ImageRef;
 
@@ -239,21 +239,15 @@ mod tests {
             .position(Position::Keyword(PositionKeyword::Center))
             .size(BackgroundSize::Cover);
         let s = Css::new().background(Background::new().layer(layer));
-        assert_eq!(
-            s.to_string(),
-            "background: url(\"a.png\") center / cover;"
-        );
+        assert_eq!(s.to_string(), "background: url(\"a.png\") center / cover;");
     }
 
     #[test]
     fn background_layer_size_without_position_inserts_zero() {
-        let layer =
-            BackgroundLayer::new(ImageRef::Url(CssString::new("a.png"))).size(BackgroundSize::Cover);
+        let layer = BackgroundLayer::new(ImageRef::Url(CssString::new("a.png")))
+            .size(BackgroundSize::Cover);
         let s = Css::new().background(Background::new().layer(layer));
-        assert_eq!(
-            s.to_string(),
-            "background: url(\"a.png\") 0 0 / cover;"
-        );
+        assert_eq!(s.to_string(), "background: url(\"a.png\") 0 0 / cover;");
     }
 
     #[test]

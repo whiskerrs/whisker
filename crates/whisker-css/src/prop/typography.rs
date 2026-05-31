@@ -1,8 +1,8 @@
 //! Typography properties: font, letter spacing, line height.
 
+use crate::css::Css;
 use crate::data_type::{CssString, Length, LengthPercentage};
 use crate::keyword::{FontStyle, FontVariant, FontWeight};
-use crate::css::Css;
 use crate::value::LineHeight;
 
 impl Css {
@@ -69,10 +69,7 @@ mod tests {
 
     #[test]
     fn font_size_length_or_percentage() {
-        assert_eq!(
-            Css::new().font_size(px(16)).to_string(),
-            "font-size: 16px;"
-        );
+        assert_eq!(Css::new().font_size(px(16)).to_string(), "font-size: 16px;");
         assert_eq!(
             Css::new().font_size(percent(120)).to_string(),
             "font-size: 120%;"
@@ -109,7 +106,7 @@ mod tests {
 
     #[test]
     fn letter_spacing_length() {
-        let s = Css::new().letter_spacing(px(2).into());
+        let s = Css::new().letter_spacing(px(2));
         assert_eq!(s.to_string(), "letter-spacing: 2px;");
     }
 

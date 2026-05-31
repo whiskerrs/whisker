@@ -1,8 +1,8 @@
 //! CSS Grid properties.
 
+use crate::css::Css;
 use crate::data_type::LengthPercentage;
 use crate::keyword::GridAutoFlow;
-use crate::css::Css;
 use crate::value::{GridLine, GridTemplate};
 
 impl Css {
@@ -118,12 +118,7 @@ mod tests {
 
     #[test]
     fn grid_gaps_legacy() {
-        let s = Css::new()
-            .grid_row_gap(px(8))
-            .grid_column_gap(px(12));
-        assert_eq!(
-            s.to_string(),
-            "grid-row-gap: 8px; grid-column-gap: 12px;"
-        );
+        let s = Css::new().grid_row_gap(px(8)).grid_column_gap(px(12));
+        assert_eq!(s.to_string(), "grid-row-gap: 8px; grid-column-gap: 12px;");
     }
 }

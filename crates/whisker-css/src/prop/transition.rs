@@ -1,9 +1,9 @@
 //! Transition longhand properties.
 
+use crate::css::Css;
 use crate::data_type::Time;
 use crate::data_type_ext::EasingFunction;
 use crate::keyword::TransitionPropertyKind;
-use crate::css::Css;
 
 impl Css {
     /// Sets `transition-property` — the property to transition.

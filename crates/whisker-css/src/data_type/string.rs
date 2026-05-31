@@ -67,26 +67,17 @@ mod tests {
 
     #[test]
     fn embedded_quote_is_escaped() {
-        assert_eq!(
-            CssString::new("a\"b").to_css_string(),
-            "\"a\\\"b\""
-        );
+        assert_eq!(CssString::new("a\"b").to_css_string(), "\"a\\\"b\"");
     }
 
     #[test]
     fn backslash_is_escaped() {
-        assert_eq!(
-            CssString::new("a\\b").to_css_string(),
-            "\"a\\\\b\""
-        );
+        assert_eq!(CssString::new("a\\b").to_css_string(), "\"a\\\\b\"");
     }
 
     #[test]
     fn newline_uses_css_escape() {
-        assert_eq!(
-            CssString::new("a\nb").to_css_string(),
-            "\"a\\A b\""
-        );
+        assert_eq!(CssString::new("a\nb").to_css_string(), "\"a\\A b\"");
     }
 
     #[test]

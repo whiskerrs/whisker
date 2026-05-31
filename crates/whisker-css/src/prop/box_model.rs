@@ -3,10 +3,10 @@
 //! Lynx property index:
 //! <https://lynxjs.org/api/css/properties>
 
+use crate::css::Css;
 use crate::data_type::LengthPercentage;
 use crate::keyword::BoxSizing;
 use crate::shorthand::padding_margin::MarginValue;
-use crate::css::Css;
 use crate::value::Size;
 
 impl Css {

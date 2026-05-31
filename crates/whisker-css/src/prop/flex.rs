@@ -1,9 +1,9 @@
 //! Flexbox properties.
 
+use crate::css::Css;
 use crate::keyword::{
     AlignContent, AlignItems, AlignSelf, FlexDirection, FlexWrap, JustifyContent,
 };
-use crate::css::Css;
 use crate::value::FlexBasis;
 
 impl Css {
@@ -72,20 +72,17 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::ext::*;
     use crate::keyword::*;
     use crate::value::FlexBasis;
     use crate::Css;
-    use crate::ext::*;
 
     #[test]
     fn flex_direction_and_wrap() {
         let s = Css::new()
             .flex_direction(FlexDirection::Column)
             .flex_wrap(FlexWrap::Wrap);
-        assert_eq!(
-            s.to_string(),
-            "flex-direction: column; flex-wrap: wrap;"
-        );
+        assert_eq!(s.to_string(), "flex-direction: column; flex-wrap: wrap;");
     }
 
     #[test]

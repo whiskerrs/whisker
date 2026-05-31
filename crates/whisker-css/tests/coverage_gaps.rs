@@ -6,14 +6,21 @@ use whisker_css::data_type::{
     Angle, CalcExpr, Color, ColorStop, CssString, FitContent, Gradient, Length, LengthPercentage,
     LinearDirection, MaxContent, NamedColor, Number, Percentage, RadialShape, StopPosition, Time,
 };
-use whisker_css::data_type_ext::{EasingFunction, Integer, Position, PositionKeyword, StepPosition};
+use whisker_css::data_type_ext::{
+    EasingFunction, Integer, Position, PositionKeyword, StepPosition,
+};
 use whisker_css::ext::*;
 use whisker_css::shorthand::padding_margin::MarginValue;
 use whisker_css::shorthand::{Animation, Background, BackgroundLayer, Border, Transition};
-use whisker_css::value::{BorderRadius, FlexBasis, GridLine, GridTemplate, ImageRef, LineHeight, Repeated, Size};
+use whisker_css::value::{
+    BorderRadius, FlexBasis, GridLine, GridTemplate, ImageRef, LineHeight, Repeated, Size,
+};
 use whisker_css::{Css, ToCss};
 
 #[test]
+// Whole-point of the test is to exercise the derived `Clone` impl
+// on every public type, including the ones that are also `Copy`.
+#[allow(clippy::clone_on_copy)]
 fn debug_and_clone_pass_through() {
     // Exercise auto-derived `Clone` + `Debug` on every public type.
     let n = Number(1.0);
@@ -38,8 +45,25 @@ fn debug_and_clone_pass_through() {
 
     // Force `Clone` to fire on every variant.
     let _ = (
-        n.clone(), p.clone(), l, lp.clone(), a, t, cs.clone(), c, g.clone(), f.clone(), m, calc.clone(),
-        i, pos.clone(), stop.clone(), easing, stop_pos, lin, radial.clone(),
+        n.clone(),
+        p.clone(),
+        l,
+        lp.clone(),
+        a,
+        t,
+        cs.clone(),
+        c,
+        g.clone(),
+        f.clone(),
+        m,
+        calc.clone(),
+        i,
+        pos.clone(),
+        stop.clone(),
+        easing,
+        stop_pos,
+        lin,
+        radial.clone(),
     );
 
     // Force `Debug` (drops the verbose result on the floor).
@@ -155,7 +179,8 @@ fn position_keyword_each_variant() {
 #[test]
 fn image_ref_url_then_gradient_then_none() {
     let url = ImageRef::Url(CssString::new("a.png"));
-    let gradient: ImageRef = Gradient::linear_to_bottom([ColorStop::new(NamedColor::Red.into())]).into();
+    let gradient: ImageRef =
+        Gradient::linear_to_bottom([ColorStop::new(NamedColor::Red.into())]).into();
     let none = ImageRef::None;
     assert!(url.to_css_string().contains("url"));
     assert!(gradient.to_css_string().contains("linear-gradient"));
@@ -289,7 +314,16 @@ fn calc_expr_value_and_number_constructors() {
 #[test]
 fn linear_direction_keyword_directions_in_gradient() {
     use LinearDirection::*;
-    for d in [ToTop, ToRight, ToBottom, ToLeft, ToTopRight, ToTopLeft, ToBottomRight, ToBottomLeft] {
+    for d in [
+        ToTop,
+        ToRight,
+        ToBottom,
+        ToLeft,
+        ToTopRight,
+        ToTopLeft,
+        ToBottomRight,
+        ToBottomLeft,
+    ] {
         let g = Gradient::Linear {
             direction: d,
             stops: vec![ColorStop::new(Color::Named(NamedColor::Red))],

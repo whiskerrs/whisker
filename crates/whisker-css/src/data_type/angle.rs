@@ -51,7 +51,9 @@ mod tests {
     #[test]
     fn each_unit_serializes() {
         assert_eq!(Angle::Deg(45.0).to_css_string(), "45deg");
-        assert_eq!(Angle::Rad(1.5708).to_css_string(), "1.5708rad");
+        // Hand-picked value (not a π approximation) so the string
+        // assertion stays away from `clippy::approx_constant`.
+        assert_eq!(Angle::Rad(1.25).to_css_string(), "1.25rad");
         assert_eq!(Angle::Turn(0.25).to_css_string(), "0.25turn");
     }
 

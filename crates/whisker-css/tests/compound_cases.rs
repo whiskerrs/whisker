@@ -13,13 +13,13 @@
 //! - Pathological edge cases (empty builds, repeated overrides).
 
 use whisker_css::ext::*;
-use whisker_css::{
-    Animation, Background, BackgroundLayer, Border, BorderRadius, Color, ColorStop, CssString,
-    EasingFunction, Flex, FlexBasis, FlexDirection, Gradient, GridLine, GridTemplate, ImageRef,
-    JustifyContent, LengthPercentage, LinearOrientation, NamedColor, PositionKind, Size, Css,
-    ToCss, TransformFn, Transition, TransitionPropertyKind, Visibility,
-};
 use whisker_css::keyword::{AlignItems, Display, Overflow};
+use whisker_css::{
+    Animation, Background, BackgroundLayer, Border, BorderRadius, Color, ColorStop, Css, CssString,
+    EasingFunction, Flex, FlexBasis, FlexDirection, Gradient, GridLine, GridTemplate, ImageRef,
+    JustifyContent, LengthPercentage, LinearOrientation, NamedColor, PositionKind, Size, ToCss,
+    TransformFn, Transition, TransitionPropertyKind, Visibility,
+};
 
 #[test]
 fn realistic_card_layout() {
@@ -146,10 +146,7 @@ fn overflow_then_axis_override_keeps_other_axis() {
 #[test]
 fn gap_then_row_gap_override_keeps_column() {
     let s = Css::new().gap(px(8)).row_gap(px(16));
-    assert_eq!(
-        s.to_string(),
-        "column-gap: 8px; row-gap: 16px;"
-    );
+    assert_eq!(s.to_string(), "column-gap: 8px; row-gap: 16px;");
 }
 
 #[test]

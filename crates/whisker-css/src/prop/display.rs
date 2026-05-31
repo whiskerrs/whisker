@@ -1,7 +1,7 @@
 //! `display` and `direction` properties.
 
-use crate::keyword::{Direction, Display};
 use crate::css::Css;
+use crate::keyword::{Direction, Display};
 
 impl Css {
     /// Sets `display`. Lynx default: `linear`.
@@ -58,10 +58,7 @@ mod tests {
         assert_eq!(Css::new().display_none().to_string(), "display: none;");
         assert_eq!(Css::new().display_flex().to_string(), "display: flex;");
         assert_eq!(Css::new().display_grid().to_string(), "display: grid;");
-        assert_eq!(
-            Css::new().display_linear().to_string(),
-            "display: linear;"
-        );
+        assert_eq!(Css::new().display_linear().to_string(), "display: linear;");
         assert_eq!(
             Css::new().display_relative().to_string(),
             "display: relative;"
@@ -70,7 +67,13 @@ mod tests {
 
     #[test]
     fn direction_keywords() {
-        assert_eq!(Css::new().direction(Direction::Ltr).to_string(), "direction: ltr;");
-        assert_eq!(Css::new().direction(Direction::Rtl).to_string(), "direction: rtl;");
+        assert_eq!(
+            Css::new().direction(Direction::Ltr).to_string(),
+            "direction: ltr;"
+        );
+        assert_eq!(
+            Css::new().direction(Direction::Rtl).to_string(),
+            "direction: rtl;"
+        );
     }
 }

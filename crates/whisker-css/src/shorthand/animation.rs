@@ -3,12 +3,12 @@
 
 use core::fmt;
 
+use crate::css::Css;
 use crate::data_type::Time;
 use crate::data_type_ext::EasingFunction;
 use crate::keyword::{
     AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
 };
-use crate::css::Css;
 use crate::to_css::ToCss;
 
 /// One animation layer.
@@ -187,9 +187,6 @@ mod tests {
             Animation::new("fade").duration(300.ms()),
             Animation::new("slide").duration(500.ms()).delay(100.ms()),
         ]);
-        assert_eq!(
-            s.to_string(),
-            "animation: fade 300ms, slide 500ms 100ms;"
-        );
+        assert_eq!(s.to_string(), "animation: fade 300ms, slide 500ms 100ms;");
     }
 }
