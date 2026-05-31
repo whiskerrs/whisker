@@ -35,7 +35,9 @@ mod tests;
 
 pub use apply::{apply_attr, apply_attr_owned, apply_styles};
 pub use handle::Element;
-pub use into_view::{Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, View, WhenFn};
+pub use into_view::{
+    mount_children, Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, View, WhenFn,
+};
 pub use list_mount::list_mount;
 pub use list_provider::{NativeItemProvider, INVALID_ITEM_INDEX};
 #[doc(hidden)]

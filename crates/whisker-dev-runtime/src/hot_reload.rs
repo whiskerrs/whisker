@@ -187,7 +187,7 @@ where
         "sending hello with aslr_reference={:#x}",
         device_aslr_reference()
     ));
-    ws.send(Message::Text(hello.into())).await?;
+    ws.send(Message::Text(hello)).await?;
 
     while let Some(msg) = ws.next().await {
         let msg = msg?;
