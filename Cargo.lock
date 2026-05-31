@@ -1911,9 +1911,6 @@ dependencies = [
 [[package]]
 name = "whisker-style"
 version = "0.1.0"
-dependencies = [
- "whisker-runtime",
-]
 
 [[package]]
 name = "whisker-subsecond"

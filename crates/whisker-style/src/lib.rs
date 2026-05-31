@@ -47,8 +47,6 @@ pub mod data_type_ext;
 pub mod ext;
 pub mod keyword;
 pub mod prop;
-#[cfg(feature = "runtime-bridge")]
-mod runtime_bridge;
 pub mod shorthand;
 mod style;
 mod to_css;

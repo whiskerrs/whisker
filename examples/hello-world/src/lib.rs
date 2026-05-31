@@ -34,7 +34,7 @@ use whisker::runtime::view::Element;
 // but the long tail (`BackgroundRepeat`, `Gradient`, `ColorStop`,
 // `BorderRadius`, `MarginValue`, `Padding`, …) lives here.
 use whisker::style::keyword::{BorderStyle, FontWeight, TextAlign, TextTransform};
-use whisker::style::{ColorStop, Gradient, ImageRef, LinearDirection, PositionKind};
+use whisker::style::{ColorStop, Gradient, ImageRef, LinearDirection, PositionKind, Size};
 
 // ---- App state --------------------------------------------------------------
 
@@ -109,12 +109,7 @@ fn linear_gradient_180(c1: Color, c2: Color) -> ImageRef {
 // ---- Building blocks --------------------------------------------------------
 
 #[component]
-fn art_tile(
-    c1: Color,
-    c2: Color,
-    width: whisker::style::LengthPercentage,
-    radius: Length,
-) -> Element {
+fn art_tile(c1: Color, c2: Color, width: Size, radius: Length) -> Element {
     let style = Style::new()
         .width(width.clone())
         .aspect_ratio(1.0, 1.0)
@@ -179,7 +174,7 @@ fn recent_card(title: &'static str, sub: &'static str, c1: Color, c2: Color) -> 
         .margin_top(2.px());
     render! {
         view(style: outer) {
-            ArtTile(c1: c1, c2: c2, width: whisker::style::LengthPercentage::Length(140.px()), radius: 12.px())
+            ArtTile(c1: c1, c2: c2, width: 140.px(), radius: 12.px())
             text(style: title_style, value: title)
             text(style: sub_style, value: sub)
         }
@@ -223,7 +218,6 @@ fn grid_tile(
             .font_size(16.px())
             .text_align(TextAlign::Center)
             .line_height(28.px())
-            .to_css_string()
     });
 
     let tile_style = Style::new()
@@ -250,7 +244,7 @@ fn grid_tile(
     render! {
         view(style: tile_style) {
             view(style: art_wrap_style) {
-                ArtTile(c1: c1, c2: c2, width: whisker::style::LengthPercentage::Percentage(100.percent()), radius: 10.px())
+                ArtTile(c1: c1, c2: c2, width: 100.percent(), radius: 10.px())
                 text(style: heart_style, on_tap: on_heart, value: heart_glyph)
             }
             text(style: title_style, value: title)
@@ -327,10 +321,7 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppSt
     let on_pick = move |_| tab.set(index);
     let glyph_style = computed(move || {
         let tab_color = if tab.get() == index { ACCENT } else { TEXT_MUTED };
-        Style::new()
-            .font_size(22.px())
-            .color(tab_color)
-            .to_css_string()
+        Style::new().font_size(22.px()).color(tab_color)
     });
     let label_style = computed(move || {
         let selected = tab.get() == index;
@@ -340,7 +331,6 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppSt
             .font_size(11.px())
             .color(tab_color)
             .font_weight(FontWeight::Numeric(weight))
-            .to_css_string()
     });
     let container_style = Style::new()
         .display_flex()
@@ -438,7 +428,7 @@ fn now_playing(state: AppState) -> Element {
         .line_height(40.px());
     render! {
         view(style: container_style) {
-            ArtTile(c1: Color::hex(0xFF7E5F), c2: Color::hex(0xFEB47B), width: whisker::style::LengthPercentage::Length(48.px()), radius: 8.px())
+            ArtTile(c1: Color::hex(0xFF7E5F), c2: Color::hex(0xFEB47B), width: 48.px(), radius: 8.px())
             view(style: mid_style) {
                 text(style: title_style, value: "Sunset Drive")
                 text(style: sub_style, value: status)
@@ -791,7 +781,10 @@ pub fn video_demo() -> Element {
     let video_style = Style::new().width(100.percent()).height(220.px());
     render! {
         view(style: container) {
-            Video(ref: video.r(), src: BIG_BUCK_BUNNY_URL, style: video_style)
+            // `Video` is a module component (separate crate); its
+            // `style: Signal<String>` prop doesn't go through
+            // `DynStyle`, so the explicit `.to_string()` stays.
+            Video(ref: video.r(), src: BIG_BUCK_BUNNY_URL, style: video_style.to_string())
             view(style: row_style) {
                 text(value: "▶ Play",  style: btn_style(), on_tap: move |_| { video.play(); })
                 text(value: "⏸ Pause", style: btn_style(), on_tap: move |_| { video.pause(); })
@@ -1237,7 +1230,8 @@ fn app() -> Element {
     let hello_style = Style::new().width(100.percent()).height(8.px());
     render! {
         page(style: page_style) {
-            Hello(style: hello_style)
+            // `Hello` is a module component (separate crate); see Video above.
+            Hello(style: hello_style.to_string())
             ChildrenDemo()
             VideoDemo()
             MeasureDemo()

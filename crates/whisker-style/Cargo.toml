@@ -8,14 +8,4 @@ repository.workspace = true
 authors.workspace = true
 description = "Type-safe CSS Style builder for Whisker. Mirrors the Lynx CSS surface."
 
-[features]
-default = []
-# Adds `impl From<Style> for Signal<String>` (and the borrowed
-# counterpart) so a `Style` value can be passed directly as the
-# `style: …` kwarg on a `render!` element. Enabled by the `whisker`
-# umbrella crate; disabled in standalone tests so this crate stays
-# usable without pulling in the runtime.
-runtime-bridge = ["dep:whisker-runtime"]
-
 [dependencies]
-whisker-runtime = { workspace = true, optional = true }

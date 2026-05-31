@@ -113,6 +113,9 @@ pub use whisker_runtime::reactive::{
 // hatch for sync IO inside `async fn` bodies.
 pub use whisker_runtime::tasks::{run_blocking, run_until_stalled, spawn_local};
 mod control_flow;
+mod dyn_style;
+
+pub use dyn_style::{apply_dyn_style, DynStyle};
 
 // Built-in control flow — same `#[component]` form as anything a user
 // could implement. The PascalCase aliases `ForEach` / `Show` are
@@ -156,7 +159,7 @@ pub mod __tags {
     use whisker_runtime::reactive::Signal;
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
-        append_child, apply_attr, apply_attr_owned, apply_styles, create_element,
+        append_child, apply_attr, apply_attr_owned, create_element,
         create_element_by_name, create_phantom_element, install_list_native_item_provider,
         set_event_listener, set_update_list_info, BindType, Element,
     };
@@ -200,11 +203,18 @@ pub mod __tags {
         // ---- Styling ----------------------------------------------------
 
         /// Inline CSS (`SetRawInlineStyles`).
+        ///
+        /// Accepts any value that converts into [`crate::DynStyle`]
+        /// — a [`whisker_style::Style`] builder, a `String` / `&str`
+        /// raw CSS literal, or a reactive
+        /// [`ReadSignal`] / [`RwSignal`] of either form. Reactive
+        /// variants re-apply the CSS via the element's internal
+        /// `effect` whenever the underlying signal changes.
         fn style<V>(self, v: V) -> Self
         where
-            V: Into<Signal<String>>,
+            V: Into<crate::DynStyle>,
         {
-            apply_styles(self.__element(), v);
+            crate::apply_dyn_style(self.__element(), v);
             self
         }
 
