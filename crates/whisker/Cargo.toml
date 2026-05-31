@@ -26,4 +26,5 @@ whisker-runtime = { workspace = true }
 whisker-macros = { workspace = true }
 whisker-driver = { workspace = true }
 whisker-app-config = { workspace = true }
+whisker-css = { workspace = true }
 subsecond = { workspace = true, optional = true }

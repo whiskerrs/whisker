@@ -1764,6 +1764,7 @@ name = "whisker"
 version = "0.1.0"
 dependencies = [
  "whisker-app-config",
+ "whisker-css",
  "whisker-driver",
  "whisker-macros",
  "whisker-runtime",
@@ -1817,6 +1818,13 @@ dependencies = [
  "serde",
  "serde_json",
  "whisker-app-config",
+]
+
+[[package]]
+name = "whisker-css"
+version = "0.1.0"
+dependencies = [
+ "whisker-macros",
 ]
 
 [[package]]
