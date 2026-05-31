@@ -1767,6 +1767,7 @@ dependencies = [
  "whisker-driver",
  "whisker-macros",
  "whisker-runtime",
+ "whisker-style",
  "whisker-subsecond",
 ]
 
@@ -1905,6 +1906,13 @@ dependencies = [
  "serde",
  "serde_json",
  "slotmap",
+]
+
+[[package]]
+name = "whisker-style"
+version = "0.1.0"
+dependencies = [
+ "whisker-runtime",
 ]
 
 [[package]]

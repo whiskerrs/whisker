@@ -30,6 +30,12 @@ extern crate self as whisker;
 pub use whisker_app_config as app_config;
 pub use whisker_runtime as runtime;
 
+// Type-safe CSS Style builder. Accessible as `whisker::style::*`
+// (the namespaced form for explicit qualification) or by reaching
+// through `whisker::prelude::*` (which re-exports the most common
+// pieces).
+pub use whisker_style as style;
+
 // Re-export the element tag enum the macro emit references through
 // `::whisker::ElementTag`. The C bridge keys element creation off
 // the same enum.
@@ -1710,6 +1716,16 @@ pub mod prelude {
         ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle,
     };
     pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
+    // Type-safe CSS Style builder. Pulled into the prelude so
+    // `Style::new().display_flex().padding(px(8))` is reachable
+    // without explicit imports. Numeric-literal extension traits
+    // (`px(8)`, `8.px()`, `45.deg()`, …) come in via the wildcard
+    // `ext::*` re-export.
+    pub use crate::style::ext::*;
+    pub use crate::style::{
+        AlignItems, Border, Color, Display, Flex, FlexDirection, FlexWrap, JustifyContent, Length,
+        NamedColor, Style, ToCss,
+    };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
     // typing a tag name inside render! (the macro source position

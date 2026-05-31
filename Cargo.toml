@@ -12,6 +12,7 @@ members = [
     "crates/whisker-driver-sys",
     "crates/whisker-macros",
     "crates/whisker-runtime",
+    "crates/whisker-style",
     "crates/whisker-subsecond",
     "examples/counter",
     "examples/hello-world",
@@ -49,6 +50,7 @@ whisker-driver = { path = "crates/whisker-driver", version = "0.1.0" }
 whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.1.0" }
 whisker-macros = { path = "crates/whisker-macros", version = "0.1.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.1.0" }
+whisker-style = { path = "crates/whisker-style", version = "0.1.0" }
 
 anyhow = "1"
 thiserror = "2"
