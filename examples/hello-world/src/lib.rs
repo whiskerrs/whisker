@@ -111,11 +111,15 @@ fn linear_gradient_180(c1: Color, c2: Color) -> ImageRef {
 #[component]
 fn art_tile(c1: Color, c2: Color, width: Size, radius: Length) -> Element {
     render! {
-        view(style: Css::new()
-            .width(width.clone())
-            .aspect_ratio(1.0, 1.0)
-            .border_radius(radius)
-            .background_image(linear_gradient_135(c1, c2)))
+        view(
+            // `aspect_ratio` takes two args, so it can't be a kwarg
+            // — it's chained on after the macro.
+            style: css!(
+                width: width.clone(),
+                border_radius: radius,
+                background_image: linear_gradient_135(c1, c2),
+            ).aspect_ratio(1.0, 1.0),
+        )
     }
 }
 
@@ -147,16 +151,18 @@ fn section_header(title: &'static str) -> Element {
         view {
             text(
                 value: title,
-                style: Css::new()
-                    .font_size(20.px())
-                    .font_weight(FontWeight::Numeric(700))
-                    .color(TEXT_PRIMARY),
+                style: css!(
+                    font_size: 20.px(),
+                    font_weight: FontWeight::Numeric(700),
+                    color: TEXT_PRIMARY,
+                ),
             )
             text(
                 value: "See all ›",
-                style: Css::new()
-                    .font_size(13.px())
-                    .color(Color::rgba(255, 255, 255, 0.5)),
+                style: css!(
+                    font_size: 13.px(),
+                    color: Color::rgba(255, 255, 255, 0.5),
+                ),
             )
         }
     }
@@ -166,27 +172,30 @@ fn section_header(title: &'static str) -> Element {
 fn recent_card(title: &'static str, sub: &'static str, c1: Color, c2: Color) -> Element {
     render! {
         view(
-            style: Css::new()
-                .width(140.px())
-                .margin_right(14.px())
-                .display_flex()
-                .flex_direction(FlexDirection::Column),
+            style: css!(
+                width: 140.px(),
+                margin_right: 14.px(),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+            ),
         ) {
             ArtTile(c1: c1, c2: c2, width: 140.px(), radius: 12.px())
             text(
                 value: title,
-                style: Css::new()
-                    .font_size(14.px())
-                    .font_weight(FontWeight::Numeric(600))
-                    .color(TEXT_PRIMARY)
-                    .margin_top(8.px()),
+                style: css!(
+                    font_size: 14.px(),
+                    font_weight: FontWeight::Numeric(600),
+                    color: TEXT_PRIMARY,
+                    margin_top: 8.px(),
+                ),
             )
             text(
                 value: sub,
-                style: Css::new()
-                    .font_size(12.px())
-                    .color(TEXT_SECONDARY)
-                    .margin_top(2.px()),
+                style: css!(
+                    font_size: 12.px(),
+                    color: TEXT_SECONDARY,
+                    margin_top: 2.px(),
+                ),
             )
         }
     }
@@ -217,54 +226,59 @@ fn grid_tile(
         } else {
             TEXT_MUTED
         };
-        Css::new()
-            .position(PositionKind::Absolute)
-            .top(8.px())
-            .right(8.px())
-            .width(28.px())
-            .height(28.px())
-            .border_radius(14.px())
-            .background_color(Color::rgba(0, 0, 0, 0.45))
-            .color(heart_color)
-            .font_size(16.px())
-            .text_align(TextAlign::Center)
-            .line_height(28.px())
+        css!(
+            position: PositionKind::Absolute,
+            top: 8.px(),
+            right: 8.px(),
+            width: 28.px(),
+            height: 28.px(),
+            border_radius: 14.px(),
+            background_color: Color::rgba(0, 0, 0, 0.45),
+            color: heart_color,
+            font_size: 16.px(),
+            text_align: TextAlign::Center,
+            line_height: 28.px(),
+        )
     });
 
     render! {
         view(
-            style: Css::new()
-                .width(48.percent())
-                .margin_bottom(16.px())
-                .background_color(SURFACE)
-                .border_radius(14.px())
-                .padding(12.px())
-                .box_shadow(0.px(), 4.px(), 12.px(), 0.px(), Color::rgba(0, 0, 0, 0.25))
-                .display_flex()
-                .flex_direction(FlexDirection::Column),
+            // `box_shadow` takes 5 args, so it's chained after.
+            style: css!(
+                width: 48.percent(),
+                margin_bottom: 16.px(),
+                background_color: SURFACE,
+                border_radius: 14.px(),
+                padding: 12.px(),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+            ).box_shadow(0.px(), 4.px(), 12.px(), 0.px(), Color::rgba(0, 0, 0, 0.25)),
         ) {
             view(
-                style: Css::new()
-                    .position(PositionKind::Relative)
-                    .width(100.percent()),
+                style: css!(
+                    position: PositionKind::Relative,
+                    width: 100.percent(),
+                ),
             ) {
                 ArtTile(c1: c1, c2: c2, width: 100.percent(), radius: 10.px())
                 text(style: heart_style, on_tap: on_heart, value: heart_glyph)
             }
             text(
                 value: title,
-                style: Css::new()
-                    .font_size(14.px())
-                    .font_weight(FontWeight::Numeric(600))
-                    .color(TEXT_PRIMARY)
-                    .margin_top(10.px()),
+                style: css!(
+                    font_size: 14.px(),
+                    font_weight: FontWeight::Numeric(600),
+                    color: TEXT_PRIMARY,
+                    margin_top: 10.px(),
+                ),
             )
             text(
                 value: "Daily Mix",
-                style: Css::new()
-                    .font_size(11.px())
-                    .color(TEXT_SECONDARY)
-                    .margin_top(2.px()),
+                style: css!(
+                    font_size: 11.px(),
+                    color: TEXT_SECONDARY,
+                    margin_top: 2.px(),
+                ),
             )
         }
     }
@@ -281,63 +295,67 @@ fn activity_row(
 ) -> Element {
     render! {
         view(
-            style: Css::new()
-                .width(100.percent())
-                .display_flex()
-                .flex_direction(FlexDirection::Row)
-                .align_items(AlignItems::Center)
-                .padding((14.px(), 20.px()))
-                .border_bottom(
-                    Border::new()
-                        .width(1.px())
-                        .style(BorderStyle::Solid)
-                        .color(Color::rgba(255, 255, 255, 0.06)),
-                ),
+            style: css!(
+                width: 100.percent(),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                padding: (14.px(), 20.px()),
+                border_bottom: Border::new()
+                    .width(1.px())
+                    .style(BorderStyle::Solid)
+                    .color(Color::rgba(255, 255, 255, 0.06)),
+            ),
         ) {
             view(
-                style: Css::new()
-                    .width(44.px())
-                    .height(44.px())
-                    .border_radius(22.px())
-                    .background_image(linear_gradient_135(c1, c2))
-                    .display_flex()
-                    .align_items(AlignItems::Center)
-                    .justify_content(JustifyContent::Center)
-                    .margin_right(12.px()),
+                style: css!(
+                    width: 44.px(),
+                    height: 44.px(),
+                    border_radius: 22.px(),
+                    background_image: linear_gradient_135(c1, c2),
+                    display: Display::Flex,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    margin_right: 12.px(),
+                ),
             ) {
                 text(
                     value: initial,
-                    style: Css::new()
-                        .font_size(18.px())
-                        .color(Color::Named(NamedColor::White))
-                        .font_weight(FontWeight::Numeric(700)),
+                    style: css!(
+                        font_size: 18.px(),
+                        color: Color::Named(NamedColor::White),
+                        font_weight: FontWeight::Numeric(700),
+                    ),
                 )
             }
             view(
-                style: Css::new()
-                    .flex_grow(1.0)
-                    .flex_shrink(1.0)
-                    .display_flex()
-                    .flex_direction(FlexDirection::Column),
+                style: css!(
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Column,
+                ),
             ) {
                 text(
                     value: title,
-                    style: Css::new()
-                        .font_size(15.px())
-                        .color(TEXT_PRIMARY)
-                        .font_weight(FontWeight::Numeric(600)),
+                    style: css!(
+                        font_size: 15.px(),
+                        color: TEXT_PRIMARY,
+                        font_weight: FontWeight::Numeric(600),
+                    ),
                 )
                 text(
                     value: sub,
-                    style: Css::new()
-                        .font_size(12.px())
-                        .color(TEXT_SECONDARY)
-                        .margin_top(2.px()),
+                    style: css!(
+                        font_size: 12.px(),
+                        color: TEXT_SECONDARY,
+                        margin_top: 2.px(),
+                    ),
                 )
             }
             text(
                 value: when,
-                style: Css::new().font_size(11.px()).color(TEXT_MUTED),
+                style: css!(font_size: 11.px(), color: TEXT_MUTED),
             )
         }
     }
@@ -349,26 +367,28 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppSt
     let on_pick = move |_| tab.set(index);
     let glyph_style = computed(move || {
         let tab_color = if tab.get() == index { ACCENT } else { TEXT_MUTED };
-        Css::new().font_size(22.px()).color(tab_color)
+        css!(font_size: 22.px(), color: tab_color)
     });
     let label_style = computed(move || {
         let selected = tab.get() == index;
         let tab_color = if selected { ACCENT } else { TEXT_MUTED };
         let weight = if selected { 700 } else { 500 };
-        Css::new()
-            .font_size(11.px())
-            .color(tab_color)
-            .font_weight(FontWeight::Numeric(weight))
+        css!(
+            font_size: 11.px(),
+            color: tab_color,
+            font_weight: FontWeight::Numeric(weight),
+        )
     });
     render! {
         view(
             on_tap: on_pick,
-            style: Css::new()
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .align_items(AlignItems::Center)
-                .gap(4.px())
-                .padding((4.px(), 12.px())),
+            style: css!(
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                gap: 4.px(),
+                padding: (4.px(), 12.px()),
+            ),
         ) {
             text(style: glyph_style, value: glyph)
             text(style: label_style, value: label)
@@ -380,22 +400,21 @@ fn tab_item(index: usize, label: &'static str, glyph: &'static str, state: AppSt
 fn tab_bar(state: AppState) -> Element {
     render! {
         view(
-            style: Css::new()
-                .position(PositionKind::Absolute)
-                .left(0.px())
-                .right(0.px())
-                .bottom(0.px())
-                .display_flex()
-                .flex_direction(FlexDirection::Row)
-                .justify_content(JustifyContent::SpaceAround)
-                .padding((12.px(), 0.px(), 28.px()))
-                .background_color(SURFACE)
-                .border_top(
-                    Border::new()
-                        .width(1.px())
-                        .style(BorderStyle::Solid)
-                        .color(Color::rgba(255, 255, 255, 0.06)),
-                ),
+            style: css!(
+                position: PositionKind::Absolute,
+                left: 0.px(),
+                right: 0.px(),
+                bottom: 0.px(),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceAround,
+                padding: (12.px(), 0.px(), 28.px()),
+                background_color: SURFACE,
+                border_top: Border::new()
+                    .width(1.px())
+                    .style(BorderStyle::Solid)
+                    .color(Color::rgba(255, 255, 255, 0.06)),
+            ),
         ) {
             TabItem(index: 0_usize, label: "Home",    glyph: "⌂", state: state)
             TabItem(index: 1_usize, label: "Search",  glyph: "⌕", state: state)
@@ -425,54 +444,58 @@ fn now_playing(state: AppState) -> Element {
     });
     render! {
         view(
-            style: Css::new()
-                .position(PositionKind::Absolute)
-                .left(12.px())
-                .right(12.px())
-                .bottom(78.px())
-                .display_flex()
-                .flex_direction(FlexDirection::Row)
-                .align_items(AlignItems::Center)
-                .padding(10.px())
-                .background_color(SURFACE_2)
-                .border_radius(14.px())
-                .box_shadow(0.px(), 6.px(), 16.px(), 0.px(), Color::rgba(0, 0, 0, 0.35)),
+            style: css!(
+                position: PositionKind::Absolute,
+                left: 12.px(),
+                right: 12.px(),
+                bottom: 78.px(),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                padding: 10.px(),
+                background_color: SURFACE_2,
+                border_radius: 14.px(),
+            ).box_shadow(0.px(), 6.px(), 16.px(), 0.px(), Color::rgba(0, 0, 0, 0.35)),
         ) {
             ArtTile(c1: Color::hex(0xFF7E5F), c2: Color::hex(0xFEB47B), width: 48.px(), radius: 8.px())
             view(
-                style: Css::new()
-                    .flex(Flex::Number(1.0))
-                    .padding((0.px(), 12.px()))
-                    .display_flex()
-                    .flex_direction(FlexDirection::Column),
+                style: css!(
+                    flex: Flex::Number(1.0),
+                    padding: (0.px(), 12.px()),
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Column,
+                ),
             ) {
                 text(
                     value: "Sunset Drive",
-                    style: Css::new()
-                        .font_size(14.px())
-                        .color(TEXT_PRIMARY)
-                        .font_weight(FontWeight::Numeric(600)),
+                    style: css!(
+                        font_size: 14.px(),
+                        color: TEXT_PRIMARY,
+                        font_weight: FontWeight::Numeric(600),
+                    ),
                 )
                 text(
                     value: status,
-                    style: Css::new()
-                        .font_size(11.px())
-                        .color(TEXT_SECONDARY)
-                        .margin_top(2.px()),
+                    style: css!(
+                        font_size: 11.px(),
+                        color: TEXT_SECONDARY,
+                        margin_top: 2.px(),
+                    ),
                 )
             }
             text(
                 value: glyph,
                 on_tap: toggle,
-                style: Css::new()
-                    .width(40.px())
-                    .height(40.px())
-                    .border_radius(20.px())
-                    .background_color(ACCENT)
-                    .color(Color::Named(NamedColor::White))
-                    .font_size(14.px())
-                    .text_align(TextAlign::Center)
-                    .line_height(40.px()),
+                style: css!(
+                    width: 40.px(),
+                    height: 40.px(),
+                    border_radius: 20.px(),
+                    background_color: ACCENT,
+                    color: Color::Named(NamedColor::White),
+                    font_size: 14.px(),
+                    text_align: TextAlign::Center,
+                    line_height: 40.px(),
+                ),
             )
         }
     }
@@ -483,77 +506,82 @@ fn header() -> Element {
     // Two icon buttons share the same base; the closure-built
     // style is kept so each call can append its own margin.
     let icon = || {
-        Css::new()
-            .width(40.px())
-            .height(40.px())
-            .border_radius(20.px())
-            .background_color(Color::rgba(255, 255, 255, 0.10))
-            .color(Color::Named(NamedColor::White))
-            .font_size(16.px())
-            .text_align(TextAlign::Center)
-            .line_height(40.px())
+        css!(
+            width: 40.px(),
+            height: 40.px(),
+            border_radius: 20.px(),
+            background_color: Color::rgba(255, 255, 255, 0.10),
+            color: Color::Named(NamedColor::White),
+            font_size: 16.px(),
+            text_align: TextAlign::Center,
+            line_height: 40.px(),
+        )
     };
     render! {
         view(
-            style: Css::new()
-                .width(100.percent())
-                .padding((60.px(), 20.px(), 18.px()))
-                .background_image(linear_gradient_180(Color::hex(0x2C1860), BG))
-                .display_flex()
-                .flex_direction(FlexDirection::Row)
-                .align_items(AlignItems::Center)
-                .justify_content(JustifyContent::SpaceBetween),
+            style: css!(
+                width: 100.percent(),
+                padding: (60.px(), 20.px(), 18.px()),
+                background_image: linear_gradient_180(Color::hex(0x2C1860), BG),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+            ),
         ) {
             view(
-                style: Css::new()
-                    .display_flex()
-                    .flex_direction(FlexDirection::Row)
-                    .align_items(AlignItems::Center),
+                style: css!(
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                ),
             ) {
                 view(
-                    style: Css::new()
-                        .width(44.px())
-                        .height(44.px())
-                        .border_radius(22.px())
-                        .background_image(linear_gradient_135(
-                            Color::hex(0xFF7E5F),
-                            Color::hex(0xFEB47B),
-                        ))
-                        .display_flex()
-                        .align_items(AlignItems::Center)
-                        .justify_content(JustifyContent::Center)
-                        .margin_right(12.px()),
+                    style: css!(
+                        width: 44.px(),
+                        height: 44.px(),
+                        border_radius: 22.px(),
+                        background_image: linear_gradient_135(Color::hex(0xFF7E5F), Color::hex(0xFEB47B)),
+                        display: Display::Flex,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        margin_right: 12.px(),
+                    ),
                 ) {
                     text(
                         value: "I",
-                        style: Css::new()
-                            .font_size(18.px())
-                            .color(Color::Named(NamedColor::White))
-                            .font_weight(FontWeight::Numeric(700)),
+                        style: css!(
+                            font_size: 18.px(),
+                            color: Color::Named(NamedColor::White),
+                            font_weight: FontWeight::Numeric(700),
+                        ),
                     )
                 }
                 view(
-                    style: Css::new()
-                        .display_flex()
-                        .flex_direction(FlexDirection::Column),
+                    style: css!(
+                        display: Display::Flex,
+                        flex_direction: FlexDirection::Column,
+                    ),
                 ) {
                     text(
                         value: "Welcome back",
-                        style: Css::new().font_size(12.px()).color(TEXT_SECONDARY),
+                        style: css!(font_size: 12.px(), color: TEXT_SECONDARY),
                     )
                     text(
                         value: "Itome",
-                        style: Css::new()
-                            .font_size(18.px())
-                            .color(TEXT_PRIMARY)
-                            .font_weight(FontWeight::Numeric(700)),
+                        style: css!(
+                            font_size: 18.px(),
+                            color: TEXT_PRIMARY,
+                            font_weight: FontWeight::Numeric(700),
+                        ),
                     )
                 }
             }
             view(
-                style: Css::new()
-                    .display_flex()
-                    .flex_direction(FlexDirection::Row),
+                style: css!(
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                ),
             ) {
                 text(value: "♡", style: icon().margin_right(8.px()))
                 text(value: "⚙", style: icon())
@@ -566,11 +594,12 @@ fn header() -> Element {
 fn chips() -> Element {
     render! {
         view(
-            style: Css::new()
-                .display_flex()
-                .flex_direction(FlexDirection::Row)
-                .padding((0.px(), 20.px(), 8.px()))
-                .flex_wrap(whisker::css::FlexWrap::Nowrap),
+            style: css!(
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                padding: (0.px(), 20.px(), 8.px()),
+                flex_wrap: whisker::css::FlexWrap::Nowrap,
+            ),
         ) {
             Chip(label: "All",        accented: true)
             Chip(label: "Music",      accented: false)
@@ -585,7 +614,7 @@ fn recents() -> Element {
     render! {
         scroll_view(
             scroll_orientation: "horizontal",
-            style: Css::new().padding((4.px(), 20.px(), 8.px())).height(200.px()),
+            style: css!(padding: (4.px(), 20.px(), 8.px()), height: 200.px()),
         ) {
             RecentCard(title: "Sunset Drive",  sub: "Lo-Fi Beats", c1: Color::hex(0xFF7E5F), c2: Color::hex(0xFEB47B))
             RecentCard(title: "Deep Focus",    sub: "Ambient",     c1: Color::hex(0x4FACFE), c2: Color::hex(0x00F2FE))
@@ -600,39 +629,42 @@ fn recents() -> Element {
 fn featured() -> Element {
     render! {
         view(
-            style: Css::new()
-                .margin((0.px(), 20.px()))
-                .height(180.px())
-                .border_radius(18.px())
-                .background_image(linear_gradient_135(Color::hex(0x4A00E0), Color::hex(0x8E2DE2)))
-                .padding(20.px())
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .justify_content(JustifyContent::FlexEnd)
-                .box_shadow(0.px(), 10.px(), 24.px(), 0.px(), Color::rgba(74, 0, 224, 0.4)),
+            style: css!(
+                margin: (0.px(), 20.px()),
+                height: 180.px(),
+                border_radius: 18.px(),
+                background_image: linear_gradient_135(Color::hex(0x4A00E0), Color::hex(0x8E2DE2)),
+                padding: 20.px(),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::FlexEnd,
+            ).box_shadow(0.px(), 10.px(), 24.px(), 0.px(), Color::rgba(74, 0, 224, 0.4)),
         ) {
             text(
                 value: "Made For You",
-                style: Css::new()
-                    .font_size(12.px())
-                    .color(TEXT_SECONDARY)
-                    .text_transform(TextTransform::Uppercase)
-                    .letter_spacing(1.5.px()),
+                style: css!(
+                    font_size: 12.px(),
+                    color: TEXT_SECONDARY,
+                    text_transform: TextTransform::Uppercase,
+                    letter_spacing: 1.5.px(),
+                ),
             )
             text(
                 value: "Discover Weekly",
-                style: Css::new()
-                    .font_size(26.px())
-                    .font_weight(FontWeight::Numeric(700))
-                    .color(TEXT_PRIMARY)
-                    .margin_top(6.px()),
+                style: css!(
+                    font_size: 26.px(),
+                    font_weight: FontWeight::Numeric(700),
+                    color: TEXT_PRIMARY,
+                    margin_top: 6.px(),
+                ),
             )
             text(
                 value: "30 new songs picked just for you",
-                style: Css::new()
-                    .font_size(13.px())
-                    .color(TEXT_SECONDARY)
-                    .margin_top(4.px()),
+                style: css!(
+                    font_size: 13.px(),
+                    color: TEXT_SECONDARY,
+                    margin_top: 4.px(),
+                ),
             )
         }
     }
@@ -642,12 +674,13 @@ fn featured() -> Element {
 fn grid(state: AppState) -> Element {
     render! {
         view(
-            style: Css::new()
-                .padding((4.px(), 20.px(), 0.px()))
-                .display_flex()
-                .flex_direction(FlexDirection::Row)
-                .flex_wrap(whisker::css::FlexWrap::Wrap)
-                .justify_content(JustifyContent::SpaceBetween),
+            style: css!(
+                padding: (4.px(), 20.px(), 0.px()),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                flex_wrap: whisker::css::FlexWrap::Wrap,
+                justify_content: JustifyContent::SpaceBetween,
+            ),
         ) {
             GridTile(index: 0_usize, title: "Chill Mix",   c1: Color::hex(0x667EEA), c2: Color::hex(0x764BA2), state: state)
             GridTile(index: 1_usize, title: "Happy Mix",   c1: Color::hex(0xF093FB), c2: Color::hex(0xF5576C), state: state)
@@ -663,10 +696,11 @@ fn grid(state: AppState) -> Element {
 fn activity_feed() -> Element {
     render! {
         view(
-            style: Css::new()
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .padding((0.px(), 0.px(), 8.px())),
+            style: css!(
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                padding: (0.px(), 0.px(), 8.px()),
+            ),
         ) {
             ActivityRow(initial: "A", c1: Color::hex(0xFF7E5F), c2: Color::hex(0xFEB47B), title: "Alice", sub: "Started following you",            when: "2m")
             ActivityRow(initial: "R", c1: Color::hex(0x667EEA), c2: Color::hex(0x764BA2), title: "Riku",  sub: "Liked your playlist 'Late Night'", when: "1h")
@@ -681,23 +715,25 @@ fn activity_feed() -> Element {
 fn scroll_card(n: i32, color: Color) -> Element {
     render! {
         view(
-            style: Css::new()
-                .width(96.px())
-                .height(56.px())
-                .flex_shrink(0.0)
-                .margin_right(8.px())
-                .border_radius(10.px())
-                .background_color(color)
-                .display_flex()
-                .align_items(AlignItems::Center)
-                .justify_content(JustifyContent::Center),
+            style: css!(
+                width: 96.px(),
+                height: 56.px(),
+                flex_shrink: 0.0,
+                margin_right: 8.px(),
+                border_radius: 10.px(),
+                background_color: color,
+                display: Display::Flex,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+            ),
         ) {
             text(
                 value: format!("{n}"),
-                style: Css::new()
-                    .color(Color::Named(NamedColor::White))
-                    .font_size(18.px())
-                    .font_weight(FontWeight::Numeric(700)),
+                style: css!(
+                    color: Color::Named(NamedColor::White),
+                    font_size: 18.px(),
+                    font_weight: FontWeight::Numeric(700),
+                ),
             )
         }
     }
@@ -718,28 +754,31 @@ fn scroll_demo() -> Element {
     // Shared by 6 buttons — kept as a closure so each call site
     // gets a fresh `Css` value.
     let btn_style = || {
-        Css::new()
-            .padding((6.px(), 10.px()))
-            .background_color(Color::hex(0x6C5CE7))
-            .border_radius(6.px())
-            .color(Color::hex(0xFFFFFF))
-            .font_size(12.px())
-            .font_weight(FontWeight::Numeric(600))
+        css!(
+            padding: (6.px(), 10.px()),
+            background_color: Color::hex(0x6C5CE7),
+            border_radius: 6.px(),
+            color: Color::hex(0xFFFFFF),
+            font_size: 12.px(),
+            font_weight: FontWeight::Numeric(600),
+        )
     };
     render! {
         view(
-            style: Css::new()
-                .margin((4.px(), 20.px(), 8.px()))
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .gap(6.px()),
+            style: css!(
+                margin: (4.px(), 20.px(), 8.px()),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 6.px(),
+            ),
         ) {
             text(
                 value: label,
-                style: Css::new()
-                    .color(Color::hex(0xB9A9FF))
-                    .font_size(12.px())
-                    .font_family("monospace"),
+                style: css!(
+                    color: Color::hex(0xB9A9FF),
+                    font_size: 12.px(),
+                    font_family: "monospace",
+                ),
             )
             scroll_view(
                 ref: row.r(),
@@ -753,13 +792,14 @@ fn scroll_demo() -> Element {
                         e.detail.is_dragging,
                     ))
                 },
-                style: Css::new()
-                    .height(64.px())
-                    .display_flex()
-                    .flex_direction(FlexDirection::Row)
-                    .background_color(SURFACE)
-                    .border_radius(12.px())
-                    .padding(4.px()),
+                style: css!(
+                    height: 64.px(),
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    background_color: SURFACE,
+                    border_radius: 12.px(),
+                    padding: 4.px(),
+                ),
             ) {
                 ScrollCard(n: 1_i32, color: Color::hex(0x667EEA))
                 ScrollCard(n: 2_i32, color: Color::hex(0xF093FB))
@@ -771,11 +811,12 @@ fn scroll_demo() -> Element {
                 ScrollCard(n: 8_i32, color: Color::hex(0x9B6BFF))
             }
             view(
-                style: Css::new()
-                    .display_flex()
-                    .flex_direction(FlexDirection::Row)
-                    .flex_wrap(whisker::css::FlexWrap::Wrap)
-                    .gap(8.px()),
+                style: css!(
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: whisker::css::FlexWrap::Wrap,
+                    gap: 8.px(),
+                ),
             ) {
                 text(value: "→ 300",  style: btn_style(), on_tap: move |_| { row.scroll_to(300.0, true); })
                 text(value: "⇤ start", style: btn_style(), on_tap: move |_| { row.scroll_to(0.0, true); })
@@ -803,13 +844,14 @@ fn scroll_body(state: AppState) -> Element {
     render! {
         scroll_view(
             scroll_orientation: "vertical",
-            style: Css::new()
-                .flex_grow(1.0)
-                .flex_shrink(1.0)
-                .width(100.percent())
-                .background_color(BG)
-                .display_flex()
-                .flex_direction(FlexDirection::Column),
+            style: css!(
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                width: 100.percent(),
+                background_color: BG,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+            ),
         ) {
             ScrollDemo()
             Chips()
@@ -821,7 +863,7 @@ fn scroll_body(state: AppState) -> Element {
             Grid(state: state)
             SectionHeader(title: "Activity")
             ActivityFeed()
-            view(style: Css::new().height(160.px()))
+            view(style: css!(height: 160.px()))
         }
     }
 }
@@ -839,30 +881,32 @@ pub fn video_demo() -> Element {
     let video = VideoHandle::new();
     // Shared by 3 buttons.
     let btn_style = || {
-        Css::new()
-            .padding((8.px(), 16.px()))
-            .background_color(Color::hex(0x6C5CE7))
-            .border_radius(6.px())
-            .color(Color::hex(0xFFFFFF))
-            .font_size(14.px())
+        css!(
+            padding: (8.px(), 16.px()),
+            background_color: Color::hex(0x6C5CE7),
+            border_radius: 6.px(),
+            color: Color::hex(0xFFFFFF),
+            font_size: 14.px(),
+        )
     };
     render! {
-        view(style: Css::new().flex_direction(FlexDirection::Column)) {
+        view(style: css!(flex_direction: FlexDirection::Column)) {
             // `Video` is a module component (separate crate); its
             // `style: Signal<String>` prop doesn't accept `Css`
             // directly, so the explicit `.to_string()` stays.
             Video(
                 ref: video.r(),
                 src: BIG_BUCK_BUNNY_URL,
-                style: Css::new().width(100.percent()).height(220.px()).to_string(),
+                style: css!(width: 100.percent(), height: 220.px()).to_string(),
             )
             view(
-                style: Css::new()
-                    .flex_direction(FlexDirection::Row)
-                    .align_items(AlignItems::Center)
-                    .padding(8.px())
-                    .background_color(Color::hex(0x1A1A1A))
-                    .gap(12.px()),
+                style: css!(
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    padding: 8.px(),
+                    background_color: Color::hex(0x1A1A1A),
+                    gap: 12.px(),
+                ),
             ) {
                 text(value: "▶ Play",  style: btn_style(), on_tap: move |_| { video.play(); })
                 text(value: "⏸ Pause", style: btn_style(), on_tap: move |_| { video.pause(); })
@@ -896,23 +940,25 @@ pub fn measure_demo() -> Element {
         view(
             ref: card.r(),
             on_tap: on_measure,
-            style: Css::new()
-                .width(200.px())
-                .height(56.px())
-                .margin((8.px(), 16.px()))
-                .background_color(SURFACE)
-                .border_radius(8.px())
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .align_items(AlignItems::Center)
-                .justify_content(JustifyContent::Center),
+            style: css!(
+                width: 200.px(),
+                height: 56.px(),
+                margin: (8.px(), 16.px()),
+                background_color: SURFACE,
+                border_radius: 8.px(),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+            ),
         ) {
             text(
                 value: label,
-                style: Css::new()
-                    .color(Color::hex(0xB9A9FF))
-                    .font_size(14.px())
-                    .font_weight(FontWeight::Numeric(600)),
+                style: css!(
+                    color: Color::hex(0xB9A9FF),
+                    font_size: 14.px(),
+                    font_weight: FontWeight::Numeric(600),
+                ),
             )
         }
     }
@@ -940,29 +986,32 @@ fn text_methods_demo() -> Element {
     };
     render! {
         view(
-            style: Css::new()
-                .margin((4.px(), 16.px(), 8.px()))
-                .flex_shrink(0.0)
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .gap(4.px()),
+            style: css!(
+                margin: (4.px(), 16.px(), 8.px()),
+                flex_shrink: 0.0,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 4.px(),
+            ),
         ) {
             text(
                 ref: txt.r(),
                 on_tap: measure,
                 flatten: false,
                 value: "Hello Whisker text methods",
-                style: Css::new()
-                    .color(Color::hex(0xE8E3FF))
-                    .font_size(15.px())
-                    .font_weight(FontWeight::Numeric(600)),
+                style: css!(
+                    color: Color::hex(0xE8E3FF),
+                    font_size: 15.px(),
+                    font_weight: FontWeight::Numeric(600),
+                ),
             )
             text(
                 value: display,
-                style: Css::new()
-                    .color(Color::hex(0xB9A9FF))
-                    .font_size(12.px())
-                    .font_family("monospace"),
+                style: css!(
+                    color: Color::hex(0xB9A9FF),
+                    font_size: 12.px(),
+                    font_family: "monospace",
+                ),
             )
         }
     }
@@ -972,33 +1021,37 @@ fn text_methods_demo() -> Element {
 fn list_demo() -> Element {
     // Used inside the render-props `children` closure on every
     // list item; kept as variables so each row can `.clone()`.
-    let card = Css::new()
-        .height(52.px())
-        .margin((4.px(), 16.px()))
-        .border_radius(8.px())
-        .background_color(SURFACE)
-        .display_flex()
-        .flex_direction(FlexDirection::Row)
-        .align_items(AlignItems::Center)
-        .padding_left(16.px());
-    let txt = Css::new()
-        .color(Color::hex(0xE8E3FF))
-        .font_size(15.px())
-        .font_weight(FontWeight::Numeric(600));
+    let card = css!(
+        height: 52.px(),
+        margin: (4.px(), 16.px()),
+        border_radius: 8.px(),
+        background_color: SURFACE,
+        display: Display::Flex,
+        flex_direction: FlexDirection::Row,
+        align_items: AlignItems::Center,
+        padding_left: 16.px(),
+    );
+    let txt = css!(
+        color: Color::hex(0xE8E3FF),
+        font_size: 15.px(),
+        font_weight: FontWeight::Numeric(600),
+    );
     render! {
         view(
-            style: Css::new()
-                .flex_shrink(0.0)
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .gap(4.px()),
+            style: css!(
+                flex_shrink: 0.0,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 4.px(),
+            ),
         ) {
             text(
                 value: "list (decoupled · virtualized)",
-                style: Css::new()
-                    .color(Color::hex(0xB9A9FF))
-                    .font_size(12.px())
-                    .margin((4.px(), 16.px())),
+                style: css!(
+                    color: Color::hex(0xB9A9FF),
+                    font_size: 12.px(),
+                    margin: (4.px(), 16.px()),
+                ),
             )
             list(
                 each: || (0_i32..10).collect::<::std::vec::Vec<i32>>(),
@@ -1010,7 +1063,7 @@ fn list_demo() -> Element {
                 },
                 list_type: "single",
                 column_count: 1_i32,
-                style: Css::new().height(220.px()),
+                style: css!(height: 220.px()),
             )
         }
     }
@@ -1023,40 +1076,44 @@ fn show_demo() -> Element {
     // The two label styles are used inside the `Show`'s body /
     // fallback closures, so they need to be captured by value
     // (hence `let` + `.clone()` per branch).
-    let hidden_lbl = Css::new()
-        .color(Color::hex(0x888888))
-        .font_size(14.px())
-        .padding(12.px())
-        .background_color(SURFACE)
-        .border_radius(8.px());
-    let visible_lbl = Css::new()
-        .color(Color::hex(0xE8E3FF))
-        .font_size(14.px())
-        .padding(12.px())
-        .background_color(Color::hex(0x2A1F4A))
-        .border_radius(8.px());
+    let hidden_lbl = css!(
+        color: Color::hex(0x888888),
+        font_size: 14.px(),
+        padding: 12.px(),
+        background_color: SURFACE,
+        border_radius: 8.px(),
+    );
+    let visible_lbl = css!(
+        color: Color::hex(0xE8E3FF),
+        font_size: 14.px(),
+        padding: 12.px(),
+        background_color: Color::hex(0x2A1F4A),
+        border_radius: 8.px(),
+    );
     render! {
         view(
-            style: Css::new()
-                .margin((8.px(), 16.px()))
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .gap(8.px()),
+            style: css!(
+                margin: (8.px(), 16.px()),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 8.px(),
+            ),
         ) {
             text(
                 value: "Show (toggle the condition)",
-                style: Css::new().color(Color::hex(0xB9A9FF)).font_size(12.px()),
+                style: css!(color: Color::hex(0xB9A9FF), font_size: 12.px()),
             )
             text(
                 value: "Toggle",
                 on_tap: toggle,
-                style: Css::new()
-                    .padding((8.px(), 16.px()))
-                    .background_color(Color::hex(0x6C5CE7))
-                    .border_radius(6.px())
-                    .color(Color::hex(0xFFFFFF))
-                    .font_size(14.px())
-                    .font_weight(FontWeight::Numeric(600)),
+                style: css!(
+                    padding: (8.px(), 16.px()),
+                    background_color: Color::hex(0x6C5CE7),
+                    border_radius: 6.px(),
+                    color: Color::hex(0xFFFFFF),
+                    font_size: 14.px(),
+                    font_weight: FontWeight::Numeric(600),
+                ),
             )
             Show(
                 when: move || visible.get(),
@@ -1075,49 +1132,54 @@ fn for_each_demo() -> Element {
     let count = RwSignal::new(3_usize);
     // Used inside the ForEach `children` closure → kept as a
     // variable so each row can `.clone()`.
-    let card = Css::new()
-        .padding(10.px())
-        .background_color(SURFACE)
-        .border_radius(8.px())
-        .color(Color::hex(0xE8E3FF))
-        .font_size(14.px());
-    let item_color = Css::new().color(Color::hex(0xE8E3FF));
+    let card = css!(
+        padding: 10.px(),
+        background_color: SURFACE,
+        border_radius: 8.px(),
+        color: Color::hex(0xE8E3FF),
+        font_size: 14.px(),
+    );
+    let item_color = css!(color: Color::hex(0xE8E3FF));
     // Used by two buttons (+/-) → closure.
     let btn = || {
-        Css::new()
-            .padding((8.px(), 16.px()))
-            .background_color(Color::hex(0x6C5CE7))
-            .border_radius(6.px())
-            .color(Color::hex(0xFFFFFF))
-            .font_size(14.px())
-            .font_weight(FontWeight::Numeric(600))
+        css!(
+            padding: (8.px(), 16.px()),
+            background_color: Color::hex(0x6C5CE7),
+            border_radius: 6.px(),
+            color: Color::hex(0xFFFFFF),
+            font_size: 14.px(),
+            font_weight: FontWeight::Numeric(600),
+        )
     };
     render! {
         view(
-            style: Css::new()
-                .margin((8.px(), 16.px()))
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .gap(8.px()),
+            style: css!(
+                margin: (8.px(), 16.px()),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 8.px(),
+            ),
         ) {
             text(
                 value: "ForEach (reactive item count)",
-                style: Css::new().color(Color::hex(0xB9A9FF)).font_size(12.px()),
+                style: css!(color: Color::hex(0xB9A9FF), font_size: 12.px()),
             )
             view(
-                style: Css::new()
-                    .display_flex()
-                    .flex_direction(FlexDirection::Row)
-                    .gap(8.px()),
+                style: css!(
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    gap: 8.px(),
+                ),
             ) {
                 text(value: "+", style: btn(), on_tap: move |_| count.update(|n| *n += 1))
                 text(value: "-", style: btn(), on_tap: move |_| count.update(|n| *n = n.saturating_sub(1)))
             }
             view(
-                style: Css::new()
-                    .display_flex()
-                    .flex_direction(FlexDirection::Column)
-                    .gap(6.px()),
+                style: css!(
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Column,
+                    gap: 6.px(),
+                ),
             ) {
                 ForEach(
                     each: move || (0_usize..count.get()).collect::<::std::vec::Vec<usize>>(),
@@ -1137,32 +1199,35 @@ fn for_each_demo() -> Element {
 fn fragment_demo() -> Element {
     // 3 pills share the same style → closure.
     let pill = || {
-        Css::new()
-            .padding((6.px(), 12.px()))
-            .border_radius(999.px())
-            .color(Color::hex(0xFFFFFF))
-            .font_size(12.px())
-            .font_weight(FontWeight::Numeric(600))
-            .background_color(Color::hex(0x6C5CE7))
+        css!(
+            padding: (6.px(), 12.px()),
+            border_radius: 999.px(),
+            color: Color::hex(0xFFFFFF),
+            font_size: 12.px(),
+            font_weight: FontWeight::Numeric(600),
+            background_color: Color::hex(0x6C5CE7),
+        )
     };
     render! {
         view(
-            style: Css::new()
-                .margin((8.px(), 16.px()))
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .gap(8.px()),
+            style: css!(
+                margin: (8.px(), 16.px()),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 8.px(),
+            ),
         ) {
             text(
                 value: "fragment (transparent grouping, no DOM element)",
-                style: Css::new().color(Color::hex(0xB9A9FF)).font_size(12.px()),
+                style: css!(color: Color::hex(0xB9A9FF), font_size: 12.px()),
             )
             view(
-                style: Css::new()
-                    .display_flex()
-                    .flex_direction(FlexDirection::Row)
-                    .gap(6.px())
-                    .flex_wrap(whisker::css::FlexWrap::Wrap),
+                style: css!(
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    gap: 6.px(),
+                    flex_wrap: whisker::css::FlexWrap::Wrap,
+                ),
             ) {
                 fragment {
                     text(value: "A", style: pill())
@@ -1179,13 +1244,14 @@ fn pill(label: &'static str) -> Element {
     render! {
         text(
             value: label,
-            style: Css::new()
-                .padding((6.px(), 12.px()))
-                .border_radius(999.px())
-                .color(Color::hex(0xFFFFFF))
-                .font_size(12.px())
-                .font_weight(FontWeight::Numeric(600))
-                .background_color(Color::hex(0x00B894)),
+            style: css!(
+                padding: (6.px(), 12.px()),
+                border_radius: 999.px(),
+                color: Color::hex(0xFFFFFF),
+                font_size: 12.px(),
+                font_weight: FontWeight::Numeric(600),
+                background_color: Color::hex(0x00B894),
+            ),
         )
     }
 }
@@ -1194,19 +1260,21 @@ fn pill(label: &'static str) -> Element {
 fn pill_group(children: Children) -> Element {
     render! {
         view(
-            style: Css::new()
-                .display_flex()
-                .flex_direction(FlexDirection::Row)
-                .gap(6.px())
-                .flex_wrap(whisker::css::FlexWrap::Wrap)
-                .align_items(AlignItems::Center),
+            style: css!(
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                gap: 6.px(),
+                flex_wrap: whisker::css::FlexWrap::Wrap,
+                align_items: AlignItems::Center,
+            ),
         ) {
             text(
                 value: "tags:",
-                style: Css::new()
-                    .color(Color::hex(0xB9A9FF))
-                    .font_size(11.px())
-                    .margin_right(4.px()),
+                style: css!(
+                    color: Color::hex(0xB9A9FF),
+                    font_size: 11.px(),
+                    margin_right: 4.px(),
+                ),
             )
             children()
         }
@@ -1217,23 +1285,25 @@ fn pill_group(children: Children) -> Element {
 fn children_demo() -> Element {
     render! {
         view(
-            style: Css::new()
-                .margin((8.px(), 16.px()))
-                .padding(12.px())
-                .background_color(Color::hex(0x1A1A2E))
-                .border_radius(10.px())
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .gap(8.px())
-                .flex_shrink(0.0)
-                .min_height(130.px()),
+            style: css!(
+                margin: (8.px(), 16.px()),
+                padding: 12.px(),
+                background_color: Color::hex(0x1A1A2E),
+                border_radius: 10.px(),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 8.px(),
+                flex_shrink: 0.0,
+                min_height: 130.px(),
+            ),
         ) {
             text(
                 value: "children() slot (user component with a Children prop)",
-                style: Css::new()
-                    .color(Color::hex(0x00B894))
-                    .font_size(13.px())
-                    .font_weight(FontWeight::Numeric(600)),
+                style: css!(
+                    color: Color::hex(0x00B894),
+                    font_size: 13.px(),
+                    font_weight: FontWeight::Numeric(600),
+                ),
             )
             pill_group {
                 Pill(label: "rust")
@@ -1269,32 +1339,35 @@ pub fn propagation_demo() -> Element {
     });
     // 3 nested boxes share this layout — closure form.
     let box_style = |c: Color, pad: Length| {
-        Css::new()
-            .background_color(c)
-            .padding(pad)
-            .border_radius(10.px())
-            .display_flex()
-            .flex_direction(FlexDirection::Column)
-            .align_items(AlignItems::Center)
-            .justify_content(JustifyContent::Center)
+        css!(
+            background_color: c,
+            padding: pad,
+            border_radius: 10.px(),
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+        )
     };
     render! {
         view(
-            style: Css::new()
-                .margin((8.px(), 16.px()))
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .gap(8.px()),
+            style: css!(
+                margin: (8.px(), 16.px()),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 8.px(),
+            ),
         ) {
             text(
                 value: label,
                 on_tap: move |_| log.set(String::new()),
-                style: Css::new()
-                    .color(Color::hex(0xB9A9FF))
-                    .font_size(13.px())
-                    .font_weight(FontWeight::Numeric(600))
-                    .font_family("monospace")
-                    .padding(6.px()),
+                style: css!(
+                    color: Color::hex(0xB9A9FF),
+                    font_size: 13.px(),
+                    font_weight: FontWeight::Numeric(600),
+                    font_family: "monospace",
+                    padding: 6.px(),
+                ),
             )
             view(
                 style: box_style(Color::hex(0x241946), 20.px()),
@@ -1303,9 +1376,7 @@ pub fn propagation_demo() -> Element {
             ) {
                 text(
                     value: "outer",
-                    style: Css::new()
-                        .color(Color::rgba(255, 255, 255, 0.5))
-                        .font_size(11.px()),
+                    style: css!(color: Color::rgba(255, 255, 255, 0.5), font_size: 11.px()),
                 )
                 view(
                     style: box_style(Color::hex(0x3A2A6B), 20.px()),
@@ -1314,9 +1385,7 @@ pub fn propagation_demo() -> Element {
                 ) {
                     text(
                         value: "middle",
-                        style: Css::new()
-                            .color(Color::rgba(255, 255, 255, 0.6))
-                            .font_size(11.px()),
+                        style: css!(color: Color::rgba(255, 255, 255, 0.6), font_size: 11.px()),
                     )
                     view(
                         style: box_style(Color::hex(0x5B43A8), 18.px()),
@@ -1325,10 +1394,11 @@ pub fn propagation_demo() -> Element {
                     ) {
                         text(
                             value: "inner",
-                            style: Css::new()
-                                .color(Color::Named(NamedColor::White))
-                                .font_size(12.px())
-                                .font_weight(FontWeight::Numeric(700)),
+                            style: css!(
+                                color: Color::Named(NamedColor::White),
+                                font_size: 12.px(),
+                                font_weight: FontWeight::Numeric(700),
+                            ),
                         )
                     }
                 }
@@ -1349,16 +1419,17 @@ fn app() -> Element {
 
     render! {
         page(
-            style: Css::new()
-                .width(100.vw())
-                .height(100.vh())
-                .background_color(BG)
-                .display_flex()
-                .flex_direction(FlexDirection::Column)
-                .position(PositionKind::Relative),
+            style: css!(
+                width: 100.vw(),
+                height: 100.vh(),
+                background_color: BG,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                position: PositionKind::Relative,
+            ),
         ) {
             // `Hello` is a module component (separate crate); see Video above.
-            Hello(style: Css::new().width(100.percent()).height(8.px()).to_string())
+            Hello(style: css!(width: 100.percent(), height: 8.px()).to_string())
             ChildrenDemo()
             VideoDemo()
             MeasureDemo()
