@@ -195,6 +195,7 @@ fn recent_card(title: &'static str, sub: &'static str, c1: Color, c2: Color) -> 
                     font_size: 12.px(),
                     color: TEXT_SECONDARY,
                     margin_top: 2.px(),
+                    margin: (0.px(), 0.px(), 0.px())
                 ),
             )
         }
