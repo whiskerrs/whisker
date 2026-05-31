@@ -129,13 +129,14 @@ fn chip(label: &'static str, accented: bool) -> Element {
     render! {
         text(
             value: label,
-            style: Css::new()
-                .font_size(13.px())
-                .color(TEXT_PRIMARY)
-                .padding((8.px(), 16.px()))
-                .background_color(bg)
-                .border_radius(999.px())
-                .margin_right(8.px()),
+            style: css!(
+                font_size: 13.px(),
+                color: TEXT_PRIMARY,
+                padding: (8.px(), 16.px()),
+                background_color: bg,
+                border_radius: 999.px(),
+                margin_right: 8.px(),
+            ),
         )
     }
 }

@@ -1736,6 +1736,10 @@ pub mod prelude {
         AlignItems, Border, Color, Css, Display, Flex, FlexDirection, FlexWrap, JustifyContent,
         Length, NamedColor, ToCss,
     };
+    // The `css!` macro lives in whisker-css's macro namespace; it
+    // coexists with the `crate::css` module re-export above because
+    // the macro and module namespaces are disjoint.
+    pub use crate::css::css;
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
     // typing a tag name inside render! (the macro source position
