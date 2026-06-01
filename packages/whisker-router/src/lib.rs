@@ -62,6 +62,6 @@ pub use crate::outlet::{
 pub use crate::route::{Route, RouteError};
 pub use crate::stack::{route_stack, EntryId, EntryState, RouteEntry, RouteStack};
 pub use crate::transitions::{
-    Direction, Fade, Instant, IosSlide, Side, StackTransition, StackTransitionBox, VerticalSlide,
-    IOS_PARALLAX_PCT,
+    Direction, Fade, GestureContext, Instant, IosSlide, Side, StackTransition, StackTransitionBox,
+    VerticalSlide, IOS_PARALLAX_PCT,
 };

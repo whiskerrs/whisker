@@ -32,6 +32,48 @@ use std::rc::Rc;
 use whisker::runtime::view::Element;
 use whisker::Style;
 
+/// Primitives a transition's [`install_gestures`](StackTransition::install_gestures)
+/// implementation uses to drive the stack interactively (iOS
+/// swipe-back, Android predictive back).
+///
+/// The fields are intentionally narrow closures rather than the
+/// raw slot/owner machinery — the gesture controller only needs to
+/// know *what* it can do to the stack, not *how* the layout
+/// internally tracks wrappers.
+pub struct GestureContext {
+    /// The `StackLayout`'s root container view — bind
+    /// `touchstart`/`touchmove`/`touchend` handlers here.
+    pub container: Element,
+    /// Self-reference, so the gesture controller can call `pose` /
+    /// `slot_style` / `foreground` on the active transition without
+    /// re-binding through `&self`.
+    pub transition: StackTransitionBox,
+    /// `true` when the stack has more than one entry. Swipe-back
+    /// only makes sense above the root; gate the gesture on this.
+    pub can_back: Rc<dyn Fn() -> bool>,
+    /// Build a wrapper element for the screen one step below the
+    /// top of the stack, mount the rendered screen into it, and
+    /// insert it at DOM index 0 of the container. Returns the
+    /// wrapper handle.
+    ///
+    /// The layout retains ownership; release via
+    /// [`dispose_preview`](Self::dispose_preview) or
+    /// [`commit_preview_and_back`](Self::commit_preview_and_back).
+    pub mount_preview: Rc<dyn Fn() -> Element>,
+    /// Tear down the preview wrapper (remove from DOM, dispose the
+    /// reactive owner). Idempotent.
+    pub dispose_preview: Rc<dyn Fn()>,
+    /// Promote the preview wrapper into the `current` slot, dispose
+    /// the old current, and `stack.back()` with the
+    /// `skip_animation` flag set so the route-change effect doesn't
+    /// re-animate the navigation the gesture already finished.
+    pub commit_preview_and_back: Rc<dyn Fn()>,
+    /// Handle to the currently-foregrounded wrapper, if any —
+    /// needed so the gesture controller can re-pose / re-style the
+    /// outgoing screen alongside the preview.
+    pub current_wrapper: Rc<dyn Fn() -> Option<Element>>,
+}
+
 pub mod fade;
 pub mod instant;
 pub mod ios_slide;
@@ -137,6 +179,45 @@ pub trait StackTransition: 'static {
     fn slot_style(&self, side: Side, direction: Direction) -> Style {
         let _ = (side, direction);
         Style::from("")
+    }
+
+    /// Sample the transition's pose at progress `t ∈ [0.0, 1.0]`,
+    /// returning the per-property CSS values for the slot wrapper at
+    /// that point in the animation.
+    ///
+    /// `t = 0.0` is the start pose (incoming off-screen for a push,
+    /// outgoing at rest for a pop); `t = 1.0` is the settled end
+    /// pose. The returned `(prop, value)` pairs describe the
+    /// **dynamic** part of the animation only — static decoration
+    /// like `box-shadow` belongs in [`slot_style`](Self::slot_style)
+    /// and lives on the wrapper for the whole transition.
+    ///
+    /// This is the entry point for **interactive transitions** —
+    /// gesture-driven navigation like iOS swipe-back. The layout
+    /// queries `pose` per frame while the user drags, and at gesture
+    /// release it builds keyframes from the current pose to the
+    /// commit-/cancel-pose and lets Lynx's animator finish the motion.
+    ///
+    /// Default: empty `Vec` — the transition doesn't support
+    /// interactive scrubbing (the layout falls back to running
+    /// [`animate`](Self::animate) wholesale at the natural duration).
+    fn pose(&self, side: Side, direction: Direction, progress: f32) -> Vec<(&'static str, String)> {
+        let _ = (side, direction, progress);
+        Vec::new()
+    }
+
+    /// Wire interactive gesture handlers onto the layout's
+    /// container, if the transition has any. Called once per
+    /// `StackLayout` mount.
+    ///
+    /// This is where transitions opt into gesture-driven navigation
+    /// — [`IosSlide`] implements an edge swipe-back here, while the
+    /// other built-ins (cross-fade, vertical slide, instant) leave
+    /// the default no-op in place. Gesture state lives inside the
+    /// transition implementation; the layout exposes only the
+    /// primitives the gesture needs via [`GestureContext`].
+    fn install_gestures(&self, ctx: &GestureContext) {
+        let _ = ctx;
     }
 }
 
