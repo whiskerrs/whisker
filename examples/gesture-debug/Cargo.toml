@@ -1,0 +1,12 @@
+[package]
+name = "gesture-debug"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Touch-event diagnostic app — isolates which view shapes receive on_tap / on_touchstart / on_touchmove / on_touchend in Lynx's event pipeline."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }

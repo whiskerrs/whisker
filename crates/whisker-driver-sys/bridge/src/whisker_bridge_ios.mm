@@ -20,6 +20,7 @@
 #import <Lynx/LynxEventHandler.h>
 #import <Lynx/LynxEventEmitter.h>
 #import <Lynx/LynxEvent.h>
+#import <Lynx/LynxTouchEvent.h>
 #import <objc/runtime.h>
 
 #include <cstdint>
@@ -166,16 +167,82 @@ void InstallEventReporterIfNeeded(WhiskerEngine* engine, LynxView* view) {
         if (event == nil || event.eventName == nil) return NO;
         // `generateEventBody` is the public seam on `LynxEvent` (the
         // base class), returning the dict JS-side handlers would have
-        // received. For touch events the dict has the canonical touch
-        // points; for custom events (input / change / etc.) it carries
-        // the user-supplied params. Marshal it straight into a
-        // `WhiskerValueRaw` tree (no JSON) and hand the bridge a
+        // received. For custom events (input / change / etc.) it
+        // carries the user-supplied params. Marshal it straight into
+        // a `WhiskerValueRaw` tree (no JSON) and hand the bridge a
         // pointer; release the heap-owned tree after dispatch.
+        //
+        // BUT: `LynxTouchEvent` does NOT override `generateEventBody`
+        // — only `getEventParams` carries `clientPoint` / `pagePoint`
+        // / `viewPoint`. The body that the base class hands us is the
+        // bare `{type, target, currentTarget}` dict, so touch events
+        // arriving via this path lose their coordinates. We splice
+        // the touches/changedTouches/detail entries onto the body
+        // here, mirroring the shape the JS-side `event.touches[i]`
+        // surface would expose.
         WhiskerValueRaw value;
         bool have_value = false;
         @try {
             NSMutableDictionary* body = [event generateEventBody];
             if (body != nil) {
+                if ([event isKindOfClass:[LynxTouchEvent class]]) {
+                    LynxTouchEvent* touch = (LynxTouchEvent*)event;
+                    if (!touch.isMultiTouch) {
+                        // Single-touch shape — one synthesized
+                        // `touches[0]` (identifier 0) carrying every
+                        // coordinate space Lynx tracks.
+                        NSDictionary* t = @{
+                            @"identifier": @(0),
+                            @"x": @(touch.pagePoint.x),
+                            @"y": @(touch.pagePoint.y),
+                            @"pageX": @(touch.pagePoint.x),
+                            @"pageY": @(touch.pagePoint.y),
+                            @"clientX": @(touch.clientPoint.x),
+                            @"clientY": @(touch.clientPoint.y),
+                        };
+                        body[@"touches"] = @[t];
+                        body[@"changedTouches"] = @[t];
+                        body[@"detail"] = @{
+                            @"x": @(touch.pagePoint.x),
+                            @"y": @(touch.pagePoint.y),
+                        };
+                    } else if (touch.touchMap != nil) {
+                        // Multi-touch shape — touchMap is keyed by
+                        // touch identifier with values `@[clientX,
+                        // clientY, pageX, pageY, viewX, viewY]`.
+                        NSMutableArray* touches = [NSMutableArray array];
+                        [touch.touchMap enumerateKeysAndObjectsUsingBlock:
+                            ^(id key, id obj, BOOL* stop) {
+                                if (![obj isKindOfClass:[NSArray class]]) return;
+                                NSArray* arr = (NSArray*)obj;
+                                if (arr.count < 6) return;
+                                NSNumber* identifier = nil;
+                                if ([key isKindOfClass:[NSNumber class]]) {
+                                    identifier = (NSNumber*)key;
+                                } else {
+                                    identifier = @([[key description] integerValue]);
+                                }
+                                [touches addObject:@{
+                                    @"identifier": identifier,
+                                    @"x": arr[2],
+                                    @"y": arr[3],
+                                    @"pageX": arr[2],
+                                    @"pageY": arr[3],
+                                    @"clientX": arr[0],
+                                    @"clientY": arr[1],
+                                }];
+                            }];
+                        body[@"touches"] = touches;
+                        body[@"changedTouches"] = touches;
+                        if (touches.count > 0) {
+                            NSDictionary* first = touches.firstObject;
+                            body[@"detail"] = @{
+                                @"x": first[@"pageX"],
+                                @"y": first[@"pageY"],
+                            };
+                        }
+                    }
+                }
                 value = WhiskerValueFromNSObject(body);
                 have_value = true;
             }
