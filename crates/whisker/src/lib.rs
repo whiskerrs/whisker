@@ -48,7 +48,8 @@ pub use whisker_macros::{component, main, module_component, render};
 // allocates a fresh, unbound ref; the `#[whisker::module_component]`
 // macro binds it on mount when passed as the `ref:` prop.
 pub use whisker_driver::{
-    element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError, ScrollInfo,
+    animate_cancel, animate_start, element_ref, invoke_element_animate, AnimateOp, AnimateOptions,
+    BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError, ScrollInfo,
     ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo,
 };
 

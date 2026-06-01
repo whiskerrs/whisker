@@ -1,0 +1,34 @@
+[package]
+name = "whisker-router"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Type-safe signal-backed routing for Whisker — single-engine, custom animations, nested layouts (tabs/modal). RFC: https://github.com/whiskerrs/whisker/issues/95"
+
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
+    "src/**/*.rs",
+    "android/**/*.kt",
+    "ios/**/*.swift",
+    "README.md",
+]
+
+# rlib only — the module-system distribution path handles the native
+# sources separately. Same pattern as whisker-local-store /
+# whisker-hello-element.
+[lib]
+crate-type = ["rlib"]
+
+# Module-system opt-in marker. The Whisker build pipeline scans dep
+# trees for this table to discover module crates and stage their
+# `ios/` + `android/` directories into the platform builds.
+[package.metadata.whisker]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-router-macros = { workspace = true }

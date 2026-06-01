@@ -124,6 +124,209 @@ pub fn invoke_element_method_with_params(
     result
 }
 
+/// Typed timing options for [`animate_start`]. Field names mirror the
+/// JS Web-Animations options object (and Lynx's `Element::Animate`
+/// `animation_data` table).
+#[derive(Clone, Debug)]
+pub struct AnimateOptions {
+    /// Duration in milliseconds.
+    pub duration_ms: u32,
+    /// Easing string — `"linear"`, `"ease-in"`, `"ease-out"`,
+    /// `"ease-in-out"`, or a `"cubic-bezier(...)"` literal.
+    pub easing: String,
+    /// Iteration count. Use `f64::INFINITY` for `"infinite"` —
+    /// the bridge serialises that through Lynx's special-case.
+    pub iterations: f64,
+    /// `"normal" | "reverse" | "alternate" | "alternate-reverse"`.
+    pub direction: String,
+    /// `"none" | "forwards" | "backwards" | "both"`.
+    pub fill: String,
+    /// Delay before the animation starts, milliseconds.
+    pub delay_ms: u32,
+}
+
+impl Default for AnimateOptions {
+    fn default() -> Self {
+        Self {
+            duration_ms: 300,
+            easing: "linear".into(),
+            iterations: 1.0,
+            direction: "normal".into(),
+            fill: "forwards".into(),
+            delay_ms: 0,
+        }
+    }
+}
+
+/// High-level wrapper around [`invoke_element_animate`] for the
+/// `START` operation: starts a named animation with explicit
+/// keyframes + timing.
+///
+/// `keyframes` is a slice of `(offset, css_props)` where `offset` is
+/// a percent string like `"0%"` / `"50%"` / `"100%"` and `css_props`
+/// is the property → value map applied at that frame. Order matches
+/// the slice (Lynx is offset-driven, not order-driven, but stable
+/// order keeps the serialised JSON readable).
+///
+/// Returns `Ok(())` on dispatch success; `Err(message)` if the bridge
+/// reports a precondition failure.
+pub fn animate_start(
+    handle: Element,
+    animation_name: &str,
+    keyframes: &[(&str, &[(&str, &str)])],
+    options: &AnimateOptions,
+) -> Result<(), String> {
+    let kf_map: std::collections::BTreeMap<String, WhiskerValue> = keyframes
+        .iter()
+        .map(|(offset, props)| {
+            let prop_map: std::collections::BTreeMap<String, WhiskerValue> = props
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), WhiskerValue::String((*v).to_string())))
+                .collect();
+            ((*offset).to_string(), WhiskerValue::Map(prop_map))
+        })
+        .collect();
+    let kf = WhiskerValue::Map(kf_map);
+
+    let mut opt_map = std::collections::BTreeMap::new();
+    opt_map.insert(
+        "name".to_string(),
+        WhiskerValue::String(animation_name.into()),
+    );
+    opt_map.insert(
+        "duration".to_string(),
+        WhiskerValue::Int(options.duration_ms as i64),
+    );
+    opt_map.insert(
+        "easing".to_string(),
+        WhiskerValue::String(options.easing.clone()),
+    );
+    opt_map.insert(
+        "iterations".to_string(),
+        WhiskerValue::Float(options.iterations),
+    );
+    opt_map.insert(
+        "direction".to_string(),
+        WhiskerValue::String(options.direction.clone()),
+    );
+    opt_map.insert(
+        "fill".to_string(),
+        WhiskerValue::String(options.fill.clone()),
+    );
+    opt_map.insert(
+        "delay".to_string(),
+        WhiskerValue::Int(options.delay_ms as i64),
+    );
+    let opt = WhiskerValue::Map(opt_map);
+
+    match invoke_element_animate(handle, AnimateOp::Start as i32, animation_name, kf, opt) {
+        WhiskerValue::Null => Ok(()),
+        WhiskerValue::Error(e) => Err(e),
+        other => Err(format!("unexpected animate return: {:?}", other)),
+    }
+}
+
+/// Cancel a running named animation — drops styles, clears state.
+pub fn animate_cancel(handle: Element, animation_name: &str) -> Result<(), String> {
+    match invoke_element_animate(
+        handle,
+        AnimateOp::Cancel as i32,
+        animation_name,
+        WhiskerValue::Null,
+        WhiskerValue::Null,
+    ) {
+        WhiskerValue::Null => Ok(()),
+        WhiskerValue::Error(e) => Err(e),
+        other => Err(format!("unexpected animate return: {:?}", other)),
+    }
+}
+
+/// Lynx-side animation lifecycle operations exposed by
+/// `Element::Animate`. Matches `JavaScriptElement::AnimationOperation`
+/// in the Lynx fork — same numeric values, same semantics.
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AnimateOp {
+    /// Start (or restart) a named animation with keyframes + options.
+    Start = 0,
+    /// Resume a paused animation.
+    Play = 1,
+    /// Pause a running animation in place.
+    Pause = 2,
+    /// Cancel — clear styles, drop the animation entirely.
+    Cancel = 3,
+    /// Snap to the animation's end state and stop.
+    Finish = 4,
+}
+
+/// Element-level animation dispatch — wraps `lynx_element_animate`
+/// via [`whisker_bridge_element_animate`](ffi::whisker_bridge_element_animate).
+///
+/// This is the DOM-layer animation entry point (`element.animate(...)` in
+/// JS), distinct from [`invoke_element_method_with_params`] which targets
+/// the UI layer below. `operation` follows the Lynx enum:
+///
+///   0 = START, 1 = PLAY, 2 = PAUSE, 3 = CANCEL, 4 = FINISH.
+///
+/// For `START` the caller must supply `keyframes` (`WhiskerValue::Map` of
+/// `"0%" / "50%" / "100%"` → CSS-prop map) and `options` (`WhiskerValue::Map`
+/// of `name` / `duration` / `easing` / `iterations` / `direction` / `fill` /
+/// `delay`). Other operations only consult `animation_name` — pass
+/// [`WhiskerValue::Null`] for the rest.
+///
+/// Returns [`WhiskerValue::Null`] on dispatch success;
+/// [`WhiskerValue::Error`] on precondition failure.
+pub fn invoke_element_animate(
+    handle: Element,
+    operation: i32,
+    animation_name: &str,
+    keyframes: WhiskerValue,
+    options: WhiskerValue,
+) -> WhiskerValue {
+    let ptr_usize = module_component_ptr(handle);
+    if ptr_usize == 0 {
+        return WhiskerValue::Error(format!(
+            "invoke_element_animate: no platform component for handle {} \
+             (renderer not installed, or element released)",
+            handle.id()
+        ));
+    }
+    let name_c = match CString::new(animation_name) {
+        Ok(c) => c,
+        Err(_) => return WhiskerValue::Error("animation_name contained NUL byte".into()),
+    };
+
+    let mut builder = RawBuilder::default();
+    let raw_kf = builder.encode(&keyframes);
+    let raw_opt = builder.encode(&options);
+    let kf_ptr = match keyframes {
+        WhiskerValue::Null => std::ptr::null(),
+        _ => &raw_kf as *const _,
+    };
+    let opt_ptr = match options {
+        WhiskerValue::Null => std::ptr::null(),
+        _ => &raw_opt as *const _,
+    };
+
+    let raw_result = unsafe {
+        ffi::whisker_bridge_element_animate(
+            ptr_usize as *mut WhiskerElement,
+            operation,
+            name_c.as_ptr(),
+            kf_ptr,
+            opt_ptr,
+        )
+    };
+
+    let result = unsafe { from_raw(&raw_result) };
+    unsafe {
+        let mut mutable = raw_result;
+        ffi::whisker_bridge_value_release(&mut mutable as *mut _);
+    }
+    drop(builder);
+    result
+}
+
 /// Async, **result-returning** element-method invoke — the path for
 /// `boundingClientRect` / `takeScreenshot` etc., whose return value
 /// arrives via Lynx's UI-method callback (typically on the UI thread)

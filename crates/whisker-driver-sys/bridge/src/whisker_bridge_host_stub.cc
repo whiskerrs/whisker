@@ -116,6 +116,20 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method_with_params(
         "UI-method dispatch");
 }
 
+extern "C" WhiskerValueRaw whisker_bridge_element_animate(
+    WhiskerElement* /*element*/,
+    int32_t /*operation*/,
+    const char* /*animation_name*/,
+    const WhiskerValueRaw* /*keyframes*/,
+    const WhiskerValueRaw* /*options*/) {
+    // Host builds have no Lynx animator — same error-path shape as the
+    // other element-method stubs. Real dispatch happens on iOS /
+    // Android via `lynx_element_animate`.
+    return MakeHostStubError(
+        "whisker_bridge_element_animate: host build has no Lynx — link "
+        "against the iOS / Android bridge for real animation dispatch");
+}
+
 extern "C" bool whisker_bridge_invoke_module_async(
     const char* module_name,
     const char* method_name,

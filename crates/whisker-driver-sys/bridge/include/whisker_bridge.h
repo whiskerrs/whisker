@@ -456,6 +456,24 @@ WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_element_method_async_with_param
     WhiskerModuleCallback callback,
     void* user_data);
 
+// Element-level animation dispatch — wraps `lynx_element_animate`
+// (DOM layer, distinct from the UI-method dispatch above). Mirrors the
+// JS-side `element.animate(...)` shape:
+//
+//   [operation, animation_name, keyframes_map, options_map]
+//
+// `operation` follows `JavaScriptElement::AnimationOperation`:
+//   0 = START, 1 = PLAY, 2 = PAUSE, 3 = CANCEL, 4 = FINISH.
+//
+// START requires the full quartet. PLAY / PAUSE / CANCEL / FINISH only
+// consult `animation_name` — pass NULL for `keyframes` / `options`.
+WHISKER_BRIDGE_EXPORT WhiskerValueRaw whisker_bridge_element_animate(
+    WhiskerElement* element,
+    int32_t operation,
+    const char* animation_name,
+    const WhiskerValueRaw* keyframes,
+    const WhiskerValueRaw* options);
+
 // ---- Phase 0–3 leftovers (kept temporarily for compatibility) ------------
 
 WHISKER_BRIDGE_EXPORT void whisker_bridge_log_hello(void);

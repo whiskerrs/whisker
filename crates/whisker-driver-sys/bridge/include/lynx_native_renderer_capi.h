@@ -293,6 +293,30 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_ui_invoke_method_async_with_params
     lynx_ui_method_result_cb callback,
     void* user_data);
 
+// ----- Element-level animation dispatch -------------------------------------
+//
+// Exposes `Element::Animate` from the DOM layer (distinct from
+// `lynx_ui_invoke_method`, which targets the UI layer below). Mirrors the
+// JS-side `element.animate()` argument shape:
+//
+//   [operation, animation_name, keyframes_map, options_map]
+//
+// `operation` follows `JavaScriptElement::AnimationOperation`:
+//   0 = START, 1 = PLAY, 2 = PAUSE, 3 = CANCEL, 4 = FINISH
+//
+// START requires the full quartet; PLAY/PAUSE/CANCEL/FINISH only consult
+// `animation_name`. `keyframes` is a MAP of `"0%" / "50%" / "100%"` keys
+// (each key's value is itself a MAP of CSS property → string). `options`
+// is a MAP of `name` / `duration` / `easing` / `iterations` / `direction`
+// / `fill` / `delay` / `play-state`. NULL values degrade to lepus-null.
+LYNX_NATIVE_RENDERER_CAPI_EXPORT int32_t lynx_element_animate(
+    lynx_shell_t* shell,
+    lynx_fiber_element_t* element,
+    int32_t operation,
+    const char* animation_name,
+    const lynx_ui_method_value_t* keyframes,
+    const lynx_ui_method_value_t* options);
+
 // ----- subsecond ASLR anchor ------------------------------------------------
 
 // Whisker's subsecond hot-patcher dlsym's this symbol on startup to

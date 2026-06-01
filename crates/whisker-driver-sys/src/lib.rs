@@ -373,6 +373,30 @@ extern "C" {
         params: *const WhiskerValueRaw,
     ) -> WhiskerValueRaw;
 
+    /// Element-level animation dispatch — `element.animate(...)` shape.
+    ///
+    /// Wraps the new `lynx_element_animate` capi (DOM layer, distinct
+    /// from `lynx_ui_invoke_method_*`). `operation` follows
+    /// `JavaScriptElement::AnimationOperation`:
+    ///   0 = START, 1 = PLAY, 2 = PAUSE, 3 = CANCEL, 4 = FINISH.
+    ///
+    /// For `START` the full quartet is required: `animation_name` plus a
+    /// `WHISKER_VALUE_MAP` of `"0%"/"50%"/"100%"` → CSS-prop map for
+    /// `keyframes`, and a `WHISKER_VALUE_MAP` of
+    /// `name`/`duration`/`easing`/`iterations`/`direction`/`fill`/`delay`
+    /// for `options`. Other operations only consult `animation_name` —
+    /// pass NULL for `keyframes` / `options`.
+    ///
+    /// Returns `WHISKER_VALUE_NULL` on dispatch success;
+    /// `WHISKER_VALUE_ERROR` on precondition failure.
+    pub fn whisker_bridge_element_animate(
+        element: *mut WhiskerElement,
+        operation: i32,
+        animation_name: *const c_char,
+        keyframes: *const WhiskerValueRaw,
+        options: *const WhiskerValueRaw,
+    ) -> WhiskerValueRaw;
+
     /// Async, result-returning element-method dispatch
     /// (`boundingClientRect` / `takeScreenshot`). Returns immediately;
     /// `callback(user_data, &result)` fires once the method completes
