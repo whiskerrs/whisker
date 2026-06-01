@@ -16,6 +16,7 @@ members = [
     "crates/whisker-subsecond",
     "examples/anim-demo",
     "examples/counter",
+    "examples/gesture-debug",
     "examples/hello-world",
     "examples/hn-reader",
     "examples/router-demo",
