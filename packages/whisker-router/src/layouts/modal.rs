@@ -1,0 +1,140 @@
+//! `ModalLayout` — slide-from-bottom modal presentation driven by
+//! Lynx's native animator via [`animate_start`].
+//!
+//! On mount the sheet slides up from below the viewport over the
+//! same `slot_wrapper + on_mount + animate_start` pattern
+//! [`StackLayout`] uses. A scrim sits beneath as a fixed-opacity
+//! overlay (no fade animation for v1 — Lynx's animator chokes on
+//! same-frame opacity transitions in our wrapper-less setup; the
+//! sheet slide is the dominant cue).
+
+use std::rc::Rc;
+
+use whisker::css::ext::*;
+use whisker::css::{AlignItems, Color, Css, PositionKind, ToCss};
+use whisker::runtime::element::ElementTag;
+use whisker::runtime::reactive::on_mount;
+use whisker::runtime::view::apply::apply_styles;
+use whisker::runtime::view::{append_child, create_element, Element};
+use whisker::{animate_start, component, AnimateOptions};
+
+use crate::route::Route;
+
+const DEFAULT_DURATION_MS: u32 = 320;
+const DEFAULT_EASING: &str = "ease-out";
+const SCRIM_RGBA: (u8, u8, u8, f32) = (0, 0, 0, 0.45);
+
+/// Type-erased renderer for a single modal route.
+#[derive(Clone)]
+pub struct ModalRenderFn<R: Route>(pub Rc<dyn Fn(R) -> Element + 'static>);
+
+impl<R: Route> ModalRenderFn<R> {
+    /// Invoke the renderer with `route`.
+    pub fn call(&self, route: R) -> Element {
+        (self.0)(route)
+    }
+}
+
+impl<R, F> From<F> for ModalRenderFn<R>
+where
+    R: Route,
+    F: Fn(R) -> Element + 'static,
+{
+    fn from(f: F) -> Self {
+        ModalRenderFn(Rc::new(f))
+    }
+}
+
+/// Modal presentation — single route, slide-up entry via
+/// `animate_start`.
+#[component]
+pub fn modal_layout<R: Route>(route: R, render: ModalRenderFn<R>) -> Element {
+    let container = create_element(ElementTag::View);
+    apply_styles(container, container_css().to_css_string());
+
+    let scrim = create_element(ElementTag::View);
+    apply_styles(scrim, scrim_css().to_css_string());
+    append_child(container, scrim);
+
+    let sheet = create_element(ElementTag::View);
+    // Start the sheet offscreen-bottom so the very first paint shows
+    // it at translateY(100%); the on_mount animation slides it to 0.
+    apply_styles(sheet, sheet_css_initial().to_css_string());
+    append_child(container, sheet);
+
+    let content = render.call(route.clone());
+    append_child(sheet, content);
+
+    on_mount(move || {
+        let _ = animate_start(
+            sheet,
+            "whisker-modal-rise",
+            &[
+                ("0%", &[("transform", "translateY(100%)")]),
+                ("100%", &[("transform", "translateY(0%)")]),
+            ],
+            &AnimateOptions {
+                duration_ms: DEFAULT_DURATION_MS,
+                easing: DEFAULT_EASING.into(),
+                fill: "forwards".into(),
+                ..Default::default()
+            },
+        );
+    });
+
+    container
+}
+
+fn container_css() -> Css {
+    Css::new()
+        .position(PositionKind::Absolute)
+        .top(0.px())
+        .left(0.px())
+        .right(0.px())
+        .bottom(0.px())
+        .display_flex()
+        .align_items(AlignItems::FlexEnd)
+}
+
+fn scrim_css() -> Css {
+    let (r, g, b, a) = SCRIM_RGBA;
+    Css::new()
+        .position(PositionKind::Absolute)
+        .top(0.px())
+        .left(0.px())
+        .right(0.px())
+        .bottom(0.px())
+        .background_color(Color::rgba(r, g, b, a))
+}
+
+fn sheet_css_initial() -> Css {
+    use whisker::css::TransformFn;
+    Css::new()
+        .position(PositionKind::Relative)
+        .width(100.percent())
+        .transform([TransformFn::TranslateY(100.percent().into())])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrim_uses_configured_alpha() {
+        let css = scrim_css().to_css_string();
+        assert!(css.contains("0.45"), "got {css}");
+    }
+
+    #[test]
+    fn sheet_initial_pose_is_offscreen_bottom() {
+        let css = sheet_css_initial().to_css_string();
+        assert!(css.contains("translateY(100%)"), "got {css}");
+    }
+
+    #[test]
+    fn container_pins_to_viewport_bottom_aligned() {
+        let css = container_css().to_css_string();
+        assert!(css.contains("position: absolute"));
+        assert!(css.contains("align-items: flex-end"));
+    }
+}

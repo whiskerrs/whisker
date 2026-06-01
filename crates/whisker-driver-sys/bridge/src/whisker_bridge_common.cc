@@ -651,6 +651,48 @@ lynx_ui_method_value_t BuildCapiParamValue(const WhiskerValueRaw& v,
 }
 }  // namespace
 
+// -------- Element-level animation dispatch ---------------------------------
+//
+// Thin wrapper around `lynx_element_animate` (Lynx fork's new capi). Routes
+// `keyframes` / `options` through the same `BuildCapiParamValue` arena the
+// `_with_params` element-method path uses, so the C++ side gets a single
+// recursive `lynx_ui_method_value_t` for each. `keyframes` / `options` may be
+// NULL (PLAY / PAUSE / CANCEL / FINISH only need `animation_name`).
+extern "C" WhiskerValueRaw whisker_bridge_element_animate(
+    WhiskerElement* element,
+    int32_t operation,
+    const char* animation_name,
+    const WhiskerValueRaw* keyframes,
+    const WhiskerValueRaw* options) {
+    if (element == nullptr || element->handle == nullptr ||
+        element->shell == nullptr) {
+        return MakeBridgeErrorValue(
+            "whisker_bridge_element_animate: NULL element / shell");
+    }
+    CapiArena arena;
+    lynx_ui_method_value_t kf{};
+    lynx_ui_method_value_t opt{};
+    if (keyframes != nullptr) {
+        kf = BuildCapiParamValue(*keyframes, arena);
+    }
+    if (options != nullptr) {
+        opt = BuildCapiParamValue(*options, arena);
+    }
+    int32_t code = lynx_element_animate(
+        element->shell, element->handle, operation, animation_name,
+        keyframes != nullptr ? &kf : nullptr,
+        options != nullptr ? &opt : nullptr);
+    if (code != 0) {
+        return MakeBridgeErrorValue(
+            ("lynx_element_animate returned non-zero (code=" +
+             std::to_string(code) + ")").c_str());
+    }
+    WhiskerValueRaw ok;
+    std::memset(&ok, 0, sizeof(ok));
+    ok.type = WHISKER_VALUE_NULL;
+    return ok;
+}
+
 extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method_with_params(
     WhiskerElement* element,
     const char* method_name,
