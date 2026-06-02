@@ -409,6 +409,13 @@ struct WhiskerValueJni {
 
     jclass registry_cls = nullptr;
     jmethodID registry_dispatch = nullptr;
+
+    // Phase L-2c — event subscription routing. The C++ trampolines
+    // call back into Kotlin via these handles so the per-Module
+    // OnStart/OnStopObserving closures fire.
+    jclass event_center_cls = nullptr;
+    jmethodID event_center_fire_start = nullptr;
+    jmethodID event_center_fire_stop = nullptr;
 };
 
 WhiskerValueJni& wvjni() {
@@ -506,6 +513,24 @@ bool init_wvjni(JNIEnv* env) {
     if (h.registry_dispatch == nullptr) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         return false;
+    }
+
+    // Phase L-2c — `WhiskerModuleEventCenter` handles for the
+    // observer-hook trampolines (fireStart / fireStop).
+    h.event_center_cls = make_global(
+        env, "rs/whisker/runtime/WhiskerModuleEventCenter");
+    if (h.event_center_cls != nullptr) {
+        h.event_center_fire_start = env->GetStaticMethodID(
+            h.event_center_cls, "fireStart",
+            "(Ljava/lang/String;Ljava/lang/String;)V");
+        h.event_center_fire_stop = env->GetStaticMethodID(
+            h.event_center_cls, "fireStop",
+            "(Ljava/lang/String;Ljava/lang/String;)V");
+        // Don't hard-fail if the class isn't present yet — a host
+        // app that doesn't use the event system simply never calls
+        // `nativeRegisterObserverHooks`. ExceptionCheck() prevents
+        // a sticky exception from poisoning later JNI calls.
+        if (env->ExceptionCheck()) env->ExceptionClear();
     }
     h.ready = true;
     return true;
@@ -868,6 +893,93 @@ extern "C" bool whisker_bridge_invoke_module_async(
     callback(user_data, &r);
     whisker_bridge_value_release(&r);
     return true;
+}
+
+// ============================================================================
+// Phase L-2c — module event subscription, Android side.
+// ============================================================================
+
+namespace {
+
+// Shared C trampolines registered with the bridge once per Module
+// via `whisker_bridge_module_register_observer_hooks`. C function
+// pointers can't carry per-module context, so we route the
+// `(module, event)` pair through Kotlin's `WhiskerModuleEventCenter`
+// which uses `module` to find the right `Module` instance and fires
+// every matching `OnStartObserving` / `OnStopObserving` closure.
+void AndroidEventStartHook(const char* module_name, const char* event_name) {
+    if (module_name == nullptr || event_name == nullptr) return;
+    auto& h = wvjni();
+    if (h.event_center_cls == nullptr || h.event_center_fire_start == nullptr) {
+        return;
+    }
+    ScopedJNIEnv_M guard;
+    JNIEnv* env = guard.get();
+    if (env == nullptr) return;
+    jstring jmod = env->NewStringUTF(module_name);
+    jstring jevt = env->NewStringUTF(event_name);
+    env->CallStaticVoidMethod(
+        h.event_center_cls, h.event_center_fire_start, jmod, jevt);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(jmod);
+    env->DeleteLocalRef(jevt);
+}
+
+void AndroidEventStopHook(const char* module_name, const char* event_name) {
+    if (module_name == nullptr || event_name == nullptr) return;
+    auto& h = wvjni();
+    if (h.event_center_cls == nullptr || h.event_center_fire_stop == nullptr) {
+        return;
+    }
+    ScopedJNIEnv_M guard;
+    JNIEnv* env = guard.get();
+    if (env == nullptr) return;
+    jstring jmod = env->NewStringUTF(module_name);
+    jstring jevt = env->NewStringUTF(event_name);
+    env->CallStaticVoidMethod(
+        h.event_center_cls, h.event_center_fire_stop, jmod, jevt);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(jmod);
+    env->DeleteLocalRef(jevt);
+}
+
+}  // namespace
+
+// rs.whisker.runtime.WhiskerModuleEventCenter.nativeRegisterObserverHooks
+extern "C" JNIEXPORT void JNICALL
+Java_rs_whisker_runtime_WhiskerModuleEventCenter_nativeRegisterObserverHooks(
+    JNIEnv* env, jclass /*self*/, jstring qname_jstr) {
+    if (qname_jstr == nullptr) return;
+    if (!init_wvjni(env)) return;
+    std::string qname = jstr_to_str(env, qname_jstr);
+    whisker_bridge_module_register_observer_hooks(
+        qname.c_str(),
+        AndroidEventStartHook,
+        AndroidEventStopHook);
+}
+
+// rs.whisker.runtime.WhiskerModuleEventCenter.nativeSendEvent
+extern "C" JNIEXPORT void JNICALL
+Java_rs_whisker_runtime_WhiskerModuleEventCenter_nativeSendEvent(
+    JNIEnv* env, jclass /*self*/,
+    jstring qname_jstr, jstring event_jstr, jobject payload_obj) {
+    if (qname_jstr == nullptr || event_jstr == nullptr) return;
+    if (!init_wvjni(env)) return;
+    std::string qname = jstr_to_str(env, qname_jstr);
+    std::string event = jstr_to_str(env, event_jstr);
+    // Encode the WhiskerValue jobject into a WhiskerValueRaw whose
+    // strings / bytes / nested arrays / maps are heap-owned. The
+    // bridge fans the payload out synchronously, so we can release
+    // the heap allocations immediately after.
+    WhiskerValueRaw raw = jvalue_to_value(env, payload_obj);
+    whisker_bridge_module_send_event(qname.c_str(), event.c_str(), &raw);
+    whisker_bridge_value_release(&raw);
 }
 
 #endif  // __ANDROID__

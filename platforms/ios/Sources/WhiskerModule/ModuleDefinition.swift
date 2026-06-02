@@ -144,13 +144,44 @@ public struct WhiskerFunctionComponent: WhiskerDefinitionComponent {
 }
 
 /// Event-name declaration component. Authors declare event names
-/// they intend to emit; the runtime uses the list for
-/// type-checking + future docs generation. The dispatch site
-/// stays imperative (`WhiskerCustomEvent.dispatch(from:name:params:)`)
-/// — `Events("foo")` just records the name.
+/// they intend to emit; the runtime uses the list for type-checking
+/// + future docs generation. Dispatch from inside the module body
+/// goes through `Module.sendEvent(name, payload)` — the bridge fans
+/// the payload out to every Rust subscriber registered via
+/// `PlatformModule::on_event`.
+///
+/// Mirrors Expo's `Events("a", "b")` declaration; the matching
+/// `OnStartObserving` / `OnStopObserving` blocks below let the
+/// module lazily attach / detach its underlying source.
 public struct WhiskerEventsComponent: WhiskerDefinitionComponent {
     public let names: [String]
     public init(_ names: [String]) { self.names = names }
+}
+
+/// `OnStartObserving("name") { ... }` — fires when the listener
+/// count for `(this module, "name")` transitions from 0 to 1. The
+/// closure typically attaches the platform source (e.g. registers
+/// an `OnBackInvokedCallback`, opens a sensor) so the work only
+/// runs while subscribers are active.
+public struct WhiskerOnStartObservingComponent: WhiskerDefinitionComponent {
+    public let eventName: String
+    public let handler: () -> Void
+    public init(eventName: String, handler: @escaping () -> Void) {
+        self.eventName = eventName
+        self.handler = handler
+    }
+}
+
+/// `OnStopObserving("name") { ... }` — fires when the listener
+/// count for `(this module, "name")` transitions from 1 to 0. The
+/// closure tears down whatever `OnStartObserving` set up.
+public struct WhiskerOnStopObservingComponent: WhiskerDefinitionComponent {
+    public let eventName: String
+    public let handler: () -> Void
+    public init(eventName: String, handler: @escaping () -> Void) {
+        self.eventName = eventName
+        self.handler = handler
+    }
 }
 
 // MARK: - Result builders
@@ -272,6 +303,16 @@ public struct ModuleDefinition {
     public var functions: [WhiskerFunctionComponent] {
         components.compactMap { $0 as? WhiskerFunctionComponent }
     }
+
+    /// All `OnStartObserving(...)` hooks declared at module-level.
+    public var onStartObservingHooks: [WhiskerOnStartObservingComponent] {
+        components.compactMap { $0 as? WhiskerOnStartObservingComponent }
+    }
+
+    /// All `OnStopObserving(...)` hooks declared at module-level.
+    public var onStopObservingHooks: [WhiskerOnStopObservingComponent] {
+        components.compactMap { $0 as? WhiskerOnStopObservingComponent }
+    }
 }
 
 // MARK: - Top-level factories — the DSL surface authors call
@@ -301,10 +342,30 @@ public func View<V: AnyObject>(
 }
 
 /// `Events("a", "b", ...)` — declare event names this module
-/// emits. Just metadata; dispatch stays imperative via
-/// `WhiskerCustomEvent.dispatch(...)`.
+/// emits. Metadata only; dispatch goes through
+/// `Module.sendEvent(name, payload)`.
 public func Events(_ names: String...) -> WhiskerDefinitionComponent {
     WhiskerEventsComponent(names)
+}
+
+/// `OnStartObserving("name") { ... }` — declare a lazy-start hook
+/// for `name`. The closure fires once on the 0→1 listener-count
+/// transition. Use for sources that are expensive to keep open
+/// (`OnBackInvokedCallback`, motion sensors, network sockets).
+public func OnStartObserving(
+    _ name: String,
+    _ handler: @escaping () -> Void
+) -> WhiskerDefinitionComponent {
+    WhiskerOnStartObservingComponent(eventName: name, handler: handler)
+}
+
+/// `OnStopObserving("name") { ... }` — pair to `OnStartObserving`.
+/// The closure fires once on the 1→0 listener-count transition.
+public func OnStopObserving(
+    _ name: String,
+    _ handler: @escaping () -> Void
+) -> WhiskerDefinitionComponent {
+    WhiskerOnStopObservingComponent(eventName: name, handler: handler)
 }
 
 // MARK: - Prop factories

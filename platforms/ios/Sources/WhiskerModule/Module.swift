@@ -37,4 +37,35 @@ open class Module {
     /// re-used afterwards so authors can do expensive setup in
     /// `definition()` without paying for it on every dispatch.
     public private(set) lazy var definitionLazy: ModuleDefinition = self.definition()
+
+    /// Fully-qualified module name (`<crate>:<Name>`), set by the
+    /// codegen-emitted registration call. `nil` until the module
+    /// has been registered — `sendEvent` will silently no-op in
+    /// that window. Authors must NOT set this themselves; the L-2c
+    /// codegen does. (Public-set rather than `internal(set)` so the
+    /// generated registration block, which lives in a different
+    /// Swift module than `WhiskerModule`, can assign it.)
+    public var qualifiedName: String?
+
+    /// Dispatch `payload` to every Rust subscriber of `event` on
+    /// this module. The bridge fans the call out to every
+    /// `PlatformModule::on_event` callback registered against
+    /// `(this.qualifiedName, event)`.
+    ///
+    /// Defaults to `.null` for an unparameterised ping (e.g. a
+    /// "back button pressed" event whose only meaning is the firing).
+    /// No-op if the module hasn't been registered yet.
+    public func sendEvent(_ event: String, _ payload: WhiskerValue = .null) {
+        guard let qname = qualifiedName else {
+            #if DEBUG
+            print("WhiskerModule: sendEvent(\"\(event)\") called before registration — dropped.")
+            #endif
+            return
+        }
+        WhiskerModuleEventCenter.dispatchSend(
+            module: qname,
+            event: event,
+            payload: payload
+        )
+    }
 }

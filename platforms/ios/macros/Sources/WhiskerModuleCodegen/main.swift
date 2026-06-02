@@ -218,15 +218,22 @@ func render(
                     let module = \(instance)
                     let def = module.definitionLazy
                     if let name = def.name {
+                        // Phase L-2c — every DSL module records its
+                        // fully-qualified name so `sendEvent` /
+                        // observer-hook routing can find it.
+                        let qname = "\(tagPrefix)" + name
+                        module.qualifiedName = qname
+                        WhiskerModuleEventCenter.register(module)
+
                         if let view = def.view {
-                            LynxComponentRegistry.registerUI(view.viewClass, withName: "\(tagPrefix)" + name)
+                            LynxComponentRegistry.registerUI(view.viewClass, withName: qname)
                             module.registerWithLynx()
                         } else {
                             // Namespace the dispatch key with the crate
                             // (`<crate>:Name`) so two crates can ship
                             // same-named function-only modules — matches
                             // the Rust `module!("Name")` prefix.
-                            whisker_bridge_register_module_dispatch("\(tagPrefix)" + name, \(shim))
+                            whisker_bridge_register_module_dispatch(qname, \(shim))
                         }
                     }
                 }

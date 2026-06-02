@@ -198,6 +198,22 @@ pub struct WhiskerKeyValueRaw {
 pub type WhiskerModuleCallback =
     extern "C" fn(user_data: *mut c_void, result: *const WhiskerValueRaw);
 
+/// Callback type for module event subscriptions. Fired by the bridge
+/// when a registered `(module, event)` pair receives a
+/// `whisker_bridge_module_send_event` call. `payload` is borrowed —
+/// the bridge frees its allocations once the callback returns.
+pub type WhiskerModuleEventCallback =
+    extern "C" fn(user_data: *mut c_void, payload: *const WhiskerValueRaw);
+
+/// Callback type for `OnStartObserving` / `OnStopObserving` hooks.
+/// The bridge fires these on the 0↔1 listener-count transition for
+/// a `(module, event)` pair. Both `module_name` and `event_name` are
+/// borrowed (NUL-terminated UTF-8) — copy if you need to retain them
+/// past the call. `module_name` lets a shared platform-side
+/// trampoline index its own per-module table.
+pub type WhiskerModuleObserverHook =
+    extern "C" fn(module_name: *const c_char, event_name: *const c_char);
+
 /// Per-module dispatch function — the platform-side Swift Macro or
 /// KSP processor emits one of these per `@WhiskerModule`-annotated
 /// class. The bridge stores `(module_name → dispatch_fn)` in a
@@ -323,6 +339,47 @@ extern "C" {
     pub fn whisker_bridge_register_module_dispatch(
         module_name: *const c_char,
         dispatch: WhiskerModuleDispatchFn,
+    );
+
+    // ------------------------------------------------------------------
+    // Module event subscription (Phase L-2c)
+    // ------------------------------------------------------------------
+
+    /// Register `callback` against `(module_name, event_name)`.
+    /// Returns a positive listener id on success, or <= 0 on a
+    /// precondition failure. The Rust wrapper hands the caller a
+    /// `ModuleSubscription` that calls
+    /// `whisker_bridge_module_remove_event_listener` on drop.
+    pub fn whisker_bridge_module_add_event_listener(
+        module_name: *const c_char,
+        event_name: *const c_char,
+        callback: WhiskerModuleEventCallback,
+        user_data: *mut c_void,
+    ) -> i32;
+
+    /// Remove a previously-registered listener. No-op if `listener_id`
+    /// is unknown. The bridge does not free the caller's `user_data`.
+    pub fn whisker_bridge_module_remove_event_listener(listener_id: i32);
+
+    /// Dispatch `payload` to every listener registered against
+    /// `(module_name, event_name)`. Called from the native module
+    /// side (`sendEvent` on Swift / Kotlin). `payload` may be NULL
+    /// for an unparameterised ping.
+    pub fn whisker_bridge_module_send_event(
+        module_name: *const c_char,
+        event_name: *const c_char,
+        payload: *const WhiskerValueRaw,
+    );
+
+    /// Register OnStart / OnStopObserving hooks for `module_name`.
+    /// The bridge calls `started(event)` on the 0→1 listener-count
+    /// transition and `stopped(event)` on 1→0, so the native module
+    /// can spin up / tear down an expensive source (e.g. an
+    /// `OnBackInvokedCallback` registration) only while needed.
+    pub fn whisker_bridge_module_register_observer_hooks(
+        module_name: *const c_char,
+        started: WhiskerModuleObserverHook,
+        stopped: WhiskerModuleObserverHook,
     );
 
     /// Invoke a Lynx UI method on a mounted element. Synchronous —

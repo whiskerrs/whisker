@@ -109,7 +109,11 @@ let package = Package(
         // the Lynx symbols needed to subclass `LynxUI<View>`.
         .target(
             name: "WhiskerModule",
-            dependencies: ["Lynx"],
+            // `WhiskerDriver` carries the C ABI surface
+            // (`WhiskerValueRaw`, `whisker_bridge_module_send_event`,
+            // …) that `WhiskerValue.swift` and
+            // `WhiskerModuleEventCenter.swift` `@_exported import`.
+            dependencies: ["Lynx", "WhiskerDriver"],
             path: "Sources/WhiskerModule"
         ),
 

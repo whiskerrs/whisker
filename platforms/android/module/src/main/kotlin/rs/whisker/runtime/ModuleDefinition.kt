@@ -111,12 +111,35 @@ public data class WhiskerFunctionComponent(
 ) : WhiskerDefinitionComponent
 
 /**
- * `Events("a", "b", ...)` — declare event names this module
- * emits. Just metadata; dispatch stays imperative via
- * `WhiskerCustomEvent.dispatch(...)`.
+ * `Events("a", "b", ...)` — declare event names this module emits.
+ * Metadata only; dispatch goes through
+ * [Module.sendEvent], which fans the payload out to every Rust
+ * subscriber registered via `PlatformModule::on_event`.
  */
 public data class WhiskerEventsComponent(public val names: List<String>) :
     WhiskerDefinitionComponent
+
+/**
+ * `OnStartObserving("name") { ... }` — fires when the listener
+ * count for `(this module, "name")` transitions from 0 to 1. Use to
+ * lazily attach an expensive source (e.g. `OnBackInvokedCallback`
+ * registration, sensor open) so the work only runs while at least
+ * one Rust subscriber is active.
+ */
+public data class WhiskerOnStartObservingComponent(
+    public val eventName: String,
+    public val handler: () -> Unit,
+) : WhiskerDefinitionComponent
+
+/**
+ * `OnStopObserving("name") { ... }` — fires when the listener count
+ * for `(this module, "name")` transitions from 1 to 0. Tears down
+ * whatever `OnStartObserving` set up.
+ */
+public data class WhiskerOnStopObservingComponent(
+    public val eventName: String,
+    public val handler: () -> Unit,
+) : WhiskerDefinitionComponent
 
 // ----- DSL builders --------------------------------------------------------
 
@@ -180,6 +203,27 @@ public class WhiskerModuleDefinitionBuilder {
     /** `Events("a", "b", ...)` — variadic event-name declaration. */
     public fun Events(vararg names: String): WhiskerDefinitionComponent =
         WhiskerEventsComponent(names.toList()).also { components.add(it) }
+
+    /**
+     * `OnStartObserving("name") { ... }` — declare a lazy-start
+     * hook for `name`. The closure fires once on the 0→1
+     * listener-count transition for `(this module, "name")`.
+     */
+    public fun OnStartObserving(
+        name: String,
+        handler: () -> Unit,
+    ): WhiskerDefinitionComponent =
+        WhiskerOnStartObservingComponent(name, handler).also { components.add(it) }
+
+    /**
+     * `OnStopObserving("name") { ... }` — pair to
+     * `OnStartObserving`. Fires on the 1→0 transition.
+     */
+    public fun OnStopObserving(
+        name: String,
+        handler: () -> Unit,
+    ): WhiskerDefinitionComponent =
+        WhiskerOnStopObservingComponent(name, handler).also { components.add(it) }
 
     // ---- Module-level (view-less) function: raw args (case ②) ----
 
@@ -269,6 +313,14 @@ public data class ModuleDefinition(public val components: List<WhiskerDefinition
     /** Module-level (view-less) [Function] declarations. */
     public val functions: List<WhiskerFunctionComponent>
         get() = components.filterIsInstance<WhiskerFunctionComponent>()
+
+    /** Module-level [OnStartObserving] hooks. */
+    public val onStartObservingHooks: List<WhiskerOnStartObservingComponent>
+        get() = components.filterIsInstance<WhiskerOnStartObservingComponent>()
+
+    /** Module-level [OnStopObserving] hooks. */
+    public val onStopObservingHooks: List<WhiskerOnStopObservingComponent>
+        get() = components.filterIsInstance<WhiskerOnStopObservingComponent>()
 
     public companion object {
         /**
