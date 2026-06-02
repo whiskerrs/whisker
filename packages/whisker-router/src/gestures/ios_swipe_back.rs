@@ -29,20 +29,14 @@ use whisker::runtime::event::bind_typed;
 use whisker::runtime::reactive::on_mount;
 use whisker::runtime::view::{set_inline_styles, BindType, Element};
 use whisker::{
-    animate_cancel, animate_start, component, render, use_context, AnimateOptions, Style,
+    animate_cancel, animate_start, component, render, spawn_local, use_context, AnimateOptions,
+    ElementHandle, Style,
 };
 
 use crate::layouts::stack::{slot_css, StackLayoutHandle};
 use crate::transitions::ios_slide;
 use crate::transitions::{Direction, Side, StackTransitionBox};
 
-/// Horizontal distance (in points) that maps the gesture to a full
-/// `progress = 1.0`. iPhone 17 Pro is 402pt wide and the wrapper
-/// covers the full viewport, so a 1:1 finger-to-edge ratio wants
-/// this equal to the viewport width. Older iPhones differ by a few
-/// points (375–430pt) — a future revision can read the actual
-/// container width to make this exact across devices.
-const SWIPE_FULL_DISTANCE_PX: f32 = 402.0;
 /// `clientX` (in points) within which a `touchstart` qualifies as
 /// an edge swipe-back attempt. iOS uses ~20pt; 24pt is generous
 /// without eating into scrollable content.
@@ -53,6 +47,13 @@ const SWIPE_COMMIT_THRESHOLD: f32 = 0.5;
 const SWIPE_MIN_FINISH_MS: u32 = 120;
 /// Natural finish duration scaled by the remaining distance.
 const SWIPE_FULL_FINISH_MS: u32 = 320;
+/// Fallback used while the async container measurement is in
+/// flight — a hair under iPhone 17 Pro's 402pt viewport. The
+/// progress derivation reads `container_width` (set by the
+/// `boundingClientRect` task that fires on mount and at each
+/// touchstart) and only falls back to this constant when the cell
+/// is still zero.
+const SWIPE_FALLBACK_WIDTH_PX: f32 = 400.0;
 
 /// iOS-style edge swipe-back gesture component.
 ///
@@ -93,6 +94,35 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
     // — lets touchmove pose it without going through
     // `current_wrapper` every frame.
     let preview_wrapper: Rc<Cell<Option<Element>>> = Rc::new(Cell::new(None));
+    // Container width in points — cached from `boundingClientRect`.
+    // Lynx exposes the layout box asynchronously so the value
+    // arrives a frame after we ask; until then the touchmove
+    // handler falls back to `SWIPE_FALLBACK_WIDTH_PX`. We re-fire
+    // the measurement on every `touchstart` so orientation changes
+    // and split-screen resizes pick up between gestures.
+    let container_width: Rc<Cell<f32>> = Rc::new(Cell::new(0.0));
+    // `bind_once` ensures we only attach the `ElementRef` once;
+    // it's a cheap arena handle and rebinding is harmless, but
+    // keeping it pinned to one allocation lets us return the same
+    // `ElementHandle` from every `measure()` call.
+    let container_ref = ElementHandle::new();
+    container_ref.r().bind(container);
+
+    let measure = {
+        let container_width = container_width.clone();
+        move || {
+            let container_width = container_width.clone();
+            spawn_local(async move {
+                if let Ok(rect) = container_ref.bounding_client_rect().await {
+                    let w = rect.width as f32;
+                    if w > 0.0 {
+                        container_width.set(w);
+                    }
+                }
+            });
+        }
+    };
+    measure();
 
     // touchstart — qualify the edge swipe, mount the preview
     // wrapper, capture state.
@@ -102,6 +132,7 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
         let mount_preview = mount_preview.clone();
         let current_wrapper = current_wrapper.clone();
         let transition = transition.clone();
+        let measure = measure.clone();
         bind_typed::<TouchEvent, _>(container, "touchstart", BindType::Bind, move |e| {
             if gesture.borrow().is_some() {
                 return;
@@ -119,6 +150,10 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
             if start_x > SWIPE_EDGE_THRESHOLD_PX {
                 return;
             }
+            // Re-measure on every touchstart so orientation /
+            // split-screen changes between gestures land in
+            // `container_width` before the next touchmove tick.
+            measure();
 
             let wrapper = mount_preview();
             apply_pose(
@@ -154,6 +189,7 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
         let preview_wrapper = preview_wrapper.clone();
         let current_wrapper = current_wrapper.clone();
         let transition = transition.clone();
+        let container_width = container_width.clone();
         bind_typed::<TouchEvent, _>(container, "touchmove", BindType::Bind, move |e| {
             let mut g = gesture.borrow_mut();
             let state = match g.as_mut() {
@@ -173,7 +209,15 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
                 None => return,
             };
             let delta = (touch.client_x as f32 - state.start_x).max(0.0);
-            let progress = (delta / SWIPE_FULL_DISTANCE_PX).clamp(0.0, 1.0);
+            let full = {
+                let measured = container_width.get();
+                if measured > 0.0 {
+                    measured
+                } else {
+                    SWIPE_FALLBACK_WIDTH_PX
+                }
+            };
+            let progress = (delta / full).clamp(0.0, 1.0);
             state.progress = progress;
 
             if let Some(wrapper) = preview_wrapper.get() {
