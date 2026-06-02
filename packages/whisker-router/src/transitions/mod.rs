@@ -1,18 +1,20 @@
-//! Transitions: pluggable animations for [`StackLayout`](crate::StackLayout).
+//! Transitions: pluggable visual animations for [`StackLayout`](crate::StackLayout).
 //!
-//! Each transition implementation lives in its own submodule —
-//! [`ios_slide`] for the default UIKit-style horizontal slide,
-//! [`vertical_slide`] for the Y-axis variant, [`fade`] for an
-//! opacity cross-fade, and [`instant`] for the no-animation
-//! fallback. This module re-exports the trait + every built-in,
-//! plus the shared [`Direction`] / [`Side`] / [`StackTransitionBox`]
-//! types each implementation consumes.
+//! A transition's job is to describe *how the screen looks* during
+//! a navigation — push, pop, anything in between. Each transition
+//! implementation lives in its own submodule — [`ios_slide`] for
+//! the default UIKit-style horizontal slide, [`vertical_slide`] for
+//! the Y-axis variant, [`fade`] for an opacity cross-fade, and
+//! [`instant`] for the no-animation fallback. This module re-exports
+//! the trait + every built-in, plus the shared [`Direction`] /
+//! [`Side`] / [`StackTransitionBox`] types each implementation
+//! consumes.
 //!
 //! Custom transitions implement [`StackTransition`] and are passed
 //! to the layout via [`StackTransitionBox::new`]:
 //!
 //! ```ignore
-//! use whisker_router::{StackTransition, StackTransitionBox, Direction};
+//! use whisker_router::{StackTransition, StackTransitionBox, Direction, Side};
 //! use whisker::runtime::view::Element;
 //!
 //! struct ZoomSlide;
@@ -26,6 +28,13 @@
 //!     }
 //! }
 //! ```
+//!
+//! Interactive behaviour (iOS swipe-back, Android system back) is
+//! intentionally **not** part of this trait — it lives in separate
+//! [composable components](crate::gestures) that the user mounts
+//! inside the layout. That way transitions stay pure and easy to
+//! write, and gestures stay easy to mix-and-match without coupling
+//! every transition impl to a touch-event loop.
 
 use std::rc::Rc;
 
@@ -69,14 +78,15 @@ pub enum Side {
     Outgoing,
 }
 
-/// Pluggable transition for a stack layout.
+/// Pluggable transition for a stack layout — purely visual.
 ///
 /// One [`animate`](StackTransition::animate) call per slot per
 /// navigation — the [`Side`] argument distinguishes "drive the
 /// incoming wrapper" from "drive the outgoing wrapper". The trait
 /// is `'static` so it can be stored inside an `Rc`.
 pub trait StackTransition: 'static {
-    /// Drive the animation for one slot wrapper.
+    /// Drive the natural (non-interactive) animation for one slot
+    /// wrapper.
     ///
     /// `side` says which slot is being animated (incoming = the
     /// new top of the stack; outgoing = the screen being replaced).

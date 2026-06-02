@@ -28,6 +28,7 @@
 #![warn(missing_docs)]
 
 pub mod back_handler;
+pub mod gestures;
 pub mod layouts;
 pub mod linking;
 pub mod outlet;
@@ -52,9 +53,10 @@ pub mod transitions;
 pub use whisker_router_macros::route;
 
 pub use crate::back_handler::{on_back, BackHandlerGuard};
+pub use crate::gestures::{IosSwipeBack, IosSwipeBackProps};
 pub use crate::layouts::modal::{ModalLayout, ModalLayoutProps, ModalRenderFn};
 pub use crate::layouts::pane::{Pane, PaneProps};
-pub use crate::layouts::stack::{StackLayout, StackLayoutProps};
+pub use crate::layouts::stack::{StackLayout, StackLayoutHandle, StackLayoutProps};
 pub use crate::layouts::tabs::{TabSpec, TabsLayout, TabsLayoutProps};
 pub use crate::outlet::{
     router, Outlet, OutletProps, RouteProvider, RouteProviderProps, RouteRenderFn,

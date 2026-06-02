@@ -14,8 +14,8 @@
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::{
-    route, route_stack, router, RouteProvider, RouteProviderProps, RouteRenderFn, RouteStack,
-    StackLayout, StackLayoutProps,
+    route, route_stack, router, IosSwipeBack, IosSwipeBackProps, RouteProvider, RouteProviderProps,
+    RouteRenderFn, RouteStack, StackLayout, StackLayoutProps,
 };
 
 /// Top-level route enum.
@@ -36,18 +36,19 @@ pub enum AppRoute {
     Settings,
 }
 
-/// Container used by every screen — plain column layout with an
-/// opaque background. Opaque fill is iOS-style: during a
-/// `StackLayout` slide, the parallaxed outgoing screen sits behind
-/// the incoming and would show through any transparent area, so
-/// every screen MUST own its own background to look right.
-fn screen_style() -> &'static str {
-    "display: flex; flex-direction: column; gap: 8px; padding: 16px; \
-     width: 100%; height: 100%; background-color: white; overflow: visible;"
+/// Layout shared by every screen — column with padded buttons.
+/// The background colour is parameterised so each route renders in
+/// a distinct hue, making it easy to see which screen sits on top
+/// (vs. underneath) during a swipe-back / push animation.
+fn screen_style(bg: &str) -> String {
+    format!(
+        "display: flex; flex-direction: column; gap: 8px; padding: 16px; \
+         width: 100%; height: 100%; background-color: {bg}; overflow: visible;"
+    )
 }
 
 fn link_style() -> &'static str {
-    "padding: 6px 12px; background: #e5e7eb; border-radius: 4px;"
+    "padding: 6px 12px; background: rgba(0, 0, 0, 0.08); border-radius: 4px;"
 }
 
 /// Home screen — two `push` actions to seed other test paths.
@@ -57,7 +58,7 @@ pub fn home_screen() -> Element {
     let nav_list = nav.clone();
     let nav_settings = nav.clone();
     render! {
-        view(style: screen_style()) {
+        view(style: screen_style("#fef3c7")) {
             text(style: "font-size: 24px;") { text(value: "Home") }
             view(
                 style: link_style(),
@@ -83,7 +84,7 @@ pub fn list_screen() -> Element {
     let nav_post = nav.clone();
     let nav_back = nav.clone();
     render! {
-        view(style: screen_style()) {
+        view(style: screen_style("#d1fae5")) {
             text(style: "font-size: 24px;") { text(value: "List") }
             view(
                 style: link_style(),
@@ -107,7 +108,7 @@ pub fn post_screen(id: u64) -> Element {
     let nav = router::<AppRoute>();
     let label = computed(move || format!("Post #{id}"));
     render! {
-        view(style: screen_style()) {
+        view(style: screen_style("#dbeafe")) {
             text(style: "font-size: 24px;") { text(value: label) }
             view(
                 style: link_style(),
@@ -125,7 +126,7 @@ pub fn post_screen(id: u64) -> Element {
 pub fn settings_screen() -> Element {
     let nav = router::<AppRoute>();
     render! {
-        view(style: screen_style()) {
+        view(style: screen_style("#fce7f3")) {
             text(style: "font-size: 24px;") { text(value: "Settings") }
             view(
                 style: link_style(),
@@ -152,7 +153,9 @@ pub fn render_with(stack: RouteStack<AppRoute>) -> Element {
     .into();
     render! {
         RouteProvider(stack: stack) {
-            StackLayout(render: render.clone())
+            StackLayout(render: render.clone()) {
+                IosSwipeBack()
+            }
         }
     }
 }
@@ -178,7 +181,9 @@ pub fn render_app() -> Element {
                     display: flex; flex-direction: column;",
         ) {
             RouteProvider(stack: stack) {
-                StackLayout(render: render.clone())
+                StackLayout(render: render.clone()) {
+                    IosSwipeBack()
+                }
             }
         }
     }

@@ -3,6 +3,12 @@
 //! subtle brightness dim on the parallaxed background screen.
 //!
 //! Default transition for [`StackLayout`](crate::StackLayout).
+//!
+//! For the iOS-native edge swipe-back gesture, mount
+//! [`IosSwipeBack`](crate::IosSwipeBack) as a child of the layout —
+//! the gesture is intentionally a separate composable component,
+//! not part of this transition trait, so you can mix transitions
+//! and gestures freely.
 
 use whisker::runtime::view::Element;
 use whisker::{animate_start, AnimateOptions, Style};
@@ -58,13 +64,11 @@ impl StackTransition for IosSlide {
     fn animate(&self, element: Element, side: Side, direction: Direction) {
         let parallax = format!("translateX(-{IOS_PARALLAX_PCT}%)");
         let (name, from, to): Keyframes = match (side, direction) {
-            // New screen slides in from the right at full brightness.
             (Side::Incoming, Direction::Forward) => (
                 "stack-ios-incoming-forward",
                 vec![("transform", "translateX(100%)")],
                 vec![("transform", "translateX(0%)")],
             ),
-            // Returning screen brightens as it slides back from -30%.
             (Side::Incoming, Direction::Backward) => (
                 "stack-ios-incoming-backward",
                 vec![
@@ -76,8 +80,6 @@ impl StackTransition for IosSlide {
                     ("filter", "brightness(1.0)"),
                 ],
             ),
-            // Previous screen parallaxes off-left and dims behind the
-            // pushing screen.
             (Side::Outgoing, Direction::Forward) => (
                 "stack-ios-outgoing-forward",
                 vec![
@@ -89,7 +91,6 @@ impl StackTransition for IosSlide {
                     ("filter", "brightness(0.85)"),
                 ],
             ),
-            // Leaving screen slides off the trailing edge.
             (Side::Outgoing, Direction::Backward) => (
                 "stack-ios-outgoing-backward",
                 vec![("transform", "translateX(0%)")],
@@ -112,14 +113,33 @@ impl StackTransition for IosSlide {
 
     fn slot_style(&self, side: Side, direction: Direction) -> Style {
         let raw = match (side, direction) {
-            // Foreground (moving) side carries the depth shadow.
             (Side::Incoming, Direction::Forward) => IOS_LEADING_SHADOW,
             (Side::Outgoing, Direction::Backward) => IOS_LEADING_SHADOW,
-            // Background (parallaxed) side starts dimmed.
             (Side::Outgoing, Direction::Forward) => IOS_PARALLAX_DIM,
             (Side::Incoming, Direction::Backward) => IOS_PARALLAX_DIM,
             _ => "",
         };
         Style::from(raw)
     }
+}
+
+/// Sample the iOS slide pose at `progress ∈ [0.0, 1.0]`. Shared
+/// with the [`IosSwipeBack`](crate::IosSwipeBack) gesture so the
+/// gesture's per-frame scrub stays in sync with the natural
+/// animation's endpoints.
+pub(crate) fn pose(side: Side, direction: Direction, progress: f32) -> Vec<(&'static str, String)> {
+    let (tx_from, tx_to, br_from, br_to) = match (side, direction) {
+        (Side::Incoming, Direction::Forward) => (100.0, 0.0, 1.0, 1.0),
+        (Side::Incoming, Direction::Backward) => (-IOS_PARALLAX_PCT, 0.0, 0.85, 1.0),
+        (Side::Outgoing, Direction::Forward) => (0.0, -IOS_PARALLAX_PCT, 1.0, 0.85),
+        (Side::Outgoing, Direction::Backward) => (0.0, 100.0, 1.0, 1.0),
+        (_, Direction::None) => return Vec::new(),
+    };
+    let t = progress.clamp(0.0, 1.0);
+    let tx = tx_from + (tx_to - tx_from) * t;
+    let br = br_from + (br_to - br_from) * t;
+    vec![
+        ("transform", format!("translateX({tx}%)")),
+        ("filter", format!("brightness({br})")),
+    ]
 }
