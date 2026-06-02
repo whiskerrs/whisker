@@ -5,15 +5,15 @@
 //! slots, deriving the [`Direction`], and ordering the DOM so the
 //! transition's paint-order hint takes effect.
 //!
-//! Interactive gestures (iOS swipe-back, future Android predictive
-//! back) live inside the transition — `StackLayout` only builds a
-//! [`GestureContext`](crate::transitions::GestureContext) of
-//! primitives and hands it to [`StackTransition::install_gestures`]
-//! once, at mount. Transitions that don't have a gesture (cross-
-//! fade, instant, vertical slide) ignore the hook.
+//! Interactive behaviour (iOS swipe-back, Android system back) is
+//! **not** part of the transition trait. Instead, the layout
+//! publishes a [`StackLayoutHandle`] into context and the user
+//! composes gesture / back-handler components as children of
+//! [`StackLayout`]. See [`crate::IosSwipeBack`] for the iOS edge
+//! swipe-back component.
 //!
 //! The default transition is [`IosSlide`](crate::transitions::IosSlide):
-//! horizontal slide with ~30% parallax + edge swipe-back gesture.
+//! horizontal slide with ~30% parallax.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -28,24 +28,71 @@ use whisker::runtime::view::apply::apply_styles;
 use whisker::runtime::view::{
     append_child, create_element, insert_child_at, remove_child, set_inline_styles, Element,
 };
-use whisker::{component, Style};
+use whisker::{component, provide_context, Children, Style};
 
 use crate::outlet::{router, RouteRenderFn};
 use crate::route::Route;
-use crate::transitions::{Direction, GestureContext, Side, StackTransitionBox};
+use crate::transitions::{Direction, Side, StackTransitionBox};
 
 type Slot = Rc<RefCell<Option<(OwnerId, Element)>>>;
 
-/// Animated stack: holds two slots during a transition and lets a
-/// [`StackTransition`] drive their animations.
+/// Handle a [`StackLayout`] publishes to context so child components
+/// (gestures, back-handlers, anything else that needs to coordinate
+/// with the layout's wrapper bookkeeping) can drive it.
 ///
-/// The [`RouteStack`](crate::RouteStack) for route type `R` is
-/// pulled from context — wrap a [`RouteProvider`](crate::RouteProvider)
-/// above the layout so `router::<R>()` finds it.
+/// Read this from a child via
+/// `use_context::<StackLayoutHandle>().expect("inside StackLayout")`,
+/// then call the closures as needed. For plain back navigation
+/// (Android system back, hardware key, in-app back UI) you usually
+/// don't need this handle — `router::<R>().back()` is enough.
+/// This is for the interactive paths that need to mount a preview
+/// of the destination screen and promote it atomically.
+#[derive(Clone)]
+pub struct StackLayoutHandle {
+    /// The `StackLayout`'s root container view. Bind touch /
+    /// animation / custom listeners on this element.
+    pub container: Element,
+
+    /// Handle to the currently-foregrounded wrapper, if any. The
+    /// gesture controller poses this wrapper alongside the
+    /// preview.
+    pub current_wrapper: Rc<dyn Fn() -> Option<Element>>,
+
+    /// Build a wrapper element for the screen one step below the
+    /// top of the stack, mount the rendered screen into it, and
+    /// insert it at DOM index 0 of the container. Returns the
+    /// wrapper handle.
+    ///
+    /// The layout retains ownership; release via
+    /// [`dispose_preview`](Self::dispose_preview) or
+    /// [`commit_preview_and_back`](Self::commit_preview_and_back).
+    pub mount_preview: Rc<dyn Fn() -> Element>,
+
+    /// Tear down the preview wrapper (remove from DOM, dispose the
+    /// reactive owner). Idempotent.
+    pub dispose_preview: Rc<dyn Fn()>,
+
+    /// Promote the preview wrapper into the `current` slot, dispose
+    /// both the old current and any stale outgoing wrapper, then
+    /// `stack.back()` with `skip_animation` set so the route-change
+    /// effect doesn't re-animate the navigation the gesture
+    /// already finished.
+    pub commit_preview_and_back: Rc<dyn Fn()>,
+}
+
+/// Animated stack: holds two slots during a transition and renders
+/// the current entry of the in-context
+/// [`RouteStack`](crate::RouteStack).
+///
+/// The route stack for route type `R` is pulled from context —
+/// wrap a [`RouteProvider`](crate::RouteProvider) above the layout
+/// so `router::<R>()` finds it. Children of the layout (gestures,
+/// back-handlers) receive a [`StackLayoutHandle`] via context.
 #[component]
 pub fn stack_layout<R: Route>(
     #[prop(default = StackTransitionBox::default())] transition: StackTransitionBox,
     render: RouteRenderFn<R>,
+    children: Children,
 ) -> Element {
     let stack = router::<R>();
     let container = create_element(ElementTag::View);
@@ -56,23 +103,18 @@ pub fn stack_layout<R: Route>(
     let preview: Slot = Rc::new(RefCell::new(None));
     // When a gesture commit fires `stack.back()`, the resulting
     // route-change effect must NOT animate — the wrappers already
-    // sit at the final pose. The commit closure sets this to a
-    // small count (2 by default); each effect run decrements and
-    // bails. A count rather than a bool because a single signal
-    // update can fan out into more than one effect run (the
-    // computed-of-a-RwSignal chain doesn't always batch them) and
-    // a one-shot bool would let the second run mount a fresh
-    // wrapper, double-stacking the destination screen on top of
-    // the gesture's promoted preview.
+    // sit at the final pose. The commit closure sets this to 1;
+    // the effect decrements and bails. Counted (rather than bool)
+    // because a single signal update can fan out into more than
+    // one effect run on some runtime paths.
     let skip_animation: Rc<Cell<u32>> = Rc::new(Cell::new(0));
     let prev_len = Rc::new(Cell::new(0_usize));
     let first = Rc::new(Cell::new(true));
 
-    // Single source of truth for the effect — tracking both
-    // `current()` and `stack()` separately makes the runtime re-run
-    // the effect twice per navigation (each one is its own
-    // `computed`), which drops `skip_animation` on the floor for the
-    // second run and double-mounts the destination screen.
+    // Tracking a single `entries` signal (rather than the derived
+    // `current()` + `stack()` signals) so the effect re-runs once
+    // per navigation — separate computeds would each schedule a
+    // distinct re-run.
     let entries_signal = stack.entries();
 
     {
@@ -92,8 +134,8 @@ pub fn stack_layout<R: Route>(
             let new_len = entries.len();
             let old_len = prev_len.get();
 
-            // Gesture-driven commit already advanced the visual state.
-            // Update bookkeeping and bail.
+            // Gesture-driven commit already advanced the visual
+            // state. Update bookkeeping and bail.
             let skip = skip_animation.get();
             if skip > 0 {
                 skip_animation.set(skip - 1);
@@ -162,42 +204,51 @@ pub fn stack_layout<R: Route>(
         });
     }
 
-    // Reserve an owner whose parent is the layout's own owner
-    // (`create_owner(None)` falls back to the current owner). The
-    // gesture handlers fire from the touch dispatcher, which has no
-    // active reactive owner — without this anchor, owners spawned
-    // for the preview screen become roots and lose access to the
-    // `RouteProvider` context their components rely on.
-    let gesture_parent = create_owner(None);
+    // Reserve an owner whose parent is the layout's own owner so
+    // children that mount via `commit_preview_and_back` /
+    // `mount_preview` get reachable context (`RouteProvider` etc.).
+    // The gesture handlers fire from the touch dispatcher, which
+    // has no active reactive owner; without this anchor, owners
+    // spawned for the preview screen would become roots and lose
+    // access to the `RouteProvider` context their components rely
+    // on.
+    let handle_parent = create_owner(None);
 
-    // Hand off gesture wiring to the transition. The trait method
-    // is no-op by default; only `IosSlide` (and any user-defined
-    // gesture-aware transition) installs handlers.
-    let gesture_ctx = build_gesture_context(
+    // Publish the handle so child gesture/back components can pick
+    // it up via `use_context::<StackLayoutHandle>()`.
+    let handle = build_stack_layout_handle(
         container,
         transition.clone(),
         stack.clone(),
         render.clone(),
-        current.clone(),
+        current,
         outgoing,
         preview,
         skip_animation,
-        gesture_parent,
+        handle_parent,
     );
-    transition.0.install_gestures(&gesture_ctx);
+    provide_context(handle);
+
+    // Mount the user's children (gestures / back-handlers / etc.).
+    // They render no DOM of their own but attach handlers via
+    // `on_mount`; the phantom returned by `mount_children` is
+    // attached under the container so the children's owner is a
+    // descendant of the layout's owner.
+    let phantom = whisker::runtime::view::mount_children(&children);
+    append_child(container, phantom);
 
     container
 }
 
-/// Build the closure surface a [`StackTransition`] uses to drive
-/// the stack interactively (the preview wrapper, the commit-back
-/// path, the can-back gate).
+/// Build the closure surface a child component pulls out of context
+/// to drive the stack's preview / commit primitives.
 ///
 /// Lives here in the layout because all of these operations touch
 /// the slots that the route-change effect also manipulates — the
-/// transition itself stays free of `OwnerId`/`Slot` plumbing.
+/// gesture / back-handler components stay free of `OwnerId` / `Slot`
+/// plumbing.
 #[allow(clippy::too_many_arguments)]
-fn build_gesture_context<R: Route>(
+fn build_stack_layout_handle<R: Route>(
     container: Element,
     transition: StackTransitionBox,
     stack: crate::stack::RouteStack<R>,
@@ -206,18 +257,14 @@ fn build_gesture_context<R: Route>(
     outgoing: Slot,
     preview: Slot,
     skip_animation: Rc<Cell<u32>>,
-    // `gesture_parent`: anchor owner used as the parent of any owner
-    // spawned from a gesture handler. Touch dispatchers fire with no
-    // active reactive owner, so without this anchor the screens
-    // mounted inside a preview wrapper would become roots and lose
-    // access to the `RouteProvider`'s `RouteStack` context.
-    gesture_parent: OwnerId,
-) -> GestureContext {
-    let can_back = {
-        let stack = stack.clone();
-        Rc::new(move || stack.entries().get().len() > 1) as Rc<dyn Fn() -> bool>
-    };
-
+    // `handle_parent`: anchor owner used as the parent of any owner
+    // spawned via the handle's closures. Touch / system back
+    // dispatchers fire with no active reactive owner; without this
+    // anchor screens mounted inside a preview wrapper would become
+    // roots and lose access to the `RouteProvider`'s `RouteStack`
+    // context.
+    handle_parent: OwnerId,
+) -> StackLayoutHandle {
     let mount_preview = {
         let stack = stack.clone();
         let render = render.clone();
@@ -253,7 +300,7 @@ fn build_gesture_context<R: Route>(
                 entries[0].route.clone()
             };
 
-            let preview_owner = create_owner(Some(gesture_parent));
+            let preview_owner = create_owner(Some(handle_parent));
             let preview_wrapper = create_element(ElementTag::View);
             apply_wrapper_style(
                 preview_wrapper,
@@ -326,14 +373,12 @@ fn build_gesture_context<R: Route>(
             as Rc<dyn Fn() -> Option<Element>>
     };
 
-    GestureContext {
+    StackLayoutHandle {
         container,
-        transition,
-        can_back,
+        current_wrapper,
         mount_preview,
         dispose_preview,
         commit_preview_and_back,
-        current_wrapper,
     }
 }
 
@@ -357,7 +402,7 @@ fn container_css() -> Css {
 /// `Style::Dynamic` registers an effect so the closure re-fires
 /// (and the wrapper re-styles) whenever any signal it reads
 /// changes — useful for theme-driven decoration.
-fn apply_wrapper_style(
+pub(crate) fn apply_wrapper_style(
     wrapper: Element,
     transition: &dyn crate::transitions::StackTransition,
     side: Side,
@@ -387,7 +432,7 @@ fn apply_wrapper_style(
     }
 }
 
-fn slot_css() -> Css {
+pub(crate) fn slot_css() -> Css {
     // `overflow: visible` is critical — Lynx clips a child's
     // `box-shadow` at the parent's bounds by default (unlike Web
     // CSS where overflow defaults to `visible`). Without this the
@@ -437,18 +482,5 @@ mod tests {
     fn container_uses_relative_positioning() {
         let css = container_css().to_css_string();
         assert!(css.contains("position: relative"), "got {css}");
-    }
-
-    #[test]
-    fn ios_slide_pose_endpoints_match_animate_keyframes() {
-        // `pose(0.0)` matches the "from" pose of `animate()`'s
-        // keyframes, `pose(1.0)` matches the "to". Verified for the
-        // common case (incoming forward push).
-        let t = IosSlide::default();
-        let p0 = t.pose(Side::Incoming, Direction::Forward, 0.0);
-        let p1 = t.pose(Side::Incoming, Direction::Forward, 1.0);
-        assert_eq!(p0[0].0, "transform");
-        assert!(p0[0].1.contains("100"), "got {}", p0[0].1);
-        assert!(p1[0].1.contains('0'), "got {}", p1[0].1);
     }
 }
