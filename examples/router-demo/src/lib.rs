@@ -14,8 +14,9 @@
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::{
-    route, route_stack, router, IosSwipeBack, IosSwipeBackProps, RouteProvider, RouteProviderProps,
-    RouteRenderFn, RouteStack, StackLayout, StackLayoutProps,
+    route, route_stack, router, AndroidPredictiveBack, AndroidPredictiveBackProps, IosSwipeBack,
+    IosSwipeBackProps, RouteProvider, RouteProviderProps, RouteRenderFn, RouteStack, StackLayout,
+    StackLayoutProps,
 };
 
 /// Top-level route enum.
@@ -155,6 +156,7 @@ pub fn render_with(stack: RouteStack<AppRoute>) -> Element {
         RouteProvider(stack: stack) {
             StackLayout(render: render.clone()) {
                 IosSwipeBack()
+                AndroidPredictiveBack()
             }
         }
     }
@@ -183,6 +185,7 @@ pub fn render_app() -> Element {
             RouteProvider(stack: stack) {
                 StackLayout(render: render.clone()) {
                     IosSwipeBack()
+                    AndroidPredictiveBack()
                 }
             }
         }

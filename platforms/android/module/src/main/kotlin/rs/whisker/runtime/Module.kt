@@ -49,6 +49,17 @@ public abstract class Module {
     public var qualifiedName: String? = null
 
     /**
+     * Module-host context. Mirrors Expo's `Module.appContext`.
+     * Read `appContext.currentActivity` to reach the host Activity
+     * from inside an `OnStartObserving` / `Function` body — the
+     * accessor is request-time, so a config-change rotation
+     * transparently resolves to the new Activity once the new
+     * `WhiskerView` attaches.
+     */
+    public val appContext: WhiskerAppContext
+        get() = WhiskerAppContext.shared
+
+    /**
      * Dispatch [payload] to every Rust subscriber of [event] on this
      * module. The bridge fans the call out to every
      * `PlatformModule::on_event` callback registered against

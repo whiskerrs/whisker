@@ -382,6 +382,11 @@ extern "C" {
         stopped: WhiskerModuleObserverHook,
     );
 
+    /// Write `msg` to `adb logcat` (Android only — no-op on iOS;
+    /// debug print path that survives Android's stderr-is-dropped
+    /// policy). `tag == NULL` defaults to "WhiskerRust".
+    pub fn whisker_bridge_log_info(tag: *const c_char, msg: *const c_char);
+
     /// Invoke a Lynx UI method on a mounted element. Synchronous —
     /// dispatches through Lynx's `LynxUIMethodProcessor` (iOS) /
     /// `LynxUIMethodsExecutor` (Android), which in turn calls the

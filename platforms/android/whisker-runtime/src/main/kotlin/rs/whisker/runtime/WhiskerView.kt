@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class WhiskerView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-) : LynxView(context, LynxViewBuilder()) {
+) : LynxView(context, LynxViewBuilder()), WhiskerModuleHost {
 
     private var engine: Long = 0
     private val scheduled = AtomicBoolean(false)
@@ -103,7 +103,39 @@ class WhiskerView @JvmOverloads constructor(
             nativeEngineRelease(engine)
             engine = 0L
         }
+        // Defensive — onDetachedFromWindow normally runs first, but
+        // some host flows call destroy() directly. Either path leaves
+        // the host stack clean.
+        WhiskerAppContext.popHost(this)
         super.destroy()
+    }
+
+    // ---- WhiskerModuleHost wiring -----------------------------------------
+    //
+    // Publish this view as the current `appContext.currentActivity`
+    // candidate while it's attached to a window. Modules use the
+    // resolved Activity to register window-scoped callbacks
+    // (`OnBackInvokedCallback`, sensor listeners, ...). The Activity
+    // accessor unwraps the view's `context` ContextWrapper chain at
+    // call time, so a config-change rotation transparently picks up
+    // the new Activity once the new view attaches.
+
+    /**
+     * Implements [WhiskerModuleHost.hostContext] by forwarding to
+     * the view's own [getContext]. Named `hostContext` (not
+     * `context`) so it doesn't collide with `View.getContext()` on
+     * the JVM `getContext()` signature.
+     */
+    override val hostContext: Context get() = getContext()
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        WhiskerAppContext.pushHost(this)
+    }
+
+    override fun onDetachedFromWindow() {
+        WhiskerAppContext.popHost(this)
+        super.onDetachedFromWindow()
     }
 
     /** Called from native (any thread) when a signal update marks the

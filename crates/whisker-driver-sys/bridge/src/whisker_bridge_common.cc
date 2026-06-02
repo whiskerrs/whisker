@@ -25,6 +25,14 @@
 #include <unordered_map>
 #include <vector>
 
+#if defined(__ANDROID__)
+// `dlsym(RTLD_DEFAULT, "lynx_element_animate")` — runtime resolution path
+// for the symbol that the Lynx Android fork doesn't yet export. See the
+// `whisker_bridge_element_animate` comment block below for the rationale.
+#include <dlfcn.h>
+#include <android/log.h>
+#endif
+
 #include "lynx_native_renderer_capi.h"
 
 #include "whisker_bridge.h"
@@ -540,6 +548,17 @@ int32_t NextListenerId() {
 
 }  // namespace
 
+extern "C" void whisker_bridge_log_info(const char* tag, const char* msg) {
+    if (msg == nullptr) return;
+#if defined(__ANDROID__)
+    __android_log_print(ANDROID_LOG_INFO,
+                        tag != nullptr ? tag : "WhiskerRust", "%s", msg);
+#else
+    (void)tag;
+    (void)msg;
+#endif
+}
+
 extern "C" int32_t whisker_bridge_module_add_event_listener(
     const char* module_name,
     const char* event_name,
@@ -832,6 +851,40 @@ lynx_ui_method_value_t BuildCapiParamValue(const WhiskerValueRaw& v,
 // `_with_params` element-method path uses, so the C++ side gets a single
 // recursive `lynx_ui_method_value_t` for each. `keyframes` / `options` may be
 // NULL (PLAY / PAUSE / CANCEL / FINISH only need `animation_name`).
+//
+// On Android the Lynx v3.8.0-whisker.1 fork doesn't yet export
+// `lynx_element_animate` in `liblynx.so` — the symbol exists on the iOS
+// xcframework slice only. Without intervention, linking the user crate's
+// cdylib against this bridge would let the .so build with an unresolved
+// reference and crash at `dlopen` ("cannot locate symbol
+// `lynx_element_animate`") before any Rust code runs. We side-step the link
+// dependency by resolving the symbol at runtime via `dlsym(RTLD_DEFAULT,
+// ...)`: on iOS (and on Android once the fork bump lands) the function
+// pointer comes back non-null and the call proceeds; on today's Android
+// `liblynx.so` we surface a clear "not exported" error and let the rest of
+// the app run minus animations.
+namespace {
+using LynxElementAnimateFn = int32_t (*)(
+    void*, void*, int32_t, const char*,
+    const lynx_ui_method_value_t*, const lynx_ui_method_value_t*);
+
+LynxElementAnimateFn ResolveLynxElementAnimate() {
+#if defined(__ANDROID__)
+    // Cached once per process. `dlsym(RTLD_DEFAULT, ...)` searches the
+    // default scope (every SO already loaded by the dynamic linker), so
+    // `liblynx.so`'s definition wins once the fork ships it. `nullptr`
+    // means the symbol is not yet exported — see the comment block above.
+    static LynxElementAnimateFn fn = [] {
+        return reinterpret_cast<LynxElementAnimateFn>(
+            dlsym(RTLD_DEFAULT, "lynx_element_animate"));
+    }();
+    return fn;
+#else
+    return &lynx_element_animate;
+#endif
+}
+}  // namespace
+
 extern "C" WhiskerValueRaw whisker_bridge_element_animate(
     WhiskerElement* element,
     int32_t operation,
@@ -843,6 +896,12 @@ extern "C" WhiskerValueRaw whisker_bridge_element_animate(
         return MakeBridgeErrorValue(
             "whisker_bridge_element_animate: NULL element / shell");
     }
+    LynxElementAnimateFn animate = ResolveLynxElementAnimate();
+    if (animate == nullptr) {
+        return MakeBridgeErrorValue(
+            "lynx_element_animate not exported by liblynx.so on this "
+            "platform — Lynx fork bump needed");
+    }
     CapiArena arena;
     lynx_ui_method_value_t kf{};
     lynx_ui_method_value_t opt{};
@@ -852,7 +911,7 @@ extern "C" WhiskerValueRaw whisker_bridge_element_animate(
     if (options != nullptr) {
         opt = BuildCapiParamValue(*options, arena);
     }
-    int32_t code = lynx_element_animate(
+    int32_t code = animate(
         element->shell, element->handle, operation, animation_name,
         keyframes != nullptr ? &kf : nullptr,
         options != nullptr ? &opt : nullptr);

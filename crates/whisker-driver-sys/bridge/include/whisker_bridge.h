@@ -463,6 +463,14 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_module_register_observer_hooks(
 // no-op for scalars. NULL pointer is also safe.
 WHISKER_BRIDGE_EXPORT void whisker_bridge_value_release(WhiskerValueRaw* value);
 
+// Debug-only: write `msg` to the platform log (Android logcat / no-op
+// elsewhere — iOS keeps using `os_log` via Swift). Survives Android's
+// stderr-is-dropped policy, so it's the only way to land a Rust
+// diagnostic in `adb logcat` without going through the JNI layer.
+// `tag == NULL` defaults to "WhiskerRust".
+WHISKER_BRIDGE_EXPORT void whisker_bridge_log_info(
+    const char* tag, const char* msg);
+
 // Invoke a Lynx UI method on a mounted element synchronously.
 // Phase 7-Φ.H.2.5 stub — currently always returns
 // `WHISKER_VALUE_ERROR` because the Lynx fork doesn't yet expose
