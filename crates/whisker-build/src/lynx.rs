@@ -57,11 +57,11 @@ use std::path::{Path, PathBuf};
 /// Schema: `<lynx-upstream-version>-whisker.<patch-iteration>` so a
 /// reader can tell at a glance which upstream Lynx is wrapped, and
 /// our own patch iterations bump independently.
-pub const LYNX_FORK_TAG: &str = "v3.8.0-whisker.1";
+pub const LYNX_FORK_TAG: &str = "v3.8.0-whisker.2";
 
 /// Version segment that appears in cache paths + tarball filenames.
 /// Derived from [`LYNX_FORK_TAG`] minus the leading `v`.
-pub const LYNX_VERSION: &str = "3.8.0-whisker.1";
+pub const LYNX_VERSION: &str = "3.8.0-whisker.2";
 
 /// SHA-256 of `whisker-lynx-android-<LYNX_VERSION>.tar.gz` as
 /// produced by the fork's CI. Pinned to the
@@ -86,7 +86,7 @@ pub const LYNX_VERSION: &str = "3.8.0-whisker.1";
 /// `LynxBase.podspec.json`, `LynxServiceAPI.podspec.json`) were
 /// synced to the trunk 3.8.0 source/header lists in the same release.
 pub const LYNX_ANDROID_SHA256: &str =
-    "541d586cc60ce68eb00eb984e2709d862a38caee9ff449e1410801e7e3e3d4c6";
+    "dfef0af66e874fcae01139eb94530676437eeff4fa10cea3eae7a1595819f886";
 
 /// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`.
 ///
@@ -99,7 +99,7 @@ pub const LYNX_ANDROID_SHA256: &str =
 /// from `core/native_renderer_capi/`, so the bridge in
 /// `crates/whisker-driver-sys/` no longer vendors them.
 pub const LYNX_IOS_SHA256: &str =
-    "2ecbd8be9fbfea54d4144e64d3b3c0a93c8a8bb3d6ed59bfff9ffdff5944a6b0";
+    "a81beb0fe153ff446fa842f9611b98d748a8d4969b92231d4fcb6ef67861f0aa";
 
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
 /// placeholders are filled by [`download_url`].

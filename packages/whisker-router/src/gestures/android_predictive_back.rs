@@ -5,9 +5,15 @@
 //! `whisker-router:PredictiveBack` native module's `backInvoked`
 //! event (Kotlin side: registers an
 //! `OnBackPressedDispatcher.OnBackPressedCallback` against the host
-//! Activity). On commit, calls [`StackLayoutHandle::commit_preview_and_back`]
-//! to pop the current entry — same hook the iOS swipe gesture
-//! lands on.
+//! Activity). On press, calls [`StackLayoutHandle::back`] to pop the
+//! current entry — the layout's natural route-change effect handles
+//! the backward slide animation.
+//!
+//! Unlike [`IosSwipeBack`](crate::IosSwipeBack) we do NOT use
+//! `commit_preview_and_back`: the predictive-back press is a single
+//! discrete event with no interactive drag, so there's no preview
+//! wrapper to promote — the natural route-change effect, with its
+//! built-in backward animation, is the right path.
 //!
 //! ```ignore
 //! StackLayout(transition: IosSlide::default(), render: render) {
@@ -53,7 +59,7 @@ use whisker::runtime::view::Element;
 pub fn android_predictive_back() -> Element {
     let handle = use_context::<StackLayoutHandle>()
         .expect("AndroidPredictiveBack must be a child of StackLayout");
-    let commit_back: Rc<dyn Fn()> = handle.commit_preview_and_back.clone();
+    let back: Rc<dyn Fn()> = handle.back.clone();
 
     // The bridge stores callbacks in a Send + Sync box (the C side
     // can fire from any thread that calls `module_send_event`). For
@@ -66,7 +72,7 @@ pub fn android_predictive_back() -> Element {
     // marshal hop, we wrap the Rc in [`MainThreadOnly`]. Soundness
     // rests on: every `sendEvent("backInvoked")` originates from
     // the Kotlin OnBackPressedCallback, which is main-thread.
-    let holder = MainThreadOnly { inner: commit_back };
+    let holder = MainThreadOnly { inner: back };
 
     let module = module!("PredictiveBack");
     let sub = module.on_event("backInvoked", move |_payload| {
