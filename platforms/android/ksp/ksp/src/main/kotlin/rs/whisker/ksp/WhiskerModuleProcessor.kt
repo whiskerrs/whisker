@@ -199,6 +199,7 @@ public class WhiskerModuleProcessor(
             w.appendLine("import com.lynx.tasm.behavior.Behavior")
             w.appendLine("import com.lynx.tasm.behavior.LynxContext")
             w.appendLine("import com.lynx.tasm.behavior.ui.LynxUI")
+            w.appendLine("import rs.whisker.runtime.WhiskerModuleEventCenter")
             w.appendLine("import rs.whisker.runtime.registerWithLynx")
             w.appendLine("import java.util.concurrent.atomic.AtomicBoolean")
             w.appendLine()
@@ -250,12 +251,18 @@ public class WhiskerModuleProcessor(
                 w.appendLine("            val $nameLocal = $defLocal.name")
                 w.appendLine("            val $viewLocal = $defLocal.view")
                 w.appendLine("            if ($nameLocal != null) {")
+                // Phase L-2c — every module records its fully-qualified
+                // name (`<crate>:<Name>`) so `sendEvent` / observer-hook
+                // routing can find it via `WhiskerModuleEventCenter`.
+                val tagPrefix = if (crateName != null) "$crateName:" else ""
+                w.appendLine("                val qualifiedName = \"$tagPrefix\" + $nameLocal")
+                w.appendLine("                $instanceLocal.qualifiedName = qualifiedName")
+                w.appendLine("                WhiskerModuleEventCenter.register($instanceLocal)")
                 // View-bearing: register the Lynx Behavior so the tag
                 // resolves to the view class. View-less modules skip
                 // this — they have no element to instantiate.
-                val tagPrefix = if (crateName != null) "$crateName:" else ""
                 w.appendLine("                if ($viewLocal != null) {")
-                w.appendLine("                    val qualifiedTag = \"$tagPrefix\" + $nameLocal")
+                w.appendLine("                    val qualifiedTag = qualifiedName")
                 w.appendLine("                    val viewClass = $viewLocal.viewClass")
                 // Generic reflective instantiator. The Lynx UI
                 // subclass is required to expose a single-arg

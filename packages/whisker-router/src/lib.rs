@@ -53,7 +53,9 @@ pub mod transitions;
 pub use whisker_router_macros::route;
 
 pub use crate::back_handler::{on_back, BackHandlerGuard};
-pub use crate::gestures::{IosSwipeBack, IosSwipeBackProps};
+pub use crate::gestures::{
+    AndroidPredictiveBack, AndroidPredictiveBackProps, IosSwipeBack, IosSwipeBackProps,
+};
 pub use crate::layouts::modal::{ModalLayout, ModalLayoutProps, ModalRenderFn};
 pub use crate::layouts::pane::{Pane, PaneProps};
 pub use crate::layouts::stack::{StackLayout, StackLayoutHandle, StackLayoutProps};

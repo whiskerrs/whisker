@@ -78,6 +78,16 @@ pub struct StackLayoutHandle {
     /// effect doesn't re-animate the navigation the gesture
     /// already finished.
     pub commit_preview_and_back: Rc<dyn Fn()>,
+
+    /// Plain back navigation — calls the in-context
+    /// [`RouteStack::back`](crate::RouteStack::back). The natural
+    /// route-change effect handles the pop animation, so non-
+    /// interactive back handlers (Android system back, hardware key,
+    /// in-app "Back" button) don't need to touch the preview slot at
+    /// all. Erased over the route type `R` so children that don't
+    /// know `R` (e.g. [`AndroidPredictiveBack`](crate::gestures::AndroidPredictiveBack))
+    /// can drive it.
+    pub back: Rc<dyn Fn()>,
 }
 
 /// Animated stack: holds two slots during a transition and renders
@@ -373,12 +383,26 @@ fn build_stack_layout_handle<R: Route>(
             as Rc<dyn Fn() -> Option<Element>>
     };
 
+    let back = {
+        let stack = stack.clone();
+        Rc::new(move || {
+            // `back()` returns false if already at the stack root.
+            // Plain back handlers don't surface that to the host —
+            // the platform's natural back-when-empty behaviour (e.g.
+            // finishing the Activity) takes over if the route stays
+            // unchanged. Drop the bool here so the closure matches
+            // `Fn()` for the type-erased handle.
+            let _ = stack.back();
+        }) as Rc<dyn Fn()>
+    };
+
     StackLayoutHandle {
         container,
         current_wrapper,
         mount_preview,
         dispose_preview,
         commit_preview_and_back,
+        back,
     }
 }
 

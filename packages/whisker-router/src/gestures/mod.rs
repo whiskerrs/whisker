@@ -16,6 +16,8 @@
 //! from context and uses [`router::<R>()`](crate::router) to drive
 //! the stack.
 
+pub mod android_predictive_back;
 pub mod ios_swipe_back;
 
+pub use android_predictive_back::{AndroidPredictiveBack, AndroidPredictiveBackProps};
 pub use ios_swipe_back::{IosSwipeBack, IosSwipeBackProps};

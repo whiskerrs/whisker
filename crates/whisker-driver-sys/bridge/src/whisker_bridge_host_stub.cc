@@ -220,3 +220,45 @@ extern "C" void whisker_bridge_log_hello(void) {
     // Empty stub — the real impl lives in the iOS / Android bridge
     // files; host code that calls this gets a no-op.
 }
+
+// ---------- whisker-module event system (Phase L-2c) ----------------------
+//
+// Host builds have no native module sending events, so the event-
+// listener registry collapses to no-ops: `add_event_listener` returns
+// a fake-positive id (so the Rust wrapper's "subscription succeeded"
+// check passes), and the rest are silent no-ops. Tests that rely on
+// real Rust ↔ native event flow have to run on iOS / Android.
+
+extern "C" int32_t whisker_bridge_module_add_event_listener(
+    const char* /*module_name*/,
+    const char* /*event_name*/,
+    WhiskerModuleEventCallback /*callback*/,
+    void* /*user_data*/) {
+    // Return a non-zero id so the Rust `ModuleSubscription::error()`
+    // path doesn't flag the registration as failed in host tests.
+    return 1;
+}
+
+extern "C" void whisker_bridge_module_remove_event_listener(
+    int32_t /*listener_id*/) {
+    // No-op — there's nothing registered in the host stub.
+}
+
+extern "C" void whisker_bridge_module_send_event(
+    const char* /*module_name*/,
+    const char* /*event_name*/,
+    const WhiskerValueRaw* /*payload*/) {
+    // No-op — no native module fires events in host tests.
+}
+
+extern "C" void whisker_bridge_module_register_observer_hooks(
+    const char* /*module_name*/,
+    WhiskerModuleObserverHook /*started*/,
+    WhiskerModuleObserverHook /*stopped*/) {
+    // No-op — no observer-driven sources in host tests.
+}
+
+extern "C" void whisker_bridge_log_info(
+    const char* /*tag*/, const char* /*msg*/) {
+    // No-op — real impl writes to logcat (Android) / os_log (iOS).
+}

@@ -378,11 +378,98 @@ WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_module_async(
     WhiskerModuleCallback callback,
     void* user_data);
 
+// ============================================================================
+// Module event subscription (Phase L-2c)
+// ============================================================================
+//
+// Modeled after Expo Modules' Events / sendEvent / OnStartObserving /
+// OnStopObserving lifecycle: a module declares the event names it
+// emits (Swift / Kotlin DSL), runtime listeners are registered on the
+// Rust side, and the native module calls `whisker_bridge_module_send_event`
+// to fan-out to every registered listener.
+//
+// Listener bookkeeping is internal to the bridge; the Rust wrapper
+// (`PlatformModule::on_event`) gets back a stable `listener_id` and
+// hands the user a `ModuleSubscription` that calls `remove_event_listener`
+// on drop.
+
+// Callback fired on the bridge's dispatch thread when a registered
+// `(module, event)` pair receives a `send_event`. `payload` is
+// borrowed for the duration of the call — the bridge frees it once
+// the callback returns (same ownership as `WhiskerModuleCallback`).
+typedef void (*WhiskerModuleEventCallback)(void* user_data,
+                                           const WhiskerValueRaw* payload);
+
+// Register `callback` against the `(module_name, event_name)` pair.
+// Returns a positive listener id on success; a value <= 0 indicates a
+// precondition failure (NULL name, NULL callback). The caller is
+// responsible for keeping `user_data` valid until
+// `whisker_bridge_module_remove_event_listener` returns.
+//
+// Multiple listeners on the same pair are supported — every
+// `send_event` fans out to all of them in registration order.
+WHISKER_BRIDGE_EXPORT int32_t whisker_bridge_module_add_event_listener(
+    const char* module_name,
+    const char* event_name,
+    WhiskerModuleEventCallback callback,
+    void* user_data);
+
+// Remove a previously-registered listener. No-op if the id is
+// unknown (already removed, never existed). `user_data` is the
+// caller's; the bridge does not free it.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_module_remove_event_listener(
+    int32_t listener_id);
+
+// Dispatch `payload` to every listener registered against
+// `(module_name, event_name)`. Called from the native module side
+// (Swift / Kotlin `sendEvent` lowers to this). `payload` may be
+// NULL to send a no-data ping; otherwise it is borrowed for the
+// duration of the dispatch (the bridge does not copy it). Listeners
+// fire on the calling thread, in registration order.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_module_send_event(
+    const char* module_name,
+    const char* event_name,
+    const WhiskerValueRaw* payload);
+
+// Lifecycle hooks the native side uses to start / stop an expensive
+// source (e.g. an `OnBackInvokedCallback` registration) only while
+// at least one listener is present. The native side registers
+// `started` / `stopped` once at module load (via
+// `whisker_bridge_module_register_observer_hooks`), and the bridge
+// fires:
+//
+//   - `started(module, event)` when the listener count for
+//     `(module, event)` transitions from 0 to 1.
+//   - `stopped(module, event)` when the listener count transitions
+//     from 1 to 0.
+//
+// `module` is passed back even though the hook is per-module — the
+// platform side typically registers one shared C trampoline and
+// uses `module` to index into its own per-module dispatch table.
+//
+// Passing `started=NULL` / `stopped=NULL` unregisters the hooks for
+// that module (the last write wins).
+typedef void (*WhiskerModuleObserverHook)(
+    const char* module_name,
+    const char* event_name);
+WHISKER_BRIDGE_EXPORT void whisker_bridge_module_register_observer_hooks(
+    const char* module_name,
+    WhiskerModuleObserverHook started,
+    WhiskerModuleObserverHook stopped);
+
 // Free any heap allocations the bridge attached to `value` (string
 // content, bytes content, recursive array/map contents). Safe to
 // call on a value whose `type` doesn't carry heap data — it's a
 // no-op for scalars. NULL pointer is also safe.
 WHISKER_BRIDGE_EXPORT void whisker_bridge_value_release(WhiskerValueRaw* value);
+
+// Debug-only: write `msg` to the platform log (Android logcat / no-op
+// elsewhere — iOS keeps using `os_log` via Swift). Survives Android's
+// stderr-is-dropped policy, so it's the only way to land a Rust
+// diagnostic in `adb logcat` without going through the JNI layer.
+// `tag == NULL` defaults to "WhiskerRust".
+WHISKER_BRIDGE_EXPORT void whisker_bridge_log_info(
+    const char* tag, const char* msg);
 
 // Invoke a Lynx UI method on a mounted element synchronously.
 // Phase 7-Φ.H.2.5 stub — currently always returns

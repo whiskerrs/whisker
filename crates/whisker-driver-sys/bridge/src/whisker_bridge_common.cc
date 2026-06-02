@@ -16,6 +16,7 @@
 // stay hidden; only the LYNX_CAPI_EXPORT-tagged functions cross the
 // .so boundary.
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -23,6 +24,10 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
 
 #include "lynx_native_renderer_capi.h"
 
@@ -472,6 +477,190 @@ extern "C" bool whisker_bridge_invoke_module_async(
     return true;
 }
 #endif  // !__ANDROID__
+
+// ============================================================================
+// Module event subscription (Phase L-2c)
+// ============================================================================
+//
+// Listener registry is keyed on `(module, event)` and tracks an
+// ordered list of `(listener_id, callback, user_data)` triples.
+// `listener_id` is a monotonically-increasing positive integer; we
+// expose it to the Rust wrapper so `ModuleSubscription::drop()` can
+// O(1)-locate the entry to delete without re-keying by module/event.
+//
+// Observer hooks (`OnStartObserving` / `OnStopObserving` parallels)
+// fire on the 0↔1 listener-count transition for each
+// `(module, event)` pair. The native module registers them once at
+// load time; the bridge looks them up by module name on every
+// add/remove and calls them inline so the native source can spin up
+// before the next `send_event` arrives.
+
+namespace {
+
+struct ModuleEventListener {
+    int32_t id = 0;
+    std::string module_name;
+    std::string event_name;
+    WhiskerModuleEventCallback callback = nullptr;
+    void* user_data = nullptr;
+};
+
+struct ModuleObserverHooks {
+    WhiskerModuleObserverHook started = nullptr;
+    WhiskerModuleObserverHook stopped = nullptr;
+};
+
+std::mutex& EventRegistryMutex() {
+    static std::mutex m;
+    return m;
+}
+
+// Listener storage. Keyed by id so removal is O(1); a secondary
+// per-(module, event) listener-count map lets us decide whether to
+// fire OnStart / OnStop on each transition without rescanning.
+std::unordered_map<int32_t, ModuleEventListener>& EventListeners() {
+    static std::unordered_map<int32_t, ModuleEventListener> m;
+    return m;
+}
+std::unordered_map<std::string, int>& ListenerCounts() {
+    static std::unordered_map<std::string, int> m;
+    return m;
+}
+std::unordered_map<std::string, ModuleObserverHooks>& ObserverHooks() {
+    static std::unordered_map<std::string, ModuleObserverHooks> m;
+    return m;
+}
+
+std::string EventKey(const std::string& module_name, const std::string& event_name) {
+    // `\x1f` (unit separator) is forbidden inside identifier-like
+    // module / event names, so this concatenation is unambiguous.
+    return module_name + "\x1f" + event_name;
+}
+
+int32_t NextListenerId() {
+    static std::atomic<int32_t> counter{1};
+    return counter.fetch_add(1, std::memory_order_relaxed);
+}
+
+}  // namespace
+
+extern "C" void whisker_bridge_log_info(const char* tag, const char* msg) {
+    if (msg == nullptr) return;
+#if defined(__ANDROID__)
+    __android_log_print(ANDROID_LOG_INFO,
+                        tag != nullptr ? tag : "WhiskerRust", "%s", msg);
+#else
+    (void)tag;
+    (void)msg;
+#endif
+}
+
+extern "C" int32_t whisker_bridge_module_add_event_listener(
+    const char* module_name,
+    const char* event_name,
+    WhiskerModuleEventCallback callback,
+    void* user_data) {
+    if (module_name == nullptr || event_name == nullptr || callback == nullptr) {
+        return 0;
+    }
+    int32_t id = NextListenerId();
+    std::string module_str(module_name);
+    std::string event_str(event_name);
+    std::string key = EventKey(module_str, event_str);
+
+    WhiskerModuleObserverHook start_hook = nullptr;
+    bool became_first = false;
+    {
+        std::lock_guard<std::mutex> g(EventRegistryMutex());
+        EventListeners()[id] = ModuleEventListener{
+            id, module_str, event_str, callback, user_data};
+        int& count = ListenerCounts()[key];
+        if (count == 0) {
+            became_first = true;
+            auto it = ObserverHooks().find(module_str);
+            if (it != ObserverHooks().end()) {
+                start_hook = it->second.started;
+            }
+        }
+        count += 1;
+    }
+    if (became_first && start_hook != nullptr) {
+        // Fire outside the lock — the hook may call back into the
+        // bridge (e.g. register an `OnBackInvokedCallback` that
+        // synchronously emits a startup event).
+        start_hook(module_str.c_str(), event_str.c_str());
+    }
+    return id;
+}
+
+extern "C" void whisker_bridge_module_remove_event_listener(int32_t listener_id) {
+    if (listener_id <= 0) return;
+    WhiskerModuleObserverHook stop_hook = nullptr;
+    std::string module_for_stop;
+    std::string event_for_stop;
+    {
+        std::lock_guard<std::mutex> g(EventRegistryMutex());
+        auto it = EventListeners().find(listener_id);
+        if (it == EventListeners().end()) return;
+        std::string module_str = it->second.module_name;
+        std::string event_str = it->second.event_name;
+        EventListeners().erase(it);
+        std::string key = EventKey(module_str, event_str);
+        int& count = ListenerCounts()[key];
+        if (count > 0) {
+            count -= 1;
+            if (count == 0) {
+                ListenerCounts().erase(key);
+                auto hook_it = ObserverHooks().find(module_str);
+                if (hook_it != ObserverHooks().end()) {
+                    stop_hook = hook_it->second.stopped;
+                    module_for_stop = module_str;
+                    event_for_stop = event_str;
+                }
+            }
+        }
+    }
+    if (stop_hook != nullptr) {
+        stop_hook(module_for_stop.c_str(), event_for_stop.c_str());
+    }
+}
+
+extern "C" void whisker_bridge_module_send_event(
+    const char* module_name,
+    const char* event_name,
+    const WhiskerValueRaw* payload) {
+    if (module_name == nullptr || event_name == nullptr) return;
+    // Snapshot the listener list under the lock — we don't want to
+    // hold it across the user callbacks (which may register / drop
+    // further listeners). Vector copy is cheap; listener counts in
+    // practice are small (1–2 per gesture / observer).
+    std::vector<std::pair<WhiskerModuleEventCallback, void*>> snapshot;
+    {
+        std::lock_guard<std::mutex> g(EventRegistryMutex());
+        for (const auto& kv : EventListeners()) {
+            const auto& l = kv.second;
+            if (l.module_name == module_name && l.event_name == event_name) {
+                snapshot.emplace_back(l.callback, l.user_data);
+            }
+        }
+    }
+    for (auto& entry : snapshot) {
+        entry.first(entry.second, payload);
+    }
+}
+
+extern "C" void whisker_bridge_module_register_observer_hooks(
+    const char* module_name,
+    WhiskerModuleObserverHook started,
+    WhiskerModuleObserverHook stopped) {
+    if (module_name == nullptr) return;
+    std::lock_guard<std::mutex> g(EventRegistryMutex());
+    if (started == nullptr && stopped == nullptr) {
+        ObserverHooks().erase(module_name);
+    } else {
+        ObserverHooks()[module_name] = ModuleObserverHooks{started, stopped};
+    }
+}
 
 // Phase 7-Φ.H.2.7 — `whisker_bridge_invoke_element_method` impl.
 //

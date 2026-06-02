@@ -75,7 +75,18 @@ const BRIDGE_EXPORTS: &[&str] = &[
     // previous `_OBJC_CLASS_$_WhiskerModuleRegistry` export (the
     // Obj-C class is gone — pure C function pointer table now).
     "_whisker_bridge_register_module_dispatch",
+    // whisker-module event system (Phase L-2c). `add/remove_event_listener`
+    // is consumed by Rust subscribers (e.g. AndroidPredictiveBack);
+    // `send_event` is the native module → Rust fan-out;
+    // `register_observer_hooks` drives OnStart/StopObserving. Without
+    // these in the whitelist iOS link drops them and
+    // `WhiskerModuleEventCenter.swift` fails to resolve at link time.
+    "_whisker_bridge_module_add_event_listener",
+    "_whisker_bridge_module_remove_event_listener",
+    "_whisker_bridge_module_send_event",
+    "_whisker_bridge_module_register_observer_hooks",
     "_whisker_bridge_log_hello",
+    "_whisker_bridge_log_info",
 ];
 
 /// Build the WhiskerDriver.xcframework that wraps `package`'s dylib

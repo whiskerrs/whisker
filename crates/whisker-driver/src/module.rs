@@ -154,6 +154,142 @@ impl PlatformModule {
     pub async fn invoke_async(&self, function: &str, args: Vec<WhiskerValue>) -> WhiskerValue {
         invoke_async(&self.name, function, args).await
     }
+
+    /// Subscribe to `event` on this module. The returned
+    /// [`ModuleSubscription`] removes the listener on drop, so the
+    /// caller controls listener lifetime by simply holding (or
+    /// dropping) the value.
+    ///
+    /// Modelled on Expo's `addListener(event, fn)` — the native side
+    /// pumps events through `whisker_bridge_module_send_event`, the
+    /// bridge fans them out to every registered Rust callback.
+    /// `OnStartObserving` / `OnStopObserving` hooks (registered
+    /// per-module on the platform side) fire on the 0↔1 listener
+    /// transition so the module can lazily attach / detach its
+    /// underlying source.
+    ///
+    /// The closure runs on whichever thread the bridge dispatches on
+    /// (typically the platform main thread). `Send + Sync` is
+    /// required because the bridge stores the pointer and the
+    /// dispatch thread may differ from the subscribing thread.
+    pub fn on_event<F>(&self, event: &str, callback: F) -> ModuleSubscription
+    where
+        F: Fn(WhiskerValue) + Send + Sync + 'static,
+    {
+        let module_c = match CString::new(self.name.as_str()) {
+            Ok(c) => c,
+            Err(_) => return ModuleSubscription::failed("module name contained NUL byte"),
+        };
+        let event_c = match CString::new(event) {
+            Ok(c) => c,
+            Err(_) => return ModuleSubscription::failed("event name contained NUL byte"),
+        };
+        // `Box<EventCallback>` gives a stable thin pointer we can
+        // stuff into `user_data`. The inner box carries the fat
+        // trait-object pointer; the outer box is just for the address.
+        let callback: EventCallback = Box::new(callback);
+        let user_data = Box::into_raw(Box::new(callback)) as *mut c_void;
+        let id = unsafe {
+            ffi::whisker_bridge_module_add_event_listener(
+                module_c.as_ptr(),
+                event_c.as_ptr(),
+                event_trampoline,
+                user_data,
+            )
+        };
+        if id <= 0 {
+            // Bridge refused — recover the box so the closure drops.
+            unsafe {
+                let _ = Box::from_raw(user_data as *mut EventCallback);
+            }
+            return ModuleSubscription::failed("bridge refused event listener registration");
+        }
+        ModuleSubscription {
+            id,
+            user_data,
+            error: None,
+        }
+    }
+}
+
+// ----- Event subscription -------------------------------------------------
+
+/// Heap-allocated Rust callback the C trampoline dispatches into.
+/// `Send + Sync` because the bridge may fire from any thread.
+type EventCallback = Box<dyn Fn(WhiskerValue) + Send + Sync>;
+
+/// C trampoline registered with the bridge. Recovers the
+/// `EventCallback` from `user_data` (by reference — ownership stays
+/// with [`ModuleSubscription`]) and invokes it with the decoded
+/// payload.
+extern "C" fn event_trampoline(user_data: *mut c_void, payload: *const ffi::WhiskerValueRaw) {
+    if user_data.is_null() {
+        return;
+    }
+    let cb = unsafe { &*(user_data as *const EventCallback) };
+    let value = if payload.is_null() {
+        WhiskerValue::Null
+    } else {
+        unsafe { from_raw(&*payload) }
+    };
+    cb(value);
+}
+
+/// RAII handle for an [`PlatformModule::on_event`] subscription.
+/// Dropping the handle removes the listener via
+/// [`whisker_bridge_module_remove_event_listener`](whisker_driver_sys::whisker_bridge_module_remove_event_listener)
+/// and frees the boxed Rust closure.
+///
+/// `error` carries a non-fatal registration failure so the caller can
+/// inspect it without unwrapping a `Result`. A failed subscription is
+/// inert — drop does nothing — so it's safe to leak.
+pub struct ModuleSubscription {
+    id: i32,
+    user_data: *mut c_void,
+    error: Option<String>,
+}
+
+impl ModuleSubscription {
+    fn failed(msg: &str) -> Self {
+        Self {
+            id: 0,
+            user_data: std::ptr::null_mut(),
+            error: Some(msg.into()),
+        }
+    }
+
+    /// `Some(_)` if registration failed; `None` for a live
+    /// subscription. The error string is suitable for logging.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// Bridge-assigned listener id (positive for live subscriptions,
+    /// `0` for a failed one). Exposed primarily for tests / tracing.
+    pub fn id(&self) -> i32 {
+        self.id
+    }
+}
+
+// The `user_data` pointer references a `Box<EventCallback>` whose
+// inner closure is `Send + Sync`. The wrapper itself never reads the
+// pointer except to free it on drop, so it's safe to move across
+// threads.
+unsafe impl Send for ModuleSubscription {}
+unsafe impl Sync for ModuleSubscription {}
+
+impl Drop for ModuleSubscription {
+    fn drop(&mut self) {
+        if self.id <= 0 || self.user_data.is_null() {
+            return;
+        }
+        unsafe {
+            ffi::whisker_bridge_module_remove_event_listener(self.id);
+            // Reclaim and drop the boxed closure now that the bridge
+            // can no longer call into it.
+            let _ = Box::from_raw(self.user_data as *mut EventCallback);
+        }
+    }
 }
 
 /// Async variant. Resolves once the bridge fires the C callback
