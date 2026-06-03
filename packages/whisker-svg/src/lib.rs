@@ -21,8 +21,8 @@
 //!
 //! ## How the bytes flow
 //!
-//! Rust calls [`whisker_svg_core::compile`] on every change to
-//! `content`, producing the v1 display-list byte stream defined in
+//! Rust calls [`compile`] on every change to `content`, producing
+//! the v1 display-list byte stream defined in
 //! `packages/whisker-svg/SPEC.md`. The bytes are base64-encoded
 //! and sent through the standard Whisker `apply_attr` stringified-
 //! value path — Whisker's existing C ABI doesn't expose a "binary
@@ -35,9 +35,19 @@
 //!
 //! `color:` is plumbed unmodified to the platform replayer. When
 //! the source SVG uses `fill="currentColor"` (or `stroke="..."`),
-//! `whisker-svg-core` emits `OP_PAINT_FILL_TINT` / `OP_PAINT_STROKE_TINT`
+//! the compiler emits `OP_PAINT_FILL_TINT` / `OP_PAINT_STROKE_TINT`
 //! instead of a literal colour — the replayer substitutes the host's
 //! `color:` value at draw time. See `SPEC.md` §"Tint propagation".
+
+pub mod builder;
+pub mod compile;
+pub mod format;
+pub mod path_parse;
+pub mod replay;
+
+pub use builder::{Color, DisplayListBuilder, Transform};
+pub use compile::{compile, CompileError, Compiled};
+pub use replay::{replay, ReplayError, TraceVisitor, Visitor};
 
 use base64::Engine;
 use whisker::prelude::*;
@@ -99,15 +109,15 @@ pub fn svg_renderer(display_list: Signal<String>, color: Signal<String>, style: 
 /// Compile `svg_xml` to a base64-cased display list. Returns empty
 /// string on parse failure (the replayer treats that as
 /// "render nothing", same as an empty SVG). A best-effort surface
-/// — surfacing the underlying [`whisker_svg_core::CompileError`]
-/// to the user would mean threading errors through the reactive
-/// graph, which doesn't compose well with `Signal<String>` props.
-/// Diagnostics print to stderr via `eprintln!`.
+/// — surfacing the underlying [`CompileError`] to the user would
+/// mean threading errors through the reactive graph, which doesn't
+/// compose well with `Signal<String>` props. Diagnostics print to
+/// stderr via `eprintln!`.
 fn encode(svg_xml: &str) -> String {
     if svg_xml.is_empty() {
         return String::new();
     }
-    match whisker_svg_core::compile(svg_xml) {
+    match compile(svg_xml) {
         Ok(c) => {
             for w in &c.warnings {
                 eprintln!("[whisker-svg] {w}");

@@ -1985,15 +1985,8 @@ name = "whisker-svg"
 version = "0.1.0"
 dependencies = [
  "base64",
- "whisker",
- "whisker-svg-core",
-]
-
-[[package]]
-name = "whisker-svg-core"
-version = "0.1.0"
-dependencies = [
  "roxmltree",
+ "whisker",
 ]
 
 [[package]]

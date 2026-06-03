@@ -1,7 +1,7 @@
 //! Fixture-driven integration test.
 //!
 //! Walks every `tests/fixtures/*.svg`, compiles it through
-//! [`whisker_svg_core::compile`], runs the resulting bytes through
+//! [`whisker_svg::compile`], runs the resulting bytes through
 //! [`TraceVisitor`], and asserts the trace matches the matching
 //! `*.trace.txt`. Also asserts the produced bytes match
 //! `*.bin` — those byte files are the canonical cross-platform
@@ -17,7 +17,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use whisker_svg_core::{compile, replay, TraceVisitor};
+use whisker_svg::{compile, replay, TraceVisitor};
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

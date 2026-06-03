@@ -3,10 +3,10 @@
 //! every opcode encoded → decoded back to its arguments, error
 //! surfaces).
 
-use whisker_svg_core::builder::{Color, Transform};
-use whisker_svg_core::format::*;
-use whisker_svg_core::replay::{replay, ReplayError, Visitor};
-use whisker_svg_core::DisplayListBuilder;
+use whisker_svg::builder::{Color, Transform};
+use whisker_svg::format::*;
+use whisker_svg::replay::{replay, ReplayError, Visitor};
+use whisker_svg::DisplayListBuilder;
 
 /// Capture every visitor call as a tagged event so we can
 /// match-assert the sequence and arguments precisely.

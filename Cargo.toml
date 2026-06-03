@@ -14,7 +14,6 @@ members = [
     "crates/whisker-css",
     "crates/whisker-runtime",
     "crates/whisker-subsecond",
-    "crates/whisker-svg-core",
     "examples/podcast",
     "examples/podcast/crates/podcast-theme",
     "examples/podcast/crates/podcast-domain",
