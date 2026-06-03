@@ -55,14 +55,17 @@ typedef struct WhiskerEngine WhiskerEngine;
 typedef struct WhiskerElement WhiskerElement;
 
 // Tag type passed to create functions that need a tag string. Numeric
-// IDs map to HTML-style tag names ("view", "text", "image", ...).
+// IDs map to HTML-style tag names ("view", "text", "scroll-view", ...).
+// `image` is intentionally not built-in — use the `whisker-image`
+// module (Kingfisher / Coil-backed) instead. The Lynx-native `<image>`
+// has no `LynxServiceImageProtocol` registered in the Whisker
+// distribution, so the tag would never paint anyway.
 typedef enum {
     WhiskerElementTagPage       = 1,
     WhiskerElementTagView       = 2,
     WhiskerElementTagText       = 3,
     WhiskerElementTagRawText    = 4,
-    WhiskerElementTagImage      = 5,
-    WhiskerElementTagScrollView = 6,
+    WhiskerElementTagScrollView = 5,
 } WhiskerElementTag;
 
 // ---- Engine lifecycle -----------------------------------------------------

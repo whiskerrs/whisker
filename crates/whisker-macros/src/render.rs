@@ -10,7 +10,7 @@
 //!
 //! Each `node` is classified by its leading ident:
 //!
-//! - Built-in tag (`view`, `page`, `text`, `raw_text`, `image`,
+//! - Built-in tag (`view`, `page`, `text`, `raw_text`,
 //!   `scroll_view`) → lowered to a builder chain
 //!   `::whisker::__tags::__<tag>_ctor().style(…).…__h()`.
 //! - `Show` / `For` → lowered to the matching `whisker::show` /
@@ -345,7 +345,7 @@ fn snake_to_pascal(name: &str) -> String {
 fn is_builtin_tag(name: &str) -> bool {
     matches!(
         name,
-        "page" | "view" | "text" | "raw_text" | "image" | "scroll_view" | "list" | "fragment"
+        "page" | "view" | "text" | "raw_text" | "scroll_view" | "list" | "fragment"
     )
     // `list_item` is intentionally NOT exposed as a user-writable
     // tag. The `list` render-props builder auto-wraps every
@@ -539,7 +539,7 @@ impl ElementNode {
 
         let call = if is_known_attr_method(&tag_name, &name_str) {
             // Named builder attribute method (`style`, `class`, the
-            // universal trait attrs, and per-tag ones like `image::mode`,
+            // universal trait attrs, and per-tag ones like
             // `scroll_view::bounces`, `text::text_maxline`). The method
             // takes `impl Into<Signal<T>>` for its semantic `T` and
             // handles Static / Dynamic dispatch internally; the value
@@ -632,20 +632,6 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("text", "text_single_line_vertical_align")
             | ("text", "custom_context_menu")
             | ("text", "custom_text_selection")
-            | ("image", "src")
-            | ("image", "mode")
-            | ("image", "placeholder")
-            | ("image", "blur_radius")
-            | ("image", "auto_size")
-            | ("image", "tint_color")
-            | ("image", "cap_insets")
-            | ("image", "cap_insets_scale")
-            | ("image", "loop_count")
-            | ("image", "autoplay")
-            | ("image", "prefetch_width")
-            | ("image", "prefetch_height")
-            | ("image", "image_config")
-            | ("image", "defer_src_invalidation")
             | ("scroll_view", "scroll_orientation")
             | ("scroll_view", "bounces")
             | ("scroll_view", "enable_scroll")
@@ -699,18 +685,13 @@ fn is_known_event_method(name: &str) -> bool {
             | "on_transitioncancel"
             // Component-specific events (CustomEvent → bind only). These
             // are inherent methods on a single tag's builder (scroll_view
-            // / image / text), so the macro emits `.on_scroll(f)` etc.;
+            // / text), so the macro emits `.on_scroll(f)` etc.;
             // using one on the wrong tag is a clear "no method" error.
             | "on_scroll"
             | "on_scrolltoupper"
             | "on_scrolltolower"
             | "on_scrollend"
             | "on_contentsizechanged"
-            | "on_load"
-            | "on_error"
-            | "on_startplay"
-            | "on_currentloopcomplete"
-            | "on_finalloopcomplete"
             | "on_layout"
             | "on_selectionchange"
     );
@@ -867,7 +848,7 @@ mod tests {
 
     #[test]
     fn builtin_tags_recognised() {
-        for t in ["page", "view", "text", "raw_text", "image", "scroll_view"] {
+        for t in ["page", "view", "text", "raw_text", "scroll_view"] {
             assert!(is_builtin_tag(t));
         }
     }

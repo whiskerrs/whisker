@@ -22,6 +22,7 @@ members = [
     "examples/router-demo",
     "examples/subsecond-poc",
     "packages/whisker-hello-element",
+    "packages/whisker-image",
     "packages/whisker-local-store",
     "packages/whisker-router",
     "packages/whisker-router-macros",

@@ -23,8 +23,7 @@ pub enum WhiskerElementTag {
     View = 2,
     Text = 3,
     RawText = 4,
-    Image = 5,
-    ScrollView = 6,
+    ScrollView = 5,
 }
 
 pub type WhiskerTasmCallback = extern "C" fn(user_data: *mut c_void);

@@ -232,8 +232,8 @@ fn style_attribute_emits_set_inline_styles() {
 fn arbitrary_attribute_emits_set_attribute() {
     with_recorder(|log| {
         let _ = render! {
-            image(
-                src: "https://example.com/x.png",
+            view(
+                role: "banner",
                 alt: "example",
             )
         };
@@ -242,13 +242,13 @@ fn arbitrary_attribute_emits_set_attribute() {
             ops[0],
             Op::Create {
                 id: 0,
-                tag: ElementTag::Image
+                tag: ElementTag::View
             }
         );
         assert!(ops.contains(&Op::SetAttr {
             id: 0,
-            key: "src".into(),
-            value: "https://example.com/x.png".into(),
+            key: "role".into(),
+            value: "banner".into(),
         }));
         assert!(ops.contains(&Op::SetAttr {
             id: 0,
@@ -277,17 +277,6 @@ fn typed_attribute_methods_route_to_named_setters() {
         assert!(has(&ops, "bounces", "true"), "got {ops:?}");
         assert!(has(&ops, "enable-scroll", "false"), "got {ops:?}");
         assert!(has(&ops, "upper-threshold", "50"), "got {ops:?}");
-    });
-
-    // image: enum-string + bool + number(0).
-    with_recorder(|log| {
-        let _ = render! {
-            image(mode: "aspectFit", auto_size: true, loop_count: 0)
-        };
-        let ops = log.borrow();
-        assert!(has(&ops, "mode", "aspectFit"), "got {ops:?}");
-        assert!(has(&ops, "auto-size", "true"), "got {ops:?}");
-        assert!(has(&ops, "loop-count", "0"), "got {ops:?}");
     });
 
     // text: number + bool.
@@ -371,19 +360,15 @@ fn tap_propagation_variants_route_to_bind_types() {
 
 #[test]
 fn component_specific_events_route_bind_only() {
-    // Phase 6 coverage: tag-specific CustomEvents (scroll_view / image /
+    // Phase 6 coverage: tag-specific CustomEvents (scroll_view /
     // text) register their named listener as BindType::Bind. They have
     // no catch/capture variants (Lynx CustomEvent = target-only).
     with_recorder(|log| {
         let _ = render! {
             scroll_view {
-                image(on_load: |_| {}, on_error: |_| {})
                 text(on_layout: |_| {}, on_selectionchange: |_| {})
             }
         };
-        // attach scroll handlers on the scroll_view itself via a second
-        // render (kwargs + children on one element are both fine, but
-        // keep this focused).
         let names: Vec<(String, BindType)> = log
             .borrow()
             .iter()
@@ -394,7 +379,7 @@ fn component_specific_events_route_bind_only() {
                 _ => None,
             })
             .collect();
-        for n in ["load", "error", "layout", "selectionchange"] {
+        for n in ["layout", "selectionchange"] {
             assert!(
                 names.contains(&(n.to_string(), BindType::Bind)),
                 "missing bind listener for {n}; got {names:?}"
@@ -557,7 +542,7 @@ fn dynamic_attribute_re_runs_on_dep_change() {
         // Already a `ReadSignal<String>` — pass the handle directly,
         // it converts to `Signal::Dynamic`.
         let _h = render! {
-            image(src: src)
+            view(src: src)
         };
         set_src.set("b.png".into());
         flush();
@@ -895,12 +880,12 @@ fn for_removes_items_on_update() {
 }
 
 #[test]
-fn page_view_image_scroll_view_tags_supported() {
+fn page_view_scroll_view_tags_supported() {
     with_recorder(|log| {
         let _ = render! {
             page {
                 scroll_view {
-                    image()
+                    view()
                 }
             }
         };
@@ -914,7 +899,7 @@ fn page_view_image_scroll_view_tags_supported() {
             .collect();
         assert_eq!(
             creates,
-            vec![ElementTag::Page, ElementTag::ScrollView, ElementTag::Image]
+            vec![ElementTag::Page, ElementTag::ScrollView, ElementTag::View]
         );
     });
 }

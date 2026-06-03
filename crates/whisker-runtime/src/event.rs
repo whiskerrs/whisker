@@ -348,34 +348,6 @@ pub struct ScrollDetail {
     pub is_dragging: bool,
 }
 
-// ---- image -----------------------------------------------------------------
-
-/// `load` on `<image>` — the image request succeeded; `detail` gives
-/// the intrinsic pixel size. (`error` / animated-image events surface
-/// as [`CustomEvent`] — their detail is component-specific.)
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ImageLoadEvent {
-    #[serde(rename = "type", default)]
-    pub kind: String,
-    #[serde(default)]
-    pub timestamp: f64,
-    #[serde(default)]
-    pub target: Target,
-    #[serde(rename = "currentTarget", default)]
-    pub current_target: Target,
-    #[serde(default)]
-    pub detail: ImageLoadDetail,
-}
-
-/// Intrinsic image size carried by an [`ImageLoadEvent`].
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
-pub struct ImageLoadDetail {
-    #[serde(default)]
-    pub width: f64,
-    #[serde(default)]
-    pub height: f64,
-}
-
 // ---- text ------------------------------------------------------------------
 
 /// `layout` on `<text>` — fired after text layout completes.

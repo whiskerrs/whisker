@@ -18,8 +18,7 @@ pub enum ElementTag {
     View = 2,
     Text = 3,
     RawText = 4,
-    Image = 5,
-    ScrollView = 6,
+    ScrollView = 5,
 }
 
 impl ElementTag {
@@ -29,7 +28,6 @@ impl ElementTag {
             ElementTag::View => "view",
             ElementTag::Text => "text",
             ElementTag::RawText => "raw-text",
-            ElementTag::Image => "image",
             ElementTag::ScrollView => "scroll-view",
         }
     }

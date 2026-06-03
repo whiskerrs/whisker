@@ -481,62 +481,6 @@ impl Default for ElementHandle {
     }
 }
 
-/// Imperative handle to a mounted `<image>`. Allocate with
-/// [`ImageHandle::new`], bind via `image(ref: handle.r())` in
-/// `render!`, then drive animated-image (GIF / APNG) playback.
-///
-/// `Copy` (the inner `ElementRef` is an arena handle), so it can be
-/// captured by value into multiple event closures.
-#[derive(Copy, Clone)]
-pub struct ImageHandle {
-    r: ElementRef,
-}
-
-impl ImageHandle {
-    /// Allocate a fresh, unbound image handle.
-    pub fn new() -> Self {
-        Self {
-            r: ElementRef::new(),
-        }
-    }
-
-    /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind
-    /// it on mount (`image(ref: handle.r())`).
-    pub fn r(&self) -> ElementRef {
-        self.r
-    }
-
-    generic_element_methods!();
-
-    /// `pauseAnimation` — pause a playing animated image, holding the
-    /// current frame.
-    pub fn pause_animation(&self) {
-        let _ = self.r.invoke("pauseAnimation", WhiskerValue::Null);
-    }
-
-    /// `resumeAnimation` — resume a paused animated image from the
-    /// held frame.
-    pub fn resume_animation(&self) {
-        let _ = self.r.invoke("resumeAnimation", WhiskerValue::Null);
-    }
-
-    /// `stopAnimation` — stop playback and reset to the first frame.
-    pub fn stop_animation(&self) {
-        let _ = self.r.invoke("stopAnimation", WhiskerValue::Null);
-    }
-
-    /// `startAnimate` — (re)start playback from the first frame.
-    pub fn start_animate(&self) {
-        let _ = self.r.invoke("startAnimate", WhiskerValue::Null);
-    }
-}
-
-impl Default for ImageHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Imperative handle to a mounted `<scroll-view>`. Allocate with
 /// [`ScrollViewHandle::new`], bind via `scroll_view(ref: handle.r())`
 /// in `render!`, then query scroll state.
