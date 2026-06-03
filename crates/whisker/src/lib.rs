@@ -49,8 +49,8 @@ pub use whisker_macros::{component, main, module_component, render};
 // macro binds it on mount when passed as the `ref:` prop.
 pub use whisker_driver::{
     animate_cancel, animate_start, element_ref, invoke_element_animate, AnimateOp, AnimateOptions,
-    BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError, ScrollInfo,
-    ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo,
+    BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
+    TextBoundingRect, TextHandle, UiInfo,
 };
 
 // Function-only module dispatch. `PlatformModule` is the name-keyed
@@ -74,9 +74,9 @@ pub use whisker_runtime::value::WhiskerValue;
 /// lifecycle / component-state events a [`CustomEvent`](event::CustomEvent).
 pub mod event {
     pub use whisker_runtime::event::{
-        AnimationEvent, BindType, CustomEvent, Event, ImageLoadDetail, ImageLoadEvent, Point,
-        ScrollDetail, ScrollEvent, SelectionChangeEvent, SelectionDetail, Size, Target,
-        TextLayoutDetail, TextLayoutEvent, TextLineInfo, Touch, TouchEvent,
+        AnimationEvent, BindType, CustomEvent, Event, Point, ScrollDetail, ScrollEvent,
+        SelectionChangeEvent, SelectionDetail, Size, Target, TextLayoutDetail, TextLayoutEvent,
+        TextLineInfo, Touch, TouchEvent,
     };
 }
 
@@ -154,7 +154,7 @@ pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
 pub mod __tags {
     use crate::ElementTag;
     use whisker_runtime::event::{
-        bind_typed, AnimationEvent, CustomEvent, ImageLoadEvent, ScrollEvent, SelectionChangeEvent,
+        bind_typed, AnimationEvent, CustomEvent, ScrollEvent, SelectionChangeEvent,
         TextLayoutEvent, TouchEvent,
     };
     use whisker_runtime::reactive::Signal;
@@ -928,178 +928,6 @@ pub mod __tags {
         }
     }
 
-    /// `<image>` — bitmap element. `src` is the image URL / resource.
-    #[allow(non_camel_case_types)]
-    pub struct image {
-        handle: Element,
-    }
-    #[allow(non_snake_case)]
-    pub fn __image_ctor() -> image {
-        image {
-            handle: create_element(ElementTag::Image),
-        }
-    }
-    impl ElementBuilder for image {
-        fn __element(&self) -> Element {
-            self.handle
-        }
-    }
-    impl image {
-        /// `src` — image URL or resource name. Reactive-capable.
-        pub fn src<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "src", v);
-            self
-        }
-
-        // ---- image attributes (every method reactive-capable) -------
-
-        /// `mode` — crop/scale: `scaleToFill` (default) / `aspectFit` /
-        /// `aspectFill` / `center`.
-        pub fn mode<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "mode", v);
-            self
-        }
-        /// `placeholder` — fallback image shown while loading.
-        pub fn placeholder<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "placeholder", v);
-            self
-        }
-        /// `blur-radius` — blur intensity, e.g. `"10px"`.
-        pub fn blur_radius<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "blur-radius", v);
-            self
-        }
-        /// `auto-size` — size the element to the image's intrinsic size.
-        pub fn auto_size<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr(self.handle, "auto-size", v);
-            self
-        }
-        /// `tint-color` — recolor non-transparent pixels.
-        pub fn tint_color<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "tint-color", v);
-            self
-        }
-        /// `cap-insets` — 9-patch stretchable area (`"top right bottom left"`).
-        pub fn cap_insets<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "cap-insets", v);
-            self
-        }
-        /// `cap-insets-scale` — scale of the 9-patch stretchable area.
-        pub fn cap_insets_scale<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<f64>>,
-        {
-            apply_attr(self.handle, "cap-insets-scale", v);
-            self
-        }
-        /// `loop-count` — animated-image play count (0 = infinite).
-        pub fn loop_count<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<i32>>,
-        {
-            apply_attr(self.handle, "loop-count", v);
-            self
-        }
-        /// `autoplay` — start an animated image automatically on load.
-        pub fn autoplay<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr(self.handle, "autoplay", v);
-            self
-        }
-        /// `prefetch-width` — load even when element width is 0, e.g. `"100px"`.
-        pub fn prefetch_width<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "prefetch-width", v);
-            self
-        }
-        /// `prefetch-height` — load even when element height is 0, e.g. `"100px"`.
-        pub fn prefetch_height<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "prefetch-height", v);
-            self
-        }
-        /// `image-config` — bitmap memory format: `ARGB_8888` / `RGB_565`.
-        pub fn image_config<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "image-config", v);
-            self
-        }
-        /// `defer-src-invalidation` — keep the old image until the new
-        /// one loads successfully.
-        pub fn defer_src_invalidation<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr(self.handle, "defer-src-invalidation", v);
-            self
-        }
-
-        // ---- image-specific events (CustomEvent → bind only) --------
-
-        /// `load` — the image request succeeded. The
-        /// [`ImageLoadEvent`] carries the intrinsic pixel size.
-        pub fn on_load<F: Fn(ImageLoadEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "load", BindType::Bind, f);
-            self
-        }
-
-        /// `error` — the image failed to load. The [`CustomEvent`]
-        /// `detail` carries component-specific error info.
-        pub fn on_error<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "error", BindType::Bind, f);
-            self
-        }
-
-        /// `startplay` — an animated image (APNG/GIF) started playing.
-        pub fn on_startplay<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "startplay", BindType::Bind, f);
-            self
-        }
-
-        /// `currentloopcomplete` — one loop of an animated image
-        /// finished playing.
-        pub fn on_currentloopcomplete<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "currentloopcomplete", BindType::Bind, f);
-            self
-        }
-
-        /// `finalloopcomplete` — an animated image finished all its
-        /// `loop-count` loops.
-        pub fn on_finalloopcomplete<F: Fn(CustomEvent) + 'static>(self, f: F) -> Self {
-            bind_typed(self.handle, "finalloopcomplete", BindType::Bind, f);
-            self
-        }
-    }
-
     /// `<scroll-view>` — scrollable container.
     #[allow(non_camel_case_types)]
     pub struct scroll_view {
@@ -1723,8 +1551,8 @@ pub mod prelude {
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};
     // Function-shaped prop types for control-flow components.
     pub use crate::{
-        element_ref, BoundingClientRect, ElementHandle, ElementRef, ImageHandle, RefError,
-        ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle,
+        element_ref, BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo,
+        ScrollViewHandle, TextBoundingRect, TextHandle,
     };
     pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
     // Type-safe CSS builder. Pulled into the prelude so
@@ -1756,7 +1584,7 @@ pub mod prelude {
     // these blocked kwarg completion was a separate bug — the
     // prefix-match heuristic that's since been removed.)
     #[doc(hidden)]
-    pub use crate::__tags::{fragment, image, list, page, raw_text, scroll_view, text, view};
+    pub use crate::__tags::{fragment, list, page, raw_text, scroll_view, text, view};
     // `list_item` intentionally absent — the `list` render-props
     // builder auto-wraps every item internally; user code never
     // reaches for `list_item` directly.

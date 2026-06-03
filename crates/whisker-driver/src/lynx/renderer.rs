@@ -97,7 +97,6 @@ fn map_tag(tag: ElementTag) -> WhiskerElementTag {
         ElementTag::View => WhiskerElementTag::View,
         ElementTag::Text => WhiskerElementTag::Text,
         ElementTag::RawText => WhiskerElementTag::RawText,
-        ElementTag::Image => WhiskerElementTag::Image,
         ElementTag::ScrollView => WhiskerElementTag::ScrollView,
     }
 }

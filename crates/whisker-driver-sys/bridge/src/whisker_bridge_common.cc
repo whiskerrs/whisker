@@ -176,7 +176,6 @@ lynx_element_tag_e MapTag(WhiskerElementTag tag) {
         case WhiskerElementTagView:       return LYNX_ELEMENT_TAG_VIEW;
         case WhiskerElementTagText:       return LYNX_ELEMENT_TAG_TEXT;
         case WhiskerElementTagRawText:    return LYNX_ELEMENT_TAG_RAW_TEXT;
-        case WhiskerElementTagImage:      return LYNX_ELEMENT_TAG_IMAGE;
         case WhiskerElementTagScrollView: return LYNX_ELEMENT_TAG_SCROLL_VIEW;
     }
     return LYNX_ELEMENT_TAG_VIEW;
