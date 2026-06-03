@@ -21,6 +21,11 @@ Thumbs.db
 # committed. The whole `gen/` subtree is ignored, including gradle's
 # `.gradle/` / `build/` caches that live there during dev.
 examples/**/gen/
+# Same exclusion for the `example/` apps that live next to each
+# Whisker module (e.g. `packages/whisker-svg/example/gen/`). Module
+# examples are CNG-generated the same way as top-level examples;
+# their `gen/{android,ios}` trees must not be committed.
+packages/**/example/gen/
 
 # Native build artifacts under the workspace's Whisker-internal
 # `native/` tree (Lynx AARs, SPM build caches, etc.). These belong to

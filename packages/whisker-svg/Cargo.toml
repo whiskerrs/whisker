@@ -1,0 +1,42 @@
+[package]
+name = "whisker-svg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Whisker SVG widget — `Svg(content: …, color: …, style: …)`. Compiles inline SVG XML to the v1 display-list byte stream defined in `SPEC.md` and hands it to the iOS / Android replayer modules over `WhiskerValue::Bytes` (base64-cased through the existing string Prop pipeline to avoid C ABI churn)."
+
+# Explicit include — mirrors whisker-image / whisker-safe-area:
+# `cargo publish` ships the Kotlin + Swift platform sources next to
+# `src/lib.rs`, never the local Gradle / Xcode build artefacts.
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
+    "SPEC.md",
+    "src/**/*.rs",
+    "android/**/*.kt",
+    "android/**/*.kts",
+    "ios/**/*.swift",
+    "README.md",
+]
+
+[lib]
+crate-type = ["rlib"]
+
+# Module-system opt-in marker — same as whisker-image / whisker-video.
+[package.metadata.whisker]
+
+[dependencies]
+whisker = { workspace = true }
+# Base64 for transporting display-list bytes through the existing
+# string-typed Prop pipeline. `base64` is the de-facto crate
+# (~10 KB compiled). The platform replayers decode with the OS
+# stdlib's Base64 facility, no extra dep there.
+base64 = "0.22"
+# SVG XML parsing for the compiler. Disabling default-features
+# drops the `xmlparser` errata-recovery path, which we don't need —
+# we treat unknown tags as warnings and proceed.
+roxmltree = { version = "0.20", default-features = false, features = ["std"] }
