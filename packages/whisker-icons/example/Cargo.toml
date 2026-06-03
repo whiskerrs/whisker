@@ -1,0 +1,13 @@
+[package]
+name = "whisker-icons-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Example app for `whisker-icons`. Renders a small Lucide-icon gallery so on-device verification of the tree-shaken icon constants happens in one place."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-icons = { path = ".." }

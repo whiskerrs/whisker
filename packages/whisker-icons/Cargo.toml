@@ -1,0 +1,28 @@
+[package]
+name = "whisker-icons"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Lucide icons for Whisker — `Icon(svg: lucide::Heart, color: …, size: …)`. Each icon is a separate `pub const &str` synthesised at build time from `vendor/lucide/icons/*.svg`, so the linker drops every icon the user doesn't reference (tree-shaking). The Icon component is a thin wrapper around `whisker-svg`'s `Svg`."
+build = "build.rs"
+
+# `cargo publish` needs the vendored SVGs (build.rs walks them at
+# crate-build time) and the upstream LICENSE for attribution.
+include = [
+    "Cargo.toml",
+    "build.rs",
+    "src/**/*.rs",
+    "vendor/lucide/icons/*.svg",
+    "vendor/lucide/LICENSE",
+    "README.md",
+]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-svg = { path = "../whisker-svg", version = "0.1.0" }
