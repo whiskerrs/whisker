@@ -980,6 +980,9 @@ dependencies = [
 [[package]]
 name = "podcast-theme"
 version = "0.1.0"
+dependencies = [
+ "whisker-css",
+]
 
 [[package]]
 name = "podcast-ui-kit"
@@ -988,6 +991,7 @@ dependencies = [
  "podcast-domain",
  "podcast-theme",
  "whisker",
+ "whisker-icons",
  "whisker-image",
  "whisker-safe-area",
 ]

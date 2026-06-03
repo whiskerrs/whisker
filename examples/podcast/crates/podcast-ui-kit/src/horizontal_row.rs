@@ -6,38 +6,35 @@
 //! their own intrinsic widths.
 
 use podcast_theme as theme;
+use whisker::css::{AlignItems, Display, FlexDirection};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker::Children;
 
 #[component]
 pub fn horizontal_row(children: Children) -> Element {
-    // scroll-view with horizontal orientation. `bounces: true` so
-    // iOS rubber-banding kicks in at the ends; `scroll_bar_enable:
-    // false` because Apple-style podcast browsers don't show one.
-    let scroll_style = "width: 100%; display: flex;".to_string();
-    // Inner content row — cards laid out left-to-right with
-    // `CARD_GAP` between them and `GUTTER` of breathing room at
-    // either side of the row.
-    let inner_style = format!(
-        "display: flex; flex-direction: row; align-items: flex-start; \
-         padding-left: {gutter}; padding-right: {gutter};",
-        gutter = theme::GUTTER,
-    );
-    // Each child gets a right margin via wrapping `view`s — done by
-    // having the children include a margin in their own style, but
-    // to keep the kit's components style-agnostic we instead leave
-    // the gap to the caller's section layout. The caller (browse
-    // screen) inserts manual spacer views when needed.
-
     render! {
+        // `bounces: true` → iOS rubber-banding at the ends;
+        // `scroll_bar_enable: false` → Apple-style podcast browsers
+        // don't show a scroll bar.
         scroll_view(
-            style: scroll_style,
+            style: css!(width: percent(100), display: Display::Flex),
             scroll_orientation: "horizontal",
             scroll_bar_enable: false,
             bounces: true,
         ) {
-            view(style: inner_style) {
+            // Inner content row — cards laid out left-to-right with
+            // `GUTTER` of breathing room at either side of the row.
+            // Card-to-card gap is the caller's concern (the browse
+            // screen inserts manual spacer views) so this component
+            // stays style-agnostic.
+            view(style: css!(
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::FlexStart,
+                padding_left: theme::GUTTER,
+                padding_right: theme::GUTTER,
+            )) {
                 children()
             }
         }

@@ -3,12 +3,13 @@
 //! Three-part bar: leading menu glyph, centred title, trailing
 //! action. Visual reference: a generic mobile media-browser header
 //! (Pocket Casts, Spotify, Castbox all ship a near-identical
-//! shape). Renders text-only — no SVG / image assets are baked in,
-//! keeping the component self-contained.
+//! shape). The menu glyph is `lucide::Menu` via `whisker-icons`.
 
 use podcast_theme as theme;
+use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyContent, ToCss};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
+use whisker_icons::{lucide, Icon, IconProps};
 use whisker_safe_area::safe_area_insets;
 
 /// Title shown centred in the bar. Action label shown trailing.
@@ -17,82 +18,101 @@ use whisker_safe_area::safe_area_insets;
 #[component]
 pub fn top_nav(title: String, action_label: String) -> Element {
     // Two-layer style: outer wrapper carries the safe-area inset
-    // via `padding-top`, inner row keeps its content height. We
+    // via `padding_top`, inner row keeps its content height. We
     // can't pile padding on top of a fixed-height row — the row's
     // children would just disappear behind the padding. Splitting
-    // wrapper / row keeps `NAV_HEIGHT` purely about the nav
-    // content area.
+    // wrapper / row keeps `NAV_HEIGHT` purely about the nav content
+    // area.
     //
     // `safe_area_insets()` returns a process-wide `ReadSignal` —
     // re-fires on rotation / Dynamic Island / notch / Android edge-
     // to-edge toggle. `computed` derives a `ReadSignal<String>` the
     // `style:` prop wires as a reactive style binding, so the bar
-    // re-pads automatically without us touching state from the
-    // component body.
+    // re-pads automatically without the component body touching
+    // state.
     let insets = safe_area_insets();
-    let bg = theme::BG;
     let wrapper_style = computed(move || {
-        format!(
-            "width: 100%; padding-top: {top}px; \
-             flex-shrink: 0; \
-             background-color: {bg};",
-            top = insets.get().top,
+        css!(
+            width: percent(100),
+            padding_top: px(insets.get().top as f32),
+            flex_shrink: 0.0,
+            background_color: theme::BG,
         )
+        .to_css_string()
     });
-    let bar_style = format!(
-        "width: 100%; min-height: {h}; \
-         flex-shrink: 0; \
-         display: flex; flex-direction: row; align-items: center; \
-         padding-left: {gutter}; padding-right: {gutter};",
-        h = theme::NAV_HEIGHT,
-        gutter = theme::GUTTER,
-    );
-    // Three flex children — leading / centre / trailing — each
-    // claiming an equal third so the title genuinely centres on
-    // the bar, not on the title text's own width. The leading
-    // slot is a stack of three short bars (a hamburger glyph
-    // rendered with views, not an icon font, so the kit doesn't
-    // need to ship glyph assets).
-    let slot_third = "flex-grow: 1; flex-shrink: 1; flex-basis: 0%; \
-                      display: flex; flex-direction: row;";
-    let leading_style = format!("{slot_third} align-items: center; justify-content: flex-start;");
-    let centre_style = format!("{slot_third} align-items: center; justify-content: center;");
-    let trailing_style = format!("{slot_third} align-items: center; justify-content: flex-end;");
-
-    let title_style = format!(
-        "font-size: {size}; color: {fg}; font-weight: 600;",
-        size = theme::T_NAV_TITLE,
-        fg = theme::TEXT_PRIMARY,
-    );
-    let action_style = format!(
-        "font-size: {size}; color: {accent}; font-weight: 500;",
-        size = theme::T_NAV_TITLE,
-        accent = theme::ACCENT,
-    );
-
-    // Hamburger glyph: three stacked 2px-tall purple lines.
-    let hamburger_wrap_style = "display: flex; flex-direction: column; width: 18px;".to_string();
-    let bar_line = format!(
-        "width: 18px; height: 2px; background-color: {accent}; \
-         border-radius: 1px; margin-top: 3px; margin-bottom: 3px;",
-        accent = theme::ACCENT,
-    );
 
     render! {
         view(style: wrapper_style) {
-            view(style: bar_style) {
-                view(style: leading_style) {
-                    view(style: hamburger_wrap_style) {
-                        view(style: bar_line.clone())
-                        view(style: bar_line.clone())
-                        view(style: bar_line.clone())
-                    }
+            view(style: css!(
+                width: percent(100),
+                min_height: theme::NAV_HEIGHT,
+                flex_shrink: 0.0,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                padding_left: theme::GUTTER,
+                padding_right: theme::GUTTER,
+            )) {
+                // Three flex children — leading / centre / trailing
+                // — each claiming an equal third so the title
+                // genuinely centres on the bar, not on the title
+                // text's own width.
+                view(style: css!(
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    flex_basis: percent(0),
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::FlexStart,
+                )) {
+                    Icon(
+                        svg: lucide::Menu,
+                        // `whisker-icons` plumbs `color` straight
+                        // through to Lynx as a CSS colour string
+                        // (`stroke="currentColor"` in the source
+                        // SVG), so the accent hex literal is the
+                        // right shape here — there's no typed
+                        // `Color` path on `Icon`'s prop yet.
+                        color: "#a78bfa",
+                        size: "22",
+                    )
                 }
-                view(style: centre_style) {
-                    text(style: title_style, value: title.clone())
+                view(style: css!(
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    flex_basis: percent(0),
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                )) {
+                    text(
+                        style: css!(
+                            font_size: theme::T_NAV_TITLE,
+                            color: theme::TEXT_PRIMARY,
+                            font_weight: FontWeight::Numeric(600),
+                        ),
+                        value: title.clone(),
+                    )
                 }
-                view(style: trailing_style) {
-                    text(style: action_style, value: action_label.clone())
+                view(style: css!(
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    flex_basis: percent(0),
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::FlexEnd,
+                )) {
+                    text(
+                        style: css!(
+                            font_size: theme::T_NAV_TITLE,
+                            color: theme::ACCENT,
+                            font_weight: FontWeight::Numeric(500),
+                        ),
+                        value: action_label.clone(),
+                    )
                 }
             }
         }

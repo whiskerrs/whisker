@@ -21,5 +21,10 @@ whisker-image = { path = "../../../../packages/whisker-image" }
 # bar correctly under the notch / Dynamic Island instead of hard-
 # coding 44pt.
 whisker-safe-area = { path = "../../../../packages/whisker-safe-area" }
+# `whisker-icons` exposes every Lucide icon as a tree-shakable
+# `&'static str` constant under `lucide::*`. Used for the section
+# chevron, top-nav menu glyph, and mini-player play / skip glyphs —
+# replaces the prior hand-faked views and Unicode arrows.
+whisker-icons = { path = "../../../../packages/whisker-icons" }
 podcast-theme = { path = "../podcast-theme" }
 podcast-domain = { path = "../podcast-domain" }

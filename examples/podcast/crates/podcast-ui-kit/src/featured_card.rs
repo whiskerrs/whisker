@@ -8,52 +8,57 @@
 
 use podcast_domain::Podcast;
 use podcast_theme as theme;
+use whisker::css::{Display, FlexDirection, FontWeight, TextOverflow, ToCss};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_image::{Image, ImageProps};
 
 #[component]
 pub fn featured_card(podcast: Podcast) -> Element {
-    let card_style = format!(
-        "width: {w}; \
-         display: flex; flex-direction: column;",
-        w = theme::FEATURED_CARD_WIDTH,
-    );
     let category_label = podcast
         .primary_genre_name
         .clone()
         .unwrap_or_else(|| "Featured".to_string())
         .to_uppercase();
-    let category_style = format!(
-        "font-size: {size}; color: {fg}; \
-         letter-spacing: 0.5px; font-weight: 600;",
-        size = theme::T_CATEGORY,
-        fg = theme::TEXT_SECONDARY,
-    );
     let title_text = podcast.collection_name.clone();
-    let title_style = format!(
-        "font-size: {size}; color: {fg}; \
-         font-weight: 600; margin-top: 6px; \
-         text-maxline: 2; text-overflow: ellipsis;",
-        size = theme::T_FEATURED_TITLE,
-        fg = theme::TEXT_PRIMARY,
-    );
-    let art_style = format!(
-        "width: {w}; height: {w}; \
-         border-radius: {r}; margin-top: 12px; \
-         background-color: {surface};",
-        w = theme::FEATURED_CARD_WIDTH,
-        r = theme::ARTWORK_RADIUS,
-        surface = theme::SURFACE,
-    );
     let artwork_src = podcast.artwork_url_600.clone();
 
     render! {
-        view(style: card_style) {
-            text(style: category_style, value: category_label)
-            text(style: title_style, value: title_text)
+        view(style: css!(
+            width: theme::FEATURED_CARD_WIDTH,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+        )) {
+            text(
+                style: css!(
+                    font_size: theme::T_CATEGORY,
+                    color: theme::TEXT_SECONDARY,
+                    font_weight: FontWeight::Numeric(600),
+                ).raw("letter-spacing", "0.5px"),
+                value: category_label,
+            )
+            // `text-maxline` is a Lynx-only extension not in the
+            // typed css! builder; `.raw(...)` appends it verbatim.
+            text(
+                style: css!(
+                    font_size: theme::T_FEATURED_TITLE,
+                    color: theme::TEXT_PRIMARY,
+                    font_weight: FontWeight::Numeric(600),
+                    margin_top: px(6),
+                    text_overflow: TextOverflow::Ellipsis,
+                ).raw("text-maxline", "2"),
+                value: title_text,
+            )
+            // `Image` is a `module_component` — its `style` prop is
+            // `Signal<String>`, no `From<Css>` impl. Serialise here.
             Image(
-                style: art_style,
+                style: css!(
+                    width: theme::FEATURED_CARD_WIDTH,
+                    height: theme::FEATURED_CARD_WIDTH,
+                    border_radius: theme::ARTWORK_RADIUS,
+                    margin_top: px(12),
+                    background_color: theme::SURFACE,
+                ).to_css_string(),
                 src: artwork_src,
                 mode: "aspectFill",
             )

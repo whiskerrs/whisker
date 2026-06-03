@@ -7,41 +7,46 @@
 //! decides which variant by passing the flag.
 
 use podcast_theme as theme;
+use whisker::css::{Display, FlexDirection, FontWeight};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
+use whisker_icons::{lucide, Icon, IconProps};
 
 #[component]
 pub fn section_header(title: String, #[prop(default = false)] show_chevron: bool) -> Element {
-    let row_style = format!(
-        "width: 100%; \
-         padding-left: {gutter}; padding-right: {gutter}; \
-         display: flex; flex-direction: row; align-items: center;",
-        gutter = theme::GUTTER,
-    );
-    let title_style = format!(
-        "font-size: {size}; font-weight: 700; color: {fg};",
-        size = theme::T_HERO,
-        fg = theme::TEXT_PRIMARY,
-    );
-
-    // Chevron style is built fresh inside the Show child closure (not
-    // captured from the outer body) — Show's `children:` closure
-    // captures by move and re-runs on `when` changes, so any moved
-    // outer String would fail the second invocation. Constructing the
-    // string inside the closure body sidesteps that.
     render! {
-        view(style: row_style) {
-            text(style: title_style, value: title.clone())
+        view(style: css!(
+            width: percent(100),
+            padding_left: theme::GUTTER,
+            padding_right: theme::GUTTER,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            align_items: whisker::css::AlignItems::Center,
+        )) {
+            text(
+                style: css!(
+                    font_size: theme::T_HERO,
+                    font_weight: FontWeight::Bold,
+                    color: theme::TEXT_PRIMARY,
+                ),
+                value: title.clone(),
+            )
+            // `Show`'s `children:` closure re-runs on `when` changes
+            // and captures by move, so any outer-scope String would
+            // fail the second invocation. The Icon's props are
+            // built fresh inside the closure to sidestep that.
             Show(when: move || show_chevron, fallback: || render! { fragment() }) {
-                text(
-                    style: format!(
-                        "font-size: {size}; font-weight: 700; \
-                         color: {fg}; margin-left: 8px;",
-                        size = theme::T_HERO,
-                        fg = theme::TEXT_PRIMARY,
-                    ),
-                    value: ">",
-                )
+                view(style: css!(
+                    margin_left: px(8),
+                    display: Display::Flex,
+                    align_items: whisker::css::AlignItems::Center,
+                )) {
+                    Icon(
+                        svg: lucide::ChevronRight,
+                        color: "#ffffff",
+                        size: "28",
+                    )
+                }
             }
         }
     }
