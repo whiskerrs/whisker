@@ -1,5 +1,5 @@
 // Cross-platform conformance — the bytes embedded here are an
-// exact copy of `crates/whisker-svg-core/tests/fixtures/rect_solid.bin`
+// exact copy of `packages/whisker-svg/tests/fixtures/rect_solid.bin`
 // (produced by the Rust compiler from `rect_solid.svg`). Replaying
 // them through the Swift visitor MUST produce the same trace
 // string that the Rust `TraceVisitor` writes to
@@ -25,7 +25,7 @@ import XCTest
 final class ConformanceTests: XCTestCase {
 
     /// Verbatim bytes of
-    /// `crates/whisker-svg-core/tests/fixtures/rect_solid.bin`.
+    /// `packages/whisker-svg/tests/fixtures/rect_solid.bin`.
     private static let rectSolidBytes: [UInt8] = [
         // Header: "WSDL" + version 1 + flags 0
         0x57, 0x53, 0x44, 0x4C, 0x01, 0x00,
@@ -53,7 +53,7 @@ final class ConformanceTests: XCTestCase {
     ]
 
     /// Verbatim content of
-    /// `crates/whisker-svg-core/tests/fixtures/rect_solid.trace.txt`.
+    /// `packages/whisker-svg/tests/fixtures/rect_solid.trace.txt`.
     private static let rectSolidExpectedTrace = """
     VIEWPORT 0 0 24 24
     FILL_COLOR #FF0000FF

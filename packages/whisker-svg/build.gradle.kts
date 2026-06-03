@@ -4,7 +4,7 @@
 // pure-Kotlin (no native deps). The replayer paints directly into
 // the View's own `Canvas` via `onDraw`, so AndroidSVG / Serval /
 // Skia aren't needed — the entire SVG → pixels path goes through
-// the Rust `whisker-svg-core` compiler + this thin Kotlin replayer.
+// the Rust producer + this thin Kotlin replayer.
 
 plugins {
     id("com.android.library")

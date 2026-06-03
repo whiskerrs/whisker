@@ -2,7 +2,7 @@
 
 This document is the **single source of truth** for the byte format
 transported through `WhiskerValue::Bytes` between
-`crates/whisker-svg-core` (Rust producer) and the per-platform
+`packages/whisker-svg` (Rust producer) and the per-platform
 replayers in `packages/whisker-svg/{ios,android}/`. All three
 implementations MUST validate against this document. Changes here
 require updating every implementation in lockstep.
@@ -247,7 +247,7 @@ mode for subsequent fills.
 
 ## Validation table
 
-Conformance test data lives in `crates/whisker-svg-core/tests/fixtures/`:
+Conformance test data lives in `packages/whisker-svg/tests/fixtures/`:
 
 | Fixture                  | Purpose                                    |
 |--------------------------|--------------------------------------------|

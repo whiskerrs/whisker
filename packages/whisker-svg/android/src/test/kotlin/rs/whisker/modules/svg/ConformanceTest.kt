@@ -1,5 +1,5 @@
 // Cross-platform conformance — the bytes embedded here are an
-// exact copy of `crates/whisker-svg-core/tests/fixtures/rect_solid.bin`
+// exact copy of `packages/whisker-svg/tests/fixtures/rect_solid.bin`
 // (produced by the Rust compiler from `rect_solid.svg`). Replaying
 // them through the Kotlin visitor MUST produce the same trace
 // string that the Rust `TraceVisitor` writes to

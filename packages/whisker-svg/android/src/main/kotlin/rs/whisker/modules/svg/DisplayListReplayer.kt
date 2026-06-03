@@ -28,7 +28,7 @@ internal sealed class DLReplayError(message: String) : Exception(message) {
  * Sink for decoded opcodes. Every method has a default no-op
  * implementation so partial visitors only override what they
  * care about — matches the `Visitor` trait on the Rust side
- * `crates/whisker-svg-core/src/replay.rs`.
+ * `packages/whisker-svg/src/replay.rs`.
  */
 internal interface DLVisitor {
     fun save() {}
@@ -159,10 +159,10 @@ private class Cursor(val bytes: ByteArray, var pos: Int) {
  * produces the same trace as the Rust `TraceVisitor` does for
  * identical input bytes — the cross-platform conformance check.
  *
- * Line format mirrors `crates/whisker-svg-core/src/replay.rs`
+ * Line format mirrors `packages/whisker-svg/src/replay.rs`
  * `TraceVisitor` exactly, so the produced trace string is
  * byte-for-byte the matching `*.trace.txt` from
- * `crates/whisker-svg-core/tests/fixtures/`.
+ * `packages/whisker-svg/tests/fixtures/`.
  */
 internal class DLTraceVisitor : DLVisitor {
     val lines: MutableList<String> = mutableListOf()

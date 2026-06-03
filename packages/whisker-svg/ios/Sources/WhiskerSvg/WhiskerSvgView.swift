@@ -23,7 +23,7 @@ public final class WhiskerSvgView: WhiskerUI<WhiskerSvgDrawingView> {
     }
 
     /// Backing of the `_display_list` Prop. The value is the
-    /// Rust producer's `whisker_svg_core::compile()` output, base64
+    /// Rust producer's `whisker_svg::compile()` output, base64
     /// encoded. Empty string → clear the cached bytes (renders
     /// nothing).
     public func setDisplayList(_ base64: String) {

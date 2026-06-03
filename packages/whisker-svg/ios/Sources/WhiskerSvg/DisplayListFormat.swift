@@ -2,7 +2,7 @@
 // `packages/whisker-svg/SPEC.md`.
 //
 // Every value here MUST match the SPEC. The Rust producer in
-// `crates/whisker-svg-core/src/format.rs` is the parallel
+// `packages/whisker-svg/src/format.rs` is the parallel
 // authority; any change in either file without the matching
 // counterpart edit (and SPEC bump) is a protocol break.
 

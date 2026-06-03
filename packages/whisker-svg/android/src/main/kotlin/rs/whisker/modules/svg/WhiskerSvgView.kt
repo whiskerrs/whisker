@@ -21,7 +21,7 @@ open class WhiskerSvgView(context: WhiskerContext) : WhiskerUI<WhiskerSvgDrawing
 
     /**
      * Backing of the `_display_list` Prop. The value is the
-     * Rust producer's `whisker_svg_core::compile()` output,
+     * Rust producer's `whisker_svg::compile()` output,
      * base64-encoded. Empty string clears the cached bytes
      * (renders nothing).
      */

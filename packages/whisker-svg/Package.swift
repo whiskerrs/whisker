@@ -6,7 +6,7 @@
 // library target (the Module + WhiskerSvgView + replayer) plus a
 // test target that pins the binary display-list format against
 // inline-encoded reference bytes — those reference bytes are
-// snapshots of `crates/whisker-svg-core/tests/fixtures/*.bin`, so
+// snapshots of `packages/whisker-svg/tests/fixtures/*.bin`, so
 // the Rust producer and the Swift replayer cannot drift without
 // the test catching it.
 

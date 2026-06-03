@@ -33,7 +33,7 @@ enum DLReplayError: Error, Equatable {
 /// Sink for decoded opcodes. Every method has a default no-op
 /// implementation so partial visitors only override what they
 /// care about — matches the `Visitor` trait shape on the Rust
-/// side `crates/whisker-svg-core/src/replay.rs`.
+/// side `packages/whisker-svg/src/replay.rs`.
 protocol DLVisitor {
     mutating func save()
     mutating func restore()
@@ -221,10 +221,10 @@ private struct Cursor {
 /// produces the same trace as the Rust `TraceVisitor` does for
 /// identical input bytes — the cross-platform conformance check.
 ///
-/// Line format mirrors `crates/whisker-svg-core/src/replay.rs`
+/// Line format mirrors `packages/whisker-svg/src/replay.rs`
 /// `TraceVisitor` exactly, so the produced trace string is
 /// byte-for-byte the matching `*.trace.txt` from
-/// `crates/whisker-svg-core/tests/fixtures/`.
+/// `packages/whisker-svg/tests/fixtures/`.
 struct DLTraceVisitor: DLVisitor {
     var lines: [String] = []
 

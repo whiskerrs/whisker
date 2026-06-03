@@ -10,7 +10,7 @@
 //!
 //! ## Updating goldens
 //!
-//! Run with `WHISKER_SVG_UPDATE_GOLDEN=1 cargo test -p whisker-svg-core`
+//! Run with `WHISKER_SVG_UPDATE_GOLDEN=1 cargo test -p whisker-svg`
 //! to (re)write the `*.trace.txt` and `*.bin` files instead of
 //! comparing. Used when the SPEC changes intentionally.
 
