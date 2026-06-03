@@ -1,0 +1,9 @@
+[package]
+name = "podcast-theme"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Design tokens for the podcast example: colors, type scale, spacing. No runtime deps — pure const strings so consumers can drop them into format!(\"...{token}...\") style attributes without paying for a type-system trip."
+
+[lib]
+crate-type = ["rlib"]

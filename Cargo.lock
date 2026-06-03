@@ -982,6 +982,57 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "podcast"
+version = "0.1.0"
+dependencies = [
+ "podcast-feature-browse",
+ "podcast-theme",
+ "whisker",
+]
+
+[[package]]
+name = "podcast-data"
+version = "0.1.0"
+dependencies = [
+ "podcast-domain",
+ "serde",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
+name = "podcast-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "podcast-feature-browse"
+version = "0.1.0"
+dependencies = [
+ "podcast-data",
+ "podcast-domain",
+ "podcast-theme",
+ "podcast-ui-kit",
+ "whisker",
+]
+
+[[package]]
+name = "podcast-theme"
+version = "0.1.0"
+
+[[package]]
+name = "podcast-ui-kit"
+version = "0.1.0"
+dependencies = [
+ "podcast-domain",
+ "podcast-theme",
+ "whisker",
+ "whisker-image",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

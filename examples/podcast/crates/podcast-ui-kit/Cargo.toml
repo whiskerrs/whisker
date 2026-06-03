@@ -1,0 +1,20 @@
+[package]
+name = "podcast-ui-kit"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Reusable atomic widgets for the podcast example: top nav, section header, featured / ranked artwork cards, mini player. Depends only on whisker + theme + domain — features compose these into screens."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+# `whisker-image` provides `WhiskerImage` — a Kingfisher / Coil-
+# backed `<image>` replacement. Lynx's own `<image>` element needs
+# a `LynxServiceImageProtocol` implementation registered against it
+# (which Whisker doesn't ship), so we use the module-component path
+# instead. See `WhiskerImage`'s crate docs for the rationale.
+whisker-image = { path = "../../../../packages/whisker-image" }
+podcast-theme = { path = "../podcast-theme" }
+podcast-domain = { path = "../podcast-domain" }

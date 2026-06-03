@@ -1,0 +1,18 @@
+[package]
+name = "podcast-data"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "iTunes Search API client + repositories for the podcast example. Hides the iTunes Search wire shape behind a domain-typed `Repository` so the UI layer never sees DTOs or HTTP errors directly."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+podcast-domain = { path = "../podcast-domain" }
+# Blocking HTTPS client with rustls + webpki-roots — no system-cert
+# dependency on Android / iOS. Matches what `examples/hn-reader`
+# uses.
+ureq = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
