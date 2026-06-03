@@ -264,7 +264,7 @@ fn compile_ios() -> Result<()> {
         .include(&bridge_src);
 
     // Whisker module-system: external module crates (e.g.
-    // `packages/whisker-hello-element`) may declare legacy iOS .mm
+    // `packages/whisker-image`) may declare legacy iOS .mm
     // sources in `[package.metadata.whisker.ios] native_sources`.
     // `whisker-build` walks the consuming app's cargo dep tree,
     // gathers each module's `native_sources` (resolved to absolute
