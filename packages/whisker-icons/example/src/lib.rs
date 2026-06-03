@@ -12,36 +12,43 @@
 //! this example pulls every icon in because it explicitly
 //! enumerates them, but other consumers that touch only a
 //! handful still get the trimmed-binary behaviour.
+//!
+//! Styling is via the typed `css!` macro inline at each call
+//! site — no intermediate `format!`-ed `String` styles — so the
+//! readability story matches the rest of the kit (`pane.rs`,
+//! `tabs.rs`).
 
 mod icons;
 
+use whisker::css::{FontWeight, TextAlign};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_icons::{Icon, IconProps};
 
-const BG: &str = "#101012";
-const CARD_BG: &str = "#1c1c1f";
-const FG: &str = "#f0f0f3";
-
 #[whisker::main]
 pub fn app() -> Element {
-    let page_style = format!(
-        "background-color: {BG}; flex-grow: 1; flex-shrink: 1; \
-         display: flex; flex-direction: column; \
-         padding-top: 48px; padding-bottom: 24px;",
-    );
-    let header_style = format!(
-        "color: {FG}; font-size: 22px; font-weight: 700; \
-         margin-left: 20px; margin-bottom: 16px;",
-    );
     let header_text = format!("lucide gallery (all {})", icons::ALL.len());
-    // Lynx's `<list>` needs a bounded height to virtualise — `flex-grow:1`
-    // inside the flex-column page gives it whatever's left under the header.
-    let list_style = "flex-grow: 1; flex-shrink: 1; width: 100%;".to_string();
 
     render! {
-        page(style: page_style) {
-            text(style: header_style, value: header_text)
+        page(style: css!(
+            background_color: Color::hex(0x101012),
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            padding_top: px(48),
+            padding_bottom: px(24),
+        )) {
+            text(
+                style: css!(
+                    color: Color::hex(0xF0F0F3),
+                    font_size: px(22),
+                    font_weight: FontWeight::Numeric(700),
+                    margin_left: px(20),
+                    margin_bottom: px(16),
+                ),
+                value: header_text,
+            )
             list(
                 each: || icons::ALL.to_vec(),
                 key: |(name, _): &(&'static str, &'static str)| name.to_string(),
@@ -55,7 +62,14 @@ pub fn app() -> Element {
                 list_type: "flow",
                 column_count: 3,
                 span_count: 3,
-                style: list_style,
+                // Lynx's `<list>` needs a bounded height to virtualise —
+                // `flex_grow: 1` inside the flex-column page gives it
+                // whatever's left under the header.
+                style: css!(
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    width: percent(100),
+                ),
             )
         }
     }
@@ -67,32 +81,39 @@ pub fn app() -> Element {
 /// the list plumbing.
 #[component]
 fn tile(label: &'static str, svg: &'static str) -> Element {
-    // `width: 100%` makes the card fill the list-cell so
-    // `align-items: center` (cross-axis = horizontal under
-    // `flex-direction: column`) actually has a frame to center
-    // against — without it the card collapses to its intrinsic
-    // content width and pins to the left edge of the cell.
-    let card_style = "width: 100%; \
-                      display: flex; flex-direction: column; align-items: center; \
-                      padding: 8px;"
-        .to_string();
-    let frame_style = format!(
-        "width: 64px; height: 64px; \
-         background-color: {CARD_BG}; \
-         border-radius: 12px; \
-         display: flex; align-items: center; justify-content: center;",
-    );
-    let caption_style = format!(
-        "color: {FG}; font-size: 10px; margin-top: 4px; \
-         text-align: center;",
-    );
-
     render! {
-        view(style: card_style) {
-            view(style: frame_style) {
-                Icon(svg: svg, color: FG, size: "32")
+        // `width: 100%` makes the card fill the list-cell so
+        // `align-items: center` (cross-axis = horizontal under
+        // `flex-direction: column`) actually has a frame to center
+        // against — without it the card collapses to its intrinsic
+        // content width and pins to the left edge of the cell.
+        view(style: css!(
+            width: percent(100),
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: px(8),
+        )) {
+            view(style: css!(
+                width: px(64),
+                height: px(64),
+                background_color: Color::hex(0x1C1C1F),
+                border_radius: px(12),
+                display: Display::Flex,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+            )) {
+                Icon(svg: svg, color: "#f0f0f3", size: "32")
             }
-            text(style: caption_style, value: label)
+            text(
+                style: css!(
+                    color: Color::hex(0xF0F0F3),
+                    font_size: px(10),
+                    margin_top: px(4),
+                    text_align: TextAlign::Center,
+                ),
+                value: label,
+            )
         }
     }
 }
