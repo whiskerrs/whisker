@@ -176,7 +176,7 @@ fn application_class_name(app_name: &str) -> String {
 }
 
 /// `rootProject.name`. Lowercase, hyphenated form of the app name —
-/// e.g. `HelloWorld` → `hello-world-android`. Matches the existing
+/// e.g. `Podcast` → `podcast-android`. Matches the existing
 /// example convention (gradle warns on uppercase project names).
 fn project_name(app_name: &str) -> String {
     let mut out = String::new();

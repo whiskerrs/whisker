@@ -82,7 +82,7 @@ pub struct Config {
     /// in-workspace examples it's `examples/<pkg>/`, for an
     /// external user it's wherever they keep their app.
     pub crate_dir: PathBuf,
-    /// User-crate package name (e.g. "hello-world").
+    /// User-crate package name (e.g. "podcast").
     pub package: String,
     /// Where the rebuilt artifact gets installed + launched.
     pub target: Target,
@@ -128,8 +128,8 @@ impl Config {
 #[derive(Debug, Clone)]
 pub struct AndroidParams {
     /// Absolute path to the Gradle project (= the dir with
-    /// `app/build.gradle.kts`). For the in-workspace hello-world
-    /// example this is `examples/hello-world/android/`.
+    /// `app/build.gradle.kts`). For the in-workspace podcast
+    /// example this is `examples/podcast/android/`.
     pub project_dir: PathBuf,
     /// `applicationId` — used by `adb am start -n
     /// <application_id>/<launcher_activity>`.
@@ -150,8 +150,8 @@ pub struct AndroidParams {
 #[derive(Debug, Clone)]
 pub struct IosParams {
     /// Absolute path to the Xcode project's parent dir (= where
-    /// `<Scheme>.xcodeproj` lives). For hello-world this is
-    /// `examples/hello-world/ios/`.
+    /// `<Scheme>.xcodeproj` lives). For podcast this is
+    /// `examples/podcast/ios/`.
     pub project_dir: PathBuf,
     /// Xcode scheme. Doubles as the `.app` filename xcodebuild
     /// produces (`<Scheme>.app`). With XcodeGen this always

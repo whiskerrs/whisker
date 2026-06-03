@@ -20,7 +20,8 @@ include = [
 
 # rlib only. The Whisker module system handles native-source
 # distribution out-of-band via the `android/` + `ios/` package dirs
-# — we don't ship a cdylib here. Sibling of `whisker-hello-element`.
+# — we don't ship a cdylib here. Sibling of `whisker-image` /
+# `whisker-video`.
 [lib]
 crate-type = ["rlib"]
 

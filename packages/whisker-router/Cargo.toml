@@ -20,7 +20,7 @@ include = [
 
 # rlib only — the module-system distribution path handles the native
 # sources separately. Same pattern as whisker-local-store /
-# whisker-hello-element.
+# whisker-image / whisker-video.
 [lib]
 crate-type = ["rlib"]
 

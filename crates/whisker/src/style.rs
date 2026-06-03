@@ -164,6 +164,6 @@ mod tests {
     // Reactive From impls rely on the reactive runtime arena; the
     // standalone test environment doesn't bootstrap one, so the
     // dynamic-branch tests are exercised by the end-to-end runs in
-    // `examples/hello-world`. The static cases above already cover
+    // `examples/podcast`. The static cases above already cover
     // the discriminant + serialization paths.
 }
