@@ -24,6 +24,7 @@ members = [
     "packages/whisker-local-store",
     "packages/whisker-router",
     "packages/whisker-router-macros",
+    "packages/whisker-safe-area",
     "packages/whisker-video",
 ]
 exclude = [

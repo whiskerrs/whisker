@@ -16,5 +16,10 @@ whisker = { workspace = true }
 # (which Whisker doesn't ship), so we use the module-component path
 # instead. See `WhiskerImage`'s crate docs for the rationale.
 whisker-image = { path = "../../../../packages/whisker-image" }
+# `whisker-safe-area` exposes the host view's safe-area insets as a
+# reactive `ReadSignal<SafeAreaInsets>`. `top_nav` reads it to pad the
+# bar correctly under the notch / Dynamic Island instead of hard-
+# coding 44pt.
+whisker-safe-area = { path = "../../../../packages/whisker-safe-area" }
 podcast-theme = { path = "../podcast-theme" }
 podcast-domain = { path = "../podcast-domain" }

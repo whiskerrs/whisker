@@ -9,6 +9,7 @@
 use podcast_theme as theme;
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
+use whisker_safe_area::safe_area_insets;
 
 /// Title shown centred in the bar. Action label shown trailing.
 /// Both are plain strings so the host screen can localise without
@@ -22,16 +23,22 @@ pub fn top_nav(title: String, action_label: String) -> Element {
     // wrapper / row keeps `NAV_HEIGHT` purely about the nav
     // content area.
     //
-    // Lynx doesn't expose `env(safe-area-inset-top)` yet, so we
-    // hard-code 44pt — works on every iPhone since the notch and
-    // is harmless on Android (the host already inset-pads the
-    // WhiskerView for status bar).
-    let wrapper_style = format!(
-        "width: 100%; padding-top: 44px; \
-         flex-shrink: 0; \
-         background-color: {bg};",
-        bg = theme::BG,
-    );
+    // `safe_area_insets()` returns a process-wide `ReadSignal` —
+    // re-fires on rotation / Dynamic Island / notch / Android edge-
+    // to-edge toggle. `computed` derives a `ReadSignal<String>` the
+    // `style:` prop wires as a reactive style binding, so the bar
+    // re-pads automatically without us touching state from the
+    // component body.
+    let insets = safe_area_insets();
+    let bg = theme::BG;
+    let wrapper_style = computed(move || {
+        format!(
+            "width: 100%; padding-top: {top}px; \
+             flex-shrink: 0; \
+             background-color: {bg};",
+            top = insets.get().top,
+        )
+    });
     let bar_style = format!(
         "width: 100%; min-height: {h}; \
          flex-shrink: 0; \
