@@ -34,10 +34,20 @@ pub fn app() -> Element {
     );
     let header_text = format!("lucide gallery (all {ICON_COUNT})");
 
+    // The header sits outside the scroll-view so it stays pinned;
+    // the grid is the only scrollable region. `flex-grow: 1` on the
+    // scroll-view makes it claim whatever vertical space the page
+    // has left after the header lays out — needed because Lynx's
+    // `<scroll-view>` only scrolls within its own bounded height.
+    let scroll_style =
+        "flex-grow: 1; flex-shrink: 1; flex-basis: 0; width: 100%;".to_string();
+
     render! {
         page(style: page_style) {
             text(style: header_style, value: header_text)
-            IconsGridWrapper()
+            scroll_view(style: scroll_style) {
+                IconsGridWrapper()
+            }
         }
     }
 }
