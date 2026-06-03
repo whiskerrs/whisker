@@ -1,0 +1,35 @@
+[package]
+name = "whisker-image"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Whisker platform component module — `whisker-image:Image` element backed by Kingfisher on iOS / Coil on Android. Fetches HTTP(S) URLs and renders into a UIImageView / ImageView with built-in memory + disk cache. Demonstrates the `@WhiskerModule` `Prop` setter pattern from `whisker-video` against a network-fetching native widget."
+
+# Explicit `include` list — mirrors `whisker-video`. A `cargo publish`
+# ships the Kotlin + Swift platform sources alongside `src/lib.rs`,
+# but never the local Gradle / Xcode build artifacts that would
+# accidentally bloat the published crate if a stale build dir lingers.
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
+    "src/lib.rs",
+    "android/**/*.kt",
+    "ios/**/*.swift",
+    "README.md",
+]
+
+[lib]
+crate-type = ["rlib"]
+
+# Module-system opt-in marker. The bare table identifies this cargo
+# crate as a Whisker module; `whisker-build` walks the consuming app's
+# dep tree, picks out every dep carrying it, and wires the Android
+# Gradle subproject + iOS SwiftPM package into the host build.
+[package.metadata.whisker]
+
+[dependencies]
+whisker = { workspace = true }

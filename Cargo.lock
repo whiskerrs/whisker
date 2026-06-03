@@ -1908,6 +1908,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-image"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+]
+
+[[package]]
 name = "whisker-local-store"
 version = "0.1.0"
 dependencies = [
