@@ -80,7 +80,15 @@ pub fn compile(svg_xml: &str) -> Result<Compiled, CompileError> {
     let mut ctx = Ctx {
         warnings: Vec::new(),
     };
-    let initial_state = PaintState::default();
+    // Read paint state off the root `<svg>` itself before walking
+    // its children. Lucide-style icon sets put `fill="none"
+    // stroke="currentColor" stroke-width="2"` on the `<svg>` element
+    // (not on each inner `<path>`), and rely on those cascading
+    // down. Without this step every Lucide icon would draw as a
+    // solid black silhouette (the SVG default fill) instead of the
+    // intended stroke outline.
+    let mut initial_state = PaintState::default();
+    update_paint(&root, &mut initial_state, &mut ctx);
     for child in root.children() {
         if child.is_element() {
             walk(&child, &mut builder, &mut ctx, &initial_state);

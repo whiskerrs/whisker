@@ -160,9 +160,10 @@ pub mod __tags {
     use whisker_runtime::reactive::Signal;
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
-        append_child, apply_attr, apply_attr_owned, create_element, create_element_by_name,
-        create_phantom_element, install_list_native_item_provider, set_event_listener,
-        set_update_list_info, BindType, Element,
+        append_child, apply_attr, apply_attr_bool, apply_attr_int, apply_attr_owned,
+        create_element, create_element_by_name, create_phantom_element,
+        install_list_native_item_provider, set_event_listener, set_update_list_info, BindType,
+        Element,
     };
 
     // ---- The common builder surface -------------------------------------
@@ -957,62 +958,67 @@ pub mod __tags {
 
         // ---- scroll_view attributes (reactive-capable) --------------
 
-        /// `bounces` — bounce effect at the scroll edges.
+        /// `bounces` — bounce effect at the scroll edges. Lynx
+        /// reads via `IsBool()`, so the bool path is required.
         pub fn bounces<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<bool>>,
         {
-            apply_attr(self.handle, "bounces", v);
+            apply_attr_bool(self.handle, "bounces", v);
             self
         }
-        /// `enable-scroll` — allow the user to drag-scroll.
+        /// `enable-scroll` — allow the user to drag-scroll. Bool
+        /// dispatch on the Lynx side.
         pub fn enable_scroll<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<bool>>,
         {
-            apply_attr(self.handle, "enable-scroll", v);
+            apply_attr_bool(self.handle, "enable-scroll", v);
             self
         }
-        /// `scroll-bar-enable` — show the scrollbar indicator.
+        /// `scroll-bar-enable` — show the scrollbar indicator. Bool
+        /// dispatch on the Lynx side.
         pub fn scroll_bar_enable<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<bool>>,
         {
-            apply_attr(self.handle, "scroll-bar-enable", v);
+            apply_attr_bool(self.handle, "scroll-bar-enable", v);
             self
         }
         /// `initial-scroll-offset` — starting scroll position (px).
+        /// Lynx reads via `IsNumber()`.
         pub fn initial_scroll_offset<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<i32>>,
         {
-            apply_attr(self.handle, "initial-scroll-offset", v);
+            apply_attr_int(self.handle, "initial-scroll-offset", v);
             self
         }
         /// `initial-scroll-to-index` — child index to jump to on load.
+        /// Lynx reads via `IsNumber()`.
         pub fn initial_scroll_to_index<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<i32>>,
         {
-            apply_attr(self.handle, "initial-scroll-to-index", v);
+            apply_attr_int(self.handle, "initial-scroll-to-index", v);
             self
         }
         /// `upper-threshold` — distance (px) from the top/left edge that
-        /// triggers `scrolltoupper`.
+        /// triggers `scrolltoupper`. Lynx reads via `IsNumber()`.
         pub fn upper_threshold<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<i32>>,
         {
-            apply_attr(self.handle, "upper-threshold", v);
+            apply_attr_int(self.handle, "upper-threshold", v);
             self
         }
         /// `lower-threshold` — distance (px) from the bottom/right edge
-        /// that triggers `scrolltolower`.
+        /// that triggers `scrolltolower`. Lynx reads via `IsNumber()`.
         pub fn lower_threshold<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<i32>>,
         {
-            apply_attr(self.handle, "lower-threshold", v);
+            apply_attr_int(self.handle, "lower-threshold", v);
             self
         }
 
@@ -1139,21 +1145,37 @@ pub mod __tags {
             apply_attr(self.handle, "list-type", v);
             self
         }
-        /// `column-count` — number of columns (default 1).
+        /// `column-count` — number of columns (default 1). Lynx
+        /// reads this via `IsNumber()` on the decoupled list
+        /// container, so the int path is required — the stringified
+        /// `apply_attr` would silently no-op.
         pub fn column_count<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<i32>>,
         {
-            apply_attr(self.handle, "column-count", v);
+            apply_attr_int(self.handle, "column-count", v);
+            self
+        }
+        /// `span-count` — preferred grid attribute on newer Lynx
+        /// builds (`column-count` is marked `@deprecated` in the
+        /// Lynx source). Same numeric-typed dispatch as
+        /// [`column_count`]; setting both is the safe shape while
+        /// older Lynx builds are still in the field.
+        pub fn span_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "span-count", v);
             self
         }
         /// `vertical-orientation` — `true` (default) scrolls
-        /// vertically, `false` horizontally.
+        /// vertically, `false` horizontally. Lynx reads via
+        /// `IsBool()`, so the bool path is required.
         pub fn vertical_orientation<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<bool>>,
         {
-            apply_attr(self.handle, "vertical-orientation", v);
+            apply_attr_bool(self.handle, "vertical-orientation", v);
             self
         }
     }

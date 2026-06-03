@@ -89,6 +89,24 @@ pub trait DynRenderer {
     fn release_element(&mut self, handle: Element);
 
     fn set_attribute(&mut self, handle: Element, key: &str, value: &str);
+    /// Typed-attr variants. Lynx's prop dispatch on many UIs
+    /// (`<list>`, `<scroll-view>`, …) gates branches on
+    /// `value.IsNumber()` / `value.IsBool()` against the underlying
+    /// `lepus::Value`, so a stringified attr from
+    /// [`set_attribute`](Self::set_attribute) silently no-ops in
+    /// those branches. Use these for any prop whose Lynx handler
+    /// reads the value as anything other than a string. Default
+    /// impls forward to the string path (good enough for test
+    /// renderers that don't model the underlying type discrimination).
+    fn set_attribute_int(&mut self, handle: Element, key: &str, value: i64) {
+        self.set_attribute(handle, key, &value.to_string());
+    }
+    fn set_attribute_bool(&mut self, handle: Element, key: &str, value: bool) {
+        self.set_attribute(handle, key, if value { "true" } else { "false" });
+    }
+    fn set_attribute_double(&mut self, handle: Element, key: &str, value: f64) {
+        self.set_attribute(handle, key, &value.to_string());
+    }
     fn set_inline_styles(&mut self, handle: Element, css: &str);
 
     /// Underlying Lynx sign (`impl_id`) for `handle`, or 0 if the
@@ -503,6 +521,27 @@ pub fn set_attribute(handle: Element, key: &str, value: &str) {
         return; // phantoms carry no Lynx-side styling — silently no-op
     }
     with_renderer(|r| r.set_attribute(handle, key, value), ())
+}
+
+pub fn set_attribute_int(handle: Element, key: &str, value: i64) {
+    if is_phantom(handle) {
+        return;
+    }
+    with_renderer(|r| r.set_attribute_int(handle, key, value), ())
+}
+
+pub fn set_attribute_bool(handle: Element, key: &str, value: bool) {
+    if is_phantom(handle) {
+        return;
+    }
+    with_renderer(|r| r.set_attribute_bool(handle, key, value), ())
+}
+
+pub fn set_attribute_double(handle: Element, key: &str, value: f64) {
+    if is_phantom(handle) {
+        return;
+    }
+    with_renderer(|r| r.set_attribute_double(handle, key, value), ())
 }
 
 pub fn set_inline_styles(handle: Element, css: &str) {

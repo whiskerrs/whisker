@@ -1903,6 +1903,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-icons"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-svg",
+]
+
+[[package]]
+name = "whisker-icons-example"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-icons",
+ "whisker-safe-area",
+]
+
+[[package]]
 name = "whisker-image"
 version = "0.1.0"
 dependencies = [

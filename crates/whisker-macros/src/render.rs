@@ -642,6 +642,7 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("scroll_view", "lower_threshold")
             | ("list", "list_type")
             | ("list", "column_count")
+            | ("list", "span_count")
             | ("list", "vertical_orientation")
             // Render-props setters on `list` — type-stated, take
             // closure literals via `Into<EachFn<T>>` etc. The

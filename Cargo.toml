@@ -20,6 +20,8 @@ members = [
     "examples/podcast/crates/podcast-data",
     "examples/podcast/crates/podcast-ui-kit",
     "examples/podcast/crates/podcast-feature-browse",
+    "packages/whisker-icons",
+    "packages/whisker-icons/example",
     "packages/whisker-image",
     "packages/whisker-local-store",
     "packages/whisker-router",
