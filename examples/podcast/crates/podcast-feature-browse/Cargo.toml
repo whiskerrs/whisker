@@ -1,0 +1,16 @@
+[package]
+name = "podcast-feature-browse"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Browse-screen feature crate. Composes podcast-ui-kit widgets against podcast-data results, manages the load state, and exposes a single `browse_screen()` component the app's main entry mounts."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+podcast-theme = { path = "../podcast-theme" }
+podcast-domain = { path = "../podcast-domain" }
+podcast-data = { path = "../podcast-data" }
+podcast-ui-kit = { path = "../podcast-ui-kit" }

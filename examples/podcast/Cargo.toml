@@ -1,0 +1,17 @@
+[package]
+name = "podcast"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Production-grade podcast browser example. Demonstrates a layered Whisker app: theme tokens, pure domain types, iTunes Search API data layer, reusable UI kit, and a Browse feature crate composed at the app's main entry."
+
+# Whisker example crates are always plain rlibs at the workspace
+# layer; `whisker run` / `whisker build` rebuild them as cdylibs for
+# the actual mobile targets via cargo rustc --crate-type dylib.
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+podcast-theme = { path = "crates/podcast-theme" }
+podcast-feature-browse = { path = "crates/podcast-feature-browse" }

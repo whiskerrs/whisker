@@ -1,0 +1,16 @@
+[package]
+name = "podcast-domain"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Pure value types for the podcast example. No I/O, no UI, no whisker dependency — consumed by both the data layer (deserialise) and the UI layer (render) without dragging either side into the other's transitive deps."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# `serde` is included because consumers (data layer) need to derive
+# Deserialize on these structs. Keeping `derive` off would push the
+# decision into every consumer, with each one defining its own DTO
+# and a domain-mapping shim — more code, no clearer.
+serde = { version = "1", features = ["derive"] }
