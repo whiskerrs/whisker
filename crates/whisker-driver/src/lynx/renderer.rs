@@ -164,6 +164,30 @@ impl DynRenderer for BridgeRenderer {
         };
     }
 
+    fn set_attribute_int(&mut self, handle: Element, key: &str, value: i64) {
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
+        let Ok(key_c) = CString::new(key) else { return };
+        unsafe { ffi::whisker_bridge_set_attribute_int(ptr.as_ptr(), key_c.as_ptr(), value) };
+    }
+
+    fn set_attribute_bool(&mut self, handle: Element, key: &str, value: bool) {
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
+        let Ok(key_c) = CString::new(key) else { return };
+        unsafe { ffi::whisker_bridge_set_attribute_bool(ptr.as_ptr(), key_c.as_ptr(), value) };
+    }
+
+    fn set_attribute_double(&mut self, handle: Element, key: &str, value: f64) {
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
+        let Ok(key_c) = CString::new(key) else { return };
+        unsafe { ffi::whisker_bridge_set_attribute_double(ptr.as_ptr(), key_c.as_ptr(), value) };
+    }
+
     fn set_inline_styles(&mut self, handle: Element, css: &str) {
         let Some(ptr) = self.lookup(handle) else {
             return;

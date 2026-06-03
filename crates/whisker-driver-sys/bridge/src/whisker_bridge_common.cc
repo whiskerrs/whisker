@@ -226,6 +226,34 @@ extern "C" void whisker_bridge_set_attribute(WhiskerElement* element,
     lynx_element_set_attribute(element->handle, key, value);
 }
 
+// Typed-attribute variants — Lynx's prop dispatch on many UIs
+// (e.g. decoupled `<list>` reading `span-count` / `column-count`)
+// gates branches on `value.IsNumber()` / `value.IsBool()`, so a
+// stringified attr from `whisker_bridge_set_attribute` silently
+// no-ops for those props. These forward to the matching typed
+// `lynx_element_set_attribute_*` capi so the dispatch sees the
+// right `lepus::Value` discriminant.
+extern "C" void whisker_bridge_set_attribute_int(WhiskerElement* element,
+                                                 const char* key,
+                                                 int64_t value) {
+    if (element == nullptr || element->handle == nullptr) return;
+    lynx_element_set_attribute_int(element->handle, key, value);
+}
+
+extern "C" void whisker_bridge_set_attribute_bool(WhiskerElement* element,
+                                                  const char* key,
+                                                  bool value) {
+    if (element == nullptr || element->handle == nullptr) return;
+    lynx_element_set_attribute_bool(element->handle, key, value);
+}
+
+extern "C" void whisker_bridge_set_attribute_double(WhiskerElement* element,
+                                                    const char* key,
+                                                    double value) {
+    if (element == nullptr || element->handle == nullptr) return;
+    lynx_element_set_attribute_double(element->handle, key, value);
+}
+
 // Feed a `<list>` element its item-count so Lynx's decoupled native
 // list can build its `update-list-info` map of positional item-keys.
 // Called by the `list` builder's `__h()` finalize after all children

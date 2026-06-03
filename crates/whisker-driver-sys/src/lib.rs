@@ -249,6 +249,26 @@ extern "C" {
         key: *const c_char,
         value: *const c_char,
     );
+    // Typed-attr variants — see `whisker_bridge_common.cc` for the
+    // rationale. Use them for props the Lynx prop-dispatch gates on
+    // `value.IsNumber()` / `value.IsBool()` (e.g. `<list>`'s
+    // `span-count`, `<scroll-view>`'s `bounces`). String dispatch
+    // silently no-ops in those branches.
+    pub fn whisker_bridge_set_attribute_int(
+        element: *mut WhiskerElement,
+        key: *const c_char,
+        value: i64,
+    );
+    pub fn whisker_bridge_set_attribute_bool(
+        element: *mut WhiskerElement,
+        key: *const c_char,
+        value: bool,
+    );
+    pub fn whisker_bridge_set_attribute_double(
+        element: *mut WhiskerElement,
+        key: *const c_char,
+        value: f64,
+    );
     pub fn whisker_bridge_set_inline_styles(element: *mut WhiskerElement, css: *const c_char);
 
     pub fn whisker_bridge_list_set_item_count(element: *mut WhiskerElement, count: i32);

@@ -16,7 +16,9 @@
 
 use crate::reactive::{effect, Signal};
 use crate::view::handle::Element;
-use crate::view::renderer::{set_attribute, set_inline_styles};
+use crate::view::renderer::{
+    set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int, set_inline_styles,
+};
 
 /// Apply an inline-styles value to `h`, picking a static vs reactive
 /// code path based on the [`Signal<T>`] variant. The `Dynamic` case
@@ -47,6 +49,49 @@ where
         Signal::Static(t) => set_attribute(h, name, &t.to_string()),
         Signal::Dynamic(sig) => {
             effect(move || set_attribute(h, name, &sig.get().to_string()));
+        }
+    }
+}
+
+/// Typed-attribute helpers — use these when the Lynx-side handler
+/// reads the value as anything other than a string. Lynx's prop
+/// dispatch on many UIs (`<list>`, `<scroll-view>`, …) gates
+/// branches on `value.IsNumber()` / `value.IsBool()`, so a
+/// stringified attr from [`apply_attr`] silently no-ops in those
+/// branches. See `crates/whisker-driver-sys/bridge/src/whisker_bridge_common.cc`
+/// for the bridge-side rationale.
+pub fn apply_attr_int<V>(h: Element, name: &'static str, v: V)
+where
+    V: ::std::convert::Into<Signal<i32>>,
+{
+    match v.into() {
+        Signal::Static(t) => set_attribute_int(h, name, i64::from(t)),
+        Signal::Dynamic(sig) => {
+            effect(move || set_attribute_int(h, name, i64::from(sig.get())));
+        }
+    }
+}
+
+pub fn apply_attr_bool<V>(h: Element, name: &'static str, v: V)
+where
+    V: ::std::convert::Into<Signal<bool>>,
+{
+    match v.into() {
+        Signal::Static(t) => set_attribute_bool(h, name, t),
+        Signal::Dynamic(sig) => {
+            effect(move || set_attribute_bool(h, name, sig.get()));
+        }
+    }
+}
+
+pub fn apply_attr_f64<V>(h: Element, name: &'static str, v: V)
+where
+    V: ::std::convert::Into<Signal<f64>>,
+{
+    match v.into() {
+        Signal::Static(t) => set_attribute_double(h, name, t),
+        Signal::Dynamic(sig) => {
+            effect(move || set_attribute_double(h, name, sig.get()));
         }
     }
 }
