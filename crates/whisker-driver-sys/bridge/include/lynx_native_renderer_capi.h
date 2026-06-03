@@ -102,6 +102,25 @@ LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_attribute(
     const char* key,
     const char* value);
 
+// Typed-attribute variants. The string variant above wraps the value
+// as `lepus::Value(String)`; many Lynx prop handlers branch on
+// `value.IsNumber()` / `value.IsBool()` and silently no-op for those
+// — these route through `lepus::Value(int64_t/bool/double)` so the
+// dispatch sees the right discriminant. `key` must be non-null.
+// (Added to the Whisker Lynx fork at v3.8.0-whisker.3.)
+LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_attribute_int(
+    lynx_fiber_element_t* element,
+    const char* key,
+    int64_t value);
+LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_attribute_bool(
+    lynx_fiber_element_t* element,
+    const char* key,
+    bool value);
+LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_attribute_double(
+    lynx_fiber_element_t* element,
+    const char* key,
+    double value);
+
 LYNX_NATIVE_RENDERER_CAPI_EXPORT void lynx_element_set_inline_styles(
     lynx_fiber_element_t* element,
     const char* css);
