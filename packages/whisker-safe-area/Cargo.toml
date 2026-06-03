@@ -1,0 +1,34 @@
+[package]
+name = "whisker-safe-area"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Whisker module exposing the host view's safe-area insets as a reactive ReadSignal<SafeAreaInsets>. iOS reads UIView.safeAreaInsets; Android reads WindowInsetsCompat (systemBars + displayCutout). Android edge-to-edge off → all-zero insets (graceful degrade)."
+
+# Explicit `include` list — mirrors `whisker-image` / `whisker-video`.
+# `cargo publish` ships the Kotlin + Swift platform sources alongside
+# `src/lib.rs`, but never the local Gradle / Xcode build artifacts.
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
+    "src/lib.rs",
+    "android/**/*.kt",
+    "ios/**/*.swift",
+    "README.md",
+]
+
+[lib]
+crate-type = ["rlib"]
+
+# Module-system opt-in marker. The bare table identifies this cargo
+# crate as a Whisker module; `whisker-build` walks the consuming app's
+# dep tree, picks out every dep carrying it, and wires the Android
+# Gradle subproject + iOS SwiftPM package into the host build.
+[package.metadata.whisker]
+
+[dependencies]
+whisker = { workspace = true }

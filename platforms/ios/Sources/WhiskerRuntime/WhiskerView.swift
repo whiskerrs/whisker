@@ -114,4 +114,38 @@ public final class WhiskerView: LynxView {
     public override func onEnterBackground() {
         super.onEnterBackground()
     }
+
+    // MARK: - Safe-area broadcast
+
+    /// Called by UIKit whenever the host view's `safeAreaInsets`
+    /// recompute — on first layout after attach, on rotation, on
+    /// multitasking split-screen resize, on notch / Dynamic Island
+    /// reveal. We re-broadcast through `NotificationCenter` so the
+    /// `whisker-safe-area:SafeArea` module can pick the change up
+    /// without holding a direct reference to this view.
+    ///
+    /// Loose-coupling through the notification keeps the runtime
+    /// agnostic of the safe-area module: the consumer crate is opt-
+    /// in. Apps that don't depend on `whisker-safe-area` pay only the
+    /// cost of one `NotificationCenter.post` per insets change, which
+    /// is rare and cheap.
+    public override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        NotificationCenter.default.post(
+            name: WhiskerView.safeAreaInsetsDidChangeNotification,
+            object: self,
+            userInfo: [WhiskerView.safeAreaInsetsKey: safeAreaInsets]
+        )
+    }
+
+    /// Posted on every `safeAreaInsetsDidChange()` fire. `object` is
+    /// the firing `WhiskerView`; `userInfo[safeAreaInsetsKey]` is a
+    /// `UIEdgeInsets`. Loose-coupling hook for the `whisker-safe-area`
+    /// module.
+    public static let safeAreaInsetsDidChangeNotification =
+        Notification.Name("WhiskerViewSafeAreaInsetsDidChange")
+
+    /// `userInfo` key carrying the `UIEdgeInsets` payload of
+    /// [`safeAreaInsetsDidChangeNotification`].
+    public static let safeAreaInsetsKey = "WhiskerViewSafeAreaInsets"
 }

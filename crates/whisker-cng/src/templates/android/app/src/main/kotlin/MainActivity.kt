@@ -1,22 +1,15 @@
 package {{android_application_id}}
 
-import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
-import rs.whisker.runtime.WhiskerView
+import rs.whisker.runtime.WhiskerActivity
 
-class MainActivity : AppCompatActivity() {
-    private var whiskerView: WhiskerView? = null
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val view = WhiskerView(this)
-        whiskerView = view
-        setContentView(view)
-    }
-
-    override fun onDestroy() {
-        whiskerView?.destroy()
-        whiskerView = null
-        super.onDestroy()
-    }
-}
+/**
+ * Host Activity for the Whisker app.
+ *
+ * Empty by design — [WhiskerActivity] handles WhiskerView instantiation,
+ * lifecycle forwarding, edge-to-edge window configuration, and system-bar
+ * styling. Override `onCreate(savedInstanceState)` here only if the app
+ * needs to wire something **before** the WhiskerView is set as the
+ * content view (e.g. installing a SplashScreen). Always call
+ * `super.onCreate(savedInstanceState)` last in that case.
+ */
+class MainActivity : WhiskerActivity()

@@ -989,6 +989,7 @@ dependencies = [
  "podcast-theme",
  "whisker",
  "whisker-image",
+ "whisker-safe-area",
 ]
 
 [[package]]
@@ -1947,6 +1948,13 @@ dependencies = [
  "serde",
  "serde_json",
  "slotmap",
+]
+
+[[package]]
+name = "whisker-safe-area"
+version = "0.1.0"
+dependencies = [
+ "whisker",
 ]
 
 [[package]]
