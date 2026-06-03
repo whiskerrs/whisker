@@ -1,0 +1,19 @@
+[package]
+name = "whisker-svg-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Whisker's SVG → display-list compiler + replayer. Internal crate used by `packages/whisker-svg` to produce the binary byte stream defined in `packages/whisker-svg/SPEC.md`. The same SPEC.md governs the per-platform replayers; this crate is the Rust side of that contract."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Tiny pure-Rust XML reader. ~80 KB compiled, no allocations beyond
+# a single Document holding the source string. We don't need
+# anything heavier (xml-rs / quick-xml) because the SVG subset we
+# target has no namespace gymnastics or streaming concerns.
+roxmltree = { version = "0.20", default-features = false, features = ["std"] }
