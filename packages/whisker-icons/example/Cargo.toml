@@ -11,3 +11,8 @@ crate-type = ["rlib"]
 [dependencies]
 whisker = { workspace = true }
 whisker-icons = { path = ".." }
+# Reactive accessor for the host view's safe-area insets — used to
+# push the gallery header below the system status bar / notch on
+# both Android (post-edge-to-edge) and iOS. Reads as
+# `safe_area_insets().get().top / .bottom` inside a `computed`.
+whisker-safe-area = { path = "../../whisker-safe-area" }

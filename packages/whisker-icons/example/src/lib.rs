@@ -20,35 +20,53 @@
 
 mod icons;
 
-use whisker::css::{FontWeight, TextAlign};
+use whisker::css::{FontWeight, TextAlign, ToCss};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_icons::{Icon, IconProps};
+use whisker_safe_area::safe_area_insets;
 
 #[whisker::main]
 pub fn app() -> Element {
     let header_text = format!("lucide gallery (all {})", icons::ALL.len());
+    // Reactive page padding — picks up the status-bar / notch
+    // height on iOS and (post-WhiskerActivity-edge-to-edge) Android.
+    // Re-fires on rotation / Dynamic Island / system-bar visibility
+    // changes via `safe_area_insets()`'s process-wide signal.
+    let insets = safe_area_insets();
 
     render! {
-        page(style: css!(
+        page(style: computed(move || css!(
             background_color: Color::hex(0x101012),
             flex_grow: 1.0,
             flex_shrink: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
-            padding_top: px(48),
-            padding_bottom: px(24),
-        )) {
-            text(
-                style: css!(
-                    color: Color::hex(0xF0F0F3),
-                    font_size: px(22),
-                    font_weight: FontWeight::Numeric(700),
-                    margin_left: px(20),
-                    margin_bottom: px(16),
-                ),
-                value: header_text,
-            )
+            padding_top: px(insets.get().top as f32 + 16.0),
+            padding_bottom: px(insets.get().bottom as f32 + 16.0),
+        ).to_css_string())) {
+            // Wrap the header `text` in a `view` — a known Lynx
+            // Android quirk collapses the first direct child of a
+            // `<page>` to zero height when edge-to-edge is enabled
+            // (`WhiskerActivity` flips `setDecorFitsSystemWindows(false)`).
+            // Putting an intermediate flex container in between gives
+            // the text a frame to lay out against. The wrapper is
+            // otherwise transparent.
+            view(style: css!(
+                width: percent(100),
+                flex_shrink: 0.0,
+            )) {
+                text(
+                    style: css!(
+                        color: Color::hex(0xF0F0F3),
+                        font_size: px(22),
+                        font_weight: FontWeight::Numeric(700),
+                        margin_left: px(20),
+                        margin_bottom: px(16),
+                    ),
+                    value: header_text,
+                )
+            }
             list(
                 each: || icons::ALL.to_vec(),
                 key: |(name, _): &(&'static str, &'static str)| name.to_string(),

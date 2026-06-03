@@ -1916,6 +1916,7 @@ version = "0.1.0"
 dependencies = [
  "whisker",
  "whisker-icons",
+ "whisker-safe-area",
 ]
 
 [[package]]
