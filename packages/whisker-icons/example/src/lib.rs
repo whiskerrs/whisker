@@ -67,7 +67,13 @@ pub fn app() -> Element {
 /// the list plumbing.
 #[component]
 fn tile(label: &'static str, svg: &'static str) -> Element {
-    let card_style = "display: flex; flex-direction: column; align-items: center; \
+    // `width: 100%` makes the card fill the list-cell so
+    // `align-items: center` (cross-axis = horizontal under
+    // `flex-direction: column`) actually has a frame to center
+    // against — without it the card collapses to its intrinsic
+    // content width and pins to the left edge of the cell.
+    let card_style = "width: 100%; \
+                      display: flex; flex-direction: column; align-items: center; \
                       padding: 8px;"
         .to_string();
     let frame_style = format!(
