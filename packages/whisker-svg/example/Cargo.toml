@@ -1,0 +1,13 @@
+[package]
+name = "whisker-svg-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Example app for `whisker-svg`. Renders a small gallery of SVGs (solid fills, strokes, currentColor tinting) so visual + on-device verification of the display-list replayer happens in one place. The iOS / Android test targets defined in the parent `whisker-svg` package's `Package.swift` / `build.gradle.kts` are reachable through this example's gen/ project — `cd gen/android && ./gradlew :whisker-svg:testDebugUnitTest`, `cd gen/ios && xcodebuild -scheme WhiskerSvg test`."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-svg = { path = ".." }

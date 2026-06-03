@@ -17,7 +17,7 @@ class SvgModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("Svg")
         View(WhiskerSvgView::class.java) {
-            Prop("_display_list") { view: WhiskerSvgView, value ->
+            Prop("display-list") { view: WhiskerSvgView, value ->
                 view.setDisplayList(value.asString() ?: "")
             }
             Prop("color") { view: WhiskerSvgView, value ->

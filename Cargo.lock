@@ -1997,6 +1997,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-svg-example"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-svg",
+]
+
+[[package]]
 name = "whisker-video"
 version = "0.1.0"
 dependencies = [

@@ -29,7 +29,7 @@
 //! Prop" channel, and the iOS / Android replayer modules accept
 //! the base64 directly. A future PR can swap the transport without
 //! touching the platform replayer logic (the base64 layer is paint
-//! around the `_display_list` Prop only).
+//! around the `display_list` Prop only).
 //!
 //! ## Tinting
 //!
@@ -76,7 +76,7 @@ pub fn svg(content: Signal<String>, color: Signal<String>, style: Signal<String>
     // be moved out of the outer FnMut on the first re-fire.
     render! {
         SvgRenderer(
-            _display_list: display_list,
+            display_list: display_list,
             color: color.clone(),
             style: style.clone(),
         )
@@ -84,17 +84,17 @@ pub fn svg(content: Signal<String>, color: Signal<String>, style: Signal<String>
 }
 
 /// Internal `module_component` — the platform-side `WhiskerSvgView`
-/// receives `_display_list` (base64 of the binary SPEC bytes),
+/// receives `display_list` (base64 of the binary SPEC bytes),
 /// `color` (CSS colour string for tint substitution), and the
 /// standard `style:` cascade. Users don't touch this directly;
 /// it's hidden behind the `Svg` wrapper above.
 ///
-/// The leading underscore on `_display_list` is a convention to
+/// The leading underscore on `display_list` is a convention to
 /// signal "internal transport, not a user-facing API surface".
 /// (Whisker doesn't enforce visibility on Prop names yet — this
 /// is documentation-level.)
 #[whisker::module_component("Svg")]
-pub fn svg_renderer(_display_list: Signal<String>, color: Signal<String>, style: Signal<String>) {}
+pub fn svg_renderer(display_list: Signal<String>, color: Signal<String>, style: Signal<String>) {}
 
 /// Compile `svg_xml` to a base64-cased display list. Returns empty
 /// string on parse failure (the replayer treats that as

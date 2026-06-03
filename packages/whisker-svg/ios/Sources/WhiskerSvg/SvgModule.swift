@@ -23,7 +23,7 @@ public final class SvgModule: Module {
         ModuleDefinition {
             Name("Svg")
             View(WhiskerSvgView.self) {
-                Prop("_display_list") { (view: WhiskerSvgView, value: WhiskerValue) in
+                Prop("display-list") { (view: WhiskerSvgView, value: WhiskerValue) in
                     view.setDisplayList(value.asString ?? "")
                 }
                 Prop("color") { (view: WhiskerSvgView, value: WhiskerValue) in

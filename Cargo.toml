@@ -27,6 +27,7 @@ members = [
     "packages/whisker-router-macros",
     "packages/whisker-safe-area",
     "packages/whisker-svg",
+    "packages/whisker-svg/example",
     "packages/whisker-video",
 ]
 exclude = [
