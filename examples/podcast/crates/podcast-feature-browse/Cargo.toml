@@ -14,3 +14,4 @@ podcast-theme = { path = "../podcast-theme" }
 podcast-domain = { path = "../podcast-domain" }
 podcast-data = { path = "../podcast-data" }
 podcast-ui-kit = { path = "../podcast-ui-kit" }
+podcast-routing = { path = "../podcast-routing" }

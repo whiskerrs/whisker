@@ -1,0 +1,19 @@
+[package]
+name = "podcast-feature-detail"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Podcast detail screen — shows artwork, title, artist, genre, episode-count, and an episode-list placeholder. Reads the podcast from a shared `RwSignal<HashMap<u64, Podcast>>` registry the browse feature populates on load — keeps the route URL-friendly (`/podcast/:id`) without forcing a re-fetch on every tap. Playback is a future PR; this crate is rendering-only."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-image = { path = "../../../../packages/whisker-image" }
+whisker-icons = { path = "../../../../packages/whisker-icons" }
+whisker-router = { path = "../../../../packages/whisker-router" }
+whisker-safe-area = { path = "../../../../packages/whisker-safe-area" }
+podcast-domain = { path = "../podcast-domain" }
+podcast-routing = { path = "../podcast-routing" }
+podcast-theme = { path = "../podcast-theme" }

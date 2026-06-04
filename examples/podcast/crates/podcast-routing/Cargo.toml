@@ -1,0 +1,12 @@
+[package]
+name = "podcast-routing"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Routing surface for the podcast example: the `AppRoute` enum (the typed enum the StackLayout dispatches on) and the `Navigator` struct (a thin push/pop facade the feature crates read from context). Defined here, in a crate both `podcast-feature-browse` and `podcast-feature-detail` depend on, so the two features share the same Rust types when they look the values up via `use_context` — distinct structurally-identical types in each feature crate match on different `TypeId`s and the lookup returns `None`."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker-router = { workspace = true }

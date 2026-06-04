@@ -944,9 +944,13 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 name = "podcast"
 version = "0.1.0"
 dependencies = [
+ "podcast-domain",
  "podcast-feature-browse",
+ "podcast-feature-detail",
+ "podcast-routing",
  "podcast-theme",
  "whisker",
+ "whisker-router",
 ]
 
 [[package]]
@@ -972,9 +976,31 @@ version = "0.1.0"
 dependencies = [
  "podcast-data",
  "podcast-domain",
+ "podcast-routing",
  "podcast-theme",
  "podcast-ui-kit",
  "whisker",
+]
+
+[[package]]
+name = "podcast-feature-detail"
+version = "0.1.0"
+dependencies = [
+ "podcast-domain",
+ "podcast-routing",
+ "podcast-theme",
+ "whisker",
+ "whisker-icons",
+ "whisker-image",
+ "whisker-router",
+ "whisker-safe-area",
+]
+
+[[package]]
+name = "podcast-routing"
+version = "0.1.0"
+dependencies = [
+ "whisker-router",
 ]
 
 [[package]]
