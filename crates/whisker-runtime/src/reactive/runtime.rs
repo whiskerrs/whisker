@@ -99,17 +99,43 @@ impl NodeData {
 /// kept in sync by the effect/computed runner — on each re-run, the runner
 /// re-derives `sources` by tracking signal reads during the closure,
 /// then sets `subscribers` on the new sources symmetrically.
+///
+/// `arc_sources` is the equivalent for `ArcSignal`-family reads: Arc-
+/// backed signals don't live in the arena, so they can't be referenced
+/// by `NodeId`. Instead, each Arc signal whose value this node read
+/// hands the node a `Rc<dyn ArcSubscription>` clone of its inner; on
+/// re-run / disposal, the node iterates this list to tell each signal
+/// "drop me from your subscriber list" via [`ArcSubscription::unsubscribe`].
+/// The signal itself stays alive (Arc refcount) regardless.
 pub struct ReactiveNode {
     pub owner: OwnerId,
     pub data: NodeData,
     pub sources: HashSet<NodeId>,
     pub subscribers: HashSet<NodeId>,
+    pub arc_sources: Vec<Rc<dyn ArcSubscription>>,
 }
 
 impl ReactiveNode {
     pub fn kind(&self) -> NodeKind {
         self.data.kind()
     }
+}
+
+/// Cleanup interface that Arc-backed signals expose so the scheduler
+/// and owner-disposal code can detach a node from a signal's subscriber
+/// list without knowing the signal's concrete type.
+///
+/// The signal owns a `Vec<NodeId>` of subscribers; when a node either
+/// (a) re-runs and rebuilds its source set or (b) gets disposed with
+/// its owner, the runtime walks the node's `arc_sources` and calls
+/// `unsubscribe(node_id)` on each so the signal's bookkeeping stays in
+/// sync. The signal's value lives on as long as someone holds an Arc
+/// to it — disposal here only severs the back-reference.
+pub trait ArcSubscription {
+    /// Drop `subscriber` from this signal's subscriber list. No-op if
+    /// it was never present (e.g. already pruned by an earlier
+    /// `notify`).
+    fn unsubscribe(&self, subscriber: NodeId);
 }
 
 /// A scope in the reactive tree. Created when a component mounts,

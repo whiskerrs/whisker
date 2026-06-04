@@ -60,7 +60,7 @@
 use std::sync::OnceLock;
 
 use whisker::module;
-use whisker::{signal, ReadSignal, WhiskerValue, WriteSignal};
+use whisker::{ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, WhiskerValue};
 
 /// Safe-area inset amounts in **points (iOS) / dp (Android)** — the
 /// same density-independent units that the rest of Whisker's CSS
@@ -81,37 +81,74 @@ pub struct SafeAreaInsets {
 
 /// Reactive accessor for the current safe-area insets.
 ///
-/// All calls share one underlying signal pair, so reading from many
-/// components or effects is cheap (no extra subscription, no extra
-/// cross-platform round-trip). The signal starts at
+/// All calls share one underlying signal: the value lives in a
+/// process-global [`ArcRwSignal`] stashed in [`SLOT`], so reading
+/// from many components or effects is cheap (no extra subscription,
+/// no extra cross-platform round-trip). The signal starts at
 /// `SafeAreaInsets::default()` and updates as soon as the native side
 /// can push the host view's current values.
 ///
+/// The returned handle is a `Copy` [`ReadSignal`] — the conversion
+/// from the underlying [`ArcReadSignal`] happens inside this function
+/// so callers get the same ergonomics as a component-local
+/// `signal()`. The arena entry minted by the conversion lives in
+/// whichever owner is current at call time; when that owner disposes,
+/// only the entry is freed, the underlying value stays alive because
+/// the `OnceLock` keeps the Arc strong count up.
+///
 /// **Must be called from the main thread.** The underlying reactive
-/// runtime is thread-local; calling from a worker thread would either
-/// allocate a fresh detached signal (silently broken) or panic.
+/// runtime is thread-local.
 pub fn safe_area_insets() -> ReadSignal<SafeAreaInsets> {
     install();
-    SLOT.get().expect("install() ran above").inner
+    SLOT.get()
+        .expect("install() ran above")
+        .read
+        .inner
+        .clone()
+        .into()
 }
 
 // ---- Internals -------------------------------------------------------------
 
+/// Slot contents — both halves of the global Arc signal. The read
+/// half is what `safe_area_insets()` hands out (as a converted Copy
+/// `ReadSignal`); the write half stays here so the native event
+/// callback can `set()` through it.
+struct Slot {
+    read: MainThreadOnly<ArcReadSignal<SafeAreaInsets>>,
+    /// Held only to keep the write side reachable from the on-event
+    /// callback below — not exposed externally. The `Drop` glue runs
+    /// at process teardown along with the `OnceLock`.
+    #[allow(dead_code)]
+    write: MainThreadOnly<ArcWriteSignal<SafeAreaInsets>>,
+}
+
 /// One-shot install of the global signal + the native subscription.
 /// Idempotent — re-entry on subsequent `safe_area_insets()` calls is
 /// a single `OnceLock::get()` check.
+///
+/// The signal is allocated as an [`ArcRwSignal`] so its lifetime is
+/// governed by the [`SLOT`]'s Arc strong count rather than the
+/// caller's owner. The owner that triggered the first call can come
+/// and go without affecting subsequent reads — no `with_detached_owner`
+/// gymnastics, no `panic_cannot_unwind` on a disposed read.
 fn install() {
     SLOT.get_or_init(|| {
-        let (read, write) = signal(SafeAreaInsets::default());
+        let (read, write) = ArcRwSignal::new(SafeAreaInsets::default()).split();
         // The bridge's `on_event` callback may fire from any thread
-        // depending on the host; the `WriteSignal` is `!Send`. We
+        // depending on the host; the `ArcWriteSignal` is `!Send`. We
         // assert main-thread-only via [`MainThreadOnly`] and trust
         // the platform contract (iOS posts from `safeAreaInsetsDidChange`
         // on UI thread; Android posts from `OnApplyWindowInsetsListener`
         // on UI thread). If a future host changes that, swap the
         // closure body to `run_on_main_thread` first.
-        subscribe_to_native(MainThreadOnly { inner: write });
-        MainThreadOnly { inner: read }
+        subscribe_to_native(MainThreadOnly {
+            inner: write.clone(),
+        });
+        Slot {
+            read: MainThreadOnly { inner: read },
+            write: MainThreadOnly { inner: write },
+        }
     });
 }
 
@@ -120,7 +157,7 @@ fn install() {
 /// — the signal lives for the process lifetime, so the listener
 /// should too. Letting the subscription `Drop` would also drop the
 /// underlying closure pointer the bridge holds.
-fn subscribe_to_native(writer: MainThreadOnly<WriteSignal<SafeAreaInsets>>) {
+fn subscribe_to_native(writer: MainThreadOnly<ArcWriteSignal<SafeAreaInsets>>) {
     let module = module!("SafeArea");
     let sub = module.on_event("insetsChanged", move |payload| {
         if let Some(insets) = decode_payload(payload) {
@@ -160,14 +197,14 @@ fn decode_payload(value: WhiskerValue) -> Option<SafeAreaInsets> {
     })
 }
 
-/// Static slot for the global signal pair + the subscription closure
-/// wrapper. `OnceLock` requires `Sync`; the inner value is `!Send` /
-/// `!Sync` because `ReadSignal` / `WriteSignal` are thread-local
-/// handles. We wrap in [`MainThreadOnly`] to satisfy the bound by
-/// asserting main-thread-only access; the contract is that
-/// `safe_area_insets()` callers run on the main thread (the reactive
-/// runtime constraint already requires that anyway).
-static SLOT: OnceLock<MainThreadOnly<ReadSignal<SafeAreaInsets>>> = OnceLock::new();
+/// Static slot for the global Arc signal pair. `OnceLock` requires
+/// `Sync`; `ArcReadSignal` / `ArcWriteSignal` are `!Send` / `!Sync`
+/// because the underlying `Rc` is thread-local. We wrap both halves
+/// in [`MainThreadOnly`] to satisfy the bound by asserting main-
+/// thread-only access; the contract is that `safe_area_insets()`
+/// callers run on the main thread (the reactive runtime constraint
+/// already requires that anyway).
+static SLOT: OnceLock<Slot> = OnceLock::new();
 
 /// Locally-scoped wrapper asserting main-thread-only access to
 /// `inner`. Used twice here: once for the static slot (so the
