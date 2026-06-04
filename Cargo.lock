@@ -1918,6 +1918,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "cargo_metadata",
  "futures-util",
  "notify",
  "object",

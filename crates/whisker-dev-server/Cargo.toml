@@ -18,6 +18,10 @@ serde_json = { workspace = true }
 subsecond-types = { workspace = true }
 notify = { workspace = true }
 object = { workspace = true }
+# Workspace dep-graph walk for sub-crate hot-reload: enumerate path
+# deps of the user crate so the file watcher can cover their src/
+# trees and the patcher knows which crate a changed file belongs to.
+cargo_metadata = "0.18"
 # Cold-rebuild orchestration. Shared with whisker-cli's `whisker build`.
 whisker-build = { workspace = true }
 

@@ -65,14 +65,25 @@ impl Change {
     }
 }
 
-/// Spawn a recursive watcher on `root`. Debounced [`Change`] batches
-/// arrive on `tx`. The returned [`RecommendedWatcher`] keeps the OS
-/// watch alive — drop it to stop watching.
+/// Spawn a recursive watcher rooted at each path in `roots`.
+/// Debounced [`Change`] batches arrive on `tx`. The returned
+/// [`RecommendedWatcher`] keeps the OS watches alive — drop it to
+/// stop watching.
+///
+/// Roots that fail to attach (don't exist, or notify rejects them)
+/// log a warning and are skipped; the watcher still returns as long
+/// as at least one root attached. Sub-crates without a `src/` are
+/// the common case — `cargo metadata` lists every workspace member,
+/// not every member ships a `src/` (proc-macro-only crates, virtual
+/// manifest stubs, …).
 pub fn spawn_watcher(
-    root: PathBuf,
+    roots: Vec<PathBuf>,
     debounce: Duration,
     tx: mpsc::Sender<Change>,
 ) -> Result<RecommendedWatcher> {
+    if roots.is_empty() {
+        anyhow::bail!("spawn_watcher: no roots to watch");
+    }
     let (raw_tx, raw_rx) = std_mpsc::channel::<Event>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
         if let Ok(ev) = res {
@@ -82,9 +93,19 @@ pub fn spawn_watcher(
         }
     })
     .context("create notify watcher")?;
-    watcher
-        .watch(&root, RecursiveMode::Recursive)
-        .with_context(|| format!("watch {}", root.display()))?;
+    let mut attached = 0;
+    for root in &roots {
+        match watcher.watch(root, RecursiveMode::Recursive) {
+            Ok(()) => attached += 1,
+            Err(e) => whisker_build::ui::warn(format!("skip watch {}: {e}", root.display())),
+        }
+    }
+    if attached == 0 {
+        anyhow::bail!(
+            "spawn_watcher: no roots successfully attached (of {})",
+            roots.len()
+        );
+    }
 
     // Debounce loop: separate OS thread because notify's callback is
     // synchronous and the std mpsc::Receiver isn't async-friendly.
@@ -209,7 +230,7 @@ mod tests {
 
         let (tx, mut rx) = mpsc::channel::<Change>(8);
         let _watcher =
-            spawn_watcher(dir.clone(), Duration::from_millis(120), tx).expect("watcher up");
+            spawn_watcher(vec![dir.clone()], Duration::from_millis(120), tx).expect("watcher up");
 
         // Give notify a moment to register the watch.
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -241,7 +262,7 @@ mod tests {
 
         let (tx, mut rx) = mpsc::channel::<Change>(8);
         let _watcher =
-            spawn_watcher(dir.clone(), Duration::from_millis(120), tx).expect("watcher up");
+            spawn_watcher(vec![dir.clone()], Duration::from_millis(120), tx).expect("watcher up");
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         std::fs::write(
