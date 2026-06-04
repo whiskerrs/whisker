@@ -120,7 +120,12 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
                 return;
             }
 
-            let wrapper = mount_preview();
+            // `mount_preview` returns the just-below-top wrapper from
+            // the back stack. `None` means the stack is at its root
+            // (`back` would be invalid) — abort the gesture.
+            let Some(wrapper) = mount_preview() else {
+                return;
+            };
             apply_pose(
                 wrapper,
                 transition.0.as_ref(),

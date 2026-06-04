@@ -1,9 +1,33 @@
-//! `StackLayout` — push/pop with both screens visible during the
-//! transition. Animation specifics are delegated to a
+//! `StackLayout` — back-stack-preserving stack navigator.
+//!
+//! Behaviour matches the established native stack-navigator semantics
+//! (iOS `UINavigationController`, Android Fragment back stack, React
+//! Navigation): every entry currently in the
+//! [`RouteStack`](crate::RouteStack) stays **mounted** in the DOM and
+//! keeps its reactive owner alive. Going back doesn't re-mount the
+//! previous screen; it reveals the one that was already there.
+//! Owners are only disposed for entries that have been **popped off
+//! the stack** (and dispose is deferred until the next navigation so
+//! the popped wrapper survives long enough to animate out).
+//!
+//! This is a change from the earlier model that held a single
+//! `current` / `outgoing` slot pair and disposed the previous route
+//! on every transition. The earlier model lost component state
+//! (scroll position, in-flight resources, child component
+//! lifecycles) on back-navigation, and forced module authors who
+//! cached signals into route owners to fight an extra owner-tree
+//! complication. The preserve-back-stack model fixes both: scroll
+//! position survives a push/back round-trip, and per-route owners
+//! survive disposal of *other* routes.
+//!
+//! Animation specifics are still delegated to a
 //! [`StackTransition`](crate::StackTransition) implementation; the
-//! layout itself is responsible only for mounting / promoting
-//! slots, deriving the [`Direction`], and ordering the DOM so the
-//! transition's paint-order hint takes effect.
+//! layout is responsible for: tracking the entry-to-wrapper map,
+//! diffing it against the latest `entries` signal, choosing which
+//! wrapper plays the incoming / outgoing role on push or pop,
+//! ordering the container's child list so the transition's
+//! foreground hint paints in the right z-order, and deferring
+//! dispose of popped wrappers until after their animation runs.
 //!
 //! Interactive behaviour (iOS swipe-back, Android system back) is
 //! **not** part of the transition trait. Instead, the layout
@@ -16,6 +40,7 @@
 //! horizontal slide with ~30% parallax.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use whisker::css::ext::*;
@@ -32,9 +57,51 @@ use whisker::{component, provide_context, Children, Style};
 
 use crate::outlet::{router, RouteRenderFn};
 use crate::route::Route;
+use crate::stack::EntryId;
 use crate::transitions::{Direction, Side, StackTransitionBox};
 
-type Slot = Rc<RefCell<Option<(OwnerId, Element)>>>;
+/// One mounted entry's bookkeeping: the reactive owner that holds the
+/// rendered tree, plus the wrapper `view` it lives inside. The wrapper
+/// is what the transition animates; the owner is what gets disposed
+/// when the entry is popped off the stack.
+#[derive(Clone, Copy)]
+struct MountedEntry {
+    owner: OwnerId,
+    wrapper: Element,
+}
+
+/// Mutable state shared between the route-change effect and the
+/// gesture / back-handler closures published through the
+/// [`StackLayoutHandle`]. Held in `Rc<RefCell<...>>` because the
+/// closures live in different reactive scopes (the effect's, the
+/// gesture component's) but coordinate on the same data.
+#[derive(Clone)]
+struct LayoutState {
+    /// Every entry currently mounted under [`container`], keyed by its
+    /// stable [`EntryId`]. Insertion happens when an entry is pushed
+    /// onto the stack; removal happens when an entry is popped off
+    /// (with dispose deferred via [`Self::pending_dispose`]).
+    ///
+    /// The `last` of [`Self::order`] is the active (visible) entry.
+    mounted: Rc<RefCell<HashMap<EntryId, MountedEntry>>>,
+    /// IDs in the order they appear in [`RouteStack::entries`]. Last
+    /// element is the current visible route; everything before is
+    /// the back stack, kept mounted at the suspended pose.
+    order: Rc<RefCell<Vec<EntryId>>>,
+    /// Entries whose owners are scheduled for disposal **on the
+    /// next effect run**. Dispose is deferred so the wrapper stays
+    /// alive long enough to animate out — Lynx's `Element::Animate`
+    /// has no completion callback, so we can't dispose at "end of
+    /// animation" precisely; the next-nav drain is a memory-bounded
+    /// approximation (max one popped wrapper queued at a time).
+    pending_dispose: Rc<RefCell<Vec<MountedEntry>>>,
+    /// Counter the gesture commit closures use to suppress the
+    /// route-change effect's natural animation. The gesture has
+    /// already moved wrappers to their final pose by hand, so the
+    /// next effect run reads `> 0`, decrements, and skips animation
+    /// + DOM reordering.
+    skip_animation: Rc<Cell<u32>>,
+}
 
 /// Handle a [`StackLayout`] publishes to context so child components
 /// (gestures, back-handlers, anything else that needs to coordinate
@@ -45,59 +112,63 @@ type Slot = Rc<RefCell<Option<(OwnerId, Element)>>>;
 /// then call the closures as needed. For plain back navigation
 /// (Android system back, hardware key, in-app back UI) you usually
 /// don't need this handle — `router::<R>().back()` is enough.
-/// This is for the interactive paths that need to mount a preview
-/// of the destination screen and promote it atomically.
+/// This is for the interactive paths that need to reach the
+/// just-below-top wrapper that the back-stack model now keeps
+/// pre-mounted for them.
 #[derive(Clone)]
 pub struct StackLayoutHandle {
     /// The `StackLayout`'s root container view. Bind touch /
     /// animation / custom listeners on this element.
     pub container: Element,
 
-    /// Handle to the currently-foregrounded wrapper, if any. The
-    /// gesture controller poses this wrapper alongside the
-    /// preview.
+    /// Returns the wrapper for the currently-foregrounded entry
+    /// (top of stack), if any. The gesture controller poses this
+    /// wrapper alongside the preview during a swipe-back drag.
     pub current_wrapper: Rc<dyn Fn() -> Option<Element>>,
 
-    /// Build a wrapper element for the screen one step below the
-    /// top of the stack, mount the rendered screen into it, and
-    /// insert it at DOM index 0 of the container. Returns the
-    /// wrapper handle.
+    /// Returns the wrapper for the entry **one step below** the top
+    /// of the stack — the screen a back navigation would reveal.
     ///
-    /// The layout retains ownership; release via
-    /// [`dispose_preview`](Self::dispose_preview) or
-    /// [`commit_preview_and_back`](Self::commit_preview_and_back).
-    pub mount_preview: Rc<dyn Fn() -> Element>,
+    /// In the preserve-back-stack model this wrapper is already
+    /// mounted at the suspended pose (parallax behind the current
+    /// top), so a swipe gesture just animates it forward instead of
+    /// having to mount a fresh tree on every touchstart. Returns
+    /// `None` if the stack has only one entry (no back to reveal).
+    pub mount_preview: Rc<dyn Fn() -> Option<Element>>,
 
-    /// Tear down the preview wrapper (remove from DOM, dispose the
-    /// reactive owner). Idempotent.
+    /// Visually cancel an in-progress swipe-back gesture: restore
+    /// the just-below-top wrapper to its suspended pose so it stops
+    /// tracking the finger and resumes hiding behind the top.
+    /// Idempotent.
+    ///
+    /// Does **not** dispose anything — the just-below-top wrapper is
+    /// a real back-stack entry, not a throwaway preview. The layout
+    /// keeps it mounted regardless of gesture state.
     pub dispose_preview: Rc<dyn Fn()>,
 
-    /// Promote the preview wrapper into the `current` slot, dispose
-    /// both the old current and any stale outgoing wrapper, then
-    /// `stack.back()` with `skip_animation` set so the route-change
-    /// effect doesn't re-animate the navigation the gesture
-    /// already finished.
+    /// Commit an in-progress swipe-back gesture: call
+    /// [`RouteStack::back`] and tell the route-change effect to
+    /// skip its natural animation (the gesture has already settled
+    /// the wrappers at their final pose). The popped entry's owner
+    /// is disposed on the next effect run.
     pub commit_preview_and_back: Rc<dyn Fn()>,
 
     /// Plain back navigation — calls the in-context
     /// [`RouteStack::back`](crate::RouteStack::back). The natural
-    /// route-change effect handles the pop animation, so non-
-    /// interactive back handlers (Android system back, hardware key,
-    /// in-app "Back" button) don't need to touch the preview slot at
-    /// all. Erased over the route type `R` so children that don't
-    /// know `R` (e.g. [`AndroidPredictiveBack`](crate::gestures::AndroidPredictiveBack))
+    /// route-change effect handles the pop animation. Erased over
+    /// the route type `R` so children that don't know `R`
+    /// (e.g. [`AndroidPredictiveBack`](crate::gestures::AndroidPredictiveBack))
     /// can drive it.
     pub back: Rc<dyn Fn()>,
 }
 
-/// Animated stack: holds two slots during a transition and renders
-/// the current entry of the in-context
-/// [`RouteStack`](crate::RouteStack).
+/// Back-stack-preserving stack navigator.
 ///
-/// The route stack for route type `R` is pulled from context —
-/// wrap a [`RouteProvider`](crate::RouteProvider) above the layout
-/// so `router::<R>()` finds it. Children of the layout (gestures,
-/// back-handlers) receive a [`StackLayoutHandle`] via context.
+/// Reads the in-context [`RouteStack`](crate::RouteStack) and mirrors
+/// it into the DOM as a stack of wrappers, keeping every entry
+/// mounted until it's popped off the stack. Animation between top
+/// transitions is delegated to the configured
+/// [`StackTransition`](crate::StackTransition).
 #[component]
 pub fn stack_layout<R: Route>(
     #[prop(default = StackTransitionBox::default())] transition: StackTransitionBox,
@@ -108,17 +179,12 @@ pub fn stack_layout<R: Route>(
     let container = create_element(ElementTag::View);
     apply_styles(container, container_css().to_css_string());
 
-    let outgoing: Slot = Rc::new(RefCell::new(None));
-    let current: Slot = Rc::new(RefCell::new(None));
-    let preview: Slot = Rc::new(RefCell::new(None));
-    // When a gesture commit fires `stack.back()`, the resulting
-    // route-change effect must NOT animate — the wrappers already
-    // sit at the final pose. The commit closure sets this to 1;
-    // the effect decrements and bails. Counted (rather than bool)
-    // because a single signal update can fan out into more than
-    // one effect run on some runtime paths.
-    let skip_animation: Rc<Cell<u32>> = Rc::new(Cell::new(0));
-    let prev_len = Rc::new(Cell::new(0_usize));
+    let state = LayoutState {
+        mounted: Rc::new(RefCell::new(HashMap::new())),
+        order: Rc::new(RefCell::new(Vec::new())),
+        pending_dispose: Rc::new(RefCell::new(Vec::new())),
+        skip_animation: Rc::new(Cell::new(0)),
+    };
     let first = Rc::new(Cell::new(true));
 
     // Tracking a single `entries` signal (rather than the derived
@@ -129,114 +195,31 @@ pub fn stack_layout<R: Route>(
 
     {
         let render = render.clone();
-        let outgoing = outgoing.clone();
-        let current = current.clone();
-        let prev_len = prev_len.clone();
-        let first = first.clone();
-        let skip_animation = skip_animation.clone();
         let transition = transition.clone();
+        let state = state.clone();
+        let first = first.clone();
         effect(move || {
-            let entries = entries_signal.get();
-            let route = entries
-                .last()
-                .map(|e| e.route.clone())
-                .expect("RouteStack invariant: at least one entry");
-            let new_len = entries.len();
-            let old_len = prev_len.get();
-
-            // Gesture-driven commit already advanced the visual
-            // state. Update bookkeeping and bail.
-            let skip = skip_animation.get();
-            if skip > 0 {
-                skip_animation.set(skip - 1);
-                prev_len.set(new_len);
-                first.set(false);
-                return;
-            }
-
-            let dir = if first.get() {
-                Direction::None
-            } else if new_len > old_len {
-                Direction::Forward
-            } else if new_len < old_len {
-                Direction::Backward
-            } else {
-                Direction::None
-            };
-            prev_len.set(new_len);
-            first.set(false);
-
-            if let Some((owner, wrapper)) = outgoing.borrow_mut().take() {
-                remove_child(container, wrapper);
-                dispose_owner(owner);
-            }
-
-            if let Some((owner, wrapper)) = current.borrow_mut().take() {
-                if dir == Direction::None {
-                    remove_child(container, wrapper);
-                    dispose_owner(owner);
-                } else {
-                    apply_wrapper_style(wrapper, transition.0.as_ref(), Side::Outgoing, dir);
-                    *outgoing.borrow_mut() = Some((owner, wrapper));
-                }
-            }
-
-            let new_owner = create_owner(None);
-            let wrapper = create_element(ElementTag::View);
-            apply_wrapper_style(wrapper, transition.0.as_ref(), Side::Incoming, dir);
-            match transition.0.foreground(dir) {
-                Side::Outgoing => insert_child_at(container, wrapper, 0),
-                Side::Incoming => append_child(container, wrapper),
-            }
-            let route_for_render = route.clone();
-            let render_for_owner = render.clone();
-            with_owner(new_owner, || {
-                let h = render_for_owner.call(route_for_render);
-                append_child(wrapper, h);
-            });
-            *current.borrow_mut() = Some((new_owner, wrapper));
-
-            if dir == Direction::None {
-                return;
-            }
-
-            let incoming_wrapper = wrapper;
-            let outgoing_for_anim = outgoing.borrow().as_ref().map(|(_, w)| *w);
-            let transition_for_mount = transition.clone();
-            on_mount(move || {
-                transition_for_mount
-                    .0
-                    .animate(incoming_wrapper, Side::Incoming, dir);
-                if let Some(out) = outgoing_for_anim {
-                    transition_for_mount.0.animate(out, Side::Outgoing, dir);
-                }
-            });
+            run_navigation_effect(
+                &state,
+                &first,
+                &transition,
+                container,
+                &render,
+                entries_signal.get(),
+            );
         });
     }
 
     // Reserve an owner whose parent is the layout's own owner so
-    // children that mount via `commit_preview_and_back` /
-    // `mount_preview` get reachable context (`RouteProvider` etc.).
-    // The gesture handlers fire from the touch dispatcher, which
-    // has no active reactive owner; without this anchor, owners
-    // spawned for the preview screen would become roots and lose
-    // access to the `RouteProvider` context their components rely
-    // on.
-    let handle_parent = create_owner(None);
+    // children that mount via `commit_preview_and_back` get reachable
+    // context (`RouteProvider` etc.). The gesture handlers fire from
+    // the touch dispatcher, which has no active reactive owner;
+    // without this anchor, owners spawned for entries the gesture
+    // interacts with would become roots and lose access to the
+    // `RouteProvider` context their components rely on.
+    let _handle_parent = create_owner(None);
 
-    // Publish the handle so child gesture/back components can pick
-    // it up via `use_context::<StackLayoutHandle>()`.
-    let handle = build_stack_layout_handle(
-        container,
-        transition.clone(),
-        stack.clone(),
-        render.clone(),
-        current,
-        outgoing,
-        preview,
-        skip_animation,
-        handle_parent,
-    );
+    let handle = build_stack_layout_handle(container, stack.clone(), state);
     provide_context(handle);
 
     // Mount the user's children (gestures / back-handlers / etc.).
@@ -250,148 +233,291 @@ pub fn stack_layout<R: Route>(
     container
 }
 
-/// Build the closure surface a child component pulls out of context
-/// to drive the stack's preview / commit primitives.
-///
-/// Lives here in the layout because all of these operations touch
-/// the slots that the route-change effect also manipulates — the
-/// gesture / back-handler components stay free of `OwnerId` / `Slot`
-/// plumbing.
-#[allow(clippy::too_many_arguments)]
-fn build_stack_layout_handle<R: Route>(
+/// One pass of the route-change effect. Pulled out of the `effect`
+/// closure so the steps read top-to-bottom without an extra
+/// indentation level.
+fn run_navigation_effect<R: Route>(
+    state: &LayoutState,
+    first: &Rc<Cell<bool>>,
+    transition: &StackTransitionBox,
     container: Element,
-    transition: StackTransitionBox,
-    stack: crate::stack::RouteStack<R>,
-    render: RouteRenderFn<R>,
-    current: Slot,
-    outgoing: Slot,
-    preview: Slot,
-    skip_animation: Rc<Cell<u32>>,
-    // `handle_parent`: anchor owner used as the parent of any owner
-    // spawned via the handle's closures. Touch / system back
-    // dispatchers fire with no active reactive owner; without this
-    // anchor screens mounted inside a preview wrapper would become
-    // roots and lose access to the `RouteProvider`'s `RouteStack`
-    // context.
-    handle_parent: OwnerId,
-) -> StackLayoutHandle {
-    let mount_preview = {
-        let stack = stack.clone();
-        let render = render.clone();
-        let preview = preview.clone();
-        let outgoing_for_mount = outgoing.clone();
-        let transition = transition.clone();
-        Rc::new(move || {
-            // If a previous gesture left a preview lingering (e.g.,
-            // mount → no commit/cancel before the next touchstart),
-            // tear it down before mounting a fresh one — otherwise
-            // the DOM accumulates orphan wrappers that paint on top
-            // of the current screen.
-            if let Some((owner, wrapper)) = preview.borrow_mut().take() {
-                remove_child(container, wrapper);
-                dispose_owner(owner);
+    render: &RouteRenderFn<R>,
+    entries: Vec<crate::stack::RouteEntry<R>>,
+) {
+    // Step 1: drain the previous navigation's pending dispose —
+    // wrappers that were popped off the stack last time and need
+    // their owners freed now that their animation has had time to
+    // play. Done first so a tight push-back-push cycle doesn't
+    // leave stale wrappers in the DOM during the new transition.
+    {
+        let mut pending = state.pending_dispose.borrow_mut();
+        for entry in pending.drain(..) {
+            remove_child(container, entry.wrapper);
+            dispose_owner(entry.owner);
+        }
+    }
+
+    let new_ids: Vec<EntryId> = entries.iter().map(|e| e.id).collect();
+    let new_id_set: std::collections::HashSet<EntryId> = new_ids.iter().copied().collect();
+
+    // Step 2: skip-animation guard. The gesture commit path
+    // (`commit_preview_and_back`) sets `skip_animation` so the
+    // natural pop animation doesn't fire — the gesture already
+    // settled the wrappers at their final pose. We still need to
+    // *bookkeep* the stack change: the popped entry has to leave
+    // `mounted`, and any owner it held has to be disposed.
+    let skip = state.skip_animation.get();
+    if skip > 0 {
+        state.skip_animation.set(skip - 1);
+        let old_ids = std::mem::replace(&mut *state.order.borrow_mut(), new_ids.clone());
+        let removed: Vec<EntryId> = old_ids
+            .iter()
+            .filter(|id| !new_id_set.contains(id))
+            .copied()
+            .collect();
+        for id in removed {
+            if let Some(entry) = state.mounted.borrow_mut().remove(&id) {
+                // Gesture already animated this wrapper to its
+                // offscreen pose, so dispose right away — no
+                // pending queue.
+                remove_child(container, entry.wrapper);
+                dispose_owner(entry.owner);
             }
+        }
+        first.set(false);
+        return;
+    }
 
-            // Dispose any stale outgoing wrapper from the most
-            // recent natural push. It would otherwise still sit in
-            // the DOM at its parallax pose (translateX(-30%)
-            // brightness 0.85) and obscure the preview the gesture
-            // is about to mount — visible as a frozen "back" screen
-            // that doesn't track the finger.
-            if let Some((owner, wrapper)) = outgoing_for_mount.borrow_mut().take() {
-                remove_child(container, wrapper);
-                dispose_owner(owner);
+    let old_ids = state.order.borrow().clone();
+    let old_id_set: std::collections::HashSet<EntryId> = old_ids.iter().copied().collect();
+
+    // Step 3: compute the diff.
+    let added: Vec<EntryId> = new_ids
+        .iter()
+        .filter(|id| !old_id_set.contains(id))
+        .copied()
+        .collect();
+    let removed: Vec<EntryId> = old_ids
+        .iter()
+        .filter(|id| !new_id_set.contains(id))
+        .copied()
+        .collect();
+
+    // Step 4: determine direction. We only animate the top transition
+    // — replace_all / back_to / replace shapes either don't change
+    // the top, or change it from / to something not in the previous
+    // stack, in which case we still pick Forward or Backward by
+    // whether the new top was already in `old_id_set`.
+    let new_top = new_ids.last().copied();
+    let old_top = old_ids.last().copied();
+    let dir = if first.get() {
+        Direction::None
+    } else if new_top == old_top {
+        // Top didn't change — maybe a non-top mutation (rare).
+        Direction::None
+    } else if new_top.is_some_and(|t| old_id_set.contains(&t)) {
+        Direction::Backward
+    } else {
+        Direction::Forward
+    };
+    first.set(false);
+
+    // Step 5: mount any newly-added entries. They start at the
+    // "below top" suspended pose; the top-transition step below
+    // overrides the wrapper for the new top into its Incoming
+    // animation pose.
+    for id in &added {
+        let entry = entries
+            .iter()
+            .find(|e| e.id == *id)
+            .expect("added id must be present in new entries");
+        let route = entry.route.clone();
+        let new_owner = create_owner(None);
+        let wrapper = create_element(ElementTag::View);
+        apply_wrapper_style(
+            wrapper,
+            transition.0.as_ref(),
+            Side::Outgoing,
+            Direction::Forward,
+        );
+        // Insert at the position the entry occupies in the new
+        // stack. DOM order matches stack order — root at index 0,
+        // current top at the last index — so z-stacking naturally
+        // puts the top entry on top.
+        let position = new_ids
+            .iter()
+            .position(|i| *i == *id)
+            .expect("just inserted");
+        insert_child_at(container, wrapper, position);
+        with_owner(new_owner, || {
+            let h = render.call(route);
+            append_child(wrapper, h);
+        });
+        state.mounted.borrow_mut().insert(
+            *id,
+            MountedEntry {
+                owner: new_owner,
+                wrapper,
+            },
+        );
+    }
+
+    // Step 6: persist the new order so the next run can diff.
+    *state.order.borrow_mut() = new_ids.clone();
+
+    // Step 7: set the top transition's animation start poses, then
+    // schedule the actual animation in `on_mount` so the renderer
+    // has a chance to commit the start frame.
+    if dir != Direction::None {
+        let incoming = new_top.and_then(|id| state.mounted.borrow().get(&id).copied());
+        // `outgoing` might be in `removed` (when we're popping the
+        // top), but at this point in the effect run we haven't moved
+        // anything to `pending_dispose` yet — the wrapper is still
+        // in `mounted` until step 8 below. So a single lookup works
+        // for both push and pop cases.
+        let outgoing = old_top.and_then(|id| state.mounted.borrow().get(&id).copied());
+
+        if let Some(inc) = incoming {
+            apply_wrapper_style(inc.wrapper, transition.0.as_ref(), Side::Incoming, dir);
+        }
+        if let Some(out) = outgoing {
+            apply_wrapper_style(out.wrapper, transition.0.as_ref(), Side::Outgoing, dir);
+        }
+
+        // Reorder for z-stacking based on the transition's
+        // foreground hint. iOS slide's Backward keeps `Outgoing`
+        // (= the leaving top) in front so it visibly slides off
+        // the screen revealing the incoming behind it; the default
+        // child order at this point has the incoming below already,
+        // so we only have to act for the Incoming foreground case.
+        if matches!(transition.0.foreground(dir), Side::Incoming) {
+            if let Some(inc) = incoming {
+                // Move incoming to last child so it paints on top.
+                // (No-op for Forward since we already inserted the
+                // newly-mounted incoming at the last index.)
+                remove_child(container, inc.wrapper);
+                append_child(container, inc.wrapper);
             }
+        } else if let Some(out) = outgoing {
+            // Outgoing foreground: ensure outgoing paints last.
+            remove_child(container, out.wrapper);
+            append_child(container, out.wrapper);
+        }
 
-            let entries = stack.entries().get();
-            let prev_route = if entries.len() >= 2 {
-                entries[entries.len() - 2].route.clone()
-            } else {
-                entries[0].route.clone()
-            };
-
-            let preview_owner = create_owner(Some(handle_parent));
-            let preview_wrapper = create_element(ElementTag::View);
+        let transition_for_mount = transition.clone();
+        on_mount(move || {
+            if let Some(inc) = incoming {
+                transition_for_mount
+                    .0
+                    .animate(inc.wrapper, Side::Incoming, dir);
+            }
+            if let Some(out) = outgoing {
+                transition_for_mount
+                    .0
+                    .animate(out.wrapper, Side::Outgoing, dir);
+            }
+        });
+    } else if let Some(top_id) = new_top {
+        // No animation — just make sure the top wrapper sits at the
+        // active (centred) pose. Important for the very first run
+        // and for replace_all-style transitions.
+        if let Some(entry) = state.mounted.borrow().get(&top_id) {
             apply_wrapper_style(
-                preview_wrapper,
+                entry.wrapper,
                 transition.0.as_ref(),
                 Side::Incoming,
-                Direction::Backward,
+                Direction::None,
             );
-            insert_child_at(container, preview_wrapper, 0);
-            with_owner(preview_owner, || {
-                let h = render.call(prev_route);
-                append_child(preview_wrapper, h);
-            });
-            *preview.borrow_mut() = Some((preview_owner, preview_wrapper));
-            preview_wrapper
-        }) as Rc<dyn Fn() -> Element>
+        }
+    }
+
+    // Step 8: process removed entries.
+    //   - The popped *top* (in a Backward navigation) is mid-
+    //     animation — its wrapper has to stay alive long enough to
+    //     play out. Move it to `pending_dispose`; the next effect
+    //     run drains the queue.
+    //   - Any other removed entries (replace_all, back_to multiple
+    //     levels, replace) don't animate — dispose right away.
+    for id in &removed {
+        if let Some(entry) = state.mounted.borrow_mut().remove(id) {
+            if dir == Direction::Backward && Some(*id) == old_top {
+                state.pending_dispose.borrow_mut().push(entry);
+            } else {
+                remove_child(container, entry.wrapper);
+                dispose_owner(entry.owner);
+            }
+        }
+    }
+}
+
+fn build_stack_layout_handle<R: Route>(
+    container: Element,
+    stack: crate::stack::RouteStack<R>,
+    state: LayoutState,
+) -> StackLayoutHandle {
+    let current_wrapper = {
+        let state = state.clone();
+        Rc::new(move || {
+            let order = state.order.borrow();
+            order
+                .last()
+                .and_then(|id| state.mounted.borrow().get(id).map(|e| e.wrapper))
+        }) as Rc<dyn Fn() -> Option<Element>>
+    };
+
+    let mount_preview = {
+        let state = state.clone();
+        Rc::new(move || {
+            // In the preserve-back-stack model the entry one step
+            // below the top is already mounted at the suspended
+            // pose — return its wrapper so the gesture can drive
+            // it. Returns None if there's no entry below the top
+            // (i.e. the stack is at the root and back is invalid).
+            let order = state.order.borrow();
+            if order.len() < 2 {
+                return None;
+            }
+            let prev_id = order[order.len() - 2];
+            state.mounted.borrow().get(&prev_id).map(|e| e.wrapper)
+        }) as Rc<dyn Fn() -> Option<Element>>
     };
 
     let dispose_preview = {
-        let preview = preview.clone();
-        Rc::new(move || {
-            if let Some((owner, wrapper)) = preview.borrow_mut().take() {
-                remove_child(container, wrapper);
-                dispose_owner(owner);
-            }
-        }) as Rc<dyn Fn()>
+        // The just-below-top wrapper is a real back-stack entry, so
+        // we don't dispose it. This closure exists to let the
+        // gesture signal "cancel the drag" — the gesture component
+        // itself is responsible for animating the wrapper back to
+        // its suspended pose (it owns the touch progress and the
+        // re-pose animation). We only need to keep the closure for
+        // API compatibility; no-op is the right semantic now.
+        Rc::new(|| {}) as Rc<dyn Fn()>
     };
 
     let commit_preview_and_back = {
-        let preview = preview.clone();
-        let current = current.clone();
-        let outgoing_for_commit = outgoing.clone();
         let stack = stack.clone();
-        let skip_animation = skip_animation.clone();
+        let skip_animation = state.skip_animation.clone();
         Rc::new(move || {
-            // Promote preview → current; dispose both the old
-            // current (the screen we're leaving) AND any wrapper
-            // sitting in the outgoing slot. The outgoing slot
-            // holds whatever screen the prior push promoted there
-            // (e.g. the original Home after a Home → List push) —
-            // the natural pop would dispose it at the top of the
-            // effect, but we're about to skip that effect, so
-            // without this the wrapper persists in the DOM and
-            // reappears underneath the promoted preview.
-            let promoted = preview.borrow_mut().take();
-            let old_current = current.borrow_mut().take();
-            let stale_outgoing = outgoing_for_commit.borrow_mut().take();
-            if let Some((owner, wrapper)) = stale_outgoing {
-                remove_child(container, wrapper);
-                dispose_owner(owner);
-            }
-            if let Some((owner, wrapper)) = old_current {
-                remove_child(container, wrapper);
-                dispose_owner(owner);
-            }
-            if let Some((owner, wrapper)) = promoted {
-                *current.borrow_mut() = Some((owner, wrapper));
-            }
-            // One effect run is consumed by the `stack.back()` call
-            // below — `skip_animation` makes that run a no-op so we
-            // don't re-mount on top of the gesture's promoted
-            // preview.
+            // The gesture has already animated the just-below-top
+            // wrapper to centre and the previous top wrapper to its
+            // offscreen pose. Tell the route-change effect to skip
+            // its natural animation so the next `stack.back()` doesn't
+            // re-fire the transition; the effect still does the
+            // bookkeeping (dispose the popped entry's owner, update
+            // mounted_order). Counted because rare-but-possible
+            // multi-fire signal paths could land more than one
+            // effect run on a single back.
             skip_animation.set(1);
-            stack.back();
+            let _ = stack.back();
         }) as Rc<dyn Fn()>
-    };
-
-    let current_wrapper = {
-        let current = current.clone();
-        Rc::new(move || current.borrow().as_ref().map(|(_, w)| *w))
-            as Rc<dyn Fn() -> Option<Element>>
     };
 
     let back = {
         let stack = stack.clone();
         Rc::new(move || {
-            // `back()` returns false if already at the stack root.
-            // Plain back handlers don't surface that to the host —
-            // the platform's natural back-when-empty behaviour (e.g.
-            // finishing the Activity) takes over if the route stays
-            // unchanged. Drop the bool here so the closure matches
-            // `Fn()` for the type-erased handle.
+            // `back()` returns false if already at the stack root —
+            // plain back handlers don't surface that to the host,
+            // the platform's natural back-when-empty behaviour
+            // takes over.
             let _ = stack.back();
         }) as Rc<dyn Fn()>
     };
