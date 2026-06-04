@@ -336,6 +336,25 @@ fn filter_captured_linker_args(args: &[String]) -> Vec<String> {
             i += 1;
             continue;
         }
+        // `-Wl,-dead_strip` (Mach-O) / `-Wl,--gc-sections` (ELF) =
+        // remove unreferenced symbols from the linked image. Combined
+        // with `-Wl,-undefined,dynamic_lookup` and per-symbol
+        // `-exported_symbol` whitelists, this strips every symbol
+        // that isn't transitively reachable from the whitelist roots.
+        //
+        // Fine for the fat build where `_whisker_app_main` keeps the
+        // whole user crate's tree live, but FATAL for sub-crate
+        // patches (#103): the patch dylib's sub-crate `.o` provides
+        // a definition for symbols the user crate's `.o` references,
+        // but `dynamic_lookup` lets ld64 treat those references as
+        // "will be resolved at runtime" without following the local
+        // edge, so dead_strip drops every sub-crate symbol. The
+        // JumpTable then has zero sub-crate entries and the hot patch
+        // visibly does nothing. Drop both forms.
+        if arg == "-Wl,-dead_strip" || arg == "-Wl,--gc-sections" {
+            i += 1;
+            continue;
+        }
 
         out.push(arg.clone());
         i += 1;
@@ -482,6 +501,20 @@ mod tests {
             "dynamic_lookup",
             "-Wl,-undefined,dynamic_lookup",
             "-Wl,--unresolved-symbols=ignore-all",
+            "-arch",
+            "arm64",
+        ]));
+        assert_eq!(kept, s(&["-arch", "arm64"]));
+    }
+
+    #[test]
+    fn filter_drops_dead_strip_and_gc_sections() {
+        // `-Wl,-dead_strip` (Mach-O) and `-Wl,--gc-sections` (ELF)
+        // would otherwise drop sub-crate symbols whose only inbound
+        // references are satisfied via `-undefined,dynamic_lookup`.
+        let kept = filter_captured_linker_args(&s(&[
+            "-Wl,-dead_strip",
+            "-Wl,--gc-sections",
             "-arch",
             "arm64",
         ]));
