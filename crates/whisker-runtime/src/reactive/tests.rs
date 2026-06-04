@@ -1007,3 +1007,97 @@ fn computed_constructed_inside_computed_does_not_leak_subscription_to_outer_comp
     // Outer's cached value should reflect src change.
     assert_eq!(outer.get(), 2);
 }
+
+// ============================================================================
+// Detached-owner allocation invariant
+// ============================================================================
+//
+// `with_detached_owner(f)` is the escape hatch process-global, lazy-
+// initialised signals (the kind stashed in `OnceLock`) must use. It
+// runs `f` with the runtime's `owner_stack` temporarily cleared so any
+// reactive primitive allocated inside falls through to the detached-
+// owner fallback in `alloc_signal_node` and survives disposal of the
+// caller's owner.
+//
+// The bug this prevents: `whisker_safe_area::safe_area_insets()`'s
+// signal was allocated under whichever route-mount owner happened to
+// be current at first call. When that route was disposed (e.g. during
+// a back navigation that popped the screen which first installed the
+// safe-area module), the signal's slot was freed too — and the next
+// caller that pulled the cached read handle from the `OnceLock` read
+// a freed `NodeId`, hitting `expect("ReadSignal: signal disposed …")`
+// across the `tick_callback` extern "C" boundary as a
+// `panic_cannot_unwind` abort.
+
+#[test]
+fn signal_created_in_detached_owner_survives_caller_owner_disposal() {
+    // Regression: simulate the safe-area pattern. A "module" stashes
+    // its signal in a `OnceLock`-style cache inside an owner that
+    // later gets disposed. With `with_detached_owner`, the signal
+    // outlives the caller's owner; without it, reading the cached
+    // handle after disposal panics.
+    fresh();
+    let module_state: Rc<RefCell<Option<ReadSignal<i32>>>> = Rc::new(RefCell::new(None));
+    let state_for_install = module_state.clone();
+
+    // Install the module from inside a short-lived owner — the
+    // scenario equivalent to "Browse mounts, calls `safe_area_insets()`
+    // for the first time, allocating the signal under Browse's owner".
+    let caller_owner = super::owner::create_owner(None);
+    super::owner::with_owner(caller_owner, || {
+        with_detached_owner(|| {
+            let (read, _write) = signal(42_i32);
+            *state_for_install.borrow_mut() = Some(read);
+        });
+    });
+
+    // Dispose the caller's owner — exactly what `StackLayout`'s
+    // route-pop effect does to the previous route owner.
+    super::owner::dispose_owner(caller_owner);
+
+    // Pull the cached handle and read it. Without
+    // `with_detached_owner`, this is the panic site that closed the
+    // podcast app.
+    let cached = module_state.borrow().expect("module signal stashed");
+    assert_eq!(cached.get(), 42, "signal must survive caller disposal");
+}
+
+#[test]
+fn with_detached_owner_restores_owner_stack_after_f_returns() {
+    // Allocate an owner so the caller has something on the stack;
+    // confirm `with_detached_owner` clears it for `f` and restores
+    // it afterwards.
+    fresh();
+    let outer = super::owner::create_owner(None);
+    super::owner::with_owner(outer, || {
+        let outer_during_call = with_runtime(|rt| rt.current_owner());
+        assert_eq!(outer_during_call, Some(outer));
+
+        let inner_observed = with_detached_owner(|| with_runtime(|rt| rt.current_owner()));
+        // Inside `with_detached_owner`, the stack was cleared until
+        // some primitive (none in this test) lazily pushed a detached
+        // fallback owner.
+        assert_eq!(inner_observed, None, "owner stack cleared for f");
+
+        // After `with_detached_owner` returns, the caller's owner is
+        // back on the stack.
+        let after = with_runtime(|rt| rt.current_owner());
+        assert_eq!(after, Some(outer), "owner stack restored after f");
+    });
+}
+
+#[test]
+fn with_detached_owner_restores_owner_stack_when_f_panics() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    fresh();
+    let outer = super::owner::create_owner(None);
+    super::owner::with_owner(outer, || {
+        let before = with_runtime(|rt| rt.current_owner());
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            with_detached_owner(|| panic!("intentional"));
+        }));
+        assert!(result.is_err());
+        let after = with_runtime(|rt| rt.current_owner());
+        assert_eq!(after, before, "owner stack restored even when f unwinds");
+    });
+}

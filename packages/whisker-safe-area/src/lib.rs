@@ -60,6 +60,7 @@
 use std::sync::OnceLock;
 
 use whisker::module;
+use whisker::runtime::reactive::with_detached_owner;
 use whisker::{signal, ReadSignal, WhiskerValue, WriteSignal};
 
 /// Safe-area inset amounts in **points (iOS) / dp (Android)** — the
@@ -100,18 +101,32 @@ pub fn safe_area_insets() -> ReadSignal<SafeAreaInsets> {
 /// One-shot install of the global signal + the native subscription.
 /// Idempotent — re-entry on subsequent `safe_area_insets()` calls is
 /// a single `OnceLock::get()` check.
+///
+/// The `signal(...)` call is wrapped in [`with_detached_owner`] so
+/// the underlying `RwSignal` lives in a process-global detached
+/// owner instead of whichever route-mount owner happens to be
+/// current at the first call. Without this, the signal node gets
+/// freed the first time that route is popped — and the next caller
+/// who pulls the cached `ReadSignal` out of [`SLOT`] reads a dead
+/// `NodeId` (`expect("ReadSignal: signal disposed …")` panics across
+/// `tick_callback`'s `extern "C"` boundary as a
+/// `panic_cannot_unwind` abort). The detached owner this allocation
+/// pushes is never disposed — process-global state is allowed to
+/// "leak", because the signal needs to outlive every route.
 fn install() {
     SLOT.get_or_init(|| {
-        let (read, write) = signal(SafeAreaInsets::default());
-        // The bridge's `on_event` callback may fire from any thread
-        // depending on the host; the `WriteSignal` is `!Send`. We
-        // assert main-thread-only via [`MainThreadOnly`] and trust
-        // the platform contract (iOS posts from `safeAreaInsetsDidChange`
-        // on UI thread; Android posts from `OnApplyWindowInsetsListener`
-        // on UI thread). If a future host changes that, swap the
-        // closure body to `run_on_main_thread` first.
-        subscribe_to_native(MainThreadOnly { inner: write });
-        MainThreadOnly { inner: read }
+        with_detached_owner(|| {
+            let (read, write) = signal(SafeAreaInsets::default());
+            // The bridge's `on_event` callback may fire from any thread
+            // depending on the host; the `WriteSignal` is `!Send`. We
+            // assert main-thread-only via [`MainThreadOnly`] and trust
+            // the platform contract (iOS posts from `safeAreaInsetsDidChange`
+            // on UI thread; Android posts from `OnApplyWindowInsetsListener`
+            // on UI thread). If a future host changes that, swap the
+            // closure body to `run_on_main_thread` first.
+            subscribe_to_native(MainThreadOnly { inner: write });
+            MainThreadOnly { inner: read }
+        })
     });
 }
 

@@ -140,6 +140,48 @@ pub(crate) fn untrack<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// Run `f` with the runtime's `owner_stack` temporarily cleared, so
+/// reactive primitives allocated inside fall through to the detached-
+/// owner fallback in `alloc_*_node` and are no longer tied to whichever
+/// owner happens to be current at call time.
+///
+/// **Use case.** Process-global lazy-initialised signals — the kind
+/// stored behind an `OnceLock` and shared across the lifetime of the
+/// app, like `whisker_safe_area::safe_area_insets()`'s
+/// `SafeAreaInsets` signal. If you `signal(...)` such a value while
+/// some short-lived owner is current (e.g. a route-mount owner), the
+/// signal becomes owned by that scope. When the scope disposes, the
+/// signal slot is freed, and the next caller that pulls the cached
+/// handle from the `OnceLock` reads a freed `NodeId` — a
+/// `panic_cannot_unwind` across the `tick_callback` boundary.
+///
+/// Wrapping the install path in `with_detached_owner` makes the
+/// signal slot live for the lifetime of the process, regardless of
+/// the call-site's owner context. The detached owner this creates is
+/// never disposed — process-global state is allowed to "leak".
+///
+/// The restore runs from a `Drop` guard, so a panic in `f` doesn't
+/// leave the runtime with a half-restored owner stack. Re-entrant
+/// safe.
+pub fn with_detached_owner<R>(f: impl FnOnce() -> R) -> R {
+    use runtime::OwnerId;
+
+    struct Restore(Vec<OwnerId>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            // Replace the (possibly mutated) live stack with the
+            // saved one. Any detached owners pushed during `f` stay
+            // alive in `rt.owners` but are no longer reachable from
+            // the stack — exactly what we want for global state.
+            with_runtime(|rt| rt.owner_stack = std::mem::take(&mut self.0));
+        }
+    }
+
+    let saved = with_runtime(|rt| std::mem::take(&mut rt.owner_stack));
+    let _guard = Restore(saved);
+    f()
+}
+
 /// (Test only) reset the thread-local runtime to an empty state. Used
 /// between unit tests to keep the arena clean.
 #[doc(hidden)]
