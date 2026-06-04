@@ -1344,7 +1344,11 @@ fn paused_owner_defers_effect_runs_until_resumed() {
             *runs_clone.borrow_mut() += 1;
         });
     });
-    assert_eq!(*runs.borrow(), 1, "initial registration runs the effect once");
+    assert_eq!(
+        *runs.borrow(),
+        1,
+        "initial registration runs the effect once"
+    );
 
     pause_owner(owner);
     assert!(is_owner_paused(owner));
