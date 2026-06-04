@@ -110,6 +110,13 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     }
     let mut ctx: Box<InitCtx> = unsafe { Box::from_raw(user_data as *mut InitCtx) };
 
+    // Route Rust panics to the platform log so a `panic_cannot_unwind`
+    // crash through `extern "C"` boundaries leaves a readable
+    // backtrace + payload in `logcat` / the iOS unified log — without
+    // this, the default panic handler writes to stderr which Android
+    // discards entirely and iOS silently drops in unified-log mode.
+    install_panic_to_platform_log_hook();
+
     let renderer = match unsafe { BridgeRenderer::from_raw(ctx.engine) } {
         Some(r) => r,
         None => return,
@@ -172,6 +179,125 @@ fn start_hot_reload_receiver() {
 
 #[cfg(not(feature = "hot-reload"))]
 fn start_hot_reload_receiver() {}
+
+/// Replace the default Rust panic hook with one that emits the panic
+/// message + location + a short backtrace through the platform log
+/// (Android `logcat` / iOS unified log). Idempotent — installed once
+/// per process from [`init_callback`].
+///
+/// Why this exists: `panic_cannot_unwind` aborts (the kind Whisker
+/// hits when a panic propagates into an `extern "C"` boundary like
+/// `tick_callback`) leave a tombstone with only the C stack frames
+/// the unwinder walked through. The Rust panic's message and the
+/// frame inside the user closure that actually panicked never reach
+/// `logcat` because the default hook writes to `stderr` and bionic
+/// drops stderr to `/dev/null`. Without this hook, narrowing such a
+/// crash takes hours of bisection. With it, the offending frame is
+/// one `adb logcat | grep whisker-panic` away.
+fn install_panic_to_platform_log_hook() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            // Compose a one-line summary (location + payload) plus a
+            // multi-line backtrace if `RUST_BACKTRACE` says to.
+            let location = info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let payload = panic_payload_string(info);
+            let backtrace = std::backtrace::Backtrace::capture();
+            let backtrace_str = if matches!(
+                backtrace.status(),
+                std::backtrace::BacktraceStatus::Captured
+            ) {
+                format!("\n{backtrace}")
+            } else {
+                String::new()
+            };
+            let line = format!("panicked at {location}: {payload}{backtrace_str}");
+
+            // Mirror through the platform log so the panic is
+            // visible in `adb logcat` on Android and the iOS unified
+            // log. Tagged so log filters can pick it out.
+            for chunk in line.lines() {
+                platform_log(&format!("panic: {chunk}"));
+            }
+
+            // Defer to the previous hook so behaviour on host targets
+            // (stderr / RUST_BACKTRACE machinery) stays exactly as
+            // the user expects.
+            prev(info);
+        }));
+    });
+}
+
+/// Write a one-line message to the platform log. Mirrors the
+/// `whisker_dev_runtime::devlog` shape but lives here so the panic
+/// hook works regardless of the `hot-reload` feature flag.
+///
+/// * Android — `__android_log_write(INFO, "whisker", text)`. Visible
+///   under `adb logcat -s whisker:I`.
+/// * iOS — `syslog(LOG_INFO, "[whisker] %s", text)`. Visible under
+///   `xcrun simctl spawn booted log stream`.
+/// * Host (macOS / Linux) — plain `eprintln!`.
+fn platform_log(line: &str) {
+    #[cfg(target_os = "android")]
+    {
+        unsafe extern "C" {
+            fn __android_log_write(
+                prio: std::os::raw::c_int,
+                tag: *const std::os::raw::c_char,
+                text: *const std::os::raw::c_char,
+            ) -> std::os::raw::c_int;
+        }
+        const ANDROID_LOG_INFO: std::os::raw::c_int = 4;
+        let tag = b"whisker\0";
+        let mut buf: Vec<u8> = Vec::with_capacity(line.len() + 1);
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(0);
+        unsafe {
+            __android_log_write(
+                ANDROID_LOG_INFO,
+                tag.as_ptr() as *const _,
+                buf.as_ptr() as *const _,
+            );
+        }
+    }
+    #[cfg(target_os = "ios")]
+    {
+        unsafe extern "C" {
+            fn syslog(priority: std::os::raw::c_int, format: *const std::os::raw::c_char, ...);
+        }
+        const LOG_INFO: std::os::raw::c_int = 6;
+        let fmt = b"[whisker] %s\0";
+        let mut buf: Vec<u8> = Vec::with_capacity(line.len() + 1);
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(0);
+        unsafe {
+            syslog(LOG_INFO, fmt.as_ptr() as *const _, buf.as_ptr());
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        eprintln!("[whisker] {line}");
+    }
+}
+
+/// Best-effort extraction of a panic payload as a `String`. Mirrors
+/// the default hook's fallback chain: prefer `&str`, then
+/// `String`, then a `<non-string panic>` placeholder.
+fn panic_payload_string(info: &std::panic::PanicHookInfo<'_>) -> String {
+    let payload = info.payload();
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        return (*s).to_string();
+    }
+    if let Some(s) = payload.downcast_ref::<String>() {
+        return s.clone();
+    }
+    "<non-string panic>".to_string()
+}
 
 /// Apply the next pending hot patch, if any. Returns `true` when a
 /// patch was successfully applied so the caller can force a flush
