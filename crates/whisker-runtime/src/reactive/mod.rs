@@ -56,7 +56,10 @@ pub use component::{
 pub use computed::computed;
 pub use context::{provide_context, use_context, with_context};
 pub use effect::effect;
-pub use owner::{create_owner, dispose_owner, on_cleanup, with_owner};
+pub use owner::{
+    create_owner, dispose_owner, is_owner_paused, on_cleanup, pause_owner, resume_owner,
+    with_owner,
+};
 pub use prop::Signal;
 pub use resource::{resource, resource_sync, Resource, ResourceState};
 pub use runtime::{NodeId, OwnerId};

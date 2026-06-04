@@ -47,7 +47,7 @@ use whisker::css::ext::*;
 use whisker::css::{Css, Overflow, PositionKind, ToCss};
 use whisker::runtime::element::ElementTag;
 use whisker::runtime::reactive::{
-    create_owner, dispose_owner, effect, on_mount, with_owner, OwnerId,
+    create_owner, dispose_owner, effect, on_mount, pause_owner, resume_owner, with_owner, OwnerId,
 };
 use whisker::runtime::view::apply::apply_styles;
 use whisker::runtime::view::{
@@ -285,6 +285,7 @@ fn run_navigation_effect<R: Route>(
             }
         }
         first.set(false);
+        sync_owner_paused_state(state);
         return;
     }
 
@@ -446,6 +447,32 @@ fn run_navigation_effect<R: Route>(
                 remove_child(container, entry.wrapper);
                 dispose_owner(entry.owner);
             }
+        }
+    }
+
+    // Step 9: sync paused state across all mounted owners. The top
+    // of `order` runs effects; everything else (mounted-but-hidden
+    // back-stack) is paused until it surfaces. Idempotent, so it's
+    // safe to call on every navigation, including the very first.
+    sync_owner_paused_state(state);
+}
+
+/// Walk `state.mounted` and align each entry's owner with the
+/// expected paused state: the topmost (last in [`LayoutState::order`])
+/// is active; everything else is paused.
+///
+/// Idempotent — `pause_owner` / `resume_owner` no-op on the matching
+/// state, so calling this every navigation costs at most one set
+/// flip per owner.
+fn sync_owner_paused_state(state: &LayoutState) {
+    let order = state.order.borrow();
+    let mounted = state.mounted.borrow();
+    let top_id = order.last().copied();
+    for (id, entry) in mounted.iter() {
+        if Some(*id) == top_id {
+            resume_owner(entry.owner);
+        } else {
+            pause_owner(entry.owner);
         }
     }
 }

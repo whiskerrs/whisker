@@ -104,10 +104,10 @@ macro_rules! module {
 // for callers that prefer the long path.
 pub use whisker_runtime::reactive::{
     arc_signal, computed, create_owner, dispose_owner, effect, flush, flush_mounts,
-    mount_component, on_cleanup, on_mount, provide_context, resource, resource_sync, signal,
-    unmount_component, use_context, with_context, with_owner, ArcReadSignal, ArcRwSignal,
-    ArcWriteSignal, ReadSignal, Resource, ResourceState, RwSignal, Signal, StoredValue,
-    WriteSignal,
+    is_owner_paused, mount_component, on_cleanup, on_mount, pause_owner, provide_context,
+    resource, resource_sync, resume_owner, signal, unmount_component, use_context, with_context,
+    with_owner, ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource, ResourceState,
+    RwSignal, Signal, StoredValue, WriteSignal,
 };
 // Async task host. `resource()` uses these internally, but they're
 // also part of the user surface: components spawn ad-hoc async work
