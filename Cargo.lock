@@ -1144,6 +1144,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "router-example-feature-detail"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-router",
+]
+
+[[package]]
+name = "router-example-feature-home"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-router",
+ "whisker-safe-area",
+]
+
+[[package]]
 name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1980,6 +1997,16 @@ version = "0.1.0"
 dependencies = [
  "whisker",
  "whisker-router-macros",
+]
+
+[[package]]
+name = "whisker-router-example"
+version = "0.1.0"
+dependencies = [
+ "router-example-feature-detail",
+ "router-example-feature-home",
+ "whisker",
+ "whisker-router",
 ]
 
 [[package]]

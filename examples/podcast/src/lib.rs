@@ -45,6 +45,10 @@ use whisker::css::{Display, FlexDirection};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::stack::{route_stack, RouteStack};
+use whisker_router::{
+    AndroidPredictiveBack, AndroidPredictiveBackProps, IosSwipeBack, IosSwipeBackProps,
+    RouteProvider, RouteProviderProps, RouteRenderFn, StackLayout, StackLayoutProps,
+};
 
 /// Process-wide table mapping a podcast `id` to its full [`Podcast`]
 /// value. `Browse` populates it from the resource result as soon as
@@ -88,17 +92,12 @@ fn app() -> Element {
     provide_context(navigator);
     provide_context(index);
 
-    // We bypass `whisker_router::StackLayout` and dispatch on the
-    // current route by reading the stack's entries signal in a
-    // reactive child. `StackLayout` mounts each screen in a
-    // detached `create_owner(None)` (see
-    // `packages/whisker-router/src/layouts/stack.rs:184`), and any
-    // screen heavier than a trivial view panics on the first tick
-    // — see follow-up issue. Routing still goes through the typed
-    // `RouteStack` so the back-button machinery and deep-link
-    // surface stay intact; we just don't get the animated push /
-    // pop transitions until the panic is fixed.
-    let entries = stack.entries();
+    let render: RouteRenderFn<AppRoute> = (|r: AppRoute| match r {
+        AppRoute::Browse => render! { BrowseScreen() },
+        AppRoute::Detail { id } => render! { DetailScreen(id: id) },
+    })
+    .into();
+
     render! {
         page(style: css!(
             width: vw(100),
@@ -107,23 +106,12 @@ fn app() -> Element {
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
         )) {
-            DynRoute(entries: entries)
+            RouteProvider(stack: stack) {
+                StackLayout(render: render.clone()) {
+                    IosSwipeBack()
+                    AndroidPredictiveBack()
+                }
+            }
         }
-    }
-}
-
-/// Re-renders whichever screen [`AppRoute`] picks. Read the
-/// `entries` signal inside a `#[component]` body so the macro's
-/// reactive remount wrapper re-fires when the route changes.
-#[component]
-fn dyn_route(entries: ReadSignal<Vec<whisker_router::stack::RouteEntry<AppRoute>>>) -> Element {
-    let route = entries
-        .get()
-        .last()
-        .map(|e| e.route.clone())
-        .unwrap_or(AppRoute::Browse);
-    match route {
-        AppRoute::Browse => render! { BrowseScreen() },
-        AppRoute::Detail { id } => render! { DetailScreen(id: id) },
     }
 }
