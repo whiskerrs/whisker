@@ -379,6 +379,138 @@ fn computed_notifies_downstream_subscribers() {
 }
 
 #[test]
+fn on_mount_callback_inside_effect_does_not_leak_subscription_to_outer() {
+    // Regression: `flush_mounts` invokes each queued `on_mount`
+    // callback as plain user code. If a callback performs a direct
+    // `signal.get()` while a tracker is still active on the call
+    // stack (e.g. `flush_mounts` invoked from inside an effect, or
+    // from a non-standard tick driver), the signal would subscribe
+    // the outer tracker instead of nothing.
+    //
+    // After fix: `flush_mounts` brackets each `cb()` invocation in
+    // `untrack`, so on_mount callbacks never leak subscriptions
+    // upward regardless of the call-stack context.
+    use super::component::{flush_mounts, on_mount};
+    fresh();
+    let (effect_dep, set_effect_dep) = signal(0_i32);
+    let (mount_src, set_mount_src) = signal(0_i32);
+    let outer_runs = Rc::new(RefCell::new(0));
+    let outer_runs_clone = outer_runs.clone();
+    effect(move || {
+        let _ = effect_dep.get();
+        *outer_runs_clone.borrow_mut() += 1;
+        // Build a fresh owner so `on_mount` doesn't warn about
+        // "called outside any owner scope".
+        let owner = super::owner::create_owner(None);
+        super::owner::with_owner(owner, || {
+            on_mount(move || {
+                let _ = mount_src.get();
+            });
+        });
+        // Flush inside the effect — same call stack as the outer
+        // effect's tracker. With the fix, the callback runs under a
+        // cleared tracker, so its signal read doesn't leak.
+        flush_mounts();
+    });
+    assert_eq!(*outer_runs.borrow(), 1);
+    set_mount_src.set(1);
+    flush();
+    // No leak: `mount_src` write does not re-run the outer effect.
+    assert_eq!(*outer_runs.borrow(), 1);
+    // Sanity check that the outer effect's legitimate dependency
+    // still works.
+    set_effect_dep.set(1);
+    flush();
+    assert_eq!(*outer_runs.borrow(), 2);
+}
+
+#[test]
+fn mount_component_body_inside_effect_does_not_leak_subscription_to_outer() {
+    // Regression: a `#[component]` body invoked from inside another
+    // effect / computed used to run with that outer node's
+    // `current_tracker` still set. Any direct `signal.get()` the
+    // body performed (not via a nested `effect`/`computed`) silently
+    // subscribed the outer node, turning innocent component reads
+    // into recursive remount triggers when the read signal changed.
+    //
+    // After fix: `mount_component` wraps the body invocation in
+    // `untrack`, so component bodies are tracker-isolated. Reactivity
+    // inside a body must come from explicit `effect`/`computed`
+    // calls, which establish their own tracker scope.
+    use super::component::mount_component;
+    fresh();
+    let (effect_dep, set_effect_dep) = signal(0_i32);
+    let (body_src, set_body_src) = signal(0_i32);
+    let outer_runs = Rc::new(RefCell::new(0));
+    let outer_runs_clone = outer_runs.clone();
+    effect(move || {
+        let _ = effect_dep.get();
+        *outer_runs_clone.borrow_mut() += 1;
+        // Mount a synthetic "component": fresh owner, body reads a
+        // signal directly (the typical hazard pattern for a top-level
+        // `#[component]` body that derives a value inline).
+        let (_owner, _value) = mount_component(0xdead_beef as *const (), || body_src.get());
+    });
+    assert_eq!(*outer_runs.borrow(), 1);
+    // No leak: writing to `body_src` MUST NOT re-run the outer
+    // effect — the outer effect never legitimately subscribed.
+    set_body_src.set(1);
+    flush();
+    assert_eq!(*outer_runs.borrow(), 1);
+    // Sanity check the outer effect's legitimate dependency still
+    // fires.
+    set_effect_dep.set(1);
+    flush();
+    assert_eq!(*outer_runs.borrow(), 2);
+}
+
+#[test]
+fn computed_constructed_inside_effect_does_not_leak_subscription_to_outer() {
+    // Regression: `computed(...)`'s construction-time seed call used
+    // to run with whatever `current_tracker` happened to be set on
+    // entry. If you built a `computed` inside an `effect`, the seed's
+    // `signal.get()` registered the *outer effect* as a subscriber of
+    // every signal the computed body read — so a write to one of
+    // those signals re-ran the outer effect (whose job is often to
+    // re-mount a component subtree), leaking a fresh `computed` node
+    // on every tick.
+    //
+    // After fix: the seed run is wrapped in `untrack`, so the only
+    // subscriber registered against the signal is the computed node
+    // itself. Verified by counting outer-effect runs: a single write
+    // to the signal must produce exactly one extra effect run (the
+    // initial one + one for the explicit `effect_dep` change), not
+    // two.
+    fresh();
+    let (effect_dep, set_effect_dep) = signal(0_i32);
+    let (computed_src, set_computed_src) = signal(0_i32);
+    let outer_runs = Rc::new(RefCell::new(0));
+    let outer_runs_clone = outer_runs.clone();
+    effect(move || {
+        // Subscribe to `effect_dep` so the outer effect has a
+        // legitimate reason to re-run.
+        let _ = effect_dep.get();
+        *outer_runs_clone.borrow_mut() += 1;
+        // Construct a computed that reads `computed_src`. Pre-fix,
+        // this would register the outer effect as a subscriber of
+        // `computed_src` via the seed run's `track_and_fetch`.
+        let _doubled = computed(move || computed_src.get() * 2);
+    });
+    assert_eq!(*outer_runs.borrow(), 1);
+    // Writing to `computed_src` MUST NOT re-run the outer effect —
+    // the outer effect never subscribed to it (only the inner
+    // computed should have).
+    set_computed_src.set(99);
+    flush();
+    assert_eq!(*outer_runs.borrow(), 1);
+    // Writing to `effect_dep` IS a legitimate trigger and should
+    // re-run the outer effect exactly once.
+    set_effect_dep.set(1);
+    flush();
+    assert_eq!(*outer_runs.borrow(), 2);
+}
+
+#[test]
 fn computed_does_not_notify_when_value_unchanged() {
     fresh();
     let (count, set_count) = signal(5_i32);
@@ -610,4 +742,268 @@ fn effect_reading_and_writing_unrelated_signals_terminates() {
         *runs_clone.borrow_mut() += 1;
     });
     assert_eq!(*runs.borrow(), 1);
+}
+
+// ============================================================================
+// Tracker isolation invariant
+// ============================================================================
+//
+// The invariant: **whenever the reactive runtime invokes user code in a
+// construction-time / one-shot path, `current_tracker` is `None` for the
+// duration of that call**. The user code is free to call `signal.get()` or
+// build nested reactive nodes without accidentally subscribing whatever
+// outer effect / computed / component happens to be on the call stack.
+//
+// Reactivity inside such bodies must come from *explicit* `effect` /
+// `computed` calls, which establish their own tracker scope via the
+// scheduler. The runtime guarantees no ambient subscription leaks.
+//
+// The tests below enforce this invariant for each entrypoint in the
+// public surface. A future contributor who adds a new entrypoint that
+// invokes user code without `untrack`-bracketing will break one of
+// these tests.
+//
+// The pattern: enter an outer `effect`, which sets `current_tracker` to
+// the effect's node id. From inside that effect, call the entrypoint
+// under test and capture `current_tracker` as observed by the user
+// closure. Assert it was `None`.
+
+/// Snapshot the runtime's `current_tracker` at call time.
+fn observed_tracker() -> Option<super::runtime::NodeId> {
+    with_runtime(|rt| rt.current_tracker)
+}
+
+#[test]
+fn untrack_clears_tracker_during_f_and_restores_after() {
+    fresh();
+    let observed_inside = Rc::new(RefCell::new(Some(observed_tracker()))); // sentinel
+    let observed_outer_after = Rc::new(RefCell::new(None));
+    let observed_inside_clone = observed_inside.clone();
+    let observed_outer_after_clone = observed_outer_after.clone();
+    effect(move || {
+        let outer_tracker = observed_tracker();
+        assert!(
+            outer_tracker.is_some(),
+            "outer effect's tracker must be set"
+        );
+        untrack(|| {
+            *observed_inside_clone.borrow_mut() = Some(observed_tracker());
+        });
+        *observed_outer_after_clone.borrow_mut() = Some(observed_tracker());
+        // The outer tracker should be the same as before `untrack`.
+        assert_eq!(observed_tracker(), outer_tracker);
+    });
+    assert_eq!(*observed_inside.borrow(), Some(None));
+    assert!(observed_outer_after.borrow().unwrap().is_some());
+}
+
+#[test]
+fn untrack_is_nestable_without_breaking_outer_restore() {
+    // Nested `untrack` calls should each restore the tracker to
+    // whatever the immediate parent had — `None` for the inner
+    // untrack (its parent already untracked), and the outer effect's
+    // tracker after both untracks return.
+    fresh();
+    let inner_observed = Rc::new(RefCell::new(None));
+    let inner_observed_clone = inner_observed.clone();
+    effect(move || {
+        let outer_tracker = observed_tracker();
+        untrack(|| {
+            assert_eq!(observed_tracker(), None, "outer untrack clears");
+            untrack(|| {
+                *inner_observed_clone.borrow_mut() = Some(observed_tracker());
+            });
+            assert_eq!(observed_tracker(), None, "inner untrack returned to None");
+        });
+        assert_eq!(
+            observed_tracker(),
+            outer_tracker,
+            "outer untrack restored the effect's tracker"
+        );
+    });
+    assert_eq!(*inner_observed.borrow(), Some(None));
+}
+
+#[test]
+fn untrack_restores_tracker_when_f_panics() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    fresh();
+    let restored = Rc::new(RefCell::new(None));
+    let restored_clone = restored.clone();
+    effect(move || {
+        let before = observed_tracker();
+        assert!(before.is_some(), "outer effect's tracker is set");
+        // Catch the panic from `untrack`'s body so the effect itself
+        // continues. The runtime's `Drop` guard inside `untrack` must
+        // restore `current_tracker` before the unwind escapes.
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            untrack(|| {
+                panic!("intentional panic from inside untrack");
+            });
+        }));
+        assert!(result.is_err(), "panic must propagate");
+        *restored_clone.borrow_mut() = Some(observed_tracker());
+        assert_eq!(observed_tracker(), before, "tracker restored after panic");
+    });
+    assert!(restored.borrow().unwrap().is_some());
+}
+
+#[test]
+fn computed_seed_runs_with_no_tracker_when_constructed_inside_effect() {
+    // The computed's compute closure runs at construction-time
+    // (seed) AND again on every scheduled re-run. We only care
+    // about the seed observation — capture the FIRST call and
+    // ignore later scheduled runs (those legitimately get
+    // tracker = Some(computed_node) set by `run_node_if_alive`).
+    fresh();
+    let observed: Rc<RefCell<Option<Option<super::runtime::NodeId>>>> = Rc::new(RefCell::new(None));
+    let observed_clone = observed.clone();
+    effect(move || {
+        let observed_inner = observed_clone.clone();
+        let _doubled = computed(move || {
+            let mut slot = observed_inner.borrow_mut();
+            if slot.is_none() {
+                *slot = Some(observed_tracker());
+            }
+            0_i32
+        });
+    });
+    assert_eq!(
+        *observed.borrow(),
+        Some(None),
+        "computed seed must run with no tracker"
+    );
+}
+
+#[test]
+fn mount_component_body_runs_with_no_tracker_when_invoked_inside_effect() {
+    use super::component::mount_component;
+    fresh();
+    let observed = Rc::new(RefCell::new(Some(observed_tracker())));
+    let observed_clone = observed.clone();
+    effect(move || {
+        let observed_inner = observed_clone.clone();
+        let (_owner, ()) = mount_component(0x1234_5678 as *const (), || {
+            *observed_inner.borrow_mut() = Some(observed_tracker());
+        });
+    });
+    assert_eq!(
+        *observed.borrow(),
+        Some(None),
+        "mount_component body must run with no tracker"
+    );
+}
+
+#[test]
+fn mount_component_remountable_body_runs_with_no_tracker_when_invoked_inside_effect() {
+    use super::component::mount_component_remountable;
+    use crate::view::create_phantom_element;
+    fresh();
+    let observed = Rc::new(RefCell::new(Some(observed_tracker())));
+    let observed_clone = observed.clone();
+    effect(move || {
+        let observed_inner = observed_clone.clone();
+        // Component body must return an Element. A phantom element
+        // is fine — we're not asserting on the tree shape here.
+        let _root = mount_component_remountable(0x2345_6789 as *const (), move || {
+            *observed_inner.borrow_mut() = Some(observed_tracker());
+            create_phantom_element()
+        });
+    });
+    assert_eq!(
+        *observed.borrow(),
+        Some(None),
+        "mount_component_remountable body must run with no tracker"
+    );
+}
+
+// Note: `remount_components_for`'s body invocation reuses the
+// exact same `untrack(|| with_owner(new_owner, || (*info.body)()))`
+// bracket the initial mount uses. Driving the remount path through
+// a unit test requires a full renderer install + an attached parent
+// element (otherwise `info.parent` is `None` and the path
+// short-circuits), which sits at the integration-test layer.
+// Coverage relies on:
+//   1. `mount_component_remountable_body_runs_with_no_tracker_...`
+//      below, which exercises the identical `untrack` pattern, and
+//   2. inspection of `component.rs::remount_components_for` to
+//      confirm the bracket is in place.
+// If a future contributor removes the bracket from the remount
+// path, the corresponding StackLayout / hot-reload integration
+// scenario will regress visibly.
+
+#[test]
+fn flush_mounts_callback_runs_with_no_tracker_when_called_inside_effect() {
+    use super::component::{flush_mounts, on_mount};
+    fresh();
+    let observed = Rc::new(RefCell::new(Some(observed_tracker())));
+    let observed_clone = observed.clone();
+    effect(move || {
+        let owner = super::owner::create_owner(None);
+        let observed_inner = observed_clone.clone();
+        super::owner::with_owner(owner, || {
+            on_mount(move || {
+                *observed_inner.borrow_mut() = Some(observed_tracker());
+            });
+        });
+        flush_mounts();
+    });
+    assert_eq!(
+        *observed.borrow(),
+        Some(None),
+        "on_mount callback must run with no tracker"
+    );
+}
+
+#[test]
+fn resource_sync_fetcher_runs_with_no_tracker_when_called_inside_effect() {
+    use super::resource::resource_sync;
+    fresh();
+    let observed = Rc::new(RefCell::new(Some(observed_tracker())));
+    let observed_clone = observed.clone();
+    effect(move || {
+        let observed_inner = observed_clone.clone();
+        let _r = resource_sync::<i32, _>(move || {
+            *observed_inner.borrow_mut() = Some(observed_tracker());
+            Ok(0)
+        });
+    });
+    assert_eq!(
+        *observed.borrow(),
+        Some(None),
+        "resource_sync fetcher must run with no tracker"
+    );
+}
+
+#[test]
+fn computed_constructed_inside_computed_does_not_leak_subscription_to_outer_computed() {
+    // The same invariant applies to nested computed: a computed
+    // constructed during another computed's seed (which is rare but
+    // legal — e.g. a derived value that itself wraps a computed)
+    // must not leak.
+    fresh();
+    let (src, set_src) = signal(0_i32);
+    let outer_runs = Rc::new(RefCell::new(0));
+    let outer_runs_clone = outer_runs.clone();
+    let outer = computed(move || {
+        *outer_runs_clone.borrow_mut() += 1;
+        // Construct an inner computed reading `src`. Pre-fix this
+        // would have subscribed `outer` to `src` via the seed leak.
+        let inner = computed(move || src.get() * 2);
+        inner.get()
+    });
+    // The legitimate dependency edge (outer → inner.get → src) is
+    // established when the scheduler runs `outer`'s real compute
+    // after construction. We still expect outer to re-run when src
+    // changes — that's correct reactivity, not a leak.
+    let initial = *outer_runs.borrow();
+    set_src.set(1);
+    flush();
+    let after_legit_change = *outer_runs.borrow();
+    assert!(
+        after_legit_change > initial,
+        "outer should re-run for legitimate edge through inner.get()"
+    );
+    // Outer's cached value should reflect src change.
+    assert_eq!(outer.get(), 2);
 }

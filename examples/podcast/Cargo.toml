@@ -13,5 +13,9 @@ crate-type = ["rlib"]
 
 [dependencies]
 whisker = { workspace = true }
+whisker-router = { workspace = true }
+podcast-domain = { path = "crates/podcast-domain" }
+podcast-routing = { path = "crates/podcast-routing" }
 podcast-theme = { path = "crates/podcast-theme" }
 podcast-feature-browse = { path = "crates/podcast-feature-browse" }
+podcast-feature-detail = { path = "crates/podcast-feature-detail" }

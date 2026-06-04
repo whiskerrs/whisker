@@ -105,6 +105,41 @@ pub(crate) fn warn_no_owner(context: &'static str) {
 #[cfg(not(debug_assertions))]
 pub(crate) fn warn_no_owner(_context: &'static str) {}
 
+/// Run `f` with the runtime's `current_tracker` temporarily cleared,
+/// then restore it.
+///
+/// Use this whenever a reactive primitive needs to invoke a user
+/// closure that performs signal reads **but those reads must not
+/// register dependencies against whatever outer effect / computed
+/// happens to be running**. The canonical case is `computed`'s
+/// construction-time seed run: the seed is just for cache initial
+/// value, the real dependency edges are registered by the
+/// scheduler-driven run that happens immediately afterwards.
+///
+/// The restore runs from a `Drop` guard, so a panic in `f` doesn't
+/// leave the runtime in an "untracked" state. Re-entrant safe — if
+/// `f` itself calls `untrack`, the nested guard restores `None`
+/// (the value the outer guard already pushed), which is what the
+/// outer guard would have done.
+pub(crate) fn untrack<R>(f: impl FnOnce() -> R) -> R {
+    use runtime::NodeId;
+
+    struct Restore(Option<NodeId>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            // `with_runtime` reborrows the thread-local; the previous
+            // borrow opened in `untrack` was already released before
+            // `f` started, so this is a fresh borrow — no
+            // double-borrow risk.
+            with_runtime(|rt| rt.current_tracker = self.0);
+        }
+    }
+
+    let prev = with_runtime(|rt| rt.current_tracker.take());
+    let _guard = Restore(prev);
+    f()
+}
+
 /// (Test only) reset the thread-local runtime to an empty state. Used
 /// between unit tests to keep the arena clean.
 #[doc(hidden)]

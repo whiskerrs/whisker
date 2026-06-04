@@ -37,8 +37,13 @@
 //! padding equal to its height + bottom inset — otherwise the
 //! last card hides behind the player on initial scroll-to-end.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use podcast_data::fetch_browse_screen;
 use podcast_domain::{ChartSection, Podcast, SectionLayout};
+use podcast_routing::Navigator;
 use podcast_theme as theme;
 use podcast_ui_kit::{
     FeaturedCard, FeaturedCardProps, HorizontalRow, HorizontalRowProps, MiniPlayer,
@@ -50,10 +55,39 @@ use whisker::prelude::*;
 use whisker::runtime::tasks::run_blocking;
 use whisker::runtime::view::Element;
 
+/// `Rc<RefCell<HashMap<u64, Podcast>>>` — the shared id-to-Podcast
+/// table the top-level shell provides via context. Duplicated here
+/// (rather than imported from `podcast` so we'd take a dep on the
+/// shell) since the structural type is what `use_context` matches
+/// on, not its origin.
+pub type PodcastIndex = Rc<RefCell<HashMap<u64, Podcast>>>;
+
 /// Browse screen root. Mount under the app `page`.
+///
+/// Reads [`Navigator`] from context inside the leaf `card_with_gap`
+/// — keeps the browse feature off `whisker-router` so a host using
+/// a different router can swap the navigator and reuse this screen
+/// as-is.
 #[component]
 pub fn browse_screen() -> Element {
     let sections = resource(fetch_sections);
+
+    // Mirror the resource's success state into the shared podcast
+    // registry so the Detail screen can look the tapped show up
+    // without re-hitting the API.
+    {
+        let index_opt = use_context::<PodcastIndex>();
+        effect(move || {
+            if let (Some(sections), Some(index)) = (sections.get(), index_opt.as_ref()) {
+                let mut map = index.borrow_mut();
+                for section in &sections {
+                    for podcast in &section.items {
+                        map.insert(podcast.id, podcast.clone());
+                    }
+                }
+            }
+        });
+    }
 
     render! {
         view(style: css!(
@@ -218,12 +252,24 @@ fn card_with_gap(podcast: Podcast, rank: u32, layout: SectionLayout) -> Element 
     // are mostly small strings.
     let podcast_for_featured = podcast.clone();
     let podcast_for_ranked = podcast.clone();
+    let podcast_id = podcast.id;
+    // Tap handler: read the `Navigator` from context so this leaf
+    // component stays unaware of the routing layer. Falls back to
+    // a no-op when no Navigator is available (e.g. a standalone
+    // unit-harness that wires the browse screen without the
+    // shell's `RouteProvider`/`StackLayout` chain).
+    let on_show: Rc<dyn Fn(u64)> = use_context::<Navigator>()
+        .map(|n| n.show_detail)
+        .unwrap_or_else(|| Rc::new(|_| {}));
     render! {
-        view(style: css!(
-            margin_right: theme::CARD_GAP,
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-        )) {
+        view(
+            style: css!(
+                margin_right: theme::CARD_GAP,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+            ),
+            on_tap: move |_| (on_show)(podcast_id),
+        ) {
             Show(when: move || layout == SectionLayout::Featured, fallback: || render! { fragment() }) {
                 featured_card(podcast: podcast_for_featured.clone())
             }

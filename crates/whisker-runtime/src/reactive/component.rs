@@ -26,7 +26,7 @@ use std::rc::Rc;
 
 use super::owner::{create_owner, dispose_owner, with_owner};
 use super::runtime::OwnerId;
-use super::with_runtime;
+use super::{untrack, with_runtime};
 use crate::view::Element;
 
 /// Mount a component: create a fresh child owner, register `fn_ptr`
@@ -47,7 +47,16 @@ pub fn mount_component<R>(fn_ptr: *const (), body: impl FnOnce() -> R) -> (Owner
         }
         rt.component_owners.entry(fn_ptr).or_default().push(owner);
     });
-    let result = with_owner(owner, body);
+    // Component bodies build a static Element tree; the reactive
+    // dependencies they declare must come from explicit
+    // `effect` / `computed` calls *inside* the body, not from
+    // ambient signal reads contaminating whatever outer reactive
+    // node we happened to be constructed inside (a parent
+    // component's `Show` effect, `StackLayout`'s route mount, etc.).
+    // Clear the tracker around the body call so a direct
+    // `signal.get()` in user code doesn't silently subscribe the
+    // outer node.
+    let result = untrack(|| with_owner(owner, body));
     (owner, result)
 }
 
@@ -96,7 +105,15 @@ pub fn flush_mounts() {
     // may themselves register new on_mount) land in a fresh queue.
     let queue: Vec<Box<dyn FnOnce()>> = with_runtime(|rt| std::mem::take(&mut rt.pending_mounts));
     for cb in queue {
-        cb();
+        // `on_mount` callbacks are fire-once side effects that may
+        // read signals to inspect post-mount state but should never
+        // subscribe whatever node happens to be on the call stack
+        // when the queue gets drained. In production `flush_mounts`
+        // runs after `reactive_flush` returns (tracker already
+        // cleared by the scheduler), but other integrations may
+        // call it from inside a reactive scope — wrap each `cb` in
+        // `untrack` so the invariant is enforced by the queue itself.
+        untrack(cb);
     }
 }
 
@@ -271,7 +288,9 @@ where
         }
         rt.component_owners.entry(fn_ptr).or_default().push(owner);
     });
-    let body_root = with_owner(owner, || (*body_for_first)());
+    // See `mount_component` for the rationale on the `untrack`
+    // bracket. Same invariant applies to the remountable variant.
+    let body_root = untrack(|| with_owner(owner, || (*body_for_first)()));
 
     // Register the MountSite with parent / anchor as `None` for now
     // — the next `view::append_child` that attaches `body_root`
@@ -476,7 +495,11 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
                 .or_default()
                 .push(new_owner);
         });
-        let new_body_root = with_owner(new_owner, || (*info.body)());
+        // `untrack` so the remounted body's signal reads register
+        // against its own nested `effect`/`computed`s, not against
+        // whatever scheduler context happens to be active when
+        // `tick_callback` calls into us.
+        let new_body_root = untrack(|| with_owner(new_owner, || (*info.body)()));
         // The body's `mount_component_remountable` calls leave a
         // PENDING_MOUNT entry behind; we drain it here because the
         // batched path attaches the new root via `insert_child_at`

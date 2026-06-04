@@ -181,7 +181,13 @@ where
     T: Clone + 'static,
     F: FnOnce() -> Result<T, String>,
 {
-    let state = RwSignal::new(match fetcher() {
+    // `fetcher` is a one-shot seed for the resource's RwSignal —
+    // its signal reads are meant to compute an initial value, not to
+    // re-fire the resource when those signals change. Run it under
+    // `untrack` so the reads don't leak into whatever outer effect
+    // / computed / component body happens to be calling
+    // `resource_sync`. Same principle as the computed seed guard.
+    let state = RwSignal::new(match super::untrack(fetcher) {
         Ok(v) => ResourceState::Ready(v),
         Err(e) => ResourceState::Error(e),
     });

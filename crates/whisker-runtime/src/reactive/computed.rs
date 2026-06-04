@@ -24,7 +24,7 @@ use std::rc::Rc;
 use super::runtime::{NodeData, NodeId, Owner, ReactiveNode};
 use super::scheduler;
 use super::signal::ReadSignal;
-use super::with_runtime;
+use super::{untrack, with_runtime};
 
 /// Create a computed (derived) value. `f` is run once immediately to
 /// seed the cache, then re-run whenever a tracked source changes.
@@ -49,7 +49,19 @@ pub fn computed<T: 'static + Clone + PartialEq>(
     // can write back to its own value slot. Allocate the node first
     // with a placeholder value of the right type, then replace the
     // compute with one that knows the id.
-    let initial = f();
+    //
+    // Run the seed inside `untrack` so the read graph it produces
+    // doesn't leak into whatever outer reactive node we may be
+    // constructed inside. The seed exists only to give the cache a
+    // value of the right shape; the real dependency edges are
+    // registered by the explicit `schedule(node_id); flush()` below,
+    // which runs under the scheduler's own tracker scope. Without the
+    // untrack guard, calling `computed(move || sig.get())` from
+    // inside an effect makes that effect a subscriber of `sig` — a
+    // write to `sig` then re-runs the outer effect (often a route /
+    // component mount) and silently leaks a fresh computed node on
+    // every tick.
+    let initial = untrack(&mut f);
     let value: Rc<RefCell<dyn Any>> = Rc::new(RefCell::new(initial));
 
     // The compute closure needs to be set after we know the NodeId,
