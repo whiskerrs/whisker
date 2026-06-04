@@ -75,23 +75,37 @@ pub fn create_undefined_symbol_stub(
 /// patch refers to but doesn't itself define. Sorted (Vec, not Set)
 /// so callers can hash the result deterministically for caching.
 pub fn compute_needed_symbols(patch_obj: &Path) -> Result<Vec<String>> {
-    let bytes = std::fs::read(patch_obj)
-        .with_context(|| format!("read patch obj {}", patch_obj.display()))?;
-    let file = object::File::parse(&*bytes).context("parse patch obj")?;
+    compute_needed_symbols_multi(std::slice::from_ref(&patch_obj))
+}
 
+/// Multi-input variant of [`compute_needed_symbols`]. Take the union
+/// of every input's undefined set minus the union of every input's
+/// defined set — i.e. symbols still unresolved after the inputs
+/// satisfy each other's references.
+///
+/// Used by sub-crate hot-patches (#103) where the patch dylib is
+/// linked from both the sub-crate's `.o` and the user crate's `.o`
+/// (the user's `.o` carries the anchor symbols). A name undefined
+/// in one but defined in the other should NOT end up in the stub.
+pub fn compute_needed_symbols_multi(patch_objs: &[&Path]) -> Result<Vec<String>> {
     let mut undefined: HashSet<String> = HashSet::new();
     let mut defined: HashSet<String> = HashSet::new();
-    for sym in file.symbols() {
-        let Ok(name) = sym.name() else {
-            continue;
-        };
-        if name.is_empty() {
-            continue;
-        }
-        if sym.is_undefined() {
-            undefined.insert(name.to_string());
-        } else {
-            defined.insert(name.to_string());
+    for patch_obj in patch_objs {
+        let bytes = std::fs::read(patch_obj)
+            .with_context(|| format!("read patch obj {}", patch_obj.display()))?;
+        let file = object::File::parse(&*bytes).context("parse patch obj")?;
+        for sym in file.symbols() {
+            let Ok(name) = sym.name() else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            if sym.is_undefined() {
+                undefined.insert(name.to_string());
+            } else {
+                defined.insert(name.to_string());
+            }
         }
     }
     let mut needed: Vec<String> = undefined.difference(&defined).cloned().collect();

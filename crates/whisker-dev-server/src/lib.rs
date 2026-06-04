@@ -53,12 +53,14 @@ pub mod hotpatch;
 pub mod installer;
 pub mod server;
 pub mod watcher;
+pub mod workspace;
 
 pub use builder::Builder;
 pub use installer::Installer;
 pub use server::{Patch, PatchSender};
 pub use watcher::{Change, ChangeKind};
 pub use whisker_build::CaptureShims;
+pub use workspace::{discover_path_deps, identify_crate_for_paths, PathDepCrate};
 
 // ----- Config & enums --------------------------------------------------------
 
@@ -262,18 +264,50 @@ impl DevServer {
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
         whisker_build::ui::debug(format!("ws://{bound}/whisker-dev"));
 
-        // Watch the user crate's `src/`. `crate_dir` is whatever the
-        // cli resolved (`Cargo.toml` parent) — for in-workspace
-        // examples this is `<workspace>/examples/<pkg>/`, for an
-        // external user it's wherever they keep their app.
-        let watch_root = self.config.crate_dir.join("src");
+        // Walk the user crate's dep graph for every workspace path
+        // dep. The watcher attaches one notify root per `src/`, and
+        // the change loop uses the same list to map a changed file
+        // back to its owning crate. Registry / git deps are excluded
+        // — their sources live outside the workspace; Cargo.toml /
+        // Cargo.lock edits trigger a Tier 2 rebuild and pick them
+        // up that way.
+        let path_deps = workspace::discover_path_deps(
+            &self.config.crate_dir.join("Cargo.toml"),
+            &self.config.package,
+        )
+        .unwrap_or_else(|e| {
+            whisker_build::ui::warn(format!(
+                "cargo metadata failed ({e:#}); falling back to user crate only",
+            ));
+            Vec::new()
+        });
+        // Always include the user crate's src dir as a fallback even
+        // if cargo metadata returned nothing — the dev loop should
+        // still work in degraded mode.
+        let user_src = self.config.crate_dir.join("src");
+        let mut watch_roots: Vec<PathBuf> = path_deps
+            .iter()
+            .map(|c| c.src_dir.clone())
+            .filter(|p| p.is_dir())
+            .collect();
+        if !watch_roots.iter().any(|p| p == &user_src) && user_src.is_dir() {
+            watch_roots.push(user_src.clone());
+        }
+        if watch_roots.is_empty() {
+            // Last-resort: watch the user_src path even if it doesn't
+            // exist yet — notify will fail and we'll surface the
+            // error to the user.
+            watch_roots.push(user_src.clone());
+        }
         let (tx, mut rx) = tokio::sync::mpsc::channel::<watcher::Change>(8);
         let _watcher = watcher::spawn_watcher(
-            watch_root.clone(),
+            watch_roots.clone(),
             std::time::Duration::from_millis(200),
             tx,
         )?;
-        whisker_build::ui::debug(format!("watching {}", watch_root.display()));
+        for root in &watch_roots {
+            whisker_build::ui::debug(format!("watching {}", root.display()));
+        }
         emit(&self.on_event, Event::Started);
 
         // Configure the initial build. For Tier 1 it doubles as the
@@ -368,6 +402,24 @@ impl DevServer {
                     // wire-up so the user sees a single elapsed
                     // duration for "edit → app updated".
                     let patch_step = whisker_build::ui::step("patch", "tier 1");
+                    // Map the changed file paths to the owning crate.
+                    // None = batch spans multiple crates, or a path
+                    // outside every known src dir — fall back to a
+                    // cold rebuild since we can only patch one crate
+                    // per batch.
+                    let crate_key = workspace::identify_crate_for_paths(&change.paths, &path_deps);
+                    if !path_deps.is_empty() && crate_key.is_none() {
+                        patch_step.fail("multi-crate change batch; using Tier 2");
+                        run_build_cycle(
+                            &builder,
+                            &installer,
+                            &self.on_event,
+                            &sender,
+                            "rebuild (tier2 fallback, multi-crate batch)",
+                        )
+                        .await;
+                        continue;
+                    }
                     let Some(aslr_reference) = sender.latest_aslr_reference() else {
                         // No client has reported its `aslr_reference` yet
                         // (handshake hasn't completed, or never connected).
@@ -385,7 +437,7 @@ impl DevServer {
                         continue;
                     };
                     let started = std::time::Instant::now();
-                    match p.build_patch(aslr_reference).await {
+                    match p.build_patch(aslr_reference, crate_key.as_deref()).await {
                         Ok(plan) => {
                             let built_in = started.elapsed();
                             log_patch_diff(&plan.report);

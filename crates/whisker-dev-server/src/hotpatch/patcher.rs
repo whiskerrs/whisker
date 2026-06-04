@@ -143,18 +143,51 @@ impl Patcher {
     /// `0` for cases where no device has connected yet (the patch
     /// will still build but won't dispatch correctly at runtime; the
     /// caller should refrain from sending it in that state).
-    pub async fn build_patch(&self, aslr_reference: u64) -> Result<PatchPlan> {
-        // Look up the captured rustc invocation by the rustc-style
-        // crate name (hyphens → underscores). Tier 1 only patches
-        // the user crate today; tracking edits in dependency crates
-        // is a future expansion.
-        let crate_key = self.package.replace('-', "_");
+    ///
+    /// `crate_key` is the **rustc-form** name of the crate that owns
+    /// the change. `None` defaults to the user crate. Sub-crate
+    /// patches (#103) pass the changed crate's name so the thin
+    /// build picks up that crate's captured rustc args (a fresh `.o`
+    /// of the changed sub-crate), then links it into a patch dylib
+    /// using the user crate's linker invocation as template. The
+    /// original user dylib already exports the sub-crate's symbols
+    /// (rustc linked its rlib in fat-build time); subsecond's
+    /// JumpTable redirects them onto the patch dylib's new bodies.
+    pub async fn build_patch(
+        &self,
+        aslr_reference: u64,
+        crate_key: Option<&str>,
+    ) -> Result<PatchPlan> {
+        let user_key = self.package.replace('-', "_");
+        let crate_key = crate_key
+            .map(str::to_owned)
+            .unwrap_or_else(|| user_key.clone());
         let captured_rustc = self.captured_rustc_args.get(&crate_key).with_context(|| {
             format!(
-                "no captured rustc invocation for crate `{}`; was the fat build run?",
-                self.package,
+                "no captured rustc invocation for crate `{crate_key}`; \
+                 was the fat build run?",
             )
         })?;
+        // When patching a sub-crate, also compile the user crate
+        // alongside it. The user crate carries the
+        // `whisker_aslr_anchor` / `whisker_app_main` / `whisker_tick`
+        // symbols (emitted by `#[whisker::main]`) — without them,
+        // `subsecond::apply_patch`'s `dlsym(patch, "whisker_aslr_anchor")`
+        // returns NULL and the runtime computes a junk slide that
+        // SIGBUSes on the next call into a patched function. Linking
+        // the user crate's `.o` puts those symbols into the patch
+        // dylib's `.dynsym` so subsecond's math works.
+        let user_rustc = if crate_key != user_key {
+            Some(self.captured_rustc_args.get(&user_key).with_context(|| {
+                format!(
+                    "sub-crate patch ({crate_key}) needs user crate `{user_key}` in the link \
+                         (for the `whisker_aslr_anchor` symbol), but no captured rustc invocation \
+                         is available for it",
+                )
+            })?)
+        } else {
+            None
+        };
 
         // Linker capture is keyed by output basename. The fat build's
         // crate-type is whatever cargo chose (typically `cdylib` for
@@ -170,11 +203,26 @@ impl Patcher {
         validate_environment(captured_rustc, &self.rustc_path)
             .context("environment validation before thin rebuild")?;
 
-        // Stage 1: rustc the user crate to a single `.o` file.
+        // Stage 1: rustc the changed crate to a `.o` file.
         let obj_plan = thin_build::build_obj_plan(captured_rustc, &self.patch_out_dir);
         let object = run_obj_plan(&obj_plan, &self.rustc_path, &self.cwd)
             .await
             .context("rustc --emit=obj for thin patch")?;
+
+        // Stage 1b: for sub-crate patches, also rebuild the user
+        // crate's `.o` so the patch dylib carries the anchor symbols
+        // subsecond needs (see Stage 1's `user_rustc` doc above).
+        // Skipped on user-crate patches because `object` already
+        // covers it.
+        let user_object_for_link: Option<PathBuf> = if let Some(user_rustc) = user_rustc {
+            let user_obj_plan = thin_build::build_obj_plan(user_rustc, &self.patch_out_dir);
+            let obj = run_obj_plan(&user_obj_plan, &self.rustc_path, &self.cwd)
+                .await
+                .context("rustc --emit=obj for user crate (sub-crate patch anchor source)")?;
+            Some(obj)
+        } else {
+            None
+        };
 
         // Stage 2: synthesize a stub `.o` that maps every host symbol
         // the patch refers to onto its live runtime address. The stub
@@ -190,15 +238,28 @@ impl Patcher {
         // `lib.rs::run` skips Tier 1 entirely when no aslr_reference
         // has been reported.
         let extras: Vec<PathBuf> = if aslr_reference == 0 {
-            Vec::new()
+            // Test-fixture path: even without a stub we still need to
+            // pass the user crate's `.o` for sub-crate patches so
+            // the anchor symbol exists.
+            user_object_for_link.iter().cloned().collect()
         } else {
             let stub_path = self.patch_out_dir.join("aslr-stub.o");
+            // Feed BOTH input objects into the UND-symbol scan when
+            // building the stub. The sub-crate `.o` references
+            // whisker / kit symbols; the user crate `.o` references
+            // sub-crate symbols + framework symbols. Missing the
+            // latter set would leave UNDs unresolved at link time.
             let stub_bytes = self
-                .stub_bytes_for(&object, aslr_reference)
+                .stub_bytes_for_objects(&object, user_object_for_link.as_deref(), aslr_reference)
                 .context("synthesize stub object")?;
             std::fs::write(&stub_path, &stub_bytes)
                 .with_context(|| format!("write stub object to {}", stub_path.display()))?;
             let mut e = vec![stub_path];
+            // Pull in the user crate's `.o` alongside the sub-crate's
+            // (no-op for user-crate patches where this is None).
+            if let Some(uo) = user_object_for_link.as_ref() {
+                e.push(uo.clone());
+            }
             // Belt-and-suspenders on Linux/Android: the stub is
             // Text-only and emits weak symbols, so non-Text host
             // refs (thread-locals, static OnceCells like
@@ -254,13 +315,27 @@ impl Patcher {
         ))
     }
 
-    /// Return the stub object bytes for `object`+`aslr_reference`.
-    /// Reuses an in-session cached copy when the patch's UND symbol
-    /// set matches the previous build's and `aslr_reference` /
-    /// `target_os` are unchanged — the common case when an edit only
-    /// touches a function body.
-    fn stub_bytes_for(&self, object: &Path, aslr_reference: u64) -> Result<Vec<u8>> {
-        let needed = super::compute_needed_symbols(object).context("compute_needed_symbols")?;
+    /// Return the stub object bytes for the link inputs +
+    /// `aslr_reference`. Reuses an in-session cached copy when the
+    /// patch's UND symbol set matches the previous build's and
+    /// `aslr_reference` / `target_os` are unchanged — the common case
+    /// when an edit only touches a function body.
+    ///
+    /// Pass `extra` for sub-crate patches (#103): the union of UND
+    /// symbols across both objects, minus their union of defined,
+    /// gives the right "still unresolved" set.
+    fn stub_bytes_for_objects(
+        &self,
+        object: &Path,
+        extra: Option<&Path>,
+        aslr_reference: u64,
+    ) -> Result<Vec<u8>> {
+        let mut paths: Vec<&Path> = vec![object];
+        if let Some(p) = extra {
+            paths.push(p);
+        }
+        let needed =
+            super::compute_needed_symbols_multi(&paths).context("compute_needed_symbols_multi")?;
         let needed_hash = hash_needed(&needed);
         if let Ok(guard) = self.stub_cache.lock() {
             if let Some(cached) = guard.as_ref() {
@@ -543,8 +618,26 @@ mod tests {
         );
         // aslr_reference value is irrelevant for this error path —
         // build_patch bails before touching it.
-        let err = p.build_patch(0).await.unwrap_err();
+        let err = p.build_patch(0, None).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("no captured rustc invocation"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn build_patch_errors_when_explicit_crate_key_missing() {
+        let p = Patcher::new(
+            "demo".into(),
+            "/rustc".into(),
+            "/cc".into(),
+            "/cwd".into(),
+            "/patches".into(),
+            LinkerOs::Macos,
+            empty_cache(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let err = p.build_patch(0, Some("not_a_crate")).await.unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("not_a_crate"), "{msg}");
     }
 }

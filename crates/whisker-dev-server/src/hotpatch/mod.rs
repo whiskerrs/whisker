@@ -30,7 +30,8 @@ pub use patcher::Patcher;
 pub use runner::{run_link_plan, run_obj_plan, thin_rebuild_obj};
 pub use shim_paths::{expected_shim_paths, resolve_shim_paths, ShimPaths};
 pub use stub_object::{
-    build_stub_for_needed, compute_needed_symbols, create_undefined_symbol_stub,
+    build_stub_for_needed, compute_needed_symbols, compute_needed_symbols_multi,
+    create_undefined_symbol_stub,
 };
 pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
 pub use thin_build::{build_obj_plan, library_filename, object_filename, ObjBuildPlan};
