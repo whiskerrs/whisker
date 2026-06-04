@@ -47,6 +47,7 @@ pub fn effect(f: impl FnMut() + 'static) -> NodeId {
             },
             sources: Default::default(),
             subscribers: Default::default(),
+            arc_sources: Vec::new(),
         });
         if let Some(o) = rt.owners.get_mut(owner) {
             o.nodes.push(id);

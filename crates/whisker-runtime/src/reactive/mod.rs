@@ -28,6 +28,7 @@
 //! (no `Arc`, no locks) while matching how the runtime actually
 //! executes.
 
+pub mod arc_signal;
 pub mod component;
 pub mod computed;
 pub mod context;
@@ -45,6 +46,7 @@ mod tests;
 #[cfg(test)]
 mod tests_resource;
 
+pub use arc_signal::{arc_signal, ArcReadSignal, ArcRwSignal, ArcWriteSignal};
 #[doc(hidden)]
 pub use component::__reset_pending_mount_for_tests;
 pub use component::{

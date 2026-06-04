@@ -121,6 +121,12 @@ pub fn flush() {
 fn run_node_if_alive(node: NodeId) {
     // Step 1: grab the compute handle, clear old sources, set the
     // tracker. Short borrow.
+    //
+    // `arc_sources` is taken out of the runtime borrow first because
+    // its `unsubscribe` callees re-enter the runtime via Arc-signal
+    // internals (and even if they don't today, they're free user
+    // code that may grow that way). Drop the runtime borrow before
+    // iterating.
     let prep = with_runtime(|rt| {
         let n = rt.nodes.get(node)?;
         let owner = n.owner;
@@ -129,7 +135,7 @@ fn run_node_if_alive(node: NodeId) {
             NodeData::Computed { compute, .. } => compute.clone(),
             NodeData::Signal { .. } => return None,
         };
-        // Detach from existing sources before re-tracking.
+        // Detach from existing arena sources before re-tracking.
         let sources: Vec<_> = rt.nodes.get(node)?.sources.iter().copied().collect();
         for src in sources {
             if let Some(src_node) = rt.nodes.get_mut(src) {
@@ -139,21 +145,38 @@ fn run_node_if_alive(node: NodeId) {
         if let Some(n) = rt.nodes.get_mut(node) {
             n.sources.clear();
         }
+        // Take the arc_sources out — we'll call unsubscribe on each
+        // outside the runtime borrow.
+        let arc_sources = rt
+            .nodes
+            .get_mut(node)
+            .map(|n| std::mem::take(&mut n.arc_sources))
+            .unwrap_or_default();
         rt.current_tracker = Some(node);
         rt.owner_stack.push(owner);
-        Some(compute)
+        Some((compute, arc_sources))
     });
 
-    let Some(compute) = prep else { return };
+    let Some((compute, arc_sources)) = prep else {
+        return;
+    };
 
-    // Step 2: invoke compute. The runtime is unborrowed at this
+    // Step 2: tell each Arc-backed signal "drop me from your subscriber
+    // list" so a stale subscription doesn't outlast our last
+    // dependency on it. The compute body below will re-register a
+    // fresh subscription against every Arc signal it reads.
+    for arc_src in arc_sources {
+        arc_src.unsubscribe(node);
+    }
+
+    // Step 3: invoke compute. The runtime is unborrowed at this
     // point, so user code inside is free to enter `with_runtime`.
     {
         let mut borrow = compute.borrow_mut();
         (*borrow)();
     }
 
-    // Step 3: restore book-keeping — pop the owner we pushed and
+    // Step 4: restore book-keeping — pop the owner we pushed and
     // clear the tracker.
     with_runtime(|rt| {
         rt.owner_stack.pop();

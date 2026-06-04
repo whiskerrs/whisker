@@ -1007,3 +1007,323 @@ fn computed_constructed_inside_computed_does_not_leak_subscription_to_outer_comp
     // Outer's cached value should reflect src change.
     assert_eq!(outer.get(), 2);
 }
+
+// ============================================================================
+// ArcSignal family
+// ============================================================================
+//
+// Arc-backed signals decouple lifetime from the owner tree. The
+// invariant we care about: a signal allocated inside one owner can
+// be read after that owner is disposed, as long as a handle is held
+// somewhere. The tests below establish that property and verify that
+// the subscriber-tracking machinery (re-run cleanup + disposed-owner
+// pruning) keeps the back-references in sync.
+
+#[test]
+fn arc_signal_basic_get_set() {
+    fresh();
+    let signal = ArcRwSignal::new(10_i32);
+    assert_eq!(signal.get(), 10);
+    signal.set(42);
+    assert_eq!(signal.get(), 42);
+}
+
+#[test]
+fn arc_signal_clone_shares_value() {
+    fresh();
+    let s1 = ArcRwSignal::new(0_i32);
+    let s2 = s1.clone();
+    s1.set(1);
+    assert_eq!(s2.get(), 1);
+    s2.set(2);
+    assert_eq!(s1.get(), 2);
+}
+
+#[test]
+fn arc_signal_split_round_trip() {
+    fresh();
+    let rw = ArcRwSignal::new(0_i32);
+    let (r, w) = rw.split();
+    w.set(5);
+    assert_eq!(r.get(), 5);
+    w.update(|v| *v += 3);
+    assert_eq!(r.get(), 8);
+}
+
+#[test]
+fn arc_signal_survives_caller_owner_disposal() {
+    // The bug this whole family exists to fix: a signal whose
+    // declaring owner is disposed must still be readable through
+    // any clone of its handle, because the value lives by Arc
+    // refcount, not by an arena slot.
+    fresh();
+    let stash: Rc<RefCell<Option<ArcReadSignal<i32>>>> = Rc::new(RefCell::new(None));
+    let stash_for_install = stash.clone();
+
+    let owner = create_owner(None);
+    with_owner(owner, || {
+        let (r, w) = arc_signal(99_i32);
+        // Pretend `w` is the write half kept by a native module's
+        // event callback; we don't need to keep it for this test.
+        drop(w);
+        *stash_for_install.borrow_mut() = Some(r);
+    });
+
+    dispose_owner(owner);
+
+    // Pre-fix this would have panicked (`expect("signal disposed")`)
+    // for Copy signals. Post-fix Arc signals survive the disposal.
+    let cached = stash.borrow().clone().expect("stashed signal");
+    assert_eq!(cached.get(), 99);
+}
+
+#[test]
+fn arc_signal_effect_subscribes_and_reruns() {
+    fresh();
+    let counter = ArcRwSignal::new(0_i32);
+    let counter_for_effect = counter.clone();
+    let observed: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    let observed_clone = observed.clone();
+    effect(move || observed_clone.borrow_mut().push(counter_for_effect.get()));
+    counter.set(1);
+    flush();
+    counter.set(2);
+    flush();
+    assert_eq!(*observed.borrow(), vec![0, 1, 2]);
+}
+
+#[test]
+fn arc_signal_subscriber_is_pruned_when_its_owner_is_disposed() {
+    // Asymmetric strong/weak: signal -> subscriber is weak (just a
+    // NodeId), so when the subscriber's owner is disposed, the
+    // signal's subscriber list can prune the stale NodeId without
+    // any panic.
+    fresh();
+    let counter = ArcRwSignal::new(0_i32);
+    let counter_for_effect = counter.clone();
+    let observed: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    let observed_clone = observed.clone();
+
+    let owner = create_owner(None);
+    with_owner(owner, || {
+        effect(move || observed_clone.borrow_mut().push(counter_for_effect.get()));
+    });
+    assert_eq!(*observed.borrow(), vec![0]);
+
+    // Tear the effect down by disposing its owner. The subscriber
+    // list inside `counter` should be pruned eagerly by the
+    // owner-disposal cascade so the next `set` doesn't try to
+    // schedule a freed NodeId.
+    dispose_owner(owner);
+
+    counter.set(7);
+    flush();
+    // Effect didn't re-run — it's gone.
+    assert_eq!(*observed.borrow(), vec![0]);
+    // Signal still alive on its own (caller still holds it).
+    assert_eq!(counter.get_untracked(), 7);
+}
+
+#[test]
+fn arc_signal_effect_resubscribes_on_rerun() {
+    // The scheduler must drop the effect's old subscription to an
+    // Arc signal before re-running, so a write to a no-longer-read
+    // signal doesn't fire stale subscribers.
+    fresh();
+    let toggle = ArcRwSignal::new(false);
+    let a = ArcRwSignal::new(0_i32);
+    let b = ArcRwSignal::new(0_i32);
+    let toggle_e = toggle.clone();
+    let a_e = a.clone();
+    let b_e = b.clone();
+    let runs = Rc::new(RefCell::new(0));
+    let runs_clone = runs.clone();
+    effect(move || {
+        if toggle_e.get() {
+            let _ = a_e.get();
+        } else {
+            let _ = b_e.get();
+        }
+        *runs_clone.borrow_mut() += 1;
+    });
+    assert_eq!(*runs.borrow(), 1);
+
+    // Currently reading b. Writing a should NOT re-run.
+    a.set(1);
+    flush();
+    assert_eq!(*runs.borrow(), 1);
+
+    b.set(1);
+    flush();
+    assert_eq!(*runs.borrow(), 2);
+
+    // Flip to reading a.
+    toggle.set(true);
+    flush();
+    assert_eq!(*runs.borrow(), 3);
+
+    // Now writing b should NOT re-run — the previous subscription
+    // got cleared by the scheduler.
+    b.set(2);
+    flush();
+    assert_eq!(*runs.borrow(), 3);
+
+    a.set(2);
+    flush();
+    assert_eq!(*runs.borrow(), 4);
+}
+
+#[test]
+fn arc_signal_computed_caches_value() {
+    fresh();
+    let count = ArcRwSignal::new(3_i32);
+    let count_e = count.clone();
+    let doubled = computed(move || count_e.get() * 2);
+    assert_eq!(doubled.get(), 6);
+    count.set(5);
+    flush();
+    assert_eq!(doubled.get(), 10);
+}
+
+#[test]
+fn arc_signal_with_untracked_does_not_register_subscriber() {
+    fresh();
+    let s = ArcRwSignal::new(0_i32);
+    let s_e = s.clone();
+    let runs = Rc::new(RefCell::new(0));
+    let runs_clone = runs.clone();
+    effect(move || {
+        let _ = s_e.with_untracked(|v| *v);
+        *runs_clone.borrow_mut() += 1;
+    });
+    assert_eq!(*runs.borrow(), 1);
+    s.set(1);
+    flush();
+    assert_eq!(*runs.borrow(), 1, "with_untracked must not subscribe");
+}
+
+#[test]
+fn arc_to_rw_conversion_shares_underlying_value() {
+    // Converting an `ArcRwSignal` to a `RwSignal` (Copy) builds a
+    // fresh arena entry, but both handles observe the same underlying
+    // value: writes through one are visible through the other.
+    fresh();
+    let owner = create_owner(None);
+    let arc = ArcRwSignal::new(0_i32);
+    let arc_for_outside = arc.clone();
+    let rw: RwSignal<i32> = with_owner(owner, || arc.clone().into());
+    assert_eq!(rw.get(), 0);
+    arc.set(7);
+    assert_eq!(rw.get(), 7);
+    rw.set(42);
+    assert_eq!(arc.get_untracked(), 42);
+    assert_eq!(arc_for_outside.get_untracked(), 42);
+    dispose_owner(owner);
+}
+
+#[test]
+fn arc_to_rw_conversion_propagates_to_effect_subscribers() {
+    // An effect that captures the converted `RwSignal` (Copy) re-runs
+    // when the original `ArcRwSignal` is written.
+    fresh();
+    let arc = ArcRwSignal::new(0_i32);
+    let owner = create_owner(None);
+    let observed: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
+    let observed_clone = observed.clone();
+    with_owner(owner, || {
+        let rw: RwSignal<i32> = arc.clone().into();
+        effect(move || observed_clone.borrow_mut().push(rw.get()));
+    });
+    arc.set(1);
+    flush();
+    arc.set(2);
+    flush();
+    assert_eq!(*observed.borrow(), vec![0, 1, 2]);
+    dispose_owner(owner);
+}
+
+#[test]
+fn arc_to_rw_conversion_survives_caller_owner_disposal_via_arc() {
+    // After disposing the owner that minted the `RwSignal`, the
+    // original `ArcRwSignal` still works. The converted `RwSignal`
+    // handle itself is gone (its arena slot was freed), but the
+    // underlying value lives on because the `Arc` keeps a strong
+    // reference.
+    fresh();
+    let arc = ArcRwSignal::new(0_i32);
+    let owner = create_owner(None);
+    let _: RwSignal<i32> = with_owner(owner, || arc.clone().into());
+    dispose_owner(owner);
+    arc.set(99);
+    assert_eq!(arc.get_untracked(), 99);
+}
+
+#[test]
+fn arc_read_signal_to_read_signal_conversion_reads_correctly() {
+    fresh();
+    let (r, w) = arc_signal(5_i32);
+    let owner = create_owner(None);
+    let copy: ReadSignal<i32> = with_owner(owner, || r.into());
+    assert_eq!(copy.get(), 5);
+    w.set(99);
+    assert_eq!(copy.get(), 99);
+    dispose_owner(owner);
+}
+
+#[test]
+fn arc_write_signal_to_write_signal_conversion_writes_correctly() {
+    fresh();
+    let (r, w) = arc_signal(0_i32);
+    let owner = create_owner(None);
+    let copy: WriteSignal<i32> = with_owner(owner, || w.into());
+    copy.set(123);
+    assert_eq!(r.get_untracked(), 123);
+    dispose_owner(owner);
+}
+
+#[test]
+fn arc_signal_inside_oncelock_outlives_caller_owner() {
+    // The canonical safe_area_insets-style pattern: a module stashes
+    // its ArcRwSignal in process-global storage on first call. The
+    // first call happens inside some component's owner, but the
+    // signal stays alive once the component unmounts because the
+    // OnceLock keeps a strong Arc refcount.
+    use std::sync::OnceLock;
+    fresh();
+    struct Module {
+        slot: OnceLock<ArcRwSignal<i32>>,
+    }
+    let module: Rc<Module> = Rc::new(Module {
+        slot: OnceLock::new(),
+    });
+    let module_clone = module.clone();
+
+    let install_owner = create_owner(None);
+    with_owner(install_owner, || {
+        // First touch installs the signal under whatever owner is
+        // current — the install owner here.
+        module_clone.slot.get_or_init(|| ArcRwSignal::new(0));
+    });
+
+    // Dispose the owner that triggered the install. The OnceLock
+    // still holds the only strong Arc.
+    dispose_owner(install_owner);
+
+    // The signal is still readable, set-able, and propagates to new
+    // subscribers under fresh owners.
+    let observed: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
+    let observed_clone = observed.clone();
+    let module_for_use = module.clone();
+    let use_owner = create_owner(None);
+    with_owner(use_owner, || {
+        effect(move || {
+            let v = module_for_use.slot.get().unwrap().get();
+            *observed_clone.borrow_mut() = Some(v);
+        });
+    });
+    assert_eq!(*observed.borrow(), Some(0));
+
+    module.slot.get().unwrap().set(99);
+    flush();
+    assert_eq!(*observed.borrow(), Some(99));
+}

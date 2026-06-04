@@ -99,6 +99,7 @@ pub fn computed<T: 'static + Clone + PartialEq>(
             },
             sources: Default::default(),
             subscribers: Default::default(),
+            arc_sources: Vec::new(),
         });
         if let Some(o) = rt.owners.get_mut(owner) {
             o.nodes.push(id);

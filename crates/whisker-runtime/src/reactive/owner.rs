@@ -9,7 +9,9 @@
 //! `#[component]`, `provide_context`, `on_cleanup` etc. — but tests
 //! and the renderer machinery do.
 
-use super::runtime::{Owner, OwnerId};
+use std::rc::Rc;
+
+use super::runtime::{NodeId, Owner, OwnerId};
 use super::with_runtime;
 
 /// Create a new owner. If `parent` is `None` the current top-of-stack
@@ -140,28 +142,49 @@ pub fn dispose_owner(owner: OwnerId) {
     // Step 4: free every node this owner allocated. For effects /
     // computed values, also detach them from any subscriber list they were on,
     // so other live nodes don't try to notify a freed slot later.
-    with_runtime(|rt| {
-        for node_id in &nodes {
-            let Some(node) = rt.nodes.remove(*node_id) else {
-                continue;
-            };
-            // Remove ourselves from every source's subscriber list.
-            for source in node.sources {
-                if let Some(src_node) = rt.nodes.get_mut(source) {
-                    src_node.subscribers.remove(node_id);
+    //
+    // Arc-signal back-references (`arc_sources`) get collected here
+    // and unsubscribed below, outside the runtime borrow — the
+    // unsubscribe callees may re-enter the runtime.
+    let arc_unsubscribes: Vec<(Rc<dyn super::runtime::ArcSubscription>, NodeId)> =
+        with_runtime(|rt| {
+            let mut out: Vec<(Rc<dyn super::runtime::ArcSubscription>, NodeId)> = Vec::new();
+            for node_id in &nodes {
+                let Some(node) = rt.nodes.remove(*node_id) else {
+                    continue;
+                };
+                // Remove ourselves from every source's subscriber list.
+                for source in node.sources {
+                    if let Some(src_node) = rt.nodes.get_mut(source) {
+                        src_node.subscribers.remove(node_id);
+                    }
+                }
+                // Remove ourselves from every subscriber's source list —
+                // a signal we owned may have been read by an outer effect.
+                for sub in node.subscribers {
+                    if let Some(sub_node) = rt.nodes.get_mut(sub) {
+                        sub_node.sources.remove(node_id);
+                    }
+                }
+                // Collect arc-signal back-refs so we can call `unsubscribe`
+                // outside the runtime borrow.
+                for arc_src in node.arc_sources {
+                    out.push((arc_src, *node_id));
                 }
             }
-            // Remove ourselves from every subscriber's source list —
-            // a signal we owned may have been read by an outer effect.
-            for sub in node.subscribers {
-                if let Some(sub_node) = rt.nodes.get_mut(sub) {
-                    sub_node.sources.remove(node_id);
-                }
-            }
-        }
-        // Strip these nodes from the pending queue if any were scheduled.
-        rt.pending.retain(|n| !nodes.contains(n));
-    });
+            // Strip these nodes from the pending queue if any were scheduled.
+            rt.pending.retain(|n| !nodes.contains(n));
+            out
+        });
+
+    // Tell every Arc-backed signal that one of our disposed nodes used
+    // to be on its subscriber list. The signal itself stays alive
+    // (Arc refcount), but pruning here keeps its list bounded so a
+    // long-lived signal doesn't accumulate dead `NodeId`s from
+    // every transient subscriber that came and went.
+    for (arc_src, subscriber) in arc_unsubscribes {
+        arc_src.unsubscribe(subscriber);
+    }
 
     // Step 5: release every element handle the disposed owner created.
     // We do this AFTER recursing into children so that bottom-up
