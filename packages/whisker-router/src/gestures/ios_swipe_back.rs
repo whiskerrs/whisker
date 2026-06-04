@@ -1,3 +1,10 @@
+// The implementation imports + helper machinery below stay compiled
+// on non-iOS targets so the file reads as a single unit, but they
+// are dead unless `target_os = "ios"`. Suppress the resulting
+// dead-code / unused-import warnings only when not iOS — keeping
+// warnings on for the live iOS build.
+#![cfg_attr(not(target_os = "ios"), allow(dead_code, unused_imports))]
+
 //! [`IosSwipeBack`] — iOS-style edge swipe-back gesture for
 //! [`StackLayout`](crate::StackLayout).
 //!
@@ -60,13 +67,40 @@ const SWIPE_FULL_FINISH_MS: u32 = 320;
 /// the layout handle and the in-context
 /// [`RouteStack`](crate::RouteStack) and binds the touch handlers
 /// in `on_mount`. Renders no DOM of its own.
+///
+/// **Platform**: iOS only. On Android the body is a no-op so
+/// cross-platform apps can mount it unconditionally alongside
+/// [`AndroidPredictiveBack`] without having to `cfg`-gate the call
+/// site. The Android back-gesture surface — including the
+/// predictive-back preview — is owned by `AndroidPredictiveBack`
+/// (which is itself a no-op on iOS).
+///
+/// The original Android failure mode this guard exists to prevent:
+/// the container-level `touchstart` handler the iOS gesture installs
+/// catches any tap whose `clientX` is within
+/// `SWIPE_EDGE_THRESHOLD_PX` of the leading edge — wide enough to
+/// include the leading edge of a back-chevron icon. The handler
+/// then synchronously mounts a preview wrapper (running the
+/// previous route's body and inserting a fresh subtree into the
+/// container) DURING the touch dispatch. Lynx on Android does not
+/// tolerate the mid-dispatch view-tree mutation and aborts the
+/// process — the in-app back button visibly closes the app. The
+/// cfg gate sidesteps the whole class of failure on Android.
 #[component]
 pub fn ios_swipe_back() -> Element {
-    let layout =
-        use_context::<StackLayoutHandle>().expect("IosSwipeBack must be a child of StackLayout");
-    let transition: StackTransitionBox = StackTransitionBox::new(ios_slide::IosSlide::default());
-
-    on_mount(move || install(&layout, transition.clone()));
+    // The handler install path is alive only on iOS. Suppress the
+    // `use_context` / `on_mount` calls on every other target so we
+    // don't pay the bind cost or risk the cross-platform tap-versus-
+    // touchstart collision described above. The Android side already
+    // has [`AndroidPredictiveBack`] for the same role.
+    #[cfg(target_os = "ios")]
+    {
+        let layout = use_context::<StackLayoutHandle>()
+            .expect("IosSwipeBack must be a child of StackLayout");
+        let transition: StackTransitionBox =
+            StackTransitionBox::new(ios_slide::IosSlide::default());
+        on_mount(move || install(&layout, transition.clone()));
+    }
 
     // No visible output — gesture components only attach handlers.
     render! { fragment() }
