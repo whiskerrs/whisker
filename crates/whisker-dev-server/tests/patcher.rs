@@ -218,7 +218,7 @@ async fn build_patch_emits_a_jump_table_entry_for_a_mangled_function() {
     std::fs::write(&lib_rs, edited).unwrap();
 
     // ---- The actual test: build_patch produces an entry for `calculate`
-    let plan = patcher.build_patch(0).await.expect("build_patch");
+    let plan = patcher.build_patch(0, None).await.expect("build_patch");
 
     // The diff report must NOT list `calculate` as added or removed
     // (mangled name should be identical across both sides).
@@ -282,7 +282,7 @@ async fn build_patch_errors_when_no_captured_rustc_for_the_package() {
         HashMap::new(),
     );
 
-    let err = patcher.build_patch(0).await.unwrap_err();
+    let err = patcher.build_patch(0, None).await.unwrap_err();
     let msg = format!("{err:#}");
     assert!(msg.contains("no captured rustc invocation"), "{msg}");
 
@@ -320,7 +320,7 @@ async fn build_patch_errors_when_captured_linker_is_missing() {
         HashMap::new(), // empty linker map
     );
 
-    let err = patcher.build_patch(0).await.unwrap_err();
+    let err = patcher.build_patch(0, None).await.unwrap_err();
     let msg = format!("{err:#}");
     assert!(msg.contains("no captured linker invocation"), "{msg}");
 
