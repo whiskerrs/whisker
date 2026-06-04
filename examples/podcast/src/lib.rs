@@ -36,26 +36,27 @@
 //! while features compose the kit into screens.
 
 use podcast_feature_browse::{BrowseScreen, BrowseScreenProps};
+use whisker::css::{Display, FlexDirection};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
 #[whisker::main]
 fn app() -> Element {
-    // `page` needs explicit dimensions + background — without
-    // `width: 100vw; height: 100vh;` it collapses to 0 px on iOS
-    // and the host's clear color shows through. The bg is set on
-    // the page so the system-level safe-area paint matches the
-    // dark theme even before the first frame draws.
-    let page_style = format!(
-        "width: 100vw; height: 100vh; background-color: {bg}; \
-         display: flex; flex-direction: column;",
-        bg = podcast_theme::BG,
-    );
     render! {
-        page(style: page_style) {
+        // `page` needs explicit dimensions + background — without
+        // `width: 100vw; height: 100vh;` it collapses to 0 px on
+        // iOS and the host's clear color shows through. The bg
+        // sits on the page so the system-level safe-area paint
+        // matches the dark theme even before the first frame
+        // draws.
+        page(style: css!(
+            width: vw(100),
+            height: vh(100),
+            background_color: podcast_theme::BG,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+        )) {
             browse_screen()
         }
     }
 }
-// hot reload trigger
-// rebuild trigger v2

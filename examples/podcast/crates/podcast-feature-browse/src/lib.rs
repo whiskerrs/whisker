@@ -45,6 +45,7 @@ use podcast_ui_kit::{
     MiniPlayerProps, RankedCard, RankedCardProps, SectionHeader, SectionHeaderProps, TopNav,
     TopNavProps,
 };
+use whisker::css::{AlignItems, Display, FlexDirection, JustifyContent, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::tasks::run_blocking;
 use whisker::runtime::view::Element;
@@ -54,13 +55,14 @@ use whisker::runtime::view::Element;
 pub fn browse_screen() -> Element {
     let sections = resource(fetch_sections);
 
-    let root_style = "flex-grow: 1; flex-shrink: 1; \
-                      display: flex; flex-direction: column; \
-                      position: relative;"
-        .to_string();
-
     render! {
-        view(style: root_style) {
+        view(style: css!(
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            position: PositionKind::Relative,
+        )) {
             top_nav(title: "Podcasts", action_label: "Sign In")
             Show(
                 when: move || sections.get().is_some(),
@@ -102,14 +104,22 @@ async fn fetch_sections() -> Result<Vec<ChartSection>, String> {
 /// the layout doesn't shift when state transitions.
 #[component]
 fn status_pane(message: String) -> Element {
-    let pane_style = "flex-grow: 1; flex-shrink: 1; \
-                      display: flex; flex-direction: row; \
-                      align-items: center; justify-content: center;"
-        .to_string();
-    let text_style = format!("font-size: 14px; color: {fg};", fg = theme::TEXT_SECONDARY,);
     render! {
-        view(style: pane_style) {
-            text(style: text_style, value: message.clone())
+        view(style: css!(
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+        )) {
+            text(
+                style: css!(
+                    font_size: px(14),
+                    color: theme::TEXT_SECONDARY,
+                ),
+                value: message.clone(),
+            )
         }
     }
 }
@@ -118,15 +128,6 @@ fn status_pane(message: String) -> Element {
 /// horizontal sections.
 #[component]
 fn browse_body(sections: Vec<ChartSection>) -> Element {
-    let scroll_style = "flex-grow: 1; flex-shrink: 1; width: 100%;".to_string();
-    // The vertical column inside the scroll-view. Bottom padding
-    // = mini-player height + its bottom inset + a small breath so
-    // the last section's card row doesn't hide behind the floating
-    // player.
-    let column_style = "display: flex; flex-direction: column; \
-                        padding-top: 8px; padding-bottom: 96px;"
-        .to_string();
-
     // `each:` value computes a fresh clone INSIDE its own scope so
     // the surrounding render! Fn closure doesn't lose ownership of
     // `sections` to the each-closure's `move ||`. Bare
@@ -135,12 +136,25 @@ fn browse_body(sections: Vec<ChartSection>) -> Element {
     // and break re-render correctness.
     render! {
         scroll_view(
-            style: scroll_style,
+            style: css!(
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                width: percent(100),
+            ),
             scroll_orientation: "vertical",
             scroll_bar_enable: false,
             bounces: true,
         ) {
-            view(style: column_style) {
+            // The vertical column inside the scroll-view. Bottom
+            // padding = mini-player height + bottom inset + a
+            // small breath so the last section's card row doesn't
+            // hide behind the floating player.
+            view(style: css!(
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                padding_top: px(8),
+                padding_bottom: px(96),
+            )) {
                 ForEach(
                     each: {
                         let items = sections.clone();
@@ -159,22 +173,22 @@ fn browse_body(sections: Vec<ChartSection>) -> Element {
 /// `section.layout`.
 #[component]
 fn section_block(section: ChartSection) -> Element {
-    let block_style = format!(
-        "display: flex; flex-direction: column; \
-         margin-top: {gap}; \
-         padding-top: 4px;",
-        gap = theme::SECTION_GAP,
-    );
-    let header_gap_style = format!("height: {gap}; width: 100%;", gap = theme::HEADER_GAP,);
-
     let layout = section.layout;
     let title = section.title.clone();
     let items_for_each = section.items.clone();
 
     render! {
-        view(style: block_style) {
+        view(style: css!(
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            margin_top: theme::SECTION_GAP,
+            padding_top: px(4),
+        )) {
             section_header(title: title, show_chevron: layout == SectionLayout::Ranked)
-            view(style: header_gap_style)
+            view(style: css!(
+                height: theme::HEADER_GAP,
+                width: percent(100),
+            ))
             horizontal_row {
                 ForEach(
                     each: {
@@ -197,11 +211,6 @@ fn section_block(section: ChartSection) -> Element {
 /// touching the cards.
 #[component]
 fn card_with_gap(podcast: Podcast, rank: u32, layout: SectionLayout) -> Element {
-    let wrap_style = format!(
-        "margin-right: {gap}; \
-         display: flex; flex-direction: column;",
-        gap = theme::CARD_GAP,
-    );
     // Each Show child closure captures the podcast by move (render!
     // wraps them as `move ||` for re-render correctness). The same
     // outer FnMut can't move `podcast` out twice — clone once per
@@ -210,7 +219,11 @@ fn card_with_gap(podcast: Podcast, rank: u32, layout: SectionLayout) -> Element 
     let podcast_for_featured = podcast.clone();
     let podcast_for_ranked = podcast.clone();
     render! {
-        view(style: wrap_style) {
+        view(style: css!(
+            margin_right: theme::CARD_GAP,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+        )) {
             Show(when: move || layout == SectionLayout::Featured, fallback: || render! { fragment() }) {
                 featured_card(podcast: podcast_for_featured.clone())
             }
