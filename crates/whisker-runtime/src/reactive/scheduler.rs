@@ -130,11 +130,24 @@ fn run_node_if_alive(node: NodeId) {
     let prep = with_runtime(|rt| {
         let n = rt.nodes.get(node)?;
         let owner = n.owner;
+        // Paused-owner gate: defer the run and skip. The node lands
+        // on `rt.deferred`; `resume_owner` moves it back into
+        // `pending` so the effect catches up once its scope is
+        // active again. We snapshot the kind early — pure Signal
+        // nodes never need the gate (they have no compute), so we
+        // only check the flag for Effect / Computed.
         let compute = match &n.data {
             NodeData::Effect { compute } => compute.clone(),
             NodeData::Computed { compute, .. } => compute.clone(),
             NodeData::Signal { .. } => return None,
         };
+        let paused = rt.owners.get(owner).map(|o| o.paused).unwrap_or(false);
+        if paused {
+            if !rt.deferred.contains(&node) {
+                rt.deferred.push(node);
+            }
+            return None;
+        }
         // Detach from existing arena sources before re-tracking.
         let sources: Vec<_> = rt.nodes.get(node)?.sources.iter().copied().collect();
         for src in sources {

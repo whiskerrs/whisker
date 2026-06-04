@@ -1327,3 +1327,203 @@ fn arc_signal_inside_oncelock_outlives_caller_owner() {
     flush();
     assert_eq!(*observed.borrow(), Some(99));
 }
+
+// ----- Owner pause / resume -------------------------------------------------
+
+#[test]
+fn paused_owner_defers_effect_runs_until_resumed() {
+    fresh();
+    let runs = Rc::new(RefCell::new(0_u32));
+    let (read, write) = signal(0_i32);
+
+    let owner = create_owner(None);
+    let runs_clone = runs.clone();
+    with_owner(owner, || {
+        effect(move || {
+            let _ = read.get();
+            *runs_clone.borrow_mut() += 1;
+        });
+    });
+    assert_eq!(
+        *runs.borrow(),
+        1,
+        "initial registration runs the effect once"
+    );
+
+    pause_owner(owner);
+    assert!(is_owner_paused(owner));
+
+    write.set(1);
+    flush();
+    assert_eq!(*runs.borrow(), 1, "paused effect must not run on flush");
+
+    resume_owner(owner);
+    assert!(!is_owner_paused(owner));
+    flush();
+    assert_eq!(
+        *runs.borrow(),
+        2,
+        "resume must drain the deferred re-run into pending"
+    );
+}
+
+#[test]
+fn pause_cascades_to_descendants() {
+    fresh();
+    let parent_runs = Rc::new(RefCell::new(0_u32));
+    let child_runs = Rc::new(RefCell::new(0_u32));
+    let (read, write) = signal(0_i32);
+
+    let parent = create_owner(None);
+    let child = create_owner(Some(parent));
+
+    let pr = parent_runs.clone();
+    with_owner(parent, || {
+        effect(move || {
+            let _ = read.get();
+            *pr.borrow_mut() += 1;
+        });
+    });
+    let cr = child_runs.clone();
+    with_owner(child, || {
+        effect(move || {
+            let _ = read.get();
+            *cr.borrow_mut() += 1;
+        });
+    });
+    assert_eq!(*parent_runs.borrow(), 1);
+    assert_eq!(*child_runs.borrow(), 1);
+
+    pause_owner(parent);
+    assert!(is_owner_paused(parent));
+    assert!(is_owner_paused(child), "pause cascades down the tree");
+
+    write.set(1);
+    flush();
+    assert_eq!(*parent_runs.borrow(), 1);
+    assert_eq!(*child_runs.borrow(), 1);
+
+    resume_owner(parent);
+    flush();
+    assert_eq!(*parent_runs.borrow(), 2);
+    assert_eq!(*child_runs.borrow(), 2);
+}
+
+#[test]
+fn create_owner_inherits_paused_from_parent() {
+    fresh();
+    let parent = create_owner(None);
+    pause_owner(parent);
+
+    let child = create_owner(Some(parent));
+    assert!(
+        is_owner_paused(child),
+        "owner created under a paused parent must inherit paused"
+    );
+}
+
+#[test]
+fn effect_registered_under_paused_owner_defers_initial_run_until_resume() {
+    // The initial registration of an effect goes through the same
+    // schedule + flush path as a re-run, so the pause gate also
+    // applies. The closure fires on the first resume.
+    //
+    // StackLayout sidesteps this in practice by creating route owners
+    // unpaused, running render (which fires every initial effect),
+    // and only pausing the non-top routes at the end of the
+    // navigation effect.
+    fresh();
+    let runs = Rc::new(RefCell::new(0_u32));
+    let owner = create_owner(None);
+    pause_owner(owner);
+
+    let runs_clone = runs.clone();
+    with_owner(owner, || {
+        effect(move || {
+            *runs_clone.borrow_mut() += 1;
+        });
+    });
+    assert_eq!(
+        *runs.borrow(),
+        0,
+        "paused at registration: initial run deferred"
+    );
+
+    resume_owner(owner);
+    flush();
+    assert_eq!(*runs.borrow(), 1, "resume fires the deferred initial run");
+}
+
+#[test]
+fn pause_is_idempotent() {
+    fresh();
+    let owner = create_owner(None);
+    pause_owner(owner);
+    pause_owner(owner);
+    assert!(is_owner_paused(owner));
+    resume_owner(owner);
+    assert!(!is_owner_paused(owner));
+    resume_owner(owner);
+    assert!(!is_owner_paused(owner));
+}
+
+#[test]
+fn dispose_while_paused_drops_deferred_entries() {
+    fresh();
+    let runs = Rc::new(RefCell::new(0_u32));
+    let (read, write) = signal(0_i32);
+
+    let owner = create_owner(None);
+    let runs_clone = runs.clone();
+    with_owner(owner, || {
+        effect(move || {
+            let _ = read.get();
+            *runs_clone.borrow_mut() += 1;
+        });
+    });
+    pause_owner(owner);
+    write.set(1);
+    flush();
+    assert_eq!(*runs.borrow(), 1, "paused: still 1");
+
+    dispose_owner(owner);
+    // The deferred queue had this effect's node; disposal must
+    // strip it so a later flush / resume doesn't dereference a
+    // freed slot.
+    flush();
+    // No panic, no extra run.
+    assert_eq!(*runs.borrow(), 1);
+}
+
+#[test]
+fn multiple_paused_signal_writes_collapse_to_one_run_on_resume() {
+    fresh();
+    let runs = Rc::new(RefCell::new(0_u32));
+    let (read, write) = signal(0_i32);
+
+    let owner = create_owner(None);
+    let runs_clone = runs.clone();
+    with_owner(owner, || {
+        effect(move || {
+            let _ = read.get();
+            *runs_clone.borrow_mut() += 1;
+        });
+    });
+    pause_owner(owner);
+
+    write.set(1);
+    flush();
+    write.set(2);
+    flush();
+    write.set(3);
+    flush();
+    assert_eq!(*runs.borrow(), 1, "no re-runs while paused");
+
+    resume_owner(owner);
+    flush();
+    assert_eq!(
+        *runs.borrow(),
+        2,
+        "resume coalesces the deferred re-runs into a single fire"
+    );
+}

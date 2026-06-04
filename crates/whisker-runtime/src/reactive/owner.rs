@@ -17,10 +17,20 @@ use super::with_runtime;
 /// Create a new owner. If `parent` is `None` the current top-of-stack
 /// owner is used (or the owner becomes a root if the stack is empty).
 /// Returns the new owner's id.
+///
+/// The new owner inherits its parent's `paused` flag — so a sub-
+/// component mounted while its containing route is suspended starts
+/// paused, and its effects won't fire until the route resumes.
 pub fn create_owner(parent: Option<OwnerId>) -> OwnerId {
     with_runtime(|rt| {
         let parent = parent.or_else(|| rt.current_owner());
-        let id = rt.owners.insert(Owner::new(parent));
+        let parent_paused = parent
+            .and_then(|p| rt.owners.get(p))
+            .map(|o| o.paused)
+            .unwrap_or(false);
+        let mut owner = Owner::new(parent);
+        owner.paused = parent_paused;
+        let id = rt.owners.insert(owner);
         if let Some(p) = parent {
             if let Some(parent_owner) = rt.owners.get_mut(p) {
                 parent_owner.children.push(id);
@@ -172,8 +182,11 @@ pub fn dispose_owner(owner: OwnerId) {
                     out.push((arc_src, *node_id));
                 }
             }
-            // Strip these nodes from the pending queue if any were scheduled.
+            // Strip these nodes from the pending and deferred queues
+            // if any were scheduled — otherwise a later flush /
+            // resume_owner would try to re-run a freed slot.
             rt.pending.retain(|n| !nodes.contains(n));
+            rt.deferred.retain(|n| !nodes.contains(n));
             out
         });
 
@@ -203,6 +216,95 @@ pub fn dispose_owner(owner: OwnerId) {
     for cleanup in cleanups.into_iter().rev() {
         cleanup();
     }
+}
+
+/// Pause `owner` (and its descendants): effects and computeds whose
+/// scope is the paused subtree skip flush. Their scheduled re-runs
+/// land on the runtime's `deferred` list until [`resume_owner`]
+/// drains them back.
+///
+/// Idempotent — pausing an already-paused owner is a no-op. The
+/// cascade walks the children tree breadth-first; new descendants
+/// created while paused inherit the flag via [`create_owner`].
+///
+/// Used by `StackLayout` to freeze back-stack entries that are
+/// mounted-but-off-screen, matching iOS `UINavigationController` /
+/// Android Fragment back-stack semantics: state survives but no
+/// CPU is spent on signal-driven re-renders behind the top route.
+pub fn pause_owner(owner: OwnerId) {
+    with_runtime(|rt| {
+        let mut stack = vec![owner];
+        while let Some(id) = stack.pop() {
+            let Some(o) = rt.owners.get_mut(id) else {
+                continue;
+            };
+            if o.paused {
+                continue;
+            }
+            o.paused = true;
+            stack.extend(o.children.iter().copied());
+        }
+    });
+}
+
+/// Resume `owner` (and its descendants): clear the paused flag and
+/// move any of its deferred effects back onto the pending queue so
+/// they fire on the next flush.
+///
+/// Idempotent. Iterates [`ReactiveRuntime::deferred`] and re-queues
+/// every node whose owner is no longer paused — including descendants
+/// resumed by this cascade, and any deferred node whose owner happens
+/// to have been unpaused by an earlier call.
+pub fn resume_owner(owner: OwnerId) {
+    let any_resumed = with_runtime(|rt| {
+        let mut stack = vec![owner];
+        let mut any = false;
+        while let Some(id) = stack.pop() {
+            let Some(o) = rt.owners.get_mut(id) else {
+                continue;
+            };
+            if !o.paused {
+                continue;
+            }
+            o.paused = false;
+            any = true;
+            stack.extend(o.children.iter().copied());
+        }
+        if !any {
+            return false;
+        }
+        // Drain deferred → pending for every node whose owner is no
+        // longer paused. Stale entries (node disposed under a paused
+        // owner) are dropped here.
+        let deferred = std::mem::take(&mut rt.deferred);
+        for node in deferred {
+            let still_paused = rt
+                .nodes
+                .get(node)
+                .and_then(|n| rt.owners.get(n.owner))
+                .map(|o| o.paused);
+            match still_paused {
+                Some(false) => {
+                    if !rt.pending.contains(&node) {
+                        rt.pending.push(node);
+                    }
+                }
+                Some(true) => rt.deferred.push(node),
+                None => {} // node or owner is gone; drop silently
+            }
+        }
+        true
+    });
+    if any_resumed {
+        crate::host_wake::wake_runtime();
+    }
+}
+
+/// Whether `owner` is currently paused. Mainly for tests; production
+/// code should drive pause / resume from the lifecycle layer and not
+/// branch on the flag directly.
+pub fn is_owner_paused(owner: OwnerId) -> bool {
+    with_runtime(|rt| rt.owners.get(owner).map(|o| o.paused).unwrap_or(false))
 }
 
 /// Register a callback to run when the current owner is disposed.

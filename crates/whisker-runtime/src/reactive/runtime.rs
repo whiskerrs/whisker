@@ -166,6 +166,15 @@ pub struct Owner {
     /// `WhiskerElement*` pointers across `<Show>` flips, `<For>`
     /// item removals, and per-component remounts.
     pub elements: Vec<crate::view::Element>,
+    /// When `true`, effects / computeds owned by this scope skip
+    /// flush — they're deferred onto [`ReactiveRuntime::deferred`]
+    /// until the owner is resumed.
+    ///
+    /// Cascades down the owner tree: `pause_owner` / `resume_owner`
+    /// walk descendants and mirror the flag; new owners inherit the
+    /// parent's flag at `create_owner` time. Used by `StackLayout`
+    /// to freeze back-stack entries that are mounted-but-off-screen.
+    pub paused: bool,
 }
 
 impl Owner {
@@ -178,6 +187,7 @@ impl Owner {
             cleanups: Vec::new(),
             mount_fn: None,
             elements: Vec::new(),
+            paused: false,
         }
     }
 }
@@ -213,6 +223,11 @@ pub struct ReactiveRuntime {
     /// Queue of effect/computed nodes scheduled to re-run on the next flush.
     /// Populated by signal writes; drained by [`flush_pending`].
     pub pending: Vec<NodeId>,
+    /// Nodes that were scheduled to run but whose owner is `paused`.
+    /// Sit here until their owner is resumed; on resume, drain back
+    /// into [`Self::pending`] so the deferred work fires. See
+    /// `pause_owner` / `resume_owner` for the lifecycle.
+    pub deferred: Vec<NodeId>,
     /// True while [`flush_pending`] is actively draining `pending`.
     /// Used to avoid recursive flushes (signal writes inside a running
     /// effect just enqueue; we keep draining the queue until empty
@@ -251,6 +266,7 @@ impl ReactiveRuntime {
             owner_stack: Vec::new(),
             current_tracker: None,
             pending: Vec::new(),
+            deferred: Vec::new(),
             flushing: false,
             component_owners: HashMap::new(),
             pending_mounts: Vec::new(),
