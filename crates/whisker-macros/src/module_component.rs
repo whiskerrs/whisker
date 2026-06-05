@@ -218,23 +218,13 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         }
     };
 
-    // Phase 7-Φ.H.2.4 — every platform component implicitly carries
-    // a `__ref: Option<ElementRef<#props_name>>` Props field.
-    // `render!` recognises `ref: <expr>` at the call site and
-    // routes it to the `.with_ref(expr)` setter the macro emits
-    // below. Inside the body we `bind(__handle)` the ref after
-    // creating the element, so the `ElementRef<T>` returned by
-    // `element_ref::<T>()` reaches a live `Element` handle as
-    // soon as the call site hits this code path.
-    //
-    // The marker type for the ref is the Props struct itself
-    // (e.g. `VideoProps`). User code writes
-    // `element_ref::<VideoProps>()` and passes the resulting
-    // handle as the `ref:` kwarg. We picked the Props struct
-    // rather than the PascalCase fn alias because the latter is
-    // a value-namespace re-export (`use ... as Video`), not a
-    // type — `ElementRef<Video>` would fail to resolve to a type
-    // argument.
+    // Every platform component implicitly carries a `__ref:
+    // Option<ElementRef>` Props field. `render!` recognises
+    // `ref: <expr>` at the call site and routes it to the
+    // `.with_ref(expr)` setter the macro emits below. Inside the
+    // body we `bind(__handle)` the ref after creating the element,
+    // so the `ElementRef` reaches a live `Element` handle as soon
+    // as the call site hits this code path.
 
     quote! {
         #[doc(hidden)]
@@ -243,12 +233,9 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 
             pub struct #props_name {
                 #(#props_fields,)*
-                /// Phase 7-Φ.H.2.4 — implicit `ref:` prop. Bound
-                /// to the freshly-created element inside the
-                /// macro-emitted body. Phase N: the type is the
-                /// non-generic `ElementRef`; the wrapping
-                /// `#[component]` owns it and bridges Handle
-                /// signals through `effect(...)` blocks.
+                /// Implicit `ref:` prop. Bound to the freshly-created
+                /// element inside the macro-emitted body so user code
+                /// can invoke element methods after mount.
                 pub __ref: ::std::option::Option<::whisker::ElementRef>,
             }
 
@@ -271,10 +258,9 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                 #(#setters)*
 
                 /// Bind an `ElementRef` to this element on mount.
-                /// Phase 7-Φ.H.2.4 — `render!` routes the `ref:`
-                /// kwarg to this setter. Takes the ref by value
-                /// (a `Copy` slotmap-handle) so callers can keep
-                /// theirs for later `invoke` calls.
+                /// `render!` routes the `ref:` kwarg here. Takes
+                /// the ref by value (a `Copy` slotmap handle) so
+                /// callers can keep theirs for later `invoke` calls.
                 pub fn with_ref(
                     mut self,
                     r: ::whisker::ElementRef,
@@ -311,19 +297,18 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
                 // SwiftPM plugin / KSP processor prepends the same
                 // namespace when emitting the matching
                 // `LynxComponentRegistry.registerUI` / `addBehavior`
-                // call, so the lookup matches end-to-end. Phase 7-Φ.H.2.
+                // call, so the lookup matches end-to-end.
                 let __handle = ::whisker::runtime::view::create_element_by_name(
                     concat!(env!("CARGO_PKG_NAME"), ":", #tag_name)
                 );
                 #(#apply_calls)*
-                // Phase N — bind the user-supplied `ElementRef` (if
-                // any) to the freshly-created handle so subsequent
-                // `sys.invoke("play", ...)` calls can route through
-                // the C bridge. Phase N-2 adds the matching
-                // `on_cleanup(...)` that clears the binding on
-                // unmount so post-unmount calls surface as
-                // `RefError::NotBound` rather than dispatching
-                // against a recycled `Element` ID.
+                // Bind the user-supplied `ElementRef` (if any) to the
+                // freshly-created handle so `ref.invoke("play", ...)`
+                // calls route through the C bridge. The matching
+                // `on_cleanup(...)` clears the binding on unmount so
+                // post-unmount calls surface as `RefError::NotBound`
+                // rather than dispatching against a recycled
+                // `Element` ID.
                 if let ::std::option::Option::Some(__r) = props.__ref {
                     __r.__bind(__handle);
                     ::whisker::on_cleanup(move || __r.__unbind());
@@ -543,13 +528,12 @@ fn prop_build_assignment(p: &Prop, tag_name: &str) -> TokenStream2 {
                 })
             }
         }
-        // Phase 7-Φ.H.2 follow-up — Style/Attr props are
-        // optional by default. `Signal<String>` defaults to
-        // `Signal::Static("")` when omitted, matching what Lynx
-        // would see if the attribute wasn't declared. Event
-        // handler props stay required because their `dyn Fn`
-        // types don't have a sensible default and a missing
-        // callback is almost always an author bug.
+        // Style/Attr props are optional by default. `Signal<String>`
+        // defaults to `Signal::Static("")` when omitted, matching
+        // what Lynx would see if the attribute wasn't declared.
+        // Event handler props stay required because their `dyn Fn`
+        // types don't have a sensible default and a missing callback
+        // is almost always an author bug.
         PropKind::Style { .. } | PropKind::Attr { .. } => {
             quote! { #i: self.#i.unwrap_or_default() }
         }

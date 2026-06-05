@@ -13,7 +13,7 @@ use crate::keyword::BorderStyle;
 pub struct Border {
     /// Width to apply.
     pub width: Option<LengthPercentage>,
-    /// Css to apply.
+    /// Line style to apply.
     pub style: Option<BorderStyle>,
     /// Color to apply.
     pub color: Option<Color>,

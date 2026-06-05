@@ -28,8 +28,8 @@
 //! time with a clear "required field `xxx` was not set" message.
 //!
 //! The function signature change (positional args → single Props arg)
-//! deliberately breaks the old `xxx(arg1, arg2)` calling convention
-//! (issue #18 Q4): user components must be invoked through `render!`'s
+//! deliberately breaks the old `xxx(arg1, arg2)` calling convention:
+//! user components must be invoked through `render!`'s
 //! `XxxName(kwarg: value)` syntax, which expands to
 //! `XxxName(XxxProps::builder().kwarg(value).build())`.
 
@@ -297,13 +297,10 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
                 let #props_name { #(#prop_idents),* } = __props;
                 #(#captures)*
 
-                // Mirrors the pre-rewrite #[component] body shape
-                // — see `crates/whisker-macros/src/lib.rs`'s
-                // history for the rationale on the two-closure
-                // layering (outer keeps re-clone bookkeeping out
-                // of the subsecond-dispatched inner, which has to
-                // live at the user crate's source position for
-                // hot reload to find it).
+                // Two-closure layering: the outer closure keeps the
+                // re-clone bookkeeping out of the subsecond-dispatched
+                // inner, which has to live at the user crate's source
+                // position for hot reload to find it.
                 let __body: ::std::boxed::Box<
                     dyn ::std::ops::Fn() -> ::whisker::runtime::view::Element + 'static,
                 > = ::std::boxed::Box::new(move || {
