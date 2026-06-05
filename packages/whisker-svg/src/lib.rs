@@ -39,14 +39,30 @@
 //! instead of a literal colour — the replayer substitutes the host's
 //! `color:` value at draw time. See `SPEC.md` §"Tint propagation".
 
+// Public API: the `Svg` widget, the user-callable `compile()`
+// entry point, and its result/error types. Everything else under
+// this crate is internal — kept reachable so the crate's own
+// integration tests under `tests/` can exercise it, but flagged
+// `#[doc(hidden)]` so rustdoc / IDE completion don't surface it
+// and consumers don't grow accidental dependencies on the
+// display-list machinery. The SemVer contract is "anything not in
+// rustdoc may change without notice."
+#[doc(hidden)]
 pub mod builder;
+#[doc(hidden)]
 pub mod compile;
+#[doc(hidden)]
 pub mod format;
+#[doc(hidden)]
 pub mod path_parse;
+#[doc(hidden)]
 pub mod replay;
 
-pub use builder::{Color, DisplayListBuilder, Transform};
 pub use compile::{compile, CompileError, Compiled};
+
+#[doc(hidden)]
+pub use builder::{Color, DisplayListBuilder, Transform};
+#[doc(hidden)]
 pub use replay::{replay, ReplayError, TraceVisitor, Visitor};
 
 use base64::Engine;

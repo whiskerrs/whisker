@@ -76,7 +76,17 @@ use whisker::{module, ArcReadSignal, ArcRwSignal, ReadSignal};
 /// player has finished its async load — UI that renders a progress
 /// bar can branch on `is_loaded` to fade in once the value is
 /// meaningful.
+///
+/// `#[non_exhaustive]` so the surface can grow (e.g. a future
+/// `is_buffering` flag, an `error: Option<...>`) without breaking
+/// downstream code. Users read fields directly but should not
+/// match the struct exhaustively — `PlaybackStatus { position,
+/// duration, .. }` is the supported destructure form, and
+/// construction from outside the crate is intentionally not
+/// supported (the value is produced by the native module, never by
+/// the consumer).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[non_exhaustive]
 pub struct PlaybackStatus {
     /// Current playback position from the start, in seconds.
     pub position: f64,
