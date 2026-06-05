@@ -142,15 +142,13 @@ impl<T: 'static + Clone> Signal<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // From impls — the conversions builder methods rely on.
 //
 // `impl<T> From<T> for Signal<T>` is the catch-all "plain value
-// becomes Static" path. The other From impls handle the reactive
-// handles. Per Rust's coherence rules they don't conflict because
-// the source types are concrete (ReadSignal<T>, RwSignal<T>) — they
-// match for the specific generic instantiation, not for any T.
-// ---------------------------------------------------------------------------
+// becomes Static" path; the others handle reactive handles. Coherence
+// holds because the source types are concrete (`ReadSignal<T>`,
+// `RwSignal<T>`) — they match a specific generic instantiation, not
+// any `T`.
 
 impl<T: 'static> From<T> for Signal<T> {
     fn from(v: T) -> Self {
@@ -177,9 +175,8 @@ impl<T: 'static + Clone> From<ReadSignal<T>> for Signal<T> {
 
 impl<T: 'static + Clone> From<RwSignal<T>> for Signal<T> {
     fn from(s: RwSignal<T>) -> Self {
-        // RwSignal and ReadSignal share an arena `NodeId`; convert
-        // by reconstituting the read-only handle. Direct field
-        // access is fine within the same crate.
+        // RwSignal and ReadSignal share an arena `NodeId`; project to
+        // the read-only handle for storage.
         Signal::Dynamic(s.read_only())
     }
 }

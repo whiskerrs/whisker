@@ -141,22 +141,18 @@ where
             let _ = tx.send(value);
         });
     });
-    // Map the channel error away so the user just awaits `T`.
-    // Cancellation produces a never-resolving future (the dropped
-    // sender path means the user's awaiting task is dead anyway,
-    // so it doesn't matter that we'd panic on `unwrap`). We expose
-    // a custom adapter to avoid that panic in tests where the
-    // receiver lives but the test ends before the worker writes.
+    // Wrap the receiver so user code awaits `T`. Cancellation (sender
+    // dropped because the awaiting owner was disposed) parks the
+    // future forever — the task will be GC'd when its owner cascade
+    // fires.
     BlockingResult { rx }
 }
 
 /// Adapter so `run_blocking`'s return type doesn't leak
 /// `futures_channel::oneshot::Receiver`. Pollable as a
-/// `Future<Output = T>`; if the underlying sender is dropped (owner
-/// disposed mid-fetch), the future resolves to `T::default()` —
-/// **NO**, scratch that — most `T` don't impl `Default`. Instead the
-/// future stays `Pending` forever; the awaiting task is then
-/// garbage-collected when its owner is disposed.
+/// `Future<Output = T>`; if the sender is dropped (owner disposed
+/// mid-fetch) the future parks forever rather than panicking, and the
+/// awaiting task is collected when its enclosing owner cascade fires.
 struct BlockingResult<T> {
     rx: futures_channel::oneshot::Receiver<T>,
 }
@@ -170,10 +166,7 @@ impl<T> Future for BlockingResult<T> {
         use std::task::Poll;
         match std::pin::Pin::new(&mut self.rx).poll(cx) {
             Poll::Ready(Ok(v)) => Poll::Ready(v),
-            // Sender dropped → owner was disposed. Park forever.
-            // The awaiting task will be dropped by the executor
-            // once its enclosing future is itself dropped (e.g.
-            // when the resource's owner cascade fires).
+            // Sender dropped → owner disposed; park forever.
             Poll::Ready(Err(_)) => Poll::Pending,
             Poll::Pending => Poll::Pending,
         }

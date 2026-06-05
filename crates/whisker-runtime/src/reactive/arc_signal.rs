@@ -156,10 +156,6 @@ fn notify_subscribers<T: 'static>(inner: &Rc<ArcSignalInner<T>>) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ArcRwSignal — combined read/write Arc handle
-// ---------------------------------------------------------------------------
-
 /// Refcount-backed combined read/write signal.
 ///
 /// `Clone` (refcount bump), **not** `Copy`. To pass into multiple
@@ -269,10 +265,6 @@ impl<T: 'static + Clone> ArcRwSignal<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ArcReadSignal — read-only Arc handle
-// ---------------------------------------------------------------------------
-
 /// Refcount-backed read-only handle. Clone-cheap (`Rc` bump),
 /// `!Copy`. The companion to [`ArcRwSignal::read_only`].
 pub struct ArcReadSignal<T: 'static> {
@@ -310,10 +302,6 @@ impl<T: 'static + Clone> ArcReadSignal<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ArcWriteSignal — write-only Arc handle
-// ---------------------------------------------------------------------------
-
 /// Refcount-backed write-only handle. Clone-cheap (`Rc` bump),
 /// `!Copy`. The companion to [`ArcRwSignal::write_only`].
 pub struct ArcWriteSignal<T: 'static> {
@@ -344,10 +332,6 @@ impl<T: 'static> ArcWriteSignal<T> {
         f(&mut self.inner.value.borrow_mut());
     }
 }
-
-// ---------------------------------------------------------------------------
-// Top-level constructor — Solid-style `(read, write)` tuple
-// ---------------------------------------------------------------------------
 
 /// Allocate a fresh Arc-backed signal and split into read/write
 /// halves. The Arc analog of [`signal`](super::signal::signal):

@@ -320,10 +320,8 @@ fn with_renderer<R>(f: impl FnOnce(&mut dyn DynRenderer) -> R, default: R) -> R 
     })
 }
 
-// ---------------------------------------------------------------------------
 // Free-function dispatch — what the `render!` macro and reactive
 // effects call.
-// ---------------------------------------------------------------------------
 
 /// Free-fn helper used by the `render!` macro and reactive effects to
 /// allocate an element of any tag the bridge knows. Routes both the
@@ -345,13 +343,10 @@ pub fn create_element_by_name(tag_name: &str) -> Element {
 
 pub fn create_element(tag: ElementTag) -> Element {
     let handle = with_renderer(|r| r.create_element(tag), Element(u32::MAX));
-    // Track the freshly-created element in whichever reactive owner
-    // is currently active. `Owner::dispose` later releases everything
-    // in this list via `release_element`. This is what stops
-    // `BridgeRenderer::elements` (and the underlying Lynx
-    // FiberElement refcounts) from accumulating across `<Show>`
-    // branch flips, `<For>` item removals, and per-component
-    // remounts.
+    // Register the element with the current reactive owner so
+    // `Owner::dispose` releases it. Without this, `BridgeRenderer`'s
+    // element map (and Lynx FiberElement refcounts) accumulate across
+    // `<Show>` flips, `<For>` removals, and component remounts.
     if handle.id() != u32::MAX {
         crate::reactive::with_runtime(|rt| {
             if let Some(owner_id) = rt.current_owner() {
@@ -380,10 +375,6 @@ pub fn release_element(handle: Element) {
     }
     with_renderer(|r| r.release_element(handle), ())
 }
-
-// ---------------------------------------------------------------------------
-// Phantom-element API + hoisting helpers
-// ---------------------------------------------------------------------------
 
 /// Allocate a phantom element — an opaque positional marker the
 /// runtime registers in the mirror but **never** forwards to Lynx.
@@ -601,7 +592,7 @@ pub fn install_list_native_item_provider(
 ///     phantom is later attached to a real ancestor, the same
 ///     replay path handles the queued descendants in source order.
 pub fn append_child(parent: Element, child: Element) {
-    // 1. Mirror update — always.
+    // Mirror update — unconditional.
     CHILDREN_OF.with_borrow_mut(|map| {
         map.entry(parent).or_default().push(child);
     });
@@ -609,21 +600,14 @@ pub fn append_child(parent: Element, child: Element) {
         map.insert(child, parent);
     });
 
-    // 2. Lynx-side effect.
+    // Lynx-side effect depends on phantom-ness of either end.
     let parent_is_phantom = is_phantom(parent);
     let child_is_phantom = is_phantom(child);
     if parent_is_phantom {
-        // Hoist: locate the nearest real ancestor of `parent` (could
-        // be its grandparent or higher). If there isn't one (the
-        // phantom chain is still detached) we leave the bridge
-        // untouched and let the next attach replay things.
-        // `nearest_real_ancestor` already returns `None` when the
-        // phantom chain has no real ancestor (the topmost phantom is
-        // detached). The if-let just skips the bridge step in that
-        // case; the next attach replays things.
+        // Hoist into the nearest real ancestor. When no real ancestor
+        // exists yet (topmost phantom still detached), skip the
+        // bridge step — the next attach will replay things.
         if let Some(real_anc) = nearest_real_ancestor(parent) {
-            // Replay real descendants of `child` (or `child` itself
-            // if it's real) into `real_anc` at the right positions.
             let to_attach: Vec<Element> = if child_is_phantom {
                 collect_transparent_real_descendants(child)
             } else {
@@ -634,26 +618,21 @@ pub fn append_child(parent: Element, child: Element) {
                 bridge_insert_or_append(real_anc, real, pos);
             }
         }
-    } else {
-        // Parent is real.
-        if child_is_phantom {
-            // Phantom child carries a transparent subtree; replay any
-            // real descendants now (in DFS pre-order).
-            for real in collect_transparent_real_descendants(child) {
-                let pos = count_real_descendants_before(parent, real);
-                bridge_insert_or_append(parent, real, pos);
-            }
-        } else {
-            // Both real — straight append on Lynx.
-            with_renderer(|r| r.append_child(parent, child), ());
+    } else if child_is_phantom {
+        // Phantom child carries a transparent subtree; replay any
+        // real descendants now in DFS pre-order.
+        for real in collect_transparent_real_descendants(child) {
+            let pos = count_real_descendants_before(parent, real);
+            bridge_insert_or_append(parent, real, pos);
         }
+    } else {
+        with_renderer(|r| r.append_child(parent, child), ());
     }
 
-    // 3. Notify the component-mount machinery: if `child` is the
-    // body root of a freshly-mounted `#[component]`, this is when
-    // its MountSite learns where it landed (parent + previous
-    // sibling). Hot-reload uses this signal to keep mount sites
-    // anchored across remounts.
+    // Wrapper-less component mount handshake: if `child` is the body
+    // root of a freshly-mounted `#[component]`, its MountSite now
+    // learns where it landed (parent + previous sibling). Hot-reload
+    // remount uses this to keep mount sites anchored across patches.
     crate::reactive::on_component_root_attached(parent, child);
 }
 
@@ -701,19 +680,18 @@ pub fn remove_child(parent: Element, child: Element) {
 /// detached and re-appended, ending up to the right of the new
 /// child. O(siblings_to_move) bridge calls.
 fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: usize) {
-    // 1. Append the child to Lynx — it lands at the tail.
+    // Append lands the child at the tail in Lynx.
     with_renderer(|r| r.append_child(real_parent, real_child), ());
 
-    // 2. Compute the mirror's DFS real-only order of `real_parent`.
-    // The mirror has already been updated before this call so the
-    // result includes `real_child` at the position it should sit
-    // in Lynx.
+    // Mirror already includes the child at its target slot; compute
+    // the DFS real-only order to find the siblings that need to be
+    // rotated past it.
     let real_descendants = collect_transparent_real_descendants(real_parent);
 
-    // 3. Everything after `position` in the mirror order needs to be
-    // detached + re-appended so it ends up to the right of
-    // `real_child` in Lynx. (The "after" slice excludes
-    // `real_child` itself, which sits at `real_descendants[position]`.)
+    // Everything after `position` in mirror order must end up to the
+    // right of `real_child` in Lynx — detach and re-append in order.
+    // The "after" slice excludes `real_child` itself (at
+    // `real_descendants[position]`).
     if position + 1 < real_descendants.len() {
         let to_move: Vec<Element> = real_descendants[position + 1..].to_vec();
         for sib in &to_move {

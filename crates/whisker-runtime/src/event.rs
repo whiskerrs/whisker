@@ -299,7 +299,7 @@ pub struct Size {
     pub height: f64,
 }
 
-// ---- scroll_view -----------------------------------------------------------
+// scroll_view events.
 
 /// `<scroll_view>` scroll events — `scroll`, `scrolltoupper`,
 /// `scrolltolower`, `scrollend`, `contentsizechanged`. The `detail`
@@ -348,7 +348,7 @@ pub struct ScrollDetail {
     pub is_dragging: bool,
 }
 
-// ---- text ------------------------------------------------------------------
+// text events.
 
 /// `layout` on `<text>` — fired after text layout completes.
 #[derive(Debug, Clone, Default, Deserialize)]

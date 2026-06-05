@@ -21,10 +21,6 @@ use super::runtime::{NodeData, NodeId, ReactiveNode, Scope};
 use super::scheduler;
 use super::with_runtime;
 
-// ---------------------------------------------------------------------------
-// Construction
-// ---------------------------------------------------------------------------
-
 /// Allocate a fresh signal in the current owner. Returns a
 /// `(ReadSignal, WriteSignal)` pair — Solid-style separation.
 ///
@@ -55,12 +51,10 @@ fn alloc_signal_node<T: 'static>(initial: T) -> NodeId {
     }
     with_runtime(|rt| {
         let owner = rt.current_owner().unwrap_or_else(|| {
-            // No current owner — fall back to a "global" detached owner.
-            // We create one lazily so primitives created outside of any
-            // explicit `Owner::with` (e.g. in tests, or at app startup
-            // before the first component mounts) still have a place to
-            // live. They will only be freed by `__reset_for_tests` or
-            // explicit dispose.
+            // Detached fallback owner: primitives allocated outside any
+            // `Owner::with` (tests, pre-mount startup) still need a
+            // lifecycle pin; only `__reset_for_tests` / explicit dispose
+            // will free them.
             let detached = rt.owners.insert(Scope::new(None));
             rt.owner_stack.push(detached);
             detached
@@ -78,10 +72,6 @@ fn alloc_signal_node<T: 'static>(initial: T) -> NodeId {
         id
     })
 }
-
-// ---------------------------------------------------------------------------
-// ReadSignal — read-only handle
-// ---------------------------------------------------------------------------
 
 /// Read-only signal handle. `Copy`; safe to clone freely and move
 /// into closures.
@@ -116,11 +106,9 @@ impl<T: 'static> ReadSignal<T> {
     /// expensive to clone or doesn't implement `Clone`.
     pub fn with<R>(self, f: impl FnOnce(&T) -> R) -> R {
         let value = fetch_value(self.id);
-        // First try the arc-backed storage shape (this signal was
-        // built via `RwSignal::from(arc_rw_signal)` or similar). When
-        // present, forward to `ArcRwSignal`'s tracker-aware path
-        // which subscribes through `arc_sources` — the arena
-        // subscribers HashSet stays empty for arc-backed entries.
+        // Arc-backed storage routes through `ArcRwSignal`'s
+        // tracker-aware path, which subscribes via `arc_sources`; the
+        // arena `subscribers` set stays empty for these entries.
         let arc_handle: Option<super::arc_signal::ArcRwSignal<T>> = {
             let borrow = value.borrow();
             borrow
@@ -130,7 +118,6 @@ impl<T: 'static> ReadSignal<T> {
         if let Some(arc) = arc_handle {
             return arc.with(f);
         }
-        // Direct-T storage shape (the canonical `signal()` path).
         track_node(self.id);
         let borrow = value.borrow();
         let typed = borrow
@@ -158,10 +145,6 @@ impl<T: 'static> ReadSignal<T> {
         f(typed)
     }
 }
-
-// ---------------------------------------------------------------------------
-// WriteSignal — write-only handle
-// ---------------------------------------------------------------------------
 
 /// Write-only signal handle. `Copy`. Setting or updating notifies all
 /// subscribers; the notifications are enqueued (not run synchronously)
@@ -200,10 +183,6 @@ impl<T: 'static> WriteSignal<T> {
         write_and_notify(self.id, f, /* notify = */ false);
     }
 }
-
-// ---------------------------------------------------------------------------
-// RwSignal — combined read/write handle
-// ---------------------------------------------------------------------------
 
 /// Combined read-write signal handle. Equivalent to holding both a
 /// `ReadSignal<T>` and `WriteSignal<T>` for the same underlying node.
@@ -331,22 +310,16 @@ impl<T: 'static + Clone> RwSignal<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Conversions: Arc-backed handle → arena-backed `Copy` handle
-// ---------------------------------------------------------------------------
+// Conversions: Arc-backed handle → arena-backed `Copy` handle.
 //
-// The standard module pattern: stash an [`ArcRwSignal`] in a
-// `OnceLock` so the value lives for the process; at the API surface,
-// convert to [`RwSignal`] / [`ReadSignal`] / [`WriteSignal`] so the
-// caller gets a `Copy` handle with the same ergonomics as a
-// component-local signal. The resulting arena entry is just a
-// lifecycle pin: when its owner disposes, one Arc strong count
-// decrements, but every other holder (the `OnceLock`, any other
-// component that converted independently, the effects that captured
-// the Arc into their `arc_sources`) keeps the underlying value
-// alive. Reads on the converted handles forward through the Arc, so
-// every handle observes the same value and the same subscriber
-// graph.
+// Module pattern: stash an [`ArcRwSignal`] in a `OnceLock` so the
+// value lives for the process; expose it as [`RwSignal`] /
+// [`ReadSignal`] / [`WriteSignal`] so callers get a `Copy` handle
+// with the same ergonomics as a component-local signal. The arena
+// entry is a lifecycle pin only: when its owner disposes, one Arc
+// strong count decrements but every other holder keeps the value
+// alive. Reads forward through the Arc, so every handle observes the
+// same value and the same subscriber graph.
 
 fn register_arc_in_current_owner<T: 'static>(arc: super::arc_signal::ArcRwSignal<T>) -> NodeId {
     let value: Rc<RefCell<dyn Any>> = Rc::new(RefCell::new(arc));
@@ -416,9 +389,7 @@ impl<T: 'static> From<super::arc_signal::ArcWriteSignal<T>> for WriteSignal<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers — keep the runtime borrow window narrow
-// ---------------------------------------------------------------------------
+// Internal helpers — keep the runtime borrow window narrow.
 
 /// Register the current tracker as an arena subscriber of `id`.
 /// Used only for direct-`T` signals (the arc-backed path tracks via
@@ -461,16 +432,15 @@ fn write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: bool
 /// `on_cleanup` callback after the underlying RwSignal's owner has
 /// already freed its nodes.
 fn try_write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: bool) -> bool {
-    // Step 1: pull a clone of the Rc handle in a short borrow.
+    // Short borrow to pull the Rc handle, then drop before mutating.
     let Some(value) = with_runtime(|rt| rt.nodes.get(id).and_then(|n| n.data.value().cloned()))
     else {
         return false;
     };
 
-    // Step 2: branch on storage shape — arc-backed entries forward
-    // to `ArcRwSignal::update` so the change propagates through the
-    // shared inner (every other handle, including the original
-    // `OnceLock`-stashed Arc, sees it).
+    // Arc-backed entries forward to `ArcRwSignal::update` so the
+    // change propagates through the shared inner (every other handle,
+    // including the original `OnceLock`-stashed Arc, sees it).
     let arc_handle: Option<super::arc_signal::ArcRwSignal<T>> = {
         let borrow = value.borrow();
         borrow
@@ -486,8 +456,8 @@ fn try_write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: 
         return true;
     }
 
-    // Step 3: direct-T storage shape — mutate under the borrow,
-    // then schedule arena subscribers.
+    // Direct-T storage: mutate under the borrow, then schedule
+    // arena subscribers.
     {
         let mut borrow = value.borrow_mut();
         let typed = borrow

@@ -93,22 +93,20 @@ pub fn list_mount<T, K, ItemsFn, KeyFn, BodyFn>(
     let slots: Rc<RefCell<HashMap<i32, Slot>>> = Rc::new(RefCell::new(HashMap::new()));
     let body = Rc::new(body);
 
-    // (1) Effect: items() → snapshot + count broadcast.
+    // Effect: items() → snapshot + count broadcast. After the count
+    // changes Lynx asks the provider for newly-visible indices and
+    // enqueues out any slot whose index is no longer represented.
     {
         let current_items = current_items.clone();
         effect(move || {
             let new_items = items();
             let count = new_items.len() as i32;
             *current_items.borrow_mut() = new_items;
-            // Tell Lynx the new count. The list will then call the
-            // native provider for any newly-visible index and
-            // `enqueue_component` for any slot whose index is no
-            // longer represented.
             set_update_list_info(handle, count);
         });
     }
 
-    // (2) Native item provider: pulls from `current_items` on demand.
+    // Native item provider: pulls from `current_items` on demand.
     let provider = NativeItemProvider {
         component_at_index: {
             let current_items = current_items.clone();
@@ -119,10 +117,8 @@ pub fn list_mount<T, K, ItemsFn, KeyFn, BodyFn>(
                     Some(t) => t.clone(),
                     None => return INVALID_ITEM_INDEX,
                 };
-                // Each slot lives under its own owner so reactive
-                // effects inside the body (signal subscriptions
-                // etc.) get cleaned up cleanly when the slot is
-                // enqueued out.
+                // Per-slot owner: signal subscriptions inside the
+                // body get cleaned up when the slot is enqueued out.
                 let owner = Owner::new(None);
                 let element = owner.with(|| (body)(item));
                 let sign = element.id() as i32;
@@ -141,12 +137,9 @@ pub fn list_mount<T, K, ItemsFn, KeyFn, BodyFn>(
     };
     install_list_native_item_provider(handle, provider);
 
-    // (3) Cleanup: on owner disposal (e.g. surrounding component
-    // unmount) tear down any slots still alive. The provider itself
-    // is released via the bridge's `trampoline_free` when the list
-    // element dies, which drops the `Box<dyn FnMut>`s — but that
-    // doesn't reach the per-slot owners, so we have to dispose them
-    // here.
+    // The provider's closures are released by the bridge's
+    // `trampoline_free` when the list element dies, which doesn't
+    // reach the per-slot owners — dispose those explicitly here.
     on_cleanup(move || {
         let mut slots = slots.borrow_mut();
         for (_, slot) in slots.drain() {
