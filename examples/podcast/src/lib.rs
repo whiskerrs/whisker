@@ -41,7 +41,8 @@ use podcast_domain::{NowPlaying, Podcast};
 use podcast_feature_browse::{BrowseScreen, BrowseScreenProps};
 use podcast_feature_detail::{DetailScreen, DetailScreenProps};
 use podcast_routing::{AppRoute, Navigator};
-use whisker::css::{Display, FlexDirection};
+use podcast_ui_kit::{MiniPlayer, MiniPlayerProps};
+use whisker::css::{Display, FlexDirection, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker::ArcRwSignal;
@@ -123,12 +124,17 @@ fn app() -> Element {
     .into();
 
     render! {
+        // `position: relative` anchors the absolutely-positioned
+        // mini-player to the page itself, so the bar floats above
+        // *every* route — browse and detail alike — instead of
+        // being scoped to one screen's layout.
         page(style: css!(
             width: vw(100),
             height: vh(100),
             background_color: podcast_theme::BG,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
+            position: PositionKind::Relative,
         )) {
             RouteProvider(stack: stack) {
                 StackLayout(render: render.clone()) {
@@ -136,6 +142,13 @@ fn app() -> Element {
                     AndroidPredictiveBack()
                 }
             }
+            // The mini-player renders AFTER the route stack in DOM
+            // order so it paints on top — Lynx's animator quirk on
+            // z-index during sibling animations makes paint order
+            // the reliable lever. `MiniPlayer` itself is hidden
+            // (Show fallback → fragment) while `NowPlayingSignal`
+            // is `None`, so this mount is invisible on cold start.
+            MiniPlayer()
         }
     }
 }

@@ -27,15 +27,13 @@
 //!   │   ┌─ section ─────────┐   │
 //!   │   │  …                │   │
 //!   │   └───────────────────┘   │
-//!   ├───────────────────────────┤
-//!   │   mini_player (float)     │
 //!   └───────────────────────────┘
 //! ```
 //!
-//! The mini player floats above the scroll view via absolute
-//! positioning, so the bottom-most card row needs trailing
-//! padding equal to its height + bottom inset — otherwise the
-//! last card hides behind the player on initial scroll-to-end.
+//! The mini player no longer renders here — it's anchored at the
+//! app shell so it overlays *every* route, not just browse. The
+//! bottom-most card row still keeps a 96 px tail margin so the
+//! floating player doesn't obscure it when something's playing.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -46,9 +44,8 @@ use podcast_domain::{ChartSection, Podcast, SectionLayout};
 use podcast_routing::Navigator;
 use podcast_theme as theme;
 use podcast_ui_kit::{
-    FeaturedCard, FeaturedCardProps, HorizontalRow, HorizontalRowProps, MiniPlayer,
-    MiniPlayerProps, RankedCard, RankedCardProps, SectionHeader, SectionHeaderProps, TopNav,
-    TopNavProps,
+    FeaturedCard, FeaturedCardProps, HorizontalRow, HorizontalRowProps, RankedCard,
+    RankedCardProps, SectionHeader, SectionHeaderProps, TopNav, TopNavProps,
 };
 use whisker::css::{AlignItems, Display, FlexDirection, JustifyContent, PositionKind};
 use whisker::prelude::*;
@@ -114,7 +111,6 @@ pub fn browse_screen() -> Element {
                     sections: sections.get().unwrap_or_default(),
                 )
             }
-            mini_player()
         }
     }
 }
