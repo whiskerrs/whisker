@@ -45,35 +45,27 @@ use super::{untrack, with_runtime};
 pub fn computed<T: 'static + Clone + PartialEq>(
     mut f: impl FnMut() -> T + 'static,
 ) -> ReadSignal<T> {
-    // We need access to the node id inside the compute closure so it
-    // can write back to its own value slot. Allocate the node first
-    // with a placeholder value of the right type, then replace the
-    // compute with one that knows the id.
-    //
-    // Run the seed inside `untrack` so the read graph it produces
-    // doesn't leak into whatever outer reactive node we may be
-    // constructed inside. The seed exists only to give the cache a
-    // value of the right shape; the real dependency edges are
-    // registered by the explicit `schedule(node_id); flush()` below,
-    // which runs under the scheduler's own tracker scope. Without the
-    // untrack guard, calling `computed(move || sig.get())` from
-    // inside an effect makes that effect a subscriber of `sig` — a
-    // write to `sig` then re-runs the outer effect (often a route /
-    // component mount) and silently leaks a fresh computed node on
-    // every tick.
+    // Seed inside `untrack` so the read graph it produces doesn't
+    // leak into whatever outer reactive node we may be constructed
+    // inside. The seed only initialises the cache; real dependency
+    // edges are registered by the explicit `schedule + flush` below.
+    // Without this guard, calling `computed(move || sig.get())` from
+    // inside an effect makes that effect a subscriber of `sig` — and
+    // a write to `sig` then re-runs the outer effect (often a route /
+    // component mount), silently leaking a fresh computed node every
+    // tick.
     let initial = untrack(&mut f);
     let value: Rc<RefCell<dyn Any>> = Rc::new(RefCell::new(initial));
 
-    // The compute closure needs to be set after we know the NodeId,
-    // since recomputing must write back into the same value slot and
-    // notify subscribers if the new value differs.
+    // Compute closure is set after we know the NodeId, so recomputes
+    // can write back into the same slot and notify subscribers on
+    // change.
     type ComputeCell = Rc<RefCell<Option<Box<dyn FnMut()>>>>;
     let compute_cell: ComputeCell = Rc::new(RefCell::new(None));
     let compute_cell_clone = compute_cell.clone();
     let trampoline: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(move || {
-        // Take ownership of the inner closure, call it, put it back.
-        // Mirrors the scheduler's pattern for the compute Rc itself —
-        // we never hold the cell's borrow across the user closure.
+        // Take/run/put-back so we never hold the cell's borrow across
+        // user code — mirrors the scheduler's pattern for the compute Rc.
         let mut taken = compute_cell_clone.borrow_mut().take();
         if let Some(ref mut inner) = taken {
             inner();
@@ -107,8 +99,8 @@ pub fn computed<T: 'static + Clone + PartialEq>(
         id
     });
 
-    // Now we can build the actual compute closure that knows the node
-    // id and can notify subscribers on value changes.
+    // Real compute closure: knows the node id, writes back to the
+    // value slot, notifies subscribers on change.
     let value_clone = value.clone();
     *compute_cell.borrow_mut() = Some(Box::new(move || {
         let new = f();
@@ -127,7 +119,6 @@ pub fn computed<T: 'static + Clone + PartialEq>(
                     .expect("computed: type mismatch on write-back");
                 *slot = new;
             }
-            // Notify subscribers.
             let subscribers: Vec<NodeId> = with_runtime(|rt| {
                 rt.nodes
                     .get(node_id)
@@ -140,12 +131,10 @@ pub fn computed<T: 'static + Clone + PartialEq>(
         }
     }));
 
-    // First run: register dependencies. We've already computed the
-    // initial value above, but we need a tracked run so the source
-    // graph is populated. Triggering a flush walks the pending queue
-    // which is currently empty, so we'd miss the tracking — instead
-    // we explicitly schedule + flush, which the scheduler will treat
-    // as the first run.
+    // First tracked run: populates the source graph. The initial
+    // value was already cached via the untracked seed above; we
+    // explicitly schedule + flush here because a bare `flush()` over
+    // an empty pending queue would miss tracking.
     scheduler::schedule(node_id);
     scheduler::flush();
 

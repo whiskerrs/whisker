@@ -174,13 +174,11 @@ impl WhiskerValue {
     }
 }
 
-// ----- Deserialize — lets `WhiskerValue` itself be a target type ----------
-//
-// So a typed event struct can hold an arbitrary sub-tree (a
-// `data-*` dataset, a custom event's `detail`) as a `WhiskerValue`
-// field without leaking `serde_json::Value` into the public event
-// API. Mirrors `serde_json::Value`'s own visitor: each serde scalar
-// / seq / map maps to the matching variant.
+// Deserialize impl: lets a typed event struct hold an arbitrary
+// sub-tree (a `data-*` dataset, a custom event's `detail`) as a
+// `WhiskerValue` field without leaking `serde_json::Value` into the
+// public event API. Mirrors `serde_json::Value`'s own visitor — each
+// serde scalar / seq / map maps to the matching variant.
 impl<'de> Deserialize<'de> for WhiskerValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -274,8 +272,6 @@ impl std::fmt::Display for WhiskerModuleError {
 
 impl std::error::Error for WhiskerModuleError {}
 
-// ----- From impls — let callers pass primitives directly ------------------
-
 impl From<()> for WhiskerValue {
     fn from(_: ()) -> Self {
         WhiskerValue::Null
@@ -335,12 +331,10 @@ where
     }
 }
 
-// ----- TryFrom impls — extract primitives back out of WhiskerValue --------
-//
-// Used by `ElementRef::invoke_typed<T>` so authors can write
-// `r.invoke_typed::<f64>("currentTime", vec![])`. The `Error` payload
-// is a `String` so it folds cleanly into `RefError::DispatchFailed.
-// message` without an extra map step.
+// TryFrom impls — used by `ElementRef::invoke_typed<T>` so authors
+// can write `r.invoke_typed::<f64>("currentTime", vec![])`. The
+// `Error` payload is a `String` so it folds cleanly into
+// `RefError::DispatchFailed.message` without an extra map step.
 
 impl TryFrom<WhiskerValue> for () {
     type Error = String;

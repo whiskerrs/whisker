@@ -24,10 +24,9 @@ use super::with_runtime;
 /// `Option<R>`-of-previous-value variant from Solid/Leptos is omitted
 /// in v1 — it can be layered on later without breaking this API.
 pub fn effect(f: impl FnMut() + 'static) -> NodeId {
-    // Allocate the node first (with a placeholder compute we replace
-    // before running) so the closure can see its own id if it ever
-    // needs to. The Rc<RefCell<...>> wrapper lets the scheduler clone
-    // a handle out of the runtime in a short borrow.
+    // Wrap in `Rc<RefCell<dyn FnMut()>>` so the scheduler can clone a
+    // handle out of the runtime in a short borrow before invoking
+    // user code (avoiding a runtime double-borrow on re-entrant reads).
     let compute: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(f));
 
     let needs_warning = with_runtime(|rt| rt.current_owner().is_none());
@@ -55,8 +54,8 @@ pub fn effect(f: impl FnMut() + 'static) -> NodeId {
         id
     });
 
-    // Run it immediately so dependencies are recorded and the side
-    // effect runs by the time `effect()` returns.
+    // Synchronous first run: dependencies are recorded and the side
+    // effect has executed by the time `effect()` returns.
     scheduler::schedule(node_id);
     scheduler::flush();
 

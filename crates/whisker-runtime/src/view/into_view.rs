@@ -60,27 +60,13 @@ pub fn mount_children(children: &Children) -> Element {
     ph
 }
 
-// ---------------------------------------------------------------------------
-// Function-shaped prop types for control-flow components
-// ---------------------------------------------------------------------------
+// Function-shaped prop types for control-flow components.
 //
-// These newtypes let `#[component]` annotated control-flow functions
+// These newtypes let `#[component]`-annotated control-flow functions
 // (`For`, `Show`, user-defined ones) accept closure literals via
-// `Into` in the `Props` builder. Each one wraps a `Box<dyn Fn>` so
-// the Props field has a concrete type, and a blanket `From<F>` impl
-// converts any closure with the right signature.
-//
-// The user writes:
-//   ```ignore
-//   For(each: move || items.get(), key: |i| i.id, children: |i| render! { ... })
-//   ```
-// and the macro emits `.each(closure).key(closure).children(closure)`.
-// The `setter(into)` (default in typed-builder) does the boxing.
-
-// Each one wraps `Rc<dyn Fn>` (not `Box<dyn Fn>`) so the newtype is
-// `Clone` — that's a hard requirement of `#[component]` props
-// (which the `#[component]` macro re-clones on every render).
-// `Rc<dyn Fn>` is also what [`Children`] uses for the same reason.
+// `Into` in the typed-builder `Props`. Each wraps `Rc<dyn Fn>` (not
+// `Box`) so the newtype is `Clone` — `#[component]` re-clones every
+// prop on each body invocation, matching what [`Children`] does.
 
 /// `Fn() -> Vec<T>` — the "what items to render" closure for a
 /// keyed-list control flow. Wrapping in a newtype gives typed-builder
@@ -279,10 +265,6 @@ impl View {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Stock IntoView impls
-// ---------------------------------------------------------------------------
 
 impl IntoView for View {
     fn into_view(self) -> View {
