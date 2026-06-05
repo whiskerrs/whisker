@@ -126,6 +126,13 @@ pub use whisker_runtime::tasks::{run_blocking, run_until_stalled, spawn_local};
 mod control_flow;
 mod style;
 
+// Typed enums for built-in element attributes whose Lynx-side wire
+// shape is a closed set of strings (`scroll_orientation`, `list_type`,
+// `pan_intercept_direction`, …). The setters keep their `impl
+// Into<Signal<String>>` bound for raw-string back-compat; the enums
+// plug into the same bound via `From<EnumType> for Signal<String>`.
+pub mod attrs;
+
 pub use style::{apply_style, Style};
 
 // Built-in control flow — same `#[component]` form as anything a user
@@ -289,11 +296,18 @@ pub mod __tags {
             self
         }
 
-        /// `accessibility-trait` — `"button"` / `"image"` / `"text"`
-        /// / `"none"`.
+        /// `accessibility-trait` — the role advertised to platform
+        /// a11y services (VoiceOver on iOS, TalkBack on Android).
+        /// Takes the typed
+        /// [`AccessibilityTrait`](crate::attrs::AccessibilityTrait)
+        /// enum.
+        ///
+        /// ```ignore
+        /// view(accessibility_trait: AccessibilityTrait::Button)
+        /// ```
         fn accessibility_trait<V>(self, v: V) -> Self
         where
-            V: Into<Signal<String>>,
+            V: Into<Signal<crate::attrs::AccessibilityTrait>>,
         {
             apply_attr(self.__element(), "accessibility-trait", v);
             self
@@ -445,21 +459,33 @@ pub mod __tags {
             self
         }
 
-        /// `pan-intercept-direction` — block swipe gestures in a
-        /// direction: `horizontal` / `vertical` / `none`.
+        /// `pan-intercept-direction` — block swipe gestures along
+        /// the given axis. Takes the typed
+        /// [`PanInterceptDirection`](crate::attrs::PanInterceptDirection)
+        /// enum.
+        ///
+        /// ```ignore
+        /// view(pan_intercept_direction: PanInterceptDirection::Horizontal)
+        /// ```
         fn pan_intercept_direction<V>(self, v: V) -> Self
         where
-            V: Into<Signal<String>>,
+            V: Into<Signal<crate::attrs::PanInterceptDirection>>,
         {
             apply_attr(self.__element(), "pan-intercept-direction", v);
             self
         }
 
-        /// `pan-intercept-scope` — scope of [`pan_intercept_direction`]:
-        /// `self` / `ancestors` / `descendants` / ….
+        /// `pan-intercept-scope` — scope of
+        /// [`Self::pan_intercept_direction`]. Takes the typed
+        /// [`PanInterceptScope`](crate::attrs::PanInterceptScope)
+        /// enum.
+        ///
+        /// ```ignore
+        /// view(pan_intercept_scope: PanInterceptScope::SelfAndAncestors)
+        /// ```
         fn pan_intercept_scope<V>(self, v: V) -> Self
         where
-            V: Into<Signal<String>>,
+            V: Into<Signal<crate::attrs::PanInterceptScope>>,
         {
             apply_attr(self.__element(), "pan-intercept-scope", v);
             self
@@ -867,11 +893,17 @@ pub mod __tags {
             apply_attr(self.handle, "tail-color-convert", v);
             self
         }
-        /// `text-single-line-vertical-align` — `normal` (default) /
-        /// `top` / `center` / `bottom`.
+        /// `text-single-line-vertical-align` — vertical alignment
+        /// of a single-line `<text>`. Takes the typed
+        /// [`TextVerticalAlign`](crate::attrs::TextVerticalAlign)
+        /// enum (default `Normal`).
+        ///
+        /// ```ignore
+        /// text(text_single_line_vertical_align: TextVerticalAlign::Center)
+        /// ```
         pub fn text_single_line_vertical_align<V>(self, v: V) -> Self
         where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
+            V: ::std::convert::Into<Signal<crate::attrs::TextVerticalAlign>>,
         {
             apply_attr(self.handle, "text-single-line-vertical-align", v);
             self
@@ -956,11 +988,13 @@ pub mod __tags {
         }
     }
     impl scroll_view {
-        /// Scroll direction — `"vertical"` (default) or
-        /// `"horizontal"`. Lynx's `scroll-orientation` attribute.
+        /// Scroll direction. Takes the typed
+        /// [`ScrollOrientation`](crate::attrs::ScrollOrientation)
+        /// enum (default `Vertical`); the variant's `Display` impl
+        /// produces the Lynx-side wire string at the bridge boundary.
         pub fn scroll_orientation<V>(self, v: V) -> Self
         where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
+            V: ::std::convert::Into<Signal<crate::attrs::ScrollOrientation>>,
         {
             apply_attr(self.handle, "scroll-orientation", v);
             self
@@ -1146,11 +1180,12 @@ pub mod __tags {
         // would still work but is not the supported shape.
     }
     impl<EachF, KeyF, ChildF> list<EachF, KeyF, ChildF> {
-        /// `list-type` — `"single"` (default, one column), `"flow"`,
-        /// or `"waterfall"`.
+        /// `list-type` layout — takes the typed
+        /// [`ListType`](crate::attrs::ListType) enum (default
+        /// `Single`).
         pub fn list_type<V>(self, v: V) -> Self
         where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
+            V: ::std::convert::Into<Signal<crate::attrs::ListType>>,
         {
             apply_attr(self.handle, "list-type", v);
             self
@@ -1602,6 +1637,13 @@ pub mod prelude {
     // coexists with the `crate::css` module re-export above because
     // the macro and module namespaces are disjoint.
     pub use crate::css::css;
+    // Typed enums for element attributes whose Lynx-side contract
+    // is a closed set of strings. Setters keep `impl
+    // Into<Signal<String>>` for raw-string back-compat.
+    pub use crate::attrs::{
+        AccessibilityTrait, ListType, PanInterceptDirection, PanInterceptScope, ScrollOrientation,
+        TextVerticalAlign,
+    };
     // Re-export the `__tags` struct names so RA can complete
     // `vie|` → `view`, `te|` → `text`, etc. when the user is
     // typing a tag name inside render! (the macro source position

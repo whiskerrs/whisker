@@ -545,8 +545,8 @@ impl ElementNode {
             // handles Static / Dynamic dispatch internally; the value
             // flows as-is and type inference picks the right `From`
             // (`From<T>` static / `From<ReadSignal<T>>` reactive) — so
-            // `bounces: true` / `text_maxline: 3` / `mode: "aspectFit"`
-            // all just work.
+            // `bounces: true` / `text_maxline: 3` /
+            // `mode: ImageMode::AspectFit` all just work.
             quote_spanned! {span=> .#name(#value) }
         } else if name_str == "ref" {
             // `ref: <ElementRef>` on a built-in element → bind the ref

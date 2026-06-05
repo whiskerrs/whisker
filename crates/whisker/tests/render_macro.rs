@@ -292,7 +292,7 @@ fn typed_attribute_methods_route_to_named_setters() {
     // common (trait) attrs on a plain view: bool + string.
     with_recorder(|log| {
         let _ = render! {
-            view(flatten: true, hit_slop: "10px", pan_intercept_direction: "horizontal")
+            view(flatten: true, hit_slop: "10px", pan_intercept_direction: PanInterceptDirection::Horizontal)
         };
         let ops = log.borrow();
         assert!(has(&ops, "flatten", "true"), "got {ops:?}");

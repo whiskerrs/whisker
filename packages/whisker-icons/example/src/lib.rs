@@ -77,7 +77,7 @@ pub fn app() -> Element {
                 // flow layout. iOS Lynx reads `span-count`; Android
                 // Lynx reads `column-count` — set both so the same
                 // Rust source grids on each platform.
-                list_type: "flow",
+                list_type: ListType::Flow,
                 column_count: 3,
                 span_count: 3,
                 // Lynx's `<list>` needs a bounded height to virtualise —
