@@ -1726,34 +1726,34 @@ pub mod __hot {
 /// that bootstrap reactive scopes) reaches past the prelude into
 /// [`crate::runtime`] / [`crate::owner`] / [`crate::platform_module`].
 pub mod prelude {
+    pub use crate::css::ext::*;
+    pub use crate::css::{
+        AlignItems, Border, Color, Css, Display, Flex, FlexDirection, FlexWrap, JustifyContent,
+        Length, NamedColor, ToCss,
+    };
     pub use crate::Children;
     pub use crate::ElementTag;
-    pub use crate::{component, main, render};
     pub use crate::{
         arc_signal, computed, effect, on_cleanup, on_mount, provide_context, resource,
         resource_sync, run_blocking, run_on_main_thread, signal, spawn_local, use_context,
         with_context, ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource,
         ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
     };
-    pub use crate::{ForEach, ForEachProps, Show, ShowProps};
+    pub use crate::{component, main, render};
     pub use crate::{
         element_ref, BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo,
         ScrollViewHandle, TextBoundingRect, TextHandle,
     };
     pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
-    pub use crate::css::ext::*;
-    pub use crate::css::{
-        AlignItems, Border, Color, Css, Display, Flex, FlexDirection, FlexWrap, JustifyContent,
-        Length, NamedColor, ToCss,
-    };
+    pub use crate::{ForEach, ForEachProps, Show, ShowProps};
     // The `css!` macro coexists with the `crate::css` module
     // re-export above because the macro and module namespaces are
     // disjoint.
-    pub use crate::css::css;
     pub use crate::attrs::{
         AccessibilityTrait, ListType, PanInterceptDirection, PanInterceptScope, ScrollOrientation,
         TextVerticalAlign,
     };
+    pub use crate::css::css;
     // Re-exporting the `__tags` struct names is what lets RA complete
     // `vie|` → `view`, `te|` → `text`, etc. inside render! — the
     // macro source position is a value-expression context, so RA does
