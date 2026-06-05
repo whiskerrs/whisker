@@ -1,37 +1,74 @@
-//! [`Route`] trait + supporting types.
+//! [`Route`] trait + [`RouteError`] — the typed-enum ↔ URL bridge.
 //!
-//! Concrete impls are hand-written for v1; the
-//! `#[whisker::route]` derive lands in a follow-up (requires
-//! `whisker-macros` extension — tracked separately).
+//! Implement [`Route`] manually for full control, or use the
+//! [`#[route]`](macro@crate::route) attribute macro to derive `parse` and
+//! `to_path` from per-variant `#[at("/...")]` patterns. The hidden
+//! `hand_written_example` test module shows what a derived impl
+//! looks like under the hood.
 
 use core::fmt;
 
-/// A typed routing target. Implementors round-trip between an
-/// in-memory enum value and the canonical URL path.
+/// A typed routing target — the value pushed onto a
+/// [`RouteStack`](crate::RouteStack).
 ///
-/// The blanket bounds (`Clone + PartialEq + 'static`) are required
-/// by [`RouteStack`](crate::RouteStack) so the runtime can put the
-/// value in a signal and compare entries for equality.
+/// Implementors round-trip between an in-memory enum value and the
+/// canonical URL path. The crate uses `parse` to resolve deep links
+/// and the `#[at(...)]` macro tests; `to_path` is the inverse used by
+/// linking helpers and debug formatting.
+///
+/// # Bounds
+///
+/// `Clone + PartialEq + 'static` are required by
+/// [`RouteStack`](crate::RouteStack) so the runtime can put values in
+/// a signal, compare entries for equality, and ferry the value into
+/// reactive closures without lifetime gymnastics.
+///
+/// # Example
+///
+/// The common path is the [`#[route]`](macro@crate::route) macro:
+///
+/// ```ignore
+/// use whisker_router::route;
+///
+/// #[route]
+/// #[derive(Clone, Debug, PartialEq)]
+/// pub enum AppRoute {
+///     #[at("/")]             Home,
+///     #[at("/profile/:id")]  Profile { id: u64 },
+/// }
+/// ```
+///
+/// Hand-written impls are also supported — see this file's tests for
+/// the canonical shape.
 pub trait Route: Clone + PartialEq + 'static {
-    /// Parse a path (e.g. `/profile/42`) into a route value.
+    /// Parse a URL path (e.g. `/profile/42`) into a route value.
+    ///
+    /// Implementations should tolerate a trailing slash and an
+    /// optional leading slash — the macro-generated impl does both.
     fn parse(path: &str) -> Result<Self, RouteError>
     where
         Self: Sized;
 
-    /// Canonical URL path for this route value.
+    /// Canonical URL path for this route value. Must round-trip with
+    /// [`Self::parse`].
     fn to_path(&self) -> String;
 }
 
 /// Errors surfaced from [`Route::parse`].
+///
+/// Implements [`std::error::Error`] so callers can bubble it through
+/// `?` in deep-link handlers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteError {
-    /// The input didn't match any defined route.
+    /// The input didn't match any defined route. Payload is the
+    /// original path for diagnostics.
     NoMatch(String),
-    /// A path parameter failed to parse (e.g. `id` not a valid `u64`).
+    /// A path parameter (e.g. `:id`) failed to parse into the field's
+    /// declared type.
     BadParam {
         /// Parameter name whose conversion failed.
         param: &'static str,
-        /// Raw value that didn't parse.
+        /// Raw segment value that didn't parse.
         value: String,
     },
 }
@@ -49,12 +86,9 @@ impl fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
-// ---- Test-only helpers ----------------------------------------
-//
-// Until the `#[whisker::route]` derive lands we hand-write `Route`
-// impls. This section also acts as the canonical "what an impl
-// looks like" example for documentation.
-
+// Canonical hand-written shape — kept compiled under cfg(test) so it
+// stays in sync with the macro's emitted code and doubles as a
+// reference for users who want to bypass the macro.
 #[cfg(test)]
 mod hand_written_example {
     use super::*;

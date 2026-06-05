@@ -1,24 +1,32 @@
-//! Transitions: pluggable visual animations for [`StackLayout`](crate::StackLayout).
+//! Transitions: pluggable visual animations for
+//! [`StackLayout`](crate::StackLayout).
 //!
 //! A transition's job is to describe *how the screen looks* during
-//! a navigation — push, pop, anything in between. Each transition
-//! implementation lives in its own submodule — [`ios_slide`] for
-//! the default UIKit-style horizontal slide, [`vertical_slide`] for
-//! the Y-axis variant, [`fade`] for an opacity cross-fade, and
-//! [`instant`] for the no-animation fallback. This module re-exports
-//! the trait + every built-in, plus the shared [`Direction`] /
-//! [`Side`] / [`StackTransitionBox`] types each implementation
-//! consumes.
+//! a navigation — push, pop, anything in between. The
+//! [`StackTransition`] trait has one core method ([`animate`](StackTransition::animate))
+//! and two optional hooks ([`foreground`](StackTransition::foreground),
+//! [`slot_style`](StackTransition::slot_style)) for layering and
+//! per-side decoration.
 //!
-//! Custom transitions implement [`StackTransition`] and are passed
-//! to the layout via [`StackTransitionBox::new`]:
+//! ## Built-ins
+//!
+//! - [`IosSlide`] — UINavigationController-style horizontal slide
+//!   with 30% parallax and a leading-edge shadow. **Default.**
+//! - [`Fade`] — cross-fade between two stack entries.
+//! - [`VerticalSlide`] — Y-axis analogue of [`IosSlide`].
+//! - [`Instant`] — no animation; entries swap in one frame.
+//!
+//! ## Custom transitions
+//!
+//! Implement [`StackTransition`] and wrap in
+//! [`StackTransitionBox::new`]:
 //!
 //! ```ignore
 //! use whisker_router::{StackTransition, StackTransitionBox, Direction, Side};
 //! use whisker::runtime::view::Element;
 //!
-//! struct ZoomSlide;
-//! impl StackTransition for ZoomSlide {
+//! struct ZoomIn;
+//! impl StackTransition for ZoomIn {
 //!     fn animate(&self, el: Element, side: Side, _dir: Direction) {
 //!         if side != Side::Incoming { return; }
 //!         whisker::animate_start(el, "zoom-in", &[
@@ -27,14 +35,21 @@
 //!         ], &whisker::AnimateOptions::default()).ok();
 //!     }
 //! }
+//!
+//! StackLayout(
+//!     transition: StackTransitionBox::new(ZoomIn),
+//!     render: render.into(),
+//! );
 //! ```
+//!
+//! ## Why pluggable + decoupled
 //!
 //! Interactive behaviour (iOS swipe-back, Android system back) is
 //! intentionally **not** part of this trait — it lives in separate
-//! [composable components](crate::gestures) that the user mounts
-//! inside the layout. That way transitions stay pure and easy to
-//! write, and gestures stay easy to mix-and-match without coupling
-//! every transition impl to a touch-event loop.
+//! [composable gesture components](crate::gestures) that the user
+//! mounts inside the layout. That way transitions stay pure and easy
+//! to write, and gestures stay easy to mix and match without
+//! coupling every transition impl to a touch-event loop.
 
 use std::rc::Rc;
 
@@ -51,39 +66,46 @@ pub use instant::Instant;
 pub use ios_slide::{IosSlide, IOS_PARALLAX_PCT};
 pub use vertical_slide::VerticalSlide;
 
-/// Direction of the current navigation, derived from the
-/// [`RouteStack`](crate::RouteStack) length delta.
+/// Direction of the current navigation — derived by
+/// [`StackLayout`](crate::StackLayout) from the
+/// [`RouteStack`](crate::RouteStack) diff.
+///
+/// Passed to [`StackTransition::animate`] so the transition can pick
+/// per-direction keyframes (e.g. iOS push covers, iOS pop reveals).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Direction {
-    /// Stack grew (a `push`).
+    /// Stack grew — a `push`.
     Forward,
-    /// Stack shrank (a `back`).
+    /// Stack shrank — a `back`.
     Backward,
-    /// No animation: replace, replace_all-to-same-depth, or the
+    /// No animation: `replace`, `replace_all`-to-same-route, or the
     /// first mount.
     None,
 }
 
 /// One of the two screens involved in a transition.
 ///
-/// `Incoming` is the screen the navigation is bringing in (becomes
-/// the new top of the stack after the transition). `Outgoing` is
-/// the screen being replaced (was the top before the navigation,
-/// slides away during the transition).
+/// Layouts call [`StackTransition::animate`] once per side per
+/// navigation, so the implementation can drive the incoming and
+/// outgoing wrappers independently.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Side {
-    /// The new top of the stack.
+    /// The new top of the stack — the screen being brought in.
     Incoming,
-    /// The screen being replaced.
+    /// The screen being replaced — was the top before this navigation.
     Outgoing,
 }
 
-/// Pluggable transition for a stack layout — purely visual.
+/// Pluggable transition for [`StackLayout`](crate::StackLayout) —
+/// purely visual.
 ///
-/// One [`animate`](StackTransition::animate) call per slot per
-/// navigation — the [`Side`] argument distinguishes "drive the
-/// incoming wrapper" from "drive the outgoing wrapper". The trait
-/// is `'static` so it can be stored inside an `Rc`.
+/// Layouts call [`animate`](Self::animate) once per slot per
+/// navigation (one Incoming + one Outgoing). The trait is `'static`
+/// so it can live inside an `Rc` via [`StackTransitionBox`].
+///
+/// See [`IosSlide`] / [`Fade`] / [`VerticalSlide`] / [`Instant`] for
+/// reference implementations; the [module docs](self) cover the
+/// custom-transition shape.
 pub trait StackTransition: 'static {
     /// Drive the natural (non-interactive) animation for one slot
     /// wrapper.
@@ -133,7 +155,7 @@ pub trait StackTransition: 'static {
     /// needs to live on the wrapper alongside the layout positioning
     /// goes here.
     ///
-    /// Returning a [`Style::Dynamic`](whisker::Style::Dynamic) value
+    /// Returning a [`Style::Dynamic`] value
     /// makes the decoration reactive — the wrapper is re-styled
     /// whenever any signal the closure reads fires (useful for
     /// theme-driven shadow colours, etc.). [`Style::Static`] applies
@@ -150,10 +172,19 @@ pub trait StackTransition: 'static {
     }
 }
 
-/// Cheap-to-clone handle wrapping any [`StackTransition`]
-/// implementation. The `#[component]` macro re-clones every prop on
-/// every body invocation, so the prop type must be `Clone` — this
-/// wrapper makes any `dyn StackTransition` satisfy that.
+/// Cheap-to-clone handle wrapping any [`StackTransition`].
+///
+/// `#[component]` re-clones every prop on each body invocation, so
+/// the prop type must be `Clone`. `StackTransitionBox` makes any
+/// `dyn StackTransition` satisfy that bound. Default is
+/// [`IosSlide`].
+///
+/// ```ignore
+/// StackLayout(
+///     transition: StackTransitionBox::new(Fade::default()),
+///     render: render.into(),
+/// );
+/// ```
 #[derive(Clone)]
 pub struct StackTransitionBox(pub Rc<dyn StackTransition>);
 
