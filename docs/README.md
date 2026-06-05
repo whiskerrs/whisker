@@ -9,6 +9,12 @@ Design docs and architectural notes. See the workspace
   feature flow, end-to-end Tier 1 patch sequence
 - [`hot-reload-plan.md`](hot-reload-plan.md) — design + implementation
   log for the subsecond-based hot-reload pipeline
+- [`module-api-design.md`](module-api-design.md) — how to pick a
+  user-facing surface shape for a new module crate (component
+  vs. handle vs. signal-returning fn). Read this before writing a
+  new `whisker-*` module
+- [`module-author-guide.md`](module-author-guide.md) — mechanics of
+  wiring Kotlin / Swift / Rust into one module crate
 
 ## Planned documents
 
