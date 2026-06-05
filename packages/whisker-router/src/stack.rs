@@ -1,8 +1,17 @@
 //! [`RouteStack`] — signal-backed back stack.
 //!
-//! Designed as a *first-class value*: callers can create one with
+//! Designed as a *first-class value*: callers create one with
 //! [`route_stack`], pass it as a prop, clone the handle, or hold
-//! several in parallel (tab patterns hold one per tab).
+//! several in parallel (the tab-per-stack pattern holds one per tab).
+//! Cloning shares the underlying reactive storage — there is no
+//! "owner" of the stack, just handles into the same vec.
+//!
+//! Most apps publish the stack through
+//! [`RouteProvider`](crate::RouteProvider) and let the layout
+//! ([`StackLayout`](crate::StackLayout), [`TabsLayout`](crate::TabsLayout),
+//! [`Outlet`](crate::Outlet)) look it up via [`router::<R>()`](crate::router)
+//! — the explicit handle is only needed when imperative code (event
+//! handlers, deep-link callbacks, tab bars) wants to drive navigation.
 //!
 //! Internally a single `RwSignal<Vec<RouteEntry<R>>>` drives reads;
 //! the per-entry [`EntryState`] signal coordinates animation and
@@ -17,14 +26,15 @@ use crate::route::Route;
 
 /// Lifecycle stage of one [`RouteEntry`].
 ///
-/// `Outlet` reads this to decide what styles to apply (slide-in vs
-/// settled vs slide-out) and whether to pause effects for entries
-/// that are out of view. The two `*ing` states are intentionally
-/// short-lived: layouts flip them to `Active` / `Suspended` once
-/// any transition animation finishes.
+/// Layouts (notably [`StackLayout`](crate::StackLayout)) read this to
+/// decide what styles to apply — slide-in vs settled vs slide-out —
+/// and whether to pause effects for entries that are out of view.
+/// The two `*ing` states are intentionally short-lived: layouts flip
+/// them to `Active` / `Suspended` once the transition animation
+/// finishes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EntryState {
-    /// Just pushed; animation in progress, becomes [`Active`].
+    /// Just pushed; animation in progress, becomes [`Self::Active`].
     Entering,
     /// Settled on top of the stack.
     Active,
@@ -36,20 +46,25 @@ pub enum EntryState {
 
 /// Unique identifier for a [`RouteEntry`].
 ///
-/// Stable across the entry's lifetime in the stack. Used as a key
-/// for animations / DOM diffing so the same physical screen keeps
-/// the same element handle even as the surrounding stack shifts.
+/// Stable across the entry's lifetime in the stack — even if the
+/// surrounding entries reshuffle. Used as the diff key for animations
+/// and DOM reconciliation so a physical screen keeps the same
+/// wrapper element handle through a navigation.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EntryId(pub u64);
 
-/// One slot in a [`RouteStack`].
+/// One slot in a [`RouteStack`] — the route value plus its lifecycle
+/// signal and stable id.
+///
+/// Equality compares both [`Self::id`] and [`Self::route`] so two
+/// pushes of the "same" route value are still distinguishable.
 #[derive(Clone)]
 pub struct RouteEntry<R: Route> {
     /// The route this entry represents.
     pub route: R,
     /// Lifecycle signal; updated by layouts as animations progress.
     pub state: RwSignal<EntryState>,
-    /// Stable id for this entry's lifetime.
+    /// Stable id for this entry's lifetime in the stack.
     pub id: EntryId,
 }
 
@@ -59,11 +74,32 @@ impl<R: Route + PartialEq> PartialEq for RouteEntry<R> {
     }
 }
 
-/// A signal-backed back stack of routes.
+/// A signal-backed back stack of routes — the canonical navigation
+/// primitive.
 ///
 /// `RouteStack` is a *handle*: cloning it shares the underlying
 /// reactive storage with the original, so a stack can be passed
 /// freely between components / closures without wrapping in `Rc`.
+/// The stack maintains the invariant that **at least one entry is
+/// always present** — [`Self::back`] is a no-op (returns `false`) at
+/// the root rather than emptying the stack.
+///
+/// # Example
+///
+/// ```ignore
+/// use whisker_router::route_stack;
+///
+/// let nav = route_stack(AppRoute::Home);
+/// nav.push(AppRoute::Profile { id: 7 });
+/// nav.back();
+/// assert_eq!(nav.current().get(), AppRoute::Home);
+/// ```
+///
+/// Usually you don't keep the handle around — wrap your tree in a
+/// [`RouteProvider`](crate::RouteProvider) and let descendants call
+/// [`router::<R>()`](crate::router) to retrieve it. The explicit
+/// handle is for imperative call sites (event handlers, deep-link
+/// callbacks, tab bars).
 pub struct RouteStack<R: Route> {
     entries: RwSignal<Vec<RouteEntry<R>>>,
     next_id: Rc<Cell<u64>>,
@@ -79,7 +115,10 @@ impl<R: Route> Clone for RouteStack<R> {
 }
 
 impl<R: Route> RouteStack<R> {
-    /// Construct a stack with one initial entry.
+    /// Construct a stack with `initial` as the root entry.
+    ///
+    /// Prefer the free function [`route_stack`] for symmetry with
+    /// other Whisker constructors.
     pub fn new(initial: R) -> Self {
         let next_id = Rc::new(Cell::new(0_u64));
         let id = mint_id(&next_id);
@@ -93,8 +132,6 @@ impl<R: Route> RouteStack<R> {
             next_id,
         }
     }
-
-    // ---- writers ----
 
     /// Push a new route onto the top of the stack.
     ///
@@ -135,7 +172,14 @@ impl<R: Route> RouteStack<R> {
         popped
     }
 
-    /// Pop entries until `predicate` returns true on the new top.
+    /// Pop entries until `predicate` returns `true` on the new top.
+    ///
+    /// Stops at the root regardless of the predicate. Useful for
+    /// "pop back to the home tab" patterns:
+    ///
+    /// ```ignore
+    /// nav.back_to(|r| matches!(r, AppRoute::Home));
+    /// ```
     pub fn back_to(&self, predicate: impl Fn(&R) -> bool) {
         self.entries.update(|v| {
             while v.len() > 1 {
@@ -151,7 +195,11 @@ impl<R: Route> RouteStack<R> {
         });
     }
 
-    /// Replace the topmost entry with `route` (no history growth).
+    /// Replace the topmost entry with `route` — depth unchanged.
+    ///
+    /// Use this for "redirect" navigations (e.g. login → home) where
+    /// the user should not be able to swipe back into the replaced
+    /// entry.
     pub fn replace(&self, route: R) {
         let id = mint_id(&self.next_id);
         self.entries.update(|v| {
@@ -165,6 +213,9 @@ impl<R: Route> RouteStack<R> {
     }
 
     /// Clear the stack and start over with `route` at the root.
+    ///
+    /// Typical use: logout, deep-link cold-launch into a non-home
+    /// destination, end-of-onboarding handoff.
     pub fn replace_all(&self, route: R) {
         let id = mint_id(&self.next_id);
         self.entries.set(vec![RouteEntry {
@@ -174,9 +225,10 @@ impl<R: Route> RouteStack<R> {
         }]);
     }
 
-    // ---- readers ----
-
     /// Reactive read of the topmost route.
+    ///
+    /// Re-fires whenever the top changes. The most common reader —
+    /// most screens just want "what route is showing right now".
     pub fn current(&self) -> ReadSignal<R> {
         let entries = self.entries;
         computed(move || {
@@ -188,20 +240,25 @@ impl<R: Route> RouteStack<R> {
         })
     }
 
-    /// Reactive read of the full stack (as `Vec<R>`).
+    /// Reactive read of the full stack as `Vec<R>` — useful for tab
+    /// bars or breadcrumbs that need to render every level.
     pub fn stack(&self) -> ReadSignal<Vec<R>> {
         let entries = self.entries;
         computed(move || entries.get().iter().map(|e| e.route.clone()).collect())
     }
 
-    /// Reactive read of the entries themselves — needed by layouts
-    /// that animate per-entry state.
+    /// Reactive read of the entries themselves (including
+    /// [`EntryState`] and [`EntryId`]) — used by layouts that animate
+    /// per-entry state. Most app code wants [`Self::stack`] instead.
     pub fn entries(&self) -> ReadSignal<Vec<RouteEntry<R>>> {
         let entries = self.entries;
         computed(move || entries.get())
     }
 
-    /// Reactive flag indicating whether [`Self::back`] would pop.
+    /// Reactive flag indicating whether [`Self::back`] would pop —
+    /// `true` once there's something on top of the root.
+    ///
+    /// Drive your in-app back button's visibility from this signal.
     pub fn can_back(&self) -> ReadSignal<bool> {
         let entries = self.entries;
         computed(move || entries.get().len() > 1)
@@ -221,6 +278,10 @@ fn mint_id(counter: &Rc<Cell<u64>>) -> EntryId {
 }
 
 /// Construct a fresh [`RouteStack`] with `initial` as its root entry.
+///
+/// ```ignore
+/// let nav = whisker_router::route_stack(AppRoute::Home);
+/// ```
 pub fn route_stack<R: Route>(initial: R) -> RouteStack<R> {
     RouteStack::new(initial)
 }

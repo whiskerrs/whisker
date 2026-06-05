@@ -1,12 +1,22 @@
-//! `ModalLayout` — slide-from-bottom modal presentation driven by
-//! Lynx's native animator via [`animate_start`].
+//! [`ModalLayout`] — slide-from-bottom modal presentation.
 //!
-//! On mount the sheet slides up from below the viewport over the
-//! same `slot_wrapper + on_mount + animate_start` pattern
-//! [`StackLayout`] uses. A scrim sits beneath as a fixed-opacity
-//! overlay (no fade animation for v1 — Lynx's animator chokes on
-//! same-frame opacity transitions in our wrapper-less setup; the
-//! sheet slide is the dominant cue).
+//! On mount the sheet slides up from below the viewport via Lynx's
+//! native animator. A scrim sits beneath as a fixed-opacity overlay
+//! (no fade animation in v1 — Lynx's animator chokes on same-frame
+//! opacity transitions in our wrapper-less setup; the sheet slide is
+//! the dominant cue).
+//!
+//! Unlike [`StackLayout`](crate::StackLayout) the modal is driven by
+//! a single route value rather than a stack — used as a leaf of an
+//! [`Outlet`](crate::Outlet) or as a sibling of a stack, not as a
+//! navigator in its own right.
+//!
+//! ```ignore
+//! ModalLayout(route: AppRoute::ProfileSheet, render: |r| match r {
+//!     AppRoute::ProfileSheet => render! { ProfileSheet() },
+//!     _ => render! { fragment() },
+//! }.into())
+//! ```
 
 use std::rc::Rc;
 
@@ -24,12 +34,17 @@ const DEFAULT_DURATION_MS: u32 = 320;
 const DEFAULT_EASING: &str = "ease-out";
 const SCRIM_RGBA: (u8, u8, u8, f32) = (0, 0, 0, 0.45);
 
-/// Type-erased renderer for a single modal route.
+/// Function prop for [`ModalLayout`]: maps a route value to its
+/// rendered element.
+///
+/// Same shape as [`RouteRenderFn`](crate::RouteRenderFn) but kept
+/// separate so the prop type is explicit at the call site. Use the
+/// [`From`] impl: `(|r: AppRoute| ...).into()`.
 #[derive(Clone)]
 pub struct ModalRenderFn<R: Route>(pub Rc<dyn Fn(R) -> Element + 'static>);
 
 impl<R: Route> ModalRenderFn<R> {
-    /// Invoke the renderer with `route`.
+    /// Invoke the renderer with `route` and return the element.
     pub fn call(&self, route: R) -> Element {
         (self.0)(route)
     }
@@ -45,8 +60,13 @@ where
     }
 }
 
-/// Modal presentation — single route, slide-up entry via
-/// `animate_start`.
+/// Slide-from-bottom modal sheet.
+///
+/// Renders `route` through `render` inside a sheet that animates
+/// up from below the viewport on mount. A dimmed scrim sits behind
+/// the sheet. The sheet does not interact with a
+/// [`RouteStack`](crate::RouteStack) — callers control presentation
+/// by mounting / unmounting `ModalLayout` themselves.
 #[component]
 pub fn modal_layout<R: Route>(route: R, render: ModalRenderFn<R>) -> Element {
     let container = create_element(ElementTag::View);
@@ -57,8 +77,8 @@ pub fn modal_layout<R: Route>(route: R, render: ModalRenderFn<R>) -> Element {
     append_child(container, scrim);
 
     let sheet = create_element(ElementTag::View);
-    // Start the sheet offscreen-bottom so the very first paint shows
-    // it at translateY(100%); the on_mount animation slides it to 0.
+    // First paint at translateY(100%); the on_mount animation
+    // slides it to 0.
     apply_styles(sheet, sheet_css_initial().to_css_string());
     append_child(container, sheet);
 

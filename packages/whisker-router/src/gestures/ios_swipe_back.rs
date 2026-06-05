@@ -3,22 +3,22 @@
 //!
 //! Mount as a child of the layout to enable a UIKit-style horizontal
 //! swipe from the leading edge: the destination screen slides in
-//! from the left with the 30% parallax and brightness dim of
-//! [`IosSlide`](crate::IosSlide), the current screen tracks the
-//! finger to the right, and release past the half-way point commits
-//! the navigation.
+//! from the left with [`IosSlide`](crate::IosSlide)'s 30% parallax
+//! and brightness dim, the current screen tracks the finger to the
+//! right, and release past the half-way point commits the back
+//! navigation.
 //!
 //! ```ignore
-//! StackLayout(transition: IosSlide::default(), render: render) {
+//! StackLayout(transition: IosSlide::default(), render: render.into()) {
 //!     IosSwipeBack()
 //! }
 //! ```
 //!
-//! The component is designed to pair with [`IosSlide`] for visual
-//! consistency. Pairing it with a different transition (e.g.
-//! [`Fade`](crate::Fade)) is allowed but the gesture will still
-//! render an iOS slide pose during the drag — what the natural
-//! transition does outside the gesture is unaffected.
+//! Designed to pair with [`IosSlide`](crate::IosSlide) for visual
+//! consistency. Pairing with a different transition (e.g.
+//! [`Fade`](crate::Fade)) is allowed — the gesture renders the iOS
+//! slide pose during the drag regardless, and the natural transition
+//! is unaffected outside the gesture.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -36,30 +36,27 @@ use crate::layouts::stack::{slot_css, StackLayoutHandle};
 use crate::transitions::ios_slide;
 use crate::transitions::{Direction, Side, StackTransitionBox};
 
-/// Horizontal distance (in points) that maps the gesture to a full
-/// `progress = 1.0`. iPhone 17 Pro is 402pt wide and the wrapper
-/// covers the full viewport, so a 1:1 finger-to-edge ratio wants
-/// this equal to the viewport width. Older iPhones differ by a few
-/// points (375–430pt) — a future revision can read the actual
-/// container width to make this exact across devices.
+// 1:1 finger-to-edge ratio wants this equal to the viewport width.
+// 402pt is iPhone 17 Pro; older iPhones differ by 375-430pt. A
+// future revision can read the actual container width.
 const SWIPE_FULL_DISTANCE_PX: f32 = 402.0;
-/// `clientX` (in points) within which a `touchstart` qualifies as
-/// an edge swipe-back attempt. iOS uses ~20pt; 24pt is generous
-/// without eating into scrollable content.
+// `clientX` within which a touchstart qualifies as an edge swipe.
+// iOS uses ~20pt; 24pt is generous without eating into scroll.
 const SWIPE_EDGE_THRESHOLD_PX: f32 = 24.0;
-/// Progress at touch release above which the gesture commits.
+// Progress at touch release above which the gesture commits.
 const SWIPE_COMMIT_THRESHOLD: f32 = 0.5;
-/// Floor on the touchend finish animation duration.
+// Touchend finish animation duration floor.
 const SWIPE_MIN_FINISH_MS: u32 = 120;
-/// Natural finish duration scaled by the remaining distance.
+// Natural finish duration scaled by remaining distance.
 const SWIPE_FULL_FINISH_MS: u32 = 320;
 
-/// iOS-style edge swipe-back gesture component.
+/// iOS-style edge swipe-back gesture component for
+/// [`StackLayout`](crate::StackLayout).
 ///
-/// Mount as a child of [`StackLayout`](crate::StackLayout); reads
-/// the layout handle and the in-context
-/// [`RouteStack`](crate::RouteStack) and binds the touch handlers
-/// in `on_mount`. Renders no DOM of its own.
+/// Renders no DOM of its own; reads the
+/// [`StackLayoutHandle`](crate::StackLayoutHandle) from context and
+/// binds touch handlers in `on_mount`. See the [module docs](self)
+/// for the user-facing summary.
 #[component]
 pub fn ios_swipe_back() -> Element {
     let layout =
@@ -68,13 +65,11 @@ pub fn ios_swipe_back() -> Element {
 
     on_mount(move || install(&layout, transition.clone()));
 
-    // No visible output — gesture components only attach handlers.
     render! { fragment() }
 }
 
-/// Per-active-gesture state stored in the `gesture` cell. `None`
-/// means no swipe is in flight; the touchstart handler populates
-/// it, touchmove updates it, touchend drains it.
+// `None` = no swipe in flight; touchstart populates, touchmove
+// updates, touchend drains.
 struct GestureState {
     start_x: f32,
     progress: f32,
@@ -89,13 +84,11 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
     let current_wrapper = layout.current_wrapper.clone();
 
     let gesture: Rc<RefCell<Option<GestureState>>> = Rc::new(RefCell::new(None));
-    // Cached preview wrapper between touchstart and the end event
-    // — lets touchmove pose it without going through
-    // `current_wrapper` every frame.
+    // Cache the preview wrapper across the gesture so touchmove
+    // doesn't have to re-resolve through `current_wrapper` per frame.
     let preview_wrapper: Rc<Cell<Option<Element>>> = Rc::new(Cell::new(None));
 
-    // touchstart — qualify the edge swipe, mount the preview
-    // wrapper, capture state.
+    // touchstart — qualify the edge swipe and capture state.
     {
         let gesture = gesture.clone();
         let preview_wrapper = preview_wrapper.clone();
@@ -120,9 +113,8 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
                 return;
             }
 
-            // `mount_preview` returns the just-below-top wrapper from
-            // the back stack. `None` means the stack is at its root
-            // (`back` would be invalid) — abort the gesture.
+            // `None` = stack at the root, no back-target to reveal —
+            // abort the gesture.
             let Some(wrapper) = mount_preview() else {
                 return;
             };
@@ -152,8 +144,7 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
         });
     }
 
-    // touchmove — translate finger displacement into progress and
-    // re-pose preview + current each frame.
+    // touchmove — finger delta → progress, re-pose each frame.
     {
         let gesture = gesture.clone();
         let preview_wrapper = preview_wrapper.clone();
@@ -203,9 +194,9 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
     }
 
     // touchend / touchcancel — drive the finish through Lynx's
-    // animator (short duration, `fill: forwards`). Inline writes
-    // during a string of rapid touch-move updates were getting
-    // dropped/coalesced — the animator path always takes hold.
+    // animator (short duration, fill: forwards). Inline writes get
+    // dropped/coalesced under rapid touchmoves; the animator path
+    // always takes hold.
     for end_name in ["touchend", "touchcancel"] {
         let gesture = gesture.clone();
         let preview_wrapper = preview_wrapper.clone();
@@ -258,13 +249,11 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
     }
 }
 
-/// Cancel any natural-transition animation that might still be
-/// holding `element` at its end pose via `fill: forwards`.
-///
-/// Without this, inline `transform` set during a drag is overridden
-/// by the prior animation rule's computed style and the element
-/// won't move at all. Lynx no-ops on cancel-of-nonexistent so the
-/// shotgun-cancel is cheap.
+// Cancel any prior natural-transition animation. Without this, the
+// previous animation's `fill: forwards` keeps the element at its end
+// pose and shadows inline writes — the drag would appear frozen.
+// Lynx no-ops on cancel-of-nonexistent, so the shotgun-cancel is
+// cheap.
 fn clear_natural_animations(element: Element) {
     for name in [
         "stack-ios-incoming-forward",
@@ -278,14 +267,10 @@ fn clear_natural_animations(element: Element) {
     }
 }
 
-/// Apply the iOS slide pose for `progress` to `element` as an
-/// inline style, alongside the transition's [`slot_style`] and the
-/// layout's base [`slot_css`].
-///
-/// Inline styles take effect only once any active CSS animation is
-/// cancelled — Lynx's animator with `fill: forwards` (which the
-/// natural push/pop uses) clamps the element to its end pose and
-/// shadows out-of-band style writes.
+// Write the iOS slide pose at `progress` inline, alongside the
+// transition's `slot_style` and the layout's base `slot_css`. Inline
+// styles only take effect after the active CSS animation is
+// cancelled (see `clear_natural_animations`).
 fn apply_pose(
     element: Element,
     transition: &dyn crate::transitions::StackTransition,
@@ -308,10 +293,9 @@ fn apply_pose(
     set_inline_styles(element, &style);
 }
 
-/// Animate `element` from the pose at `from_progress` to the pose
-/// at `to_progress` using Lynx's animator. `fill: forwards` keeps
-/// the element at the end pose after the animation completes; the
-/// caller doesn't have to listen for `animationend`.
+// Animate `element` from the pose at `from_progress` to the pose at
+// `to_progress` using Lynx's animator. `fill: forwards` keeps the
+// element at the end pose without an `animationend` listener.
 #[allow(clippy::too_many_arguments)]
 fn animate_to_pose(
     element: Element,

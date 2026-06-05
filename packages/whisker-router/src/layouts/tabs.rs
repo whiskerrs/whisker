@@ -1,42 +1,42 @@
-//! `TabsLayout` — keep-alive tab switcher driven by a single
-//! [`RouteStack`].
+//! [`TabsLayout`] — keep-alive tab switcher driven by the
+//! in-context [`RouteStack`](crate::RouteStack).
 //!
 //! Each tab is a `(matches, content)` pair: `matches` decides which
 //! current route belongs to this tab, `content` renders that tab's
 //! subtree. All tabs are mounted simultaneously and toggled between
-//! `display: flex` / `display: none` so state (scroll position,
-//! in-flight requests, signal values) survives switching — the same
+//! `display: flex` / `display: none` so state — scroll position,
+//! in-flight requests, signal values — survives switching. Same
 //! technique React Native's `BottomTabNavigator` and SwiftUI's
 //! `TabView` use.
 //!
-//! The expo-router-style nested-route design lives one level up: a
-//! parent enum's `#[layout(TabsLayout)]` variants each correspond to
-//! one tab, and the per-tab subtree is itself a `StackLayout` over
-//! that variant's inner route enum. From the `RouteStack`'s point of
-//! view the global stack is still a single sequence; tabs are pure
-//! projection.
+//! For tab-per-stack patterns, wrap each tab's `content` in a nested
+//! [`RouteProvider`](crate::RouteProvider) +
+//! [`StackLayout`](crate::StackLayout). From the outer stack's point
+//! of view the global stack is still a single sequence; tabs are
+//! pure projection.
 //!
 //! ```ignore
 //! use whisker::prelude::*;
-//! use whisker_router::{route_stack, TabSpec, TabsLayout};
+//! use whisker_router::{route_stack, RouteProvider, TabSpec, TabsLayout};
 //!
 //! let nav = route_stack(AppRoute::Home(HomeRoute::Index));
 //!
 //! render! {
-//!     TabsLayout(
-//!         nav: nav.clone(),
-//!         tabs: vec![
-//!             TabSpec::new(
-//!                 |r: &AppRoute| matches!(r, AppRoute::Home(_)),
-//!                 || render! { HomeStack() },
-//!             ),
-//!             TabSpec::new(
-//!                 |r: &AppRoute| matches!(r, AppRoute::Search(_)),
-//!                 || render! { SearchStack() },
-//!             ),
-//!         ],
-//!         bar: BottomBar(nav: nav.clone()).into(),
-//!     )
+//!     RouteProvider(stack: nav.clone()) {
+//!         TabsLayout(
+//!             tabs: vec![
+//!                 TabSpec::new(
+//!                     |r: &AppRoute| matches!(r, AppRoute::Home(_)),
+//!                     || render! { HomeStack() },
+//!                 ),
+//!                 TabSpec::new(
+//!                     |r: &AppRoute| matches!(r, AppRoute::Search(_)),
+//!                     || render! { SearchStack() },
+//!                 ),
+//!             ],
+//!             bar: BottomBar(nav: nav.clone()).into(),
+//!         )
+//!     }
 //! }
 //! ```
 
@@ -53,13 +53,15 @@ use crate::outlet::router;
 use crate::route::Route;
 
 /// One tab in a [`TabsLayout`] — a predicate over the current route
-/// plus the renderer for that tab's body.
+/// plus a renderer for that tab's body.
 ///
-/// Both closures are held in `Rc` so the struct is `Clone` (the
-/// `#[component]` macro re-clones every prop on each `FnMut` body
-/// invocation). `matches` is invoked inside a reactive `computed`
-/// every time the current route changes, so keep it cheap — usually
-/// a `matches!()` against an enum variant.
+/// `matches` is invoked inside a reactive `computed` on every route
+/// change, so keep it cheap — usually a `matches!()` against an
+/// enum variant. `content` is invoked exactly once at layout-mount
+/// time (the pane is then kept alive).
+///
+/// Both closures are held in `Rc` so the struct is `Clone` — the
+/// `#[component]` macro re-clones every prop on each body run.
 pub struct TabSpec<R: Route> {
     matches: Rc<dyn Fn(&R) -> bool + 'static>,
     content: Rc<dyn Fn() -> Element + 'static>,
@@ -75,7 +77,15 @@ impl<R: Route> Clone for TabSpec<R> {
 }
 
 impl<R: Route> TabSpec<R> {
-    /// Build a tab from a predicate and a body renderer.
+    /// Build a tab from a `matches` predicate and a `content`
+    /// renderer.
+    ///
+    /// ```ignore
+    /// TabSpec::new(
+    ///     |r: &AppRoute| matches!(r, AppRoute::Home(_)),
+    ///     || render! { HomeStack() },
+    /// );
+    /// ```
     pub fn new<M, C>(matches: M, content: C) -> Self
     where
         M: Fn(&R) -> bool + 'static,
@@ -96,14 +106,11 @@ impl<R: Route> TabSpec<R> {
 /// element (typically a bottom tab bar) is appended below the panes
 /// in column order.
 ///
-/// The [`RouteStack`](crate::RouteStack) for route type `R` is
-/// pulled from context — wrap a [`RouteProvider`](crate::RouteProvider)
-/// above the layout so `router::<R>()` finds it.
+/// Pulls the [`RouteStack`](crate::RouteStack) for route type `R`
+/// from context — wrap a [`RouteProvider`](crate::RouteProvider)
+/// above the layout so [`router::<R>()`](crate::router) finds it.
 ///
-/// Built directly against the runtime API rather than via `render!`
-/// for two reasons: (1) the macro can't take an arbitrary
-/// `Vec<TabSpec>` and unroll it, and (2) the bar is an already-built
-/// `Element` value which the macro doesn't accept as a child slot.
+/// See the [module docs](self) for a full example.
 #[component]
 pub fn tabs_layout<R: Route>(
     tabs: Vec<TabSpec<R>>,
@@ -113,14 +120,13 @@ pub fn tabs_layout<R: Route>(
     let container = create_element(ElementTag::View);
     apply_styles(container, container_css().to_css_string());
 
-    // Pane area — grows to fill the space above the bar.
     let pane_area = create_element(ElementTag::View);
     apply_styles(pane_area, pane_area_css().to_css_string());
     append_child(container, pane_area);
 
     let current = stack.current();
-    // Clone the tab list out of the FnMut capture so we can consume
-    // it. `TabSpec` is cheap to clone (two `Rc` bumps each).
+    // Clone out of the FnMut capture so we can consume; TabSpec is
+    // cheap to clone (two Rc bumps each).
     for tab in tabs.clone().into_iter() {
         let pane = create_element(ElementTag::View);
         let matches = tab.matches.clone();
@@ -151,8 +157,7 @@ fn container_css() -> Css {
 }
 
 fn pane_area_css() -> Css {
-    // `flex: 1` equivalent — grow to consume vertical space left
-    // over by the bar.
+    // `flex: 1` equivalent — consume vertical space above the bar.
     Css::new()
         .flex_grow(1.0)
         .flex_direction(FlexDirection::Column)
@@ -160,9 +165,9 @@ fn pane_area_css() -> Css {
 }
 
 fn pane_css(visible: bool) -> Css {
-    // Each pane covers the full pane area; only one is visible at a
-    // time. `position: absolute` would also work but `display: none`
-    // + flex-grow lets layout fall through naturally to the bar.
+    // `display: none` + flex-grow lets layout fall through to the
+    // bar naturally; `position: absolute` would work but require
+    // explicit sizing.
     let base = Css::new()
         .flex_direction(FlexDirection::Column)
         .width(100.percent())
@@ -206,10 +211,9 @@ mod tests {
 
     #[test]
     fn tab_spec_is_clone() {
-        // Static check: `#[component]` requires Clone for FnMut
-        // captures. If `TabSpec` ever stops being Clone, this fails
-        // at compile time before showing up as a downstream macro
-        // error.
+        // `#[component]` requires Clone for FnMut captures; surface
+        // the requirement at this crate's test boundary rather than
+        // as a downstream macro error.
         fn assert_clone<T: Clone>() {}
         assert_clone::<TabSpec<TestRoute>>();
     }

@@ -1,5 +1,5 @@
-//! [`VerticalSlide`] — Y-axis variant of [`super::IosSlide`] for
-//! stack-driven modal-style presentations.
+//! [`VerticalSlide`] — Y-axis analogue of
+//! [`super::IosSlide`] for stack-driven modal-style presentations.
 
 use whisker::runtime::view::Element;
 use whisker::{animate_start, AnimateOptions};
@@ -11,11 +11,15 @@ const DEFAULT_EASING: &str = "ease-in-out";
 
 /// Vertical analogue of [`super::IosSlide`] — incoming slides up
 /// from below on push, parallaxes down on pop.
+///
+/// Useful for stack-driven sheet-style presentations where the
+/// horizontal slide of [`super::IosSlide`] doesn't fit the visual
+/// model.
 #[derive(Copy, Clone, Debug)]
 pub struct VerticalSlide {
-    /// Duration in milliseconds.
+    /// Duration in milliseconds. Default 320ms.
     pub duration_ms: u32,
-    /// Easing function string.
+    /// Easing function string. Default `"ease-in-out"`.
     pub easing: &'static str,
 }
 

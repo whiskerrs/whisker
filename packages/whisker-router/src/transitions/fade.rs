@@ -1,4 +1,4 @@
-//! [`Fade`] — cross-fade transition between two stack entries.
+//! [`Fade`] — opacity cross-fade between two stack entries.
 
 use whisker::runtime::view::Element;
 use whisker::{animate_start, AnimateOptions};
@@ -7,10 +7,15 @@ use super::{Direction, Side, StackTransition};
 
 const DEFAULT_DURATION_MS: u32 = 320;
 
-/// Cross-fade. Incoming opacity 0→1, outgoing 1→0.
+/// Cross-fade transition: incoming opacity 0→1, outgoing 1→0.
+///
+/// Layering is cosmetic in a cross-fade (both screens are partially
+/// transparent throughout) so [`foreground`](Self::foreground) is
+/// always [`Side::Incoming`] — the incoming screen ends fully opaque
+/// on top of the outgoing.
 #[derive(Copy, Clone, Debug)]
 pub struct Fade {
-    /// Duration in milliseconds.
+    /// Duration in milliseconds. Default 320ms.
     pub duration_ms: u32,
     /// Easing function string. Default `"linear"` — fades feel
     /// most natural without acceleration.
@@ -49,9 +54,8 @@ impl StackTransition for Fade {
     }
 
     fn foreground(&self, _direction: Direction) -> Side {
-        // Crossfade doesn't depend on layering — both screens are
-        // partially transparent throughout. Keep incoming on top so
-        // its final fully-opaque state covers correctly at the end.
+        // Cross-fade is symmetric optically; keep incoming on top so
+        // its final fully-opaque state covers correctly.
         Side::Incoming
     }
 }

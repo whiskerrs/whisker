@@ -1,6 +1,8 @@
 //! Procedural macros for `whisker-router`.
 //!
-//! At present the crate exports a single attribute macro:
+//! At present the crate exports a single attribute macro,
+//! re-exported by `whisker-router` as
+//! [`whisker_router::route`](https://docs.rs/whisker-router/latest/whisker_router/attr.route.html):
 //!
 //! ```ignore
 //! use whisker_router::route;
@@ -12,30 +14,70 @@
 //!     Home,
 //!     #[at("/profile/:id")]
 //!     Profile { id: u64 },
+//!     #[at("/blog/:slug/edit")]
+//!     EditPost { slug: String },
 //!     #[at("/settings")]
 //!     Settings,
 //! }
 //! ```
 //!
 //! `#[route]` reads each variant's `#[at("…")]` pattern and generates
-//! a `Route` impl whose `parse` / `to_path` are byte-for-byte equivalent
-//! to the hand-written example in `whisker-router::route::tests`.
+//! a `Route` impl whose `parse` / `to_path` are byte-for-byte
+//! equivalent to the hand-written example in
+//! `whisker_router::route::tests::hand_written_example`.
 //!
-//! Path patterns are split on `/`; segments starting with `:` bind
-//! that variant's named field with the matching name (`:id` → field
-//! `id`). The field's type must implement `FromStr` for `parse` and
-//! `Display` for `to_path` — `u64`, `String`, custom enums all work.
-//! Tuple-struct variants (`Profile(u64)`) aren't supported in v1;
-//! switch to a named-field form (`Profile { id: u64 }`) instead.
+//! ## Path grammar
+//!
+//! - Patterns are split on `/`. A leading `/` is required; a trailing
+//!   `/` is tolerated on input and elided on output.
+//! - `:foo` segments are **parameters** — each binds the variant's
+//!   named field of the same name. The field's type must implement
+//!   `FromStr` (for `parse`) and `Display` (for `to_path`); `u64`,
+//!   `String`, custom enums all work.
+//! - Any other segment is a **literal** — matched verbatim.
+//!
+//! ## Variant kinds
+//!
+//! - **Unit variants** (`Home`) — must use a pattern with no
+//!   parameters (`"/"`, `"/settings"`, ...).
+//! - **Named-field variants** (`Profile { id: u64 }`) — every field
+//!   must be bound by exactly one `:name` segment; every `:name`
+//!   segment must match a field. Field order in the struct and
+//!   `:param` order in the path can differ.
+//! - **Tuple-struct variants** (`Profile(u64)`) — **not supported**
+//!   in v1. The macro emits a `compile_error!` directing you to the
+//!   named-field form.
+//!
+//! ## Errors at the call site
+//!
+//! Compile-time errors fire for: missing `#[at(...)]` on a variant,
+//! parameter naming a non-existent field, named field with no
+//! `:name` binding, tuple-struct variants, and `#[route]` on a
+//! non-enum item. Runtime errors come back as
+//! [`whisker_router::RouteError`](https://docs.rs/whisker-router/latest/whisker_router/enum.RouteError.html).
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, Data, DeriveInput, Fields, LitStr, Variant};
 
-/// `#[route]` attribute on an enum — generates `impl Route for Enum`.
+/// `#[route]` attribute on an enum — generates
+/// `impl whisker_router::route::Route for Enum`.
 ///
-/// See the crate-level docs for the supported variant + path forms.
+/// See the [crate-level docs](self) for the supported variant + path
+/// forms, the path grammar, and the diagnostic surface.
+///
+/// ```ignore
+/// use whisker_router::route;
+///
+/// #[route]
+/// #[derive(Clone, Debug, PartialEq)]
+/// pub enum AppRoute {
+///     #[at("/")]              Home,
+///     #[at("/profile/:id")]   Profile { id: u64 },
+///     #[at("/settings")]      Settings,
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn route(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(item as DeriveInput);
@@ -55,10 +97,9 @@ pub fn route(_attr: TokenStream, item: TokenStream) -> TokenStream {
             Ok(v) => v,
             Err(e) => return e.to_compile_error().into(),
         };
-        // `#[at(...)]` is consumed here — strip it from the variant
-        // so the re-emitted enum doesn't carry an unrecognised
-        // attribute (rustc would reject it; helper-attribute
-        // registration only works on derive macros).
+        // Strip `#[at(...)]` from the re-emitted enum — rustc rejects
+        // unknown attributes, and helper-attribute registration only
+        // works for derive macros (not attribute macros).
         variant.attrs.retain(|a| !a.path().is_ident("at"));
 
         let pattern_segments = split_path(&at.value());
@@ -104,8 +145,8 @@ pub fn route(_attr: TokenStream, item: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-/// Pull the `#[at("…")]` literal off a variant. Variants without one
-/// are rejected — the macro can't reasonably guess a path.
+// Pull the `#[at("…")]` literal off a variant. Variants without one
+// are rejected at compile time — the macro can't guess a path.
 fn read_at(variant: &Variant) -> syn::Result<LitStr> {
     for attr in &variant.attrs {
         if attr.path().is_ident("at") {
@@ -118,8 +159,8 @@ fn read_at(variant: &Variant) -> syn::Result<LitStr> {
     ))
 }
 
-/// `/profile/:id/edit` → `["profile", ":id", "edit"]`.
-/// Empty / "/" path → empty Vec (the "this is the index" case).
+// `/profile/:id/edit` → `["profile", ":id", "edit"]`. Empty / "/"
+// becomes the empty Vec — the "this is the index route" case.
 fn split_path(s: &str) -> Vec<String> {
     let n = s.trim_end_matches('/');
     let n = n.strip_prefix('/').unwrap_or(n);
@@ -130,8 +171,8 @@ fn split_path(s: &str) -> Vec<String> {
     }
 }
 
-/// Generate the two match arms (one for `parse`, one for `to_path`)
-/// for a single variant.
+// Generate the two match arms (one for parse, one for to_path) for
+// a single variant.
 fn build_arms(
     enum_ident: &syn::Ident,
     variant: &Variant,
@@ -140,9 +181,8 @@ fn build_arms(
 ) -> syn::Result<(TokenStream2, TokenStream2)> {
     let variant_ident = &variant.ident;
 
-    // Collect param-name → static-segment information.
-    // A "param" segment is `:foo`; everything else is a literal we
-    // pattern-match on as `&str`.
+    // `:foo` segments are params; everything else is a literal we
+    // pattern-match against as `&str`.
     let mut params: Vec<String> = Vec::new();
     let mut slice_pattern: Vec<TokenStream2> = Vec::new();
     for seg in pattern {
@@ -173,11 +213,9 @@ fn build_arms(
                     #enum_ident::#variant_ident
                 ),
             };
-            let to_path_lit = render_path(pattern, |p| format!("{{{p}}}"));
-            // Unit variants have no field bindings, so render_path's
-            // formatting is just the literal pattern (no params).
+            // Unit variants have no field bindings; render_path's
+            // formatting is just the literal pattern.
             debug_assert!(params.is_empty());
-            let _ = to_path_lit;
             let to_path_arm = build_unit_to_path(pattern, enum_ident, variant_ident);
             Ok((parse_arm, to_path_arm))
         }
@@ -189,9 +227,9 @@ fn build_arms(
                 .collect();
 
             // Every `:foo` must match a field; every field must be
-            // covered by a `:foo`. (Order is the *field declaration*
-            // order in the struct — params can appear in any order
-            // inside the path.)
+            // covered by a `:foo`. Field declaration order is what
+            // the parse arm binds to — `:param` order in the path
+            // can differ.
             for p in &params {
                 if !field_names.iter().any(|f| *f == p) {
                     return Err(syn::Error::new(
@@ -216,7 +254,6 @@ fn build_arms(
                 }
             }
 
-            // parse arm
             let parse_bindings = field_names.iter().map(|f| {
                 let seg_ident = format_ident!("__seg_{}", f);
                 let f_str = f.to_string();
@@ -236,7 +273,6 @@ fn build_arms(
                 }
             };
 
-            // to_path arm
             let to_path_arm = build_named_to_path(pattern, enum_ident, variant_ident, &field_names);
             Ok((parse_arm, to_path_arm))
         }
@@ -248,9 +284,9 @@ fn build_arms(
     }
 }
 
-/// Helper used by debug-formatting code paths inside `build_arms` —
-/// kept generic enough to be reused if we ever want a non-rust
-/// string output. For now only the param-named branch calls it.
+// Walk `pattern`, writing each literal segment verbatim and each
+// `:name` segment through `on_param`. Used by build_named_to_path
+// to construct the `format!` template.
 fn render_path(pattern: &[String], on_param: impl Fn(&str) -> String) -> String {
     let mut out = String::from("/");
     for (i, seg) in pattern.iter().enumerate() {
@@ -293,9 +329,8 @@ fn build_named_to_path(
     variant_ident: &syn::Ident,
     fields: &[&syn::Ident],
 ) -> TokenStream2 {
-    // Build a format! template — `:id` → `{id}`, literals stay as
-    // themselves. The matching `{id}` is fed by the field bindings
-    // unpacked in the match arm.
+    // `:id` → `{id}`, literals stay as themselves. The `{id}` slots
+    // are fed by the field bindings unpacked in the match arm.
     let template = render_path(pattern, |p| format!("{{{p}}}"));
     quote! {
         #enum_ident::#variant_ident { #(#fields),* } => {

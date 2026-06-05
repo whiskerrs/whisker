@@ -3,42 +3,41 @@
 //!
 //! Mount as a child of the layout. Subscribes to the
 //! `whisker-router:PredictiveBack` native module's `backInvoked`
-//! event (Kotlin side: registers an
+//! event — the Kotlin side registers an
 //! `OnBackPressedDispatcher.OnBackPressedCallback` against the host
-//! Activity). On press, calls [`StackLayoutHandle::back`] to pop the
-//! current entry — the layout's natural route-change effect handles
-//! the backward slide animation.
-//!
-//! Unlike [`IosSwipeBack`](crate::IosSwipeBack) we do NOT use
-//! `commit_preview_and_back`: the predictive-back press is a single
-//! discrete event with no interactive drag, so there's no preview
-//! wrapper to promote — the natural route-change effect, with its
-//! built-in backward animation, is the right path.
+//! Activity. On press, calls [`StackLayoutHandle::back`] to pop the
+//! current entry; the layout's natural route-change effect plays the
+//! backward slide.
 //!
 //! ```ignore
-//! StackLayout(transition: IosSlide::default(), render: render) {
+//! StackLayout(transition: IosSlide::default(), render: render.into()) {
 //!     AndroidPredictiveBack()
 //! }
 //! ```
 //!
-//! Mounting the component while the host Activity has no other back
-//! consumer takes over the system back press. Unmounting (e.g. when
-//! the user pops back to the root of the stack and the component
-//! tears down with the layout) releases it, so the platform's normal
-//! back behaviour (finish the Activity) resumes.
+//! Mounting takes over the system back press while the component is
+//! alive. Unmounting (e.g. when the layout tears down) releases the
+//! callback so the platform's normal back behaviour (finish the
+//! Activity) resumes.
 //!
-//! ## What's NOT here (yet)
+//! Unlike [`IosSwipeBack`](crate::IosSwipeBack) this component does
+//! **not** use `commit_preview_and_back`: a predictive-back press is
+//! a single discrete event with no interactive drag, so there's no
+//! preview wrapper to promote — the natural route-change effect's
+//! built-in backward animation is the right path.
 //!
-//! The current implementation only listens for the commit event —
-//! no interactive preview during the drag. API 34+'s
-//! `BackEventCompat` progress / cancel callbacks would let the layout
-//! pose the outgoing wrapper as the user drags. Adding it means
-//! declaring more events (`backProgressed`, `backCancelled`,
-//! `backStarted`) in the Kotlin module and routing them through
-//! `StackLayoutHandle`'s preview API the same way
-//! [`IosSwipeBack`](crate::IosSwipeBack) does. Out of scope for the
-//! first cut — the commit-only path already drives the layout
-//! transition correctly.
+//! ## What's not here yet
+//!
+//! Only the commit event is wired today — no interactive preview
+//! during the drag. API 34+'s `BackEventCompat` progress / cancel
+//! callbacks would let the layout pose the outgoing wrapper as the
+//! user drags. Adding it means declaring more events
+//! (`backProgressed`, `backCancelled`, `backStarted`) in the Kotlin
+//! module and routing them through
+//! [`StackLayoutHandle`]'s preview API the same way
+//! [`IosSwipeBack`](crate::IosSwipeBack) does.
+//!
+//! [`StackLayoutHandle`]: crate::StackLayoutHandle
 
 use std::rc::Rc;
 
@@ -49,12 +48,14 @@ use whisker::{component, render, use_context};
 use crate::layouts::stack::StackLayoutHandle;
 use whisker::runtime::view::Element;
 
-/// Android predictive-back gesture component.
+/// Android predictive-back gesture component for
+/// [`StackLayout`](crate::StackLayout).
 ///
-/// Mount as a child of [`StackLayout`](crate::StackLayout); reads
-/// the layout handle from context and subscribes to the
-/// `whisker-router:PredictiveBack` module's `backInvoked` event in
-/// the component body. Renders no DOM of its own.
+/// Renders no DOM of its own; reads the
+/// [`StackLayoutHandle`](crate::StackLayoutHandle) from context and
+/// subscribes to the `whisker-router:PredictiveBack` module's
+/// `backInvoked` event. See the [module docs](self) for the
+/// user-facing summary.
 #[component]
 pub fn android_predictive_back() -> Element {
     let handle = use_context::<StackLayoutHandle>()
@@ -64,22 +65,17 @@ pub fn android_predictive_back() -> Element {
     // The bridge stores callbacks in a Send + Sync box (the C side
     // can fire from any thread that calls `module_send_event`). For
     // predictive back the Kotlin sender is always the
-    // `OnBackPressedDispatcher` callback, which runs on the UI
-    // thread — same thread as Whisker's main loop — so the Rc<dyn
-    // Fn> is in practice only touched from one thread.
-    //
-    // To satisfy the type system without paying a per-callback
-    // marshal hop, we wrap the Rc in [`MainThreadOnly`]. Soundness
-    // rests on: every `sendEvent("backInvoked")` originates from
-    // the Kotlin OnBackPressedCallback, which is main-thread.
+    // `OnBackPressedDispatcher` callback on the UI thread — same
+    // thread as Whisker's main loop. `MainThreadOnly` papers over
+    // the type bound without a per-callback marshal hop.
     let holder = MainThreadOnly { inner: back };
 
     let module = module!("PredictiveBack");
     let sub = module.on_event("backInvoked", move |_payload| {
         // Bind `holder` (not `holder.inner`) so Rust 2021 disjoint
-        // closure captures take the wrapper as a whole — moving the
-        // wrapper's `Send + Sync` impls onto the closure. Capturing
-        // only `inner: Rc<...>` would re-introduce the !Sync error.
+        // closure captures move the wrapper as a whole, carrying its
+        // Send + Sync impls. Capturing `.inner: Rc<...>` would
+        // re-introduce the !Sync error.
         let h = &holder;
         (h.inner)();
     });
@@ -88,28 +84,24 @@ pub fn android_predictive_back() -> Element {
         eprintln!("[whisker-router] AndroidPredictiveBack failed to subscribe: {err}");
     }
 
-    // Drop the subscription when the component's owner is disposed
-    // (unmount). The bridge's `module_remove_event_listener` runs
-    // inside `Drop`, so the Kotlin OnStopObserving fires and the
-    // host Activity's back dispatcher releases the callback.
+    // Subscription drop runs `module_remove_event_listener` inside
+    // its Drop impl → Kotlin OnStopObserving fires → host Activity
+    // releases the back dispatcher callback.
     on_cleanup(move || drop(sub));
 
     render! { fragment() }
 }
 
-/// Locally-scoped wrapper that asserts main-thread-only access to
-/// `inner`. The unsafe `Send + Sync` is bounded by the closure
-/// callsite: `AndroidPredictiveBack`'s sole event source is the
-/// Kotlin `OnBackPressedCallback`, which fires on the UI thread.
-///
-/// Lives here (not in `whisker-runtime`) until the bridge gains a
-/// proper main-thread-only listener API. When that lands, this
-/// shim goes away.
+// Asserts main-thread-only access to `inner`. The unsafe Send + Sync
+// is bounded by the gesture's sole event source — the Kotlin
+// OnBackPressedCallback fires on the UI thread, same thread as the
+// Whisker main loop. Lives here until the bridge gains a proper
+// main-thread-only listener API; then this shim goes away.
 struct MainThreadOnly<T> {
     inner: T,
 }
 // Safety: see the type-level comment. Never expose this beyond the
-// gesture module — moving the inner value across threads would
-// break the Rc invariant.
+// gesture module — moving the inner value across threads breaks
+// the Rc invariant.
 unsafe impl<T> Send for MainThreadOnly<T> {}
 unsafe impl<T> Sync for MainThreadOnly<T> {}

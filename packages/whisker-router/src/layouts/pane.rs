@@ -1,14 +1,18 @@
-//! `Pane` — display-toggleable container that keeps its children
+//! [`Pane`] — display-toggleable container that keeps its children
 //! mounted while hidden.
 //!
-//! Tabs are the canonical caller: each tab's content lives inside
-//! a `Pane`, only one is visible at a time, and the inactive
-//! panes' state (scroll position, form inputs, in-flight effects)
-//! survives the switch because their elements are never unmounted.
+//! The building block behind [`TabsLayout`](crate::TabsLayout). Use
+//! directly when you want keep-alive semantics without `TabsLayout`'s
+//! `(matches, content)` shape — e.g. a master-detail surface where
+//! one of two panes is shown at a time without unmounting the other.
+//!
+//! Inactive panes' state (scroll position, form input, in-flight
+//! effects) survives the toggle because their elements are never
+//! unmounted — only their `display` flips between `flex` and `none`.
 //!
 //! ```ignore
 //! use whisker::prelude::*;
-//! use whisker_router::layouts::Pane;
+//! use whisker_router::Pane;
 //!
 //! let tab = RwSignal::new(Tab::Home);
 //!
@@ -29,8 +33,11 @@ use whisker::{component, computed, Children, WhenFn};
 /// Container that toggles between `display: flex` (children visible)
 /// and `display: none` (children hidden but still mounted).
 ///
-/// `visible` is a `Fn() -> bool` — the call site writes a closure
-/// over its reactive deps, same shape as `Show`'s `when`.
+/// `visible` is a `Fn() -> bool` — same shape as [`whisker::Show`]'s
+/// `when`, so the call site writes a closure over its reactive
+/// dependencies.
+///
+/// See the [module docs](self) for a tabbed-pane example.
 #[component]
 pub fn pane(visible: WhenFn, children: Children) -> Element {
     let visible = visible.clone();

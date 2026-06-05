@@ -1,18 +1,25 @@
-//! [`on_back`] — LIFO back-handler chain.
+//! [`on_back`] — LIFO back-handler chain for ad-hoc consumers.
 //!
-//! Components register a closure that returns `true` if it
-//! consumed the back event, `false` to forward it down the chain.
-//! Walking from most-recently-registered to oldest matches both
-//! React Native's `BackHandler` and Android's
-//! `OnBackPressedDispatcher` priority semantics.
+//! Components register a closure that returns `true` to consume the
+//! back event or `false` to forward it down the chain. Walking from
+//! most-recently-registered to oldest matches both React Native's
+//! `BackHandler` and Android's `OnBackPressedDispatcher` priority
+//! semantics — the modal you just opened wins over the screen
+//! underneath it.
+//!
+//! This is the *imperative* back-handler — useful when a screen
+//! wants to intercept back for confirmation, dismissal of an
+//! in-screen overlay, etc. The structural back path for
+//! [`StackLayout`](crate::StackLayout) is owned by
+//! [`AndroidPredictiveBack`](crate::AndroidPredictiveBack) and
+//! [`IosSwipeBack`](crate::IosSwipeBack) instead.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 thread_local! {
-    /// LIFO of registered back handlers. Each entry is wrapped in
-    /// an `Rc` so guards can identify their own slot for removal
-    /// without an O(n) sweep over the closures themselves.
+    // Identified by id rather than by `Rc::ptr_eq` so a guard can
+    // find its own slot for removal without iterating the closures.
     static HANDLERS: RefCell<Vec<HandlerSlot>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -25,19 +32,22 @@ thread_local! {
     static NEXT_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// RAII guard returned by [`on_back`]. Dropping it removes the
-/// handler from the chain — typically called automatically when
-/// the owning component unmounts (via `on_cleanup`).
+/// RAII guard returned by [`on_back`].
+///
+/// Dropping the guard removes the handler from the chain. The usual
+/// pattern is to bind it inside a component body and let the
+/// component's [`on_cleanup`](whisker::runtime::reactive::owner::on_cleanup)
+/// drop it on unmount. Use [`Self::forget`] to detach the guard from
+/// its handler and let the handler outlive the local binding.
 pub struct BackHandlerGuard {
     id: u64,
-    /// Set to `false` by [`Self::forget`] to detach without
-    /// removing the handler from the chain.
     active: bool,
 }
 
 impl BackHandlerGuard {
-    /// Disarm the guard so dropping it does NOT remove the handler.
-    /// Useful when the handler should outlive the local binding.
+    /// Disarm the guard so dropping it does **not** remove the
+    /// handler. The handler then lives for the duration of the
+    /// process (or until [`__reset_for_tests`] is called).
     pub fn forget(mut self) {
         self.active = false;
     }
@@ -58,8 +68,23 @@ impl Drop for BackHandlerGuard {
     }
 }
 
-/// Register a back handler. Returns a [`BackHandlerGuard`] that
-/// removes the handler on drop.
+/// Register a back handler at the top of the LIFO chain.
+///
+/// `handler` should return `true` if it consumed the back press, or
+/// `false` to forward the event to the next handler down the chain
+/// (and, ultimately, to the host platform). The returned
+/// [`BackHandlerGuard`] removes the handler on drop.
+///
+/// ```ignore
+/// let _guard = on_back(|| {
+///     if dialog_open.get() {
+///         dialog_open.set(false);
+///         true
+///     } else {
+///         false
+///     }
+/// });
+/// ```
 pub fn on_back<F>(handler: F) -> BackHandlerGuard
 where
     F: Fn() -> bool + 'static,
@@ -81,12 +106,16 @@ where
 /// Dispatch a back event through the chain.
 ///
 /// Walks from most-recently-registered to oldest, stopping at the
-/// first handler that returns `true`. Returns the same `bool`: the
-/// caller (host platform glue) interprets `false` as "let the OS
-/// handle it" (finish the activity / dismiss the view controller).
+/// first handler that returns `true`. The returned `bool` propagates
+/// the same meaning: the caller (host platform glue) interprets
+/// `false` as "let the OS handle it" — finish the Activity, dismiss
+/// the view controller, etc.
+///
+/// Called by the platform glue when the user invokes the system
+/// back gesture; not generally invoked from user code.
 pub fn dispatch_back() -> bool {
-    // Snapshot the chain so handlers can register/unregister
-    // during dispatch without confusing the iteration.
+    // Snapshot before iterating so handlers may register/unregister
+    // during dispatch without invalidating the walk.
     let snapshot: Vec<Rc<dyn Fn() -> bool>> =
         HANDLERS.with(|h| h.borrow().iter().rev().map(|s| Rc::clone(&s.cb)).collect());
     for cb in snapshot {
@@ -97,8 +126,8 @@ pub fn dispatch_back() -> bool {
     false
 }
 
-/// Test helper: wipe the back-handler chain. Useful between unit
-/// tests since the storage is thread-local.
+/// Test helper: wipe the back-handler chain. Thread-local storage,
+/// so unit tests should call this in setup/teardown.
 #[doc(hidden)]
 pub fn __reset_for_tests() {
     HANDLERS.with(|h| h.borrow_mut().clear());

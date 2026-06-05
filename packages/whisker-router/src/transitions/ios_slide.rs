@@ -1,8 +1,9 @@
-//! [`IosSlide`] — UINavigationController-style horizontal slide
-//! with parallax, leading-edge shadow on the moving screen, and a
-//! subtle brightness dim on the parallaxed background screen.
+//! [`IosSlide`] — UINavigationController-style horizontal slide.
 //!
-//! Default transition for [`StackLayout`](crate::StackLayout).
+//! The default transition for [`StackLayout`](crate::StackLayout).
+//! Horizontal slide with [`IOS_PARALLAX_PCT`] parallax, a
+//! leading-edge shadow on the moving screen, and a brightness dim
+//! on the parallaxed background screen.
 //!
 //! For the iOS-native edge swipe-back gesture, mount
 //! [`IosSwipeBack`](crate::IosSwipeBack) as a child of the layout —
@@ -15,39 +16,41 @@ use whisker::{animate_start, AnimateOptions, Style};
 
 use super::{Direction, Side, StackTransition};
 
-/// One animation's CSS endpoints — `(name, from_props, to_props)`.
+// `(animation-name, from_props, to_props)` triple.
 type Keyframes<'a> = (
     &'static str,
     Vec<(&'static str, &'a str)>,
     Vec<(&'static str, &'a str)>,
 );
 
-/// Outgoing screen translates ~30% of viewport toward the leading
-/// edge during a horizontal push — UIKit's parallax amount.
+/// Outgoing screen translates this percent of the viewport toward
+/// the leading edge during a horizontal push — UIKit's parallax
+/// amount. Also exposed for callers (e.g. swipe-back) that want to
+/// match the natural transition's endpoint.
 pub const IOS_PARALLAX_PCT: f32 = 30.0;
 
-/// Depth shadow declared as static inline style on the foreground
-/// wrapper. Lynx's animator drops `box-shadow` from `@keyframes`
-/// rules, so it has to ride along as a `slot_style` declaration
-/// rather than an animated property. 5-part syntax is required.
+// Lynx's animator drops `box-shadow` from `@keyframes` rules, so
+// the depth shadow rides along as a `slot_style` declaration instead
+// of an animated property. 5-part syntax is required.
 const IOS_LEADING_SHADOW: &str = "box-shadow: -4px 0px 16px 0px rgba(0, 0, 0, 0.06);";
 
-/// Parallaxed (background) screen sits one notch dimmer than fully
-/// lit. Carried via `slot_style` as the initial state; the matching
-/// `animate` interpolates `filter: brightness(...)` between this
-/// and `brightness(1.0)` so the screen brightens as it returns to
-/// the foreground (or dims as it leaves).
+// Background screen sits one notch dimmer than fully lit. Carried
+// via `slot_style` as the initial state; `animate` interpolates
+// `filter: brightness(...)` from here to `brightness(1.0)`.
 const IOS_PARALLAX_DIM: &str = "filter: brightness(0.85);";
 
 const DEFAULT_DURATION_MS: u32 = 320;
 const DEFAULT_EASING: &str = "ease-in-out";
 
 /// iOS UINavigationController-style horizontal slide.
+///
+/// Tuneable via [`Self::duration_ms`] and [`Self::easing`]; the
+/// shadow + brightness decorations are not configurable in v1.
 #[derive(Copy, Clone, Debug)]
 pub struct IosSlide {
-    /// Duration in milliseconds (default 320ms).
+    /// Duration in milliseconds. Default 320ms.
     pub duration_ms: u32,
-    /// Easing function string (default `"ease-in-out"`).
+    /// Easing function string. Default `"ease-in-out"`.
     pub easing: &'static str,
 }
 
@@ -123,10 +126,9 @@ impl StackTransition for IosSlide {
     }
 }
 
-/// Sample the iOS slide pose at `progress ∈ [0.0, 1.0]`. Shared
-/// with the [`IosSwipeBack`](crate::IosSwipeBack) gesture so the
-/// gesture's per-frame scrub stays in sync with the natural
-/// animation's endpoints.
+// Sample the iOS slide pose at `progress ∈ [0.0, 1.0]`. Shared with
+// the IosSwipeBack gesture so its per-frame scrub matches the
+// natural animation's endpoints exactly.
 pub(crate) fn pose(side: Side, direction: Direction, progress: f32) -> Vec<(&'static str, String)> {
     let (tx_from, tx_to, br_from, br_to) = match (side, direction) {
         (Side::Incoming, Direction::Forward) => (100.0, 0.0, 1.0, 1.0),
