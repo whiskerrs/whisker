@@ -1,0 +1,14 @@
+[package]
+name = "whisker-audio-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Example app for `whisker-audio`. Plays a short MP3 with play / pause / stop / seek controls so on-device verification of the ExoPlayer / AVPlayer module wiring happens in one place."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-audio = { path = ".." }
+whisker-safe-area = { path = "../../whisker-safe-area" }

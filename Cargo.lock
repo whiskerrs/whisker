@@ -1850,6 +1850,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-audio"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+]
+
+[[package]]
+name = "whisker-audio-example"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-audio",
+ "whisker-safe-area",
+]
+
+[[package]]
 name = "whisker-build"
 version = "0.1.0"
 dependencies = [
