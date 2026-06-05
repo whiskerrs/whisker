@@ -163,31 +163,73 @@ impl Player {
     }
 
     /// Start or resume playback from the current position.
+    ///
+    /// No-op if no source is loaded yet — the player will not start
+    /// queuing playback ahead of the load completing; call again
+    /// after `is_loaded` transitions to `true` (or simply call once
+    /// at user gesture time and let the native player schedule).
+    ///
+    /// `PlaybackStatus` effect: `is_playing` → `true` (the next
+    /// status tick); `position` resumes ticking from the current
+    /// value.
     pub fn play(&self) {
         let _ = self.inner.invoke("play", vec![]);
     }
 
     /// Pause playback at the current position.
+    ///
+    /// `PlaybackStatus` effect: `is_playing` → `false`; `position`
+    /// stops advancing but keeps its current value. The source and
+    /// loaded state are untouched, so [`Self::play`] resumes from
+    /// the same spot.
     pub fn pause(&self) {
         let _ = self.inner.invoke("pause", vec![]);
     }
 
     /// Stop playback and rewind to position 0. The native player
-    /// stays loaded — [`Player::play`] resumes from the start
+    /// stays loaded — [`Self::play`] resumes from the start
     /// without re-fetching.
+    ///
+    /// `PlaybackStatus` effect: `is_playing` → `false`; `position`
+    /// → `0.0`. `duration` and `is_loaded` are preserved.
     pub fn stop(&self) {
         let _ = self.inner.invoke("stop", vec![]);
     }
 
     /// Seek to an absolute position (seconds from the start).
+    ///
+    /// Values outside `[0, duration]` are clamped on the native
+    /// side. Seeking on a paused player keeps it paused; seeking
+    /// while playing keeps it playing — there is no implicit
+    /// play / pause toggle.
+    ///
+    /// `PlaybackStatus` effect: `position` jumps to the requested
+    /// value on the next status tick. If the destination falls
+    /// outside the buffered region the native player may stall
+    /// briefly while re-buffering — surface to users via the
+    /// `is_loaded` flag if needed (the platform side flips
+    /// `is_loaded` back to `false` while it waits).
     pub fn seek_to(&self, position_seconds: f64) {
         let _ = self
             .inner
             .invoke("seekTo", vec![WhiskerValue::Float(position_seconds)]);
     }
 
-    /// Replace the loaded media. Pass an empty string to release
-    /// the current source without queueing a new one.
+    /// Replace the loaded media with `source`. Pass an empty string
+    /// to release the current source without queueing a new one.
+    ///
+    /// **The player is reset by this call.** `PlaybackStatus`
+    /// effects: `is_loaded` → `false` (until the new source's
+    /// headers arrive); `duration` → `0.0`; `position` → `0.0`;
+    /// `is_playing` → `false`. Equivalently to constructing a fresh
+    /// [`Player`], you should re-call [`Self::play`] after the
+    /// status reports `is_loaded = true` if you want auto-resume
+    /// behaviour across source swaps.
+    ///
+    /// Passing the same source string again is *not* a no-op — the
+    /// native player still tears down and re-loads. Compare with
+    /// the previous source in user code if you want to skip the
+    /// reload.
     pub fn set_source(&self, source: impl Into<String>) {
         let _ = self
             .inner
@@ -196,6 +238,11 @@ impl Player {
 
     /// Set output gain on `[0.0, 1.0]`. Values outside the range
     /// get clamped on the native side.
+    ///
+    /// Does not affect `PlaybackStatus` — `is_playing` and
+    /// `position` stay where they are. Setting volume to `0.0` is
+    /// the conventional "mute" path; the native player keeps
+    /// running.
     pub fn set_volume(&self, value: f64) {
         let _ = self
             .inner
@@ -203,7 +250,13 @@ impl Player {
     }
 
     /// Loop the source: when playback reaches the end, the native
-    /// player rewinds to 0 and resumes. Idempotent.
+    /// player rewinds to 0 and resumes. Idempotent — calling with
+    /// the same flag again is a no-op.
+    ///
+    /// Does not affect `PlaybackStatus` until a loop boundary
+    /// actually fires. At the wrap point the `position` resets to
+    /// `0.0` and `is_playing` stays `true` (no momentary
+    /// `false`-tick).
     pub fn set_loop(&self, looping: bool) {
         let _ = self
             .inner
@@ -219,6 +272,14 @@ impl Player {
     /// the calling effect / computed as a dependent, so a `text`
     /// bound to `status.get().position` re-renders as the native
     /// player ticks through the file.
+    ///
+    /// Tick cadence: ≈ 200 ms while playing, plus an immediate
+    /// tick on every state transition (`play` / `pause` / `stop`
+    /// / `seekTo` / `setSource` / load-completion / loop-wrap).
+    /// The first tick after `Player::new` lands once the native
+    /// side has resolved the source URL and reports a non-zero
+    /// `duration` — at that point `is_loaded` flips to `true`.
+    /// All clones of the same `Player` see the identical signal.
     pub fn status(&self) -> ReadSignal<PlaybackStatus> {
         register_status(self.inner.id)
     }
