@@ -2,10 +2,22 @@
 //!
 //! Today there is one backend ([`lynx`]) that talks to the C++ Lynx
 //! bridge shipped under `whisker-driver-sys/bridge/`. Future backends
-//! (web, wgpu, …) would
-//! land as sibling modules behind cfg gates. Users never touch this
-//! crate directly — `#[whisker::main]` re-exports the `run` / `tick`
-//! helpers from here as `whisker::__main_runtime::{run,tick}`.
+//! (web, wgpu, …) would land as sibling modules behind cfg gates.
+//! Users never touch this crate directly — `#[whisker::main]`
+//! re-exports the `run` / `tick` helpers from here as
+//! `whisker::__main_runtime::{run,tick}`.
+//!
+//! The crate splits along three seams:
+//!
+//! - [`element_ref`](mod@element_ref) — [`ElementRef`] + the typed
+//!   `XxxHandle` family that user code holds to dispatch imperative
+//!   element methods (`scrollTo`, `boundingClientRect`, …).
+//! - [`module`] — [`PlatformModule`](module::PlatformModule), the
+//!   user-facing handle for native modules registered on the host side
+//!   (`whisker::module!("Foo")`).
+//! - [`lynx`] — contributor-only: the [`BridgeRenderer`] that backs the
+//!   `whisker_runtime::view` thread-local, plus event-propagation
+//!   replay and list-provider trampolines.
 
 pub mod element_ref;
 pub mod lynx;
@@ -27,14 +39,14 @@ use whisker_runtime::view::{module_component_ptr, Element};
 use crate::module::{async_trampoline, from_raw, RawBuilder, WhiskerValue};
 
 /// Synchronously invoke `method` on the platform component identified
-/// by `handle`. Routes through the C bridge
-/// (`whisker_bridge_invoke_element_method`) — itself a stub in
-/// Phase 7-Φ.H.2.5, returning a Lynx-fork-pending Error until
-/// Phase 7-Φ.H.2.7 wires in the real dispatch.
+/// by `handle`, with `args` passed positionally through Lynx's
+/// `params.args` field. Routes through the C bridge
+/// (`whisker_bridge_invoke_element_method`).
 ///
 /// Direct callers are mostly the proc macros — `ElementRef::invoke`
 /// and the `#[whisker::element_methods]`-emitted bodies. User code
-/// uses the typed wrappers, not this entry point.
+/// uses the typed wrappers ([`ElementRef`], [`ElementHandle`], …),
+/// not this entry point.
 pub fn invoke_element_method(
     handle: Element,
     method: &str,
@@ -124,9 +136,29 @@ pub fn invoke_element_method_with_params(
     result
 }
 
-/// Typed timing options for [`animate_start`]. Field names mirror the
-/// JS Web-Animations options object (and Lynx's `Element::Animate`
-/// `animation_data` table).
+/// Typed timing options for [`animate_start`].
+///
+/// Field names mirror the JS Web-Animations options object (and Lynx's
+/// `Element::Animate` `animation_data` table). [`Default`] yields a
+/// 300ms linear forwards animation that plays once.
+///
+/// ```ignore
+/// use whisker_driver::{animate_start, AnimateOptions};
+///
+/// animate_start(
+///     handle,
+///     "fade-in",
+///     &[
+///         ("0%",   &[("opacity", "0")]),
+///         ("100%", &[("opacity", "1")]),
+///     ],
+///     &AnimateOptions {
+///         duration_ms: 200,
+///         easing: "ease-out".into(),
+///         ..AnimateOptions::default()
+///     },
+/// )?;
+/// ```
 #[derive(Clone, Debug)]
 pub struct AnimateOptions {
     /// Duration in milliseconds.
@@ -336,8 +368,8 @@ pub fn invoke_element_animate(
 /// The bridge invokes the callback exactly once (synchronously with a
 /// `WhiskerValue::Error` on a precondition / unsupported-platform
 /// failure, asynchronously with the result on success), so the boxed
-/// oneshot sender is always consumed by [`async_trampoline`] — the
-/// caller never recovers it.
+/// oneshot sender is always consumed by the trampoline — the caller
+/// never recovers it.
 pub async fn invoke_element_method_async(
     handle: Element,
     method: &str,
@@ -363,8 +395,8 @@ pub async fn invoke_element_method_async(
     let tx_box: Box<Option<futures_channel::oneshot::Sender<WhiskerValue>>> = Box::new(Some(tx));
     let tx_ptr = Box::into_raw(tx_box) as *mut c_void;
 
-    // Return value is advisory — `async_trampoline` always consumes the
-    // boxed sender (the bridge guarantees one callback either way), so
+    // The bridge guarantees exactly one callback (sync error or async
+    // result), so `async_trampoline` always consumes the boxed sender —
     // we just await the channel.
     let _scheduled = unsafe {
         ffi::whisker_bridge_invoke_element_method_async(
