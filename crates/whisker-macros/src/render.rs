@@ -216,14 +216,13 @@ impl Parse for Node {
             parenthesized!(body in input);
             while !body.is_empty() {
                 // `Ident::peek_any` / `Ident::parse_any` admits
-                // raw-style identifiers AND Rust keywords. The
-                // latter matters for Phase 7-Φ.H.2.4's `ref:` kwarg
-                // (the most natural call-site name; `ref` itself
-                // is a Rust keyword). Plain `body.peek(Ident)`
-                // would reject `ref` outright; `peek_any` lets it
-                // through as an `Ident` whose text is `"ref"` and
-                // the later `name_str == "ref"` branch routes it
-                // to the `.with_ref(...)` setter.
+                // raw-style identifiers AND Rust keywords. Required
+                // for the `ref:` kwarg (the most natural call-site
+                // name; `ref` itself is a Rust keyword). Plain
+                // `body.peek(Ident)` would reject `ref` outright;
+                // `peek_any` lets it through as an `Ident` whose text
+                // is `"ref"`, and the `name_str == "ref"` branch below
+                // routes it to the `.with_ref(...)` setter.
                 if !body.peek(syn::Ident::peek_any) {
                     return Err(body.error(
                         "kwargs must be `name: expr` — positional arguments \
@@ -405,23 +404,20 @@ impl Node {
 
 impl ElementNode {
     /// Lower a built-in element to a builder chain on
-    /// `::whisker::__tags::<tag>`. Inline-chain form matches the
-    /// earlier-experiment-verified `__tags::__view_ctor().style(…).…__h()`
-    /// shape — no intermediate `let __h = …; __h` binding when the
-    /// element has no children (the let-binding form broke RA's
-    /// receiver-type threading; see `tests/ra_completion.rs`).
+    /// `::whisker::__tags::<tag>`. The inline-chain form
+    /// (`__tags::__view_ctor().style(…).…__h()` with no intermediate
+    /// `let __h = …; __h` binding) is load-bearing: a let-binding
+    /// breaks RA's receiver-type threading and kills kwarg
+    /// completion. See `tests/ra_completion.rs`.
     fn to_tokens(&self) -> TokenStream2 {
         let tag_ident = &self.tag;
         let tag_name = tag_ident.to_string();
         let tag_span = tag_ident.span();
         let ctor_ident = format_ident!("__{}_ctor", tag_ident, span = tag_span);
-        // Inline the entire `::whisker::__tags::__<tag>_ctor()` path
-        // directly into the outer `quote!`s below — same layout as
-        // earlier-experiment compose_a. Storing it into an intermediate
-        // TokenStream and interpolating may capture span/grouping
-        // info differently, which we suspect is why kwarg completion
-        // worked for compose_a but not for render! (same shape on
-        // the surface, different behaviour in practice).
+        // Inline the full `::whisker::__tags::__<tag>_ctor()` path
+        // into the outer `quote!`s below. Storing it into an
+        // intermediate TokenStream and interpolating captures span /
+        // grouping info differently and breaks RA's kwarg completion.
 
         // One `.kwarg(value)` token group per attr, span-anchored
         // at the user's kwarg-name source position so RA's
@@ -432,16 +428,13 @@ impl ElementNode {
             .filter_map(|kw| self.kwarg_to_setter(kw))
             .collect();
 
-        // No more ident-ref side block. Every partial kwarg now
-        // routes through the setter chain as a method call — see
-        // the long comment in `kwarg_to_setter` for the
-        // ra-fixup-vs-prefix-match rationale.
+        // Every partial kwarg routes through the setter chain as a
+        // method call — see the long comment in `kwarg_to_setter`.
         let ident_refs: Vec<TokenStream2> = Vec::new();
         let _ = tag_name;
 
         // Children: each child becomes a `.child({ inner_chain })`
-        // method call on the builder. Same shape verified by the
-        // earlier RA experiments.
+        // method call on the builder.
         let child_calls: Vec<TokenStream2> = self
             .children
             .iter()
@@ -451,9 +444,9 @@ impl ElementNode {
             })
             .collect();
 
-        // No children AND no ident-refs to emit → bare expression
-        // form. Matches the earlier-experiment-verified completion shape
-        // for the partial-kwarg case.
+        // No children AND no ident-refs → bare expression form.
+        // Keeps the chain on RA's happy path for partial-kwarg
+        // completion.
         if child_calls.is_empty() && ident_refs.is_empty() {
             return quote! {
                 {
@@ -507,33 +500,20 @@ impl ElementNode {
         let tag_name = self.tag.to_string();
 
         if name_str == "key" && tag_name != "list" {
-            // `key:` was a For-reconciliation hint historically and
-            // is silently ignored on direct elements. The `list`
-            // render-props builder has its own typed `key` setter
-            // (the key extractor closure for the keyed-list effect),
-            // so we keep the kwarg there.
+            // `key:` on a direct element is a no-op (reconciliation
+            // hint with no semantic effect outside keyed lists). The
+            // `list` builder has its own typed `key` setter for the
+            // keyed-list key extractor closure, so let it through.
             return None;
         }
 
         if kw.partial {
-            // ALWAYS emit a method call for partial kwargs. We
-            // used to gate this behind a prefix-match heuristic
-            // (only emit `.sty(())` if some method name on the
-            // builder started with `sty`), falling through to a
-            // `let _ = name;` ident-ref otherwise so RA could do
-            // identifier completion in the surrounding scope.
-            //
-            // The heuristic broke RA's macro completion when the
-            // partial prefix wasn't a real prefix on its own.
-            // Concretely, RA injects a sentinel suffix at the
-            // cursor (`sty` becomes `stysomething` during the
-            // expansion-for-completion pass) — the prefix check
-            // then resolves to `false` and we fall through to
-            // the ident-ref path, robbing RA of the method-call
-            // shape it needed for kwarg completion. The earlier experiment
-            // proves this: `compose_a!` always emits the method
-            // call and completes correctly; `render!` used the
-            // heuristic and didn't.
+            // ALWAYS emit a method call for partial kwargs. RA
+            // injects a sentinel suffix at the cursor during its
+            // expansion-for-completion pass, so any prefix-match
+            // heuristic (e.g. "only emit `.sty(())` if some builder
+            // method starts with `sty`") sees the suffixed name and
+            // returns false, breaking method-name completion.
             return Some(quote_spanned! {span=> .#name(()) });
         }
 
@@ -728,11 +708,6 @@ fn is_known_event_method(name: &str) -> bool {
     bind_variant || propagation_variant
 }
 
-// ---- Control-flow (Show / For) ------------------------------------------
-
-// (Old `ControlFlowNode` codegen removed — `ForEach` / `Show` now
-// take the standard UserComponent path via `#[component]`.)
-
 // ---- User-component codegen ---------------------------------------------
 
 impl UserComponentNode {
@@ -753,13 +728,10 @@ impl UserComponentNode {
                     // setter shows up under RA's method completion.
                     quote_spanned! {span=> .#name(()) }
                 } else if name_str == "ref" {
-                    // Phase 7-Φ.H.2.4 — `ref:` is the canonical
-                    // call-site name for the implicit ElementRef
-                    // prop. `ref` is a Rust keyword though, so
-                    // typed-builder can't expose `.ref(...)` as a
-                    // setter — the module_component macro emits
-                    // `.with_ref(...)` instead and we re-route
-                    // here.
+                    // `ref:` is the canonical call-site name for the
+                    // implicit ElementRef prop. `ref` is a Rust
+                    // keyword so the setter is exposed as
+                    // `.with_ref(...)`; re-route here.
                     let value = &kw.value;
                     quote_spanned! {span=> .with_ref(#value) }
                 } else {
@@ -769,11 +741,9 @@ impl UserComponentNode {
             })
             .collect();
 
-        // `key` was previously restricted to direct children of
-        // `For`. With `ForEach` now a regular `#[component]` (and
-        // user-defined keyed-list control flow following the same
-        // shape), `key` is just a normal `Props` field — let it
-        // through.
+        // `key` flows as a regular Props field — control-flow
+        // components like `ForEach` are themselves `#[component]`s
+        // and read it directly off `XxxProps`.
 
         let children_call = if self.children.is_empty() {
             quote! {}
@@ -907,8 +877,8 @@ mod tests {
 
     #[test]
     fn no_children_emits_bare_chain_expression() {
-        // Verifies the earlier-experiment-verified "no `let __h =` binding"
-        // shape for the no-children case.
+        // No-children case must stay a bare chain expression — a
+        // `let __h = …; __h` wrapper breaks RA's kwarg completion.
         let input: TokenStream2 = quote::quote! { view(style: "x") };
         let output = super::expand_test(input).to_string();
         assert!(
@@ -932,12 +902,10 @@ mod tests {
 
     #[test]
     fn every_partial_kwarg_emits_method_call() {
-        // All partial kwargs route through `.name(())` now —
-        // even prefixes that don't match any builder method.
-        // (RA injects a sentinel suffix during completion, which
-        // makes a "does this prefix match a method" heuristic
-        // unreliable; always emitting the method-call shape is
-        // what the earlier-experiment compose_a does.)
+        // All partial kwargs route through `.name(())` — even
+        // prefixes that don't match any builder method. RA's
+        // sentinel-suffix injection during completion makes any
+        // "does this prefix match a method" heuristic unreliable.
         let input: TokenStream2 = quote::quote! { view(v) };
         let output = super::expand_test(input).to_string();
         assert!(

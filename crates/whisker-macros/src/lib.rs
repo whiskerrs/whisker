@@ -8,8 +8,8 @@
 //!   `crates/whisker-macros/src/render.rs` for the grammar.
 //! - [`component`] — wraps a function so it runs inside a fresh
 //!   reactive owner. The owner is registered against the function's
-//!   fn pointer so the Strategy C hot-reload path (Phase 6.5a A6)
-//!   can find it. See `docs/reactivity-design.md`.
+//!   fn pointer so the hot-reload remount path can find it. See
+//!   `docs/reactivity-design.md`.
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -128,10 +128,9 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-/// Phase 6.5a fine-grained renderer macro. Emits imperative
-/// element-creation code that calls into
-/// [`whisker::runtime::view`] through the thread-local installed
-/// renderer, and returns an [`Element`].
+/// Fine-grained renderer macro. Emits imperative element-creation
+/// code that calls into [`whisker::runtime::view`] through the
+/// thread-local installed renderer, and returns an [`Element`].
 ///
 /// ```ignore
 /// use whisker::prelude::*;
@@ -140,15 +139,15 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     view {
 ///         style: "padding: 16px;",
 ///         on_tap: || println!("tapped"),
-///         text { "Hello, world" }
+///         text { value: "Hello, world" }
 ///     }
 /// };
 /// ```
 ///
-/// See `crates/whisker-macros/src/render.rs` for the full grammar
-/// (matches `rsx!`) and the differences from `rsx!`. `{expr}`
-/// interpolation lands in Phase 6.5a A3 Step 3; for now use string
-/// literals or assign to a variable outside the macro.
+/// See `crates/whisker-macros/src/render.rs` for the full kwarg
+/// grammar. Dynamic values flow through `Signal<T>` props; bare
+/// `{expr}` blocks inside a children list are rejected (use
+/// `text(value: <expr>)` instead).
 #[proc_macro]
 pub fn render(input: TokenStream) -> TokenStream {
     render::expand(input)
