@@ -7,7 +7,7 @@
 //! `crates/whisker-driver-sys/bridge/src/`; this module wraps the
 //! raw `WhiskerValueRaw` C-mirror in a typed [`WhiskerValue`]
 //! Rust enum and provides ergonomic [`invoke`] / [`invoke_async`]
-//! callers.
+//! callers, plus the user-facing [`PlatformModule`] handle.
 //!
 //! ## Threading
 //!
@@ -20,26 +20,21 @@
 //! marshal themselves to the main thread (typical UI-platform
 //! contract).
 //!
-//! [`invoke_async`] uses the bridge's async entry point. v1's
-//! implementation dispatches sync; a follow-up wires it through
-//! a worker queue with cancel semantics alongside the first
-//! actual async-API module.
-//!
-//! ## Foundation v1
+//! ## Value model
 //!
 //! [`WhiskerValue`] mirrors the C tagged union but as a safe,
 //! Rust-idiomatic enum. Conversions to the platform side allocate
 //! through `malloc` (matching the bridge's expected ownership);
-//! [`WhiskerValue::from_raw`] copies data OUT of bridge-allocated
-//! buffers so the caller can immediately
+//! [`from_raw`] copies data OUT of bridge-allocated buffers so the
+//! caller can immediately
 //! [`whisker_bridge_value_release`](whisker_driver_sys::whisker_bridge_value_release)
 //! the underlying allocation.
 //!
 //! Errors from the bridge (unknown module, missing method,
-//! exception thrown) surface as the [`WhiskerValue::Error`]
-//! variant carrying a UTF-8 description. The matching
-//! `#[whisker::platform_module]` proc macro layer (Phase 7-Φ.E.5)
-//! folds those into typed `Result<T, ModuleError>` returns.
+//! exception thrown) surface as the [`WhiskerValue::Error`] variant
+//! carrying a UTF-8 description. The matching
+//! `#[whisker::platform_module]` proc macro layer folds those into
+//! typed `Result<T, ModuleError>` returns.
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -124,6 +119,15 @@ pub fn invoke(name: &str, method: &str, args: Vec<WhiskerValue>) -> WhiskerValue
 /// dispatch through `invoke`, lift the returned `WhiskerValue` into a
 /// typed `Result`). The raw `WhiskerValue` surface stays so a
 /// conversion mistake is loggable rather than silently lost.
+///
+/// ```ignore
+/// let module = whisker::module!("Battery");
+/// match module.invoke("getLevel", vec![]) {
+///     WhiskerValue::Float(level) => println!("battery: {level:.0}%"),
+///     WhiskerValue::Error(msg) => eprintln!("battery dispatch failed: {msg}"),
+///     other => eprintln!("unexpected reply: {other:?}"),
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct PlatformModule {
     name: String,
@@ -292,13 +296,12 @@ impl Drop for ModuleSubscription {
     }
 }
 
-/// Async variant. Resolves once the bridge fires the C callback
-/// with the result.
+/// Async variant of [`invoke`]. Resolves once the bridge fires the C
+/// callback with the result.
 ///
-/// v1 dispatches the work on the bridge's underlying thread (iOS:
-/// global dispatch queue; Android: same-thread for now). Cancel
-/// semantics + worker-pool dispatch land alongside the first
-/// async-API module.
+/// Dispatch happens on the bridge's underlying thread (iOS global
+/// dispatch queue; Android same-thread). No cancel semantics today —
+/// dropping the future leaks the oneshot until the callback fires.
 pub async fn invoke_async(name: &str, method: &str, args: Vec<WhiskerValue>) -> WhiskerValue {
     let module_c = match CString::new(name) {
         Ok(c) => c,
@@ -372,15 +375,13 @@ pub(crate) extern "C" fn async_trampoline(
 
 // ----- Raw conversion plumbing -------------------------------------------
 
-/// Owns the heap allocations a [`WhiskerValue`] tree needs when
-/// it crosses the FFI boundary. The `WhiskerValueRaw`s the
-/// builder produces reference into these allocations; dropping
-/// the builder after the FFI call frees everything.
-#[derive(Default)]
 /// Pinned storage for the heap allocations referenced by a flat
-/// `WhiskerValueRaw[]` handed to the C bridge. Keep the builder
-/// alive until the FFI call returns; the bridge borrows pointers
-/// out of it for the duration of the call.
+/// `WhiskerValueRaw[]` handed to the C bridge.
+///
+/// The `WhiskerValueRaw`s the builder produces hold raw pointers into
+/// these allocations; keep the builder alive until the FFI call
+/// returns, then dropping it frees everything in one shot.
+#[derive(Default)]
 pub(crate) struct RawBuilder {
     /// `CString`s back the `WhiskerValueRaw::s` pointers. The
     /// FFI pointer points to the CString's internal buffer (a

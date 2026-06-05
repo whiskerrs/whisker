@@ -1,34 +1,36 @@
 //! `ElementRef` — Rust-side handle for invoking methods on a mounted
-//! Whisker platform component.
+//! Whisker platform component, plus the typed `XxxHandle` family that
+//! wraps it for end-user code.
 //!
-//! Phase N redesign (see `docs/phase-n-ref-api-design.md`):
+//! ## Design
 //!
 //! - **Non-generic** — `ElementRef` carries no marker type. End-users
 //!   never see `ElementRef` in component signatures; they hold typed
 //!   `XxxHandle` structs and let the wrapping `#[whisker::component]`
 //!   own the internal `ElementRef` that bridges native invocations.
 //! - **`RwSignal`-backed binding** — the inner `Option<Element>` lives
-//!   in the reactive runtime so `bound()` returns a `Signal<bool>`
-//!   that `effect(...)` / `computed(...)` / `text(value: ...)` can
-//!   observe. The hot-path `invoke()` reads via `get_untracked()` so
-//!   imperative dispatch never accidentally subscribes its caller.
+//!   in the reactive runtime so [`ElementRef::bound`] returns a
+//!   `Signal<bool>` that `effect(...)` / `computed(...)` /
+//!   `text(value: ...)` can observe. The hot-path
+//!   [`ElementRef::invoke`] reads via `get_untracked()` so imperative
+//!   dispatch never accidentally subscribes its caller.
 //! - **One invoke shape** — `invoke(method, args: WhiskerValue) ->
 //!   WhiskerValue` (sync, fire-and-forget) + `invoke_async` /
 //!   `invoke_typed<T>` (async, result-returning), mirroring
 //!   `PlatformModule::invoke` / `invoke_async`. `args` is a single
 //!   `WhiskerValue` passed straight through as the method's params
 //!   object; the result comes back as a `WhiskerValue`. `invoke_typed`
-//!   surfaces "not bound" / "platform-side error" as `RefError`
-//!   variants; `invoke` collapses both into `WhiskerValue::Error`.
+//!   surfaces "not bound" / "platform-side error" as [`RefError`]
+//!   variants; `invoke` collapses both into [`WhiskerValue::Error`].
 //!
 //! ## Where `ElementRef` appears
 //!
 //! Only in the signatures of `#[whisker::module_component]`-declared
 //! functions, as a hidden `__ref` prop the macro emits, and inside
 //! module-author-written `#[whisker::component]` wrappers that bridge
-//! a Handle struct to native via `effect(...)` blocks. End-users at
-//! app-level code see `VideoHandle`, `TextInputHandle`, ..., never
-//! `ElementRef` directly.
+//! a Handle struct to native via `effect(...)` blocks. End-user app
+//! code sees [`ElementHandle`], [`ScrollViewHandle`], [`TextHandle`],
+//! and similar typed handles — never `ElementRef` directly.
 
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -216,7 +218,7 @@ impl ElementRef {
     }
 
     /// `true` iff bound to a live element right now. Non-reactive.
-    /// For reactive observation, use [`bound()`].
+    /// For reactive observation, use [`bound`](Self::bound).
     pub fn is_bound(&self) -> bool {
         self.inner.get_untracked().is_some()
     }
@@ -348,15 +350,15 @@ impl ElementRef {
         let _ = self.inner.try_set(None);
     }
 
-    /// Deprecated public alias for [`__bind`] kept until Phase N-3
-    /// migration. Don't call from author code.
+    /// Deprecated public alias for [`__bind`](Self::__bind). Don't
+    /// call from author code.
     #[doc(hidden)]
     pub fn bind(&self, handle: Element) {
         self.__bind(handle);
     }
 
-    /// Deprecated public alias for [`__unbind`] kept until Phase N-3
-    /// migration. Don't call from author code.
+    /// Deprecated public alias for [`__unbind`](Self::__unbind). Don't
+    /// call from author code.
     #[doc(hidden)]
     pub fn clear(&self) {
         self.__unbind();
@@ -453,6 +455,22 @@ macro_rules! generic_element_methods {
 ///
 /// `Copy` (the inner `ElementRef` is an arena handle), so it can be
 /// captured by value into multiple event closures.
+///
+/// ```ignore
+/// let card = ElementHandle::new();
+/// effect({
+///     let card = card;
+///     move || if card.r().bound().get() {
+///         spawn_local(async move {
+///             if let Ok(rect) = card.bounding_client_rect().await {
+///                 println!("card is {}x{}", rect.width, rect.height);
+///             }
+///         });
+///     }
+/// });
+///
+/// render! { view(ref: card.r()) { /* … */ } }
+/// ```
 #[derive(Copy, Clone)]
 pub struct ElementHandle {
     r: ElementRef,
@@ -687,9 +705,8 @@ impl Default for TextHandle {
 ///
 /// The generic parameter is **ignored**. It's kept on the function
 /// signature so existing callers like `element_ref::<VideoProps>()`
-/// keep compiling through the Phase N migration window. Phase N-3
-/// will drop this shim in favour of typed `XxxHandle::new()`
-/// constructors.
+/// keep compiling; a future cleanup will drop this shim in favour of
+/// typed `XxxHandle::new()` constructors.
 ///
 /// ```ignore
 /// let r = ElementRef::new();
