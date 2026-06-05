@@ -5,9 +5,11 @@
 //! Quick map:
 //!
 //! - [`runtime`] — internal data structures: [`ReactiveRuntime`],
-//!   [`Owner`], [`ReactiveNode`], [`NodeData`].
-//! - [`owner`] — owner lifecycle: [`create_owner`], [`dispose_owner`],
-//!   [`with_owner`], [`on_cleanup`].
+//!   [`runtime::Scope`], [`ReactiveNode`], [`NodeData`].
+//! - [`owner`] — public owner API: the [`Owner`] handle and its
+//!   methods ([`Owner::new`], [`Owner::with`], [`Owner::dispose`],
+//!   [`Owner::pause`], [`Owner::resume`], [`Owner::is_paused`])
+//!   plus the free function [`on_cleanup`].
 //! - [`signal`] — [`signal`] / [`RwSignal`] / [`ReadSignal`] /
 //!   [`WriteSignal`].
 //! - [`effect`] — [`effect`] + dependency tracking.
@@ -56,12 +58,15 @@ pub use component::{
 pub use computed::computed;
 pub use context::{provide_context, use_context, with_context};
 pub use effect::effect;
-pub use owner::{
-    create_owner, dispose_owner, is_owner_paused, on_cleanup, pause_owner, resume_owner, with_owner,
-};
+// `on_cleanup` lives at the module top-level because it acts on
+// whichever owner is currently on the runtime stack — the caller
+// can't name it. Everything else owner-related lives behind the
+// `owner` module path (re-exported below) so users write
+// `whisker::owner::Owner::new(None)` / `owner.with(...)` / etc.
+pub use owner::on_cleanup;
 pub use prop::Signal;
 pub use resource::{resource, resource_sync, Resource, ResourceState};
-pub use runtime::{NodeId, OwnerId};
+pub use runtime::{NodeId, Owner};
 pub use scheduler::flush;
 pub use signal::{signal, ReadSignal, RwSignal, WriteSignal};
 pub use stored::StoredValue;
@@ -88,7 +93,7 @@ thread_local! {
 /// closures.
 ///
 /// Crate-internal; the public surface is the typed `signal` / `effect`
-/// / `computed` / `dispose_owner` etc. functions. Exposing the raw
+/// / `computed` / `Owner::dispose` etc. functions. Exposing the raw
 /// runtime would let callers violate borrow-window invariants.
 pub(crate) fn with_runtime<R>(f: impl FnOnce(&mut ReactiveRuntime) -> R) -> R {
     RUNTIME.with_borrow_mut(f)

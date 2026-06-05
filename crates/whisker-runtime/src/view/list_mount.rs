@@ -47,7 +47,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use crate::reactive::{create_owner, dispose_owner, effect, on_cleanup, with_owner, OwnerId};
+use crate::reactive::{effect, on_cleanup, Owner};
 
 use super::handle::Element;
 use super::list_provider::{NativeItemProvider, INVALID_ITEM_INDEX};
@@ -60,7 +60,7 @@ use super::renderer::{install_list_native_item_provider, set_update_list_info};
 struct Slot {
     #[allow(dead_code)] // kept for future "manual remove" code paths
     element: Element,
-    owner: OwnerId,
+    owner: Owner,
 }
 
 /// Drive a Whisker-side virtualised list against an already-created
@@ -123,8 +123,8 @@ pub fn list_mount<T, K, ItemsFn, KeyFn, BodyFn>(
                 // effects inside the body (signal subscriptions
                 // etc.) get cleaned up cleanly when the slot is
                 // enqueued out.
-                let owner = create_owner(None);
-                let element = with_owner(owner, || (body)(item));
+                let owner = Owner::new(None);
+                let element = owner.with(|| (body)(item));
                 let sign = element.id() as i32;
                 slots.borrow_mut().insert(sign, Slot { element, owner });
                 sign
@@ -134,7 +134,7 @@ pub fn list_mount<T, K, ItemsFn, KeyFn, BodyFn>(
             let slots = slots.clone();
             Box::new(move |sign| {
                 if let Some(slot) = slots.borrow_mut().remove(&sign) {
-                    dispose_owner(slot.owner);
+                    slot.owner.dispose();
                 }
             })
         }),
@@ -150,7 +150,7 @@ pub fn list_mount<T, K, ItemsFn, KeyFn, BodyFn>(
     on_cleanup(move || {
         let mut slots = slots.borrow_mut();
         for (_, slot) in slots.drain() {
-            dispose_owner(slot.owner);
+            slot.owner.dispose();
         }
     });
 }
@@ -159,7 +159,7 @@ pub fn list_mount<T, K, ItemsFn, KeyFn, BodyFn>(
 mod tests {
     use super::*;
     use crate::element::ElementTag;
-    use crate::reactive::{create_owner, dispose_owner, flush, with_owner};
+    use crate::reactive::flush;
     use crate::view::renderer::{install_renderer, uninstall_renderer, DynRenderer};
     use crate::view::{create_element_by_name, BindType};
 
@@ -230,8 +230,8 @@ mod tests {
     #[test]
     fn list_mount_broadcasts_initial_count_and_installs_provider() {
         with_capturing(|count, installed| {
-            let owner = create_owner(None);
-            with_owner(owner, || {
+            let owner = Owner::new(None);
+            owner.with(|| {
                 let handle = create_element_by_name("list");
                 list_mount(
                     handle,
@@ -244,17 +244,17 @@ mod tests {
 
             assert_eq!(*count.borrow(), Some(3));
             assert!(installed.borrow().is_some());
-            dispose_owner(owner);
+            owner.dispose();
         });
     }
 
     #[test]
     fn provider_component_at_index_returns_distinct_signs_and_runs_body() {
         with_capturing(|_count, installed| {
-            let owner = create_owner(None);
+            let owner = Owner::new(None);
             let body_calls = Rc::new(RefCell::new(Vec::<i32>::new()));
             let bc = body_calls.clone();
-            with_owner(owner, || {
+            owner.with(|| {
                 let handle = create_element_by_name("list");
                 list_mount(
                     handle,
@@ -281,15 +281,15 @@ mod tests {
             assert_ne!(s1, s2);
             assert_eq!(*body_calls.borrow(), vec![100, 200, 300]);
 
-            dispose_owner(owner);
+            owner.dispose();
         });
     }
 
     #[test]
     fn provider_out_of_range_index_returns_invalid() {
         with_capturing(|_count, installed| {
-            let owner = create_owner(None);
-            with_owner(owner, || {
+            let owner = Owner::new(None);
+            owner.with(|| {
                 let handle = create_element_by_name("list");
                 list_mount(
                     handle,
@@ -305,17 +305,17 @@ mod tests {
                 (provider.component_at_index)(5, 0, false),
                 INVALID_ITEM_INDEX
             );
-            dispose_owner(owner);
+            owner.dispose();
         });
     }
 
     #[test]
     fn enqueue_component_disposes_the_slot_owner() {
         with_capturing(|_count, installed| {
-            let owner = create_owner(None);
+            let owner = Owner::new(None);
             let drop_observed = Rc::new(RefCell::new(false));
 
-            with_owner(owner, || {
+            owner.with(|| {
                 let handle = create_element_by_name("list");
                 let dr = drop_observed.clone();
                 list_mount(
@@ -350,16 +350,16 @@ mod tests {
                 "after enqueue, slot owner disposed"
             );
 
-            dispose_owner(owner);
+            owner.dispose();
         });
     }
 
     #[test]
     fn changing_items_rebroadcasts_count() {
         with_capturing(|count, _installed| {
-            let owner = create_owner(None);
+            let owner = Owner::new(None);
             let (items_read, items_write) = crate::reactive::signal(vec![1_i32, 2, 3]);
-            with_owner(owner, || {
+            owner.with(|| {
                 let handle = create_element_by_name("list");
                 list_mount(
                     handle,
@@ -379,17 +379,17 @@ mod tests {
             flush();
             assert_eq!(*count.borrow(), Some(0));
 
-            dispose_owner(owner);
+            owner.dispose();
         });
     }
 
     #[test]
     fn on_cleanup_disposes_remaining_slot_owners() {
         with_capturing(|_count, installed| {
-            let outer = create_owner(None);
+            let outer = Owner::new(None);
             let drops = Rc::new(RefCell::new(0_u32));
 
-            with_owner(outer, || {
+            outer.with(|| {
                 let handle = create_element_by_name("list");
                 let drops = drops.clone();
                 list_mount(
@@ -415,7 +415,7 @@ mod tests {
             // map drops too — the on_cleanup hook is what reaches
             // into the slot map BEFORE that to dispose owners.)
             drop(provider);
-            dispose_owner(outer);
+            outer.dispose();
             assert_eq!(
                 *drops.borrow(),
                 2,

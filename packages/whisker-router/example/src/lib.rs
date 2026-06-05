@@ -40,7 +40,7 @@
 //!
 //! `safe_area_insets()` allocates a process-global signal lazily on
 //! first call (`OnceLock::get_or_init`). When that first call lands
-//! inside `StackLayout`'s `with_owner(create_owner(None), || …)`
+//! inside `StackLayout`'s `Owner::new(None).with(|| …)`
 //! body, the signal becomes owned by the per-route owner. The
 //! Android side of the module fires `OnStartObserving` synchronously
 //! and `sendEvent("insetsChanged", …)` lands during the same tick

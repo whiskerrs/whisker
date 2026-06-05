@@ -251,9 +251,9 @@ mod tests {
 
     fn with_runtime<F: FnOnce() -> T, T>(f: F) -> T {
         whisker::runtime::reactive::__reset_for_tests();
-        let owner = whisker::runtime::reactive::create_owner(None);
-        let out = whisker::runtime::reactive::with_owner(owner, f);
-        whisker::runtime::reactive::dispose_owner(owner);
+        let owner = whisker::runtime::reactive::Owner::new(None);
+        let out = owner.with(f);
+        owner.dispose();
         out
     }
 

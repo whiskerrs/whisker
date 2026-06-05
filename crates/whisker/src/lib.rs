@@ -103,12 +103,21 @@ macro_rules! module {
 // directly. The underlying impl lives in `whisker_runtime::reactive`
 // for callers that prefer the long path.
 pub use whisker_runtime::reactive::{
-    arc_signal, computed, create_owner, dispose_owner, effect, flush, flush_mounts,
-    is_owner_paused, mount_component, on_cleanup, on_mount, pause_owner, provide_context, resource,
-    resource_sync, resume_owner, signal, unmount_component, use_context, with_context, with_owner,
+    arc_signal, computed, effect, flush, flush_mounts, mount_component, on_cleanup, on_mount,
+    provide_context, resource, resource_sync, signal, unmount_component, use_context, with_context,
     ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource, ResourceState, RwSignal,
     Signal, StoredValue, WriteSignal,
 };
+// Owner / scope API. Application code rarely touches these —
+// `#[component]` + `on_cleanup` cover the common case. Framework
+// extension code (custom control-flow, custom routers, advanced
+// tests) reaches into this module to create and dispose reactive
+// scopes manually. See the module rustdoc for the conceptual model.
+pub use whisker_runtime::reactive::owner;
+// `Owner` (the handle) is re-exported at crate root too so users
+// can write `let scope: Owner = ...` without dragging the
+// namespace import in just for the type annotation.
+pub use whisker_runtime::reactive::Owner;
 // Async task host. `resource()` uses these internally, but they're
 // also part of the user surface: components spawn ad-hoc async work
 // through `spawn_local`, and `run_blocking` is the standard escape
@@ -1284,12 +1293,12 @@ pub mod __tags {
             // rebuilds the items Vec + broadcasts the new count.
             //
             // Owner cascade: per-item owners are detached
-            // (`create_owner(None)`); the effect explicitly disposes
+            // (`Owner::new(None)`); the effect explicitly disposes
             // them on diff. When the surrounding component disposes,
             // the released list element + items are torn down
             // through their respective owner releases.
             struct ListEntry {
-                owner: ::whisker_runtime::reactive::OwnerId,
+                owner: ::whisker_runtime::reactive::Owner,
                 handle: Element,
             }
             let entries: ::std::rc::Rc<
@@ -1310,8 +1319,8 @@ pub mod __tags {
                     if let ::std::option::Option::Some(existing) = old.remove(&k) {
                         new_entries.insert(k.clone(), existing);
                     } else {
-                        let item_owner = ::whisker_runtime::reactive::create_owner(None);
-                        let li = ::whisker_runtime::reactive::with_owner(item_owner, || {
+                        let item_owner = ::whisker_runtime::reactive::Owner::new(None);
+                        let li = item_owner.with(|| {
                             // Auto-wrap: the user's `children(item)` returns
                             // arbitrary content (a story_row view, a custom
                             // component, etc.). Lynx's <list> requires its
@@ -1341,7 +1350,7 @@ pub mod __tags {
                 // Disappeared items: detach + dispose.
                 for (_, entry) in old.drain() {
                     ::whisker_runtime::view::remove_child(handle, entry.handle);
-                    ::whisker_runtime::reactive::dispose_owner(entry.owner);
+                    entry.owner.dispose();
                 }
 
                 // Rebuild items Vec in new key order, capturing

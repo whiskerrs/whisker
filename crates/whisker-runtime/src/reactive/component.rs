@@ -24,8 +24,7 @@
 
 use std::rc::Rc;
 
-use super::owner::{create_owner, dispose_owner, with_owner};
-use super::runtime::OwnerId;
+use super::runtime::Owner;
 use super::{untrack, with_runtime};
 use crate::view::Element;
 
@@ -33,14 +32,14 @@ use crate::view::Element;
 /// against it for hot reload, run `body` inside that owner, and
 /// return both the owner id and the body's result.
 ///
-/// The caller is responsible for keeping the returned `OwnerId` alive
+/// The caller is responsible for keeping the returned `Owner` alive
 /// (e.g. attaching it to the parent component's owner-children list
 /// via the renderer) and for disposing it when the component
 /// unmounts. The owner is already linked as a child of the
-/// current-owner-at-call-time, so calling [`dispose_owner`] on an
+/// current-owner-at-call-time, so calling [`Owner::dispose`] on an
 /// ancestor will cascade.
-pub fn mount_component<R>(fn_ptr: *const (), body: impl FnOnce() -> R) -> (OwnerId, R) {
-    let owner = create_owner(None);
+pub fn mount_component<R>(fn_ptr: *const (), body: impl FnOnce() -> R) -> (Owner, R) {
+    let owner = Owner::new(None);
     with_runtime(|rt| {
         if let Some(o) = rt.owners.get_mut(owner) {
             o.mount_fn = Some(fn_ptr);
@@ -56,14 +55,14 @@ pub fn mount_component<R>(fn_ptr: *const (), body: impl FnOnce() -> R) -> (Owner
     // Clear the tracker around the body call so a direct
     // `signal.get()` in user code doesn't silently subscribe the
     // outer node.
-    let result = untrack(|| with_owner(owner, body));
+    let result = untrack(|| owner.with(body));
     (owner, result)
 }
 
 /// Dispose a component owner *and* deregister it from
-/// `component_owners`. Use this instead of plain `dispose_owner` for
+/// `component_owners`. Use this instead of plain `Owner::dispose` for
 /// owners created via `mount_component`.
-pub fn unmount_component(owner: OwnerId) {
+pub fn unmount_component(owner: Owner) {
     let fn_ptr = with_runtime(|rt| rt.owners.get(owner).and_then(|o| o.mount_fn));
     if let Some(fp) = fn_ptr {
         with_runtime(|rt| {
@@ -75,7 +74,7 @@ pub fn unmount_component(owner: OwnerId) {
             }
         });
     }
-    dispose_owner(owner);
+    owner.dispose();
 }
 
 /// Register `f` as a post-mount callback for the current owner. Fires
@@ -123,7 +122,7 @@ pub fn flush_mounts() {
 /// a snapshot — modifying the runtime's `component_owners` after
 /// this call won't affect the returned `Vec`.
 #[doc(hidden)]
-pub fn owners_for_fn(fn_ptr: *const ()) -> Vec<OwnerId> {
+pub fn owners_for_fn(fn_ptr: *const ()) -> Vec<Owner> {
     with_runtime(|rt| {
         rt.component_owners
             .get(&fn_ptr)
@@ -201,7 +200,7 @@ pub(crate) struct MountSite {
     pub body: Rc<dyn Fn() -> Element + 'static>,
     /// Current owner — `Some` between mounts, `None` during the
     /// dispose-then-remount window.
-    pub owner: Option<OwnerId>,
+    pub owner: Option<Owner>,
     /// Element handle the body returned for its outermost element.
     /// Detached from the parent at the start of each remount, then
     /// replaced by the new body's root inserted at the same slot.
@@ -281,7 +280,7 @@ where
 
     // Initial mount: fresh owner, run body, capture root.
     let body_for_first = body.clone();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     with_runtime(|rt| {
         if let Some(o) = rt.owners.get_mut(owner) {
             o.mount_fn = Some(fn_ptr);
@@ -290,7 +289,7 @@ where
     });
     // See `mount_component` for the rationale on the `untrack`
     // bracket. Same invariant applies to the remountable variant.
-    let body_root = untrack(|| with_owner(owner, || (*body_for_first)()));
+    let body_root = untrack(|| owner.with(|| (*body_for_first)()));
 
     // Register the MountSite with parent / anchor as `None` for now
     // — the next `view::append_child` that attaches `body_root`
@@ -456,7 +455,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
 
     // 2. Detach every old body_root from its parent *before* any
     //    dispose runs. Element handles get invalidated by
-    //    `dispose_owner` (renderer slot becomes `None`), so once
+    //    `Owner::dispose` (renderer slot becomes `None`), so once
     //    disposed, subsequent `remove_child` calls would silently
     //    no-op against Lynx — visible as "stale subtree still on
     //    screen" after hot reload. Doing the remove first keeps the
@@ -473,7 +472,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
 
     // 3. Dispose old owners + run new bodies, collecting (mount_id,
     //    parent, old_root, new_root, new_owner).
-    let mut results: Vec<(MountId, Element, Element, Element, OwnerId)> =
+    let mut results: Vec<(MountId, Element, Element, Element, Owner)> =
         Vec::with_capacity(infos.len());
     for info in infos {
         let old_owner = with_runtime(|rt| {
@@ -482,10 +481,10 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
             site.owner.take()
         });
         if let Some(o) = old_owner {
-            dispose_owner(o);
+            o.dispose();
         }
 
-        let new_owner = create_owner(None);
+        let new_owner = Owner::new(None);
         with_runtime(|rt| {
             if let Some(o) = rt.owners.get_mut(new_owner) {
                 o.mount_fn = Some(info.fn_ptr);
@@ -499,7 +498,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
         // against its own nested `effect`/`computed`s, not against
         // whatever scheduler context happens to be active when
         // `tick_callback` calls into us.
-        let new_body_root = untrack(|| with_owner(new_owner, || (*info.body)()));
+        let new_body_root = untrack(|| new_owner.with(|| (*info.body)()));
         // The body's `mount_component_remountable` calls leave a
         // PENDING_MOUNT entry behind; we drain it here because the
         // batched path attaches the new root via `insert_child_at`

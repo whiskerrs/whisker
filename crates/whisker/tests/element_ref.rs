@@ -21,9 +21,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use whisker::prelude::*;
-use whisker::runtime::reactive::{__reset_for_tests, create_owner, dispose_owner, effect, flush};
+use whisker::runtime::reactive::{__reset_for_tests, effect, flush};
 use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element};
-use whisker::with_owner;
+use whisker::Owner;
 
 // ---- Minimal renderer ------------------------------------------------------
 
@@ -74,9 +74,9 @@ fn with_test_env<R>(f: impl FnOnce() -> R) -> R {
     __reset_for_tests();
     let (rec, _log) = Recorder::with_log();
     let prev = install_renderer(Box::new(rec));
-    let owner = create_owner(None);
-    let out = with_owner(owner, f);
-    dispose_owner(owner);
+    let owner = Owner::new(None);
+    let out = owner.with(f);
+    owner.dispose();
     uninstall_renderer(prev);
     out
 }
@@ -125,23 +125,23 @@ fn disposing_owner_unbinds_ref() {
 
     // Allocate the ref in an outer owner so the bind/unbind cycle
     // doesn't take the ref's storage with it.
-    let outer = create_owner(None);
-    let r = with_owner(outer, ElementRef::new);
+    let outer = Owner::new(None);
+    let r = outer.with(ElementRef::new);
 
     // Mount inside an inner owner — the macro emits on_cleanup
     // against the inner owner.
-    let inner = create_owner(None);
-    with_owner(inner, || {
+    let inner = Owner::new(None);
+    inner.with(|| {
         let _h = render! { XRefTarget(ref: r, value: "x") };
     });
     assert!(r.is_bound(), "ref should bind on mount");
 
     // Disposing the inner owner triggers the on_cleanup that
     // __unbinds the ref.
-    dispose_owner(inner);
+    inner.dispose();
     assert!(!r.is_bound(), "ref should unbind on inner-owner disposal");
 
-    dispose_owner(outer);
+    outer.dispose();
     uninstall_renderer(prev);
 }
 
@@ -151,14 +151,14 @@ fn bound_signal_is_reactive() {
     let (rec, _log) = Recorder::with_log();
     let prev = install_renderer(Box::new(rec));
 
-    let outer = create_owner(None);
-    let r = with_owner(outer, ElementRef::new);
+    let outer = Owner::new(None);
+    let r = outer.with(ElementRef::new);
 
     let observed = Rc::new(RefCell::new(Vec::<bool>::new()));
     let observed_clone = observed.clone();
 
     // Effect must run in *some* owner; the outer one is fine.
-    with_owner(outer, || {
+    outer.with(|| {
         let bound = r.bound();
         effect(move || {
             observed_clone.borrow_mut().push(bound.get());
@@ -167,8 +167,8 @@ fn bound_signal_is_reactive() {
     flush();
     assert_eq!(*observed.borrow(), vec![false], "initial: unbound");
 
-    let inner = create_owner(None);
-    with_owner(inner, || {
+    let inner = Owner::new(None);
+    inner.with(|| {
         let _h = render! { XRefTarget(ref: r, value: "x") };
     });
     flush();
@@ -178,7 +178,7 @@ fn bound_signal_is_reactive() {
         "effect re-runs on bind"
     );
 
-    dispose_owner(inner);
+    inner.dispose();
     flush();
     assert_eq!(
         *observed.borrow(),
@@ -186,7 +186,7 @@ fn bound_signal_is_reactive() {
         "effect re-runs on unbind"
     );
 
-    dispose_owner(outer);
+    outer.dispose();
     uninstall_renderer(prev);
 }
 

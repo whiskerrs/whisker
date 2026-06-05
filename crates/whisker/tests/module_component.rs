@@ -13,10 +13,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use whisker::flush;
 use whisker::prelude::*;
-use whisker::runtime::reactive::{__reset_for_tests, create_owner, dispose_owner};
+use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element};
-use whisker::{flush, with_owner};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
@@ -99,9 +99,9 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     __reset_for_tests();
     let (rec, log) = Recorder::with_log();
     let prev = install_renderer(Box::new(rec));
-    let owner = create_owner(None);
-    let out = with_owner(owner, || f(log));
-    dispose_owner(owner);
+    let owner = Owner::new(None);
+    let out = owner.with(|| f(log));
+    owner.dispose();
     uninstall_renderer(prev);
     out
 }

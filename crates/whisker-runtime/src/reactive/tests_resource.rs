@@ -7,16 +7,14 @@
 //! purely-async fetchers; `run_blocking`-using fetchers do require
 //! the dispatcher and are exercised in `tasks::tests`).
 
-use crate::reactive::{
-    __reset_for_tests, create_owner, resource, resource_sync, with_owner, ResourceState,
-};
+use crate::reactive::{__reset_for_tests, resource, resource_sync, Owner, ResourceState};
 use crate::tasks;
 
 fn with_test_owner<R>(f: impl FnOnce() -> R) -> R {
     __reset_for_tests();
     tasks::__reset_for_tests();
-    let owner = create_owner(None);
-    with_owner(owner, f)
+    let owner = Owner::new(None);
+    owner.with(f)
 }
 
 #[test]

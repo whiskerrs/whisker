@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use whisker::runtime::reactive::{create_owner, dispose_owner, effect, with_owner, OwnerId};
+use whisker::runtime::reactive::{effect, Owner};
 use whisker::runtime::view::{append_child, create_phantom_element, remove_child, Element};
 use whisker::{component, provide_context, use_context, Children};
 
@@ -88,7 +88,7 @@ pub fn outlet<R: Route>(render: RouteRenderFn<R>) -> Element {
     let stack = router::<R>();
     let frag = create_phantom_element();
 
-    type Mounted = Rc<RefCell<Option<(OwnerId, Element)>>>;
+    type Mounted = Rc<RefCell<Option<(Owner, Element)>>>;
     let mounted: Mounted = Rc::new(RefCell::new(None));
 
     let current = stack.current();
@@ -98,15 +98,15 @@ pub fn outlet<R: Route>(render: RouteRenderFn<R>) -> Element {
         // Tear down the previously-mounted branch (if any).
         if let Some((owner, handle)) = mounted.borrow_mut().take() {
             remove_child(frag, handle);
-            dispose_owner(owner);
+            owner.dispose();
         }
 
         // Read the current route and mount its renderer under a
         // fresh owner so all signals/effects/spawned tasks created
         // inside live and die with this entry.
         let route = current.get();
-        let owner = create_owner(None);
-        let handle = with_owner(owner, || {
+        let owner = Owner::new(None);
+        let handle = owner.with(|| {
             let h = render.call(route);
             append_child(frag, h);
             h
@@ -140,9 +140,9 @@ mod tests {
 
     fn with_runtime<F: FnOnce() -> T, T>(f: F) -> T {
         whisker::runtime::reactive::__reset_for_tests();
-        let owner = create_owner(None);
-        let out = with_owner(owner, f);
-        dispose_owner(owner);
+        let owner = Owner::new(None);
+        let out = owner.with(f);
+        owner.dispose();
         out
     }
 

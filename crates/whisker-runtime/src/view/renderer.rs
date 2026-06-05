@@ -346,7 +346,7 @@ pub fn create_element_by_name(tag_name: &str) -> Element {
 pub fn create_element(tag: ElementTag) -> Element {
     let handle = with_renderer(|r| r.create_element(tag), Element(u32::MAX));
     // Track the freshly-created element in whichever reactive owner
-    // is currently active. `dispose_owner` later releases everything
+    // is currently active. `Owner::dispose` later releases everything
     // in this list via `release_element`. This is what stops
     // `BridgeRenderer::elements` (and the underlying Lynx
     // FiberElement refcounts) from accumulating across `<Show>`

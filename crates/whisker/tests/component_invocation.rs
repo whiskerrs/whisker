@@ -17,11 +17,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
-use whisker::runtime::reactive::{
-    __reset_for_tests, __reset_pending_mount_for_tests, create_owner,
-};
+use whisker::runtime::reactive::{__reset_for_tests, __reset_pending_mount_for_tests};
 use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element, View};
-use whisker::with_owner;
+use whisker::Owner;
 
 // ----- Recording renderer ----------------------------------------------------
 
@@ -99,8 +97,8 @@ fn with_test_env<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     let rec = Recorder::default();
     let log = rec.log.clone();
     let prev = install_renderer(Box::new(rec));
-    let owner = create_owner(None);
-    let result = with_owner(owner, || f(log));
+    let owner = Owner::new(None);
+    let result = owner.with(|| f(log));
     uninstall_renderer(prev);
     result
 }
@@ -474,10 +472,10 @@ fn props_struct_is_constructable_directly() {
     // go through `render!`), but it's the typed-builder API surface
     // and shouldn't break by accident.
     fresh();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let rec = Recorder::default();
     let prev = install_renderer(Box::new(rec));
-    with_owner(owner, || {
+    owner.with(|| {
         // Direct (non-render!) call must go through the PascalCase
         // alias the `#[component]` macro emits — the snake_case fn
         // is private inside the `__one_string_prop_inner` module.
