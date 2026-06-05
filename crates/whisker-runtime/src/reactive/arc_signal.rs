@@ -122,18 +122,32 @@ fn track<T: 'static>(inner: &Rc<ArcSignalInner<T>>) {
 /// slot has been freed. Mirrors `signal::write_and_notify` but reads
 /// the subscriber list from the Arc signal's own storage instead of
 /// from an arena node.
+///
+/// Subscribers go through [`super::scheduler::schedule`] (not a raw
+/// `rt.pending.push`) so the host wake on the empty→non-empty edge
+/// fires. Without that, writes from a bridge callback (e.g.
+/// `module.on_event(...)` updating a global `ArcRwSignal`) queued
+/// dirty effects but never flushed them until some other source
+/// happened to trigger a reactive cycle — manifesting as a UI
+/// bound to the signal that simply never re-rendered. Stale
+/// subscriber pruning is independent of the wake.
 fn notify_subscribers<T: 'static>(inner: &Rc<ArcSignalInner<T>>) {
     let subscribers: Vec<NodeId> = inner.subscribers.borrow().clone();
     let mut stale: Vec<NodeId> = Vec::new();
+    // First pass: identify stale subscribers so the dedupe walk
+    // inside `schedule()` doesn't end up with freed slots.
     with_runtime(|rt| {
         for sub in &subscribers {
-            if rt.nodes.contains_key(*sub) {
-                rt.pending.push(*sub);
-            } else {
+            if !rt.nodes.contains_key(*sub) {
                 stale.push(*sub);
             }
         }
     });
+    for sub in &subscribers {
+        if !stale.contains(sub) {
+            super::scheduler::schedule(*sub);
+        }
+    }
     if !stale.is_empty() {
         inner
             .subscribers
