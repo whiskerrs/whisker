@@ -2,62 +2,78 @@
 //!
 //! Cross-platform mobile UI framework for Rust, built on the Lynx C++ engine.
 //!
-//! Most users only need:
+//! Most users only need [`prelude`]:
 //!
 //! ```ignore
 //! use whisker::prelude::*;
 //!
 //! #[whisker::main]
 //! fn app() -> Element {
-//!     rsx! {
+//!     render! {
 //!         page { style: "background: white;",
-//!             text { "Hello, Whisker" }
+//!             text { value: "Hello, Whisker" }
 //!         }
 //!     }
 //! }
 //! ```
+//!
+//! ## What's in this crate
+//!
+//! The `whisker` crate is an *umbrella* — almost everything here is a
+//! re-export from a more specialised companion crate, surfaced through
+//! a single import root so app code never needs to know which inner
+//! crate owns which symbol. The conceptual groupings:
+//!
+//! - **Macros** ([`component`], [`main`], [`module_component`], [`render`])
+//!   — proc macros that lower component definitions and the `render! { … }`
+//!   DSL into builder chains over the items in [`__tags`].
+//! - **Reactive primitives** — [`signal()`], [`computed()`], [`effect()`],
+//!   [`on_cleanup`], [`on_mount`], [`provide_context`], [`use_context`],
+//!   [`resource()`], and their handle types ([`Signal`], [`ReadSignal`],
+//!   [`RwSignal`], [`Resource`], …).
+//! - **Async** — [`spawn_local`], [`run_blocking`], [`run_on_main_thread`].
+//! - **Control flow** — [`ForEach`] (keyed list), [`Show`] (conditional).
+//!   Both are written as ordinary `#[component]` functions.
+//! - **CSS** — the [`css`] type-safe builder + the `css!` macro.
+//! - **Built-in elements** — `view`, `text`, `scroll_view`, `list`,
+//!   `page`, `raw_text`, `fragment`. The `render!` macro lowers each
+//!   tag invocation into a builder chain on the corresponding struct in
+//!   [`__tags`]; the [`__tags::ElementBuilder`] trait provides the
+//!   shared `style` / `class` / `on_<event>` / … methods.
+//! - **Platform bridges** — [`PlatformModule`] + [`module!`] for
+//!   function-shaped native modules, [`ElementRef`] / [`element_ref()`]
+//!   for imperative methods on mounted components, [`ElementHandle`]
+//!   et al for the typed return values.
+//! - **Typed attribute enums** — see [`attrs`] for the closed-set
+//!   string attributes ([`attrs::ScrollOrientation`], etc.).
+//!
+//! Everything intended for direct user code is also pulled into
+//! [`prelude`]; reaching into the long paths is only necessary when
+//! writing framework-level extension code.
 
-// `#[whisker::component]` (and other macros in this crate) emit
-// `::whisker::…` paths. From inside the whisker crate itself those
-// paths don't resolve naturally — Rust treats `whisker` as the
-// implicit `crate::` keyword's snake-case parallel only at the
-// edition's discretion. `extern crate self as whisker;` makes the
-// crate's own items reachable through `::whisker::…`, which is what
-// the macros expand to. Required for built-in `#[component]`-shaped
-// items (e.g. `ForEach` / `Show` in `control_flow.rs`).
+// Lets the `#[whisker::component]` / `render!` expansions inside this
+// crate (e.g. `ForEach` / `Show` in `control_flow.rs`) resolve their
+// emitted `::whisker::…` paths. Without this the macros only work
+// from downstream crates.
 extern crate self as whisker;
 
 pub use whisker_app_config as app_config;
 pub use whisker_runtime as runtime;
 
-// Type-safe CSS builder. Accessible as `whisker::css::*` (the
-// namespaced form for explicit qualification) or by reaching
-// through `whisker::prelude::*` (which re-exports the most common
-// pieces).
 pub use whisker_css as css;
 
-// Re-export the element tag enum the macro emit references through
-// `::whisker::ElementTag`. The C bridge keys element creation off
-// the same enum.
+// The macro expansions reference this through `::whisker::ElementTag`;
+// the C bridge keys element creation off the same enum.
 pub use whisker_runtime::element::ElementTag;
 
 pub use whisker_macros::{component, main, module_component, render};
 
-// Phase 7-Φ.H.2 — `ElementRef<T>` is the Rust-side handle for
-// invoking methods on a mounted platform component. `element_ref::<T>()`
-// allocates a fresh, unbound ref; the `#[whisker::module_component]`
-// macro binds it on mount when passed as the `ref:` prop.
 pub use whisker_driver::{
     animate_cancel, animate_start, element_ref, invoke_element_animate, AnimateOp, AnimateOptions,
     BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
     TextBoundingRect, TextHandle, UiInfo,
 };
 
-// Function-only module dispatch. `PlatformModule` is the name-keyed
-// handle (≈ Expo `requireNativeModule`); the `module!` macro builds
-// one with the calling crate's name auto-prefixed for collision-free
-// dispatch (mirrors how `#[whisker::module_component]` namespaces
-// element tags).
 pub use whisker_driver::module::PlatformModule;
 
 /// The universal tagged-union value model. Crosses the native
@@ -98,10 +114,6 @@ macro_rules! module {
     };
 }
 
-// Phase 6.5a reactive surface, lifted to the top-level namespace so
-// user code can `use whisker::*` and reach the typical primitives
-// directly. The underlying impl lives in `whisker_runtime::reactive`
-// for callers that prefer the long path.
 pub use whisker_runtime::reactive::{
     arc_signal, computed, effect, flush, flush_mounts, mount_component, on_cleanup, on_mount,
     provide_context, resource, resource_sync, signal, unmount_component, use_context, with_context,
@@ -112,40 +124,19 @@ pub use whisker_runtime::reactive::{
 // `#[component]` + `on_cleanup` cover the common case. Framework
 // extension code (custom control-flow, custom routers, advanced
 // tests) reaches into this module to create and dispose reactive
-// scopes manually. See the module rustdoc for the conceptual model.
+// scopes manually.
 pub use whisker_runtime::reactive::owner;
-// `Owner` (the handle) is re-exported at crate root too so users
-// can write `let scope: Owner = ...` without dragging the
-// namespace import in just for the type annotation.
 pub use whisker_runtime::reactive::Owner;
-// Async task host. `resource()` uses these internally, but they're
-// also part of the user surface: components spawn ad-hoc async work
-// through `spawn_local`, and `run_blocking` is the standard escape
-// hatch for sync IO inside `async fn` bodies.
 pub use whisker_runtime::tasks::{run_blocking, run_until_stalled, spawn_local};
 mod control_flow;
 mod style;
 
-// Typed enums for built-in element attributes whose Lynx-side wire
-// shape is a closed set of strings (`scroll_orientation`, `list_type`,
-// `pan_intercept_direction`, …). The setters keep their `impl
-// Into<Signal<String>>` bound for raw-string back-compat; the enums
-// plug into the same bound via `From<EnumType> for Signal<String>`.
 pub mod attrs;
 
 pub use style::{apply_style, Style};
 
-// Built-in control flow — same `#[component]` form as anything a user
-// could implement. The PascalCase aliases `ForEach` / `Show` are
-// what `render!` resolves to.
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
-// `Children` is the conventional prop type for components that wrap
-// non-kwarg child nodes in their `render!` invocation.
 pub use whisker_runtime::view::Children;
-// Function-shaped prop types for control-flow components — the
-// `each` / `key` / `children` triple `ForEach` takes, the
-// `Fallback` newtype `Show` accepts as its `fallback:` kwarg, and
-// anything similar a user would have on their own component.
 pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
 
 /// Built-in tag builders. The `render!` macro lowers each built-in
@@ -183,29 +174,15 @@ pub mod __tags {
         Element,
     };
 
-    // ---- The common builder surface -------------------------------------
-    //
-    // Styling, the universal Lynx attributes, the full built-in event
-    // set, and children — every built-in tag shares these, so they
-    // live **once** on the `ElementBuilder` trait as provided
-    // methods rather than being copy-pasted across six structs.
-    //
-    // ## Why a trait (and not `macro_rules!`)
-    //
-    // An earlier note here recorded that rust-analyzer's
-    // method-completion engine does *not* surface methods produced
-    // by a `macro_rules!` expansion inside an `impl` block — which
-    // is why the per-tag methods used to be hand-inlined. A trait is
-    // different: trait methods are first-class items RA indexes and
-    // completes normally, **provided the trait is in scope**. The
-    // `render!` / `#[component]` expansions bring it into scope with
+    // Why a trait (and not `macro_rules!`): RA's method-completion
+    // does NOT surface methods produced by a `macro_rules!` expansion
+    // inside an `impl` block (which is why the per-tag methods used
+    // to be hand-inlined). Trait methods are first-class items RA
+    // indexes and completes, provided the trait is in scope — the
+    // `render!` / `#[component]` expansions bring it in with
     // `use ::whisker::__tags::ElementBuilder as _;` right before the
-    // builder chain, so `view(on_|…)` kwarg completion still works.
-    // (`crates/whisker-macros/tests/ra_completion.rs` is the
-    // end-to-end guard.)
-    //
-    // Tag-specific value attributes (`image::src`, `text::value`, …)
-    // stay as inherent methods on each struct, below.
+    // builder chain. End-to-end guard:
+    // `crates/whisker-macros/tests/ra_completion.rs`.
 
     /// Shared builder methods for every built-in element tag.
     ///
@@ -225,10 +202,16 @@ pub mod __tags {
         ///
         /// Accepts any value that converts into [`crate::Style`] — a
         /// [`whisker_css::Css`] builder, a `String` / `&str` raw CSS
-        /// literal, or a reactive [`ReadSignal`] / [`RwSignal`] of
-        /// either form. Reactive variants re-apply the CSS via the
+        /// literal, or a reactive [`ReadSignal`](crate::ReadSignal)
+        /// / [`RwSignal`](crate::RwSignal) of either form. Reactive variants re-apply the CSS via the
         /// element's internal `effect` whenever the underlying
         /// signal changes.
+        ///
+        /// ```ignore
+        /// view { style: "padding: 8px; background: red;" }
+        /// view { style: Css::new().padding(8.px()).background(NamedColor::Red) }
+        /// view { style: computed(move || format!("opacity: {}", alpha.get())) }
+        /// ```
         fn style<V>(self, v: V) -> Self
         where
             V: Into<crate::Style>,
@@ -279,6 +262,16 @@ pub mod __tags {
 
         /// `data-<key>` custom attribute, surfaced back on events via
         /// `Target::dataset`.
+        ///
+        /// Use to thread per-element identifiers through to an event
+        /// handler without an extra closure capture.
+        ///
+        /// ```ignore
+        /// view {
+        ///     data: ("row-id", row.id.to_string()),
+        ///     on_tap: |e| println!("tapped row {:?}", e.target.dataset.get("row-id")),
+        /// }
+        /// ```
         fn data<V>(self, key: &str, v: V) -> Self
         where
             V: Into<Signal<String>>,
@@ -409,12 +402,8 @@ pub mod __tags {
             self
         }
 
-        // ---- Native touch / gesture coordination ------------------------
-        //
-        // Whisker delivers events through Lynx's hit-testing + reporter,
-        // so these tune what reaches it: expand the hit area, hand
-        // gestures to / withhold them from Lynx's native scroll, etc.
-        // Advanced — most apps never need them.
+        // Advanced gesture-coordination attrs: tune what reaches the
+        // Lynx hit-tester / native scroll. Most apps never set these.
 
         /// `hit-slop` — expand the touch-responsive area beyond the
         /// element's bounds (e.g. `"10px"`, or per-side
@@ -501,27 +490,26 @@ pub mod __tags {
             self
         }
 
-        // ---- Events: touch / tap / click → `TouchEvent` -----------------
-        //
-        // Each touch event exposes the four Lynx handler kinds as a
-        // 1:1 naming convention (so `on_tap` ↔ `bindtap`,
-        // `on_tap_catch` ↔ `catchtap`, `on_capture_tap` ↔
-        // `capture-bindtap`, `on_capture_tap_catch` ↔
-        // `capture-catchtap`):
-        //
-        //   - `on_<event>`              — bubble phase, doesn't stop.
-        //   - `on_<event>_catch`        — bubble phase, stops here.
-        //   - `on_capture_<event>`      — capture phase, doesn't stop.
-        //   - `on_capture_<event>_catch`— capture phase, stops here.
-        //
-        // Capture handlers fire on the way *down* the element tree
-        // (root → target), bubble handlers on the way *up* (target →
-        // root); a `catch` handler stops the event from continuing
-        // along the chain after it fires. These set real Lynx handlers
-        // so the engine's native chain does the propagation.
+        // Touch / tap / click event naming maps 1:1 onto Lynx's four
+        // handler kinds: `on_<event>` ↔ `bindtap`, `on_<event>_catch`
+        // ↔ `catchtap`, `on_capture_<event>` ↔ `capture-bindtap`,
+        // `on_capture_<event>_catch` ↔ `capture-catchtap`. Capture
+        // fires top-down (root → target), bubble fires bottom-up;
+        // `catch` stops propagation at that handler. Propagation runs
+        // through Lynx's native chain (no Rust-side fan-out).
 
         /// `tap` — single tap (won't fire if the finger moved far).
         /// Bubble phase, lets the event continue up the chain.
+        ///
+        /// The closure receives a [`TouchEvent`] with the tap
+        /// coordinates and target metadata. For "stop propagation"
+        /// semantics use [`on_tap_catch`](Self::on_tap_catch);
+        /// for the down-pass capture phase, the `on_capture_tap*`
+        /// variants.
+        ///
+        /// ```ignore
+        /// view { on_tap: |e| println!("tap at {:?}", e.detail) }
+        /// ```
         fn on_tap<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
             bind_typed(self.__element(), "tap", BindType::Bind, f);
             self
@@ -793,6 +781,25 @@ pub mod __tags {
     /// `<page>` — top-level container Lynx mounts as the root of an
     /// app. Holds the screen-level `style=` and a single content
     /// subtree.
+    ///
+    /// Use `page` as the outermost element returned from a
+    /// `#[whisker::main]` function. Lynx treats the page as the
+    /// viewport for layout, so screen-spanning styles
+    /// (`width: 100%`, `background`, …) belong here. There must be
+    /// exactly one `page` at the top of the tree.
+    ///
+    /// ```ignore
+    /// use whisker::prelude::*;
+    ///
+    /// #[whisker::main]
+    /// fn app() -> Element {
+    ///     render! {
+    ///         page { style: "background: white;",
+    ///             text { value: "Hello" }
+    ///         }
+    ///     }
+    /// }
+    /// ```
     #[allow(non_camel_case_types)]
     pub struct page {
         handle: Element,
@@ -812,6 +819,23 @@ pub mod __tags {
     /// `<view>` — Lynx's flex container. The basic layout primitive:
     /// a rectangular box that lays out children with CSS flexbox
     /// (`<View>` in React Native, `<div>` on the web).
+    ///
+    /// Use `view` for any non-text grouping or layout. Note Lynx's
+    /// `flex-direction` defaults to `row` (not `column` like the web),
+    /// so vertical stacks need an explicit `flex-direction: column`.
+    /// `view` is also the right tag for touch targets — attach
+    /// `on_tap` / `on_longpress` here.
+    ///
+    /// ```ignore
+    /// render! {
+    ///     view {
+    ///         style: "flex-direction: column; padding: 16px;",
+    ///         on_tap: |_| println!("tapped"),
+    ///         text { value: "Title" }
+    ///         text { value: "Subtitle" }
+    ///     }
+    /// }
+    /// ```
     #[allow(non_camel_case_types)]
     pub struct view {
         handle: Element,
@@ -830,6 +854,22 @@ pub mod __tags {
 
     /// `<text>` — text container. The glyphs live in `raw_text`
     /// children the macro creates from string-literal children.
+    ///
+    /// `text` is the only element that renders text on screen. Set
+    /// the content through the [`value`](Self::value) attribute
+    /// (which takes any `Into<Signal<String>>`, so static strings,
+    /// `ReadSignal<String>`, and computed signals all work). Font /
+    /// color / size live in the `style` attribute as ordinary CSS.
+    ///
+    /// ```ignore
+    /// let count = signal(0_i32);
+    /// render! {
+    ///     text {
+    ///         style: "font-size: 18px; color: black;",
+    ///         value: computed(move || format!("count: {}", count.get())),
+    ///     }
+    /// }
+    /// ```
     #[allow(non_camel_case_types)]
     pub struct text {
         handle: Element,
@@ -945,6 +985,12 @@ pub mod __tags {
 
     /// `<raw-text>` — leaf text node carrying actual glyphs. Created
     /// by the macro from string-literal children of `<text>`.
+    ///
+    /// User code rarely names `raw_text` directly: write
+    /// `text { value: "..." }` and the macro emits the `raw_text`
+    /// child automatically. Reach for `raw_text` only when composing
+    /// mixed-style runs by hand (e.g. inline styled spans inside a
+    /// single `<text>`).
     #[allow(non_camel_case_types)]
     pub struct raw_text {
         handle: Element,
@@ -972,6 +1018,24 @@ pub mod __tags {
     }
 
     /// `<scroll-view>` — scrollable container.
+    ///
+    /// Use `scroll_view` for content the user should be able to pan
+    /// past the viewport. For long, *virtualised* lists where only
+    /// the visible items should hold platform views, reach for
+    /// [`list`] instead — `scroll_view` keeps every child mounted.
+    /// Direction defaults to `Vertical`; flip with
+    /// [`scroll_orientation`](Self::scroll_orientation).
+    ///
+    /// ```ignore
+    /// render! {
+    ///     scroll_view {
+    ///         style: "flex: 1;",
+    ///         scroll_orientation: ScrollOrientation::Vertical,
+    ///         on_scroll: |e| println!("y = {}", e.detail.scroll_top),
+    ///         view { /* ... long content ... */ }
+    ///     }
+    /// }
+    /// ```
     #[allow(non_camel_case_types)]
     pub struct scroll_view {
         handle: Element,
@@ -1125,16 +1189,36 @@ pub mod __tags {
     //     back to `LynxEnv::EnableDecoupledList()`, which defaults to
     //     `true`. So `custom-list-name` alone activates the decoupled path.
 
-    /// `<list>` — Lynx native-virtualised, *render-props* shape. The
-    /// list builder takes its items source as three kwargs (`each`,
+    /// `<list>` — Lynx's native-virtualised list. Pass the items
+    /// source as three kwargs and Lynx mounts only the visible items
+    /// onto platform views (recycling the rest), so the list scales
+    /// to thousands of rows without per-row mount cost.
+    ///
+    /// Use `list` when the data set is large enough that
+    /// `scroll_view` + a [`ForEach`](crate::ForEach) inside would
+    /// hold too many off-screen platform views. For short,
+    /// fully-mounted content prefer the simpler combo.
+    ///
+    /// ```ignore
+    /// let items = signal(vec!["alpha".to_string(), "beta".to_string()]);
+    /// render! {
+    ///     list {
+    ///         each: move || items.get(),
+    ///         key: |s: &String| s.clone(),
+    ///         children: |s: String| render! { view { text { value: s } } },
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// # Trade-offs
+    ///
+    /// The builder takes its items source as three kwargs (`each`,
     /// `key`, `children`) and **does not accept a body** — the macro
     /// rejects `list { … }` invocations because items can only come
-    /// through the reactive props.
-    ///
-    /// The three setters are **type-stated**: `__h()` is only
-    /// callable when all three have been supplied. Missing any of
-    /// them surfaces as a compile-time error at the close of the
-    /// builder chain (rather than a runtime panic).
+    /// through the reactive props. The three setters are
+    /// **type-stated**: `__h()` is only callable when all three have
+    /// been supplied, so a missing prop is a compile-time error at
+    /// the close of the builder chain rather than a runtime panic.
     ///
     /// `__h()` installs:
     ///   1. an `effect` that diffs `each()` against per-key
@@ -1415,11 +1499,6 @@ pub mod __tags {
             handle
         }
     }
-    // (The list_type / column_count / vertical_orientation methods
-    // moved up into the type-state-generic `impl<E, K, C> list<E, K, C>`
-    // block so they're available regardless of which setters have
-    // been called yet.)
-
     // `list_item` is an internal Lynx-side wrapper the `list`
     // render-props builder auto-creates around each item slot. It
     // realises the platform UI layer's `UIComponent` contract
@@ -1494,26 +1573,33 @@ pub mod __tags {
     }
 }
 
-// Worker-thread → main-thread marshaling. The typical use case is
-// "fetch on a worker thread, update signal on the main thread":
-//
-//     std::thread::spawn(move || {
-//         let result = blocking_fetch();
-//         run_on_main_thread(move || data.set(Some(result)));
-//     });
+/// Marshal a closure onto the main (Lynx) thread.
+///
+/// Reactive signals and the element tree are not `Sync` — every
+/// mutation has to happen on the main thread. Use `run_on_main_thread`
+/// to bounce a result computed off-thread (a blocking fetch, a
+/// heavy parse) back into a signal `set` / element method call.
+///
+/// ```ignore
+/// std::thread::spawn(move || {
+///     let result = blocking_fetch();
+///     run_on_main_thread(move || data.set(Some(result)));
+/// });
+/// ```
 pub use whisker_runtime::main_thread::run_on_main_thread;
 
 /// Whisker platform module invocation entry point.
 ///
-/// Phase 7-Φ.E API surface — `WhiskerValue` tagged-union type +
-/// `invoke` / `invoke_async` callers that cross the C bridge to
-/// platform-side modules (Obj-C class on iOS, Kotlin class on
-/// Android, both inheriting from Lynx's `LynxModule`).
+/// API surface for calling platform-side modules across the C bridge:
+/// the [`WhiskerValue`] tagged-union type plus the
+/// [`invoke`](platform_module::invoke) /
+/// [`invoke_async`](platform_module::invoke_async) entry points. The
+/// platform side is an Obj-C class on iOS / Kotlin class on Android,
+/// both inheriting from Lynx's `LynxModule`.
 ///
-/// The `#[whisker::platform_module]` proc macro (Phase 7-Φ.E.5)
-/// generates type-safe Rust proxies that wrap [`invoke`] /
-/// [`invoke_async`] — direct callers use `whisker::platform_module`
-/// when they need access to the raw `WhiskerValue` enum.
+/// The `#[whisker::platform_module]` proc macro generates type-safe
+/// Rust proxies that wrap `invoke` / `invoke_async`; reach into this
+/// module directly only when you need the raw [`WhiskerValue`] enum.
 pub mod platform_module {
     pub use whisker_driver::module::{
         from_raw, invoke, invoke_async, WhiskerModuleError, WhiskerValue,
@@ -1602,65 +1688,82 @@ pub mod __hot {
 }
 
 /// Common imports for Whisker app code.
+///
+/// `use whisker::prelude::*;` brings everything an everyday
+/// component / app needs into scope in one line. The contents map
+/// conceptually to:
+///
+/// - **Macros** for definition + templating — [`component`],
+///   [`main`], [`render`].
+/// - **Reactive primitives** — [`signal()`], [`computed()`],
+///   [`effect()`], [`on_cleanup`], [`on_mount`], context APIs,
+///   [`resource()`] / [`resource_sync`], plus all the handle types
+///   ([`Signal`], [`ReadSignal`], [`RwSignal`], …).
+/// - **Async** — [`spawn_local`], [`run_blocking`],
+///   [`run_on_main_thread`].
+/// - **Control flow** — [`ForEach`], [`Show`], plus the
+///   function-shaped prop types ([`EachFn`], [`KeyFn`], [`ItemFn`],
+///   [`WhenFn`], [`Fallback`]).
+/// - **Refs** — [`ElementRef`], [`element_ref()`], and the typed
+///   handle / return types ([`ElementHandle`], [`ScrollViewHandle`],
+///   [`TextHandle`], [`BoundingClientRect`], [`ScrollInfo`],
+///   [`TextBoundingRect`], [`RefError`]).
+/// - **CSS** — [`Css`](crate::css::Css), the builder API,
+///   numeric extension traits (`8.px()`, `45.deg()`, …), and the
+///   `css!` macro.
+/// - **Built-in element tags** — `view`, `text`, `scroll_view`,
+///   `list`, `page`, `raw_text`, `fragment` (re-exported from the
+///   hidden [`__tags`] module so rust-analyzer
+///   completes `vie|` → `view` inside `render!`).
+/// - **Typed attribute enums** — [`AccessibilityTrait`](crate::attrs::AccessibilityTrait),
+///   [`ListType`](crate::attrs::ListType),
+///   [`PanInterceptDirection`](crate::attrs::PanInterceptDirection),
+///   [`PanInterceptScope`](crate::attrs::PanInterceptScope),
+///   [`ScrollOrientation`](crate::attrs::ScrollOrientation),
+///   [`TextVerticalAlign`](crate::attrs::TextVerticalAlign).
+///
+/// Framework-level code (custom control flow, custom routers, tests
+/// that bootstrap reactive scopes) reaches past the prelude into
+/// [`crate::runtime`] / [`crate::owner`] / [`crate::platform_module`].
 pub mod prelude {
     pub use crate::Children;
     pub use crate::ElementTag;
     pub use crate::{component, main, render};
-    // Phase 7-Φ.H.2 — `ElementRef<T>` + `element_ref::<T>()` for
-    // imperative element-method dispatch (video.play(), etc.).
     pub use crate::{
         arc_signal, computed, effect, on_cleanup, on_mount, provide_context, resource,
         resource_sync, run_blocking, run_on_main_thread, signal, spawn_local, use_context,
         with_context, ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource,
         ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
     };
-    // Built-in control flow (PascalCase aliases generated by
-    // `#[component]` on `for_each` / `show` in `control_flow.rs`).
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};
-    // Function-shaped prop types for control-flow components.
     pub use crate::{
         element_ref, BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo,
         ScrollViewHandle, TextBoundingRect, TextHandle,
     };
     pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
-    // Type-safe CSS builder. Pulled into the prelude so
-    // `Css::new().display_flex().padding(px(8))` is reachable
-    // without explicit imports. Numeric-literal extension traits
-    // (`px(8)`, `8.px()`, `45.deg()`, …) come in via the wildcard
-    // `ext::*` re-export.
     pub use crate::css::ext::*;
     pub use crate::css::{
         AlignItems, Border, Color, Css, Display, Flex, FlexDirection, FlexWrap, JustifyContent,
         Length, NamedColor, ToCss,
     };
-    // The `css!` macro lives in whisker-css's macro namespace; it
-    // coexists with the `crate::css` module re-export above because
-    // the macro and module namespaces are disjoint.
+    // The `css!` macro coexists with the `crate::css` module
+    // re-export above because the macro and module namespaces are
+    // disjoint.
     pub use crate::css::css;
-    // Typed enums for element attributes whose Lynx-side contract
-    // is a closed set of strings. Setters keep `impl
-    // Into<Signal<String>>` for raw-string back-compat.
     pub use crate::attrs::{
         AccessibilityTrait, ListType, PanInterceptDirection, PanInterceptScope, ScrollOrientation,
         TextVerticalAlign,
     };
-    // Re-export the `__tags` struct names so RA can complete
-    // `vie|` → `view`, `te|` → `text`, etc. when the user is
-    // typing a tag name inside render! (the macro source position
-    // is a value-expression context to RA; it does identifier
-    // completion against the surrounding scope). Without these
-    // in scope nothing matches `vie...` and no candidates appear.
-    //
-    // This is safe to mix with kwarg completion (`view(sty|)`)
-    // because the macro now unconditionally emits `.name(())` for
-    // every partial kwarg — RA's macro-expansion completion path
-    // sees the method-call shape and ignores whatever else `view`
-    // resolves to in source. (Previous breakage where re-exporting
-    // these blocked kwarg completion was a separate bug — the
-    // prefix-match heuristic that's since been removed.)
+    // Re-exporting the `__tags` struct names is what lets RA complete
+    // `vie|` → `view`, `te|` → `text`, etc. inside render! — the
+    // macro source position is a value-expression context, so RA does
+    // identifier completion against the surrounding scope. Mixing
+    // these with kwarg completion (`view(sty|)`) is safe because the
+    // macro unconditionally emits `.name(())` for every partial
+    // kwarg, so RA's macro-expansion completion path sees the
+    // method-call shape regardless of what `view` resolves to.
     #[doc(hidden)]
     pub use crate::__tags::{fragment, list, page, raw_text, scroll_view, text, view};
     // `list_item` intentionally absent — the `list` render-props
-    // builder auto-wraps every item internally; user code never
-    // reaches for `list_item` directly.
+    // builder auto-wraps every item internally.
 }
