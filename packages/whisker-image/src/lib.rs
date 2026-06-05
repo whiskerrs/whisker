@@ -1,6 +1,9 @@
 //! `whisker-image` — networked image component.
 //!
-//! Mounts a `whisker-image:Image` element backed by:
+//! **API shape — 1 (pure Component).** See
+//! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
+//! §"Shape 1". All state is captured by props; no imperative
+//! handle. Mounts a `whisker-image:Image` element backed by:
 //!
 //! - **iOS**: `UIImageView` + [Kingfisher](https://github.com/onevcat/Kingfisher)
 //!   for URL fetching, in-memory `NSCache`, and on-disk cache.
@@ -48,6 +51,15 @@
 //!   set on the element (or via flex sizing) — Kingfisher / Coil
 //!   target-size the fetched bitmap against the rendered size, so an
 //!   element with `width: 0; height: 0;` would never paint.
+//!
+//! ## Native source
+//!
+//! Contributors: the matching platform module lives at
+//!
+//! - iOS: `packages/whisker-image/ios/Sources/WhiskerImage/ImageModule.swift`
+//!   (view: `ImageView.swift`)
+//! - Android: `packages/whisker-image/android/src/main/kotlin/rs/whisker/elements/image/ImageModule.kt`
+//!   (view: `WhiskerImageView.kt`)
 
 use whisker::Signal;
 

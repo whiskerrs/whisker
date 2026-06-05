@@ -147,9 +147,8 @@ pub fn replay<V: Visitor>(bytes: &[u8], visitor: &mut V) -> Result<(), ReplayErr
     }
 }
 
-/// Internal byte-cursor — fans out checked little-endian reads
-/// against the replay loop. Centralised here so a `Truncated` is
-/// produced from one branch.
+// Byte-cursor — fans out checked little-endian reads against the
+// replay loop. Centralised so `Truncated` comes from one branch.
 struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -329,9 +328,9 @@ impl Visitor for TraceVisitor {
     }
 }
 
-/// Compact float formatter for trace output. Strips a trailing
-/// `.0` so `42.0` prints as `42` (matches what humans write in
-/// fixture trace files) and otherwise renders Rust's `{}` form.
+// Compact float formatter for trace output: strips a trailing `.0`
+// (so `42.0` prints `42`, matching hand-written fixtures) and
+// otherwise renders Rust's `{}` form.
 fn fmt_f(v: f32) -> String {
     if v.fract() == 0.0 && v.is_finite() {
         format!("{}", v as i64)

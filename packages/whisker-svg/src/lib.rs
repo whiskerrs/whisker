@@ -1,5 +1,13 @@
 //! `whisker-svg` — inline SVG widget.
 //!
+//! **API shape — 1 (pure Component).** See
+//! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
+//! §"Shape 1". All state is captured by props; no imperative
+//! handle. The user-facing surface is [`Svg`] plus
+//! [`compile`] / [`Compiled`] / [`CompileError`] for callers who
+//! want to drive the compiler directly; everything else under this
+//! crate is `#[doc(hidden)]` internal.
+//!
 //! ```ignore
 //! use whisker::prelude::*;
 //! use whisker_svg::Svg;
@@ -38,15 +46,20 @@
 //! the compiler emits `OP_PAINT_FILL_TINT` / `OP_PAINT_STROKE_TINT`
 //! instead of a literal colour — the replayer substitutes the host's
 //! `color:` value at draw time. See `SPEC.md` §"Tint propagation".
+//!
+//! ## Native source
+//!
+//! Contributors: the matching platform replayer lives at
+//!
+//! - iOS: `packages/whisker-svg/ios/Sources/WhiskerSvg/SvgModule.swift`
+//!   (view: `WhiskerSvgView.swift`, decoder: `DisplayListReplayer.swift`)
+//! - Android: `packages/whisker-svg/android/src/main/kotlin/rs/whisker/modules/svg/SvgModule.kt`
+//!   (view: `WhiskerSvgView.kt`, decoder: `DisplayListReplayer.kt`)
 
-// Public API: the `Svg` widget, the user-callable `compile()`
-// entry point, and its result/error types. Everything else under
-// this crate is internal — kept reachable so the crate's own
-// integration tests under `tests/` can exercise it, but flagged
-// `#[doc(hidden)]` so rustdoc / IDE completion don't surface it
-// and consumers don't grow accidental dependencies on the
-// display-list machinery. The SemVer contract is "anything not in
-// rustdoc may change without notice."
+// Modules below are `#[doc(hidden)]` — `pub` for the `tests/` crate
+// integration tests, but not part of the SemVer surface. The
+// user-facing API is `Svg` + `compile` / `Compiled` / `CompileError`
+// re-exported below.
 #[doc(hidden)]
 pub mod builder;
 #[doc(hidden)]
@@ -86,20 +99,17 @@ use whisker::runtime::view::Element;
 ///   `preserveAspectRatio="xMidYMid meet"` semantics.
 #[component]
 pub fn svg(content: Signal<String>, color: Signal<String>, style: Signal<String>) -> Element {
-    // Re-compile on every content change. The closure clones
-    // `content` (Signal isn't Copy because the Static variant
-    // owns its T) so the FnMut `#[component]` body can re-fire
-    // without consuming the prop. The resulting `ReadSignal<String>`
-    // is the base64-cased display list passed to the platform.
+    // Clone `content` before the move closure: `Signal` isn't `Copy`
+    // (the Static variant owns its T), and the `#[component]` body
+    // re-fires as a FnMut.
     let display_list = {
         let content = content.clone();
         computed(move || encode(&content.get()))
     };
 
-    // Same clone trick for the pass-through props — the `render!`
-    // macro internally captures each prop in a Fn closure to set
-    // up reactive re-application, and a non-Copy `Signal` would
-    // be moved out of the outer FnMut on the first re-fire.
+    // Same clone dance for pass-through props — `render!` internally
+    // re-applies via Fn closures, so a non-Copy `Signal` moved on
+    // first fire wouldn't be available on subsequent re-fires.
     render! {
         SvgRenderer(
             display_list: display_list,
@@ -163,14 +173,13 @@ mod tests {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&b64)
             .expect("valid base64");
-        // Decoded bytes must start with the SPEC's magic.
         assert_eq!(&bytes[0..4], b"WSDL");
     }
 
     #[test]
     fn invalid_xml_yields_empty_string_not_panic() {
-        // Producer must be forgiving — surfacing CompileError back
-        // through Signal<String> doesn't compose. Stderr is enough.
+        // `encode` must be forgiving — surfacing CompileError through
+        // Signal<String> doesn't compose.
         assert_eq!(encode("<svg>"), "");
     }
 }

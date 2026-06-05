@@ -1,5 +1,11 @@
 //! `whisker-icons` — Lucide-icons widget for Whisker.
 //!
+//! **API shape — 1 (pure Component) + constants module.** See
+//! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
+//! §"Shape 1". The [`Icon`] component is a pure `whisker_svg::Svg`
+//! forwarder; the icon library itself is exposed as a set of
+//! `pub const &str` items under [`lucide`] (codegen, see `build.rs`).
+//!
 //! ```ignore
 //! use whisker::prelude::*;
 //! use whisker_icons::{Icon, lucide};
@@ -35,6 +41,13 @@
 //! `whisker_icons::heroicons` (or `::phosphor`, …) module can
 //! emit its own constants under its own attribute conventions and
 //! plug into the exact same `Icon`.
+//!
+//! ## Native source
+//!
+//! This crate has no native side — rendering is delegated to
+//! `whisker-svg`, whose platform replayers live at
+//! `packages/whisker-svg/{ios,android}/`. Icon bytes are vendored
+//! under `packages/whisker-icons/vendor/lucide/`.
 
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
@@ -61,8 +74,8 @@ pub fn icon(svg: Signal<String>, color: Signal<String>, size: Signal<String>) ->
         computed(move || {
             let raw = size.get();
             let t = raw.trim();
-            // Recognise the common CSS length units; everything
-            // else is treated as a unit-less pixel count.
+            // Common CSS length units pass through; bare numbers
+            // are treated as `px`.
             let has_unit = ["px", "em", "rem", "%", "vw", "vh"]
                 .iter()
                 .any(|u| t.ends_with(u));
@@ -102,10 +115,8 @@ mod tests {
 
     #[test]
     fn well_known_icons_resolve_to_nonempty_svg() {
-        // Spot-check that the PascalCase rule + the build.rs walk
-        // wired the constants up. If any of these panic at compile
-        // time, the codegen broke; if they pass at runtime, the
-        // icon string actually has bytes.
+        // Compile-time existence checks the PascalCase rule + the
+        // build.rs walk; runtime non-empty checks that bytes landed.
         for (label, body) in [
             ("Heart", lucide::Heart),
             ("ChevronRight", lucide::ChevronRight),
@@ -121,11 +132,8 @@ mod tests {
 
     #[test]
     fn icons_round_trip_through_whisker_svg_compiler() {
-        // The display-list pipeline is the only thing that ever
-        // looks at these strings on a device. If the icon's SVG
-        // shape happens to use something the compiler can't handle
-        // (e.g. an attribute we don't parse), we want a test
-        // failure here, not a silent blank tile on the screen.
+        // The display-list pipeline is the only consumer on-device;
+        // catch compiler-unsupported attrs here, not as a blank tile.
         let sample = [lucide::Heart, lucide::ChevronRight, lucide::AlarmClock];
         for svg in sample {
             let compiled = whisker_svg::compile(svg).expect("compile");

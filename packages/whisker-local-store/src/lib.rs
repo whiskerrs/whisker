@@ -1,6 +1,13 @@
-//! `whisker-local-store` — reference Whisker platform module.
+//! `whisker-local-store` — persistent string-keyed key-value store.
 //!
-//! Persistent string-keyed key-value store backed by:
+//! **API shape — 5 (Static methods).** See
+//! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
+//! §"Shape 5". Stateless one-shot operations, namespaced under the
+//! unit struct [`WhiskerLocalStore`]. No identity to carry across
+//! calls, no observable state to bind — just `save` / `load` /
+//! `remove`, each returning a `Result`.
+//!
+//! Backed by:
 //!   - **iOS**: `UserDefaults.standard`
 //!   - **Android**: `SharedPreferences` (named `"WhiskerLocalStore"`)
 //!
@@ -9,20 +16,22 @@
 //! data — not for large blobs (use a real file API or database for
 //! anything > ~1 MB per entry).
 //!
-//! The module is also the documented template for first-party
-//! Whisker function-only modules. Shape:
+//! ## Module template
 //!
-//!   - A hand-written typed wrapper — `pub struct WhiskerLocalStore`
-//!     — whose methods (`save` / `load` / `remove`) build the raw
-//!     `Vec<WhiskerValue>` arg list, dispatch via
-//!     `whisker::module!("WhiskerLocalStore").invoke(method, args)`,
-//!     and lift the returned `WhiskerValue` into a typed `Result`.
-//!     This is where validation / defaults / ergonomic types live;
-//!     the framework primitive (`PlatformModule::invoke`) stays a
-//!     `WhiskerValue`-only pass-through.
+//! `whisker-local-store` is also the documented reference for
+//! first-party function-only modules:
+//!
+//! - A hand-written typed wrapper — `pub struct WhiskerLocalStore` —
+//!   whose methods build the raw `Vec<WhiskerValue>` arg list,
+//!   dispatch via
+//!   `whisker::module!("WhiskerLocalStore").invoke(method, args)`,
+//!   and lift the returned `WhiskerValue` into a typed `Result`.
+//!   Validation / defaults / ergonomic types live here; the
+//!   framework primitive (`PlatformModule::invoke`) stays a
+//!   `WhiskerValue`-only pass-through.
 //!
 //! The platform side declares the matching `@WhiskerModule` DSL
-//! (`Name("WhiskerLocalStore")` + module-level `Function`s) — the
+//! (`Name("WhiskerLocalStore")` + module-level `Function`s); the
 //! per-platform codegen registers a dispatch shim under the
 //! crate-namespaced `<crate>:WhiskerLocalStore` key, which is what
 //! `module!` resolves to.
@@ -52,6 +61,15 @@
 //! but Whisker's bridge reports any class-lookup / dispatch
 //! issue through the same channel so callers handle every error
 //! uniformly.
+//!
+//! ## Native source
+//!
+//! Contributors: the matching platform module lives at
+//!
+//! - iOS: `packages/whisker-local-store/ios/Sources/WhiskerLocalStore/LocalStoreModule.swift`
+//!   (storage: `LocalStore.swift`)
+//! - Android: `packages/whisker-local-store/android/src/main/kotlin/rs/whisker/modules/localstore/LocalStoreModule.kt`
+//!   (storage: `LocalStore.kt`)
 
 use whisker::platform_module::{WhiskerModuleError, WhiskerValue};
 
@@ -116,10 +134,8 @@ impl WhiskerLocalStore {
         match result {
             WhiskerValue::Null => Ok(()),
             WhiskerValue::Error(msg) => Err(WhiskerModuleError(msg)),
-            // Be permissive: any non-error return is treated as
-            // success. The platform-side contract for `remove`
-            // is "side effect only, return null", but a stale
-            // return shape shouldn't fail the call.
+            // Permissive: `remove` is documented as side-effect-only
+            // (returns null), but a stale return shape shouldn't fail.
             _ => Ok(()),
         }
     }
