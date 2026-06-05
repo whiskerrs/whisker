@@ -15,6 +15,8 @@ Design docs and architectural notes. See the workspace
   new `whisker-*` module
 - [`module-author-guide.md`](module-author-guide.md) — mechanics of
   wiring Kotlin / Swift / Rust into one module crate
+- [`comment-style.md`](comment-style.md) — rustdoc vs. internal
+  comment standard. Cite in code review
 
 ## Planned documents
 
