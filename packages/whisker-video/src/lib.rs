@@ -1,16 +1,11 @@
-//! `whisker-video` — sample Whisker view module: a `whisker-video:Video`
-//! element backed by AVPlayer (iOS) / Media3 ExoPlayer (Android),
-//! with imperative `play` / `pause` / `seek` methods.
+//! `whisker-video` — video playback element with imperative controls.
 //!
-//! ## Shape
-//!
-//! - `#[whisker::module_component("Video")]` declares the element for
-//!   `render!`. The Lynx tag is `whisker-video:Video` (the crate name
-//!   is auto-prepended).
-//! - `VideoHandle` is the typed, imperative API end-users hold. It
-//!   wraps an `ElementRef` (the element-id handle bound on mount) and
-//!   each method dispatches through `ElementRef::invoke(method, args)`
-//!   — the raw `Vec<WhiskerValue>` wire (case ②).
+//! **API shape — 2 (Component + ref-bound handle).** See
+//! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
+//! §"Shape 2". A native UI element ([`Video`]) plus a typed handle
+//! ([`VideoHandle`]) bound on mount via `ref:`; methods dispatch
+//! through the element handle. Backed by AVPlayer (iOS) and Media3
+//! ExoPlayer (Android).
 //!
 //! ## Usage
 //!
@@ -36,6 +31,28 @@
 //!     }
 //! }
 //! ```
+//!
+//! ## Implementation notes
+//!
+//! - `#[whisker::module_component("Video")]` declares the element for
+//!   `render!`. The Lynx tag is `whisker-video:Video` (the crate name
+//!   is auto-prepended).
+//! - [`VideoHandle`] wraps an `ElementRef` (the element-id handle
+//!   bound on mount); methods dispatch through
+//!   `ElementRef::invoke(method, args)` over the raw
+//!   `Vec<WhiskerValue>` wire.
+//! - No `status()` signal yet — see
+//!   [#128](https://github.com/whiskerrs/whisker/issues/128) for
+//!   the pending observable-state decision.
+//!
+//! ## Native source
+//!
+//! Contributors: the matching platform module lives at
+//!
+//! - iOS: `packages/whisker-video/ios/Sources/WhiskerVideo/VideoModule.swift`
+//!   (view: `VideoView.swift`)
+//! - Android: `packages/whisker-video/android/src/main/kotlin/rs/whisker/elements/video/VideoModule.kt`
+//!   (view: `VideoView.kt`)
 
 use whisker::platform_module::WhiskerValue;
 use whisker::{ElementRef, Signal};

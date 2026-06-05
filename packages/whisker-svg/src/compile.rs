@@ -129,13 +129,10 @@ pub fn compile(svg_xml: &str) -> Result<Compiled, CompileError> {
     let mut ctx = Ctx {
         warnings: Vec::new(),
     };
-    // Read paint state off the root `<svg>` itself before walking
-    // its children. Lucide-style icon sets put `fill="none"
-    // stroke="currentColor" stroke-width="2"` on the `<svg>` element
-    // (not on each inner `<path>`), and rely on those cascading
-    // down. Without this step every Lucide icon would draw as a
-    // solid black silhouette (the SVG default fill) instead of the
-    // intended stroke outline.
+    // Read paint state off `<svg>` itself before descending: Lucide
+    // sets `fill="none" stroke="currentColor" stroke-width="2"` on
+    // the root, expecting it to cascade. Skipping this would paint
+    // every Lucide icon as a black silhouette.
     let mut initial_state = PaintState::default();
     update_paint(&root, &mut initial_state, &mut ctx);
     for child in root.children() {
@@ -150,7 +147,7 @@ pub fn compile(svg_xml: &str) -> Result<Compiled, CompileError> {
     })
 }
 
-/// Inherited paint state — `walk()` clones + overrides per element.
+// Inherited paint state — `walk()` clones + overrides per element.
 #[derive(Debug, Clone)]
 struct PaintState {
     fill: Paint,
@@ -162,7 +159,7 @@ struct PaintState {
 impl Default for PaintState {
     fn default() -> Self {
         Self {
-            // SVG default for shapes is black solid.
+            // SVG spec default for shapes is black solid.
             fill: Paint::Color(Color::BLACK),
             stroke: Paint::None,
             stroke_width: 1.0,
@@ -184,13 +181,9 @@ struct Ctx {
 
 fn walk(node: &roxmltree::Node, b: &mut DisplayListBuilder, ctx: &mut Ctx, inherited: &PaintState) {
     let mut state = inherited.clone();
-    // Update paint state from this node's own attributes (inherited
-    // from parent if unset).
     update_paint(node, &mut state, ctx);
 
     let name = node.tag_name().name();
-    // <g> and <svg>-as-inner-group: wrap children in SAVE/RESTORE
-    // so transforms / opacity stack properly.
     if name == "g" {
         b.save();
         if let Some(t) = parse_transform(node.attribute("transform"), ctx) {
@@ -208,7 +201,6 @@ fn walk(node: &roxmltree::Node, b: &mut DisplayListBuilder, ctx: &mut Ctx, inher
         return;
     }
 
-    // Leaf shapes — collect their path commands and emit.
     let cmds = shape_to_path(node, ctx);
     if cmds.is_empty() && name != "defs" && name != "title" && name != "desc" {
         ctx.warnings.push(format!("unsupported element <{name}>"));
@@ -216,7 +208,7 @@ fn walk(node: &roxmltree::Node, b: &mut DisplayListBuilder, ctx: &mut Ctx, inher
     }
 
     if !cmds.is_empty() {
-        // Per-shape SAVE/RESTORE if transform present, so it
+        // SAVE/RESTORE around the shape's own transform so it
         // doesn't leak to siblings.
         let local_t = parse_transform(node.attribute("transform"), ctx);
         if local_t.is_some() {
@@ -246,7 +238,7 @@ fn walk(node: &roxmltree::Node, b: &mut DisplayListBuilder, ctx: &mut Ctx, inher
             (false, false) => b.fill_and_stroke(),
             (false, true) => b.fill(),
             (true, false) => b.stroke(),
-            (true, true) => {} // both none — emit no execution op
+            (true, true) => {} // no paint → no execution op
         }
 
         if local_t.is_some() {
@@ -257,7 +249,7 @@ fn walk(node: &roxmltree::Node, b: &mut DisplayListBuilder, ctx: &mut Ctx, inher
 
 fn emit_paint(b: &mut DisplayListBuilder, s: &PaintState) {
     match s.fill {
-        Paint::None => {} // OP_PATH_FILL won't be emitted either
+        Paint::None => {} // walk() also skips OP_PATH_FILL
         Paint::Color(c) => b.fill_color(c),
         Paint::Tint => b.fill_tint(),
     }
@@ -294,8 +286,8 @@ fn update_paint(node: &roxmltree::Node, s: &mut PaintState, ctx: &mut Ctx) {
     }
 }
 
-/// Look up an attribute by name, falling back to the `style="…"`
-/// declarations. SVG icons in the wild mix the two interchangeably.
+// Look up an attribute by name, falling back to `style="…"`
+// declarations. SVG icons in the wild mix the two interchangeably.
 fn attr_or_style<'a>(node: &'a roxmltree::Node, name: &str) -> Option<&'a str> {
     if let Some(v) = node.attribute(name) {
         return Some(v);
@@ -349,7 +341,8 @@ fn parse_color(s: &str) -> Option<Color> {
             return Some(Color::rgba(r, g, b, a));
         }
     }
-    // Limited named-colour subset — enough for the in-tree fixtures.
+    // Limited named-colour subset — enough for the in-tree fixtures;
+    // expand here if real-world icons start tripping it.
     Some(match s {
         "black" => Color::BLACK,
         "white" => Color::rgb(255, 255, 255),
@@ -481,7 +474,8 @@ fn resolve_viewbox(svg: &roxmltree::Node) -> Option<(f32, f32, f32, f32)> {
             return Some((parts[0], parts[1], parts[2], parts[3]));
         }
     }
-    // Fall back to width / height if both present and unitless.
+    // No viewBox: derive one from `width`/`height` if both are
+    // present and unitless.
     let w = svg.attribute("width").and_then(strip_unit_f32);
     let h = svg.attribute("height").and_then(strip_unit_f32);
     if let (Some(w), Some(h)) = (w, h) {

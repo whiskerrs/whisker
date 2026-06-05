@@ -1,13 +1,15 @@
 //! `whisker-audio` — audio playback for Whisker apps.
 //!
-//! View-less module backed by AndroidX Media3 ExoPlayer (Android)
-//! and AVPlayer (iOS). Construct a [`Player`] anywhere a normal Rust
-//! value can live — no element to mount, no `ref:` wiring; the
-//! handle owns a native player instance, releases it on drop, and
-//! exposes a reactive [`PlaybackStatus`] signal driven by native
-//! playback callbacks.
+//! **API shape — 3 (Clone value-type handle).** See
+//! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
+//! §"Shape 3". A view-less native resource: [`Player::new`] returns
+//! a `Clone` handle, methods (`play` / `pause` / `seek_to` / …)
+//! drive the underlying engine, and [`Player::status`] exposes a
+//! reactive [`PlaybackStatus`] signal driven by native playback
+//! callbacks. The native player releases when the last clone drops.
 //!
-//! The API surface mirrors the imperative half of
+//! Backed by AVPlayer (iOS) and AndroidX Media3 ExoPlayer (Android).
+//! The surface mirrors the imperative half of
 //! [Expo's `expo-audio`](https://docs.expo.dev/versions/latest/sdk/audio/):
 //! a player object you call `play` / `pause` / `seek_to` on, plus a
 //! status field that ticks as the underlying engine reports
@@ -46,7 +48,7 @@
 //! }
 //! ```
 //!
-//! ## Shape
+//! ## Implementation notes
 //!
 //! - [`Player`] is `Clone` — internally an `Rc<PlayerInner>`. Each
 //!   clone shares the same native player; the underlying player is
@@ -58,7 +60,14 @@
 //!   every time playback state changes (and at a ~200 ms cadence
 //!   while playing); [`Player::status`] lazily installs the
 //!   dispatch table on first call and routes events to the matching
-//!   handle's [`RwSignal<PlaybackStatus>`].
+//!   handle's signal.
+//!
+//! ## Native source
+//!
+//! Contributors: the matching platform module lives at
+//!
+//! - iOS: `packages/whisker-audio/ios/Sources/WhiskerAudio/AudioModule.swift`
+//! - Android: `packages/whisker-audio/android/src/main/kotlin/rs/whisker/modules/audio/AudioModule.kt`
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -103,28 +112,38 @@ pub struct PlaybackStatus {
     pub is_playing: bool,
 }
 
-/// Typed handle for one audio player. Cheap to clone (an `Rc`-based
-/// refcount); the underlying native player is released only after
-/// every clone drops.
+/// Typed handle for one audio player. Cheap to clone (`Rc`-based
+/// refcount); the underlying native player releases only after the
+/// last clone drops.
+///
+/// # Example
+///
+/// ```ignore
+/// use whisker_audio::Player;
+///
+/// let player = Player::new("https://example.com/clip.mp3");
+/// player.play();
+/// // Drop the last `player` clone to release the native engine.
+/// ```
+///
+/// Methods are fire-and-forget — the native side reports state
+/// changes through [`Player::status`] rather than method returns.
 #[derive(Clone)]
 pub struct Player {
     inner: Rc<PlayerInner>,
 }
 
-/// The owned half of [`Player`]. Stashes the bridge-side id and
-/// runs `release` from `Drop`, so disposing the owner of the
-/// last clone releases the native player without manual book-
-/// keeping.
+// Owned half of `Player`. Stashes the bridge-side id and runs
+// `release` from `Drop`, so the last clone disposing releases the
+// native player without manual book-keeping.
 struct PlayerInner {
     id: u64,
 }
 
 impl PlayerInner {
     fn invoke(&self, method: &str, mut args: Vec<WhiskerValue>) -> WhiskerValue {
-        // Every dispatch carries the player id as the first arg —
-        // the native side keys its player map on it. Inserting
-        // up-front keeps each caller from having to remember the
-        // calling convention.
+        // Native side keys its player map on arg 0; prepend so
+        // callers don't have to remember the convention.
         args.insert(0, WhiskerValue::Int(self.id as i64));
         module!("WhiskerAudio").invoke(method, args)
     }
@@ -132,10 +151,8 @@ impl PlayerInner {
 
 impl Drop for PlayerInner {
     fn drop(&mut self) {
-        // Best-effort release — if the bridge tears down before us
-        // the invoke fails silently (returns `WhiskerValue::Error`)
-        // and the native player gets cleaned up by the process exit
-        // anyway.
+        // Best-effort: a bridge teardown before us turns this into a
+        // silent `WhiskerValue::Error`; the OS reclaims at exit.
         let _ = module!("WhiskerAudio").invoke("release", vec![WhiskerValue::Int(self.id as i64)]);
         unregister_status(self.id);
     }
@@ -287,23 +304,15 @@ impl Player {
 
 // ---- Process-global status subscription dispatch --------------------------
 
-/// Monotonic source of fresh player ids. The atomic increment lets
-/// any thread that managed to instantiate a `Player` allocate
-/// without coordination; the bridge dispatch path that consumes
-/// the id is main-thread-only.
+// Atomic so any thread that managed to construct a `Player` can
+// allocate; the dispatch path that consumes the id is main-thread-only.
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Player id → reactive signal. Lives behind an `Rc<RefCell<…>>`
-/// so the bridge-callback closure and the `register_status` insert
-/// path share one table, and the whole thing rides in a
-/// [`MainThreadOnly`] wrapper so the `Sync` bound on `OnceLock<T>`
-/// passes (access is on the bridge's main thread by contract —
-/// same model as `whisker-safe-area`).
+// Shared between the bridge-callback closure and `register_status`
+// inserts. Wrapped in `MainThreadOnly` so `OnceLock<T>`'s `T: Sync`
+// bound passes — see [`MainThreadOnly`] below.
 type StatusEntries = Rc<RefCell<HashMap<u64, ArcRwSignal<PlaybackStatus>>>>;
 
-/// Process-global dispatch table. Wraps [`StatusEntries`] so the
-/// `OnceLock<StatusTable>` `Sync` requirement is satisfied by the
-/// surrounding `MainThreadOnly` rather than by the `Rc` itself.
 struct StatusTable {
     entries: MainThreadOnly<StatusEntries>,
 }
@@ -325,9 +334,8 @@ fn register_status(id: u64) -> ReadSignal<PlaybackStatus> {
     read.into()
 }
 
-/// Remove the entry for `id` from the dispatch table — called from
-/// `PlayerInner::drop` so a long-lived process doesn't accumulate
-/// dead per-player signal slots.
+/// Remove `id` from the dispatch table on player drop so a long-
+/// lived process doesn't accumulate dead per-player slots.
 fn unregister_status(id: u64) {
     if let Some(table) = STATUS_TABLE.get() {
         if let Ok(mut entries) = table.entries.inner.try_borrow_mut() {
@@ -336,10 +344,8 @@ fn unregister_status(id: u64) {
     }
 }
 
-/// One-shot install of the `statusChanged` subscription. The
-/// closure pulls the player id out of the event payload, looks
-/// up the matching signal, and writes the decoded status. Stale
-/// events for ids that were already released are dropped silently.
+/// One-shot install of the `statusChanged` subscription. Stale
+/// events for ids that were already released drop silently.
 fn install_status_listener() -> StatusTable {
     let entries: StatusEntries = Rc::new(RefCell::new(HashMap::new()));
     let entries_for_listener = MainThreadOnly {
@@ -361,17 +367,15 @@ fn install_status_listener() -> StatusTable {
             is_playing: read_bool(&fields, "isPlaying"),
         };
         // Bind the wrapper (not `.inner`) so Rust 2021 disjoint
-        // captures move the `Send + Sync` impl as a whole. Same
-        // dance as `whisker-safe-area` does for its writer.
+        // captures move the `Send + Sync` impl as a whole.
         let table = &entries_for_listener;
         let borrow = table.inner.borrow();
         if let Some(rw) = borrow.get(&id) {
             rw.set(status);
         }
     });
-    // Leak — the listener lives for the process lifetime; dropping
-    // the subscription would also drop the closure pointer the
-    // bridge holds.
+    // Leak: listener lives for the process; dropping the
+    // subscription would also drop the closure the bridge holds.
     std::mem::forget(sub);
     StatusTable {
         entries: MainThreadOnly { inner: entries },
@@ -390,17 +394,16 @@ fn read_bool(fields: &BTreeMap<String, WhiskerValue>, key: &str) -> bool {
     matches!(fields.get(key), Some(WhiskerValue::Bool(true)))
 }
 
-/// Main-thread-only wrapper, same shape as the one in
-/// `whisker-safe-area`. The contract is that every access path
-/// runs on the Lynx TASM thread; the unsafe `Send + Sync` impls
-/// satisfy `OnceLock<T>`'s `T: Sync` bound by asserting that
-/// constraint rather than enforcing it at compile time.
+/// Main-thread-only wrapper (mirrors `whisker-safe-area`'s). Asserts
+/// the Lynx TASM-thread contract so `OnceLock<T>`'s `T: Sync` bound
+/// passes without making `Rc` actually `Sync`.
 #[derive(Clone)]
 struct MainThreadOnly<T> {
     inner: T,
 }
-// Safety: see module docs — every consumer runs on the reactive
-// thread; misuse would corrupt the arena, but that's the standard
-// risk for any signal-touching code off the main thread.
+// Safety: every consumer runs on the reactive thread by contract
+// (the bridge dispatches status events on the main thread). Misuse
+// would corrupt the arena — same risk as any signal-touching code
+// off the main thread.
 unsafe impl<T> Send for MainThreadOnly<T> {}
 unsafe impl<T> Sync for MainThreadOnly<T> {}

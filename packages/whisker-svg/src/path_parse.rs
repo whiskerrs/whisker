@@ -29,24 +29,18 @@ pub enum PathCommand {
 pub fn parse(d: &str) -> Vec<PathCommand> {
     let mut out: Vec<PathCommand> = Vec::new();
     let mut p = Parser::new(d);
-    // Pen position. Reset by every M / m. Tracked through all
-    // commands so relative offsets resolve correctly.
+    // Pen position — reset by every M/m so relative offsets resolve.
     let mut cx: f32 = 0.0;
     let mut cy: f32 = 0.0;
     // Subpath start — Close returns here.
     let mut sx: f32 = 0.0;
     let mut sy: f32 = 0.0;
-    // Last cubic control point (for S smoothing).
+    // Reflection sources for S (cubic) and T (quad) smoothing.
     let mut last_c2: Option<(f32, f32)> = None;
-    // Last quadratic control point (for T smoothing).
     let mut last_q: Option<(f32, f32)> = None;
-    // Previous explicit command, for repeated implicit commands
-    // (e.g. `M 0 0 10 10` after the initial moveto switches to
-    // implicit LineTo per SVG spec).
     let mut last_cmd: u8 = 0;
 
     while let Some(cmd) = p.peek_command() {
-        // Set the implicit-followup command and skip the letter.
         p.skip_command();
         let mut upper = cmd.to_ascii_uppercase();
         let abs = cmd.is_ascii_uppercase();
@@ -65,10 +59,8 @@ pub fn parse(d: &str) -> Vec<PathCommand> {
                     sy = ty;
                     last_c2 = None;
                     last_q = None;
-                    // Per SVG spec, additional coord pairs after M
-                    // become L (preserving absolute / relative). Switch
-                    // `upper` so the next inner-loop iteration picks
-                    // the L branch instead of repeating M.
+                    // SVG spec: additional coord pairs after M
+                    // become L (preserving abs/rel).
                     upper = b'L';
                     last_cmd = b'L';
                 }
@@ -119,10 +111,9 @@ pub fn parse(d: &str) -> Vec<PathCommand> {
                     last_q = None;
                 }
                 b'S' => {
-                    // Smooth cubic: implicit first control point is the
-                    // reflection of the previous cubic's c2 through the
-                    // pen position (or the pen itself if the previous
-                    // command wasn't a cubic).
+                    // Smooth cubic: implicit c1 is the reflection of
+                    // the previous cubic's c2 through the pen (or the
+                    // pen itself if the previous command wasn't a cubic).
                     let (Some(c2x), Some(c2y), Some(x), Some(y)) =
                         (p.coord(), p.coord(), p.coord(), p.coord())
                     else {
@@ -157,7 +148,7 @@ pub fn parse(d: &str) -> Vec<PathCommand> {
                 b'T' => {
                     // Smooth quad: implicit control point is the
                     // reflection of the previous quad's control through
-                    // the pen position (or the pen itself).
+                    // the pen (or the pen itself).
                     let (Some(x), Some(y)) = (p.coord(), p.coord()) else {
                         break;
                     };
@@ -217,16 +208,14 @@ pub fn parse(d: &str) -> Vec<PathCommand> {
                     cy = sy;
                     last_c2 = None;
                     last_q = None;
-                    // Z takes no coords — break out so the outer loop
-                    // moves to the next command letter.
+                    // Z takes no coords — break to the outer loop.
                     break;
                 }
                 _ => break,
             }
-            // After consuming one command's worth of coords, peek at
-            // the next byte: if it's a digit / sign / dot, SVG repeats
-            // the previous command implicitly. Otherwise drop to the
-            // outer loop so the next letter resets `cmd`.
+            // SVG repeats the previous command implicitly when the
+            // next non-ws byte starts a number; otherwise the outer
+            // loop reads the next command letter.
             if !p.peek_implicit_continuation() {
                 break;
             }
@@ -326,7 +315,7 @@ fn arc_to_cubics(
         dtheta += std::f32::consts::TAU;
     }
 
-    // Split into ≤ 90° pieces and emit cubics.
+    // Step 6: split into ≤ 90° pieces and emit one cubic each.
     let segs = ((dtheta.abs() / (std::f32::consts::FRAC_PI_2)).ceil() as usize).max(1);
     let step = dtheta / segs as f32;
     let k = (4.0 / 3.0) * (step / 4.0).tan();
