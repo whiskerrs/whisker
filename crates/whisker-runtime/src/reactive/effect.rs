@@ -13,7 +13,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::runtime::{NodeData, NodeId, Owner, ReactiveNode};
+use super::runtime::{NodeData, NodeId, ReactiveNode, Scope};
 use super::scheduler;
 use super::with_runtime;
 
@@ -36,7 +36,7 @@ pub fn effect(f: impl FnMut() + 'static) -> NodeId {
     }
     let node_id = with_runtime(|rt| {
         let owner = rt.current_owner().unwrap_or_else(|| {
-            let detached = rt.owners.insert(Owner::new(None));
+            let detached = rt.owners.insert(Scope::new(None));
             rt.owner_stack.push(detached);
             detached
         });

@@ -44,7 +44,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use whisker_runtime::reactive::{create_owner, dispose_owner, effect, with_owner, OwnerId};
+use whisker_runtime::reactive::{effect, Owner};
 use whisker_runtime::view::{
     append_child, create_phantom_element, remove_child, Children, EachFn, Element, Fallback,
     ItemFn, KeyFn, WhenFn,
@@ -82,7 +82,7 @@ where
     let frag = create_phantom_element();
 
     struct Entry {
-        owner: OwnerId,
+        owner: Owner,
         handle: Element,
     }
     let entries: Rc<RefCell<HashMap<K, Entry>>> = Rc::new(RefCell::new(HashMap::new()));
@@ -106,8 +106,8 @@ where
             if let Some(existing) = old.remove(&k) {
                 new_entries.insert(k.clone(), existing);
             } else {
-                let item_owner = create_owner(None);
-                let handle = with_owner(item_owner, || {
+                let item_owner = Owner::new(None);
+                let handle = item_owner.with(|| {
                     let h = children.call(item);
                     append_child(frag, h);
                     h
@@ -126,7 +126,7 @@ where
         // Disappeared items: detach + dispose.
         for (_, entry) in old.drain() {
             remove_child(frag, entry.handle);
-            dispose_owner(entry.owner);
+            entry.owner.dispose();
         }
 
         // Reorder: detach every surviving handle, then re-attach in
@@ -170,7 +170,7 @@ pub fn show(
 
     // Track the currently-mounted (owner, leaf handles) pair so we
     // can dispose + detach on every flip.
-    type Mounted = Rc<RefCell<Option<(OwnerId, Vec<Element>)>>>;
+    type Mounted = Rc<RefCell<Option<(Owner, Vec<Element>)>>>;
     let mounted: Mounted = Rc::new(RefCell::new(None));
 
     // Clone props into the effect's capture set so the outer body
@@ -186,15 +186,15 @@ pub fn show(
             for h in handles {
                 remove_child(frag, h);
             }
-            dispose_owner(owner);
+            owner.dispose();
         }
 
         let cond = when.call();
 
         if cond {
             // Truthy branch: `children` is `Children` = `Fn() -> View`.
-            let owner = create_owner(None);
-            let handles = with_owner(owner, || {
+            let owner = Owner::new(None);
+            let handles = owner.with(|| {
                 let view = children();
                 view.attach_to(frag)
             });
@@ -202,8 +202,8 @@ pub fn show(
         } else if let Some(fb) = &fallback.0 {
             // Falsy branch: `fallback` is `Fn() -> Element` (single
             // element). Mount it directly under the fragment.
-            let owner = create_owner(None);
-            let handle = with_owner(owner, || {
+            let owner = Owner::new(None);
+            let handle = owner.with(|| {
                 let h = fb();
                 append_child(frag, h);
                 h

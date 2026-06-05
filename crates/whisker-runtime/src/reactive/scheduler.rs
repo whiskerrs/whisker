@@ -131,7 +131,7 @@ fn run_node_if_alive(node: NodeId) {
         let n = rt.nodes.get(node)?;
         let owner = n.owner;
         // Paused-owner gate: defer the run and skip. The node lands
-        // on `rt.deferred`; `resume_owner` moves it back into
+        // on `rt.deferred`; `Owner::resume` moves it back into
         // `pending` so the effect catches up once its scope is
         // active again. We snapshot the kind early — pure Signal
         // nodes never need the gate (they have no compute), so we

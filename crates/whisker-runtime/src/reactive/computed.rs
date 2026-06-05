@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-use super::runtime::{NodeData, NodeId, Owner, ReactiveNode};
+use super::runtime::{NodeData, NodeId, ReactiveNode, Scope};
 use super::scheduler;
 use super::signal::ReadSignal;
 use super::{untrack, with_runtime};
@@ -87,7 +87,7 @@ pub fn computed<T: 'static + Clone + PartialEq>(
     }
     let node_id = with_runtime(|rt| {
         let owner = rt.current_owner().unwrap_or_else(|| {
-            let detached = rt.owners.insert(Owner::new(None));
+            let detached = rt.owners.insert(Scope::new(None));
             rt.owner_stack.push(detached);
             detached
         });

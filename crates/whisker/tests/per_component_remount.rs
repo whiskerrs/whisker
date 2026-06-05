@@ -18,10 +18,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
 use whisker::runtime::reactive::__reset_pending_mount_for_tests;
-use whisker::runtime::reactive::{
-    __reset_for_tests, create_owner, dispose_owner, owners_for_fn, remount_components_for,
-    with_owner,
-};
+use whisker::runtime::reactive::{__reset_for_tests, owners_for_fn, remount_components_for, Owner};
 use whisker::runtime::view::{
     __reset_children_mirror_for_tests, append_child, create_element, install_renderer,
     uninstall_renderer, DynRenderer, Element,
@@ -126,9 +123,9 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     reset_state();
     let (rec, log) = Recorder::new();
     let _prev = install_renderer(Box::new(rec));
-    let owner = create_owner(None);
-    let result = with_owner(owner, || f(log));
-    dispose_owner(owner);
+    let owner = Owner::new(None);
+    let result = owner.with(|| f(log));
+    owner.dispose();
     uninstall_renderer(None);
     result
 }
@@ -315,7 +312,7 @@ fn remount_disposes_old_owner_and_registers_new() {
         assert_eq!(after_owners.len(), 1);
         assert_ne!(
             after_owners[0], first_owner_id,
-            "remount must create a fresh owner (different OwnerId)"
+            "remount must create a fresh owner (different Owner)"
         );
     });
 }
@@ -367,9 +364,9 @@ fn dispose_owner_releases_owned_elements() {
     let (rec, log) = Recorder::new();
     let _prev = install_renderer(Box::new(rec));
 
-    let root_owner = create_owner(None);
+    let root_owner = Owner::new(None);
     // Mount the component inside the root owner.
-    let _root = with_owner(root_owner, || render! { Leaf(label: "hi") });
+    let _root = root_owner.with(|| render! { Leaf(label: "hi") });
 
     let creates_initial = log
         .borrow()
@@ -378,7 +375,7 @@ fn dispose_owner_releases_owned_elements() {
         .count();
     log.borrow_mut().clear();
 
-    dispose_owner(root_owner);
+    root_owner.dispose();
 
     let releases = log
         .borrow()
@@ -403,7 +400,7 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
     // `remount_components_for` call processed them too — touching
     // freed parent / body_root handles and corrupting the screen.
     //
-    // The fix in `dispose_owner` scrubs `mount_sites` /
+    // The fix in `Owner::dispose` scrubs `mount_sites` /
     // `fn_ptr_mounts` for any orphaned child. This test pins that
     // behaviour: after a parent remount, the child fn pointer's
     // MountSite list should equal the count of live child

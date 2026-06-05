@@ -76,7 +76,7 @@ use super::with_runtime;
 /// own themselves; we don't keep the subscriber alive by listing it
 /// here. Stale `NodeId`s (whose arena slot got freed) are pruned
 /// lazily on the next `notify_subscribers` call and eagerly during
-/// `dispose_owner` (see `crates/whisker-runtime/src/reactive/owner.rs`).
+/// `Owner::dispose` (see `crates/whisker-runtime/src/reactive/owner.rs`).
 pub(crate) struct ArcSignalInner<T> {
     value: RefCell<T>,
     subscribers: RefCell<Vec<NodeId>>,

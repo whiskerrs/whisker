@@ -46,9 +46,7 @@ use std::rc::Rc;
 use whisker::css::ext::*;
 use whisker::css::{Css, Overflow, PositionKind, ToCss};
 use whisker::runtime::element::ElementTag;
-use whisker::runtime::reactive::{
-    create_owner, dispose_owner, effect, on_mount, pause_owner, resume_owner, with_owner, OwnerId,
-};
+use whisker::runtime::reactive::{effect, on_mount, Owner};
 use whisker::runtime::view::apply::apply_styles;
 use whisker::runtime::view::{
     append_child, create_element, insert_child_at, remove_child, set_inline_styles, Element,
@@ -66,7 +64,7 @@ use crate::transitions::{Direction, Side, StackTransitionBox};
 /// when the entry is popped off the stack.
 #[derive(Clone, Copy)]
 struct MountedEntry {
-    owner: OwnerId,
+    owner: Owner,
     wrapper: Element,
 }
 
@@ -217,7 +215,7 @@ pub fn stack_layout<R: Route>(
     // without this anchor, owners spawned for entries the gesture
     // interacts with would become roots and lose access to the
     // `RouteProvider` context their components rely on.
-    let _handle_parent = create_owner(None);
+    let _handle_parent = Owner::new(None);
 
     let handle = build_stack_layout_handle(container, stack.clone(), state);
     provide_context(handle);
@@ -253,7 +251,7 @@ fn run_navigation_effect<R: Route>(
         let mut pending = state.pending_dispose.borrow_mut();
         for entry in pending.drain(..) {
             remove_child(container, entry.wrapper);
-            dispose_owner(entry.owner);
+            entry.owner.dispose();
         }
     }
 
@@ -281,7 +279,7 @@ fn run_navigation_effect<R: Route>(
                 // offscreen pose, so dispose right away — no
                 // pending queue.
                 remove_child(container, entry.wrapper);
-                dispose_owner(entry.owner);
+                entry.owner.dispose();
             }
         }
         first.set(false);
@@ -333,7 +331,7 @@ fn run_navigation_effect<R: Route>(
             .find(|e| e.id == *id)
             .expect("added id must be present in new entries");
         let route = entry.route.clone();
-        let new_owner = create_owner(None);
+        let new_owner = Owner::new(None);
         let wrapper = create_element(ElementTag::View);
         apply_wrapper_style(
             wrapper,
@@ -350,7 +348,7 @@ fn run_navigation_effect<R: Route>(
             .position(|i| *i == *id)
             .expect("just inserted");
         insert_child_at(container, wrapper, position);
-        with_owner(new_owner, || {
+        new_owner.with(|| {
             let h = render.call(route);
             append_child(wrapper, h);
         });
@@ -445,7 +443,7 @@ fn run_navigation_effect<R: Route>(
                 state.pending_dispose.borrow_mut().push(entry);
             } else {
                 remove_child(container, entry.wrapper);
-                dispose_owner(entry.owner);
+                entry.owner.dispose();
             }
         }
     }
@@ -461,7 +459,7 @@ fn run_navigation_effect<R: Route>(
 /// expected paused state: the topmost (last in [`LayoutState::order`])
 /// is active; everything else is paused.
 ///
-/// Idempotent — `pause_owner` / `resume_owner` no-op on the matching
+/// Idempotent — `Owner::pause` / `Owner::resume` no-op on the matching
 /// state, so calling this every navigation costs at most one set
 /// flip per owner.
 fn sync_owner_paused_state(state: &LayoutState) {
@@ -470,9 +468,9 @@ fn sync_owner_paused_state(state: &LayoutState) {
     let top_id = order.last().copied();
     for (id, entry) in mounted.iter() {
         if Some(*id) == top_id {
-            resume_owner(entry.owner);
+            entry.owner.resume();
         } else {
-            pause_owner(entry.owner);
+            entry.owner.pause();
         }
     }
 }

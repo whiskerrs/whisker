@@ -21,11 +21,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
-use whisker::runtime::reactive::{
-    __reset_for_tests, __reset_pending_mount_for_tests, create_owner,
-};
+use whisker::runtime::reactive::{__reset_for_tests, __reset_pending_mount_for_tests};
 use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element};
-use whisker::with_owner;
+use whisker::Owner;
 
 // ----- Recording renderer ----------------------------------------------------
 //
@@ -100,8 +98,8 @@ fn with_test_env<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     let rec = Recorder::default();
     let log = rec.log.clone();
     let prev = install_renderer(Box::new(rec));
-    let owner = create_owner(None);
-    let result = with_owner(owner, || f(log));
+    let owner = Owner::new(None);
+    let result = owner.with(|| f(log));
     uninstall_renderer(prev);
     result
 }

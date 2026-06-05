@@ -10,7 +10,7 @@
 
 use std::any::{Any, TypeId};
 
-use super::runtime::OwnerId;
+use super::runtime::Owner;
 use super::with_runtime;
 
 /// Provide a context value in the current owner. Subsequent
@@ -78,8 +78,8 @@ pub fn with_context<T: 'static, R>(f: impl FnOnce(&T) -> R) -> Option<R> {
 /// ancestor (including `start`) has one.
 fn find_owner_with<T: 'static>(
     rt: &super::runtime::ReactiveRuntime,
-    start: Option<OwnerId>,
-) -> Option<OwnerId> {
+    start: Option<Owner>,
+) -> Option<Owner> {
     let type_id = TypeId::of::<T>();
     let mut cursor = start;
     while let Some(id) = cursor {

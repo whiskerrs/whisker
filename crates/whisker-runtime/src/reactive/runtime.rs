@@ -9,9 +9,10 @@
 //! `RwSignal`) are `Copy` newtypes around a `NodeId`. They look their
 //! value up through the runtime on every operation. Cloning a handle
 //! is just an integer copy; the lifetime of the underlying state is
-//! bounded by its owning `Owner`, not by the handle. `computed()` returns
-//! a `ReadSignal<T>` that happens to be backed by a `NodeData::Computed`
-//! node — externally indistinguishable from a primitive signal.
+//! bounded by the owning [`Scope`] (looked up via its [`Owner`] handle),
+//! not by the handle. `computed()` returns a `ReadSignal<T>` that happens
+//! to be backed by a `NodeData::Computed` node — externally
+//! indistinguishable from a primitive signal.
 //!
 //! This module defines the types only. The thread-local instance and
 //! the orchestration logic live in `mod.rs` and the sibling files.
@@ -26,11 +27,11 @@ use slotmap::{new_key_type, SlotMap};
 new_key_type! {
     /// Identifier for an [`Owner`] slot in the runtime's owner map.
     /// Generational — disposing an owner invalidates outstanding
-    /// `OwnerId`s pointing at the same slot index.
-    pub struct OwnerId;
+    /// `Owner`s pointing at the same slot index.
+    pub struct Owner;
 
     /// Identifier for a [`ReactiveNode`] slot. Generational like
-    /// [`OwnerId`].
+    /// [`Owner`].
     pub struct NodeId;
 }
 
@@ -108,7 +109,7 @@ impl NodeData {
 /// "drop me from your subscriber list" via [`ArcSubscription::unsubscribe`].
 /// The signal itself stays alive (Arc refcount) regardless.
 pub struct ReactiveNode {
-    pub owner: OwnerId,
+    pub owner: Owner,
     pub data: NodeData,
     pub sources: HashSet<NodeId>,
     pub subscribers: HashSet<NodeId>,
@@ -138,29 +139,35 @@ pub trait ArcSubscription {
     fn unsubscribe(&self, subscriber: NodeId);
 }
 
-/// A scope in the reactive tree. Created when a component mounts,
-/// disposed when the component unmounts. Tracks the reactive nodes
-/// allocated inside it (so they can be freed on disposal) and the
-/// child owners (so disposal cascades).
+/// A scope record in the reactive tree. Created when a component
+/// mounts, disposed when the component unmounts. Tracks the reactive
+/// nodes allocated inside it (so they can be freed on disposal) and
+/// the child scopes (so disposal cascades).
 ///
-/// `contexts` is the per-owner context bag for `provide_context` /
+/// The public-facing API surface is the [`super::owner::Owner`]
+/// handle (a `Copy` slotmap key); `Scope` is the data record that
+/// handle dereferences to via the runtime's `owners` slotmap. Users
+/// (and even framework extension authors) never name `Scope`
+/// directly.
+///
+/// `contexts` is the per-scope context bag for `provide_context` /
 /// `use_context`. `cleanups` is the LIFO callback queue from
 /// `on_cleanup`.
-pub struct Owner {
-    pub parent: Option<OwnerId>,
-    pub children: Vec<OwnerId>,
+pub struct Scope {
+    pub parent: Option<Owner>,
+    pub children: Vec<Owner>,
     pub nodes: Vec<NodeId>,
     pub contexts: HashMap<TypeId, Box<dyn Any>>,
     pub cleanups: Vec<Box<dyn FnOnce()>>,
     /// Function-pointer fingerprint of the component fn that created
-    /// this owner. Used by Strategy C hot reload (A6) to map
+    /// this scope. Used by Strategy C hot reload (A6) to map
     /// subsecond-patched fn pointers back to live owners. `None` for
-    /// non-component owners (e.g. the root, or manually-created
+    /// non-component scopes (e.g. the root, or manually-created
     /// scopes in tests).
     pub mount_fn: Option<*const ()>,
     /// Element handles created via `view::create_element` while this
-    /// owner was at the top of the owner stack. Released through
-    /// `view::release_element` when the owner is disposed (or its
+    /// scope was at the top of the owner stack. Released through
+    /// `view::release_element` when the scope is disposed (or its
     /// ancestor disposes via cascade), preventing the renderer-side
     /// `BridgeRenderer::elements` map from accumulating dangling
     /// `WhiskerElement*` pointers across `<Show>` flips, `<For>`
@@ -170,15 +177,15 @@ pub struct Owner {
     /// flush — they're deferred onto [`ReactiveRuntime::deferred`]
     /// until the owner is resumed.
     ///
-    /// Cascades down the owner tree: `pause_owner` / `resume_owner`
-    /// walk descendants and mirror the flag; new owners inherit the
-    /// parent's flag at `create_owner` time. Used by `StackLayout`
+    /// Cascades down the owner tree: `Owner::pause` / `Owner::resume`
+    /// walk descendants and mirror the flag; new scopes inherit the
+    /// parent's flag at `Owner::new` time. Used by `StackLayout`
     /// to freeze back-stack entries that are mounted-but-off-screen.
     pub paused: bool,
 }
 
-impl Owner {
-    pub fn new(parent: Option<OwnerId>) -> Self {
+impl Scope {
+    pub fn new(parent: Option<Owner>) -> Self {
         Self {
             parent,
             children: Vec::new(),
@@ -209,13 +216,13 @@ impl Owner {
 /// running inside a closure can re-enter the runtime (read signals,
 /// write signals, register new effects) without panicking.
 pub struct ReactiveRuntime {
-    pub owners: SlotMap<OwnerId, Owner>,
+    pub owners: SlotMap<Owner, Scope>,
     pub nodes: SlotMap<NodeId, ReactiveNode>,
     /// Owner stack: the topmost is the "current" owner — new signals,
     /// effects, computed values, and lifecycle hooks register against it. Push
-    /// when entering a `with_owner` (or `#[component]`) scope, pop on
+    /// when entering a `Owner::with` (or `#[component]`) scope, pop on
     /// exit.
-    pub owner_stack: Vec<OwnerId>,
+    pub owner_stack: Vec<Owner>,
     /// The effect/computed currently being computed, if any. Signal reads
     /// inside this effect register a `sources`/`subscribers` link
     /// against it.
@@ -226,7 +233,7 @@ pub struct ReactiveRuntime {
     /// Nodes that were scheduled to run but whose owner is `paused`.
     /// Sit here until their owner is resumed; on resume, drain back
     /// into [`Self::pending`] so the deferred work fires. See
-    /// `pause_owner` / `resume_owner` for the lifecycle.
+    /// `Owner::pause` / `Owner::resume` for the lifecycle.
     pub deferred: Vec<NodeId>,
     /// True while [`flush_pending`] is actively draining `pending`.
     /// Used to avoid recursive flushes (signal writes inside a running
@@ -237,7 +244,7 @@ pub struct ReactiveRuntime {
     /// Populated by `register_component`; consulted by the A6 hot-
     /// reload path to find which owners to dispose when a fn body
     /// gets subsecond-patched.
-    pub component_owners: HashMap<*const (), Vec<OwnerId>>,
+    pub component_owners: HashMap<*const (), Vec<Owner>>,
     /// Side table of remountable component mount sites
     /// (`#[component]` with all-`Clone` props), keyed by a stable
     /// `MountId`. Hot-reload remount walks this table on every
@@ -246,7 +253,7 @@ pub struct ReactiveRuntime {
     pub(crate) mount_sites: HashMap<super::component::MountId, super::component::MountSite>,
     /// Component-fn-pointer → list of remountable mount sites that
     /// ran that fn. Mirror of `component_owners` indexed by
-    /// `MountId` instead of `OwnerId` so it survives the dispose +
+    /// `MountId` instead of `Owner` so it survives the dispose +
     /// re-create cycle on each hot-reload remount (the owner is
     /// fresh every time, the mount id is stable).
     pub fn_ptr_mounts: HashMap<*const (), Vec<super::component::MountId>>,
@@ -278,7 +285,7 @@ impl ReactiveRuntime {
 
     /// Current top-of-stack owner. `None` outside any owner scope (the
     /// pre-mount state, basically only relevant for tests).
-    pub fn current_owner(&self) -> Option<OwnerId> {
+    pub fn current_owner(&self) -> Option<Owner> {
         self.owner_stack.last().copied()
     }
 }

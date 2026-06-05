@@ -215,25 +215,25 @@ fn signals_written_during_flush_propagate_in_same_flush() {
 #[test]
 fn dispose_owner_frees_nested_signals() {
     fresh();
-    let owner = create_owner(None);
-    let (read, _write) = with_owner(owner, || signal(123_i32));
+    let owner = Owner::new(None);
+    let (read, _write) = owner.with(|| signal(123_i32));
     // Signal works while owner is alive.
     assert_eq!(read.get(), 123);
-    dispose_owner(owner);
+    owner.dispose();
     // After disposal the underlying node is gone; reads panic in debug
     // and we don't want to fault the test, so we just verify the
     // owner slot itself is freed by trying to dispose again (no-op).
-    dispose_owner(owner);
+    owner.dispose();
 }
 
 #[test]
 fn dispose_cascades_to_children() {
     fresh();
-    let parent = create_owner(None);
+    let parent = Owner::new(None);
     let mut leaf_signals = Vec::new();
-    let child = with_owner(parent, || {
-        let c = create_owner(None);
-        with_owner(c, || {
+    let child = parent.with(|| {
+        let c = Owner::new(None);
+        c.with(|| {
             let (r, _w) = signal(0_u32);
             leaf_signals.push(r);
         });
@@ -241,7 +241,7 @@ fn dispose_cascades_to_children() {
     });
 
     // Parent owns child; disposing parent disposes child too.
-    dispose_owner(parent);
+    parent.dispose();
 
     // Owner map should have neither.
     let alive = with_runtime(|rt| {
@@ -256,10 +256,10 @@ fn dispose_cascades_to_children() {
 #[test]
 fn on_cleanup_fires_lifo() {
     fresh();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
 
-    with_owner(owner, || {
+    owner.with(|| {
         let l = log.clone();
         on_cleanup(move || l.borrow_mut().push("first"));
         let l = log.clone();
@@ -268,19 +268,19 @@ fn on_cleanup_fires_lifo() {
         on_cleanup(move || l.borrow_mut().push("third"));
     });
 
-    dispose_owner(owner);
+    owner.dispose();
     assert_eq!(*log.borrow(), vec!["third", "second", "first"]);
 }
 
 #[test]
 fn disposing_owner_removes_its_effects_from_pending() {
     fresh();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let (count, set_count) = signal(0_i32);
     let runs = Rc::new(RefCell::new(0));
     let runs_clone = runs.clone();
 
-    with_owner(owner, || {
+    owner.with(|| {
         effect(move || {
             let _ = count.get();
             *runs_clone.borrow_mut() += 1;
@@ -290,7 +290,7 @@ fn disposing_owner_removes_its_effects_from_pending() {
 
     // Schedule the effect, then dispose its owner before flush.
     set_count.set(1);
-    dispose_owner(owner);
+    owner.dispose();
     flush();
 
     // The effect should NOT have re-run.
@@ -332,10 +332,10 @@ fn stored_value_does_not_trigger_effects() {
 #[test]
 fn stored_value_disposed_with_owner() {
     fresh();
-    let owner = create_owner(None);
-    let sv = with_owner(owner, || StoredValue::new(123_i32));
+    let owner = Owner::new(None);
+    let sv = owner.with(|| StoredValue::new(123_i32));
     assert_eq!(sv.get(), 123);
-    dispose_owner(owner);
+    owner.dispose();
     // Owner gone — node is gone too. We can verify indirectly: a fresh
     // owner has no leftover.
     let leftover = with_runtime(|rt| rt.owners.contains_key(owner));
@@ -401,8 +401,8 @@ fn on_mount_callback_inside_effect_does_not_leak_subscription_to_outer() {
         *outer_runs_clone.borrow_mut() += 1;
         // Build a fresh owner so `on_mount` doesn't warn about
         // "called outside any owner scope".
-        let owner = super::owner::create_owner(None);
-        super::owner::with_owner(owner, || {
+        let owner = super::Owner::new(None);
+        owner.with(|| {
             on_mount(move || {
                 let _ = mount_src.get();
             });
@@ -541,8 +541,8 @@ struct Theme(&'static str);
 #[test]
 fn context_round_trip_in_same_owner() {
     fresh();
-    let owner = create_owner(None);
-    with_owner(owner, || {
+    let owner = Owner::new(None);
+    owner.with(|| {
         provide_context(Theme("dark"));
         assert_eq!(use_context::<Theme>(), Some(Theme("dark")));
     });
@@ -551,13 +551,13 @@ fn context_round_trip_in_same_owner() {
 #[test]
 fn context_walks_parent_chain() {
     fresh();
-    let parent = create_owner(None);
+    let parent = Owner::new(None);
     let observed = Rc::new(RefCell::new(None::<Theme>));
-    with_owner(parent, || {
+    parent.with(|| {
         provide_context(Theme("from-parent"));
-        let child = create_owner(None);
+        let child = Owner::new(None);
         let observed_clone = observed.clone();
-        with_owner(child, || {
+        child.with(|| {
             *observed_clone.borrow_mut() = use_context::<Theme>();
         });
     });
@@ -567,13 +567,13 @@ fn context_walks_parent_chain() {
 #[test]
 fn context_descendant_shadows_ancestor() {
     fresh();
-    let parent = create_owner(None);
+    let parent = Owner::new(None);
     let observed = Rc::new(RefCell::new(None::<Theme>));
-    with_owner(parent, || {
+    parent.with(|| {
         provide_context(Theme("outer"));
-        let inner = create_owner(None);
+        let inner = Owner::new(None);
         let observed_clone = observed.clone();
-        with_owner(inner, || {
+        inner.with(|| {
             provide_context(Theme("inner"));
             *observed_clone.borrow_mut() = use_context::<Theme>();
         });
@@ -584,10 +584,10 @@ fn context_descendant_shadows_ancestor() {
 #[test]
 fn context_missing_returns_none() {
     fresh();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let observed = Rc::new(RefCell::new(Some(Theme("placeholder"))));
     let obs_clone = observed.clone();
-    with_owner(owner, || {
+    owner.with(|| {
         *obs_clone.borrow_mut() = use_context::<Theme>();
     });
     assert_eq!(*observed.borrow(), None);
@@ -596,10 +596,10 @@ fn context_missing_returns_none() {
 #[test]
 fn with_context_borrows_without_clone() {
     fresh();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let observed = Rc::new(RefCell::new(0_usize));
     let obs_clone = observed.clone();
-    with_owner(owner, || {
+    owner.with(|| {
         provide_context(vec![1_i32, 2, 3, 4]);
         let len = with_context::<Vec<i32>, _>(|v| v.len()).unwrap();
         *obs_clone.borrow_mut() = len;
@@ -657,10 +657,10 @@ fn mount_component_isolates_owner_state() {
 #[test]
 fn on_mount_fires_on_flush() {
     fresh();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let fired = Rc::new(RefCell::new(false));
     let fired_clone = fired.clone();
-    with_owner(owner, || {
+    owner.with(|| {
         on_mount(move || *fired_clone.borrow_mut() = true);
     });
     // Hasn't fired yet — needs a flush_mounts call.
@@ -672,9 +672,9 @@ fn on_mount_fires_on_flush() {
 #[test]
 fn on_mount_runs_in_registration_order() {
     fresh();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
-    with_owner(owner, || {
+    owner.with(|| {
         let l = log.clone();
         on_mount(move || l.borrow_mut().push("first"));
         let l = log.clone();
@@ -689,10 +689,10 @@ fn on_mount_runs_in_registration_order() {
 #[test]
 fn flush_mounts_is_idempotent() {
     fresh();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let count = Rc::new(RefCell::new(0));
     let count_clone = count.clone();
-    with_owner(owner, || {
+    owner.with(|| {
         on_mount(move || *count_clone.borrow_mut() += 1);
     });
     flush_mounts();
@@ -918,7 +918,7 @@ fn mount_component_remountable_body_runs_with_no_tracker_when_invoked_inside_eff
 }
 
 // Note: `remount_components_for`'s body invocation reuses the
-// exact same `untrack(|| with_owner(new_owner, || (*info.body)()))`
+// exact same `untrack(|| new_owner.with(|| (*info.body)()))`
 // bracket the initial mount uses. Driving the remount path through
 // a unit test requires a full renderer install + an attached parent
 // element (otherwise `info.parent` is `None` and the path
@@ -939,9 +939,9 @@ fn flush_mounts_callback_runs_with_no_tracker_when_called_inside_effect() {
     let observed = Rc::new(RefCell::new(Some(observed_tracker())));
     let observed_clone = observed.clone();
     effect(move || {
-        let owner = super::owner::create_owner(None);
+        let owner = super::Owner::new(None);
         let observed_inner = observed_clone.clone();
-        super::owner::with_owner(owner, || {
+        owner.with(|| {
             on_mount(move || {
                 *observed_inner.borrow_mut() = Some(observed_tracker());
             });
@@ -1060,8 +1060,8 @@ fn arc_signal_survives_caller_owner_disposal() {
     let stash: Rc<RefCell<Option<ArcReadSignal<i32>>>> = Rc::new(RefCell::new(None));
     let stash_for_install = stash.clone();
 
-    let owner = create_owner(None);
-    with_owner(owner, || {
+    let owner = Owner::new(None);
+    owner.with(|| {
         let (r, w) = arc_signal(99_i32);
         // Pretend `w` is the write half kept by a native module's
         // event callback; we don't need to keep it for this test.
@@ -1069,7 +1069,7 @@ fn arc_signal_survives_caller_owner_disposal() {
         *stash_for_install.borrow_mut() = Some(r);
     });
 
-    dispose_owner(owner);
+    owner.dispose();
 
     // Pre-fix this would have panicked (`expect("signal disposed")`)
     // for Copy signals. Post-fix Arc signals survive the disposal.
@@ -1104,8 +1104,8 @@ fn arc_signal_subscriber_is_pruned_when_its_owner_is_disposed() {
     let observed: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
     let observed_clone = observed.clone();
 
-    let owner = create_owner(None);
-    with_owner(owner, || {
+    let owner = Owner::new(None);
+    owner.with(|| {
         effect(move || observed_clone.borrow_mut().push(counter_for_effect.get()));
     });
     assert_eq!(*observed.borrow(), vec![0]);
@@ -1114,7 +1114,7 @@ fn arc_signal_subscriber_is_pruned_when_its_owner_is_disposed() {
     // list inside `counter` should be pruned eagerly by the
     // owner-disposal cascade so the next `set` doesn't try to
     // schedule a freed NodeId.
-    dispose_owner(owner);
+    owner.dispose();
 
     counter.set(7);
     flush();
@@ -1208,17 +1208,17 @@ fn arc_to_rw_conversion_shares_underlying_value() {
     // fresh arena entry, but both handles observe the same underlying
     // value: writes through one are visible through the other.
     fresh();
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let arc = ArcRwSignal::new(0_i32);
     let arc_for_outside = arc.clone();
-    let rw: RwSignal<i32> = with_owner(owner, || arc.clone().into());
+    let rw: RwSignal<i32> = owner.with(|| arc.clone().into());
     assert_eq!(rw.get(), 0);
     arc.set(7);
     assert_eq!(rw.get(), 7);
     rw.set(42);
     assert_eq!(arc.get_untracked(), 42);
     assert_eq!(arc_for_outside.get_untracked(), 42);
-    dispose_owner(owner);
+    owner.dispose();
 }
 
 #[test]
@@ -1227,10 +1227,10 @@ fn arc_to_rw_conversion_propagates_to_effect_subscribers() {
     // when the original `ArcRwSignal` is written.
     fresh();
     let arc = ArcRwSignal::new(0_i32);
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let observed: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
     let observed_clone = observed.clone();
-    with_owner(owner, || {
+    owner.with(|| {
         let rw: RwSignal<i32> = arc.clone().into();
         effect(move || observed_clone.borrow_mut().push(rw.get()));
     });
@@ -1239,7 +1239,7 @@ fn arc_to_rw_conversion_propagates_to_effect_subscribers() {
     arc.set(2);
     flush();
     assert_eq!(*observed.borrow(), vec![0, 1, 2]);
-    dispose_owner(owner);
+    owner.dispose();
 }
 
 #[test]
@@ -1251,9 +1251,9 @@ fn arc_to_rw_conversion_survives_caller_owner_disposal_via_arc() {
     // reference.
     fresh();
     let arc = ArcRwSignal::new(0_i32);
-    let owner = create_owner(None);
-    let _: RwSignal<i32> = with_owner(owner, || arc.clone().into());
-    dispose_owner(owner);
+    let owner = Owner::new(None);
+    let _: RwSignal<i32> = owner.with(|| arc.clone().into());
+    owner.dispose();
     arc.set(99);
     assert_eq!(arc.get_untracked(), 99);
 }
@@ -1262,23 +1262,23 @@ fn arc_to_rw_conversion_survives_caller_owner_disposal_via_arc() {
 fn arc_read_signal_to_read_signal_conversion_reads_correctly() {
     fresh();
     let (r, w) = arc_signal(5_i32);
-    let owner = create_owner(None);
-    let copy: ReadSignal<i32> = with_owner(owner, || r.into());
+    let owner = Owner::new(None);
+    let copy: ReadSignal<i32> = owner.with(|| r.into());
     assert_eq!(copy.get(), 5);
     w.set(99);
     assert_eq!(copy.get(), 99);
-    dispose_owner(owner);
+    owner.dispose();
 }
 
 #[test]
 fn arc_write_signal_to_write_signal_conversion_writes_correctly() {
     fresh();
     let (r, w) = arc_signal(0_i32);
-    let owner = create_owner(None);
-    let copy: WriteSignal<i32> = with_owner(owner, || w.into());
+    let owner = Owner::new(None);
+    let copy: WriteSignal<i32> = owner.with(|| w.into());
     copy.set(123);
     assert_eq!(r.get_untracked(), 123);
-    dispose_owner(owner);
+    owner.dispose();
 }
 
 #[test]
@@ -1298,8 +1298,8 @@ fn arc_signal_inside_oncelock_outlives_caller_owner() {
     });
     let module_clone = module.clone();
 
-    let install_owner = create_owner(None);
-    with_owner(install_owner, || {
+    let install_owner = Owner::new(None);
+    install_owner.with(|| {
         // First touch installs the signal under whatever owner is
         // current — the install owner here.
         module_clone.slot.get_or_init(|| ArcRwSignal::new(0));
@@ -1307,15 +1307,15 @@ fn arc_signal_inside_oncelock_outlives_caller_owner() {
 
     // Dispose the owner that triggered the install. The OnceLock
     // still holds the only strong Arc.
-    dispose_owner(install_owner);
+    install_owner.dispose();
 
     // The signal is still readable, set-able, and propagates to new
     // subscribers under fresh owners.
     let observed: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
     let observed_clone = observed.clone();
     let module_for_use = module.clone();
-    let use_owner = create_owner(None);
-    with_owner(use_owner, || {
+    let use_owner = Owner::new(None);
+    use_owner.with(|| {
         effect(move || {
             let v = module_for_use.slot.get().unwrap().get();
             *observed_clone.borrow_mut() = Some(v);
@@ -1336,9 +1336,9 @@ fn paused_owner_defers_effect_runs_until_resumed() {
     let runs = Rc::new(RefCell::new(0_u32));
     let (read, write) = signal(0_i32);
 
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let runs_clone = runs.clone();
-    with_owner(owner, || {
+    owner.with(|| {
         effect(move || {
             let _ = read.get();
             *runs_clone.borrow_mut() += 1;
@@ -1350,15 +1350,15 @@ fn paused_owner_defers_effect_runs_until_resumed() {
         "initial registration runs the effect once"
     );
 
-    pause_owner(owner);
-    assert!(is_owner_paused(owner));
+    owner.pause();
+    assert!(owner.is_paused());
 
     write.set(1);
     flush();
     assert_eq!(*runs.borrow(), 1, "paused effect must not run on flush");
 
-    resume_owner(owner);
-    assert!(!is_owner_paused(owner));
+    owner.resume();
+    assert!(!owner.is_paused());
     flush();
     assert_eq!(
         *runs.borrow(),
@@ -1374,18 +1374,18 @@ fn pause_cascades_to_descendants() {
     let child_runs = Rc::new(RefCell::new(0_u32));
     let (read, write) = signal(0_i32);
 
-    let parent = create_owner(None);
-    let child = create_owner(Some(parent));
+    let parent = Owner::new(None);
+    let child = Owner::new(Some(parent));
 
     let pr = parent_runs.clone();
-    with_owner(parent, || {
+    parent.with(|| {
         effect(move || {
             let _ = read.get();
             *pr.borrow_mut() += 1;
         });
     });
     let cr = child_runs.clone();
-    with_owner(child, || {
+    child.with(|| {
         effect(move || {
             let _ = read.get();
             *cr.borrow_mut() += 1;
@@ -1394,16 +1394,16 @@ fn pause_cascades_to_descendants() {
     assert_eq!(*parent_runs.borrow(), 1);
     assert_eq!(*child_runs.borrow(), 1);
 
-    pause_owner(parent);
-    assert!(is_owner_paused(parent));
-    assert!(is_owner_paused(child), "pause cascades down the tree");
+    parent.pause();
+    assert!(parent.is_paused());
+    assert!(child.is_paused(), "pause cascades down the tree");
 
     write.set(1);
     flush();
     assert_eq!(*parent_runs.borrow(), 1);
     assert_eq!(*child_runs.borrow(), 1);
 
-    resume_owner(parent);
+    parent.resume();
     flush();
     assert_eq!(*parent_runs.borrow(), 2);
     assert_eq!(*child_runs.borrow(), 2);
@@ -1412,12 +1412,12 @@ fn pause_cascades_to_descendants() {
 #[test]
 fn create_owner_inherits_paused_from_parent() {
     fresh();
-    let parent = create_owner(None);
-    pause_owner(parent);
+    let parent = Owner::new(None);
+    parent.pause();
 
-    let child = create_owner(Some(parent));
+    let child = Owner::new(Some(parent));
     assert!(
-        is_owner_paused(child),
+        child.is_paused(),
         "owner created under a paused parent must inherit paused"
     );
 }
@@ -1434,11 +1434,11 @@ fn effect_registered_under_paused_owner_defers_initial_run_until_resume() {
     // navigation effect.
     fresh();
     let runs = Rc::new(RefCell::new(0_u32));
-    let owner = create_owner(None);
-    pause_owner(owner);
+    let owner = Owner::new(None);
+    owner.pause();
 
     let runs_clone = runs.clone();
-    with_owner(owner, || {
+    owner.with(|| {
         effect(move || {
             *runs_clone.borrow_mut() += 1;
         });
@@ -1449,7 +1449,7 @@ fn effect_registered_under_paused_owner_defers_initial_run_until_resume() {
         "paused at registration: initial run deferred"
     );
 
-    resume_owner(owner);
+    owner.resume();
     flush();
     assert_eq!(*runs.borrow(), 1, "resume fires the deferred initial run");
 }
@@ -1457,14 +1457,14 @@ fn effect_registered_under_paused_owner_defers_initial_run_until_resume() {
 #[test]
 fn pause_is_idempotent() {
     fresh();
-    let owner = create_owner(None);
-    pause_owner(owner);
-    pause_owner(owner);
-    assert!(is_owner_paused(owner));
-    resume_owner(owner);
-    assert!(!is_owner_paused(owner));
-    resume_owner(owner);
-    assert!(!is_owner_paused(owner));
+    let owner = Owner::new(None);
+    owner.pause();
+    owner.pause();
+    assert!(owner.is_paused());
+    owner.resume();
+    assert!(!owner.is_paused());
+    owner.resume();
+    assert!(!owner.is_paused());
 }
 
 #[test]
@@ -1473,20 +1473,20 @@ fn dispose_while_paused_drops_deferred_entries() {
     let runs = Rc::new(RefCell::new(0_u32));
     let (read, write) = signal(0_i32);
 
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let runs_clone = runs.clone();
-    with_owner(owner, || {
+    owner.with(|| {
         effect(move || {
             let _ = read.get();
             *runs_clone.borrow_mut() += 1;
         });
     });
-    pause_owner(owner);
+    owner.pause();
     write.set(1);
     flush();
     assert_eq!(*runs.borrow(), 1, "paused: still 1");
 
-    dispose_owner(owner);
+    owner.dispose();
     // The deferred queue had this effect's node; disposal must
     // strip it so a later flush / resume doesn't dereference a
     // freed slot.
@@ -1501,15 +1501,15 @@ fn multiple_paused_signal_writes_collapse_to_one_run_on_resume() {
     let runs = Rc::new(RefCell::new(0_u32));
     let (read, write) = signal(0_i32);
 
-    let owner = create_owner(None);
+    let owner = Owner::new(None);
     let runs_clone = runs.clone();
-    with_owner(owner, || {
+    owner.with(|| {
         effect(move || {
             let _ = read.get();
             *runs_clone.borrow_mut() += 1;
         });
     });
-    pause_owner(owner);
+    owner.pause();
 
     write.set(1);
     flush();
@@ -1519,7 +1519,7 @@ fn multiple_paused_signal_writes_collapse_to_one_run_on_resume() {
     flush();
     assert_eq!(*runs.borrow(), 1, "no re-runs while paused");
 
-    resume_owner(owner);
+    owner.resume();
     flush();
     assert_eq!(
         *runs.borrow(),

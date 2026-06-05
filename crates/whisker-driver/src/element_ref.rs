@@ -337,7 +337,7 @@ impl ElementRef {
     /// recycled `Element` ID.
     ///
     /// `try_set` because the underlying signal may have already been
-    /// disposed by the time this cleanup fires: `dispose_owner`
+    /// disposed by the time this cleanup fires: `Owner::dispose`
     /// frees the owner's signal nodes (step 4) *before* running
     /// cleanups (step 6). For the typical case (ref allocated in a
     /// parent owner, element mounted in a child owner) this is a

@@ -17,7 +17,7 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-use super::runtime::{NodeData, NodeId, Owner, ReactiveNode};
+use super::runtime::{NodeData, NodeId, ReactiveNode, Scope};
 use super::scheduler;
 use super::with_runtime;
 
@@ -57,11 +57,11 @@ fn alloc_signal_node<T: 'static>(initial: T) -> NodeId {
         let owner = rt.current_owner().unwrap_or_else(|| {
             // No current owner — fall back to a "global" detached owner.
             // We create one lazily so primitives created outside of any
-            // explicit `with_owner` (e.g. in tests, or at app startup
+            // explicit `Owner::with` (e.g. in tests, or at app startup
             // before the first component mounts) still have a place to
             // live. They will only be freed by `__reset_for_tests` or
             // explicit dispose.
-            let detached = rt.owners.insert(Owner::new(None));
+            let detached = rt.owners.insert(Scope::new(None));
             rt.owner_stack.push(detached);
             detached
         });
@@ -356,7 +356,7 @@ fn register_arc_in_current_owner<T: 'static>(arc: super::arc_signal::ArcRwSignal
     }
     with_runtime(|rt| {
         let owner = rt.current_owner().unwrap_or_else(|| {
-            let detached = rt.owners.insert(Owner::new(None));
+            let detached = rt.owners.insert(Scope::new(None));
             rt.owner_stack.push(detached);
             detached
         });
