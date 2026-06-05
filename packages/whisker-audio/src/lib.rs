@@ -222,12 +222,19 @@ impl Player {
 /// the id is main-thread-only.
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Map from player id to its reactive signal. Lives in a
+/// Player id → reactive signal. Lives behind an `Rc<RefCell<…>>`
+/// so the bridge-callback closure and the `register_status` insert
+/// path share one table, and the whole thing rides in a
 /// [`MainThreadOnly`] wrapper so the `Sync` bound on `OnceLock<T>`
-/// passes; access is on the bridge's main thread by contract (same
-/// model as `whisker-safe-area`).
+/// passes (access is on the bridge's main thread by contract —
+/// same model as `whisker-safe-area`).
+type StatusEntries = Rc<RefCell<HashMap<u64, ArcRwSignal<PlaybackStatus>>>>;
+
+/// Process-global dispatch table. Wraps [`StatusEntries`] so the
+/// `OnceLock<StatusTable>` `Sync` requirement is satisfied by the
+/// surrounding `MainThreadOnly` rather than by the `Rc` itself.
 struct StatusTable {
-    entries: MainThreadOnly<Rc<RefCell<HashMap<u64, ArcRwSignal<PlaybackStatus>>>>>,
+    entries: MainThreadOnly<StatusEntries>,
 }
 
 static STATUS_TABLE: OnceLock<StatusTable> = OnceLock::new();
@@ -263,8 +270,7 @@ fn unregister_status(id: u64) {
 /// up the matching signal, and writes the decoded status. Stale
 /// events for ids that were already released are dropped silently.
 fn install_status_listener() -> StatusTable {
-    let entries: Rc<RefCell<HashMap<u64, ArcRwSignal<PlaybackStatus>>>> =
-        Rc::new(RefCell::new(HashMap::new()));
+    let entries: StatusEntries = Rc::new(RefCell::new(HashMap::new()));
     let entries_for_listener = MainThreadOnly {
         inner: entries.clone(),
     };
