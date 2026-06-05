@@ -30,22 +30,34 @@
 //! plumb the data layer's `fetch_podcast_by_id` through `resource`
 //! to handle the deep-link case.
 //!
-//! Playback is **not** wired up — the play / follow buttons are
-//! visual-only. Adding that will be a `whisker-audio` module +
-//! plumbing on top of this screen.
+//! ## Playback wiring
+//!
+//! The detail screen reads the shared [`Player`] handle and the
+//! [`NowPlayingSignal`] from context (both provided by the shell)
+//! and writes both on tap: `Player::set_source(url) + play()`
+//! starts audio, and updating the now-playing signal flips the
+//! mini-player into "showing a track" mode.
+//!
+//! Episodes themselves come from a `resource()`-driven iTunes
+//! lookup that runs once per detail-screen mount and re-fires when
+//! a new id lands.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use podcast_domain::Podcast;
+use podcast_data::fetch_episodes;
+use podcast_domain::{Episode, NowPlaying, Podcast};
 use podcast_routing::Navigator;
 use podcast_theme as theme;
 use whisker::css::{
     AlignItems, Display, FlexDirection, FontWeight, JustifyContent, TextAlign, TextOverflow,
 };
 use whisker::prelude::*;
+use whisker::runtime::tasks::run_blocking;
 use whisker::runtime::view::Element;
+use whisker::ArcRwSignal;
+use whisker_audio::Player;
 use whisker_icons::{lucide, Icon, IconProps};
 use whisker_image::{Image, ImageProps};
 use whisker_safe_area::safe_area_insets;
@@ -55,6 +67,11 @@ use whisker_safe_area::safe_area_insets;
 /// router-agnostic (no dep on the top-level shell) but can still
 /// match the context type the host provides.
 pub type PodcastIndex = Rc<RefCell<HashMap<u64, Podcast>>>;
+
+/// Mirror of the shell-side `NowPlayingSignal` alias. TypeId-
+/// matched, so `use_context::<NowPlayingSignal>()` here finds the
+/// signal the shell provided without taking a dep on the shell.
+pub type NowPlayingSignal = ArcRwSignal<Option<NowPlaying>>;
 
 /// Show detail screen.
 ///
@@ -81,6 +98,23 @@ fn detail_body(podcast: Podcast) -> Element {
     let genre = podcast.primary_genre_name.clone();
     let track_count = podcast.track_count;
     let is_explicit = podcast.is_explicit();
+
+    // Episodes resource — fires the iTunes lookup on mount, re-fires
+    // if the screen is re-rendered with a different id (resource()
+    // is owner-scoped, the outer `match podcast` discriminant means
+    // a navigate-to-different-show remounts this body).
+    let id_for_fetch = podcast.id;
+    let episodes = resource(move || async move {
+        run_blocking(move || fetch_episodes(id_for_fetch, 50))
+            .await
+            .map_err(|e| e.to_string())
+    });
+
+    // Snapshot of podcast metadata for the episode-tap closures —
+    // they need to populate `NowPlaying` without re-reading the
+    // signal map.
+    let show_title = podcast.collection_name.clone();
+    let show_artwork = podcast.artwork_url_600.clone();
 
     // Meta line: "Genre · N episodes". Built once here so the
     // `render!` body doesn't fan out into three nested `text`s.
@@ -158,18 +192,16 @@ fn detail_body(podcast: Podcast) -> Element {
                     )
                     follow_pill()
                 }
-                // Episodes section header + placeholder list. No
-                // RSS-feed wiring yet — that's the playback PR's
-                // job. The placeholder uses the same `episode_row`
-                // shape an actual episode would render with so a
-                // future wiring doesn't move the layout around.
+                // Episodes section header + list. `Show` toggles
+                // between the loading / error placeholder and the
+                // populated list once the resource resolves.
                 view(style: css!(
                     display: Display::Flex,
                     flex_direction: FlexDirection::Column,
                     padding_left: theme::GUTTER,
                     padding_right: theme::GUTTER,
                     padding_top: px(8),
-                    padding_bottom: px(40),
+                    padding_bottom: px(96),
                 )) {
                     text(
                         style: css!(
@@ -180,7 +212,22 @@ fn detail_body(podcast: Podcast) -> Element {
                         ),
                         value: "Episodes".to_string(),
                     )
-                    episode_placeholder()
+                    Show(
+                        when: move || episodes.get().is_some(),
+                        fallback: move || render! {
+                            episode_status(message: if episodes.error().is_some() {
+                                "Couldn't load episodes.".to_string()
+                            } else {
+                                "Loading…".to_string()
+                            })
+                        },
+                    ) {
+                        episode_list(
+                            episodes: episodes.get().unwrap_or_default(),
+                            show_title: show_title.clone(),
+                            show_artwork: show_artwork.clone(),
+                        )
+                    }
                 }
             }
         }
@@ -324,11 +371,10 @@ fn follow_pill() -> Element {
     }
 }
 
-/// Placeholder strip telling the user the episode list isn't wired
-/// yet. Same vertical rhythm a real `episode_row` will take so the
-/// future swap doesn't shift the surrounding layout.
+/// Centred "Loading…" / error strip. Same surface card the prior
+/// placeholder used so layout doesn't shift between resource states.
 #[component]
-fn episode_placeholder() -> Element {
+fn episode_status(message: String) -> Element {
     render! {
         view(style: css!(
             display: Display::Flex,
@@ -346,9 +392,176 @@ fn episode_placeholder() -> Element {
                     color: theme::TEXT_SECONDARY,
                     text_align: TextAlign::Center,
                 ),
-                value: "Episode list is coming with the playback PR.".to_string(),
+                value: message.clone(),
             )
         }
+    }
+}
+
+/// Vertical stack of episode rows. The `show_*` strings get
+/// captured into each tap closure so the now-playing signal can
+/// surface the show title + artwork without a back-channel lookup.
+#[component]
+fn episode_list(episodes: Vec<Episode>, show_title: String, show_artwork: String) -> Element {
+    render! {
+        view(style: css!(
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+        )) {
+            ForEach(
+                each: {
+                    let items = episodes.clone();
+                    move || items.clone()
+                },
+                key: |ep: &Episode| ep.id,
+                children: {
+                    let show_title = show_title.clone();
+                    let show_artwork = show_artwork.clone();
+                    move |ep: Episode| render! {
+                        episode_row(
+                            episode: ep,
+                            show_title: show_title.clone(),
+                            show_artwork: show_artwork.clone(),
+                        )
+                    }
+                },
+            )
+        }
+    }
+}
+
+/// One episode row. Title on the leading edge, release date + a
+/// "•" separator + duration on the trailing edge.
+///
+/// Tapping anywhere on the row drives playback. The handler pulls
+/// the shared `Player` + `NowPlayingSignal` from context so this
+/// component stays usable without the shell wiring (a standalone
+/// harness gets a `None` and the tap is a no-op).
+#[component]
+fn episode_row(episode: Episode, show_title: String, show_artwork: String) -> Element {
+    let title = episode.track_name.clone();
+    let meta = build_episode_meta(episode.release_date.as_deref(), episode.track_time_millis);
+    let audio_url = episode.episode_url.clone().unwrap_or_default();
+    let title_for_now_playing = title.clone();
+
+    let player = use_context::<Player>();
+    let now_playing = use_context::<NowPlayingSignal>();
+    // Component bodies are re-invoked under a `FnMut` wrapper (see
+    // `whisker::call`), so anything captured into the tap closure
+    // must be `Clone`d out of the component params first — moving
+    // the original `String`s straight in would consume the outer
+    // FnMut's captures on the first body run.
+    let show_title_for_tap = show_title.clone();
+    let show_artwork_for_tap = show_artwork.clone();
+    let on_tap = move |_: _| {
+        if audio_url.is_empty() {
+            return;
+        }
+        if let Some(player) = player.as_ref() {
+            player.set_source(audio_url.clone());
+            player.play();
+        }
+        if let Some(np) = now_playing.as_ref() {
+            np.set(Some(NowPlaying {
+                episode_title: title_for_now_playing.clone(),
+                show_title: show_title_for_tap.clone(),
+                artwork_url: show_artwork_for_tap.clone(),
+                audio_url: audio_url.clone(),
+            }));
+        }
+    };
+
+    render! {
+        view(
+            style: css!(
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                padding_top: px(12),
+                padding_bottom: px(12),
+                border_radius: px(8),
+            ),
+            on_tap: on_tap,
+        ) {
+            text(
+                style: css!(
+                    font_size: px(15),
+                    color: theme::TEXT_PRIMARY,
+                    font_weight: FontWeight::Numeric(600),
+                    text_overflow: TextOverflow::Ellipsis,
+                ).raw("text-maxline", "2"),
+                value: title.clone(),
+            )
+            text(
+                style: css!(
+                    font_size: px(12),
+                    color: theme::TEXT_SECONDARY,
+                    margin_top: px(4),
+                ),
+                value: meta,
+            )
+        }
+    }
+}
+
+/// "Sep 12 · 32 min"-style meta line. Either side is optional —
+/// older RSS feeds sometimes omit the duration; iTunes itself
+/// rarely omits the release date. Empty pieces are dropped so a
+/// partial row doesn't get an orphan separator.
+fn build_episode_meta(release_date: Option<&str>, track_ms: Option<u64>) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(2);
+    if let Some(date) = release_date.and_then(short_date) {
+        parts.push(date);
+    }
+    if let Some(ms) = track_ms.filter(|ms| *ms > 0) {
+        parts.push(short_duration(ms));
+    }
+    parts.join(" · ")
+}
+
+/// ISO-8601 → "Sep 12" (year omitted unless it's not the current
+/// one). Defensive: anything not matching `YYYY-MM-DDT...` falls
+/// through to a verbatim copy so a wire-shape surprise still
+/// renders something readable instead of `None`.
+fn short_date(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    if bytes.len() < 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return Some(raw.to_string());
+    }
+    let month = &raw[5..7];
+    let day = &raw[8..10];
+    let month_name = match month {
+        "01" => "Jan",
+        "02" => "Feb",
+        "03" => "Mar",
+        "04" => "Apr",
+        "05" => "May",
+        "06" => "Jun",
+        "07" => "Jul",
+        "08" => "Aug",
+        "09" => "Sep",
+        "10" => "Oct",
+        "11" => "Nov",
+        "12" => "Dec",
+        _ => return Some(raw.to_string()),
+    };
+    let day_n: u32 = day.parse().ok()?;
+    Some(format!("{month_name} {day_n}"))
+}
+
+/// "32 min" or "1 h 12 min". Anything under a minute reads as
+/// "<1 min" rather than "0 min" so very short trailers don't
+/// appear empty.
+fn short_duration(ms: u64) -> String {
+    let total_min = ms / 60_000;
+    if total_min == 0 {
+        return "<1 min".to_string();
+    }
+    let hours = total_min / 60;
+    let mins = total_min % 60;
+    if hours == 0 {
+        format!("{mins} min")
+    } else {
+        format!("{hours} h {mins} min")
     }
 }
 

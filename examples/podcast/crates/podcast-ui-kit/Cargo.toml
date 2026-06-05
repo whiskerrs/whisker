@@ -26,5 +26,9 @@ whisker-safe-area = { path = "../../../../packages/whisker-safe-area" }
 # chevron, top-nav menu glyph, and mini-player play / skip glyphs —
 # replaces the prior hand-faked views and Unicode arrows.
 whisker-icons = { path = "../../../../packages/whisker-icons" }
+# `whisker-audio` for the mini-player: it reads the shared `Player`
+# from context to toggle play / pause and drives skip-30s seeks
+# off the reactive `PlaybackStatus` signal.
+whisker-audio = { path = "../../../../packages/whisker-audio" }
 podcast-theme = { path = "../podcast-theme" }
 podcast-domain = { path = "../podcast-domain" }

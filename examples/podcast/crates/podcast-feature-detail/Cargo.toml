@@ -14,6 +14,10 @@ whisker-image = { path = "../../../../packages/whisker-image" }
 whisker-icons = { path = "../../../../packages/whisker-icons" }
 whisker-router = { path = "../../../../packages/whisker-router" }
 whisker-safe-area = { path = "../../../../packages/whisker-safe-area" }
+# The detail screen reads `Player` + `NowPlayingSignal` from
+# context — pushed by the shell — and writes both on tap.
+whisker-audio = { path = "../../../../packages/whisker-audio" }
 podcast-domain = { path = "../podcast-domain" }
+podcast-data = { path = "../podcast-data" }
 podcast-routing = { path = "../podcast-routing" }
 podcast-theme = { path = "../podcast-theme" }

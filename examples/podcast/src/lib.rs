@@ -37,13 +37,16 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use podcast_domain::Podcast;
+use podcast_domain::{NowPlaying, Podcast};
 use podcast_feature_browse::{BrowseScreen, BrowseScreenProps};
 use podcast_feature_detail::{DetailScreen, DetailScreenProps};
 use podcast_routing::{AppRoute, Navigator};
-use whisker::css::{Display, FlexDirection};
+use podcast_ui_kit::{MiniPlayer, MiniPlayerProps};
+use whisker::css::{Display, FlexDirection, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
+use whisker::ArcRwSignal;
+use whisker_audio::Player;
 use whisker_router::stack::{route_stack, RouteStack};
 use whisker_router::{
     AndroidPredictiveBack, AndroidPredictiveBackProps, IosSwipeBack, IosSwipeBackProps,
@@ -62,6 +65,16 @@ use whisker_router::{
 /// A reactive signal would force the whole detail tree to re-render
 /// every time browse pushes a new chart row.
 pub type PodcastIndex = Rc<RefCell<HashMap<u64, Podcast>>>;
+
+/// Process-wide reactive "what's playing right now". `None` when
+/// nothing has been queued yet (cold start, before the user taps
+/// an episode); `Some` while the mini-player is showing a track.
+///
+/// Exposed as a type alias — same TypeId across crates — so the
+/// detail screen (writes on tap) and the mini-player (reads to
+/// render) match on `use_context<NowPlayingSignal>()` without
+/// importing it from this shell crate.
+pub type NowPlayingSignal = ArcRwSignal<Option<NowPlaying>>;
 
 /// Build a [`Navigator`] backed by the given route stack. Defined
 /// in the shell (not in `podcast-routing`) because it's the only
@@ -87,10 +100,22 @@ fn app() -> Element {
     let index: PodcastIndex = Rc::new(RefCell::new(HashMap::new()));
     let navigator = navigator_from_stack(stack.clone());
 
+    // One process-wide audio player. Constructed with no source —
+    // the detail screen calls `set_source` + `play` when the user
+    // taps an episode. The `Player` handle is `Clone` (Rc-backed);
+    // every consumer that pulls it from context gets a fresh
+    // ref-counted handle pointing at the same native player, so
+    // play / pause from the mini-player and the detail screen both
+    // drive the same playback.
+    let player = Player::new("");
+    let now_playing: NowPlayingSignal = ArcRwSignal::new(None);
+
     // Push the shared state into context once, on the `app()`
     // owner — the ancestor of every screen rendered below.
     provide_context(navigator);
     provide_context(index);
+    provide_context(player);
+    provide_context(now_playing);
 
     let render: RouteRenderFn<AppRoute> = (|r: AppRoute| match r {
         AppRoute::Browse => render! { BrowseScreen() },
@@ -99,12 +124,17 @@ fn app() -> Element {
     .into();
 
     render! {
+        // `position: relative` anchors the absolutely-positioned
+        // mini-player to the page itself, so the bar floats above
+        // *every* route — browse and detail alike — instead of
+        // being scoped to one screen's layout.
         page(style: css!(
             width: vw(100),
             height: vh(100),
             background_color: podcast_theme::BG,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
+            position: PositionKind::Relative,
         )) {
             RouteProvider(stack: stack) {
                 StackLayout(render: render.clone()) {
@@ -112,6 +142,13 @@ fn app() -> Element {
                     AndroidPredictiveBack()
                 }
             }
+            // The mini-player renders AFTER the route stack in DOM
+            // order so it paints on top — Lynx's animator quirk on
+            // z-index during sibling animations makes paint order
+            // the reliable lever. `MiniPlayer` itself is hidden
+            // (Show fallback → fragment) while `NowPlayingSignal`
+            // is `None`, so this mount is invisible on cold start.
+            MiniPlayer()
         }
     }
 }

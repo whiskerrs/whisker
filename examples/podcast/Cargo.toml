@@ -14,8 +14,14 @@ crate-type = ["rlib"]
 [dependencies]
 whisker = { workspace = true }
 whisker-router = { workspace = true }
+# Playback: the shell constructs a single shared `Player` here and
+# publishes it (plus the now-playing signal) via context so the
+# detail screen can start playback and the mini-player can render
+# the running state.
+whisker-audio = { path = "../../packages/whisker-audio" }
 podcast-domain = { path = "crates/podcast-domain" }
 podcast-routing = { path = "crates/podcast-routing" }
 podcast-theme = { path = "crates/podcast-theme" }
+podcast-ui-kit = { path = "crates/podcast-ui-kit" }
 podcast-feature-browse = { path = "crates/podcast-feature-browse" }
 podcast-feature-detail = { path = "crates/podcast-feature-detail" }
