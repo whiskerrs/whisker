@@ -171,7 +171,7 @@ fn browse_body(sections: Vec<ChartSection>) -> Element {
                 flex_shrink: 1.0,
                 width: percent(100),
             ),
-            scroll_orientation: "vertical",
+            scroll_orientation: ScrollOrientation::Vertical,
             scroll_bar_enable: false,
             bounces: true,
         ) {

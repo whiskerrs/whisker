@@ -59,7 +59,7 @@ use whisker::runtime::view::Element;
 use whisker::ArcRwSignal;
 use whisker_audio::Player;
 use whisker_icons::{lucide, Icon, IconProps};
-use whisker_image::{Image, ImageProps};
+use whisker_image::{Image, ImageMode, ImageProps};
 use whisker_safe_area::safe_area_insets;
 
 /// `Rc<RefCell<HashMap<u64, Podcast>>>` — same alias the top-level
@@ -135,7 +135,7 @@ fn detail_body(podcast: Podcast) -> Element {
                     flex_shrink: 1.0,
                     width: percent(100),
                 ),
-                scroll_orientation: "vertical",
+                scroll_orientation: ScrollOrientation::Vertical,
                 scroll_bar_enable: false,
                 bounces: true,
             ) {
@@ -159,7 +159,7 @@ fn detail_body(podcast: Podcast) -> Element {
                             background_color: theme::SURFACE,
                         ).raw("aspect-ratio", "1 / 1").to_css_string(),
                         src: artwork_src,
-                        mode: "aspectFill",
+                        mode: ImageMode::AspectFill,
                     )
                     text(
                         style: css!(

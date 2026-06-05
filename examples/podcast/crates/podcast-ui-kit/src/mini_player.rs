@@ -35,7 +35,7 @@ use whisker::runtime::view::Element;
 use whisker::ArcRwSignal;
 use whisker_audio::Player;
 use whisker_icons::{lucide, Icon, IconProps};
-use whisker_image::{Image, ImageProps};
+use whisker_image::{Image, ImageMode, ImageProps};
 
 /// Mirror of the shell-side alias. Same TypeId across crates
 /// because the resolver matches on `Rc`/`ArcRwSignal` instantiation,
@@ -131,7 +131,7 @@ pub fn mini_player() -> Element {
                         background_color: Color::rgba(255, 255, 255, 0.15),
                     ).raw("aspect-ratio", "1 / 1").to_css_string(),
                     src: artwork_src,
-                    mode: "aspectFill",
+                    mode: ImageMode::AspectFill,
                 )
                 // Stacked text — episode title on top, show title
                 // below. Flex-grow lets it absorb the slack so the

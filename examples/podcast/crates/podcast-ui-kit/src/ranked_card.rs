@@ -10,7 +10,7 @@ use podcast_theme as theme;
 use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, TextOverflow, ToCss};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_image::{Image, ImageProps};
+use whisker_image::{Image, ImageMode, ImageProps};
 
 #[component]
 pub fn ranked_card(podcast: Podcast, rank: u32) -> Element {
@@ -36,7 +36,7 @@ pub fn ranked_card(podcast: Podcast, rank: u32) -> Element {
                     background_color: theme::SURFACE,
                 ).to_css_string(),
                 src: artwork_src,
-                mode: "aspectFill",
+                mode: ImageMode::AspectFill,
             )
             view(style: css!(
                 display: Display::Flex,

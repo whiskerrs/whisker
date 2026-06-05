@@ -19,7 +19,7 @@ pub fn horizontal_row(children: Children) -> Element {
         // don't show a scroll bar.
         scroll_view(
             style: css!(width: percent(100), display: Display::Flex),
-            scroll_orientation: "horizontal",
+            scroll_orientation: ScrollOrientation::Horizontal,
             scroll_bar_enable: false,
             bounces: true,
         ) {
