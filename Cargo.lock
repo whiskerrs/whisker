@@ -950,6 +950,7 @@ dependencies = [
  "podcast-routing",
  "podcast-theme",
  "whisker",
+ "whisker-audio",
  "whisker-router",
 ]
 
@@ -986,10 +987,12 @@ dependencies = [
 name = "podcast-feature-detail"
 version = "0.1.0"
 dependencies = [
+ "podcast-data",
  "podcast-domain",
  "podcast-routing",
  "podcast-theme",
  "whisker",
+ "whisker-audio",
  "whisker-icons",
  "whisker-image",
  "whisker-router",
@@ -1017,6 +1020,7 @@ dependencies = [
  "podcast-domain",
  "podcast-theme",
  "whisker",
+ "whisker-audio",
  "whisker-icons",
  "whisker-image",
  "whisker-safe-area",

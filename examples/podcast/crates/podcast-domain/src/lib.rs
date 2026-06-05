@@ -110,3 +110,56 @@ pub enum SectionLayout {
     /// artwork (the "Top Shows" / "New Shows" rows).
     Ranked,
 }
+
+/// One episode of a podcast — the row the detail screen renders
+/// and the unit the playback layer hands to `whisker-audio`.
+///
+/// The wire shape is iTunes' `entity=podcastEpisode` lookup
+/// result. We keep field names verbatim so the serde mapping is
+/// mechanical; the renderer formats `release_date` and
+/// `track_time_millis` into human strings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Episode {
+    /// iTunes track id. Stable per-episode key.
+    #[serde(rename = "trackId")]
+    pub id: u64,
+
+    /// Episode title.
+    #[serde(rename = "trackName", default)]
+    pub track_name: String,
+
+    /// Direct audio URL (mp3 / m4a). This is the URL handed to
+    /// the player. iTunes returns it for every episode.
+    #[serde(rename = "episodeUrl", default)]
+    pub episode_url: Option<String>,
+
+    /// Episode duration in milliseconds.
+    #[serde(rename = "trackTimeMillis", default)]
+    pub track_time_millis: Option<u64>,
+
+    /// ISO-8601 release timestamp (e.g. `2024-09-12T10:00:00Z`).
+    /// Rendered as a short relative / date label.
+    #[serde(rename = "releaseDate", default)]
+    pub release_date: Option<String>,
+
+    /// Short description / show notes. Plain text from iTunes
+    /// (HTML stripped upstream).
+    #[serde(rename = "description", default)]
+    pub description: Option<String>,
+}
+
+/// What the mini-player and lock-screen-style "now playing"
+/// surface needs to render. Decoupled from [`Episode`] so the
+/// mini-player crate doesn't need to know the wire shape — only
+/// the four strings it draws.
+///
+/// `audio_url` is included for symmetry with the playback layer
+/// (the mini-player can call `set_source` if a future "queue
+/// next" button gets wired) but is not rendered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NowPlaying {
+    pub episode_title: String,
+    pub show_title: String,
+    pub artwork_url: String,
+    pub audio_url: String,
+}
