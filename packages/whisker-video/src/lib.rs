@@ -77,17 +77,35 @@ impl VideoHandle {
         self.r
     }
 
-    /// Start or resume playback.
+    /// Start or resume playback from the current position.
+    ///
+    /// No-op if the element isn't mounted yet (the underlying
+    /// `ElementRef::invoke` swallows the dispatch) or if the
+    /// native player is still loading `src`. Safe to call from a
+    /// user gesture before the source finishes loading — the
+    /// native player will start as soon as it's ready.
     pub fn play(&self) {
         let _ = self.r.invoke("play", WhiskerValue::args([]));
     }
 
     /// Pause playback at the current position.
+    ///
+    /// The native player stays loaded and seekable; [`Self::play`]
+    /// resumes from the same spot without re-fetching. No-op if
+    /// nothing is currently playing or if the element isn't
+    /// mounted.
     pub fn pause(&self) {
         let _ = self.r.invoke("pause", WhiskerValue::args([]));
     }
 
     /// Seek to an absolute position (seconds from the start).
+    ///
+    /// Values outside `[0, duration]` are clamped on the native
+    /// side. Seeking on a paused player keeps it paused; seeking
+    /// while playing keeps it playing. The seek may stall briefly
+    /// if the destination falls outside the buffered region —
+    /// `whisker-video` does not currently expose a buffering
+    /// signal (track via the platform's native controls instead).
     pub fn seek(&self, position_seconds: f64) {
         let _ = self.r.invoke(
             "seek",

@@ -34,7 +34,7 @@
 //! ## Error tolerance
 //!
 //! A malformed colour / transform / number on one element is
-//! reported in [`CompileError::warnings`] but doesn't abort
+//! reported in [`Compiled::warnings`] but doesn't abort
 //! compilation — partial display lists with one bad element
 //! skipped are usually better than rendering nothing.
 
@@ -42,25 +42,74 @@ use crate::builder::{Color, DisplayListBuilder, Transform};
 use crate::path_parse::{self, PathCommand};
 
 /// Output of [`compile`].
+///
+/// The bytes are ready to hand to the platform replayer; warnings
+/// are diagnostic and never block rendering.
 #[derive(Debug)]
 pub struct Compiled {
-    /// The byte stream — pass to platform via `WhiskerValue::Bytes`.
+    /// The display-list byte stream, framed by the `WSDL` magic
+    /// described in `packages/whisker-svg/SPEC.md`. Always non-
+    /// empty on a successful compile: the `VIEWPORT` opcode is
+    /// emitted unconditionally, and at minimum every successful
+    /// compile contains that opcode plus the trailing end marker.
+    ///
+    /// Pass straight through `WhiskerValue::Bytes` (or, in the
+    /// current transport, the base64-encoded `display_list:` prop)
+    /// to the platform replayer. The bytes carry no input-side
+    /// references — they're freely copyable across the FFI
+    /// boundary and don't depend on `svg_xml` staying alive.
     pub bytes: Vec<u8>,
-    /// Non-fatal issues encountered (bad colour, unknown element, …).
-    /// Producers might surface these to the user as a console warn.
+
+    /// Non-fatal issues the compiler chose to skip over: a path's
+    /// `d` attribute contained an unrecognised command, a colour
+    /// failed to parse, an `<svg>` child uses an element type the
+    /// v1 compiler doesn't support yet, etc.
+    ///
+    /// Empty on a clean compile. When non-empty, the partial
+    /// display list in [`Self::bytes`] is still safe to render —
+    /// it just won't contain the dropped shapes / attributes.
+    /// Producers may want to surface these to a developer console;
+    /// users typically shouldn't see them.
     pub warnings: Vec<String>,
 }
 
-/// Hard errors that stop compilation entirely.
+/// Hard errors that stop compilation entirely — the returned
+/// [`Result`] is `Err(_)` and no [`Compiled::bytes`] are produced.
+///
+/// Distinct from [`Compiled::warnings`], which are best-effort
+/// recoveries the compiler made while still producing a usable
+/// display list. These are unrecoverable: there is no useful
+/// fallback bytestream to render.
+///
+/// `#[non_exhaustive]` — the v1 set is small (XML / non-svg
+/// root / missing viewBox), but future tightenings (e.g. a
+/// missing required `<g transform>` form) may add variants
+/// without bumping SemVer.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CompileError {
-    /// `roxmltree` couldn't parse the XML at all.
+    /// `roxmltree` couldn't parse the input as XML. The wrapped
+    /// `String` is the parser's own diagnostic ("expected element
+    /// at offset N"). Typically: an unbalanced tag, a missing
+    /// closing bracket, or non-XML bytes (a binary file passed in
+    /// by mistake).
     XmlParse(String),
-    /// The root element wasn't `<svg>`.
+
+    /// The root element of the parsed document wasn't `<svg>` —
+    /// the input is well-formed XML, but not an SVG document.
+    /// E.g. an `<html>` snippet or a `<path>` with no surrounding
+    /// `<svg>` wrapper.
     NotSvg,
-    /// `<svg>` had no `viewBox` and no `width`+`height` from which
-    /// to derive one. We need an explicit user-unit coordinate
-    /// system to emit the `VIEWPORT` opcode.
+
+    /// `<svg>` had no `viewBox` and the compiler couldn't derive
+    /// one from `width` + `height`. The v1 compiler needs an
+    /// explicit user-unit coordinate system to emit the `VIEWPORT`
+    /// opcode; without one the bytes would describe coordinates
+    /// in an undefined space and the platform replayer would have
+    /// no scale anchor.
+    ///
+    /// Fix: add `viewBox="0 0 W H"` to the `<svg>` root, where
+    /// `W`/`H` are the natural width / height in user units.
     NoViewBox,
 }
 
