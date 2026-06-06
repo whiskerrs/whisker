@@ -260,26 +260,25 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
 
 // ----- jniLibs staging ------------------------------------------------------
 
-/// Copy `so` plus the NDK-shipped `libc++_shared.so` into
-/// `gen/android/app/src/main/jniLibs/<abi>/`.
-pub fn stage_jni_libs(
-    gen_android: &Path,
-    abi: &str,
-    so: &Path,
-    tc: &AndroidToolchain,
-) -> Result<()> {
-    let dst_dir = gen_android.join("app/src/main/jniLibs").join(abi);
-    std::fs::create_dir_all(&dst_dir).with_context(|| format!("mkdir -p {}", dst_dir.display()))?;
+/// Copy `so` plus the NDK-shipped `libc++_shared.so` into `abi_dir`.
+/// Lower-level than [`stage_jni_libs`] — the caller hands in the
+/// already-resolved abi leaf directory rather than the gen-android
+/// root. Used by the `whisker-build android` binary path, where the
+/// Gradle plugin computes the destination as
+/// `<buildDir>/intermediates/whisker_jni_libs/<variant>/<abi>/` and
+/// passes it in via `--jni-libs-dir`.
+pub fn stage_so_files(abi_dir: &Path, so: &Path, tc: &AndroidToolchain, abi: &str) -> Result<()> {
+    std::fs::create_dir_all(abi_dir).with_context(|| format!("mkdir -p {}", abi_dir.display()))?;
 
     let so_name = so
         .file_name()
         .ok_or_else(|| anyhow!("so path has no filename: {}", so.display()))?;
-    let dst_so = dst_dir.join(so_name);
+    let dst_so = abi_dir.join(so_name);
     std::fs::copy(so, &dst_so)
         .with_context(|| format!("copy {} → {}", so.display(), dst_so.display()))?;
 
     let libcxx = find_libcxx_shared(&tc.ndk, abi)?;
-    let dst_libcxx = dst_dir.join("libc++_shared.so");
+    let dst_libcxx = abi_dir.join("libc++_shared.so");
     std::fs::copy(&libcxx, &dst_libcxx)
         .with_context(|| format!("copy {} → {}", libcxx.display(), dst_libcxx.display()))?;
 
@@ -288,6 +287,20 @@ pub fn stage_jni_libs(
         so_name.to_string_lossy(),
     ));
     Ok(())
+}
+
+/// Copy `so` plus the NDK-shipped `libc++_shared.so` into
+/// `gen/android/app/src/main/jniLibs/<abi>/`. Used by the cng-driven
+/// `whisker build` CLI path; the Gradle-plugin path goes through
+/// [`stage_so_files`] directly.
+pub fn stage_jni_libs(
+    gen_android: &Path,
+    abi: &str,
+    so: &Path,
+    tc: &AndroidToolchain,
+) -> Result<()> {
+    let dst_dir = gen_android.join("app/src/main/jniLibs").join(abi);
+    stage_so_files(&dst_dir, so, tc, abi)
 }
 
 /// Generate the per-app Gradle module-aggregator artefacts under

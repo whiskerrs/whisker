@@ -55,9 +55,10 @@
 //! cross-compile + artefact placement once the cng templates start
 //! invoking this binary.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
+use whisker_build::Profile;
 
 #[derive(Parser)]
 #[command(
@@ -184,19 +185,22 @@ fn run_ios(args: IosArgs) -> Result<()> {
         args.built_products_dir.display(),
     );
 
-    // Step 4 will fill in:
+    // The iOS body is still a diagnostic stub. Filling it in needs:
     //   - cargo rustc --target=<triple> --crate-type=cdylib per
-    //     requested arch
+    //     requested arch (mirrors what `whisker build --target
+    //     ios-sim` already drives through the lib's `ios::*` helpers
+    //     in whisker-cli)
     //   - lipo of the simulator slices when ARCHS contains both
     //     arm64 + x86_64
-    //   - generate whisker_modules/Package.swift +
-    //     RegisterAll.swift via ios::stage_module_swift_sources
+    //   - whisker_modules/Package.swift + RegisterAll.swift emission
+    //     via ios::stage_module_swift_sources
     //   - copy the dylib into
-    //     $BUILT_PRODUCTS_DIR/Frameworks/Whisker.framework/
-    // Today the binary just validates the arg surface and exercises
-    // module discovery so the cng-rendered pbxproj has something
-    // safe to invoke during a build.
-    eprintln!("[whisker-build ios] cargo cross-compile + module aux placement wired in Step 4",);
+    //     $BUILT_PRODUCTS_DIR/Frameworks/Whisker.framework/Whisker
+    // Tracked as the next sub-step (Step 4-iOS); the Android body
+    // above is the verified path that unblocks the Gradle plugin.
+    eprintln!(
+        "[whisker-build ios] cargo cross-compile + module aux placement still pending (Step 4-iOS)"
+    );
 
     Ok(())
 }
@@ -206,34 +210,61 @@ fn run_android(args: AndroidArgs) -> Result<()> {
     let modules = whisker_build::modules::discover(&cargo_toml, &args.package)
         .with_context(|| format!("discover whisker modules in {}", cargo_toml.display()))?;
 
-    let triple = whisker_build::android::abi_to_triple(&args.abi)
-        .with_context(|| format!("unrecognised ABI `{}`", args.abi))?;
+    let profile = parse_profile(&args.profile)?;
+
+    // `whisker-driver-sys`'s build.rs reads Lynx Android headers +
+    // .so from `<workspace>/target/lynx-android*`. Fetch the pinned
+    // tarball + create the symlinks before cargo runs so the cc-rs
+    // include search finds Lynx without a pre-existing whisker CLI
+    // bootstrap.
+    let _cache =
+        whisker_build::ensure_lynx_android().context("fetch pinned Lynx Android artifacts")?;
+    whisker_build::link_lynx_into_workspace(&args.workspace, whisker_build::LynxPlatform::Android)
+        .context("symlink target/lynx-android* into workspace")?;
+
+    let toolchain = whisker_build::android::resolve_toolchain(&args.abi, args.min_sdk)
+        .with_context(|| {
+            format!(
+                "resolve NDK toolchain for {} (api {})",
+                args.abi, args.min_sdk
+            )
+        })?;
+
+    let so_path = whisker_build::android::cargo_build_dylib(&whisker_build::android::CargoBuild {
+        workspace_root: &args.workspace,
+        package: &args.package,
+        toolchain: &toolchain,
+        profile,
+        features: &[],
+        capture: None,
+    })
+    .context("cargo cross-compile for Android")?;
+
+    whisker_build::android::stage_so_files(&args.jni_libs_dir, &so_path, &toolchain, &args.abi)
+        .with_context(|| {
+            format!(
+                "stage .so + libc++_shared.so into {}",
+                args.jni_libs_dir.display()
+            )
+        })?;
 
     eprintln!(
-        "[whisker-build android] workspace={} package={} profile={} abi={} triple={} modules={}",
-        args.workspace.display(),
-        args.package,
-        args.profile,
-        args.abi,
-        triple,
+        "[whisker-build android] {} module(s) discovered (gradle-subproject wiring is the Gradle plugin's job)",
         modules.len(),
     );
-    eprintln!(
-        "[whisker-build android] jni-libs-dir={} min-sdk={}",
-        args.jni_libs_dir.display(),
-        args.min_sdk,
-    );
-
-    // Step 4 will fill in:
-    //   - android::resolve_toolchain(abi, min_sdk) → NDK paths
-    //   - android::cargo_build_dylib(&CargoBuild { ... })
-    //   - android::stage_jni_libs(jni_libs_dir, abi, so_path, &toolchain)
-    //   - whisker_modules.settings.gradle.kts +
-    //     whisker_module_deps.gradle.kts emission so the gradle
-    //     plugin's `apply(from = ...)` references resolve
-    // Today the binary just validates the arg surface + ABI mapping
-    // + module discovery.
-    eprintln!("[whisker-build android] cargo cross-compile + jniLibs staging wired in Step 4",);
-
     Ok(())
+}
+
+/// Translate the `--profile` string the Gradle plugin (or CLI caller)
+/// passes into the typed [`Profile`] the library API expects. The
+/// plugin currently emits exactly `"debug"` / `"release"` so the
+/// match is closed; any other value is a wiring bug worth surfacing.
+fn parse_profile(s: &str) -> Result<Profile> {
+    match s {
+        "debug" => Ok(Profile::Debug),
+        "release" => Ok(Profile::Release),
+        other => Err(anyhow!(
+            "--profile must be 'debug' or 'release' (got `{other}`)"
+        )),
+    }
 }
