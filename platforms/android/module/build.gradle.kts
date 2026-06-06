@@ -1,20 +1,22 @@
-// Phase J — `whisker-module` minimal Android surface for
-// third-party Whisker modules. Carved out of `whisker-runtime` so
-// modules pull in just the types they need (`WhiskerValue`,
-// `WhiskerUI` / `WhiskerContext` typealiases, `WhiskerApplication`)
-// without dragging in the host-side `WhiskerActivity`,
-// `WhiskerView`, or `WhiskerModuleRegistry`.
+// `whisker-module` — minimal Android surface for third-party
+// Whisker modules. Carries `WhiskerValue`, `WhiskerUI` /
+// `WhiskerContext` typealiases, `WhiskerApplication`. Separate from
+// `:whisker-runtime` so modules pull in just the types they need
+// (no host-side `WhiskerActivity` / `WhiskerView` /
+// `WhiskerModuleRegistry`).
 //
-// The module-author dep surface is exactly this AAR + the
-// composite-build `rs.whisker:ksp` for build-time inheritance-
-// based discovery. Phase M (Issue #59) dropped the
-// `:annotations` JAR — discovery is now subclass-of-Module so
-// no marker annotation is required.
+// Published as `rs.whisker:whisker-module-android`. The `lynxFork`
+// / `whiskerSdkRelease` Gradle property toggle works the same way
+// as in `:whisker-runtime` — see that file's header comment.
 
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    `maven-publish`
 }
+
+group = "rs.whisker"
+version = "0.0.0-dev"
 
 android {
     // AGP namespace MUST be distinct from `:whisker-runtime`'s
@@ -43,20 +45,65 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+            withJavadocJar()
+        }
+    }
 }
 
+val whiskerSdkRelease = providers.gradleProperty("whiskerSdkRelease").orNull == "true"
+val lynxFork = providers.gradleProperty("lynxFork").getOrElse("v3.8.0-whisker.4").removePrefix("v")
+
 dependencies {
-    // `api` (not `implementation`) so consuming apps + modules can
-    // see LynxUI / LynxContext / LynxView types that the
-    // `Whisker*` typealiases in `WhiskerLynxAliases.kt` resolve to.
-    api(":LynxAndroid@aar")
-    api(":LynxBase@aar")
-    api(":LynxTrace@aar")
-    api(":ServiceAPI@aar")
+    if (whiskerSdkRelease) {
+        api("rs.whisker:lynx-android:$lynxFork")
+        api("rs.whisker:lynx-base-android:$lynxFork")
+        api("rs.whisker:lynx-trace-android:$lynxFork")
+        api("rs.whisker:lynx-service-api-android:$lynxFork")
+    } else {
+        api(":LynxAndroid@aar")
+        api(":LynxBase@aar")
+        api(":LynxTrace@aar")
+        api(":ServiceAPI@aar")
+    }
     api("org.lynxsdk.lynx:primjs:3.7.0")
 
     // No annotation re-export needed (Phase M / Issue #59): a
     // module's `build.gradle.kts` depends on this AAR alone for
-    // runtime types; the `ksp(...)` processor stays separate as
-    // a build-time dep.
+    // runtime types; the `ksp(...)` processor stays separate as a
+    // build-time dep.
+}
+
+publishing {
+    publications {
+        register<MavenPublication>("release") {
+            afterEvaluate {
+                from(components["release"])
+            }
+            artifactId = "whisker-module-android"
+            pom {
+                name.set("Whisker module API (Android)")
+                description.set(
+                    "Minimal Android surface for third-party Whisker modules — " +
+                        "WhiskerValue, Whisker* typealiases, WhiskerApplication.",
+                )
+                url.set("https://github.com/whiskerrs/whisker")
+                licenses {
+                    license {
+                        name.set("MIT")
+                        url.set("https://github.com/whiskerrs/whisker/blob/main/LICENSE")
+                    }
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = "ghPages"
+            url = uri(providers.gradleProperty("publishUrl").orElse("file://${rootProject.layout.buildDirectory.get()}/repo").get())
+        }
+    }
 }

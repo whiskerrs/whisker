@@ -1,0 +1,140 @@
+name: publish-sdk
+
+# Publishes the three Whisker Android SDK artifacts to the same
+# `gh-pages` Maven repository the Gradle plugin ships from
+# (https://whiskerrs.github.io/whisker/maven/):
+#
+#   * `rs.whisker:whisker-runtime-android:<ver>` (AAR)
+#   * `rs.whisker:whisker-module-android:<ver>`  (AAR)
+#   * `rs.whisker:ksp:<ver>`                     (jar)
+#
+# Triggers:
+#   * `workflow_dispatch` — manual smoke. Inputs: `version`
+#     (default `0.0.0-dev`). Uploads the staged Maven layout as an
+#     artifact; does NOT touch gh-pages.
+#   * push of a tag matching `sdk-v*` — real release. Same pipeline,
+#     plus `peaceiris/actions-gh-pages@v3` pushes `maven-out/` to
+#     `gh-pages` under `maven/`.
+#
+# The `sdk-v*` tag stream is independent from Whisker's own crate
+# `v*` tags and from the gradle plugin's `gradle-plugin-v*` tags.
+# Bumps are decoupled — a Rust-only change doesn't require an SDK
+# republish.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'SDK version to publish (omit for 0.0.0-dev)'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'sdk-v*'
+
+permissions:
+  # peaceiris/actions-gh-pages needs write access to push to
+  # gh-pages on tag pushes.
+  contents: write
+
+concurrency:
+  group: publish-sdk
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Resolve release version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # `refs/tags/sdk-v0.1.0` → `0.1.0`.
+            VER="${GITHUB_REF_NAME#sdk-v}"
+          else
+            VER="$INPUT_VERSION"
+            if [ -z "$VER" ]; then VER="0.0.0-dev"; fi
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Resolved SDK version: $VER"
+
+      - name: Stamp version into the three build.gradle.kts files
+        # Same `sed` pattern as `publish-gradle-plugin.yml`: anchor on
+        # the start-of-line `version = "..."` assignment so unrelated
+        # `version = ...` strings inside dependency coords are left
+        # alone. `0.0.0-dev` is the literal currently in the file as
+        # the workflow_dispatch default; the regex is broader to also
+        # match whatever the previous release stamped.
+        run: |
+          set -e
+          VER="${{ steps.ver.outputs.version }}"
+          for FILE in \
+            platforms/android/whisker-runtime/build.gradle.kts \
+            platforms/android/module/build.gradle.kts \
+            platforms/android/ksp/ksp/build.gradle.kts; do
+            sed -i -E "s/^version = \"[^\"]*\"$/version = \"${VER}\"/" "$FILE"
+            echo "After sed in $FILE:"
+            grep -n '^version = ' "$FILE"
+          done
+
+      - name: Publish whisker-runtime + module to staging Maven repo
+        # `-PwhiskerSdkRelease=true` flips the Lynx AAR deps from the
+        # flatDir-friendly `:LynxAndroid@aar` form to proper Maven
+        # coords pinned to `lynxFork`. The published POM then resolves
+        # cleanly off `https://whiskerrs.github.io/lynx/maven/`.
+        #
+        # `publishUrl` is `whisker-runtime`'s and `module`'s
+        # `publishing.repositories.maven.url` override — redirects
+        # the publish target from `build/repo` to our workspace
+        # `maven-out` dir.
+        working-directory: platforms/android
+        run: |
+          ../../gradle-plugin/gradlew --no-daemon \
+            publishAllPublicationsToGhPagesRepository \
+            -PwhiskerSdkRelease=true \
+            -PpublishUrl=file://${{ github.workspace }}/maven-out
+
+      - name: Publish ksp to staging Maven repo
+        # ksp is its own composite-build (platforms/android/ksp/),
+        # so we run gradle separately for it.
+        working-directory: platforms/android/ksp
+        run: |
+          ../../../gradle-plugin/gradlew --no-daemon \
+            publishAllPublicationsToGhPagesRepository \
+            -PpublishUrl=file://${{ github.workspace }}/maven-out
+
+      - name: List staged Maven contents
+        run: find maven-out -type f | sort
+
+      - name: Upload Maven layout (workflow_dispatch)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-maven
+          path: maven-out/**
+
+      - name: Publish to gh-pages (tag push)
+        # Lands the staged Maven layout at
+        # https://whiskerrs.github.io/whisker/maven/ alongside the
+        # gradle plugin's existing coordinates. `keep_files: true`
+        # so prior versions of either accumulate rather than getting
+        # clobbered.
+        if: ${{ startsWith(github.ref, 'refs/tags/sdk-v') }}
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: maven-out
+          destination_dir: maven
+          keep_files: true
+          commit_message: "publish SDK ${{ steps.ver.outputs.version }}"
