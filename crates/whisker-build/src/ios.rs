@@ -493,6 +493,206 @@ fn build_framework_dir(
     Ok(fw_dir)
 }
 
+// ----- Xcode Run Script Phase entry point -----------------------------------
+
+/// Inputs from an Xcode Run Script Build Phase invocation of the
+/// `whisker-build` binary. Mirrors the Xcode environment 1:1 — the
+/// caller (binary's `run_ios`) parses argv into one of these and
+/// hands it to [`build_framework_for_xcode_run_script`].
+pub struct XcodeRunScriptInputs<'a> {
+    pub workspace_root: &'a Path,
+    pub package: &'a str,
+    /// `PLATFORM_NAME` — `"iphoneos"` or `"iphonesimulator"`. Drives
+    /// the (arch → rust triple) mapping inside
+    /// [`map_arch_to_triple`].
+    pub platform: &'a str,
+    /// `ARCHS`, split on whitespace by the caller. Each entry is
+    /// `"arm64"` or `"x86_64"`. Multi-arch is only meaningful when
+    /// `platform == "iphonesimulator"` — the iphoneos slice is always
+    /// arm64 today.
+    pub archs: &'a [&'a str],
+}
+
+/// Cross-compile + framework-wrap path for the Xcode Run Script
+/// Phase. Mirrors what `whisker build --target ios-sim` already
+/// drives (`build_xcframework_with`), minus the multi-platform
+/// xcframework wrap — Xcode only needs the slices for the current
+/// destination, dropped straight into
+/// `<built_products_dir>/Frameworks/<FRAMEWORK_NAME>.framework/`.
+///
+/// Returns the path to the produced `.framework` directory.
+pub fn build_framework_for_xcode_run_script(
+    inputs: &XcodeRunScriptInputs<'_>,
+    built_products_dir: &Path,
+) -> Result<PathBuf> {
+    if inputs.archs.is_empty() {
+        return Err(anyhow!("--archs is empty; Xcode passed no ARCHS"));
+    }
+
+    // Header trees the framework's `Headers/` dir copies from. Same
+    // search the xcframework path does — kept inline rather than
+    // factored out because the helper is only two paths.
+    let rust_headers_src = inputs.workspace_root.join("crates/whisker-driver/include");
+    let bridge_headers_src = inputs
+        .workspace_root
+        .join("crates/whisker-driver-sys/bridge/include");
+    for required in ["whisker.h", "module.modulemap"] {
+        if !rust_headers_src.join(required).is_file() {
+            return Err(anyhow!(
+                "missing header {} (expected at {})",
+                required,
+                rust_headers_src.display(),
+            ));
+        }
+    }
+    if !bridge_headers_src.join("whisker_bridge.h").is_file() {
+        return Err(anyhow!(
+            "missing whisker_bridge.h (expected at {})",
+            bridge_headers_src.display(),
+        ));
+    }
+
+    // Same module discovery the xcframework path runs — pulls the
+    // `[package.metadata.whisker]` deps and stuffs their iOS native
+    // sources into `WHISKER_IOS_MODULE_NATIVE_SOURCES` so
+    // `whisker-driver-sys`'s build.rs folds them into the bridge cc
+    // build.
+    let workspace_manifest = inputs.workspace_root.join("Cargo.toml");
+    let modules =
+        crate::modules::discover(&workspace_manifest, inputs.package).with_context(|| {
+            format!(
+                "discover whisker modules for `{}` (workspace_manifest={})",
+                inputs.package,
+                workspace_manifest.display(),
+            )
+        })?;
+    let modules_env = crate::modules::ios_sources_env_value(&modules);
+
+    let lib_stem = inputs.package.replace('-', "_");
+    let cargo_dylib_name = format!("lib{lib_stem}.dylib");
+
+    // Build one dylib per requested arch.
+    let mut slice_paths: Vec<PathBuf> = Vec::with_capacity(inputs.archs.len());
+    for arch in inputs.archs {
+        let triple = map_arch_to_triple(inputs.platform, arch)?;
+        let s = crate::ui::step("compile", format!("{} ({triple})", inputs.package));
+        cargo_build_ios_dylib(
+            inputs.workspace_root,
+            inputs.package,
+            triple,
+            &[],
+            None,
+            &modules_env,
+            &s,
+        )?;
+        s.done("");
+        slice_paths.push(
+            inputs
+                .workspace_root
+                .join("target")
+                .join(triple)
+                .join("release")
+                .join(&cargo_dylib_name),
+        );
+    }
+
+    // Workspace-local scratch area: lipo + wrap happens here, then
+    // the final framework dir is copied into `built_products_dir`.
+    // Under `target/` so `cargo clean` reaps it.
+    let out_dir = inputs
+        .workspace_root
+        .join("target/whisker-driver/run-script");
+    if out_dir.exists() {
+        std::fs::remove_dir_all(&out_dir)
+            .with_context(|| format!("rm -rf {}", out_dir.display()))?;
+    }
+    std::fs::create_dir_all(&out_dir).with_context(|| format!("mkdir -p {}", out_dir.display()))?;
+
+    // Single-arch → use the slice directly. Multi-arch → lipo into a
+    // fat binary in `out_dir`.
+    let combined_dylib: PathBuf = if slice_paths.len() == 1 {
+        slice_paths.into_iter().next().expect("checked len == 1")
+    } else {
+        let fat = out_dir.join(&cargo_dylib_name);
+        crate::ui::debug(format!("lipo {}", fat.display()));
+        let mut cmd = Command::new("lipo");
+        cmd.arg("-create");
+        for p in &slice_paths {
+            if !p.is_file() {
+                return Err(anyhow!("expected dylib not built: {}", p.display()));
+            }
+            cmd.arg(p);
+        }
+        cmd.args(["-output"]).arg(&fat);
+        let status = cmd.status().context("spawn lipo")?;
+        if !status.success() {
+            return Err(anyhow!("lipo failed ({status})"));
+        }
+        fat
+    };
+
+    let staged_fw = build_framework_dir(
+        &out_dir,
+        &combined_dylib,
+        &rust_headers_src,
+        &bridge_headers_src,
+    )?;
+
+    // Publish into `<built_products_dir>/Frameworks/`. Xcode's
+    // embed-frameworks build phase scans that directory at link time.
+    let frameworks_dst = built_products_dir.join("Frameworks");
+    std::fs::create_dir_all(&frameworks_dst)
+        .with_context(|| format!("mkdir -p {}", frameworks_dst.display()))?;
+    let published_fw = frameworks_dst.join(format!("{FRAMEWORK_NAME}.framework"));
+    if published_fw.exists() {
+        std::fs::remove_dir_all(&published_fw)
+            .with_context(|| format!("rm -rf {}", published_fw.display()))?;
+    }
+    copy_dir_recursive(&staged_fw, &published_fw)?;
+    crate::ui::info(format!(
+        "publish {}.framework → {}",
+        FRAMEWORK_NAME,
+        published_fw.display(),
+    ));
+    Ok(published_fw)
+}
+
+/// Translate Xcode's `(PLATFORM_NAME, ARCH)` pair into the matching
+/// Rust target triple. Pairs that can't appear in a real Xcode
+/// build (`iphoneos` + `x86_64`, the long-deprecated armv7 device
+/// slice) hit the catch-all so the binary surfaces a clear error
+/// before cargo even starts.
+fn map_arch_to_triple(platform: &str, arch: &str) -> Result<&'static str> {
+    match (platform, arch) {
+        ("iphoneos", "arm64") => Ok("aarch64-apple-ios"),
+        ("iphonesimulator", "arm64") => Ok("aarch64-apple-ios-sim"),
+        ("iphonesimulator", "x86_64") => Ok("x86_64-apple-ios"),
+        (p, a) => Err(anyhow!(
+            "unsupported (PLATFORM_NAME, ARCH) pair: ({p}, {a})"
+        )),
+    }
+}
+
+/// `cp -R src dst` — file by file so we don't drag in a `fs_extra`
+/// dep just for one call site. The framework dir is shallow enough
+/// (Headers/, Modules/, plus the binary + Info.plist) that an
+/// inline walk is cheaper than vendoring a crate.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst).with_context(|| format!("mkdir -p {}", dst.display()))?;
+    for entry in std::fs::read_dir(src).with_context(|| format!("readdir {}", src.display()))? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)
+                .with_context(|| format!("copy {} → {}", from.display(), to.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// Minimal Info.plist that satisfies codesign + dyld for an embedded
 /// iOS framework. CFBundleExecutable must match the binary filename
 /// (= `FRAMEWORK_NAME`).
