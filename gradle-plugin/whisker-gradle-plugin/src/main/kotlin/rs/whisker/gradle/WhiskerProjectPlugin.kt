@@ -5,23 +5,40 @@ import com.android.build.api.variant.AndroidComponentsExtension
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import java.io.File
+import java.util.Properties
 
-// Project-scope plugin (id="rs.whisker.gradle"). Normally users don't
-// apply this directly — the Settings plugin (id="rs.whisker",
-// [WhiskerPlugin]) auto-applies it on every project that has AGP
-// applied via `gradle.beforeProject`. The standalone ID stays alive
-// so people who want explicit, opt-in behaviour (or who can't use a
-// Settings plugin, e.g. multi-build composites with quirky
-// classloader rules) still have a way in.
+// Project-scope plugin (id `rs.whisker.gradle`). Users declare in
+// `app/build.gradle.kts` AFTER `com.android.application` /
+// `com.android.library`:
 //
-// On apply:
-//   1. Look up the `WhiskerModuleRegistry` BuildService the Settings
-//      plugin populated.
-//   2. Add `implementation(project(":<crate>"))` for every Whisker
-//      module that has `android: { ... }` in the report.
-//   3. Per variant: a `WhiskerModuleBehaviorsTask` (aggregator
-//      Kotlin) + a `WhiskerBuildTask` per ABI (cargo cross-compile).
-//      Both are wired into AGP via `addGeneratedSourceDirectory`.
+// ```kotlin
+// plugins {
+//     id("com.android.application")
+//     id("org.jetbrains.kotlin.android")
+//     id("rs.whisker.gradle")           // version inherited from settings
+// }
+// android { ... }
+// ```
+//
+// `version` is inherited automatically from the version pin the user
+// already declared on `rs.whisker` in `settings.gradle.kts` — Gradle
+// caches the pluginManagement resolution across the build.
+//
+// On apply this plugin:
+//   1. Reads `<rootDir>/.whisker/config.properties` (workspace +
+//      userPackage) the Settings plugin wrote.
+//   2. Reads `<workspace>/target/whisker/module-info.json` (the
+//      module list).
+//   3. For each module with an Android subproject:
+//      `implementation(project(":<crate>"))`.
+//   4. Per variant: register `WhiskerModuleBehaviorsTask` (aggregator
+//      Kotlin) + `WhiskerBuildTask` per ABI (cargo cross-compile).
+//      Both are wired into the variant via
+//      `addGeneratedSourceDirectory`.
+//
+// If the user applies `rs.whisker.gradle` without the Settings plugin
+// having run first, the config file lookup fails with a clear error
+// message pointing at the missing `id("rs.whisker")` declaration.
 class WhiskerProjectPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val androidComponents =
@@ -31,31 +48,11 @@ class WhiskerProjectPlugin : Plugin<Project> {
                         "(or com.android.library) — the AndroidComponentsExtension was not found.",
                 )
 
-        // Re-register-if-absent returns the same instance the Settings
-        // plugin registered; the parameters lambda is ignored when the
-        // service already exists. Typed Provider<WhiskerModuleRegistry>
-        // without an unchecked cast.
-        val registryProvider = project.gradle.sharedServices.registerIfAbsent(
-            WHISKER_MODULE_REGISTRY_NAME,
-            WhiskerModuleRegistry::class.java,
-        ) {
-            // Defensive fallback — if this is reached it means the
-            // Settings plugin never ran. Surface a clearer error than
-            // a NoSuchElementException on `parameters.reportJson.get()`.
-            error(
-                "rs.whisker.gradle requires the rs.whisker Settings plugin to have " +
-                    "run first. Add `plugins { id(\"rs.whisker\") version ... }` to " +
-                    "settings.gradle.kts.",
-            )
-        }
-        val registry = registryProvider.get()
-        val report = registry.report()
-        val workspaceFile = File(registry.parameters.workspace.get())
-        val userPackageStr = registry.parameters.userPackage.get()
+        val (workspaceFile, userPackageStr) = readConfig(project.rootDir)
+        val report = readModulesReport(workspaceFile)
 
         // Module deps onto this project (each android-capable Whisker
-        // module is a Gradle subproject the Settings plugin
-        // `include()`'d).
+        // module is a Gradle subproject the Settings plugin `include`d).
         report.modules
             .filter { it.android != null }
             .forEach { m ->
@@ -121,6 +118,33 @@ class WhiskerProjectPlugin : Plugin<Project> {
                 )
             }
         }
+    }
+
+    private fun readConfig(rootDir: File): Pair<File, String> {
+        val cfg = File(rootDir, ".whisker/config.properties")
+        if (!cfg.isFile) {
+            error(
+                "rs.whisker.gradle: missing ${cfg.absolutePath}. " +
+                    "Did you forget `plugins { id(\"rs.whisker\") version ... }` in settings.gradle.kts?",
+            )
+        }
+        val props = Properties().apply { cfg.inputStream().use { load(it) } }
+        val ws = props.getProperty("workspace")
+            ?: error("rs.whisker.gradle: ${cfg.absolutePath} missing `workspace` key")
+        val pkg = props.getProperty("user_package")
+            ?: error("rs.whisker.gradle: ${cfg.absolutePath} missing `user_package` key")
+        return File(ws) to pkg
+    }
+
+    private fun readModulesReport(workspace: File): ModulesReport {
+        val path = File(workspace, "target/whisker/module-info.json")
+        if (!path.isFile) {
+            error(
+                "rs.whisker.gradle: missing ${path.absolutePath} — the Settings " +
+                    "plugin should have written this. Re-run Sync.",
+            )
+        }
+        return ModulesReport.parse(path)
     }
 }
 
