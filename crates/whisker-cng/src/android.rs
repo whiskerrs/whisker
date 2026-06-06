@@ -367,6 +367,10 @@ fn write_file(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
 /// Pull the Android-relevant subset of `AppConfig` into the renderer
 /// input struct. Errors out on required-but-missing fields (an
 /// applicationId is mandatory; everything else has a default).
+// Eight arguments — over clippy's seven-arg default. Bundling them
+// behind a builder or a config struct would just push the same value
+// list one level deeper without changing the call site, so allow.
+#[allow(clippy::too_many_arguments)]
 pub fn inputs_from(
     app_config: &AppConfig,
     rust_lib_name: String,
