@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>rs.whisker</groupId>
+  <artifactId>rs.whisker.gradle.plugin</artifactId>
+  <version>0.2.0</version>
+  <packaging>pom</packaging>
+  <name>Whisker Settings plugin</name>
+  <description>Discovers Whisker module deps and wires them into the consuming AGP project.</description>
+  <dependencies>
+    <dependency>
+      <groupId>rs.whisker</groupId>
+      <artifactId>whisker-gradle-plugin</artifactId>
+      <version>0.2.0</version>
+    </dependency>
+  </dependencies>
+</project>
