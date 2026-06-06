@@ -84,35 +84,41 @@ jobs:
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "Resolved plugin version: $VER"
 
-      - name: Stamp version into build.gradle.kts
-        # The plugin's `build.gradle.kts` declares `version = "0.1.0"`
-        # as a direct assignment, NOT as
+      - name: Stamp version into build.gradle.kts (both subprojects)
+        # The plugins' `build.gradle.kts` files declare
+        # `version = "0.1.0"` as direct assignments, NOT as
         # `providers.gradleProperty("version").orElse(...)`, so
         # `-Pversion=...` on the gradle CLI is silently ignored.
-        # Rewrite the literal in place before the build runs. The
-        # regex anchors on the start-of-line `version = "..."` form
-        # to avoid touching any unrelated `version = ...` lines (e.g.
-        # inside dependency coordinates).
+        # Rewrite the literal in place in both subprojects before
+        # the build runs. The regex anchors on the start-of-line
+        # `version = "..."` form to avoid touching any unrelated
+        # `version = ...` lines (e.g. inside dependency coordinates).
         run: |
           set -e
           VER="${{ steps.ver.outputs.version }}"
-          FILE="gradle-plugin/whisker-gradle-plugin/build.gradle.kts"
-          sed -i -E "s/^version = \"[^\"]*\"$/version = \"${VER}\"/" "$FILE"
-          echo "After sed:"
-          grep -n '^version = ' "$FILE"
+          for FILE in \
+            gradle-plugin/whisker-settings-plugin/build.gradle.kts \
+            gradle-plugin/whisker-gradle-plugin/build.gradle.kts; do
+            sed -i -E "s/^version = \"[^\"]*\"$/version = \"${VER}\"/" "$FILE"
+            echo "After sed in $FILE:"
+            grep -n '^version = ' "$FILE"
+          done
 
       - name: Publish to staging Maven repo
-        # `publishUrl` is read by the publishing block in
-        # `build.gradle.kts` via
+        # Run from `gradle-plugin/` (the multi-project root). The
+        # top-level `publishAllPublicationsToGhPagesRepository`
+        # aggregates both subprojects (`whisker-settings-plugin` +
+        # `whisker-gradle-plugin`) so the single command lays out
+        # both Maven coordinates.
+        #
+        # `publishUrl` is read by both subprojects' publishing
+        # blocks via
         # `providers.gradleProperty("publishUrl").orElse(<default>)`,
         # so `-PpublishUrl=file://...` redirects the maven repo from
-        # `build/repo` to our workspace-rooted `maven-out` dir. That
-        # dir is exactly the Maven 2 layout that gets uploaded as an
-        # artifact / pushed to `gh-pages` in the following steps.
+        # `build/repo` to our workspace-rooted `maven-out` dir.
         #
-        # `--no-daemon` because GHA runners are single-use; spinning
-        # up a daemon just adds startup cost we never amortise.
-        working-directory: gradle-plugin/whisker-gradle-plugin
+        # `--no-daemon` because GHA runners are single-use.
+        working-directory: gradle-plugin
         run: |
           ./gradlew --no-daemon \
             publishAllPublicationsToGhPagesRepository \
