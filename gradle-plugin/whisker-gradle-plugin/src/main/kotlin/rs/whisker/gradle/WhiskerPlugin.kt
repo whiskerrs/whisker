@@ -5,27 +5,27 @@ import com.android.build.api.variant.AndroidComponentsExtension
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 
-/// Apply with `id("rs.whisker.gradle")` AFTER `com.android.application`
-/// (or `com.android.library`) in `app/build.gradle.kts`.
-///
-/// What it does:
-///
-///   1. Creates the `whisker { ... }` extension on the project
-///      ([`WhiskerExtension`]).
-///   2. Hooks `AndroidComponentsExtension.onVariants` so every
-///      Gradle variant (`debug`, `release`, custom flavors) gets a
-///      [`WhiskerBuildTask`] per requested ABI. The task runs
-///      `whisker-build android` to cross-compile + stage.
-///   3. Adds the per-variant `jniLibs/<abi>/` dir to that variant's
-///      sourceset, so `mergeJniLibFolders` picks the Rust dylib up
-///      without the user wiring it in by hand.
-///
-/// Heavy lifting (cargo cross-compile, NDK toolchain resolve,
-/// module-system gradle subproject emission, `.so` post-processing)
-/// lives in the `whisker-build` Rust binary. This plugin is just the
-/// AGP-integration shim — keeping the orchestration logic in Rust
-/// means `whisker run` / `whisker build` (CLI path) and Gradle Sync
-/// (IDE path) share the same code.
+// Apply with `id("rs.whisker.gradle")` AFTER `com.android.application`
+// (or `com.android.library`) in `app/build.gradle.kts`.
+//
+// What it does:
+//
+//   1. Creates the `whisker { ... }` extension on the project
+//      ([`WhiskerExtension`]).
+//   2. Hooks `AndroidComponentsExtension.onVariants` so every
+//      Gradle variant (`debug`, `release`, custom flavors) gets a
+//      [`WhiskerBuildTask`] per requested ABI. The task runs
+//      `whisker-build android` to cross-compile + stage.
+//   3. Adds the per-variant `jniLibs/<abi>/` dir to that variant's
+//      sourceset, so `mergeJniLibFolders` picks the Rust dylib up
+//      without the user wiring it in by hand.
+//
+// Heavy lifting (cargo cross-compile, NDK toolchain resolve,
+// module-system gradle subproject emission, `.so` post-processing)
+// lives in the `whisker-build` Rust binary. This plugin is just the
+// AGP-integration shim — keeping the orchestration logic in Rust
+// means `whisker run` / `whisker build` (CLI path) and Gradle Sync
+// (IDE path) share the same code.
 class WhiskerPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val ext = project.extensions.create("whisker", WhiskerExtension::class.java).apply {

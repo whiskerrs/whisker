@@ -3,19 +3,19 @@ package rs.whisker.gradle
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
 
-/// The `whisker { ... }` DSL block users configure in
-/// `app/build.gradle.kts`. Drives every value the plugin needs to
-/// hand `whisker-build android` per Gradle variant.
-///
-/// ```kotlin
-/// whisker {
-///     workspace.set(file("../../.."))         // cargo workspace root
-///     package_.set("my-app")                   // user crate name
-///     abis.set(listOf("arm64-v8a"))            // ABIs to cross-compile
-///     // minSdk is read from the AGP DSL by default;
-///     // override here only for unusual cases.
-/// }
-/// ```
+// The `whisker { ... }` DSL block users configure in
+// `app/build.gradle.kts`. Drives every value the plugin needs to
+// hand `whisker-build android` per Gradle variant.
+//
+// ```kotlin
+// whisker {
+//     workspace.set(file("../../.."))         // cargo workspace root
+//     package_.set("my-app")                   // user crate name
+//     abis.set(listOf("arm64-v8a"))            // ABIs to cross-compile
+//     // minSdk is read from the AGP DSL by default;
+//     // override here only for unusual cases.
+// }
+// ```
 abstract class WhiskerExtension {
     /// Absolute path to the cargo workspace containing the user
     /// Whisker app crate. Resolves the `Cargo.toml` the plugin's
