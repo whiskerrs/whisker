@@ -1,0 +1,129 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "rs.whisker",
+    "module": "ksp",
+    "version": "0.1.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "ksp-0.1.0.jar",
+          "url": "ksp-0.1.0.jar",
+          "size": 11123,
+          "sha512": "7bd814a8c3854f096c170633be96a0c24daaa9241c12e3a2f4a31ca77a196c143a039fbb02d8b543c9736195fb9b64db4ec8d9fe22007b42c8f69fef0fafe4ab",
+          "sha256": "bb65e42cb5c49ef9c777a34fa9f90f7619e06cba9905be0284a38494b2fc6f6b",
+          "sha1": "3f0f285d58accc9cf71a8479be50ab6e01562690",
+          "md5": "466d1e4c06622eab37f7fe092462f128"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "com.google.devtools.ksp",
+          "module": "symbol-processing-api",
+          "version": {
+            "requires": "2.0.21-1.0.27"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "ksp-0.1.0.jar",
+          "url": "ksp-0.1.0.jar",
+          "size": 11123,
+          "sha512": "7bd814a8c3854f096c170633be96a0c24daaa9241c12e3a2f4a31ca77a196c143a039fbb02d8b543c9736195fb9b64db4ec8d9fe22007b42c8f69fef0fafe4ab",
+          "sha256": "bb65e42cb5c49ef9c777a34fa9f90f7619e06cba9905be0284a38494b2fc6f6b",
+          "sha1": "3f0f285d58accc9cf71a8479be50ab6e01562690",
+          "md5": "466d1e4c06622eab37f7fe092462f128"
+        }
+      ]
+    },
+    {
+      "name": "sourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "ksp-0.1.0-sources.jar",
+          "url": "ksp-0.1.0-sources.jar",
+          "size": 5750,
+          "sha512": "5a7e0c5baa1ca32f17a7dbb4ced02a433cb59d157c7d4d5eaabd3600d55107057e981c03e3b75203fb71e2df8687249630b7be61c6c2d52fac98ad3871b80576",
+          "sha256": "681010050248aae6209eacaf3ae000b4f76e9737b7295332f5ead9f2cf609ac9",
+          "sha1": "e97073117e315e19f8dcf5fcce35493c3d4a29a9",
+          "md5": "c962d93317cf5fe0467ad64465c82e0d"
+        }
+      ]
+    },
+    {
+      "name": "javadocElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "javadoc",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "ksp-0.1.0-javadoc.jar",
+          "url": "ksp-0.1.0-javadoc.jar",
+          "size": 261,
+          "sha512": "5e9a453e31484eebb723ad79c71961c3a19dad32b71bf002e85a02a7d9ab8e2ceb78de229243d32b44324f480a17eb161944cbb3a970160236287f90c4202171",
+          "sha256": "10b87034fdaab264220f6da25f5f96d245e94f643d15c31d901c29f110f2c2d4",
+          "sha1": "6218915793d4e98f4452c0de15b99c09836074a8",
+          "md5": "52f9b82433aa5a16095e697467397e94"
+        }
+      ]
+    }
+  ]
+}
