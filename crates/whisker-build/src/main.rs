@@ -198,7 +198,9 @@ fn run_ios(args: IosArgs) -> Result<()> {
     //     $BUILT_PRODUCTS_DIR/Frameworks/Whisker.framework/Whisker
     // Tracked as the next sub-step (Step 4-iOS); the Android body
     // above is the verified path that unblocks the Gradle plugin.
-    eprintln!("[whisker-build ios] cargo cross-compile + module aux placement still pending (Step 4-iOS)");
+    eprintln!(
+        "[whisker-build ios] cargo cross-compile + module aux placement still pending (Step 4-iOS)"
+    );
 
     Ok(())
 }
@@ -215,13 +217,18 @@ fn run_android(args: AndroidArgs) -> Result<()> {
     // tarball + create the symlinks before cargo runs so the cc-rs
     // include search finds Lynx without a pre-existing whisker CLI
     // bootstrap.
-    let _cache = whisker_build::ensure_lynx_android()
-        .context("fetch pinned Lynx Android artifacts")?;
+    let _cache =
+        whisker_build::ensure_lynx_android().context("fetch pinned Lynx Android artifacts")?;
     whisker_build::link_lynx_into_workspace(&args.workspace, whisker_build::LynxPlatform::Android)
         .context("symlink target/lynx-android* into workspace")?;
 
     let toolchain = whisker_build::android::resolve_toolchain(&args.abi, args.min_sdk)
-        .with_context(|| format!("resolve NDK toolchain for {} (api {})", args.abi, args.min_sdk))?;
+        .with_context(|| {
+            format!(
+                "resolve NDK toolchain for {} (api {})",
+                args.abi, args.min_sdk
+            )
+        })?;
 
     let so_path = whisker_build::android::cargo_build_dylib(&whisker_build::android::CargoBuild {
         workspace_root: &args.workspace,
@@ -234,7 +241,12 @@ fn run_android(args: AndroidArgs) -> Result<()> {
     .context("cargo cross-compile for Android")?;
 
     whisker_build::android::stage_so_files(&args.jni_libs_dir, &so_path, &toolchain, &args.abi)
-        .with_context(|| format!("stage .so + libc++_shared.so into {}", args.jni_libs_dir.display()))?;
+        .with_context(|| {
+            format!(
+                "stage .so + libc++_shared.so into {}",
+                args.jni_libs_dir.display()
+            )
+        })?;
 
     eprintln!(
         "[whisker-build android] {} module(s) discovered (gradle-subproject wiring is the Gradle plugin's job)",
@@ -251,6 +263,8 @@ fn parse_profile(s: &str) -> Result<Profile> {
     match s {
         "debug" => Ok(Profile::Debug),
         "release" => Ok(Profile::Release),
-        other => Err(anyhow!("--profile must be 'debug' or 'release' (got `{other}`)")),
+        other => Err(anyhow!(
+            "--profile must be 'debug' or 'release' (got `{other}`)"
+        )),
     }
 }

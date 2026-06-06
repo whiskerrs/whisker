@@ -268,8 +268,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
 /// `<buildDir>/intermediates/whisker_jni_libs/<variant>/<abi>/` and
 /// passes it in via `--jni-libs-dir`.
 pub fn stage_so_files(abi_dir: &Path, so: &Path, tc: &AndroidToolchain, abi: &str) -> Result<()> {
-    std::fs::create_dir_all(abi_dir)
-        .with_context(|| format!("mkdir -p {}", abi_dir.display()))?;
+    std::fs::create_dir_all(abi_dir).with_context(|| format!("mkdir -p {}", abi_dir.display()))?;
 
     let so_name = so
         .file_name()
