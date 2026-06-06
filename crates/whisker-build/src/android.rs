@@ -389,29 +389,6 @@ pub fn stage_module_kotlin_sources(
     Ok(())
 }
 
-/// Convention: per-module KSP-emitted behaviors object name is
-/// `PascalCase(crate_name) + "Behaviors"`. Matches the
-/// `whisker.moduleName` ksp arg in each module's
-/// `build.gradle.kts`.
-fn crate_to_behaviors_object(crate_name: &str) -> String {
-    let mut out = String::new();
-    let mut next_upper = true;
-    for ch in crate_name.chars() {
-        if ch == '-' || ch == '_' {
-            next_upper = true;
-            continue;
-        }
-        if next_upper {
-            out.extend(ch.to_uppercase());
-            next_upper = false;
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push_str("Behaviors");
-    out
-}
-
 fn render_module_settings_include(modules: &[&crate::modules::ResolvedModule]) -> String {
     let mut out = String::new();
     out.push_str(
@@ -494,7 +471,7 @@ fn render_aggregator_kt(modules: &[&crate::modules::ResolvedModule]) -> String {
         out.push_str("        // (no Whisker module deps)\n");
     }
     for m in modules {
-        let obj = crate_to_behaviors_object(&m.package);
+        let obj = crate::modules::crate_to_behaviors_class(&m.package);
         out.push_str(&format!("        {obj}.registerAll()\n"));
     }
     out.push_str("    }\n");
