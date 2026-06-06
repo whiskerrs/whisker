@@ -88,7 +88,17 @@ class WhiskerProjectPlugin : Plugin<Project> {
                 behaviorsClasses.set(report.modules.mapNotNull { it.android?.behaviorsClass })
                 outputDir.set(aggregatorOut)
             }
-            variant.sources.kotlin?.addGeneratedSourceDirectory(
+            // AGP 8.6 routes the Kotlin Android plugin's generated
+            // sources through `variant.sources.java`, not
+            // `variant.sources.kotlin`. The kotlin compile pulls from
+            // both, but only `java`'s `addGeneratedSourceDirectory`
+            // call propagates the implicit task dependency on the
+            // generator into `compile<Variant>Kotlin`. Wiring through
+            // `.kotlin` alone leaves the task unscheduled and the
+            // compile fails with "Unresolved reference
+            // 'WhiskerModuleBehaviors'" even though the file is on
+            // disk after a manual `./gradlew :app:whiskerGenerateAggregatorRelease`.
+            variant.sources.java?.addGeneratedSourceDirectory(
                 aggregatorTask,
                 WhiskerModuleBehaviorsTask::outputDir,
             )

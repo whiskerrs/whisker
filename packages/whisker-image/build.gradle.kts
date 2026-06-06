@@ -46,8 +46,8 @@ ksp {
 }
 
 dependencies {
-    implementation(project(":module"))
-    ksp("rs.whisker:ksp")
+    implementation("rs.whisker:whisker-module-android:0.1.0")
+    ksp("rs.whisker:ksp:0.1.0")
 
     // Coil 2.7 — Kotlin-first, coroutine-native image loader. Base
     // artifact covers PNG / JPEG / static WebP (Android 14+ native

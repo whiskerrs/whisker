@@ -53,38 +53,55 @@ pub struct PlatformSync {
     pub regenerated: bool,
 }
 
+/// SDK version pinned into the cng-generated
+/// `app/build.gradle.kts` (`rs.whisker:whisker-runtime-android:<this>`).
+/// Bumped alongside the `sdk-v*` release tag.
+const WHISKER_SDK_VERSION: &str = "0.1.0";
+/// Gradle plugin version pinned into the generated
+/// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
+/// blocks. Bumped independently from the SDK via the
+/// `gradle-plugin-v*` release tag.
+///
+/// 0.3.0 was the first version with the two-JAR split (Settings
+/// plugin / Project plugin in separate Maven artifacts). 0.4.0
+/// adds two fixes that surfaced during the first Step-5 e2e:
+///   - `WhiskerBuildTask.workspace` switched from `@InputDirectory`
+///     to `@Internal` so Gradle stops walking the cargo workspace
+///     tree (which contains other subprojects' `build/` dirs)
+///     and refusing the build for implicit dependencies.
+///   - `WhiskerProjectPlugin` now wires the aggregator Kotlin
+///     generator into `variant.sources.java` (which AGP 8.6's
+///     Kotlin compile actually depends on) rather than `.kotlin`
+///     alone, plus places the staged `.so` into a nested
+///     `<jniLibsDir>/<abi>/` subdir so AGP's `mergeJniLibFolders`
+///     recognises the layout.
+const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.4.0";
+const WHISKER_MAVEN_URL: &str = "https://whiskerrs.github.io/whisker/maven";
+const LYNX_MAVEN_URL: &str = "https://whiskerrs.github.io/lynx/maven";
+
 fn sync_android(
     app_config: &AppConfig,
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,
 ) -> Result<PlatformSync> {
-    let whisker_runtime = resolve_whisker_platform(workspace_root, "android/whisker-runtime")
-        .context("resolve Whisker's platforms/android/whisker-runtime")?;
-    // Phase J — the smaller module-author subproject. Carved out of
-    // `whisker-runtime` so third-party Whisker modules depend only
-    // on `:module`.
-    let whisker_module = resolve_whisker_platform(workspace_root, "android/module")
-        .context("resolve Whisker's platforms/android/module")?;
-    // Lynx AARs are not required to *exist* at sync time — they only
-    // matter at gradle resolution. We still pass the canonical path
-    // so the generated settings.gradle.kts always knows where to
-    // look once `whisker-build` has fetched the Lynx tarball + set
-    // up the symlink under target/lynx-android.
-    let lynx_aars = workspace_root.join("target/lynx-android");
-    // `platforms/android/ksp/` is the composite-build root
-    // that ships `@WhiskerComponent` + the KSP processor (Phase 7-Φ.H.2).
-    // Same convention as `whisker_runtime_path` — absolute path,
-    // referenced from the generated `settings.gradle.kts` via
-    // `includeBuild(...)`.
-    let whisker_android_ksp = workspace_root.join("platforms/android/ksp");
+    // Settings plugin reads `workspace` as a `file(...)` — Gradle
+    // resolves that relative to the settings.gradle.kts directory
+    // (= `gen/android/`). Hand the renderer the absolute path; the
+    // template embeds it verbatim. Absolute keeps the generated
+    // tree independent of `gen/android`'s on-disk depth, at the cost
+    // of looking less portable in diffs (acceptable — these files
+    // are AUTO-GENERATED and not meant to be committed).
+    let workspace_path = workspace_root.to_path_buf();
     let inputs = whisker_cng::android::inputs_from(
         app_config,
         package.replace('-', "_"),
-        whisker_runtime,
-        whisker_module,
-        lynx_aars,
-        whisker_android_ksp,
+        workspace_path,
+        package.to_string(),
+        WHISKER_SDK_VERSION.to_string(),
+        WHISKER_GRADLE_PLUGIN_VERSION.to_string(),
+        WHISKER_MAVEN_URL.to_string(),
+        LYNX_MAVEN_URL.to_string(),
     )?;
     let gen_dir = crate_dir.join("gen/android");
     let regenerated = whisker_cng::sync_android(&gen_dir, &inputs).context("render gen/android")?;

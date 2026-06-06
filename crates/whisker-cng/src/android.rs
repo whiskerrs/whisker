@@ -74,29 +74,32 @@ pub struct AndroidInputs {
     /// Crate name with hyphens replaced by underscores — what
     /// `System.loadLibrary` and `keepDebugSymbols` reference.
     pub rust_lib_name: String,
-    /// Absolute or `settings.gradle.kts`-relative path to
-    /// `<workspace>/platforms/android/whisker-runtime`. The renderer
-    /// writes it verbatim into the `project(":whisker-runtime").projectDir`
-    /// call.
-    pub whisker_runtime_path: PathBuf,
-    /// Absolute path to `<workspace>/platforms/android/module/`.
-    /// Phase J — the smaller module-author surface (carved out of
-    /// `whisker-runtime`). Module Gradle subprojects depend on this
-    /// via `project(":module")`; the app's settings.gradle.kts
-    /// includes it as a subproject (next to `:whisker-runtime`).
-    pub whisker_module_path: PathBuf,
-    /// Absolute path to the dir holding the Lynx AARs (typically
-    /// `<workspace>/target/lynx-android`). Registered as a `flatDir`
-    /// repo in the generated `settings.gradle.kts` so whisker-runtime's
-    /// `api(name="LynxAndroid", ext="aar")` style deps resolve.
-    pub whisker_lynx_aar_dir: PathBuf,
-    /// Absolute path to `<workspace>/platforms/android/ksp/`.
-    /// Pulled into the generated `settings.gradle.kts` via
-    /// Gradle's `includeBuild(...)` so the app's `ksp(...)` deps
-    /// on `rs.whisker:ksp` resolve against the composite-build's
-    /// subproject. Phase 7-Φ.H.2 (Phase M / Issue #59 dropped the
-    /// previously-companion `rs.whisker:annotations` JAR).
-    pub whisker_android_ksp_path: PathBuf,
+    /// Path the generated `settings.gradle.kts` writes into the
+    /// `whisker { workspace = file(...) }` block. The Settings
+    /// plugin resolves it relative to `gen/android/`, so callers
+    /// typically pass `../..` (or similar) — the path to the cargo
+    /// workspace root containing the user app's `Cargo.toml`.
+    pub whisker_workspace_path: PathBuf,
+    /// Cargo crate name of the user app. Echoed into
+    /// `whisker { userPackage = "..." }`. The Settings plugin
+    /// walks the cargo dep graph rooted here for
+    /// `[package.metadata.whisker]`-tagged module deps.
+    pub whisker_user_package: String,
+    /// `rs.whisker:whisker-runtime-android:<this>` + sibling SDK
+    /// coords' version. Step 4.5-e initial release is `0.1.0`.
+    pub whisker_sdk_version: String,
+    /// `rs.whisker:rs.whisker.gradle.plugin:<this>` version pinned
+    /// in `pluginManagement.plugins`. Independent from
+    /// `whisker_sdk_version` — gradle-plugin and SDK release on
+    /// separate `gradle-plugin-v*` / `sdk-v*` tag streams.
+    pub whisker_gradle_plugin_version: String,
+    /// gh-pages Maven URL hosting Whisker's plugins + SDK. Templates
+    /// declare it in both `pluginManagement.repositories` and
+    /// `dependencyResolutionManagement.repositories`.
+    pub whisker_maven_url: String,
+    /// gh-pages Maven URL hosting the Lynx fork AARs that
+    /// `whisker-runtime-android` pulls transitively.
+    pub lynx_maven_url: String,
     /// Bumped whenever the template *shape* changes (added file,
     /// renamed placeholder, …). The fingerprint mixes this in so
     /// existing `gen/` trees regenerate after an upgrade.
@@ -144,21 +147,17 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
     v.insert("android_project_name", project_name(&inputs.app_name));
     v.insert("rust_lib_name", inputs.rust_lib_name.clone());
     v.insert(
-        "whisker_runtime_android_path",
-        inputs.whisker_runtime_path.display().to_string(),
+        "whisker_workspace_path",
+        inputs.whisker_workspace_path.display().to_string(),
     );
+    v.insert("whisker_user_package", inputs.whisker_user_package.clone());
+    v.insert("whisker_sdk_version", inputs.whisker_sdk_version.clone());
     v.insert(
-        "whisker_module_android_path",
-        inputs.whisker_module_path.display().to_string(),
+        "whisker_gradle_plugin_version",
+        inputs.whisker_gradle_plugin_version.clone(),
     );
-    v.insert(
-        "whisker_lynx_aar_dir",
-        inputs.whisker_lynx_aar_dir.display().to_string(),
-    );
-    v.insert(
-        "whisker_android_ksp_path",
-        inputs.whisker_android_ksp_path.display().to_string(),
-    );
+    v.insert("whisker_maven_url", inputs.whisker_maven_url.clone());
+    v.insert("lynx_maven_url", inputs.lynx_maven_url.clone());
     v
 }
 
@@ -368,13 +367,19 @@ fn write_file(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
 /// Pull the Android-relevant subset of `AppConfig` into the renderer
 /// input struct. Errors out on required-but-missing fields (an
 /// applicationId is mandatory; everything else has a default).
+// Eight arguments — over clippy's seven-arg default. Bundling them
+// behind a builder or a config struct would just push the same value
+// list one level deeper without changing the call site, so allow.
+#[allow(clippy::too_many_arguments)]
 pub fn inputs_from(
     app_config: &AppConfig,
     rust_lib_name: String,
-    whisker_runtime_path: PathBuf,
-    whisker_module_path: PathBuf,
-    whisker_lynx_aar_dir: PathBuf,
-    whisker_android_ksp_path: PathBuf,
+    whisker_workspace_path: PathBuf,
+    whisker_user_package: String,
+    whisker_sdk_version: String,
+    whisker_gradle_plugin_version: String,
+    whisker_maven_url: String,
+    lynx_maven_url: String,
 ) -> Result<AndroidInputs> {
     let app_name = app_config
         .name
@@ -403,14 +408,17 @@ pub fn inputs_from(
         min_sdk,
         target_sdk,
         rust_lib_name,
-        whisker_runtime_path,
-        whisker_module_path,
-        whisker_lynx_aar_dir,
-        whisker_android_ksp_path,
-        // Bumped 3 → 4 alongside the Phase J `:module`
-        // subproject addition so existing fingerprints invalidate
-        // and gen trees re-render their settings.gradle.kts.
-        template_version: 4,
+        whisker_workspace_path,
+        whisker_user_package,
+        whisker_sdk_version,
+        whisker_gradle_plugin_version,
+        whisker_maven_url,
+        lynx_maven_url,
+        // Bumped 4 → 5 for Step 5-Android: templates switched from
+        // path-based composite-build + flatDir refs to Maven
+        // coordinates. Existing fingerprints invalidate so gen trees
+        // re-render their settings.gradle.kts + app/build.gradle.kts.
+        template_version: 5,
     })
 }
 
@@ -441,11 +449,13 @@ mod tests {
             min_sdk: 24,
             target_sdk: 34,
             rust_lib_name: "hello_world".into(),
-            whisker_runtime_path: PathBuf::from("/abs/platforms/android/whisker-runtime"),
-            whisker_module_path: PathBuf::from("/abs/platforms/android/module"),
-            whisker_lynx_aar_dir: PathBuf::from("/abs/target/lynx-android"),
-            whisker_android_ksp_path: PathBuf::from("/abs/platforms/android/ksp"),
-            template_version: 4,
+            whisker_workspace_path: PathBuf::from("../.."),
+            whisker_user_package: "hello-world".into(),
+            whisker_sdk_version: "0.1.0".into(),
+            whisker_gradle_plugin_version: "0.1.0".into(),
+            whisker_maven_url: "https://whiskerrs.github.io/whisker/maven".into(),
+            lynx_maven_url: "https://whiskerrs.github.io/lynx/maven".into(),
+            template_version: 5,
         }
     }
 
@@ -592,9 +602,11 @@ mod tests {
             &cfg,
             "x".into(),
             PathBuf::new(),
-            PathBuf::new(),
-            PathBuf::new(),
-            PathBuf::new(),
+            "x".into(),
+            "0.1.0".into(),
+            "0.1.0".into(),
+            "https://whiskerrs.github.io/whisker/maven".into(),
+            "https://whiskerrs.github.io/lynx/maven".into(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("application_id"), "got: {err:#}");
