@@ -20,7 +20,7 @@ use std::rc::Rc;
 
 use whisker::flush;
 use whisker::prelude::*;
-use whisker::runtime::reactive::{__reset_for_tests, Owner};
+use whisker::runtime::reactive::{Owner, __reset_for_tests};
 use whisker::runtime::view::{install_renderer, uninstall_renderer, DynRenderer, Element};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

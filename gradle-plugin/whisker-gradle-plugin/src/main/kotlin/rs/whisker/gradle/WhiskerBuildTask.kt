@@ -4,10 +4,8 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
-import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import javax.inject.Inject
@@ -19,8 +17,6 @@ import javax.inject.Inject
 // cross-compile, `.so` post-processing, module-system gradle
 // subproject emission. This task exists so Gradle can:
 //
-//   * declare the workspace `Cargo.toml` tree as an `@InputDirectory`
-//     (UP-TO-DATE checks track Rust source edits),
 //   * declare `jniLibs/<abi>/` as an `@OutputDirectory` (Gradle
 //     knows what to clean + which AGP task this feeds into),
 //   * fail the build with the same exit code path as any other
@@ -32,8 +28,19 @@ import javax.inject.Inject
 // don't need a Rust toolchain just to open the Android project.
 abstract class WhiskerBuildTask : DefaultTask() {
 
-    @get:InputDirectory
-    @get:PathSensitive(PathSensitivity.RELATIVE)
+    // `@Internal` rather than `@InputDirectory` so Gradle doesn't
+    // walk the entire cargo workspace tree as a task input. The
+    // workspace can contain `packages/*/build/` dirs that are
+    // outputs of OTHER (Whisker module subproject) tasks, and
+    // declaring the whole workspace as an input makes Gradle
+    // refuse to run with "implicit dependency on
+    // :whisker-router:generateReleaseResValues" etc.
+    //
+    // Cargo has its own incremental build detection (target/cache,
+    // .fingerprint files), so we don't gain much by also having
+    // Gradle UP-TO-DATE-check us. The task re-runs every time;
+    // cargo skips the actual compile when nothing changed.
+    @get:Internal
     abstract val workspace: DirectoryProperty
 
     @get:Input
@@ -66,7 +73,15 @@ abstract class WhiskerBuildTask : DefaultTask() {
     @TaskAction
     fun run() {
         val ws = workspace.get().asFile.absolutePath
-        val jni = jniLibsDir.get().asFile.absolutePath
+        // AGP's `addGeneratedSourceDirectory(task, ::jniLibsDir)`
+        // hands the entire `jniLibsDir` to mergeJniLibFolders as a
+        // jniLibs source root — and that contract demands an
+        // `<abi>/<lib>.so` layout inside (the merge task throws
+        // "not an ABI" if it sees raw .so files at the root). So
+        // whisker-build places files into a nested `<abi>/` subdir
+        // even though our task is already (variant, abi)-scoped.
+        val abiSubdir = jniLibsDir.get().asFile.resolve(abi.get())
+        abiSubdir.mkdirs()
         execOperations.exec {
             commandLine(
                 "whisker-build",
@@ -75,7 +90,7 @@ abstract class WhiskerBuildTask : DefaultTask() {
                 "--package=${packageName.get()}",
                 "--profile=${profile.get()}",
                 "--abi=${abi.get()}",
-                "--jni-libs-dir=$jni",
+                "--jni-libs-dir=${abiSubdir.absolutePath}",
                 "--min-sdk=${minSdk.get()}",
             )
         }

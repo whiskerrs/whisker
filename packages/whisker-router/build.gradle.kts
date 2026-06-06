@@ -54,11 +54,11 @@ ksp {
 }
 
 dependencies {
-    implementation(project(":module"))
+    implementation("rs.whisker:whisker-module-android:0.1.0")
     // androidx.activity.OnBackPressedDispatcher / -Callback for
     // PredictiveBackModule. 1.8+ is the floor that wires
     // OnBackPressedDispatcher into the platform's OnBackInvoked
     // path on API 33+ — older androidx routes the legacy path.
     implementation("androidx.activity:activity:1.8.2")
-    ksp("rs.whisker:ksp")
+    ksp("rs.whisker:ksp:0.1.0")
 }
