@@ -167,41 +167,44 @@ fn main() -> Result<()> {
 }
 
 fn run_ios(args: IosArgs) -> Result<()> {
-    let cargo_toml = args.workspace.join("Cargo.toml");
-    let modules = whisker_build::modules::discover(&cargo_toml, &args.package)
-        .with_context(|| format!("discover whisker modules in {}", cargo_toml.display()))?;
+    // Lynx iOS xcframework needs to be on disk before the bridge cc
+    // build resolves `<staged>/Lynx/...` includes. Mirrors the
+    // Android path's `ensure_lynx_android()`.
+    let _cache = whisker_build::ensure_lynx_ios().context("fetch pinned Lynx iOS artifacts")?;
+    whisker_build::link_lynx_into_workspace(&args.workspace, whisker_build::LynxPlatform::Ios)
+        .context("symlink target/lynx-ios into workspace")?;
 
+    let archs: Vec<&str> = args.archs.split_whitespace().collect();
+    let fw = whisker_build::ios::build_framework_for_xcode_run_script(
+        &whisker_build::ios::XcodeRunScriptInputs {
+            workspace_root: &args.workspace,
+            package: &args.package,
+            platform: &args.platform,
+            archs: &archs,
+        },
+        &args.built_products_dir,
+    )
+    .with_context(|| {
+        format!(
+            "build framework for ({}/{}) → {}",
+            args.platform,
+            args.archs,
+            args.built_products_dir.display(),
+        )
+    })?;
+
+    // `configuration` is currently informational — the iOS cargo
+    // build is always `--release` (matches what `cargo_build_ios_dylib`
+    // already pins for the xcframework path; subsecond's Tier 1
+    // capture wants the same optimised codegen prod ships). Logged
+    // here so a Debug-mode Xcode build that's surprised by
+    // release-tier optimisation has the mismatch visible.
     eprintln!(
-        "[whisker-build ios] workspace={} package={} config={} platform={} archs=[{}] modules={}",
-        args.workspace.display(),
-        args.package,
+        "[whisker-build ios] published {} (configuration={}, archs=[{}])",
+        fw.display(),
         args.configuration,
-        args.platform,
         args.archs,
-        modules.len(),
     );
-    eprintln!(
-        "[whisker-build ios] built-products-dir={}",
-        args.built_products_dir.display(),
-    );
-
-    // The iOS body is still a diagnostic stub. Filling it in needs:
-    //   - cargo rustc --target=<triple> --crate-type=cdylib per
-    //     requested arch (mirrors what `whisker build --target
-    //     ios-sim` already drives through the lib's `ios::*` helpers
-    //     in whisker-cli)
-    //   - lipo of the simulator slices when ARCHS contains both
-    //     arm64 + x86_64
-    //   - whisker_modules/Package.swift + RegisterAll.swift emission
-    //     via ios::stage_module_swift_sources
-    //   - copy the dylib into
-    //     $BUILT_PRODUCTS_DIR/Frameworks/Whisker.framework/Whisker
-    // Tracked as the next sub-step (Step 4-iOS); the Android body
-    // above is the verified path that unblocks the Gradle plugin.
-    eprintln!(
-        "[whisker-build ios] cargo cross-compile + module aux placement still pending (Step 4-iOS)"
-    );
-
     Ok(())
 }
 
