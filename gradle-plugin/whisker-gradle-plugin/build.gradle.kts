@@ -1,21 +1,21 @@
 // `whisker-gradle-plugin` — the Android side of the build-system
-// migration. Applied at the consuming app's `app/build.gradle.kts`
-// via `id("rs.whisker.gradle")` after AGP. The plugin:
+// migration. Ships TWO plugin IDs from the same JAR:
 //
-//   1. Reads a `whisker { ... }` extension that names the user's
-//      Cargo workspace root + package name.
-//   2. Registers a per-variant per-ABI `whiskerBuild<Variant><Abi>`
-//      task that shells out to the `whisker-build` binary
-//      (PATH-resolved, built by `cargo install whisker-build`) with
-//      the workspace / package / profile / abi / jni-libs-dir /
-//      min-sdk inputs Gradle's variant model carries.
-//   3. Wires the resulting `.so` (and any module-system gradle
-//      subprojects whisker-build emits) into the Android variant's
-//      jniLibs so the standard `assemble<Variant>` produces an APK
-//      that loads the Rust dylib.
+//   * `rs.whisker` (Settings plugin, [WhiskerPlugin]) — applied once
+//     in `settings.gradle.kts`. Spawns `whisker-build modules` to
+//     discover Whisker module deps at Initialization phase,
+//     `include()`s each one, registers a BuildService, and
+//     auto-applies the project-scope plugin on every AGP project
+//     via `gradle.beforeProject`.
+//
+//   * `rs.whisker.gradle` (Project plugin, [WhiskerProjectPlugin])
+//     — registers a per-variant aggregator Kotlin generator and
+//     per-variant per-ABI cargo cross-compile task. Normally
+//     auto-applied; the standalone ID stays available for
+//     opt-in scenarios.
 //
 // `cargo` cross-compilation logic itself lives in `whisker-build` —
-// the plugin is purely the AGP-integration shim.
+// the plugins are purely the Gradle-integration shims.
 
 plugins {
     `kotlin-dsl`
@@ -45,12 +45,32 @@ dependencies {
 
 gradlePlugin {
     plugins {
-        create("whisker") {
-            id = "rs.whisker.gradle"
+        // Settings-scope entry point. Users declare this once in
+        // `settings.gradle.kts`; it runs `whisker-build modules` to
+        // discover module subprojects, `include()`s each one,
+        // registers the `WhiskerModuleRegistry` BuildService, and
+        // auto-applies the project-scope plugin onto every AGP
+        // module via `gradle.beforeProject`. Mirrors Expo's
+        // `expo-autolinking-settings` / Flutter's
+        // `dev.flutter.flutter-plugin-loader`.
+        create("whiskerSettings") {
+            id = "rs.whisker"
             implementationClass = "rs.whisker.gradle.WhiskerPlugin"
-            displayName = "Whisker Gradle plugin"
+            displayName = "Whisker Settings plugin"
             description =
-                "Cross-compiles Whisker (Rust) modules for Android and stages the resulting .so into the AGP variant's jniLibs."
+                "Discovers Whisker module deps and wires them into the consuming AGP project."
+        }
+
+        // Project-scope plugin. Auto-applied by the Settings plugin
+        // above. The standalone ID is kept for explicit-opt-in
+        // scenarios (multi-build composites, classloader quirks)
+        // and so its behaviour is testable in isolation.
+        create("whiskerProject") {
+            id = "rs.whisker.gradle"
+            implementationClass = "rs.whisker.gradle.WhiskerProjectPlugin"
+            displayName = "Whisker project plugin"
+            description =
+                "Per-AGP-module Whisker integration: aggregator Kotlin generation + cargo cross-compile + jniLibs staging."
         }
     }
 }

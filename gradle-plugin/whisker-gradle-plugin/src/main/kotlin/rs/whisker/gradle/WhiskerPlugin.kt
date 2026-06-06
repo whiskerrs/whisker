@@ -1,91 +1,163 @@
 package rs.whisker.gradle
 
-import com.android.build.api.dsl.CommonExtension
-import com.android.build.api.variant.AndroidComponentsExtension
 import org.gradle.api.Plugin
-import org.gradle.api.Project
+import org.gradle.api.initialization.Settings
+import java.io.File
+import java.io.IOException
+import java.security.MessageDigest
 
-// Apply with `id("rs.whisker.gradle")` AFTER `com.android.application`
-// (or `com.android.library`) in `app/build.gradle.kts`.
+const val WHISKER_MODULE_REGISTRY_NAME = "whiskerModuleRegistry"
+
+// Whisker's primary entry point on Android: a Settings plugin
+// (id="rs.whisker") that the user declares once in
+// `settings.gradle.kts`. Mirrors Expo's `expo-autolinking-settings`
+// and Flutter's `dev.flutter.flutter-plugin-loader` — discover at
+// Initialization phase, hand off to the per-project plugin via
+// auto-apply + a BuildService.
 //
-// What it does:
+// Usage (consumer-side):
 //
-//   1. Creates the `whisker { ... }` extension on the project
-//      ([`WhiskerExtension`]).
-//   2. Hooks `AndroidComponentsExtension.onVariants` so every
-//      Gradle variant (`debug`, `release`, custom flavors) gets a
-//      [`WhiskerBuildTask`] per requested ABI. The task runs
-//      `whisker-build android` to cross-compile + stage.
-//   3. Adds the per-variant `jniLibs/<abi>/` dir to that variant's
-//      sourceset, so `mergeJniLibFolders` picks the Rust dylib up
-//      without the user wiring it in by hand.
+// ```kotlin
+// // settings.gradle.kts
+// pluginManagement {
+//     repositories {
+//         maven { url = uri("https://whiskerrs.github.io/whisker/maven") }
+//         google(); mavenCentral(); gradlePluginPortal()
+//     }
+// }
+// plugins {
+//     id("rs.whisker") version "0.1.0"
+// }
+// whisker {
+//     workspace = file("../../..")
+//     userPackage = "router-demo"
+// }
+// rootProject.name = "router-demo"
+// include(":app")
+// ```
 //
-// Heavy lifting (cargo cross-compile, NDK toolchain resolve,
-// module-system gradle subproject emission, `.so` post-processing)
-// lives in the `whisker-build` Rust binary. This plugin is just the
-// AGP-integration shim — keeping the orchestration logic in Rust
-// means `whisker run` / `whisker build` (CLI path) and Gradle Sync
-// (IDE path) share the same code.
-class WhiskerPlugin : Plugin<Project> {
-    override fun apply(project: Project) {
-        val ext = project.extensions.create("whisker", WhiskerExtension::class.java).apply {
-            // Sensible default — modern Android, single arch. Multi-
-            // arch fan-out is a future toggle once the consumer
-            // demand shows up.
-            abis.convention(listOf("arm64-v8a"))
+// `app/build.gradle.kts` only declares AGP + Kotlin — no Whisker block.
+// The Settings plugin auto-applies `rs.whisker.gradle` on every AGP
+// project, which reads the module registry below and wires the rest.
+class WhiskerPlugin : Plugin<Settings> {
+    override fun apply(settings: Settings) {
+        val ext = settings.extensions.create("whisker", WhiskerSettingsExtension::class.java)
+
+        settings.gradle.settingsEvaluated {
+            val workspace = ext.workspace.orNull?.asFile
+                ?: error("rs.whisker: `whisker { workspace = file(...) }` is required.")
+            val userPackage = ext.userPackage.orNull
+                ?: error("rs.whisker: `whisker { userPackage = \"...\" }` is required.")
+
+            val (json, report) = loadOrRefreshModulesReport(workspace, userPackage)
+
+            // include() each Whisker module crate as a Gradle subproject.
+            // Subproject path uses the crate name verbatim (`:whisker-router`)
+            // so the host app can declare deps via the same string.
+            report.modules.forEach { m ->
+                m.android?.let { a ->
+                    settings.include(":${m.crateName}")
+                    settings.project(":${m.crateName}").projectDir = File(a.subprojectDir)
+                }
+            }
+
+            // Register the BuildService so the Project plugin (and
+            // anyone else who cares) can read the same module list
+            // during Configuration phase.
+            settings.gradle.sharedServices.registerIfAbsent(
+                WHISKER_MODULE_REGISTRY_NAME,
+                WhiskerModuleRegistry::class.java,
+            ) {
+                parameters.reportJson.set(json)
+                parameters.workspace.set(workspace.absolutePath)
+                parameters.userPackage.set(userPackage)
+            }
         }
 
-        val androidComponents = project.extensions.findByType(AndroidComponentsExtension::class.java)
-            ?: error(
-                "rs.whisker.gradle must be applied AFTER com.android.application " +
-                    "(or com.android.library) — the AndroidComponentsExtension was not found."
-            )
-
-        androidComponents.onVariants { variant ->
-            val agpDsl = project.extensions.getByType(CommonExtension::class.java)
-            // Default minSdk to whatever AGP's DSL carries; the
-            // `whisker { minSdk.set(...) }` override wins when set.
-            val minSdkProvider = ext.minSdk.orElse(
-                project.provider { agpDsl.defaultConfig.minSdk ?: 24 }
-            )
-            // AGP's `onVariants` gives a generic `Variant` — neither
-            // `debuggable` nor `isMinifyEnabled` is on the common
-            // interface, so distinguish on name. `release` /
-            // `Release` is the canonical AGP build-type for
-            // non-debug; anything else maps to cargo `debug`. The
-            // user can still override `whisker { ... }` per flavor
-            // in a future hook.
-            val cargoProfile = if (variant.name.endsWith("release", ignoreCase = true))
-                "release"
-            else
-                "debug"
-
-            ext.abis.get().forEach { abi ->
-                val taskName = "whiskerBuild${variant.name.replaceFirstChar { it.uppercase() }}${abi.toCamelCase()}"
-                val jniLibsDir = project.layout.buildDirectory.dir(
-                    "intermediates/whisker_jni_libs/${variant.name}/$abi"
-                )
-                val task = project.tasks.register(taskName, WhiskerBuildTask::class.java) {
-                    group = "whisker"
-                    description = "Cross-compile the Whisker Rust crate for $abi (${variant.name})."
-                    workspace.set(ext.workspace)
-                    packageName.set(ext.package_)
-                    profile.set(project.provider { cargoProfile })
-                    this.abi.set(abi)
-                    this.jniLibsDir.set(jniLibsDir)
-                    minSdk.set(minSdkProvider)
-                }
-                // Register the task's output dir as an extra
-                // jniLibs sourceset for this variant. AGP wires it
-                // into `merge<Variant>JniLibFolders` automatically.
-                variant.sources.jniLibs?.addGeneratedSourceDirectory(
-                    task,
-                    WhiskerBuildTask::jniLibsDir,
-                )
+        // Auto-apply the project plugin on any project that ends up
+        // with AGP applied. `withPlugin` fires whenever the plugin
+        // becomes present, regardless of declaration order in the
+        // user's build.gradle.kts. Mirrors expo's
+        // `useExpoModules()` auto-config.
+        //
+        // Kotlin DSL ships `Gradle.beforeProject` as a
+        // receiver-style lambda (`this` = Project). Capture the
+        // outer `pluginManager` into `pm` so we can call `apply`
+        // from inside `withPlugin { ... }` (whose own `this` is
+        // `AppliedPlugin`, not `Project`).
+        settings.gradle.beforeProject {
+            val pm = pluginManager
+            pm.withPlugin("com.android.application") {
+                pm.apply(WhiskerProjectPlugin::class.java)
+            }
+            pm.withPlugin("com.android.library") {
+                pm.apply(WhiskerProjectPlugin::class.java)
             }
         }
     }
-}
 
-private fun String.toCamelCase(): String =
-    split('-', '_').joinToString("") { it.replaceFirstChar { c -> c.uppercase() } }
+    // Cache file: <workspace>/target/whisker/module-info.json. Sync
+    // reuses it whenever Cargo.lock's hash matches; otherwise re-runs
+    // `whisker-build modules`. Same idea as Flutter's
+    // `.flutter-plugins-dependencies`.
+    private fun loadOrRefreshModulesReport(
+        workspace: File,
+        userPackage: String,
+    ): Pair<String, ModulesReport> {
+        val cachePath = File(workspace, "target/whisker/module-info.json")
+        val expectedHash = sha256OfCargoLock(workspace)
+
+        if (cachePath.isFile && expectedHash != null) {
+            try {
+                val text = cachePath.readText()
+                val cached = ModulesReport.parse(text)
+                if (cached.cargoLockSha256 == expectedHash) {
+                    return text to cached
+                }
+            } catch (_: Exception) {
+                // Stale or corrupted cache — fall through to re-run.
+            }
+        }
+
+        val text = runWhiskerBuildModules(workspace, userPackage)
+        val parsed = ModulesReport.parse(text)
+        try {
+            cachePath.parentFile?.mkdirs()
+            cachePath.writeText(text)
+        } catch (_: IOException) {
+            // Caching is a perf opt — failing to write the cache
+            // doesn't break the build, just slows future Syncs.
+        }
+        return text to parsed
+    }
+
+    private fun sha256OfCargoLock(workspace: File): String? {
+        val lock = File(workspace, "Cargo.lock")
+        if (!lock.isFile) return null
+        val md = MessageDigest.getInstance("SHA-256")
+        val bytes = lock.readBytes()
+        val hash = md.digest(bytes)
+        return hash.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun runWhiskerBuildModules(workspace: File, userPackage: String): String {
+        val proc = ProcessBuilder(
+            "whisker-build",
+            "modules",
+            "--workspace=${workspace.absolutePath}",
+            "--package=$userPackage",
+        ).redirectErrorStream(false).start()
+        val out = proc.inputStream.bufferedReader().readText()
+        val err = proc.errorStream.bufferedReader().readText()
+        val rc = proc.waitFor()
+        if (rc != 0) {
+            error(
+                "whisker-build modules failed (exit $rc).\n" +
+                    "stderr:\n$err\n" +
+                    "Hint: install with `cargo install whisker-build` " +
+                    "and make sure it's on the JVM's PATH.",
+            )
+        }
+        return out
+    }
+}
