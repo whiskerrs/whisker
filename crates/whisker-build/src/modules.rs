@@ -47,7 +47,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use cargo_metadata::MetadataCommand;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// Top-level shape of the `[package.metadata.whisker]` table.
 ///
@@ -362,4 +363,195 @@ pub fn android_jni_sources_env_value(modules: &[ResolvedModule]) -> String {
         }
     }
     paths.join(":")
+}
+
+// ----- JSON report for build-system plugins ---------------------------------
+//
+// The Settings Plugin / SwiftPM Build Tool Plugin can't link against
+// this crate (they live in Kotlin / Swift), so they consume module
+// discovery through stdout JSON from the `whisker-build modules`
+// subcommand. The shape below is the wire schema — keep it stable
+// across releases (additive changes only; rename → version bump).
+
+/// Per-Whisker-module JSON record returned by
+/// [`build_modules_report`]. Per-platform fields are `Option` so
+/// modules that ship only one platform serialise cleanly (consumers
+/// can filter `has_android` / `has_ios` rather than parsing
+/// "android": {} stubs).
+#[derive(Debug, Clone, Serialize)]
+pub struct ModulesReportModule {
+    /// Cargo crate name (e.g., `"whisker-router"`).
+    pub crate_name: String,
+    /// Absolute path to the directory containing the module's
+    /// `Cargo.toml`.
+    pub manifest_dir: PathBuf,
+    /// Android-side surface. `None` when the module has no `android/`
+    /// directory at the package root.
+    pub android: Option<AndroidModuleReport>,
+    /// iOS-side surface. `None` when the module declares neither
+    /// `ios_native_sources` nor `ios_swift_sources` nor an
+    /// `ios/Package.swift`.
+    pub ios: Option<IosModuleReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AndroidModuleReport {
+    /// Absolute path the Gradle Settings Plugin uses for
+    /// `settings.project(":<crate>").projectDir = file(this)`.
+    /// This is the package root (manifest_dir) — the Expo-style
+    /// layout keeps `build.gradle.kts` at the root and points its
+    /// Kotlin source set at the `android/` subdirectory.
+    pub subproject_dir: PathBuf,
+    /// `<PascalCase(crate_name)>Behaviors` — the KSP-emitted object
+    /// name. Lives in package `rs.whisker.runtime.generated`, same as
+    /// the aggregator, so the aggregator references it without an
+    /// import.
+    pub behaviors_class: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IosModuleReport {
+    /// SwiftPM module / framework name. Absent for modules whose
+    /// only iOS surface is raw `.m` / `.mm` sources without a
+    /// `Package.swift`.
+    pub swift_module: Option<String>,
+    /// `.m` / `.mm` source paths (absolute) the host bridge cc-build
+    /// should fold in. Empty for the common DSL case.
+    pub native_sources: Vec<PathBuf>,
+    /// `.swift` source paths declared via the legacy
+    /// `[package.metadata.whisker.ios] swift_sources = [...]`. Empty
+    /// for the common Expo-style case (Swift lives in
+    /// `ios/Package.swift`).
+    pub swift_sources: Vec<PathBuf>,
+}
+
+/// Top-level JSON payload — what `whisker-build modules` writes to
+/// stdout.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModulesReport {
+    /// Hex SHA-256 of the workspace's `Cargo.lock`. Consumers (the
+    /// Gradle Settings Plugin) key their disk cache on this — Sync
+    /// reuses the cached JSON when the lock file hasn't changed.
+    pub cargo_lock_sha256: String,
+    /// The user app crate the discovery resolved against. Echoed
+    /// back so consumers can sanity-check their `whisker { userPackage = ... }`
+    /// declaration matches.
+    pub user_package: String,
+    /// Stable-ordered (alphabetical by `crate_name`) list of modules.
+    pub modules: Vec<ModulesReportModule>,
+}
+
+/// Build a [`ModulesReport`] from a workspace + user package. Combines
+/// [`discover`], `Cargo.lock` hashing, and per-platform availability
+/// classification.
+///
+/// Detection rules — both follow the Expo-style "manifest at the
+/// package root, source under a per-platform subdir":
+///   * Android: `<manifest_dir>/build.gradle.kts` exists. The
+///     `subproject_dir` reported is `manifest_dir` (the AGP library
+///     module is rooted at the package root; its Kotlin source set
+///     points at `android/` internally).
+///   * iOS: `<manifest_dir>/Package.swift` exists, OR
+///     `ios_native_sources` / `ios_swift_sources` is non-empty.
+pub fn build_modules_report(workspace_root: &Path, user_package: &str) -> Result<ModulesReport> {
+    let manifest_path = workspace_root.join("Cargo.toml");
+    let resolved = discover(&manifest_path, user_package)
+        .with_context(|| format!("discover modules for `{user_package}`"))?;
+
+    let lock_path = workspace_root.join("Cargo.lock");
+    let cargo_lock_sha256 =
+        sha256_file(&lock_path).with_context(|| format!("hash {}", lock_path.display()))?;
+
+    let modules: Vec<ModulesReportModule> = resolved
+        .into_iter()
+        .map(|m| {
+            let android = if m.manifest_dir.join("build.gradle.kts").is_file() {
+                Some(AndroidModuleReport {
+                    subproject_dir: m.manifest_dir.clone(),
+                    behaviors_class: crate_to_behaviors_class(&m.package),
+                })
+            } else {
+                None
+            };
+            let swift_pkg = m.manifest_dir.join("Package.swift");
+            let has_ios = !m.ios_native_sources.is_empty()
+                || !m.ios_swift_sources.is_empty()
+                || swift_pkg.is_file();
+            let ios = if has_ios {
+                Some(IosModuleReport {
+                    swift_module: if swift_pkg.is_file() {
+                        Some(crate_to_swift_module(&m.package))
+                    } else {
+                        None
+                    },
+                    native_sources: m.ios_native_sources,
+                    swift_sources: m.ios_swift_sources,
+                })
+            } else {
+                None
+            };
+            ModulesReportModule {
+                crate_name: m.package,
+                manifest_dir: m.manifest_dir,
+                android,
+                ios,
+            }
+        })
+        .collect();
+
+    Ok(ModulesReport {
+        cargo_lock_sha256,
+        user_package: user_package.to_string(),
+        modules,
+    })
+}
+
+/// `whisker-router` → `WhiskerRouterBehaviors`. Public so the Gradle
+/// Project Plugin can derive the same FQN from JSON without re-
+/// implementing the rule. (The aggregator only needs the short class
+/// name — the FQN is `rs.whisker.runtime.generated.<class>`.)
+pub fn crate_to_behaviors_class(crate_name: &str) -> String {
+    let mut out = pascal_case(crate_name);
+    out.push_str("Behaviors");
+    out
+}
+
+/// `whisker-router` → `WhiskerRouter`. SwiftPM module names follow
+/// the package name in `ios/Package.swift`; the canonical Expo-style
+/// layout uses the PascalCase form of the crate name.
+pub fn crate_to_swift_module(crate_name: &str) -> String {
+    pascal_case(crate_name)
+}
+
+fn pascal_case(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut next_upper = true;
+    for ch in s.chars() {
+        if ch == '-' || ch == '_' {
+            next_upper = true;
+            continue;
+        }
+        if next_upper {
+            out.extend(ch.to_uppercase());
+            next_upper = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(hex(&hasher.finalize()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
 }

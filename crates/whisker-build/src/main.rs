@@ -81,6 +81,18 @@ enum Cmd {
     /// Android dispatch — called from the whisker-gradle-plugin's
     /// `cargoBuildDebug` / `cargoBuildRelease` task.
     Android(AndroidArgs),
+
+    /// Discovery dispatch — emits a JSON manifest of every Whisker
+    /// module the user app depends on. Consumed by the Gradle
+    /// Settings Plugin (`rs.whisker`) at Initialization phase to
+    /// `include(":...")` each module's Android subproject, and by
+    /// the SwiftPM Build Tool Plugin to generate Swift wrappers.
+    ///
+    /// Pure read-only — no cargo build, no NDK touch. Fast enough
+    /// (~100ms cold cargo metadata) that the plugin can call it on
+    /// every Sync; consumers still cache by `Cargo.lock` hash for
+    /// the warm path.
+    Modules(ModulesArgs),
 }
 
 /// Inputs the Xcode Run Script Phase passes to the binary. Mirrors
@@ -158,12 +170,44 @@ struct AndroidArgs {
     min_sdk: u32,
 }
 
+/// Inputs for the `modules` discovery subcommand. Workspace + app
+/// crate name are enough — there's no platform context here because
+/// the JSON carries per-platform availability flags inline.
+#[derive(Args)]
+struct ModulesArgs {
+    /// Workspace root containing the user app's top-level `Cargo.toml`.
+    #[arg(long)]
+    workspace: PathBuf,
+
+    /// User app crate name. Discovery walks the cargo dep graph
+    /// rooted at this package.
+    #[arg(long)]
+    package: String,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Ios(args) => run_ios(args),
         Cmd::Android(args) => run_android(args),
+        Cmd::Modules(args) => run_modules(args),
     }
+}
+
+fn run_modules(args: ModulesArgs) -> Result<()> {
+    let report = whisker_build::modules::build_modules_report(&args.workspace, &args.package)
+        .with_context(|| {
+            format!(
+                "build modules report for `{}` (workspace={})",
+                args.package,
+                args.workspace.display(),
+            )
+        })?;
+    // Pretty-print so a human inspecting the cache file can read it;
+    // the Gradle plugin parses either form fine.
+    let json = serde_json::to_string_pretty(&report).context("serialize modules report")?;
+    println!("{json}");
+    Ok(())
 }
 
 fn run_ios(args: IosArgs) -> Result<()> {
