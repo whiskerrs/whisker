@@ -1,0 +1,154 @@
+name: publish-gradle-plugin
+
+# Publishes the `rs.whisker.gradle` Gradle plugin to the `gh-pages`
+# Maven repository served at
+# https://whiskerrs.github.io/whisker/maven/. Consumers add it via
+# their `settings.gradle.kts`:
+#
+#     pluginManagement {
+#         repositories {
+#             maven { url = uri("https://whiskerrs.github.io/whisker/maven") }
+#             gradlePluginPortal()
+#         }
+#     }
+#
+# Triggers:
+#   * `workflow_dispatch` — manual smoke runs. Uploads the staged
+#     Maven layout as a downloadable artifact; does NOT touch
+#     `gh-pages`. Use this to inspect the POM / module metadata
+#     before cutting a real tag.
+#   * push of a tag matching `gradle-plugin-v*` — the real release
+#     path. Whisker's own crates tag as `v*`, so the
+#     `gradle-plugin-v*` prefix keeps the two release streams from
+#     stomping each other.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Plugin version to publish (omit for 0.0.0-dev)'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'gradle-plugin-v*'
+
+permissions:
+  # Required for peaceiris/actions-gh-pages to push the staged Maven
+  # layout onto the `gh-pages` branch. The default `GITHUB_TOKEN`
+  # perms on this repo are read-only.
+  contents: write
+
+# Serialise tag-push runs so two near-simultaneous releases don't
+# race each other on the gh-pages branch (peaceiris/actions-gh-pages
+# does a non-rebasing push and the loser would clobber the winner).
+# `cancel-in-progress: false` because a release in flight is worth
+# more than the latest queued one.
+concurrency:
+  group: publish-gradle-plugin
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        # The plugin's `kotlin { jvmToolchain(17) }` requires a 17
+        # JDK on PATH for the Kotlin compile + the gradle daemon
+        # itself.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Resolve release version
+        id: ver
+        env:
+          # `github.event.inputs.version` is only meaningful on
+          # workflow_dispatch — referenced via `event.inputs` so the
+          # expression also evaluates cleanly (to empty string) on
+          # tag-push events. Modelled on the lynx fork's
+          # `build-whisker-tarballs.yml` "Resolve release version"
+          # step.
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # `refs/tags/gradle-plugin-v0.2.0` -> `0.2.0`.
+            VER="${GITHUB_REF_NAME#gradle-plugin-v}"
+          else
+            VER="$INPUT_VERSION"
+            if [ -z "$VER" ]; then VER="0.0.0-dev"; fi
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Resolved plugin version: $VER"
+
+      - name: Stamp version into build.gradle.kts
+        # The plugin's `build.gradle.kts` declares `version = "0.1.0"`
+        # as a direct assignment, NOT as
+        # `providers.gradleProperty("version").orElse(...)`, so
+        # `-Pversion=...` on the gradle CLI is silently ignored.
+        # Rewrite the literal in place before the build runs. The
+        # regex anchors on the start-of-line `version = "..."` form
+        # to avoid touching any unrelated `version = ...` lines (e.g.
+        # inside dependency coordinates).
+        run: |
+          set -e
+          VER="${{ steps.ver.outputs.version }}"
+          FILE="gradle-plugin/whisker-gradle-plugin/build.gradle.kts"
+          sed -i -E "s/^version = \"[^\"]*\"$/version = \"${VER}\"/" "$FILE"
+          echo "After sed:"
+          grep -n '^version = ' "$FILE"
+
+      - name: Publish to staging Maven repo
+        # `publishUrl` is read by the publishing block in
+        # `build.gradle.kts` via
+        # `providers.gradleProperty("publishUrl").orElse(<default>)`,
+        # so `-PpublishUrl=file://...` redirects the maven repo from
+        # `build/repo` to our workspace-rooted `maven-out` dir. That
+        # dir is exactly the Maven 2 layout that gets uploaded as an
+        # artifact / pushed to `gh-pages` in the following steps.
+        #
+        # `--no-daemon` because GHA runners are single-use; spinning
+        # up a daemon just adds startup cost we never amortise.
+        working-directory: gradle-plugin/whisker-gradle-plugin
+        run: |
+          ./gradlew --no-daemon \
+            publishAllPublicationsToGhPagesRepository \
+            -PpublishUrl=file://${{ github.workspace }}/maven-out
+
+      - name: List staged Maven contents
+        # Sanity check — shows the resolved coordinates
+        # (`rs/whisker/whisker-gradle-plugin/<ver>/...`) in the run
+        # log so a botched `sed` is obvious without having to
+        # download the artifact.
+        run: find maven-out -type f | sort
+
+      - name: Upload Maven layout (workflow_dispatch)
+        # Manual runs only — on tag pushes the gh-pages step below is
+        # the durable record. Skipping the artifact upload on
+        # releases also avoids needlessly retaining duplicate copies.
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: maven-repo
+          path: maven-out/**
+
+      - name: Publish to gh-pages (tag push)
+        # Serves the Maven 2 layout at
+        # https://whiskerrs.github.io/whisker/maven/ once GitHub
+        # Pages is enabled on the gh-pages branch (one-time repo
+        # setting under Settings -> Pages).
+        #
+        # `keep_files: true` preserves prior plugin versions so the
+        # repo accumulates rather than being clobbered — same
+        # pattern as the lynx fork's gh-pages publish step.
+        if: ${{ startsWith(github.ref, 'refs/tags/gradle-plugin-v') }}
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: maven-out
+          destination_dir: maven
+          keep_files: true
+          commit_message: "publish whisker-gradle-plugin ${{ steps.ver.outputs.version }}"
