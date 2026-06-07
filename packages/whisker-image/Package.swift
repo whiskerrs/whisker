@@ -36,6 +36,8 @@ import PackageDescription
 // from the CLI may or may not be in the inherited environment. The
 // monorepo fallback lets the resolve succeed in either case.
 
+import Foundation
+
 let whiskerRuntimePath: String
 let whiskerMacrosPath: String
 if let r = Context.environment["WHISKER_IOS_RUNTIME"],
@@ -43,8 +45,15 @@ if let r = Context.environment["WHISKER_IOS_RUNTIME"],
     whiskerRuntimePath = r
     whiskerMacrosPath = m
 } else {
-    whiskerRuntimePath = Context.packageDirectory + "/../../platforms/ios"
-    whiskerMacrosPath = whiskerRuntimePath + "/macros"
+    // URL.standardized resolves `../` so SwiftPM sees the same
+    // canonical absolute path the cng-rendered
+    // `gen/ios/whisker_modules/Package.swift` uses. Otherwise the
+    // build graph treats this and the aggregator as two instances
+    // of the same package and the WhiskerModuleCodegenPlugin's
+    // executable dep doesn't land in `Build/Products/Release/`.
+    let raw = Context.packageDirectory + "/../../platforms/ios"
+    whiskerRuntimePath = URL(fileURLWithPath: raw).standardized.path
+    whiskerMacrosPath = URL(fileURLWithPath: whiskerRuntimePath + "/macros").standardized.path
 }
 
 let package = Package(
