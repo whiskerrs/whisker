@@ -12,16 +12,15 @@
 #if defined(__APPLE__)
 
 #import <Foundation/Foundation.h>
-#import <Lynx/LynxView.h>
-#import <Lynx/LynxView+Internal.h>
-#import <Lynx/LynxTemplateRender.h>
-#import <Lynx/LynxTemplateRender+Internal.h>
-#import <Lynx/LynxUIOwner.h>
-#import <Lynx/LynxEventHandler.h>
-#import <Lynx/LynxEventEmitter.h>
-#import <Lynx/LynxEvent.h>
-#import <Lynx/LynxTouchEvent.h>
 #import <objc/runtime.h>
+
+// Step-6 build decoupling: vendored stub @interface declarations for
+// the Lynx Obj-C types this file touches. Replaces every
+// `#import <Lynx/...>` so the bridge .mm compiles without `-F` paths
+// into the staged Lynx xcframework. At link time, the only Lynx-side
+// thing left is the `objc_getClass("LynxTouchEvent")` lookup below —
+// that's a C string, not an `_OBJC_CLASS_$_` symbol.
+#include "lynx_objc_stubs.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -185,7 +184,18 @@ void InstallEventReporterIfNeeded(WhiskerEngine* engine, LynxView* view) {
         @try {
             NSMutableDictionary* body = [event generateEventBody];
             if (body != nil) {
-                if ([event isKindOfClass:[LynxTouchEvent class]]) {
+                // Step-6: avoid emitting an `_OBJC_CLASS_$_LynxTouchEvent`
+                // link-time reference. The class is registered with the
+                // Obj-C runtime by Lynx.framework at dyld load time, so a
+                // name-based lookup resolves to the same class object
+                // `[LynxTouchEvent class]` would have returned — but
+                // through a C string, not a class symbol. The downcast
+                // below is still typed against our stub @interface so
+                // the property accessors compile to the right
+                // objc_msgSend selectors.
+                Class lynxTouchEventClass = objc_getClass("LynxTouchEvent");
+                if (lynxTouchEventClass != Nil &&
+                    [event isKindOfClass:lynxTouchEventClass]) {
                     LynxTouchEvent* touch = (LynxTouchEvent*)event;
                     if (!touch.isMultiTouch) {
                         // Single-touch shape — one synthesized

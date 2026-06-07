@@ -1,13 +1,37 @@
 //! Build script for `whisker-driver-sys`.
 //!
 //! Compiles the C++ bridge in `bridge/` into a static archive and
-//! emits the link directives that thread it (and Lynx) into the user
-//! crate's final dylib (Android and iOS — both targets now use the
-//! same `--crate-type=dylib` shape so subsecond hot-patches can
-//! resolve mangled host symbols at `dlopen` time).
+//! emits the link directives that thread it into the user crate's
+//! final dylib.
 //!
-//! No-op on host targets (`cargo check`, host tests, rust-analyzer …)
-//! so the workspace stays buildable without any native toolchain.
+//! Step-6 build decoupling (this file's main responsibility):
+//! pre-Step-6 the bridge `.o` files carried link-time UND refs to
+//! every `lynx_*` symbol they called, so this script had to emit
+//! `-framework Lynx*` (iOS) / `-llynx` (Android) — and that required
+//! the user to have run `whisker build` once to stage the Lynx
+//! artifact tree under `target/lynx-{android-unpacked,ios}/`. Cold
+//! `cargo build` couldn't succeed against a fresh checkout.
+//!
+//! Now the bridge calls Lynx through a function pointer table that
+//! `whisker_bridge_lynx_loader.cc` populates with `dlopen` +
+//! `dlsym` at engine-attach time. The bridge `.o` files carry zero
+//! `lynx_*` UND refs, so this script no longer needs Lynx headers
+//! OR a Lynx link line — `cargo build --target=aarch64-{linux-
+//! android,apple-ios}` succeeds without any prior tooling.
+//!
+//! What still happens here:
+//!   * Compile the bridge sources (whisker_bridge_common.cc +
+//!     platform glue + the loader) into a static archive.
+//!   * Emit `+whole-archive` so the bridge entry points
+//!     (`whisker_bridge_*`) survive the parent dylib's dead-strip.
+//!   * Declare the system frameworks / libs the bridge `.mm` /
+//!     `.cc` actually use (Foundation, UIKit, libdl, libc++, …).
+//!   * Optionally compile module-provided iOS native sources
+//!     (legacy Obj-C++ modules like whisker-image) when
+//!     `whisker-build` sets `WHISKER_IOS_MODULE_NATIVE_SOURCES`.
+//!     Module sources still need Lynx headers; those paths only
+//!     activate in the orchestrated `whisker build` flow, never in
+//!     plain `cargo build`.
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -29,9 +53,7 @@ fn main() -> Result<()> {
 /// (native-module dispatch registry, `whisker_bridge_invoke_module`,
 /// `whisker_bridge_value_release`, `whisker_bridge_log_hello`) so
 /// host tests link without pulling in `whisker_bridge_common.cc`'s
-/// Lynx C-API calls (`lynx_shell_*`, `lynx_element_*`, …). Those
-/// symbols only exist inside the Lynx framework / shared library
-/// that ships with the iOS / Android slices.
+/// dispatch-table call sites.
 fn compile_host_stub() -> Result<()> {
     let bridge_src = bridge_root().join("src");
     let mut build = cc::Build::new();
@@ -67,19 +89,15 @@ fn lynx_staged_headers() -> PathBuf {
     workspace_target_dir().join("lynx-headers")
 }
 
-// --- Lynx C++ header path tree (iOS only) ----------------------------
+// --- Lynx C++ header path tree (legacy module sources only) ----------
 //
-// The bridge proper (whisker_bridge_common.cc + whisker_bridge_ios.mm)
-// only needs `lynx_native_renderer_capi.h`, which is vendored under
-// `bridge/include/`. On both platforms the `lynx_*` capi symbols live
-// inside Lynx itself (Android: liblynx.so; iOS:
-// Lynx.xcframework/Lynx — fork-built since `v3.7.0-whisker.21`, see
-// whiskerrs/lynx#19), so the bridge needs zero Lynx C++ headers.
-//
-// However: `lynx_native_renderer_capi.h` itself includes
-// `lynx_value_api.h` and a few other transitively-needed Lynx headers,
-// so the staged tree is still set up as -I paths.
-fn add_lynx_includes_for_capi_impl(build: &mut cc::Build) {
+// Step-6 dropped Lynx header includes from the bridge proper. The only
+// remaining consumer is the legacy module-side `.mm` sources brought
+// in via `WHISKER_IOS_MODULE_NATIVE_SOURCES` (whisker-image's Coil
+// glue and similar). Those still need to compile against Lynx's
+// Obj-C / C++ public headers, so when they're present we stage the
+// header tree and add the `-I` paths to that build only.
+fn add_lynx_includes_for_module_sources(build: &mut cc::Build) {
     let staged = lynx_staged_headers();
     let primjs = staged.join("PrimJS/src");
     build
@@ -97,25 +115,11 @@ fn add_lynx_includes_for_capi_impl(build: &mut cc::Build) {
 }
 
 /// Silence diagnostics that fire on every Lynx public header rather
-/// than our own code. `cargo build` otherwise prints ~300 lines of
-/// `-Wunused-parameter` cargo-warning messages per build of the
-/// bridge, drowning out anything that's actually actionable.
-///
-/// We don't want to mask warnings on OUR sources, but cc-rs has no
-/// per-file warning override — the `Build` instance compiles both
-/// `whisker_bridge_*.cc` (ours) and the Lynx headers transitively.
-/// Lynx's own GN build silences these too (see Lynx's
-/// `BUILD.gn`'s `default_warning_flags`), so suppressing here just
-/// matches the upstream stance.
-///
-/// Kept as a single named call so the future "split this Build into
-/// our-sources + lynx-headers builds" refactor has an obvious anchor
-/// to replace.
+/// than our own code. Only matters for the module-sources branch
+/// (the bridge no longer pulls Lynx headers), but cc-rs has no
+/// per-file warning override — keeping the helper around for the
+/// module compile path.
 fn silence_upstream_lynx_warnings(build: &mut cc::Build) {
-    // Source of the bulk of the noise: Lynx's many `virtual` interface
-    // methods accept context parameters they ignore in their default
-    // impl. `-Wno-unused-parameter` is the precise switch; broader
-    // `-w` would also hide actionable warnings in our own code.
     build.flag_if_supported("-Wno-unused-parameter");
 }
 
@@ -123,34 +127,22 @@ fn silence_upstream_lynx_warnings(build: &mut cc::Build) {
 
 fn compile_android() -> Result<()> {
     let abi = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    let abi_dir = match abi.as_str() {
-        "aarch64" => "arm64-v8a",
+    match abi.as_str() {
+        "aarch64" => {}
         other => anyhow::bail!(
             "whisker-driver-sys currently supports only arm64-v8a on Android (got {other})"
         ),
-    };
+    }
 
     let bridge_src = bridge_root().join("src");
-    let lynx_jni = workspace_target_dir()
-        .join("lynx-android-unpacked/jni")
-        .join(abi_dir);
-    if !lynx_jni.is_dir() {
-        anyhow::bail!(
-            "Lynx Android jniLibs missing at {}\n  \
-             Run `whisker build --target android` (or `whisker run`) first \
-             so `whisker-build` can fetch the pinned Lynx tarball + \
-             symlink it into target/. Set WHISKER_LYNX_DIR=/abs/path to \
-             override with a local build.",
-            lynx_jni.display()
-        );
-    }
 
     // --- Bridge compile ---------------------------------------------
     //
-    // Android only needs the vendored `lynx_native_renderer_capi.h`
-    // (under bridge/include/); the symbols it declares come from
-    // liblynx.so. No deep Lynx C++ header tree required — Phase 6-α
-    // removed every direct C++-internal include from the bridge.
+    // Step-6: zero Lynx headers required. The bridge sees the
+    // vendored `lynx_capi.h` (function pointer typedefs + dispatch
+    // table) for type definitions and routes every call through
+    // `whisker_lynx_capi()->fn`; the loader does `dlopen("liblynx.so")`
+    // + `dlsym` at engine_attach time.
     let mut build = cc::Build::new();
     // Silence cc's auto `cargo:rustc-link-lib=static=...` so we can
     // emit our own with `+whole-archive` (cargo refuses duplicates).
@@ -160,6 +152,7 @@ fn compile_android() -> Result<()> {
         .std("c++17")
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_android.cc"))
+        .file(bridge_src.join("whisker_bridge_lynx_loader.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);
     // Force inline LSE atomics so the C++ side never reaches for
@@ -175,16 +168,15 @@ fn compile_android() -> Result<()> {
     // `+whole-archive` keeps every .o regardless of whether any Rust
     // code references its symbols — JNI exports (`JNI_OnLoad`,
     // `Java_*`) are only "referenced" by the Android runtime at load
-    // time and would otherwise be GC'd. Verified: this propagates to
-    // the parent dylib through cargo's link-lib transitive rules.
+    // time and would otherwise be GC'd.
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     println!("cargo:rustc-link-search=native={out_dir}");
     println!("cargo:rustc-link-lib=static:+whole-archive=whisker_bridge_static");
 
-    // Dynamic deps onto Lynx's shipped .so files.
-    println!("cargo:rustc-link-search=native={}", lynx_jni.display());
-    println!("cargo:rustc-link-lib=dylib=lynx");
-    println!("cargo:rustc-link-lib=dylib=lynxbase");
+    // Step-6: no more `-llynx` / `-llynxbase`. Lynx is resolved at
+    // runtime by `whisker_bridge_load_lynx()` via dlopen; the loader
+    // pulls libdl from bionic which is always available, no extra
+    // link directive needed (libdl is part of libc on Android).
     println!("cargo:rustc-link-lib=dylib=log");
     println!("cargo:rustc-link-lib=dylib=c++_shared");
     println!("cargo:rustc-link-lib=dylib=c");
@@ -203,132 +195,82 @@ fn compile_android() -> Result<()> {
 
 // --- iOS -------------------------------------------------------------
 
-const LYNX_FRAMEWORKS: &[&str] = &["Lynx", "LynxBase", "LynxServiceAPI", "PrimJS"];
-
 fn compile_ios() -> Result<()> {
     let triple = std::env::var("TARGET").expect("cargo sets TARGET");
-    let slice = match triple.as_str() {
-        "aarch64-apple-ios" => "ios-arm64",
-        "aarch64-apple-ios-sim" | "x86_64-apple-ios" => "ios-arm64_x86_64-simulator",
+    match triple.as_str() {
+        "aarch64-apple-ios" | "aarch64-apple-ios-sim" | "x86_64-apple-ios" => {}
         other => anyhow::bail!("unsupported iOS target triple: {other}"),
-    };
-    let lynx_root = workspace_target_dir().join("lynx-ios");
-    for fw in LYNX_FRAMEWORKS {
-        let dir = lynx_root.join(format!("{fw}.xcframework")).join(slice);
-        if !dir.is_dir() {
-            anyhow::bail!(
-                "Lynx xcframework slice missing: {} \n  \
-                 Run `whisker build --target ios-sim` (or ios-device, or \
-                 `whisker run`) first so `whisker-build` can fetch the \
-                 pinned Lynx tarball + symlink it into target/. Set \
-                 WHISKER_LYNX_DIR=/abs/path to override with a local build.",
-                dir.display()
-            );
-        }
     }
 
     // --- Bridge compile ---------------------------------------------
     //
-    // The bridge proper (whisker_bridge_common.cc + whisker_bridge_ios.mm)
-    // only includes the vendored C API header. The `lynx_*` symbols
-    // it references live inside `Lynx.framework/Lynx` itself — the
-    // fork's `core/native_renderer_capi/lynx_native_renderer.cc` is
-    // compiled into the xcframework directly since v3.7.0-whisker.21
-    // (whiskerrs/lynx#19). The bridge no longer carries a vendored
-    // copy of it.
+    // Step-6: the bridge proper (whisker_bridge_common.cc +
+    // whisker_bridge_ios.mm + whisker_bridge_lynx_loader.cc) compiles
+    // against the vendored `lynx_capi.h` (function pointer typedefs)
+    // and the vendored `lynx_objc_stubs.h` (minimal Obj-C @interface
+    // declarations for LynxView / LynxEvent / LynxTouchEvent / …).
+    // No `-F` paths into a staged Lynx xcframework needed; all Lynx
+    // symbols resolve at runtime via dlopen + dlsym +
+    // `objc_getClass`.
     let bridge_src = bridge_root().join("src");
     let mut build = cc::Build::new();
     // Silence cc::Build's auto `cargo:rustc-link-lib=static=…`; we
     // emit `+whole-archive` ourselves below so Swift-callable bridge
     // entry points (`whisker_bridge_engine_attach` etc.) survive
-    // dead-strip. Same rationale as Android's JNI exports.
+    // dead-strip.
     build.cargo_metadata(false);
     build
         .cpp(true)
-        // Lynx itself is gnu++17; staged headers (`std::optional`,
-        // `std::is_invocable_r_v`) need this dialect to compile.
         .flag("-std=gnu++17")
-        // Lynx public headers use `__weak` Obj-C references, which
-        // need ARC. cc-rs doesn't enable it by default — SPM's
-        // Obj-C/Obj-C++ defaults did, so we have to opt back in.
+        // Lynx public headers used `__weak` Obj-C references; the
+        // vendored stubs don't, but our stub @interface declarations
+        // are imported into an ARC-managed .mm and keeping ARC on
+        // matches the upstream convention.
         .flag("-fobjc-arc")
-        // Lynx's `jsvalue_helper.h` picks the trace-gc.h variant
-        // by platform: `gc/trace-gc.h` for iOS, `quickjs/include/trace-gc.h`
-        // elsewhere. The bridge's staged PrimJS headers ship the
-        // iOS-pathed variant only (`PrimJS/src/gc/trace-gc.h`), so
-        // tell jsvalue_helper which branch to take.
         .define("OS_IOS", "1")
         .file(bridge_src.join("whisker_bridge_common.cc"))
         .file(bridge_src.join("whisker_bridge_ios.mm"))
+        .file(bridge_src.join("whisker_bridge_lynx_loader.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);
-
-    // Whisker module-system: external module crates (e.g.
-    // `packages/whisker-image`) may declare legacy iOS .mm
-    // sources in `[package.metadata.whisker.ios] native_sources`.
-    // `whisker-build` walks the consuming app's cargo dep tree,
-    // gathers each module's `native_sources` (resolved to absolute
-    // paths), and passes them through here as a colon-separated env
-    // var so they're
-    // compiled into the same bridge static archive as the core
-    // bridge code. That puts each module's `LYNX_REGISTER_UI(...)`
-    // constructor inside the host dylib's `+load` set, which is what
-    // makes the element-class registration actually fire when the
-    // app loads.
-    //
-    // Empty / missing env var is the normal cargo-only build path
-    // (no `whisker run` orchestration) — modules can still compile,
-    // but their native sources won't make it into the dylib. The
-    // user-facing diagnostic for that lives in the CLI; cargo
-    // builds alone are not expected to produce a runnable iOS app
-    // anyway.
-    println!("cargo:rerun-if-env-changed=WHISKER_IOS_MODULE_NATIVE_SOURCES");
-    if let Ok(joined) = std::env::var("WHISKER_IOS_MODULE_NATIVE_SOURCES") {
-        for entry in joined.split(':').filter(|s| !s.is_empty()) {
-            let path = std::path::PathBuf::from(entry);
-            if !path.is_file() {
-                // Don't try to be clever — `whisker-build` is the
-                // source of truth for these paths, and if it gave us
-                // something bogus we want the build to fail loudly
-                // with the offending path right here.
-                panic!(
-                    "WHISKER_IOS_MODULE_NATIVE_SOURCES references a non-existent file: {}",
-                    path.display(),
-                );
-            }
-            println!("cargo:rerun-if-changed={}", path.display());
-            build.file(&path);
-        }
-    }
-    add_lynx_includes_for_capi_impl(&mut build);
-    for fw in LYNX_FRAMEWORKS {
-        build.flag("-F");
-        build.flag(
-            lynx_root
-                .join(format!("{fw}.xcframework"))
-                .join(slice)
-                .to_str()
-                .expect("xcframework path is valid UTF-8"),
-        );
-    }
-    // Match Lynx xcframework's Release build (NDEBUG=1 → no
-    // `adoption_required_` / `destruction_started_` debug fields in
-    // `RefCountedThreadSafeBase`).
+    // Match the iOS xcframework's Release build (suppresses debug-only
+    // fields in shared types we still reference indirectly).
     build.define("NDEBUG", Some("1"));
-    // cc::Build picks Obj-C++ semantics for `.mm` files automatically
-    // (it appends `-x objective-c++`), so no extra flag is needed for
-    // `whisker_bridge_ios.mm`.
     silence_upstream_lynx_warnings(&mut build);
     build.compile("whisker_bridge_static");
 
-    // --- Link-line emission for the parent dylib --------------------
-    // The user crate is now built as `dylib` on iOS (matching
-    // Android — see `whisker-build/src/ios.rs::build_xcframework`),
-    // so cargo *does* have a final link step and these directives
-    // flow into it. The previous `rustc-link-arg-staticlib=…`
-    // directives were silently dropped because staticlibs have no
-    // link step.
+    // --- Module-author iOS native sources ---------------------------
+    //
+    // Legacy: external module crates (e.g. `whisker-image`) may
+    // declare iOS .mm sources in `[package.metadata.whisker.ios]
+    // native_sources`. `whisker-build` walks the consuming app's
+    // cargo dep tree, gathers each module's `native_sources`
+    // (resolved to absolute paths), and passes them through here as
+    // a colon-separated env var. Those still call into Lynx's
+    // public Obj-C API directly, so they need the staged Lynx
+    // header tree as `-I` paths — and a `-framework Lynx*` link.
+    //
+    // This path only fires when `whisker-build` orchestrated the
+    // build and pre-staged everything. Plain `cargo build` leaves
+    // the env var unset, so the cold-start path doesn't depend on
+    // any of it.
+    println!("cargo:rerun-if-env-changed=WHISKER_IOS_MODULE_NATIVE_SOURCES");
+    let module_sources: Vec<PathBuf> = std::env::var("WHISKER_IOS_MODULE_NATIVE_SOURCES")
+        .ok()
+        .into_iter()
+        .flat_map(|joined| {
+            joined
+                .split(':')
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if !module_sources.is_empty() {
+        compile_ios_module_sources(&module_sources, &triple)?;
+    }
 
+    // --- Link-line emission for the parent dylib --------------------
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     println!("cargo:rustc-link-search=native={out_dir}");
     // Bridge entry points are called by Swift through the framework's
@@ -336,41 +278,21 @@ fn compile_ios() -> Result<()> {
     // dead-stripped before reaching the dylib's `.dynsym`.
     println!("cargo:rustc-link-lib=static:+whole-archive=whisker_bridge_static");
 
-    // Lynx framework search + dependent-dylib references. The bridge
-    // `.a` has UND refs to `LynxShell::*` etc.; resolving them at the
-    // dylib's link step bakes LC_LOAD_DYLIB entries pointing at
-    // `@rpath/<Lynx>.framework/<Lynx>`, which dyld resolves at runtime
-    // when the host app's `@executable_path/Frameworks` rpath hits
-    // the SPM-embedded Lynx frameworks.
-    for fw in LYNX_FRAMEWORKS {
-        let dir = lynx_root.join(format!("{fw}.xcframework")).join(slice);
-        println!("cargo:rustc-link-search=framework={}", dir.display());
-        println!("cargo:rustc-link-lib=framework={fw}");
-    }
-
     // Apple system frameworks the bridge `.mm` directly references
-    // (NSLog, NSObject machinery, Obj-C runtime, etc.). When Lynx
-    // was static-linked into our dylib, these symbols got pulled in
-    // transitively from the Lynx archive's UND refs — but now Lynx
-    // is a dynamic framework with its own LC_LOAD_DYLIB list, so
-    // our dylib has to declare them itself.
+    // (NSLog, NSObject machinery, Obj-C runtime, etc.). Step-6 dropped
+    // the `-framework Lynx*` line; those frameworks load themselves at
+    // runtime via SwiftPM's auto-embed, and the loader dlopen's the
+    // main one explicitly.
     println!("cargo:rustc-link-lib=framework=Foundation");
     println!("cargo:rustc-link-lib=framework=UIKit");
     println!("cargo:rustc-link-lib=framework=CoreFoundation");
     println!("cargo:rustc-link-lib=framework=QuartzCore");
-    // Lynx engine's transitive dependencies (still relevant — even
-    // with dynamic Lynx, declaring them here lets the host app's
-    // static-analysis tooling see the dependency).
-    println!("cargo:rustc-link-lib=framework=JavaScriptCore");
-    println!("cargo:rustc-link-lib=framework=NaturalLanguage");
     // libc++ for the bridge's C++ standard-library uses.
     println!("cargo:rustc-link-lib=dylib=c++");
-    // Obj-C runtime stubs (`_objc_msgSend`, `_objc_release_x19`,
-    // `_class_getInstanceVariable`, …). Apple linkers usually
-    // auto-link `libobjc` for any binary that touches Obj-C, but
-    // declaring it explicitly avoids the auto-link omission we saw
-    // when going from static-Lynx (carrying libobjc transitively)
-    // to dynamic-Lynx.
+    // Obj-C runtime stubs (`_objc_msgSend`, `_objc_getClass`, …). Apple
+    // linkers usually auto-link `libobjc` for any binary that touches
+    // Obj-C, but declaring it explicitly avoids the auto-link omission
+    // we saw when going from static-Lynx to dynamic-Lynx.
     println!("cargo:rustc-link-lib=dylib=objc");
 
     // NOTE: forcing bridge entry points (`_whisker_bridge_*`) into the
@@ -383,6 +305,87 @@ fn compile_ios() -> Result<()> {
     // `-Wl,-exported_symbol` flags directly to the `cargo rustc`
     // invocation that produces the user-crate dylib, where they
     // actually take effect.
+
+    Ok(())
+}
+
+const LYNX_FRAMEWORKS: &[&str] = &["Lynx", "LynxBase", "LynxServiceAPI", "PrimJS"];
+
+/// Compile the legacy module-side iOS .mm sources (whisker-image
+/// etc.) into a second static archive. Those sources still
+/// `#import <Lynx/...>`, so they need the staged Lynx header tree
+/// available — which means `whisker build` must have run first.
+/// Bail with a pointed error if `target/lynx-ios` isn't there.
+fn compile_ios_module_sources(sources: &[PathBuf], triple: &str) -> Result<()> {
+    let slice = match triple {
+        "aarch64-apple-ios" => "ios-arm64",
+        "aarch64-apple-ios-sim" | "x86_64-apple-ios" => "ios-arm64_x86_64-simulator",
+        other => anyhow::bail!("unsupported iOS target triple for module sources: {other}"),
+    };
+    let lynx_root = workspace_target_dir().join("lynx-ios");
+    for fw in LYNX_FRAMEWORKS {
+        let dir = lynx_root.join(format!("{fw}.xcframework")).join(slice);
+        if !dir.is_dir() {
+            anyhow::bail!(
+                "Lynx xcframework slice missing at {} \n  \
+                 Module crates declared iOS native_sources \
+                 (WHISKER_IOS_MODULE_NATIVE_SOURCES) but the staged \
+                 Lynx artifact tree isn't present. Run `whisker build \
+                 --target ios-sim` (or ios-device) so `whisker-build` \
+                 can fetch + stage Lynx before this build.rs runs.",
+                dir.display()
+            );
+        }
+    }
+
+    let mut build = cc::Build::new();
+    build.cargo_metadata(false);
+    build
+        .cpp(true)
+        .flag("-std=gnu++17")
+        .flag("-fobjc-arc")
+        .define("OS_IOS", "1")
+        .include(bridge_root().join("include"));
+    for path in sources {
+        if !path.is_file() {
+            panic!(
+                "WHISKER_IOS_MODULE_NATIVE_SOURCES references a non-existent file: {}",
+                path.display()
+            );
+        }
+        println!("cargo:rerun-if-changed={}", path.display());
+        build.file(path);
+    }
+    add_lynx_includes_for_module_sources(&mut build);
+    for fw in LYNX_FRAMEWORKS {
+        build.flag("-F");
+        build.flag(
+            lynx_root
+                .join(format!("{fw}.xcframework"))
+                .join(slice)
+                .to_str()
+                .expect("xcframework path is valid UTF-8"),
+        );
+    }
+    build.define("NDEBUG", Some("1"));
+    silence_upstream_lynx_warnings(&mut build);
+    build.compile("whisker_bridge_module_native");
+
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    println!("cargo:rustc-link-search=native={out_dir}");
+    println!("cargo:rustc-link-lib=static:+whole-archive=whisker_bridge_module_native");
+
+    // Module sources call straight into Lynx Obj-C — they need the
+    // frameworks at link time so dyld picks them up. The Lynx
+    // frameworks themselves are auto-embedded by SwiftPM into the
+    // host app, so this just emits the link-line stubs.
+    for fw in LYNX_FRAMEWORKS {
+        let dir = lynx_root.join(format!("{fw}.xcframework")).join(slice);
+        println!("cargo:rustc-link-search=framework={}", dir.display());
+        println!("cargo:rustc-link-lib=framework={fw}");
+    }
+    println!("cargo:rustc-link-lib=framework=JavaScriptCore");
+    println!("cargo:rustc-link-lib=framework=NaturalLanguage");
 
     Ok(())
 }
