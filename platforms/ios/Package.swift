@@ -118,10 +118,9 @@ let package = Package(
         // namespace overlaps cleanly at link time — the
         // monorepo-local link picks WhiskerDriver's
         // implementations.
-        .target(
+        .systemLibrary(
             name: "WhiskerCBridge",
-            path: "../../swiftpm/Sources/WhiskerCBridge",
-            publicHeadersPath: "include"
+            path: "Sources/WhiskerCBridge/include"
         ),
 
         .target(

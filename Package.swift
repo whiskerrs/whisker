@@ -55,32 +55,37 @@ let package = Package(
         // segment + checksum here must move together.
         .binaryTarget(
             name: "Lynx",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.4/Lynx-3.8.0-whisker.4.xcframework.zip",
-            checksum: "0e612e7a3edf9c628b7f750f24eed65162718cf84f30fcb693e1d6868f610bea"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.5/Lynx-3.8.0-whisker.5.xcframework.zip",
+            checksum: "2e086ad0454765deea92aa43c338690efe6d2c97caba2a7577dcbc00857a58b1"
         ),
         .binaryTarget(
             name: "LynxBase",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.4/LynxBase-3.8.0-whisker.4.xcframework.zip",
-            checksum: "d65a856dd5caacc14b2c285af179c5bce5c80594cfa3a9e0bea077e3272f4fcd"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.5/LynxBase-3.8.0-whisker.5.xcframework.zip",
+            checksum: "48f730b606aaa602adc7bb05052704b90631d882ee46dc0b2cc4117199d15581"
         ),
         .binaryTarget(
             name: "LynxServiceAPI",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.4/LynxServiceAPI-3.8.0-whisker.4.xcframework.zip",
-            checksum: "ab26dc419701a2c1ccc5578b8eb2b6281c6c727aa5d91f9ebb01f20a18a4c14c"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.5/LynxServiceAPI-3.8.0-whisker.5.xcframework.zip",
+            checksum: "f80412698e715655b12c86a6290090c29ae15c00b62dc6cbaefc65a00a683910"
         ),
         .binaryTarget(
             name: "PrimJS",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.4/PrimJS-3.8.0-whisker.4.xcframework.zip",
-            checksum: "4835ac846af4db8610a4a9d2517c8d5ba1c0744c67969740905b967cd6f8e5b6"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.5/PrimJS-3.8.0-whisker.5.xcframework.zip",
+            checksum: "804397a2506078ed312b77046cb3227e10bb9953ef57e25cbd97fbaac8ab508f"
         ),
 
-        // WhiskerCBridge — see swiftpm/Sources/WhiskerCBridge/include/module.modulemap
+        // WhiskerCBridge — see
+        // platforms/ios/Sources/WhiskerCBridge/include/module.modulemap
         // for why this is header-only. Replaces the `WhiskerDriver`
         // binaryTarget that the monorepo-local Package.swift carries.
-        .target(
+        // Source lives under platforms/ios/Sources/ so the
+        // monorepo-local Package.swift can `path: "Sources/WhiskerCBridge"`
+        // it (SwiftPM rejects targets outside their package root, so
+        // we can't share a swiftpm/ top-level dir between the two
+        // packages).
+        .systemLibrary(
             name: "WhiskerCBridge",
-            path: "swiftpm/Sources/WhiskerCBridge",
-            publicHeadersPath: "include"
+            path: "platforms/ios/Sources/WhiskerCBridge/include"
         ),
 
         .target(

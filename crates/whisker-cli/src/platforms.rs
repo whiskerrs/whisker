@@ -111,23 +111,13 @@ fn sync_android(
     })
 }
 
-/// Repo URL the generated pbxproj's
-/// `XCRemoteSwiftPackageReference` for `whisker` points at. Step
-/// 5-iOS pins this to the main whiskerrs/whisker repo; the root
-/// `Package.swift` there carries `WhiskerRuntime` + `WhiskerModule`
-/// + Lynx binaryTargets (url+checksum).
-const WHISKER_SWIFTPM_REPO_URL: &str = "https://github.com/whiskerrs/whisker";
-/// Branch name Xcode tracks for `whisker`. Initially `main` —
-/// once we add proper semver tags this becomes
-/// `whisker-runtime-v<x.y.z>` or moves to `exactVersion`.
-const WHISKER_SWIFTPM_BRANCH: &str = "main";
-
 fn sync_ios(
     app_config: &AppConfig,
     crate_dir: &Path,
-    _workspace_root: &Path,
+    workspace_root: &Path,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/ios");
+    let whisker_runtime = workspace_root.join("platforms/ios");
     // `gen/ios/whisker_modules/` is populated lazily by
     // `whisker-build::ios::stage_module_swift_sources` later in the
     // pipeline (between cargo build and xcodebuild). The pbxproj
@@ -135,12 +125,7 @@ fn sync_ios(
     // needs an *absolute* path to that directory at sync time, so we
     // pre-compute it here even though the contents will land later.
     let whisker_modules = gen_dir.join("whisker_modules");
-    let inputs = whisker_cng::ios::inputs_from(
-        app_config,
-        WHISKER_SWIFTPM_REPO_URL.to_string(),
-        WHISKER_SWIFTPM_BRANCH.to_string(),
-        whisker_modules,
-    )?;
+    let inputs = whisker_cng::ios::inputs_from(app_config, whisker_runtime, whisker_modules)?;
     // whisker-cng renders the full Xcode project directly (pbxproj +
     // xcworkspacedata + sources). No xcodegen subprocess needed —
     // see crates/whisker-cng/src/ios.rs for the rationale.
