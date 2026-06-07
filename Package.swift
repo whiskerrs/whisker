@@ -55,23 +55,23 @@ let package = Package(
         // segment + checksum here must move together.
         .binaryTarget(
             name: "Lynx",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.5/Lynx-3.8.0-whisker.5.xcframework.zip",
-            checksum: "2e086ad0454765deea92aa43c338690efe6d2c97caba2a7577dcbc00857a58b1"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.6/Lynx-3.8.0-whisker.6.xcframework.zip",
+            checksum: "a467fceb0bd6b0318c80fcc93fe9b14e26f268dc6b2b9e06bf0365f50cb76fc5"
         ),
         .binaryTarget(
             name: "LynxBase",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.5/LynxBase-3.8.0-whisker.5.xcframework.zip",
-            checksum: "48f730b606aaa602adc7bb05052704b90631d882ee46dc0b2cc4117199d15581"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.6/LynxBase-3.8.0-whisker.6.xcframework.zip",
+            checksum: "309dd1e544a4cd035b71e1c786532e7344653c470d7206fbb28e1493b7f8e36e"
         ),
         .binaryTarget(
             name: "LynxServiceAPI",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.5/LynxServiceAPI-3.8.0-whisker.5.xcframework.zip",
-            checksum: "f80412698e715655b12c86a6290090c29ae15c00b62dc6cbaefc65a00a683910"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.6/LynxServiceAPI-3.8.0-whisker.6.xcframework.zip",
+            checksum: "59bc9fcf07704d288de63b78ec1717fa81ade0af1cacea2f3712b57a220cb92f"
         ),
         .binaryTarget(
             name: "PrimJS",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.5/PrimJS-3.8.0-whisker.5.xcframework.zip",
-            checksum: "804397a2506078ed312b77046cb3227e10bb9953ef57e25cbd97fbaac8ab508f"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.6/PrimJS-3.8.0-whisker.6.xcframework.zip",
+            checksum: "a7069cd487834f96af28a335da049220b61317b0448768f040c171224f891651"
         ),
 
         // WhiskerCBridge — see

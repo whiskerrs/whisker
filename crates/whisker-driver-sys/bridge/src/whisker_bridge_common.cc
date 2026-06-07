@@ -12,9 +12,17 @@
 // methods through reinterpret_cast<LynxShell*>. That required
 // patching Lynx to drop -fvisibility=hidden and pulled in mangled-
 // symbol fragility. Now every operation goes through Lynx's stable
-// extern "C" API (lynx_native_renderer_capi.h). Lynx-side internals
-// stay hidden; only the LYNX_CAPI_EXPORT-tagged functions cross the
-// .so boundary.
+// extern "C" API. Lynx-side internals stay hidden; only the
+// LYNX_CAPI_EXPORT-tagged functions cross the .so boundary.
+//
+// Step-6 refactor (build decoupling): the bridge no longer carries
+// link-time UND refs to `lynx_*` symbols. `lynx_capi.h` declares
+// function pointer typedefs + a `WhiskerLynxCapi` dispatch struct;
+// `whisker_bridge_load_lynx()` dlopens Lynx at engine_attach time
+// and fills the struct, and every call site here goes through
+// `whisker_lynx_capi()->fn(args)`. That lets the user crate's
+// `cargo build` succeed without a prior `whisker build` to fetch
+// the Lynx artifacts.
 
 #include <atomic>
 #include <cstdint>
@@ -29,7 +37,7 @@
 #include <android/log.h>
 #endif
 
-#include "lynx_native_renderer_capi.h"
+#include "lynx_capi.h"
 
 #include "whisker_bridge.h"
 #include "whisker_bridge_internal.h"
@@ -97,7 +105,12 @@ WhiskerEventDispatcher& EventDispatcher() {
 // ----------------------------------------------------------------------------
 
 WhiskerEngine* whisker_bridge_internal_engine_create(void* native_shell_ptr) {
-    lynx_shell_t* shell = lynx_shell_from_native_ptr(native_shell_ptr);
+    // Bind Lynx's C ABI before the first dispatch through it. Idempotent:
+    // subsequent attaches see the cached success and short-circuit. A
+    // non-zero return means dlopen / dlsym / ABI handshake failed — bail
+    // out so the NULL dispatch table doesn't crash on the next line.
+    if (whisker_bridge_load_lynx() != 0) return nullptr;
+    lynx_shell_t* shell = whisker_lynx_capi()->shell_from_native_ptr(native_shell_ptr);
     if (shell == nullptr) return nullptr;
     auto* engine = new WhiskerEngine();
     engine->shell = shell;
@@ -142,7 +155,7 @@ extern "C" void whisker_bridge_engine_release(WhiskerEngine* engine) {
     // wrapper for the page is freed via its `release_element` call
     // on the Whisker-runtime side, independently of this.
     if (engine->shell != nullptr) {
-        lynx_shell_release(engine->shell);
+        whisker_lynx_capi()->shell_release(engine->shell);
         engine->shell = nullptr;
     }
     delete engine;
@@ -161,7 +174,7 @@ extern "C" bool whisker_bridge_dispatch(WhiskerEngine* engine,
     // Lynx's C API takes the same callback shape — we can pass our
     // user_data + callback through directly. Fiber-arch init happens
     // inside lynx_shell_run_on_tasm_thread on the first call.
-    return lynx_shell_run_on_tasm_thread(engine->shell, callback, user_data);
+    return whisker_lynx_capi()->shell_run_on_tasm_thread(engine->shell, callback, user_data);
 }
 
 // ----------------------------------------------------------------------------
@@ -187,7 +200,7 @@ extern "C" WhiskerElement* whisker_bridge_create_element(WhiskerEngine* engine,
                                                         WhiskerElementTag tag) {
     if (engine == nullptr || engine->shell == nullptr) return nullptr;
     lynx_fiber_element_t* handle =
-        lynx_create_fiber_element(engine->shell, MapTag(tag));
+        whisker_lynx_capi()->create_fiber_element(engine->shell, MapTag(tag));
     if (handle == nullptr) return nullptr;
     return new WhiskerElement{handle, engine->shell};
 }
@@ -199,7 +212,7 @@ extern "C" WhiskerElement* whisker_bridge_create_element_by_name(
         return nullptr;
     }
     lynx_fiber_element_t* handle =
-        lynx_create_fiber_element_by_name(engine->shell, tag_name);
+        whisker_lynx_capi()->create_fiber_element_by_name(engine->shell, tag_name);
     if (handle == nullptr) return nullptr;
     return new WhiskerElement{handle, engine->shell};
 }
@@ -210,7 +223,7 @@ extern "C" void whisker_bridge_release_element(WhiskerElement* element) {
     // renderer now (it drops them in its own `release_element`, keyed
     // by the same sign), so there's nothing to clean up here.
     if (element->handle != nullptr) {
-        lynx_element_release(element->handle);
+        whisker_lynx_capi()->element_release(element->handle);
     }
     delete element;
 }
@@ -223,7 +236,7 @@ extern "C" void whisker_bridge_set_attribute(WhiskerElement* element,
                                             const char* key,
                                             const char* value) {
     if (element == nullptr || element->handle == nullptr) return;
-    lynx_element_set_attribute(element->handle, key, value);
+    whisker_lynx_capi()->element_set_attribute(element->handle, key, value);
 }
 
 // Typed-attribute variants — Lynx's prop dispatch on many UIs
@@ -237,21 +250,21 @@ extern "C" void whisker_bridge_set_attribute_int(WhiskerElement* element,
                                                  const char* key,
                                                  int64_t value) {
     if (element == nullptr || element->handle == nullptr) return;
-    lynx_element_set_attribute_int(element->handle, key, value);
+    whisker_lynx_capi()->element_set_attribute_int(element->handle, key, value);
 }
 
 extern "C" void whisker_bridge_set_attribute_bool(WhiskerElement* element,
                                                   const char* key,
                                                   bool value) {
     if (element == nullptr || element->handle == nullptr) return;
-    lynx_element_set_attribute_bool(element->handle, key, value);
+    whisker_lynx_capi()->element_set_attribute_bool(element->handle, key, value);
 }
 
 extern "C" void whisker_bridge_set_attribute_double(WhiskerElement* element,
                                                     const char* key,
                                                     double value) {
     if (element == nullptr || element->handle == nullptr) return;
-    lynx_element_set_attribute_double(element->handle, key, value);
+    whisker_lynx_capi()->element_set_attribute_double(element->handle, key, value);
 }
 
 // Feed a `<list>` element its item-count so Lynx's decoupled native
@@ -262,7 +275,7 @@ extern "C" void whisker_bridge_set_attribute_double(WhiskerElement* element,
 extern "C" void whisker_bridge_list_set_item_count(WhiskerElement* element,
                                                   int32_t count) {
     if (element == nullptr || element->handle == nullptr) return;
-    lynx_element_set_update_list_info(element->handle, count);
+    whisker_lynx_capi()->element_set_update_list_info(element->handle, count);
 }
 
 // Install a native item provider on a `<list>` element so Whisker can
@@ -285,7 +298,7 @@ extern "C" void whisker_bridge_list_set_native_item_provider(
         }
         return;
     }
-    lynx_list_set_native_item_provider(element->handle, component_at_index,
+    whisker_lynx_capi()->list_set_native_item_provider(element->handle, component_at_index,
                                        enqueue_component, user_data,
                                        user_data_free);
 }
@@ -293,19 +306,19 @@ extern "C" void whisker_bridge_list_set_native_item_provider(
 extern "C" void whisker_bridge_set_inline_styles(WhiskerElement* element,
                                                 const char* css) {
     if (element == nullptr || element->handle == nullptr) return;
-    lynx_element_set_inline_styles(element->handle, css);
+    whisker_lynx_capi()->element_set_inline_styles(element->handle, css);
 }
 
 extern "C" void whisker_bridge_append_child(WhiskerElement* parent,
                                            WhiskerElement* child) {
     if (parent == nullptr || child == nullptr) return;
-    lynx_element_append_child(parent->handle, child->handle);
+    whisker_lynx_capi()->element_append_child(parent->handle, child->handle);
 }
 
 extern "C" void whisker_bridge_remove_child(WhiskerElement* parent,
                                            WhiskerElement* child) {
     if (parent == nullptr || child == nullptr) return;
-    lynx_element_remove_child(parent->handle, child->handle);
+    whisker_lynx_capi()->element_remove_child(parent->handle, child->handle);
 }
 
 // Superseded by Rust-side propagation reconstruction: listeners now
@@ -342,7 +355,7 @@ extern "C" void whisker_bridge_register_event_dispatcher(
 
 extern "C" int32_t whisker_bridge_element_sign(WhiskerElement* element) {
     if (element == nullptr || element->handle == nullptr) return 0;
-    return lynx_element_id(element->handle);
+    return whisker_lynx_capi()->element_id(element->handle);
 }
 
 extern "C" void whisker_bridge_set_native_event_handler(WhiskerElement* element,
@@ -357,7 +370,7 @@ extern "C" void whisker_bridge_set_native_event_handler(WhiskerElement* element,
     // `lynx_element_set_event_handler` ships in the Lynx fork's liblynx
     // as of v3.7.0-whisker.6 (whiskerrs/lynx#6), so this works on both
     // platforms now.
-    lynx_element_set_event_handler(element->handle, event_name);
+    whisker_lynx_capi()->element_set_event_handler(element->handle, event_name);
 }
 
 // ----------------------------------------------------------------------------
@@ -389,12 +402,12 @@ extern "C" void whisker_bridge_set_root(WhiskerEngine* engine, WhiskerElement* p
     // is released via the normal `release_element` path when the
     // root owner is disposed. The two refs never share ownership of
     // the `lynx_fiber_element_t` wrapper, so there's no double-free.
-    lynx_shell_set_root_element(engine->shell, page->handle);
+    whisker_lynx_capi()->shell_set_root_element(engine->shell, page->handle);
 }
 
 extern "C" void whisker_bridge_flush(WhiskerEngine* engine) {
     if (engine == nullptr || engine->shell == nullptr) return;
-    lynx_shell_flush(engine->shell);
+    whisker_lynx_capi()->shell_flush(engine->shell);
 }
 
 // ---- Native module invocation (Phase 7-Φ.F) -------------------------------
@@ -701,7 +714,7 @@ extern "C" void whisker_bridge_module_register_observer_hooks(
 // `WhiskerUI<View>` subclass.
 //
 // `element->shell` carries the `lynx_shell_t*` we need; the sign
-// comes from `lynx_element_id(element->handle)`.
+// comes from `whisker_lynx_capi()->element_id(element->handle)`.
 //
 // Currently fire-and-forget — the platform Invoke routes the
 // actual call to the main / UI thread, so the result isn't
@@ -758,7 +771,7 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
         return MakeBridgeErrorValue(
             "whisker_bridge_invoke_element_method: NULL element / shell / method");
     }
-    int32_t sign = lynx_element_id(element->handle);
+    int32_t sign = whisker_lynx_capi()->element_id(element->handle);
     if (sign <= 0) {
         return MakeBridgeErrorValue(
             "whisker_bridge_invoke_element_method: element has no sign yet "
@@ -768,7 +781,7 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method(
     std::vector<lynx_ui_method_value_t> lynx_args;
     BuildLynxUiArgs(args, arg_count, lynx_args);
 
-    int32_t code = lynx_ui_invoke_method(
+    int32_t code = whisker_lynx_capi()->ui_invoke_method(
         element->shell, sign, method_name,
         lynx_args.empty() ? nullptr : lynx_args.data(), lynx_args.size());
     if (code != 0) {
@@ -894,7 +907,7 @@ extern "C" WhiskerValueRaw whisker_bridge_element_animate(
     if (options != nullptr) {
         opt = BuildCapiParamValue(*options, arena);
     }
-    int32_t code = lynx_element_animate(
+    int32_t code = whisker_lynx_capi()->element_animate(
         element->shell, element->handle, operation, animation_name,
         keyframes != nullptr ? &kf : nullptr,
         options != nullptr ? &opt : nullptr);
@@ -919,7 +932,7 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method_with_params(
             "whisker_bridge_invoke_element_method_with_params: NULL element / "
             "shell / method");
     }
-    int32_t sign = lynx_element_id(element->handle);
+    int32_t sign = whisker_lynx_capi()->element_id(element->handle);
     if (sign <= 0) {
         return MakeBridgeErrorValue(
             "whisker_bridge_invoke_element_method_with_params: element has no "
@@ -933,7 +946,7 @@ extern "C" WhiskerValueRaw whisker_bridge_invoke_element_method_with_params(
         root = BuildCapiParamValue(*params, arena);
     }
 
-    int32_t code = lynx_ui_invoke_method_with_params(
+    int32_t code = whisker_lynx_capi()->ui_invoke_method_with_params(
         element->shell, sign, method_name, params != nullptr ? &root : nullptr);
     if (code != 0) {
         return MakeBridgeErrorValue(
@@ -1084,7 +1097,7 @@ extern "C" bool whisker_bridge_invoke_element_method_async(
             "whisker_bridge_invoke_element_method_async: NULL element / shell / method");
         return false;
     }
-    int32_t sign = lynx_element_id(element->handle);
+    int32_t sign = whisker_lynx_capi()->element_id(element->handle);
     if (sign <= 0) {
         FailElementMethodAsync(
             callback, user_data,
@@ -1098,7 +1111,7 @@ extern "C" bool whisker_bridge_invoke_element_method_async(
     std::vector<lynx_ui_method_value_t> lynx_args;
     BuildLynxUiArgs(args, arg_count, lynx_args);
     auto* ctx = new ElementMethodAsyncCtx{callback, user_data};
-    int32_t code = lynx_ui_invoke_method_async(
+    int32_t code = whisker_lynx_capi()->ui_invoke_method_async(
         element->shell, sign, method_name,
         lynx_args.empty() ? nullptr : lynx_args.data(), lynx_args.size(),
         element_method_async_adapter, ctx);
@@ -1135,7 +1148,7 @@ extern "C" bool whisker_bridge_invoke_element_method_async_with_params(
                                "NULL element / shell / method");
         return false;
     }
-    int32_t sign = lynx_element_id(element->handle);
+    int32_t sign = whisker_lynx_capi()->element_id(element->handle);
     if (sign <= 0) {
         FailElementMethodAsync(callback, user_data,
                                "whisker_bridge_invoke_element_method_async_with_params: "
@@ -1150,7 +1163,7 @@ extern "C" bool whisker_bridge_invoke_element_method_async_with_params(
         root = BuildCapiParamValue(*params, arena);
     }
     auto* ctx = new ElementMethodAsyncCtx{callback, user_data};
-    int32_t code = lynx_ui_invoke_method_async_with_params(
+    int32_t code = whisker_lynx_capi()->ui_invoke_method_async_with_params(
         element->shell, sign, method_name, params != nullptr ? &root : nullptr,
         element_method_async_adapter, ctx);
     if (code != 0) {

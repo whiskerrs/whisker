@@ -60,7 +60,7 @@ pub type LynxListEnqueueComponentFn = extern "C" fn(sign: i32, user_data: *mut c
 pub type LynxUserDataFreeFn = extern "C" fn(user_data: *mut c_void);
 
 /// Mirror of `LYNX_LIST_INVALID_INDEX` (the C macro in
-/// `lynx_native_renderer_capi.h`) — returned by
+/// `lynx_capi.h`) — returned by
 /// [`LynxListComponentAtIndexFn`] to signal "no element could be
 /// produced for this index". Matches Lynx's
 /// `lynx::tasm::list::kInvalidIndex`; 0 is a real `impl_id` and
