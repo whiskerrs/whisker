@@ -135,25 +135,32 @@ impl Builder {
     }
 
     async fn build_ios_simulator(&self) -> Result<()> {
-        // For iOS the dev loop produces a WhiskerDriver.xcframework
-        // that the WhiskerRuntime SPM package references. The actual
-        // `.app` build (xcodebuild) lives in `installer.rs::ios_install_and_launch` —
-        // that step needs the bundle id + scheme from `IosParams`
-        // and runs after this returns.
+        // Step 7: this method's only remaining job is to stage the
+        // module Swift sources for SwiftPM. The actual `.app` build —
+        // and the cargo cross-compile that produces
+        // `WhiskerDriver.framework` — happens during xcodebuild in
+        // `installer.rs::ios_install_and_launch`, via the cng-generated
+        // pbxproj's "Whisker Prebuild" Run Script Build Phase.
+        //
+        // Pre-Step-7 this method also ran `build_xcframework_with` to
+        // produce `target/whisker-driver/WhiskerDriver.xcframework`
+        // and to prime the Tier 1 capture shims. The xcframework is
+        // no longer referenced by anything (Step 7 dropped the SPM
+        // binaryTarget) so its output was wasted; the capture wiring
+        // moved to `installer.rs` where it gets applied as env vars
+        // on the xcodebuild Command.
         let ws = self.workspace_root.clone();
         let crate_dir = self.crate_dir.clone();
         let pkg = self.package.clone();
-        let features = self.features.clone();
-        let capture = self.capture.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
-            // Stage Whisker modules' iOS Swift sources before cargo
-            // build so the pbxproj's WhiskerModules SwiftPM ref
-            // resolves cleanly. Empty when no module declares
-            // `[ios].swift_sources` — the staging step still writes
-            // a no-op Package.swift + WhiskerModuleBehaviors.swift
-            // so AppDelegate's `import WhiskerModules` doesn't
-            // fail to resolve.
+            // Stage Whisker modules' iOS Swift sources before
+            // xcodebuild runs so the pbxproj's WhiskerModules SwiftPM
+            // ref resolves cleanly. Empty when no module declares
+            // `[ios].swift_sources` — the staging step still writes a
+            // no-op Package.swift + WhiskerModuleBehaviors.swift so
+            // AppDelegate's `import WhiskerModules` doesn't fail to
+            // resolve.
             let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
             let gen_ios = crate_dir.join("gen/ios");
             let whisker_runtime_path = ws.join("platforms/ios");
@@ -164,23 +171,10 @@ impl Builder {
                 &whisker_ios_macros_path,
                 &modules,
             )?;
-
-            // Dev loop only ever loads the arm64-sim slice on an
-            // Apple Silicon Mac. Building the device + x86 slices
-            // adds ~60s per initial `whisker run` for no benefit
-            // here; production `whisker build` still goes through
-            // the universal path via `whisker-cli::build`.
-            whisker_build::ios::build_xcframework_with(
-                &ws,
-                &pkg,
-                &features,
-                capture.as_ref(),
-                whisker_build::ios::IosSlices::SimulatorFat,
-            )?;
             Ok(())
         })
         .await
-        .context("spawn_blocking iOS xcframework build")?
+        .context("spawn_blocking iOS module-source stage")?
     }
 }
 

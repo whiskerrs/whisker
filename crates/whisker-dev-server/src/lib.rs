@@ -348,6 +348,7 @@ impl DevServer {
             self.config.ios.clone(),
             self.config.workspace_root.clone(),
             self.config.package.clone(),
+            tier1_init.as_ref().map(|p| p.capture.clone()),
         );
 
         // Initial build + install + launch. Without this the dev

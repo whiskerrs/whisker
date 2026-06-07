@@ -32,7 +32,8 @@ pub mod modules;
 pub mod ui;
 
 pub use capture::{
-    capture_env_vars, target_linker_env_var, target_rustflags_env_var, CaptureShims,
+    capture_env_vars, capture_env_vars_for_triple, target_linker_env_var, target_rustflags_env_var,
+    CaptureShims,
 };
 pub use lynx::{
     cache_dir as lynx_cache_dir, cache_version_root as lynx_cache_version_root,
