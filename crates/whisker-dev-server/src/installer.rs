@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use tokio::process::Command;
 
 use crate::{AndroidParams, IosParams, Target};
+use whisker_build::CaptureShims;
 
 pub struct Installer {
     target: Target,
@@ -24,6 +25,16 @@ pub struct Installer {
     ios: Option<IosParams>,
     workspace_root: PathBuf,
     package: String,
+    /// Tier 1 capture shims for hot-reload. When `Some`, the
+    /// xcodebuild Command in [`ios_install_and_launch`] gets the
+    /// `RUSTC_WORKSPACE_WRAPPER` + `CARGO_TARGET_*_LINKER` +
+    /// `CARGO_TARGET_*_RUSTFLAGS` env vars set so the Step-7
+    /// Build Phase's cargo invocation runs as a fat capture build.
+    /// Pre-Step-7 the dev-server primed capture via a separate
+    /// `build_xcframework_with` call in `builder.rs`; that call now
+    /// produces an artifact xcodebuild's Build Phase rebuilds anyway,
+    /// so the capture wiring moves here.
+    capture: Option<CaptureShims>,
 }
 
 impl Installer {
@@ -33,6 +44,7 @@ impl Installer {
         ios: Option<IosParams>,
         workspace_root: PathBuf,
         package: String,
+        capture: Option<CaptureShims>,
     ) -> Self {
         Self {
             target,
@@ -40,6 +52,7 @@ impl Installer {
             ios,
             workspace_root,
             package,
+            capture,
         }
     }
 
@@ -56,7 +69,13 @@ impl Installer {
                 let p = self.ios.as_ref().context(
                     "target=IosSimulator but no IosParams — cli must populate Config.ios",
                 )?;
-                ios_install_and_launch(p, &self.workspace_root, &self.package).await
+                ios_install_and_launch(
+                    p,
+                    &self.workspace_root,
+                    &self.package,
+                    self.capture.as_ref(),
+                )
+                .await
             }
         }
     }
@@ -321,6 +340,7 @@ async fn ios_install_and_launch(
     p: &IosParams,
     workspace_root: &std::path::Path,
     package: &str,
+    capture: Option<&CaptureShims>,
 ) -> Result<()> {
     let xcode_project = p.project_dir.join(format!("{}.xcodeproj", p.scheme));
     if !xcode_project.is_dir() {
@@ -355,6 +375,22 @@ async fn ios_install_and_launch(
             "WHISKER_IOS_MACROS",
             workspace_root.join("platforms/ios/macros"),
         );
+    // Tier 1 capture wiring (hot-reload). Pre-Step-7 the dev-server
+    // ran a separate `build_xcframework_with` call to prime the rustc
+    // + linker capture caches before xcodebuild touched the framework.
+    // Step 7's Build Phase produces the framework during xcodebuild
+    // itself, so the capture envs need to ride along here — they
+    // propagate xcodebuild → shell Build Phase → `whisker-build ios`
+    // subprocess → cargo, where the shims actually intercept rustc +
+    // linker. Capture is opt-in (`HotPatchMode::Tier1Subsecond`); when
+    // `None`, xcodebuild runs without the shims and the loop falls
+    // back to Tier 2 cold rebuilds.
+    if let Some(c) = capture {
+        let sim_triple = "aarch64-apple-ios-sim";
+        for (k, v) in whisker_build::capture_env_vars_for_triple(c, Some(sim_triple)) {
+            xc_cmd.env(k, v);
+        }
+    }
     let xc_status = run_filtered(xc_cmd, SimctlNoise::Xcodebuild)
         .await
         .context("spawn xcodebuild")?;
@@ -473,7 +509,7 @@ mod tests {
 
     #[test]
     fn installer_for_host_doesnt_need_android_or_ios() {
-        let inst = Installer::new(Target::Host, None, None, PathBuf::new(), "x".into());
+        let inst = Installer::new(Target::Host, None, None, PathBuf::new(), "x".into(), None);
         // Just exercise the `host_skip` branch via the public API —
         // it doesn't await anything async so we can run it on the
         // current thread without a runtime.
@@ -485,7 +521,14 @@ mod tests {
 
     #[test]
     fn installer_for_android_without_params_errors() {
-        let inst = Installer::new(Target::Android, None, None, PathBuf::new(), "x".into());
+        let inst = Installer::new(
+            Target::Android,
+            None,
+            None,
+            PathBuf::new(),
+            "x".into(),
+            None,
+        );
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -497,7 +540,14 @@ mod tests {
 
     #[test]
     fn installer_for_ios_without_params_errors() {
-        let inst = Installer::new(Target::IosSimulator, None, None, PathBuf::new(), "x".into());
+        let inst = Installer::new(
+            Target::IosSimulator,
+            None,
+            None,
+            PathBuf::new(),
+            "x".into(),
+            None,
+        );
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
