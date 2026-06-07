@@ -64,6 +64,15 @@ pub struct IosInputs {
     /// `[ios].swift_sources` and the generated
     /// `WhiskerModuleBehaviors.swift`.
     pub whisker_modules_path: PathBuf,
+    /// Absolute path to the cargo workspace root that contains the
+    /// user app crate's top-level `Cargo.toml` (the one with
+    /// `[workspace]`). Embedded into the pbxproj's Run Script Build
+    /// Phase as `--workspace=...` so Xcode-driven builds invoke
+    /// `whisker-build ios` without the user typing it. Step 7.
+    pub workspace_root: PathBuf,
+    /// Cargo package name (the user app crate) — the Rust side of
+    /// `whisker-build ios --package=...`. Step 7.
+    pub user_package: String,
     pub template_version: u32,
 }
 
@@ -105,6 +114,11 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         "whisker_modules_ios_path",
         inputs.whisker_modules_path.display().to_string(),
     );
+    v.insert(
+        "whisker_workspace_root",
+        inputs.workspace_root.display().to_string(),
+    );
+    v.insert("whisker_user_package", inputs.user_package.clone());
     v
 }
 
@@ -198,6 +212,8 @@ pub fn inputs_from(
     app_config: &AppConfig,
     whisker_runtime_path: PathBuf,
     whisker_modules_path: PathBuf,
+    workspace_root: PathBuf,
+    user_package: String,
 ) -> Result<IosInputs> {
     let app_name = app_config
         .name
@@ -237,16 +253,15 @@ pub fn inputs_from(
         deployment_target,
         whisker_runtime_path,
         whisker_modules_path,
-        // Bumped 4 → 5: backed the pbxproj's WhiskerRuntime ref off
-        // `XCRemoteSwiftPackageReference` and onto
-        // `XCLocalSwiftPackageReference` for the monorepo flow. The
-        // remote-ref form needs every Whisker module's `Package.swift`
-        // to also move off the env-var local-path resolution onto the
-        // same remote URL, otherwise SwiftPM treats the local and
-        // remote `Whisker` packages as separate package identities
-        // and rejects the build with "products with conflicting
-        // name". Tracked as a follow-up.
-        template_version: 5,
+        workspace_root,
+        user_package,
+        // Bumped 5 → 6 for Step 7: pbxproj template now embeds a
+        // PBXShellScriptBuildPhase that calls `whisker-build ios` to
+        // produce `WhiskerDriver.framework` during the build, plus
+        // FRAMEWORK_SEARCH_PATHS / OTHER_LDFLAGS pointing at it.
+        // WhiskerDriver is no longer an SPM binaryTarget — see
+        // `platforms/ios/Package.swift` for the rationale.
+        template_version: 6,
     })
 }
 
@@ -278,7 +293,9 @@ mod tests {
             deployment_target: "13.0".into(),
             whisker_runtime_path: PathBuf::from("/abs/platforms/ios"),
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
-            template_version: 5,
+            workspace_root: PathBuf::from("/abs/workspace"),
+            user_package: "hello-world".into(),
+            template_version: 6,
         }
     }
 
@@ -367,7 +384,14 @@ mod tests {
             name: Some("X".into()),
             ..AppConfig::default()
         };
-        let err = inputs_from(&cfg, PathBuf::new(), PathBuf::new()).unwrap_err();
+        let err = inputs_from(
+            &cfg,
+            PathBuf::new(),
+            PathBuf::new(),
+            PathBuf::new(),
+            String::new(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("bundle_id"), "got: {err:#}");
     }
 }

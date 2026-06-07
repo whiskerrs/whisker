@@ -4,17 +4,38 @@ import PackageDescription
 // WhiskerRuntime is the SPM package the iOS host app depends on. It
 // composes:
 //
-//   WhiskerDriver.xcframework  — Rust crate (the user's `#[whisker::main]`
-//                             code) + the C++ Lynx bridge, packaged as
-//                             a dynamic `.framework` so subsecond can
-//                             hot-patch it at runtime. Build by:
-//                             `cargo xtask ios build-xcframework`.
 //   Lynx*.xcframework       — Lynx engine + PrimJS, dynamic frameworks
-//                             built from the upstream CocoaPods source
-//                             pods. Build by:
-//                             `cargo xtask ios build-lynx-frameworks`.
-//   WhiskerRuntime (Swift)     — thin Swift API: WhiskerView, WhiskerAppDelegate,
-//                             CADisplayLink-driven render loop.
+//                             fetched at SPM resolve time from the
+//                             monorepo-local `target/lynx-ios/` cache
+//                             (`whisker-build` ensures it exists).
+//   WhiskerCBridge          — header-only systemLibrary exposing the
+//                             Whisker C ABI declarations. The actual
+//                             implementation lives in
+//                             `WhiskerDriver.framework`, which is built
+//                             per-app by an Xcode Run Script Build
+//                             Phase (Step 7) — see below.
+//   WhiskerRuntime (Swift)  — thin Swift API: WhiskerView,
+//                             WhiskerAppDelegate, CADisplayLink-driven
+//                             render loop.
+//
+// Step-7 change: `WhiskerDriver` is NOT declared here as a `binaryTarget`.
+// The Rust crate it wraps contains user `#[whisker::main]` code, so it
+// can't be pre-built and shipped — it has to be compiled per-app. Pre-
+// Step-7 the monorepo flow staged it under `target/whisker-driver/` so
+// SPM could resolve a path-based binaryTarget, but that forced every
+// build to go through the `whisker-build` CLI before Xcode opened. The
+// Run Script Build Phase that whisker-cng injects into the per-app
+// pbxproj now produces `WhiskerDriver.framework` inside
+// `$(BUILT_PRODUCTS_DIR)/Frameworks/` during the build itself; the
+// project's `OTHER_LDFLAGS` adds `-framework WhiskerDriver` so Xcode's
+// link step picks it up, and `LD_RUNPATH_SEARCH_PATHS` includes
+// `@executable_path/Frameworks` so dyld resolves it at app launch.
+//
+// The C-ABI surface Swift code calls into (`whisker_bridge_*`,
+// `WhiskerValueRaw`, …) is declared by `WhiskerCBridge`'s
+// module.modulemap. WhiskerRuntime's Swift sources do
+// `@_exported import WhiskerCBridge` — at link time the consumer's app
+// resolves the undefined refs against `WhiskerDriver.framework`.
 //
 // The bridge is intentionally NOT an SPM target. We used to have a
 // `WhiskerBridge` C++ target here that compiled bridge sources via SPM;
@@ -22,17 +43,6 @@ import PackageDescription
 // bridge sources, so keeping the build in `crates/whisker-driver-sys/
 // build.rs` (where it already lived for Android) means a single source
 // of truth. The bridge now lives under `crates/whisker-driver-sys/bridge/`.
-//
-// Build pre-reqs (run before opening Xcode):
-//   cargo xtask ios build-lynx-frameworks
-//   cargo xtask ios build-xcframework
-//
-// Runtime layout: the host app embeds WhiskerDriver.framework under
-// `<App>.app/Frameworks/`. The dylib's LC_ID_DYLIB is
-// `@rpath/WhiskerDriver.framework/WhiskerDriver` (set by xtask via
-// `install_name_tool -id`), so the host app needs
-// `@executable_path/Frameworks` in `LD_RUNPATH_SEARCH_PATHS` — set in
-// `examples/<pkg>/ios/project.yml` (XcodeGen → Xcode project setting).
 
 let package = Package(
     name: "WhiskerRuntime",
@@ -49,13 +59,6 @@ let package = Package(
         // including WhiskerView / WhiskerViewController / AppDelegate).
         .library(name: "WhiskerModule", targets: ["WhiskerModule"]),
         .library(name: "WhiskerRuntime", targets: ["WhiskerRuntime"]),
-        // Re-export the binary `WhiskerDriver` framework so external
-        // packages can `import WhiskerDriver` to see the C ABI
-        // declarations (`whisker_bridge_register_module_dispatch`,
-        // `WhiskerValueRaw`, …) the codegen-emitted dispatch shim
-        // references. Without this product the binary target stays
-        // scoped to WhiskerRuntime's own sources.
-        .library(name: "WhiskerDriver", targets: ["WhiskerDriver"]),
         // Phase 7-Φ.G: each module package is now its own SwiftPM
         // library and needs to `import Lynx` (etc.) directly to
         // subclass `LynxUI<UIView>`. Expose the binary frameworks
@@ -67,16 +70,6 @@ let package = Package(
         .library(name: "PrimJS", targets: ["PrimJS"]),
     ],
     targets: [
-        // Rust runtime + C++ bridge, packaged as a dynamic xcframework
-        // (one `.framework` per slice). The cargo dylib's build.rs
-        // emits dependent-dylib refs (LC_LOAD_DYLIB) to the Lynx
-        // frameworks below, so dyld resolves them at app launch when
-        // SPM auto-embeds the Lynx xcframeworks into the host app.
-        .binaryTarget(
-            name: "WhiskerDriver",
-            path: "../../target/whisker-driver/WhiskerDriver.xcframework"
-        ),
-
         // Lynx engine + dependencies, as xcframeworks built from upstream
         // CocoaPods source via `cargo xtask ios build-lynx-frameworks`.
         .binaryTarget(
@@ -107,17 +100,16 @@ let package = Package(
         // `WhiskerLynxAliases.swift` does `@_exported import Lynx`,
         // so a consumer's `import WhiskerModule` transitively pulls
         // the Lynx symbols needed to subclass `LynxUI<View>`.
-        // Header-only mirror of `WhiskerDriver`'s public C ABI.
-        // The Swift sources `@_exported import WhiskerCBridge` so
-        // the same source tree builds both here (monorepo,
-        // WhiskerDriver binaryTarget present) and from the root
-        // `Package.swift` (no WhiskerDriver, host app provides
-        // symbols via per-app build). `WhiskerCBridge`'s
-        // module.modulemap re-declares the same headers
-        // WhiskerDriver's xcframework ships, so the symbol
-        // namespace overlaps cleanly at link time — the
-        // monorepo-local link picks WhiskerDriver's
-        // implementations.
+        //
+        // Header-only mirror of `WhiskerDriver`'s public C ABI. The
+        // Swift sources `@_exported import WhiskerCBridge` so the
+        // call-site signatures are visible at compile time; the
+        // implementing symbols come from `WhiskerDriver.framework`
+        // (built per-app by an Xcode Run Script Build Phase — see
+        // file header) and resolve at the host app's link step.
+        // `WhiskerCBridge`'s `module.modulemap` carries the same C
+        // declarations the framework's `Headers/` directory would
+        // expose, so the symbol namespace overlaps cleanly.
         .systemLibrary(
             name: "WhiskerCBridge",
             path: "Sources/WhiskerCBridge/include"
@@ -125,7 +117,7 @@ let package = Package(
 
         .target(
             name: "WhiskerModule",
-            dependencies: ["Lynx", "WhiskerDriver", "WhiskerCBridge"],
+            dependencies: ["Lynx", "WhiskerCBridge"],
             path: "Sources/WhiskerModule"
         ),
 
@@ -133,7 +125,6 @@ let package = Package(
             name: "WhiskerRuntime",
             dependencies: [
                 "WhiskerModule",
-                "WhiskerDriver",
                 "WhiskerCBridge",
                 "Lynx",
                 "LynxBase",
@@ -143,24 +134,15 @@ let package = Package(
             path: "Sources/WhiskerRuntime",
             linkerSettings: [
                 // System frameworks Lynx depends on transitively.
-                // WhiskerDriver.dylib already declares LC_LOAD_DYLIB
-                // for these (see `whisker-driver-sys/build.rs`), so
-                // dyld would load them anyway, but keeping the
-                // declaration here lets the host app's static-analysis
-                // tooling see the dependency.
+                // WhiskerDriver.framework's dylib already declares
+                // LC_LOAD_DYLIB for these (see
+                // `whisker-driver-sys/build.rs`), so dyld would load
+                // them anyway, but keeping the declaration here lets
+                // the host app's static-analysis tooling see the
+                // dependency.
                 .linkedFramework("JavaScriptCore"),
                 .linkedFramework("NaturalLanguage"),
                 .linkedLibrary("c++"),
-                // `-ObjC` is no longer required here: when iOS was a
-                // staticlib, the host app's link step had to be told
-                // to pull every Obj-C class from the archived `.o`
-                // files. With the dylib path, that responsibility
-                // moves into the dylib's own link step in
-                // `whisker-driver-sys/build.rs`
-                // (`cargo:rustc-link-arg=-Wl,-ObjC`). The Obj-C classes
-                // end up in the dylib's `__objc_classlist` and dyld
-                // picks them up at load time, so the host app no
-                // longer needs the flag.
             ]
         ),
     ]

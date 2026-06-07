@@ -188,11 +188,14 @@ fn build_ios_app(
         &modules,
     )?;
 
-    // 3. xcframework wrap (cargo per-triple → lipo sim slices → wrap).
-    //    Self-contained in `whisker_build::ios`.
-    ios::build_xcframework(workspace_root, &m.package, &[], None)?;
-
     // 3. xcodebuild release.
+    //
+    // Step-7 dropped the explicit `build_xcframework` call here: the
+    // cng-generated pbxproj now carries a "Whisker Prebuild" Build
+    // Phase that invokes `whisker-build ios` to produce
+    // `WhiskerDriver.framework` during the xcodebuild run itself.
+    // Doing it here AND letting the Build Phase re-do it would burn
+    // a redundant cargo cross-compile.
     let scheme = m
         .config
         .ios

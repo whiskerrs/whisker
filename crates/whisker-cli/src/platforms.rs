@@ -33,7 +33,7 @@ pub fn sync_for_target(
 ) -> Result<PlatformSync> {
     match target {
         Target::Android => sync_android(app_config, crate_dir, workspace_root, package),
-        Target::IosSimulator => sync_ios(app_config, crate_dir, workspace_root),
+        Target::IosSimulator => sync_ios(app_config, crate_dir, workspace_root, package),
         Target::Host => Ok(PlatformSync {
             gen_dir: crate_dir.to_path_buf(),
             regenerated: false,
@@ -115,6 +115,7 @@ fn sync_ios(
     app_config: &AppConfig,
     crate_dir: &Path,
     workspace_root: &Path,
+    package: &str,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/ios");
     let whisker_runtime = workspace_root.join("platforms/ios");
@@ -125,7 +126,13 @@ fn sync_ios(
     // needs an *absolute* path to that directory at sync time, so we
     // pre-compute it here even though the contents will land later.
     let whisker_modules = gen_dir.join("whisker_modules");
-    let inputs = whisker_cng::ios::inputs_from(app_config, whisker_runtime, whisker_modules)?;
+    let inputs = whisker_cng::ios::inputs_from(
+        app_config,
+        whisker_runtime,
+        whisker_modules,
+        workspace_root.to_path_buf(),
+        package.to_string(),
+    )?;
     // whisker-cng renders the full Xcode project directly (pbxproj +
     // xcworkspacedata + sources). No xcodegen subprocess needed —
     // see crates/whisker-cng/src/ios.rs for the rationale.
