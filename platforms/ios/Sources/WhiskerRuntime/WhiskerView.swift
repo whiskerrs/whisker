@@ -3,7 +3,7 @@ import Lynx
 // WhiskerDriver re-exports the C ABI of `whisker_bridge.h` (see its
 // module.modulemap), so `whisker_bridge_engine_attach` etc. are visible
 // from this single import.
-import WhiskerDriver
+import WhiskerCBridge
 
 /// Hosts the Whisker runtime on iOS.
 ///

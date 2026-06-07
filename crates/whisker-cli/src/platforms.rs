@@ -16,7 +16,7 @@
 //! `build` subcommands call this before kicking off the rest of the
 //! build pipeline.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use whisker_app_config::AppConfig;
 use whisker_dev_server::Target;
@@ -111,13 +111,22 @@ fn sync_android(
     })
 }
 
+/// Repo URL the generated pbxproj's
+/// `XCRemoteSwiftPackageReference` for `whisker` points at. Step
+/// 5-iOS pins this to the main whiskerrs/whisker repo; the root
+/// `Package.swift` there carries `WhiskerRuntime` + `WhiskerModule`
+/// + Lynx binaryTargets (url+checksum).
+const WHISKER_SWIFTPM_REPO_URL: &str = "https://github.com/whiskerrs/whisker";
+/// Branch name Xcode tracks for `whisker`. Initially `main` —
+/// once we add proper semver tags this becomes
+/// `whisker-runtime-v<x.y.z>` or moves to `exactVersion`.
+const WHISKER_SWIFTPM_BRANCH: &str = "main";
+
 fn sync_ios(
     app_config: &AppConfig,
     crate_dir: &Path,
-    workspace_root: &Path,
+    _workspace_root: &Path,
 ) -> Result<PlatformSync> {
-    let whisker_runtime = resolve_whisker_platform(workspace_root, "ios")
-        .context("resolve Whisker's platforms/ios")?;
     let gen_dir = crate_dir.join("gen/ios");
     // `gen/ios/whisker_modules/` is populated lazily by
     // `whisker-build::ios::stage_module_swift_sources` later in the
@@ -126,7 +135,12 @@ fn sync_ios(
     // needs an *absolute* path to that directory at sync time, so we
     // pre-compute it here even though the contents will land later.
     let whisker_modules = gen_dir.join("whisker_modules");
-    let inputs = whisker_cng::ios::inputs_from(app_config, whisker_runtime, whisker_modules)?;
+    let inputs = whisker_cng::ios::inputs_from(
+        app_config,
+        WHISKER_SWIFTPM_REPO_URL.to_string(),
+        WHISKER_SWIFTPM_BRANCH.to_string(),
+        whisker_modules,
+    )?;
     // whisker-cng renders the full Xcode project directly (pbxproj +
     // xcworkspacedata + sources). No xcodegen subprocess needed —
     // see crates/whisker-cng/src/ios.rs for the rationale.
@@ -135,26 +149,6 @@ fn sync_ios(
         gen_dir,
         regenerated,
     })
-}
-
-/// Locate the Whisker-provided platform-side subtree (Android Gradle
-/// module or iOS SPM package). Today the only source is the
-/// in-workspace `platforms/` dir; for external users this'll move to
-/// a downloaded cache once `whisker-cli` learns to fetch published
-/// Lynx artifacts. The clear-cut error message points at that future
-/// feature so surprised users have a thread to pull.
-fn resolve_whisker_platform(workspace_root: &Path, relative: &str) -> Result<PathBuf> {
-    let p = workspace_root.join("platforms").join(relative);
-    if !p.exists() {
-        return Err(anyhow!(
-            "Whisker platform runtime not found at {}.\n\
-             Today `whisker-cli` only resolves the in-workspace `platforms/` tree; \
-             external installs need the Lynx artifacts download feature (not \
-             yet implemented).",
-            p.display(),
-        ));
-    }
-    Ok(p)
 }
 
 #[cfg(test)]
@@ -169,18 +163,5 @@ mod tests {
         let sync = sync_for_target(Target::Host, &cfg, &crate_dir, &ws, "pkg").unwrap();
         assert_eq!(sync.gen_dir, crate_dir);
         assert!(!sync.regenerated);
-    }
-
-    #[test]
-    fn resolve_whisker_native_errors_when_missing() {
-        let err = resolve_whisker_platform(
-            &PathBuf::from("/definitely-not-a-real-path"),
-            "android/whisker-runtime",
-        )
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("platform runtime not found"),
-            "got: {err:#}",
-        );
     }
 }

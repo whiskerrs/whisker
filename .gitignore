@@ -38,6 +38,13 @@ platforms/android/**/build/
 platforms/android/**/.cxx/
 platforms/ios/.build/
 platforms/ios/.swiftpm/
+
+# Root-level SwiftPM package (root `Package.swift` exists for remote
+# consumers of WhiskerRuntime). `.build/` is `swift build`'s
+# per-host cache; `Package.resolved` pins binaryTarget archives.
+/.build/
+/.swiftpm/
+/Package.resolved
 platforms/ios/*.xcodeproj/
 platforms/ios/*.xcworkspace/
 platforms/bridge/build/

@@ -107,13 +107,26 @@ let package = Package(
         // `WhiskerLynxAliases.swift` does `@_exported import Lynx`,
         // so a consumer's `import WhiskerModule` transitively pulls
         // the Lynx symbols needed to subclass `LynxUI<View>`.
+        // Header-only mirror of `WhiskerDriver`'s public C ABI.
+        // The Swift sources `@_exported import WhiskerCBridge` so
+        // the same source tree builds both here (monorepo,
+        // WhiskerDriver binaryTarget present) and from the root
+        // `Package.swift` (no WhiskerDriver, host app provides
+        // symbols via per-app build). `WhiskerCBridge`'s
+        // module.modulemap re-declares the same headers
+        // WhiskerDriver's xcframework ships, so the symbol
+        // namespace overlaps cleanly at link time — the
+        // monorepo-local link picks WhiskerDriver's
+        // implementations.
+        .target(
+            name: "WhiskerCBridge",
+            path: "../../swiftpm/Sources/WhiskerCBridge",
+            publicHeadersPath: "include"
+        ),
+
         .target(
             name: "WhiskerModule",
-            // `WhiskerDriver` carries the C ABI surface
-            // (`WhiskerValueRaw`, `whisker_bridge_module_send_event`,
-            // …) that `WhiskerValue.swift` and
-            // `WhiskerModuleEventCenter.swift` `@_exported import`.
-            dependencies: ["Lynx", "WhiskerDriver"],
+            dependencies: ["Lynx", "WhiskerDriver", "WhiskerCBridge"],
             path: "Sources/WhiskerModule"
         ),
 
@@ -122,6 +135,7 @@ let package = Package(
             dependencies: [
                 "WhiskerModule",
                 "WhiskerDriver",
+                "WhiskerCBridge",
                 "Lynx",
                 "LynxBase",
                 "LynxServiceAPI",

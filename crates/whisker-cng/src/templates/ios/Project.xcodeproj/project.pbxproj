@@ -14,7 +14,6 @@
 
 /* Begin PBXFileReference section */
 		35D466DB8920E7A52C599EBC /* {{ios_scheme}}.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "{{ios_scheme}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		4A31F1231CDD4ED82F669821 /* ios */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ios; path = "{{whisker_runtime_ios_path}}"; sourceTree = "<absolute>"; };
 		4BEF20C6F91CCD1A10D66BCE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		D3F08A1D5C9B6E7A2F104B59 /* whisker_modules */ = {isa = PBXFileReference; lastKnownFileType = folder; name = whisker_modules; path = "{{whisker_modules_ios_path}}"; sourceTree = "<absolute>"; };
 /* End PBXFileReference section */
@@ -60,7 +59,6 @@
 		E8E7FE2E076C1851BADE1012 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				4A31F1231CDD4ED82F669821 /* ios */,
 				D3F08A1D5C9B6E7A2F104B59 /* whisker_modules */,
 			);
 			name = Packages;
@@ -303,11 +301,18 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		B25ED1A6F9E42E26D051E805 /* XCLocalSwiftPackageReference "WhiskerRuntime" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "{{whisker_runtime_ios_path}}";
+/* Begin XCRemoteSwiftPackageReference section */
+		B25ED1A6F9E42E26D051E805 /* XCRemoteSwiftPackageReference "whisker" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "{{whisker_swiftpm_repo_url}}";
+			requirement = {
+				kind = branch;
+				branch = "{{whisker_swiftpm_branch}}";
+			};
 		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCLocalSwiftPackageReference section */
 		C97DA5F310E249B0FCB72E81 /* XCLocalSwiftPackageReference "WhiskerModules" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "{{whisker_modules_ios_path}}";
@@ -317,6 +322,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		F920EEBD91D9E8039DA5A3F9 /* WhiskerRuntime */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = B25ED1A6F9E42E26D051E805 /* XCRemoteSwiftPackageReference "whisker" */;
 			productName = WhiskerRuntime;
 		};
 		A4F2BE0925D17CE83AB061F7 /* WhiskerModules */ = {

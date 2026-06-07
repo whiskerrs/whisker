@@ -1,0 +1,21 @@
+// WhiskerCBridge — header-only C target consumed by `WhiskerRuntime`
+// and `WhiskerModule` Swift sources via `import WhiskerCBridge`.
+//
+// The C ABI symbols declared here (`whisker_bridge_*`,
+// `whisker_main`, …) are NOT implemented inside this target. They
+// land in the user app's `WhiskerDriver.framework` (compiled per-app
+// by `whisker-build ios` from the user's Rust crate + the C++
+// bridge). At link time, SwiftPM-built `.o` files reference these
+// symbols as undefined; the host app's link step pulls in
+// WhiskerDriver.framework which provides them.
+//
+// Static-library link tolerates undefined symbols, so the Whisker
+// SwiftPM package builds clean. The host app's dyld resolves them
+// against WhiskerDriver.framework at runtime via the standard
+// `LD_RUNPATH_SEARCH_PATHS` pointing at `@executable_path/Frameworks/`.
+
+module WhiskerCBridge {
+    header "whisker.h"
+    header "whisker_bridge.h"
+    export *
+}
