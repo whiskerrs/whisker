@@ -100,7 +100,7 @@ jobs:
         # `maven-out` dir.
         working-directory: platforms/android
         run: |
-          ../../gradle-plugin/gradlew --no-daemon \
+          ./gradle-plugin/gradlew --no-daemon \
             publishAllPublicationsToGhPagesRepository \
             -PwhiskerSdkRelease=true \
             -PpublishUrl=file://${{ github.workspace }}/maven-out
@@ -110,7 +110,7 @@ jobs:
         # so we run gradle separately for it.
         working-directory: platforms/android/ksp
         run: |
-          ../../../gradle-plugin/gradlew --no-daemon \
+          ../gradle-plugin/gradlew --no-daemon \
             publishAllPublicationsToGhPagesRepository \
             -PpublishUrl=file://${{ github.workspace }}/maven-out
 

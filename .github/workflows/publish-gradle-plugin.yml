@@ -97,8 +97,8 @@ jobs:
           set -e
           VER="${{ steps.ver.outputs.version }}"
           for FILE in \
-            gradle-plugin/whisker-settings-plugin/build.gradle.kts \
-            gradle-plugin/whisker-gradle-plugin/build.gradle.kts; do
+            platforms/android/gradle-plugin/whisker-settings-plugin/build.gradle.kts \
+            platforms/android/gradle-plugin/whisker-gradle-plugin/build.gradle.kts; do
             sed -i -E "s/^version = \"[^\"]*\"$/version = \"${VER}\"/" "$FILE"
             echo "After sed in $FILE:"
             grep -n '^version = ' "$FILE"
@@ -118,7 +118,7 @@ jobs:
         # `build/repo` to our workspace-rooted `maven-out` dir.
         #
         # `--no-daemon` because GHA runners are single-use.
-        working-directory: gradle-plugin
+        working-directory: platforms/android/gradle-plugin
         run: |
           ./gradlew --no-daemon \
             publishAllPublicationsToGhPagesRepository \
