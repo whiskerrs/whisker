@@ -8,8 +8,10 @@
 //! gen/ios/
 //! ├── <scheme>.xcodeproj/
 //! │   ├── project.pbxproj
-//! │   └── project.xcworkspace/
-//! │       └── contents.xcworkspacedata
+//! │   ├── project.xcworkspace/
+//! │   │   └── contents.xcworkspacedata
+//! │   └── xcshareddata/xcschemes/
+//! │       └── <scheme>.xcscheme
 //! ├── Info.plist
 //! └── Sources/AppDelegate.swift
 //! ```
@@ -36,6 +38,8 @@ use crate::render::render;
 const PBXPROJ: &str = include_str!("templates/ios/Project.xcodeproj/project.pbxproj");
 const XCWORKSPACEDATA: &str =
     include_str!("templates/ios/Project.xcodeproj/project.xcworkspace/contents.xcworkspacedata");
+const XCSCHEME: &str =
+    include_str!("templates/ios/Project.xcodeproj/xcshareddata/xcschemes/scheme.xcscheme");
 const INFO_PLIST: &str = include_str!("templates/ios/Info.plist");
 const APP_DELEGATE_SWIFT: &str = include_str!("templates/ios/Sources/AppDelegate.swift");
 
@@ -155,6 +159,20 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
             .join("contents.xcworkspacedata"),
         XCWORKSPACEDATA.as_bytes(),
     )?;
+    // Shared xcscheme so opening the project in Xcode.app yields the
+    // same Build / Run / Test / Profile / Analyze / Archive surface
+    // every contributor sees. Without this, Xcode auto-creates a
+    // per-user scheme on first open — works, but isn't shared via
+    // source control and the user has to pick a destination on every
+    // fresh checkout. Filename mirrors the scheme name so Xcode picks
+    // it up by convention (it scans `xcshareddata/xcschemes/*.xcscheme`).
+    let xcscheme = render(XCSCHEME, &vars).context("render xcscheme")?;
+    write_file(
+        &xcodeproj
+            .join("xcshareddata/xcschemes")
+            .join(format!("{}.xcscheme", inputs.scheme)),
+        xcscheme.as_bytes(),
+    )?;
 
     Ok(())
 }
@@ -255,14 +273,13 @@ pub fn inputs_from(
         whisker_modules_path,
         workspace_root,
         user_package,
-        // Bumped 6 → 7 for the path-hardening sweep: the Prebuild
-        // Run Script now sanity-checks that the cng-baked
-        // `{{whisker_workspace_root}}` actually exists. Workspace
-        // moves between `whisker build` runs would otherwise let
-        // standalone xcodebuild proceed silently against a stale
-        // absolute path until cargo bails far downstream — the
-        // explicit check turns that into a single clear error early.
-        template_version: 7,
+        // Bumped 7 → 8: cng now also emits a shared
+        // `xcshareddata/xcschemes/<scheme>.xcscheme` so Xcode.app
+        // opens the project with the same Build / Run / Test /
+        // Profile actions every contributor sees, instead of letting
+        // Xcode auto-create a per-user (unshared, unsourced) scheme
+        // on first open.
+        template_version: 8,
     })
 }
 
@@ -296,7 +313,7 @@ mod tests {
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
-            template_version: 7,
+            template_version: 8,
         }
     }
 
@@ -311,6 +328,7 @@ mod tests {
             "Sources/AppDelegate.swift",
             "HelloWorld.xcodeproj/project.pbxproj",
             "HelloWorld.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
+            "HelloWorld.xcodeproj/xcshareddata/xcschemes/HelloWorld.xcscheme",
             ".whisker-fingerprint",
         ] {
             assert!(out.join(expected).exists(), "missing: {expected}");
