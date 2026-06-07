@@ -47,19 +47,20 @@ pub struct IosInputs {
     pub scheme: String,
     pub bundle_id: String,
     pub deployment_target: String,
-    /// Path to the WhiskerRuntime SPM package — typically
-    /// `<workspace>/platforms/ios`. Written into the rendered pbxproj
-    /// as the `XCLocalSwiftPackageReference.relativePath` value
-    /// (Xcode accepts an absolute path there) and as the `path` of
-    /// the synthetic Packages-group `PBXFileReference` (with
-    /// `sourceTree = "<absolute>"`). Both should be absolute so the
-    /// generated project is portable regardless of where the
-    /// consuming crate sits relative to the workspace root.
-    pub whisker_runtime_path: PathBuf,
+    /// Git URL the generated pbxproj's
+    /// `XCRemoteSwiftPackageReference` for `whisker` points at.
+    /// Step 5-iOS pins this to the main whiskerrs/whisker repo;
+    /// the root `Package.swift` there carries `WhiskerRuntime` +
+    /// `WhiskerModule` + Lynx binaryTargets (url+checksum).
+    pub whisker_swiftpm_repo_url: String,
+    /// Branch name Xcode tracks for `whisker`. Initially `main`
+    /// — once we add proper semver tags this becomes
+    /// `whisker-runtime-v<x.y.z>` or moves to
+    /// `XCRemoteSwiftPackageReference.requirement.kind = exactVersion`.
+    pub whisker_swiftpm_branch: String,
     /// Path to the auto-generated `WhiskerModules` SwiftPM package
-    /// — typically `<crate_dir>/gen/ios/whisker_modules`. Same
-    /// shape as [`whisker_runtime_path`] but pointed at the
-    /// gen-tree-managed dir `whisker-build::ios::
+    /// — typically `<crate_dir>/gen/ios/whisker_modules`. Pointed
+    /// at the gen-tree-managed dir `whisker-build::ios::
     /// stage_module_swift_sources` populates with each module's
     /// `[ios].swift_sources` and the generated
     /// `WhiskerModuleBehaviors.swift`.
@@ -98,8 +99,12 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
     v.insert("ios_bundle_id", inputs.bundle_id.clone());
     v.insert("ios_deployment_target", inputs.deployment_target.clone());
     v.insert(
-        "whisker_runtime_ios_path",
-        inputs.whisker_runtime_path.display().to_string(),
+        "whisker_swiftpm_repo_url",
+        inputs.whisker_swiftpm_repo_url.clone(),
+    );
+    v.insert(
+        "whisker_swiftpm_branch",
+        inputs.whisker_swiftpm_branch.clone(),
     );
     v.insert(
         "whisker_modules_ios_path",
@@ -196,7 +201,8 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
 /// `name`; `bundle_id` defaults to the top-level `app.bundle_id`.
 pub fn inputs_from(
     app_config: &AppConfig,
-    whisker_runtime_path: PathBuf,
+    whisker_swiftpm_repo_url: String,
+    whisker_swiftpm_branch: String,
     whisker_modules_path: PathBuf,
 ) -> Result<IosInputs> {
     let app_name = app_config
@@ -235,12 +241,14 @@ pub fn inputs_from(
         scheme,
         bundle_id,
         deployment_target,
-        whisker_runtime_path,
+        whisker_swiftpm_repo_url,
+        whisker_swiftpm_branch,
         whisker_modules_path,
-        // Bumped: 2 → 3 for the WhiskerModules SwiftPM ref + the
-        // `whisker_modules_ios_path` template var. Forces every
-        // consuming app to re-render its pbxproj on next sync.
-        template_version: 3,
+        // Bumped 3 → 4 for Step 5-iOS: pbxproj uses
+        // XCRemoteSwiftPackageReference for `whisker` instead of
+        // XCLocalSwiftPackageReference for WhiskerRuntime. Forces
+        // every consuming app to re-render its pbxproj on next sync.
+        template_version: 4,
     })
 }
 
@@ -270,9 +278,10 @@ mod tests {
             scheme: "HelloWorld".into(),
             bundle_id: "rs.whisker.examples.helloWorld".into(),
             deployment_target: "13.0".into(),
-            whisker_runtime_path: PathBuf::from("/abs/platforms/ios"),
+            whisker_swiftpm_repo_url: "https://github.com/whiskerrs/whisker".into(),
+            whisker_swiftpm_branch: "main".into(),
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
-            template_version: 3,
+            template_version: 4,
         }
     }
 
@@ -305,8 +314,12 @@ mod tests {
             std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
         assert!(pbxproj.contains("PRODUCT_BUNDLE_IDENTIFIER = \"rs.whisker.examples.helloWorld\""));
         assert!(pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = \"13.0\""));
-        assert!(pbxproj.contains("relativePath = \"/abs/platforms/ios\""));
-        assert!(pbxproj.contains("path = \"/abs/platforms/ios\""));
+        // XCRemoteSwiftPackageReference for Whisker SwiftPM (Step 5-iOS).
+        assert!(pbxproj.contains("repositoryURL = \"https://github.com/whiskerrs/whisker\""));
+        assert!(pbxproj.contains("branch = \"main\""));
+        // WhiskerModules still resolves through the local gen-tree
+        // dir whisker-build's iOS pipeline populates.
+        assert!(pbxproj.contains("relativePath = \"/abs/gen/ios/whisker_modules\""));
         assert!(pbxproj.contains("name = \"HelloWorld\""));
         assert!(pbxproj.contains("productName = \"HelloWorld\""));
         // Catch any unsubstituted placeholders.
@@ -356,7 +369,13 @@ mod tests {
             name: Some("X".into()),
             ..AppConfig::default()
         };
-        let err = inputs_from(&cfg, PathBuf::new(), PathBuf::new()).unwrap_err();
+        let err = inputs_from(
+            &cfg,
+            "https://github.com/whiskerrs/whisker".into(),
+            "main".into(),
+            PathBuf::new(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("bundle_id"), "got: {err:#}");
     }
 }

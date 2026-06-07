@@ -29,7 +29,7 @@
 //    shared trampolines into the bridge (lazy install).
 
 import Foundation
-@_exported import WhiskerDriver
+@_exported import WhiskerCBridge
 
 /// Shared dispatcher + observer-hook router. All state is internal
 /// to the `WhiskerModule` framework; `Module.sendEvent` and the

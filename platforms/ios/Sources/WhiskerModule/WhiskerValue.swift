@@ -34,7 +34,7 @@ import Foundation
 // that the codegen-emitted `@_cdecl` dispatch shim references.
 // Without re-exporting, every module .swift file would need its own
 // `import WhiskerDriver`.
-@_exported import WhiskerDriver
+@_exported import WhiskerCBridge
 
 public enum WhiskerValue: Equatable {
     case null
