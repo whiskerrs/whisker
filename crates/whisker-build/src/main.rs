@@ -188,10 +188,43 @@ struct ModulesArgs {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Ios(args) => run_ios(args),
-        Cmd::Android(args) => run_android(args),
-        Cmd::Modules(args) => run_modules(args),
+        Cmd::Ios(args) => run_ios(canonicalize_ios_args(args)?),
+        Cmd::Android(args) => run_android(canonicalize_android_args(args)?),
+        Cmd::Modules(args) => run_modules(canonicalize_modules_args(args)?),
     }
+}
+
+/// Resolve the workspace path to its canonical form (`..` collapsed, symlinks
+/// resolved) before anything downstream consumes it. Without this, two
+/// invocations with logically-equivalent but textually-different workspace
+/// paths bake different absolute paths into the cng-rendered files
+/// (`gen/ios/whisker_modules/Package.swift`, the pbxproj's Run Script
+/// substitution) — and SPM's `.package(path:)` does a byte-for-byte string
+/// compare for identity, so a mismatch against the module-side fallback
+/// `URL.standardized.path` splits the same package into two identities and
+/// breaks the SwiftPM build-tool-plugin dependency chain (Step 7's late
+/// blocker).
+///
+/// `whisker-cli` already canonicalizes via its `find_workspace_root`, but
+/// nothing forces a caller (a hand-edited Run Script, a CI YAML, a future
+/// IDE driver) to come through that path. Belt-and-braces.
+fn canonicalize_workspace(p: PathBuf) -> Result<PathBuf> {
+    std::fs::canonicalize(&p).with_context(|| format!("canonicalize workspace {}", p.display()))
+}
+
+fn canonicalize_ios_args(mut args: IosArgs) -> Result<IosArgs> {
+    args.workspace = canonicalize_workspace(args.workspace)?;
+    Ok(args)
+}
+
+fn canonicalize_android_args(mut args: AndroidArgs) -> Result<AndroidArgs> {
+    args.workspace = canonicalize_workspace(args.workspace)?;
+    Ok(args)
+}
+
+fn canonicalize_modules_args(mut args: ModulesArgs) -> Result<ModulesArgs> {
+    args.workspace = canonicalize_workspace(args.workspace)?;
+    Ok(args)
 }
 
 fn run_modules(args: ModulesArgs) -> Result<()> {

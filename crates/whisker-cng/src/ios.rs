@@ -255,13 +255,14 @@ pub fn inputs_from(
         whisker_modules_path,
         workspace_root,
         user_package,
-        // Bumped 5 → 6 for Step 7: pbxproj template now embeds a
-        // PBXShellScriptBuildPhase that calls `whisker-build ios` to
-        // produce `WhiskerDriver.framework` during the build, plus
-        // FRAMEWORK_SEARCH_PATHS / OTHER_LDFLAGS pointing at it.
-        // WhiskerDriver is no longer an SPM binaryTarget — see
-        // `platforms/ios/Package.swift` for the rationale.
-        template_version: 6,
+        // Bumped 6 → 7 for the path-hardening sweep: the Prebuild
+        // Run Script now sanity-checks that the cng-baked
+        // `{{whisker_workspace_root}}` actually exists. Workspace
+        // moves between `whisker build` runs would otherwise let
+        // standalone xcodebuild proceed silently against a stale
+        // absolute path until cargo bails far downstream — the
+        // explicit check turns that into a single clear error early.
+        template_version: 7,
     })
 }
 
@@ -295,7 +296,7 @@ mod tests {
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
-            template_version: 6,
+            template_version: 7,
         }
     }
 

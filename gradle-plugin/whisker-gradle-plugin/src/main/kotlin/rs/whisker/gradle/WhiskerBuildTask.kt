@@ -72,6 +72,19 @@ abstract class WhiskerBuildTask : DefaultTask() {
 
     @TaskAction
     fun run() {
+        // Fail fast with a clear message if `whisker-build` isn't on
+        // PATH. Without this, Gradle reports the raw POSIX error
+        // (`Cannot run program 'whisker-build': error=2, No such file
+        // or directory`) which leaves the user guessing what to
+        // install. Mirrors the `command -v` check the iOS Run Script
+        // does up-front for the same reason.
+        if (!isOnPath("whisker-build")) {
+            error(
+                "rs.whisker.gradle: 'whisker-build' is not on PATH. " +
+                    "Install with: cargo install whisker-build " +
+                    "(re-open Android Studio after install so it picks up the new PATH).",
+            )
+        }
         val ws = workspace.get().asFile.absolutePath
         // AGP's `addGeneratedSourceDirectory(task, ::jniLibsDir)`
         // hands the entire `jniLibsDir` to mergeJniLibFolders as a
@@ -93,6 +106,14 @@ abstract class WhiskerBuildTask : DefaultTask() {
                 "--jni-libs-dir=${abiSubdir.absolutePath}",
                 "--min-sdk=${minSdk.get()}",
             )
+        }
+    }
+
+    private fun isOnPath(tool: String): Boolean {
+        val pathEnv = System.getenv("PATH") ?: return false
+        val sep = System.getProperty("path.separator") ?: ":"
+        return pathEnv.split(sep).any { dir ->
+            dir.isNotEmpty() && java.io.File(dir, tool).let { it.isFile && it.canExecute() }
         }
     }
 }
