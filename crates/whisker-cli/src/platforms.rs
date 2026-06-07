@@ -56,7 +56,15 @@ pub struct PlatformSync {
 /// SDK version pinned into the cng-generated
 /// `app/build.gradle.kts` (`rs.whisker:whisker-runtime-android:<this>`).
 /// Bumped alongside the `sdk-v*` release tag.
-const WHISKER_SDK_VERSION: &str = "0.1.0";
+///
+/// 0.1.1 rolls forward the transitive Lynx pin baked into the SDK's
+/// POM from `v3.8.0-whisker.4` (initial SDK release) to
+/// `v3.8.0-whisker.6`. The newer Lynx exposes `lynx_capi_abi_version()`
+/// which the Step-6 dlopen-based bridge requires; without this bump,
+/// downstream apps that pull `whisker-runtime-android:0.1.0`
+/// transitively get the older Lynx and the bridge loader aborts on
+/// "undefined symbol: lynx_capi_abi_version" at engine_attach time.
+const WHISKER_SDK_VERSION: &str = "0.1.1";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
