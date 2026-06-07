@@ -297,7 +297,8 @@ fn compile_ios() -> Result<()> {
 
     // NOTE: forcing bridge entry points (`_whisker_bridge_*`) into the
     // dylib's `.dynsym` happens in
-    // `whisker-build/src/ios.rs::build_xcframework`, not here.
+    // `whisker-build/src/ios.rs::build_framework_for_xcode_run_script`,
+    // not here.
     // `cargo:rustc-link-arg=…` only flows into the link of the crate
     // that owns the build.rs (whisker-driver-sys is an rlib — no
     // link step) and does NOT propagate to the parent dylib build of

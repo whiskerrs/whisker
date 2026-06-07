@@ -1,21 +1,24 @@
 //! iOS cargo + xcframework + xcodebuild orchestration. Shared by
-//! `whisker-cli`'s `whisker build` and `whisker-dev-server`'s Tier 2
-//! cold rebuild path.
+//! `whisker-cli`'s `whisker build` and `whisker-dev-server`'s install
+//! step.
 //!
-//! Three phases:
+//! Two entry points:
 //!
-//! 1. [`build_xcframework`] — cross-compile the user crate as a
-//!    Mach-O `.dylib` for each iOS triple (`aarch64-apple-ios`,
-//!    `aarch64-apple-ios-sim`, `x86_64-apple-ios`), lipo the two
-//!    simulator slices into a fat binary, wrap each slice into a
-//!    `WhiskerDriver.framework/` directory (with Headers, Modules,
-//!    Info.plist), then `xcodebuild -create-xcframework`. Output
-//!    lands at `<workspace>/target/whisker-driver/WhiskerDriver.xcframework`,
-//!    which the WhiskerRuntime SPM package references.
+//! 1. [`build_framework_for_xcode_run_script`] — the path xcodebuild's
+//!    "Whisker Prebuild" Build Phase invokes via the `whisker-build
+//!    ios` CLI. Cross-compiles the user crate as a Mach-O `.dylib`
+//!    for each requested arch (`$ARCHS` from Xcode), lipo-fuses sim
+//!    slices when both are requested, wraps the result into a
+//!    `WhiskerDriver.framework/` and drops it at
+//!    `$BUILT_PRODUCTS_DIR/Frameworks/`. xcodebuild's link step picks
+//!    it up via `OTHER_LDFLAGS += -framework WhiskerDriver` and the
+//!    "Whisker Embed Framework" phase copies it into the `.app`
+//!    bundle.
 //!
 //! 2. [`run_xcodebuild_app`] — invoke `xcodebuild` against the
-//!    XcodeGen-generated `<scheme>.xcodeproj` under `gen/ios/`,
-//!    returning the produced `.app`.
+//!    cng-generated `<scheme>.xcodeproj` under `gen/ios/`, returning
+//!    the produced `.app`. Trigger #1 above runs from inside this
+//!    xcodebuild invocation via the Build Phase.
 //!
 //! Why `dylib` (not `staticlib`)? subsecond's hot-patch model needs
 //! the dylib's `.dynsym` available to read mangled Rust symbols
@@ -23,9 +26,13 @@
 //! `docs/hot-reload-plan.md` "Second Pivot".
 //!
 //! Tier 1 fat-build capture (see [`crate::capture`]) is opt-in via
-//! the `capture` parameter on [`build_xcframework`]. Dev-server's
-//! Tier 2 cold rebuild passes `Some(&shims)`; `whisker build`
-//! passes `None`.
+//! the `capture` parameter on the per-arch cargo helper. The
+//! dev-server wires it up by setting `RUSTC_WORKSPACE_WRAPPER` /
+//! `CARGO_TARGET_*_LINKER` / `CARGO_TARGET_*_RUSTFLAGS` env vars on
+//! the xcodebuild Command (see `whisker-dev-server::installer`); the
+//! variables propagate through to the Build Phase shell, the
+//! `whisker-build ios` subprocess, and finally cargo. `whisker build`
+//! sets no env so the build runs without capture.
 
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
@@ -88,255 +95,6 @@ const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_bridge_log_hello",
     "_whisker_bridge_log_info",
 ];
-
-/// Build the WhiskerDriver.xcframework that wraps `package`'s dylib
-/// for every iOS slice the WhiskerRuntime SPM package consumes
-/// (`ios-arm64` device + `ios-arm64_x86_64-simulator` fat sim).
-///
-/// Returns the path to the resulting `.xcframework` directory.
-///
-/// When `capture` is `Some`, the cargo invocations per triple are
-/// elevated into Tier 1 fat builds — they still produce the same
-/// dylibs but populate the rustc + linker capture caches so the
-/// dev-server's Patcher can construct hot patches. Dev-server's
-/// Tier 2 cold rebuild path passes `Some(&shims)`; `whisker build`
-/// passes `None` (prod has no Tier 1).
-/// Which iOS slice(s) to put in the resulting xcframework.
-///
-/// `whisker run --target ios-sim` doesn't need the device slice —
-/// skipping it cuts the dev-loop's initial build by one cargo
-/// triple (~20–60s warm cache). The simulator pair (arm64 + x86_64)
-/// stays as a fat slice because `xcodebuild
-/// -destination 'generic/platform=iOS Simulator'` insists on
-/// linking against a universal binary; pinning `-arch <host>`
-/// alongside the destination is rejected by xcodebuild.
-///
-/// Production `whisker build` keeps the universal shape so the
-/// resulting artifact runs on real hardware too.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum IosSlices {
-    /// arm64 device + arm64 sim + x86_64 sim. Required for shipping.
-    Universal,
-    /// arm64 sim + x86_64 sim (lipo'd into one fat slice). Right
-    /// choice for `whisker run --target ios-sim` — both sim archs
-    /// are needed at link time, but the device slice isn't.
-    SimulatorFat,
-}
-
-pub fn build_xcframework(
-    workspace_root: &Path,
-    package: &str,
-    features: &[String],
-    capture: Option<&CaptureShims>,
-) -> Result<PathBuf> {
-    build_xcframework_with(
-        workspace_root,
-        package,
-        features,
-        capture,
-        IosSlices::Universal,
-    )
-}
-
-pub fn build_xcframework_with(
-    workspace_root: &Path,
-    package: &str,
-    features: &[String],
-    capture: Option<&CaptureShims>,
-    slices: IosSlices,
-) -> Result<PathBuf> {
-    let out = workspace_root.join("target/whisker-driver");
-    let lib_stem = package.replace('-', "_");
-    let cargo_dylib_name = format!("lib{lib_stem}.dylib");
-
-    let rust_headers_src = workspace_root.join("crates/whisker-driver/include");
-    let bridge_headers_src = workspace_root.join("crates/whisker-driver-sys/bridge/include");
-    for required in ["whisker.h", "module.modulemap"] {
-        if !rust_headers_src.join(required).is_file() {
-            return Err(anyhow!(
-                "missing header {} (expected at {})",
-                required,
-                rust_headers_src.display(),
-            ));
-        }
-    }
-    if !bridge_headers_src.join("whisker_bridge.h").is_file() {
-        return Err(anyhow!(
-            "missing whisker_bridge.h (expected at {})",
-            bridge_headers_src.display(),
-        ));
-    }
-
-    // Clean isn't a step the user needs to watch — it's a sub-100ms
-    // rm-rf of our own artifact dir. Just do it silently; the debug
-    // line below records the path for verbose-mode triage.
-    crate::ui::debug(format!("clean {}", out.display()));
-    if out.exists() {
-        std::fs::remove_dir_all(&out).with_context(|| format!("rm -rf {}", out.display()))?;
-    }
-    std::fs::create_dir_all(&out).with_context(|| format!("mkdir -p {}", out.display()))?;
-
-    // Triple set + order driven by `slices`. arm64-sim lands last in
-    // both variants so its rustc + linker capture wins the
-    // dev-server's last-write-wins cache (Apple-Silicon dev machines
-    // run the arm64 simulator natively).
-    let triples: &[&str] = match slices {
-        IosSlices::Universal => &[
-            "aarch64-apple-ios",
-            "x86_64-apple-ios",
-            "aarch64-apple-ios-sim",
-        ],
-        IosSlices::SimulatorFat => &["x86_64-apple-ios", "aarch64-apple-ios-sim"],
-    };
-
-    // Module-system discovery (Phase 7-Φ.F). Walks the consuming
-    // app's cargo dep graph for any `[package.metadata.whisker]`
-    // table, collects the iOS native-source paths, and passes them through
-    // `WHISKER_IOS_MODULE_NATIVE_SOURCES` to `whisker-driver-sys`'s
-    // build.rs — which then folds them into its `cc::Build` so each
-    // module's `LYNX_REGISTER_UI(...)` constructor ends up inside
-    // the host dylib's `+load` set.
-    //
-    // We do this once before the triple loop so cargo metadata
-    // runs only once and every slice sees the same module list
-    // (avoids cargo invalidating the bridge build between slices).
-    let manifest_path = workspace_root
-        .join("crates")
-        .join(package.replace('-', "_")) // best-effort default
-        .join("Cargo.toml");
-    // The above guess is only a fallback. The actual cargo manifest
-    // for `package` is whatever cargo metadata resolves — but to
-    // bootstrap the metadata call we need *some* manifest. The root
-    // workspace Cargo.toml is the right entry point: cargo_metadata
-    // accepts it and resolves `package` against the workspace.
-    let workspace_manifest = workspace_root.join("Cargo.toml");
-    let modules = crate::modules::discover(&workspace_manifest, package).with_context(|| {
-        format!(
-            "discover modules for `{package}` (workspace_manifest={}, fallback_manifest={})",
-            workspace_manifest.display(),
-            manifest_path.display(),
-        )
-    })?;
-    let modules_env = crate::modules::ios_sources_env_value(&modules);
-    if !modules_env.is_empty() {
-        let count: usize = modules.iter().map(|m| m.ios_native_sources.len()).sum();
-        crate::ui::debug(format!(
-            "discovered {count} iOS native source(s) across {} module(s)",
-            modules.len(),
-        ));
-    }
-
-    for triple in triples {
-        let s = crate::ui::step("compile", format!("{package} ({triple})"));
-        cargo_build_ios_dylib(
-            workspace_root,
-            package,
-            triple,
-            features,
-            capture,
-            &modules_env,
-            &s,
-        )?;
-        s.done("");
-    }
-
-    let target_dir = workspace_root.join("target");
-    // For `SimulatorHost`, this is the lone slice we just built. For
-    // `Universal`, this is the arm64 simulator slice that gets
-    // lipo'd together with the x86 one further down.
-    let sim_arm64_dylib = target_dir
-        .join("aarch64-apple-ios-sim/release")
-        .join(&cargo_dylib_name);
-
-    let xcf = out.join(format!("{FRAMEWORK_NAME}.xcframework"));
-    let xcf_step = crate::ui::step("xcframework", FRAMEWORK_NAME.to_string());
-
-    let mut xcframework_cmd = std::process::Command::new("xcodebuild");
-    xcframework_cmd.arg("-create-xcframework");
-
-    // Common: every variant wraps each slice in its own .framework
-    // tree before handing the lot to xcodebuild.
-    let mut staged_fws: Vec<PathBuf> = Vec::new();
-
-    let sim_x86_dylib = target_dir
-        .join("x86_64-apple-ios/release")
-        .join(&cargo_dylib_name);
-    for p in [&sim_arm64_dylib, &sim_x86_dylib] {
-        if !p.is_file() {
-            return Err(anyhow!("expected dylib not built: {}", p.display()));
-        }
-    }
-
-    // Device slice — only for Universal.
-    if matches!(slices, IosSlices::Universal) {
-        let device_dylib = target_dir
-            .join("aarch64-apple-ios/release")
-            .join(&cargo_dylib_name);
-        if !device_dylib.is_file() {
-            return Err(anyhow!(
-                "expected dylib not built: {}",
-                device_dylib.display()
-            ));
-        }
-        let device_fw_parent = out.join("device");
-        let device_fw = build_framework_dir(
-            &device_fw_parent,
-            &device_dylib,
-            &rust_headers_src,
-            &bridge_headers_src,
-        )?;
-        staged_fws.push(device_fw);
-    }
-
-    // Lipo arm64 + x86 sim dylibs into a fat sim binary. Both
-    // `Universal` and `SimulatorFat` need this — xcodebuild's
-    // `-destination 'generic/platform=iOS Simulator'` link demands
-    // a universal simulator slice.
-    let sim_fat_parent = out.join("sim");
-    std::fs::create_dir_all(&sim_fat_parent)?;
-    let sim_fat = sim_fat_parent.join(&cargo_dylib_name);
-    crate::ui::debug(format!("lipo {}", sim_fat.display()));
-    let status = Command::new("lipo")
-        .args(["-create"])
-        .arg(&sim_arm64_dylib)
-        .arg(&sim_x86_dylib)
-        .args(["-output"])
-        .arg(&sim_fat)
-        .status()
-        .context("spawn lipo")?;
-    if !status.success() {
-        xcf_step.fail(format!("lipo {status}"));
-        return Err(anyhow!("lipo failed ({status})"));
-    }
-    let sim_fw = build_framework_dir(
-        &sim_fat_parent,
-        &sim_fat,
-        &rust_headers_src,
-        &bridge_headers_src,
-    )?;
-    staged_fws.push(sim_fw);
-
-    for fw in &staged_fws {
-        xcframework_cmd.args(["-framework"]).arg(fw);
-    }
-    xcframework_cmd.args(["-output"]).arg(&xcf);
-
-    // `xcodebuild -create-xcframework` always prints `xcframework
-    // successfully written out to: <path>` on stdout, which doubles
-    // the visible confirmation that the step itself already gives.
-    // Discard it; failures still surface via the exit status + our
-    // anyhow message.
-    let status = xcframework_cmd
-        .stdout(std::process::Stdio::null())
-        .status()
-        .context("spawn xcodebuild -create-xcframework")?;
-    if !status.success() {
-        xcf_step.fail(format!("{status}"));
-        return Err(anyhow!("xcodebuild -create-xcframework failed ({status})"));
-    }
-    xcf_step.done("");
-    Ok(xcf)
-}
 
 /// `cargo rustc --release --crate-type dylib --target <triple>` for one
 /// iOS triple. Appends `-Wl,-exported_symbol,<sym>` for every entry in
@@ -514,11 +272,12 @@ pub struct XcodeRunScriptInputs<'a> {
 }
 
 /// Cross-compile + framework-wrap path for the Xcode Run Script
-/// Phase. Mirrors what `whisker build --target ios-sim` already
-/// drives (`build_xcframework_with`), minus the multi-platform
-/// xcframework wrap — Xcode only needs the slices for the current
-/// destination, dropped straight into
-/// `<built_products_dir>/Frameworks/<FRAMEWORK_NAME>.framework/`.
+/// Phase. Cargo-builds one dylib per requested arch, lipo-fuses sim
+/// slices when both archs are requested, wraps the result into a
+/// `WhiskerDriver.framework/` and drops it at
+/// `<built_products_dir>/Frameworks/<FRAMEWORK_NAME>.framework/`
+/// where xcodebuild's link step picks it up via
+/// `OTHER_LDFLAGS += -framework WhiskerDriver`.
 ///
 /// Returns the path to the produced `.framework` directory.
 pub fn build_framework_for_xcode_run_script(

@@ -44,8 +44,9 @@
 //!    [`whisker_build::modules::discover`].
 //! 3. Drive cargo cross-compile + per-platform autolinking aux
 //!    generation through the lib's existing
-//!    `android::cargo_build_dylib` / `ios::build_xcframework`
-//!    / `*::stage_module_*_sources` helpers.
+//!    `android::cargo_build_dylib` /
+//!    `ios::build_framework_for_xcode_run_script` /
+//!    `*::stage_module_*_sources` helpers.
 //! 4. Place the resulting binary in the location Xcode / Gradle
 //!    expects (`$BUILT_PRODUCTS_DIR/Frameworks/...` /
 //!    `jniLibs/<abi>/lib*.so`).

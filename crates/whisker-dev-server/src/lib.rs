@@ -607,11 +607,10 @@ fn target_triple_for(config: &Config) -> Option<String> {
             // Pick the simulator triple that matches the host arch
             // running `whisker run`. Both arm64 Macs (`aarch64-apple-
             // ios-sim`) and Intel Macs (`x86_64-apple-ios`) need a
-            // simulator slice, and the dev loop only builds one
-            // (`whisker-build`'s `build_xcframework` builds all
-            // three for release distribution, but the hot-patch
-            // path rebuilds just the thin obj for whichever triple
-            // the user is on).
+            // simulator slice. The Build Phase that xcodebuild fires
+            // (via `whisker-build ios`) cross-compiles whichever arch
+            // Xcode requests via `$ARCHS`; the hot-patch path rebuilds
+            // just the thin obj for whichever triple the user is on.
             let triple = match std::env::consts::ARCH {
                 "aarch64" => "aarch64-apple-ios-sim",
                 "x86_64" => "x86_64-apple-ios",
