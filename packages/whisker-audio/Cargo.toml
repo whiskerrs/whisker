@@ -16,7 +16,8 @@ include = [
     "Package.swift",
     "build.gradle.kts",
     "src/lib.rs",
-    "src/cng.rs",
+    "src/plugin.rs",
+    "src/runtime.rs",
     "bin/**/*.rs",
     "android/**/*.kt",
     "ios/**/*.swift",
@@ -32,17 +33,17 @@ crate-type = ["rlib"]
 # Android Gradle subproject + iOS SwiftPM package into the host build.
 [package.metadata.whisker]
 
-# CNG plugin registration — `whisker-cng::discovery` walks the
-# consuming app's dep tree, picks this entry up, builds the
-# `whisker-audio-plugin` binary below, and registers it as a
-# `SubprocessPlugin` with the engine. The user opts into actual
-# behaviour by calling `app.plugin::<WhiskerAudio>(|c| …)` in
-# their `whisker.rs`; with no opt-in the plugin runs with
-# `Config::default()` and contributes nothing.
+# Plugin registration — Whisker walks the consuming app's dep
+# tree, picks this entry up, builds the `whisker-audio-plugin`
+# binary below, and runs it during `whisker generate`. The user
+# opts into actual behaviour by calling
+# `app.plugin::<WhiskerAudio>(|c| …)` in their `whisker.rs`; with
+# no opt-in the plugin runs with `Config::default()` and
+# contributes nothing.
 [package.metadata.whisker.plugins.whisker-audio]
 bin = "whisker-audio-plugin"
 
-# Subprocess binary entry point the CNG engine spawns. Reads a
+# Subprocess binary entry point Whisker spawns. Reads a
 # `PluginRequest` JSON from stdin, mutates the IR via
 # `WhiskerAudio::apply`, writes a `PluginResponse` JSON to
 # stdout.
@@ -56,7 +57,7 @@ doc = false
 [dependencies]
 # `whisker` (the umbrella runtime crate) is gated behind the
 # `runtime` feature so the config probe — which only needs the
-# `cng` module — can pull this crate with
+# `plugin` module — can pull this crate with
 # `default-features = false` and avoid the multi-minute build of
 # the Lynx bridge + driver. The runtime feature is on by default
 # so user app crates that depend on `whisker-audio` for actual
@@ -64,7 +65,7 @@ doc = false
 # flag dance.
 whisker = { workspace = true, optional = true }
 
-# CNG plugin support — always on. Light deps (trait + IR types +
+# Plugin support — always on. Light deps (trait + IR types +
 # JSON envelope + subprocess runner) so the probe-build path stays
 # cheap when `runtime` is disabled.
 whisker-plugin = { workspace = true }

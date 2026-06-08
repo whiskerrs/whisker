@@ -60,20 +60,33 @@
 //! }
 //! ```
 //!
-//! ## What the IR covers — current scope (RFC #164 Phase 1)
+//! ## What the IR covers
 //!
-//! The IRs are intentionally minimal in this first cut. They expose
-//! the surfaces Phase 2's built-in plugins actually need —
-//! Info.plist key/value tree, AndroidManifest's
-//! permissions/intent-filter set, gradle plugin/dependency lists,
-//! and a free-form `extra_files` bag for everything else (resources,
-//! source files, etc.). Pbxproj structural edits are tracked as a
-//! deferred operation list; the engine replays them against the
-//! template renderer rather than the protocol carrying a full
-//! pbxproj object graph.
+//! [`IosProjectIr`] and [`AndroidProjectIr`] each carry two
+//! layers:
 //!
-//! Adding a new typed field to an IR is a non-breaking change if
-//! the field is `#[serde(default)]`: older plugin binaries simply
+//! 1. **Core fields** seeded from `AppConfig` by the engine before
+//!    any plugin runs — `app_name`, `version`, `bundle_id` /
+//!    `application_id`, `scheme`, `deployment_target`, `min_sdk`,
+//!    `target_sdk`. A plugin can read them to make decisions or
+//!    override them via `Operation::Override`.
+//! 2. **Plugin-additive fields** that plugins push into:
+//!    - `info_plist: BTreeMap<String, PlistValue>` (`String` /
+//!      `Boolean` / `Integer` / `Array<String>` rendered)
+//!    - `manifest.permissions: Vec<String>` (dedup'd at render)
+//!    - `manifest.application_meta_data: Vec<MetaDataEntry>`
+//!    - `gradle.apply_plugins: Vec<String>` /
+//!      `gradle.dependencies: Vec<String>` (raw Kotlin DSL lines
+//!      emitted into `app/build.gradle.kts`)
+//!    - `pbxproj_ops: Vec<PbxprojOp>` (`AddResource` / `AddSource` /
+//!      `SetBuildSetting` / `LinkSystemFramework` materialised
+//!      into the iOS xcodeproj)
+//!    - `extra_files: BTreeMap<PathBuf, FileEntry>` (arbitrary
+//!      files dropped into `gen/`, path-validated against `..`
+//!      traversal)
+//!
+//! Adding a new typed field is a non-breaking change when the
+//! field is `#[serde(default)]`: older plugin binaries simply
 //! don't touch it, the engine sees the default. Adding a *required*
 //! field is a wire-format break.
 //!
@@ -444,41 +457,12 @@ pub struct AndroidManifest {
     /// inside the `<application>` block.
     #[serde(default)]
     pub application_meta_data: Vec<MetaDataEntry>,
-
-    /// `<intent-filter>` entries added to the launcher activity.
-    /// Most plugins won't touch this — it exists for deep-link and
-    /// custom-scheme plugins.
-    #[serde(default)]
-    pub launcher_intent_filters: Vec<IntentFilter>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MetaDataEntry {
     pub name: String,
     pub value: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct IntentFilter {
-    #[serde(default)]
-    pub actions: Vec<String>,
-    #[serde(default)]
-    pub categories: Vec<String>,
-    /// `<data android:scheme="..." android:host="..." .../>` rows.
-    #[serde(default)]
-    pub data: Vec<IntentFilterData>,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
-pub struct IntentFilterData {
-    #[serde(default)]
-    pub scheme: Option<String>,
-    #[serde(default)]
-    pub host: Option<String>,
-    #[serde(default)]
-    pub path_prefix: Option<String>,
-    #[serde(default)]
-    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

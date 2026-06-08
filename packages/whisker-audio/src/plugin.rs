@@ -1,4 +1,4 @@
-//! Whisker CNG plugin for the audio module.
+//! Whisker plugin for the audio module.
 //!
 //! Mirrors the surface of `expo-audio`'s config plugin
 //! (<https://docs.expo.dev/versions/latest/sdk/audio/>) — apps that
@@ -9,7 +9,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! use whisker_audio::cng::WhiskerAudio;
+//! use whisker_audio::WhiskerAudio;
 //!
 //! app.plugin::<WhiskerAudio>(|c| c
 //!     .microphone_permission("Record audio clips for podcasts.")
@@ -84,9 +84,9 @@ impl PluginConfig for WhiskerAudioConfig {
     const NAME: &'static str = "whisker-audio";
 }
 
-/// The plugin the CNG engine drives in-process (1st-party) or
-/// spawns as a subprocess (3rd-party path via the
-/// `whisker-audio-plugin` binary).
+/// The plugin the Whisker engine drives — either in-process or as
+/// a subprocess via the bundled `whisker-audio-plugin` binary,
+/// depending on the engine's plugin pipeline.
 pub struct WhiskerAudio;
 
 impl Plugin for WhiskerAudio {
