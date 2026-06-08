@@ -43,7 +43,7 @@
 use anyhow::Result;
 use crossterm::{
     cursor,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    terminal::{Clear, ClearType},
     ExecutableCommand,
 };
 use ratatui::backend::CrosstermBackend;
@@ -177,11 +177,23 @@ pub struct Tui {
 }
 
 impl Tui {
-    /// Initialise the TUI: enter raw mode, hide the cursor, allocate
-    /// an inline viewport at the bottom of the terminal. Returns the
-    /// handle the rest of the cli uses to push state updates.
+    /// Initialise the TUI: hide the cursor, allocate an inline
+    /// viewport at the bottom of the terminal. Returns the handle the
+    /// rest of the cli uses to push state updates.
+    ///
+    /// **Cooked mode, not raw.** A previous iteration called
+    /// `enable_raw_mode()` here — that's what `ratatui` examples do
+    /// because they're handling keyboard input. We don't, and raw
+    /// mode breaks the rest of the dev loop: every `eprintln!` that
+    /// other crates use to write sections / steps / device logs
+    /// emits a bare `\n` (no `\r`), which under raw-mode tty
+    /// settings moves the cursor down one row but leaves it at the
+    /// same column the previous line ended at. The visible result
+    /// is a staircase of `⏵`/`✓` rows drifting rightward across the
+    /// screen. Skipping `enable_raw_mode` keeps `\n` → CRLF
+    /// translation on, so all of the legacy line-based output
+    /// scrolls cleanly at column 0 above the viewport.
     pub fn start(state: TuiState) -> Result<Self> {
-        enable_raw_mode()?;
         let mut stderr = std::io::stderr();
         stderr.execute(cursor::Hide)?;
         // 3-line viewport: 1 line for a separator, 2 lines of content.
@@ -267,19 +279,15 @@ impl Tui {
         Ok(())
     }
 
-    /// Drop the inline viewport, restore cooked mode + cursor. Safe
-    /// to call from a panic hook — `disable_raw_mode` and
-    /// `cursor::Show` are idempotent.
+    /// Drop the inline viewport + restore the cursor. We never
+    /// flipped to raw mode (see [`Tui::start`]), so there's nothing
+    /// to undo there — just clear the viewport region and re-show
+    /// the cursor so the user's shell prompt lands on a clean line.
     pub fn shutdown(mut self) -> Result<()> {
-        // Clear the viewport so the closing newline doesn't leave the
-        // bar painted in the user's scrollback. `MoveTo(0, last_row)`
-        // is what `clear_after_cursor` ends at, so the cursor returns
-        // to the natural position after the viewport.
         let _ = self.terminal.clear();
         let mut stderr = std::io::stderr();
         let _ = stderr.execute(cursor::Show);
         let _ = stderr.execute(Clear(ClearType::FromCursorDown));
-        let _ = disable_raw_mode();
         Ok(())
     }
 }
