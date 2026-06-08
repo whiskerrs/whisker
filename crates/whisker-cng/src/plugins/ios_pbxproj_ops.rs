@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<IosPbxprojOpsConfig>(|c| c
+//! app.plugin::<IosPbxprojOps>(|c| c
 //!     .add_resource("GoogleService-Info.plist")
 //!     .link_system_framework("AVFoundation.framework")
 //!     .set_build_setting("OTHER_LDFLAGS", "-ObjC"));
@@ -68,9 +68,9 @@ impl PluginConfig for IosPbxprojOpsConfig {
     const NAME: &'static str = "whisker-ios-pbxproj-ops";
 }
 
-pub struct IosPbxprojOpsPlugin;
+pub struct IosPbxprojOps;
 
-impl Plugin for IosPbxprojOpsPlugin {
+impl Plugin for IosPbxprojOps {
     type Config = IosPbxprojOpsConfig;
     fn apply(&self, ctx: &mut GenerateContext, cfg: &IosPbxprojOpsConfig) -> anyhow::Result<()> {
         let Some(ios) = ctx.ios.as_mut() else {
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_ios();
-        IosPbxprojOpsPlugin
+        IosPbxprojOps
             .apply(&mut ctx, &IosPbxprojOpsConfig::default())
             .unwrap();
         assert!(ctx.ios.unwrap().pbxproj_ops.is_empty());
@@ -120,7 +120,7 @@ mod tests {
             .link_system_framework("AVFoundation.framework")
             .set_build_setting("OTHER_LDFLAGS", "-ObjC");
         let mut ctx = ctx_with_ios();
-        IosPbxprojOpsPlugin.apply(&mut ctx, &cfg).unwrap();
+        IosPbxprojOps.apply(&mut ctx, &cfg).unwrap();
         let ops = ctx.ios.unwrap().pbxproj_ops;
         assert_eq!(ops.len(), 3);
         match &ops[0] {
@@ -149,7 +149,7 @@ mod tests {
         let mut cfg = IosPbxprojOpsConfig::default();
         cfg.add_resource("a").add_source("b.swift");
         let mut ctx = ctx_with_ios();
-        IosPbxprojOpsPlugin.apply(&mut ctx, &cfg).unwrap();
+        IosPbxprojOps.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(ctx.journal.records.len(), 1);
         let r = &ctx.journal.records[0];
         assert_eq!(r.plugin, "whisker-ios-pbxproj-ops");

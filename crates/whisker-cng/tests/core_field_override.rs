@@ -46,9 +46,9 @@ impl PluginConfig for FlavorSuffixConfig {
     const NAME: &'static str = "demo-flavor-suffix";
 }
 
-struct FlavorSuffixPlugin;
+struct FlavorSuffix;
 
-impl Plugin for FlavorSuffixPlugin {
+impl Plugin for FlavorSuffix {
     type Config = FlavorSuffixConfig;
     fn apply(&self, ctx: &mut GenerateContext, cfg: &FlavorSuffixConfig) -> Result<()> {
         if cfg.suffix.is_empty() {
@@ -154,7 +154,7 @@ fn ios_bundle_id_falls_back_to_top_level_when_ios_section_unset() {
 #[test]
 fn custom_plugin_can_override_ios_bundle_id_in_the_rendered_pbxproj() {
     let mut app = base_app();
-    app.plugin::<FlavorSuffixConfig>(|c| {
+    app.plugin::<FlavorSuffix>(|c| {
         c.set(".staging");
     });
 
@@ -166,13 +166,13 @@ fn custom_plugin_can_override_ios_bundle_id_in_the_rendered_pbxproj() {
     // `inputs_from` happy-path E2E test below uses an interface
     // that lets the flavor plugin in.
     let mut engine = Engine::with_builtins();
-    engine.register(FlavorSuffixPlugin);
+    engine.register(FlavorSuffix);
     let ctx = engine.compose(&app, EnabledTargets::ios_only()).unwrap();
 
     assert_eq!(
         ctx.ios.unwrap().bundle_id.as_deref(),
         Some("rs.whisker.examples.hello.staging"),
-        "FlavorSuffixPlugin should have appended `.staging`",
+        "FlavorSuffix should have appended `.staging`",
     );
     // Journal records the Override.
     assert!(ctx.journal.records.iter().any(|r| {
@@ -185,11 +185,11 @@ fn custom_plugin_can_override_ios_bundle_id_in_the_rendered_pbxproj() {
 #[test]
 fn custom_plugin_can_override_android_application_id() {
     let mut app = base_app();
-    app.plugin::<FlavorSuffixConfig>(|c| {
+    app.plugin::<FlavorSuffix>(|c| {
         c.set(".dev");
     });
     let mut engine = Engine::with_builtins();
-    engine.register(FlavorSuffixPlugin);
+    engine.register(FlavorSuffix);
     let ctx = engine
         .compose(&app, EnabledTargets::android_only())
         .unwrap();

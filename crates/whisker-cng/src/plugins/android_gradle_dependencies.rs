@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<GradleDependenciesConfig>(|c| c
+//! app.plugin::<GradleDependencies>(|c| c
 //!     .add("implementation(\"com.google.firebase:firebase-analytics:21.5.0\")")
 //!     .add("kapt(\"androidx.room:room-compiler:2.6.0\")"));
 //! ```
@@ -38,9 +38,9 @@ impl PluginConfig for GradleDependenciesConfig {
     const NAME: &'static str = "whisker-gradle-dependencies";
 }
 
-pub struct GradleDependenciesPlugin;
+pub struct GradleDependencies;
 
-impl Plugin for GradleDependenciesPlugin {
+impl Plugin for GradleDependencies {
     type Config = GradleDependenciesConfig;
     fn apply(
         &self,
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
-        GradleDependenciesPlugin
+        GradleDependencies
             .apply(&mut ctx, &GradleDependenciesConfig::default())
             .unwrap();
         assert!(ctx.android.unwrap().gradle.dependencies.is_empty());
@@ -93,7 +93,7 @@ mod tests {
         cfg.add("implementation(\"com.google.firebase:firebase-analytics:21.5.0\")")
             .add("kapt(\"androidx.room:room-compiler:2.6.0\")");
         let mut ctx = ctx_with_android();
-        GradleDependenciesPlugin.apply(&mut ctx, &cfg).unwrap();
+        GradleDependencies.apply(&mut ctx, &cfg).unwrap();
         let deps = ctx.android.unwrap().gradle.dependencies;
         assert_eq!(deps.len(), 2);
         assert!(deps[0].starts_with("implementation("));
@@ -106,7 +106,7 @@ mod tests {
         cfg.add("implementation(\"a:b:1\")")
             .add("implementation(\"c:d:1\")");
         let mut ctx = ctx_with_android();
-        GradleDependenciesPlugin.apply(&mut ctx, &cfg).unwrap();
+        GradleDependencies.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(ctx.journal.records.len(), 1);
         let r = &ctx.journal.records[0];
         assert_eq!(r.plugin, "whisker-gradle-dependencies");

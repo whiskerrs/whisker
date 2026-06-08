@@ -21,7 +21,7 @@
 //!     // blocks. The Config struct's `PluginConfig::NAME` keys the
 //!     // entry inside `plugins`, so this call replaces any prior
 //!     // configuration for the same plugin.
-//!     app.plugin::<FirebaseConfig>(|c| c
+//!     app.plugin::<Firebase>(|c| c
 //!         .google_service_path("ios/GoogleService-Info.plist"));
 //! }
 //! ```
@@ -35,7 +35,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use whisker_plugin::PluginConfig;
+use whisker_plugin::{Plugin, PluginConfig};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -90,16 +90,26 @@ impl AppConfig {
 
     /// Declare a Whisker CNG plugin and configure its options.
     ///
-    /// `T` is the plugin's Config struct, which carries the plugin's
-    /// stable name as `T::NAME`. The closure receives a fresh
-    /// `T::default()` and mutates it through whatever builder
-    /// methods the plugin author exposed. The resulting Config is
-    /// serialized as JSON and stored under `plugins[T::NAME]`.
+    /// `P` is the plugin type (the `Plugin` trait impl shipped by
+    /// the plugin author, e.g. `WhiskerAudio` from `whisker-audio`).
+    /// The closure receives a `&mut P::Config` — the typed config
+    /// struct paired with `P` — starting from `Config::default()`
+    /// so a no-config call site reads as `app.plugin::<P>(|_| {})`
+    /// and a configured one reads as `app.plugin::<P>(|c| c.field(...))`.
     ///
-    /// Calling `plugin::<T>` twice for the same `T` replaces the
-    /// prior entry — last call wins. Use this when a downstream
-    /// `configure` extension wants to override what an upstream
-    /// helper installed.
+    /// The resulting Config is serialized as JSON and stored under
+    /// `plugins[P::Config::NAME]`. Calling `plugin::<P>` twice for
+    /// the same `P` replaces the prior entry — last call wins.
+    ///
+    /// ## Why the generic is `P: Plugin`, not `P: PluginConfig`
+    ///
+    /// `P` is the user-facing name of the plugin (the noun a user
+    /// would say out loud: "I'm using WhiskerAudio"); `P::Config`
+    /// is an implementation detail you only touch through the
+    /// closure parameter. Spelling the plugin's identity as the
+    /// turbofish keeps `app.plugin::<WhiskerAudio>(|c| …)` reading
+    /// like "enable the WhiskerAudio plugin" instead of "register
+    /// this config struct".
     ///
     /// # Panics
     ///
@@ -111,16 +121,17 @@ impl AppConfig {
     /// `#[serde(tag = ...)]`). Plugin authors should fix their
     /// Config; we don't return `Result` because `whisker.rs` is
     /// meant to be ergonomic builder code, not error-handling code.
-    pub fn plugin<T: PluginConfig>(&mut self, f: impl FnOnce(&mut T)) -> &mut Self {
-        let mut cfg = T::default();
+    pub fn plugin<P>(&mut self, f: impl FnOnce(&mut P::Config)) -> &mut Self
+    where
+        P: Plugin,
+    {
+        let mut cfg = <P::Config as Default>::default();
         f(&mut cfg);
+        let name = <P::Config as PluginConfig>::NAME;
         let json = serde_json::to_value(&cfg).unwrap_or_else(|e| {
-            panic!(
-                "AppConfig::plugin: failed to serialize Config for plugin `{}`: {e}",
-                T::NAME,
-            )
+            panic!("AppConfig::plugin: failed to serialize Config for plugin `{name}`: {e}",)
         });
-        self.plugins.insert(T::NAME.to_string(), json);
+        self.plugins.insert(name.to_string(), json);
         self
     }
 }
@@ -204,6 +215,7 @@ impl AndroidConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use whisker_plugin::GenerateContext;
 
     #[derive(Default, Serialize, Deserialize)]
     struct PermissionsConfig {
@@ -226,6 +238,14 @@ mod tests {
         }
     }
 
+    struct Permissions;
+    impl Plugin for Permissions {
+        type Config = PermissionsConfig;
+        fn apply(&self, _: &mut GenerateContext, _: &PermissionsConfig) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
     #[derive(Default, Serialize, Deserialize)]
     struct FirebaseConfig {
         google_service_path: Option<String>,
@@ -242,10 +262,18 @@ mod tests {
         }
     }
 
+    struct Firebase;
+    impl Plugin for Firebase {
+        type Config = FirebaseConfig;
+        fn apply(&self, _: &mut GenerateContext, _: &FirebaseConfig) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn plugin_call_stores_serialized_config_keyed_by_name() {
         let mut app = AppConfig::default();
-        app.plugin::<FirebaseConfig>(|c| {
+        app.plugin::<Firebase>(|c| {
             c.google_service_path("ios/GoogleService-Info.plist");
         });
 
@@ -265,7 +293,7 @@ mod tests {
         let mut app = AppConfig::default();
         // closure leaves the config at default — entry should still
         // exist (the plugin was declared, just unconfigured).
-        app.plugin::<FirebaseConfig>(|_| {});
+        app.plugin::<Firebase>(|_| {});
         let v = app.plugins.get("whisker-firebase").unwrap();
         assert!(v.is_object());
         assert!(v.get("google_service_path").unwrap().is_null());
@@ -274,10 +302,10 @@ mod tests {
     #[test]
     fn plugin_call_replaces_prior_entry_for_same_type() {
         let mut app = AppConfig::default();
-        app.plugin::<FirebaseConfig>(|c| {
+        app.plugin::<Firebase>(|c| {
             c.google_service_path("old.plist");
         });
-        app.plugin::<FirebaseConfig>(|c| {
+        app.plugin::<Firebase>(|c| {
             c.google_service_path("new.plist");
         });
 
@@ -291,10 +319,10 @@ mod tests {
     #[test]
     fn multiple_distinct_plugins_coexist() {
         let mut app = AppConfig::default();
-        app.plugin::<FirebaseConfig>(|c| {
+        app.plugin::<Firebase>(|c| {
             c.google_service_path("ios/GoogleService-Info.plist");
         });
-        app.plugin::<PermissionsConfig>(|c| {
+        app.plugin::<Permissions>(|c| {
             c.camera_reason("Take photos for the app")
                 .add("android.permission.CAMERA");
         });
@@ -313,7 +341,7 @@ mod tests {
     fn appconfig_round_trips_through_json_with_plugins_field() {
         let mut app = AppConfig::default();
         app.name("Demo");
-        app.plugin::<FirebaseConfig>(|c| {
+        app.plugin::<Firebase>(|c| {
             c.google_service_path("ios/GoogleService-Info.plist");
         });
 

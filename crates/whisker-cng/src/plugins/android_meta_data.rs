@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<AndroidMetaDataConfig>(|c| c
+//! app.plugin::<AndroidMetaData>(|c| c
 //!     .add("com.google.firebase.messaging.default_notification_icon",
 //!          "@drawable/ic_notification")
 //!     .add("com.google.android.geo.API_KEY", "AIza..."));
@@ -41,9 +41,9 @@ impl PluginConfig for AndroidMetaDataConfig {
     const NAME: &'static str = "whisker-android-meta-data";
 }
 
-pub struct AndroidMetaDataPlugin;
+pub struct AndroidMetaData;
 
-impl Plugin for AndroidMetaDataPlugin {
+impl Plugin for AndroidMetaData {
     type Config = AndroidMetaDataConfig;
 
     fn apply(&self, ctx: &mut GenerateContext, cfg: &AndroidMetaDataConfig) -> anyhow::Result<()> {
@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
-        AndroidMetaDataPlugin
+        AndroidMetaData
             .apply(&mut ctx, &AndroidMetaDataConfig::default())
             .unwrap();
         assert!(ctx
@@ -104,7 +104,7 @@ mod tests {
         )
         .add("com.google.android.geo.API_KEY", "AIza...");
         let mut ctx = ctx_with_android();
-        AndroidMetaDataPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidMetaData.apply(&mut ctx, &cfg).unwrap();
         let entries = ctx.android.unwrap().manifest.application_meta_data;
         assert_eq!(entries.len(), 2);
         assert_eq!(
@@ -120,7 +120,7 @@ mod tests {
         let mut cfg = AndroidMetaDataConfig::default();
         cfg.add("a", "1").add("b", "2");
         let mut ctx = ctx_with_android();
-        AndroidMetaDataPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidMetaData.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(ctx.journal.records.len(), 1);
         let r = &ctx.journal.records[0];
         assert_eq!(r.plugin, "whisker-android-meta-data");

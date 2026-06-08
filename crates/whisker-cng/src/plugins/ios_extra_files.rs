@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<IosExtraFilesConfig>(|c| c
+//! app.plugin::<IosExtraFiles>(|c| c
 //!     .add("Sources/Helper.swift", SWIFT_SRC)
 //!     .add("Resources/Config.json", json_str)
 //!     .add_with_mode("Scripts/run.sh", SCRIPT, 0o755));
@@ -65,9 +65,9 @@ impl PluginConfig for IosExtraFilesConfig {
     const NAME: &'static str = "whisker-ios-extra-files";
 }
 
-pub struct IosExtraFilesPlugin;
+pub struct IosExtraFiles;
 
-impl Plugin for IosExtraFilesPlugin {
+impl Plugin for IosExtraFiles {
     type Config = IosExtraFilesConfig;
     fn apply(&self, ctx: &mut GenerateContext, cfg: &IosExtraFilesConfig) -> anyhow::Result<()> {
         let Some(ios) = ctx.ios.as_mut() else {
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_ios();
-        IosExtraFilesPlugin
+        IosExtraFiles
             .apply(&mut ctx, &IosExtraFilesConfig::default())
             .unwrap();
         assert!(ctx.ios.unwrap().extra_files.is_empty());
@@ -121,7 +121,7 @@ mod tests {
             0o755,
         );
         let mut ctx = ctx_with_ios();
-        IosExtraFilesPlugin.apply(&mut ctx, &cfg).unwrap();
+        IosExtraFiles.apply(&mut ctx, &cfg).unwrap();
         let files = ctx.ios.unwrap().extra_files;
         assert_eq!(files.len(), 2);
         let helper = &files[&PathBuf::from("Sources/Helper.swift")];
@@ -136,7 +136,7 @@ mod tests {
         let mut cfg = IosExtraFilesConfig::default();
         cfg.add("a.swift", "").add("b.swift", "").add("c.swift", "");
         let mut ctx = ctx_with_ios();
-        IosExtraFilesPlugin.apply(&mut ctx, &cfg).unwrap();
+        IosExtraFiles.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(ctx.journal.records.len(), 1);
         let r = &ctx.journal.records[0];
         assert_eq!(r.plugin, "whisker-ios-extra-files");
@@ -148,7 +148,7 @@ mod tests {
         let mut cfg = IosExtraFilesConfig::default();
         cfg.add("a.swift", "");
         let mut ctx = GenerateContext::default();
-        IosExtraFilesPlugin.apply(&mut ctx, &cfg).unwrap();
+        IosExtraFiles.apply(&mut ctx, &cfg).unwrap();
         assert!(ctx.journal.records.is_empty());
     }
 }

@@ -5,9 +5,9 @@
 //! crate's `Cargo.toml`, builds it via `cargo build --bin
 //! whisker-audio-plugin`, and spawns it with a `PluginRequest`
 //! JSON on stdin / `PluginResponse` JSON on stdout. The plugin
-//! logic lives in `whisker_audio::cng::WhiskerAudioPlugin`; this
+//! logic lives in `whisker_audio::cng::WhiskerAudio`; this
 //! file is just the wrapper.
 
 fn main() -> anyhow::Result<()> {
-    whisker_plugin::run_as_subprocess(whisker_audio::cng::WhiskerAudioPlugin)
+    whisker_plugin::run_as_subprocess(whisker_audio::cng::WhiskerAudio)
 }

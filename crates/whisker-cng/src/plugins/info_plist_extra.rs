@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<InfoPlistExtraConfig>(|c| c
+//! app.plugin::<InfoPlistExtra>(|c| c
 //!     .add("NSCameraUsageDescription", "Take photos for posts.")
 //!     .add("LSApplicationQueriesSchemes", "comgooglemaps"));
 //! ```
@@ -52,9 +52,9 @@ impl PluginConfig for InfoPlistExtraConfig {
     const NAME: &'static str = "whisker-info-plist-extra";
 }
 
-pub struct InfoPlistExtraPlugin;
+pub struct InfoPlistExtra;
 
-impl Plugin for InfoPlistExtraPlugin {
+impl Plugin for InfoPlistExtra {
     type Config = InfoPlistExtraConfig;
 
     fn apply(&self, ctx: &mut GenerateContext, cfg: &InfoPlistExtraConfig) -> anyhow::Result<()> {
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_ios();
-        InfoPlistExtraPlugin
+        InfoPlistExtra
             .apply(&mut ctx, &InfoPlistExtraConfig::default())
             .unwrap();
         assert!(ctx.ios.unwrap().info_plist.is_empty());
@@ -104,7 +104,7 @@ mod tests {
         cfg.add("NSCameraUsageDescription", "Take photos.")
             .add("LSApplicationQueriesSchemes", "comgooglemaps");
         let mut ctx = ctx_with_ios();
-        InfoPlistExtraPlugin.apply(&mut ctx, &cfg).unwrap();
+        InfoPlistExtra.apply(&mut ctx, &cfg).unwrap();
         let plist = ctx.ios.unwrap().info_plist;
         assert_eq!(
             plist["NSCameraUsageDescription"],
@@ -121,7 +121,7 @@ mod tests {
         let mut cfg = InfoPlistExtraConfig::default();
         cfg.add("Key1", "v1").add("Key2", "v2");
         let mut ctx = ctx_with_ios();
-        InfoPlistExtraPlugin.apply(&mut ctx, &cfg).unwrap();
+        InfoPlistExtra.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(ctx.journal.records.len(), 2);
         for r in &ctx.journal.records {
             assert_eq!(r.plugin, "whisker-info-plist-extra");
@@ -135,7 +135,7 @@ mod tests {
         let mut cfg = InfoPlistExtraConfig::default();
         cfg.add("k", "v");
         let mut ctx = GenerateContext::default(); // ios = None
-        InfoPlistExtraPlugin.apply(&mut ctx, &cfg).unwrap();
+        InfoPlistExtra.apply(&mut ctx, &cfg).unwrap();
         assert!(ctx.journal.records.is_empty());
     }
 }

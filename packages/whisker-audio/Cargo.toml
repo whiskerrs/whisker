@@ -44,7 +44,7 @@ bin = "whisker-audio-plugin"
 
 # Subprocess binary entry point the CNG engine spawns. Reads a
 # `PluginRequest` JSON from stdin, mutates the IR via
-# `WhiskerAudioPlugin::apply`, writes a `PluginResponse` JSON to
+# `WhiskerAudio::apply`, writes a `PluginResponse` JSON to
 # stdout.
 [[bin]]
 name = "whisker-audio-plugin"
@@ -54,11 +54,28 @@ bench = false
 doc = false
 
 [dependencies]
-whisker = { workspace = true }
+# `whisker` (the umbrella runtime crate) is gated behind the
+# `runtime` feature so the config probe — which only needs the
+# `cng` module — can pull this crate with
+# `default-features = false` and avoid the multi-minute build of
+# the Lynx bridge + driver. The runtime feature is on by default
+# so user app crates that depend on `whisker-audio` for actual
+# audio playback get the Player runtime without any feature
+# flag dance.
+whisker = { workspace = true, optional = true }
 
-# CNG plugin support — pulled in unconditionally because the
-# `[[bin]]` above always builds. Light deps (trait + IR types +
-# JSON envelope + subprocess runner).
+# CNG plugin support — always on. Light deps (trait + IR types +
+# JSON envelope + subprocess runner) so the probe-build path stays
+# cheap when `runtime` is disabled.
 whisker-plugin = { workspace = true }
 serde = { workspace = true }
 anyhow = { workspace = true }
+
+[features]
+default = ["runtime"]
+# Pull in the heavyweight `whisker` umbrella crate (and through it
+# the Lynx bridge, driver, render layer). Required by anyone that
+# wants to use the `Player` / `PlaybackStatus` API. Default-on so
+# normal app dependencies "just work". Off-on-probe so the config
+# probe build stays fast.
+runtime = ["dep:whisker"]

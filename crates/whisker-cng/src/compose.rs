@@ -104,14 +104,14 @@ impl Engine {
     /// pre-engine `whisker-cng`.
     pub fn with_builtins() -> Self {
         let mut e = Self::new();
-        e.register(crate::plugins::info_plist_extra::InfoPlistExtraPlugin)
-            .register(crate::plugins::android_permissions::AndroidPermissionsPlugin)
-            .register(crate::plugins::android_meta_data::AndroidMetaDataPlugin)
-            .register(crate::plugins::android_gradle_plugins::GradlePluginsPlugin)
-            .register(crate::plugins::android_gradle_dependencies::GradleDependenciesPlugin)
-            .register(crate::plugins::ios_extra_files::IosExtraFilesPlugin)
-            .register(crate::plugins::android_extra_files::AndroidExtraFilesPlugin)
-            .register(crate::plugins::ios_pbxproj_ops::IosPbxprojOpsPlugin);
+        e.register(crate::plugins::info_plist_extra::InfoPlistExtra)
+            .register(crate::plugins::android_permissions::AndroidPermissions)
+            .register(crate::plugins::android_meta_data::AndroidMetaData)
+            .register(crate::plugins::android_gradle_plugins::GradlePlugins)
+            .register(crate::plugins::android_gradle_dependencies::GradleDependencies)
+            .register(crate::plugins::ios_extra_files::IosExtraFiles)
+            .register(crate::plugins::android_extra_files::AndroidExtraFiles)
+            .register(crate::plugins::ios_pbxproj_ops::IosPbxprojOps);
         e
     }
 
@@ -619,8 +619,8 @@ mod tests {
     impl PluginConfig for BundleIdConfig {
         const NAME: &'static str = "set-bundle-id";
     }
-    struct BundleIdPlugin;
-    impl Plugin for BundleIdPlugin {
+    struct BundleId;
+    impl Plugin for BundleId {
         type Config = BundleIdConfig;
         fn apply(&self, ctx: &mut GenerateContext, cfg: &BundleIdConfig) -> Result<()> {
             let bundle_id = format!("{}{}", "rs.whisker.demo", cfg.suffix);
@@ -646,8 +646,8 @@ mod tests {
     impl PluginConfig for PermissionsConfig {
         const NAME: &'static str = "permissions";
     }
-    struct PermissionsPlugin;
-    impl Plugin for PermissionsPlugin {
+    struct Permissions;
+    impl Plugin for Permissions {
         type Config = PermissionsConfig;
         fn apply(&self, ctx: &mut GenerateContext, cfg: &PermissionsConfig) -> Result<()> {
             if let Some(a) = ctx.android.as_mut() {
@@ -669,14 +669,14 @@ mod tests {
         }
     }
 
-    /// Conflicts with BundleIdPlugin if both `Set` the same key.
+    /// Conflicts with BundleId if both `Set` the same key.
     #[derive(Default, Serialize, Deserialize)]
     struct AnotherBundleIdConfig {}
     impl PluginConfig for AnotherBundleIdConfig {
         const NAME: &'static str = "another-bundle-id";
     }
-    struct AnotherBundleIdPlugin;
-    impl Plugin for AnotherBundleIdPlugin {
+    struct AnotherBundleId;
+    impl Plugin for AnotherBundleId {
         type Config = AnotherBundleIdConfig;
         fn apply(&self, ctx: &mut GenerateContext, _cfg: &AnotherBundleIdConfig) -> Result<()> {
             if let Some(ios) = ctx.ios.as_mut() {
@@ -695,14 +695,14 @@ mod tests {
         }
     }
 
-    /// Like AnotherBundleIdPlugin but uses Override.
+    /// Like AnotherBundleId but uses Override.
     #[derive(Default, Serialize, Deserialize)]
     struct OverrideBundleIdConfig {}
     impl PluginConfig for OverrideBundleIdConfig {
         const NAME: &'static str = "override-bundle-id";
     }
-    struct OverrideBundleIdPlugin;
-    impl Plugin for OverrideBundleIdPlugin {
+    struct OverrideBundleId;
+    impl Plugin for OverrideBundleId {
         type Config = OverrideBundleIdConfig;
         fn after(&self) -> &'static [&'static str] {
             &["set-bundle-id"]
@@ -778,9 +778,9 @@ mod tests {
     #[test]
     fn plugin_runs_with_user_config_when_declared_in_app_config() {
         let mut engine = Engine::new();
-        engine.register(BundleIdPlugin);
+        engine.register(BundleId);
         let mut app = base_app_config();
-        app.plugin::<BundleIdConfig>(|c| {
+        app.plugin::<BundleId>(|c| {
             c.suffix = ".staging".into();
         });
         let ctx = engine.compose(&app, EnabledTargets::ios_only()).unwrap();
@@ -793,10 +793,10 @@ mod tests {
 
     #[test]
     fn plugin_falls_back_to_default_config_when_not_declared() {
-        // No app.plugin::<BundleIdConfig> call → engine still runs the
+        // No app.plugin::<BundleId> call → engine still runs the
         // registered plugin with BundleIdConfig::default().
         let mut engine = Engine::new();
-        engine.register(BundleIdPlugin);
+        engine.register(BundleId);
         let ctx = engine
             .compose(&base_app_config(), EnabledTargets::ios_only())
             .unwrap();
@@ -813,9 +813,7 @@ mod tests {
     #[test]
     fn after_constraint_orders_dependent_plugin_later() {
         let mut engine = Engine::new();
-        engine
-            .register(OverrideBundleIdPlugin)
-            .register(BundleIdPlugin);
+        engine.register(OverrideBundleId).register(BundleId);
         let ctx = engine
             .compose(&base_app_config(), EnabledTargets::ios_only())
             .unwrap();
@@ -824,7 +822,7 @@ mod tests {
             ios.info_plist.get("CFBundleIdentifier"),
             Some(&PlistValue::String("rs.overridden".into())),
         );
-        // BundleIdPlugin ran first → set-bundle-id (Set) came before
+        // BundleId ran first → set-bundle-id (Set) came before
         // override-bundle-id (Override). Sequence indices reflect that.
         let seqs: Vec<_> = ctx
             .journal
@@ -921,7 +919,7 @@ mod tests {
     #[test]
     fn duplicate_plugin_registration_is_rejected() {
         let mut engine = Engine::new();
-        engine.register(BundleIdPlugin).register(BundleIdPlugin);
+        engine.register(BundleId).register(BundleId);
         let err = engine
             .compose(&base_app_config(), EnabledTargets::both())
             .unwrap_err();
@@ -959,9 +957,7 @@ mod tests {
     #[test]
     fn two_set_writes_to_same_path_is_a_conflict() {
         let mut engine = Engine::new();
-        engine
-            .register(BundleIdPlugin)
-            .register(AnotherBundleIdPlugin);
+        engine.register(BundleId).register(AnotherBundleId);
         let err = engine
             .compose(&base_app_config(), EnabledTargets::ios_only())
             .unwrap_err();
@@ -974,9 +970,7 @@ mod tests {
     #[test]
     fn override_resolves_what_would_otherwise_be_a_conflict() {
         let mut engine = Engine::new();
-        engine
-            .register(BundleIdPlugin)
-            .register(OverrideBundleIdPlugin);
+        engine.register(BundleId).register(OverrideBundleId);
         // Override-after-Set is the documented use case for Override.
         engine
             .compose(&base_app_config(), EnabledTargets::ios_only())
@@ -1051,7 +1045,7 @@ mod tests {
             serde_json::json!({"suffix": 7}),
         );
         let mut engine = Engine::new();
-        engine.register(BundleIdPlugin);
+        engine.register(BundleId);
         let err = engine
             .compose(&app, EnabledTargets::ios_only())
             .unwrap_err();
@@ -1063,10 +1057,10 @@ mod tests {
     #[test]
     fn full_pipeline_with_permissions_and_bundle_id_succeeds() {
         let mut app = base_app_config();
-        app.plugin::<BundleIdConfig>(|c| {
+        app.plugin::<BundleId>(|c| {
             c.suffix = ".dev".into();
         });
-        app.plugin::<PermissionsConfig>(|c| {
+        app.plugin::<Permissions>(|c| {
             c.permissions.extend([
                 "android.permission.CAMERA".into(),
                 "android.permission.LOCATION".into(),
@@ -1074,7 +1068,7 @@ mod tests {
         });
 
         let mut engine = Engine::new();
-        engine.register(BundleIdPlugin).register(PermissionsPlugin);
+        engine.register(BundleId).register(Permissions);
         let ctx = engine.compose(&app, EnabledTargets::both()).unwrap();
 
         assert_eq!(

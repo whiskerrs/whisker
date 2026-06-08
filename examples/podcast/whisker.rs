@@ -36,21 +36,12 @@ pub fn configure(app: &mut whisker_app_config::AppConfig) {
     //   - record_audio_android → AndroidManifest <uses-permission RECORD_AUDIO>
     //   - enable_background_{recording,playback} → Info.plist.UIBackgroundModes
     //
-    // Using the raw `app.plugins` map here rather than the typed
-    // `app.plugin::<WhiskerAudioConfig>(|c| …)` builder because the
-    // config probe (`crates/whisker-cli/src/probe.rs`) is
-    // deliberately tiny and only depends on `whisker-app-config` +
-    // `serde_json`. Pulling `whisker-audio` into the probe would
-    // drag in the runtime + Lynx bridge, blowing up the
-    // "single-digit seconds first time" probe budget. Splitting a
-    // probe-friendly `whisker-audio-config` crate out is a future
-    // improvement that would re-enable the typed builder.
-    app.plugins.insert(
-        "whisker-audio".to_string(),
-        serde_json::json!({
-            "microphone_permission": "Record clips for podcast episodes.",
-            "record_audio_android": true,
-            "enable_background_playback": true,
-        }),
-    );
+    // The probe pulls `whisker-audio` with `default-features = false`
+    // so only the `cng` module is built (no Lynx bridge / runtime
+    // overhead) — see `crates/whisker-cli/src/probe.rs`.
+    app.plugin::<whisker_audio::cng::WhiskerAudio>(|c| {
+        c.microphone_permission("Record clips for podcast episodes.")
+            .record_audio_android(true)
+            .enable_background_playback(true);
+    });
 }

@@ -36,9 +36,9 @@
 //!     const NAME: &'static str = "example-plugin";
 //! }
 //!
-//! struct MyPlugin;
+//! struct Demo;
 //!
-//! impl Plugin for MyPlugin {
+//! impl Plugin for Demo {
 //!     type Config = MyConfig;
 //!     fn apply(&self, ctx: &mut GenerateContext, cfg: &MyConfig) -> anyhow::Result<()> {
 //!         if let Some(ios) = ctx.ios.as_mut() {
@@ -56,7 +56,7 @@
 //! }
 //!
 //! fn main() -> anyhow::Result<()> {
-//!     whisker_plugin::run_as_subprocess(MyPlugin)
+//!     whisker_plugin::run_as_subprocess(Demo)
 //! }
 //! ```
 //!
@@ -631,7 +631,7 @@ pub struct PluginResponse {
 ///
 /// ```ignore
 /// fn main() -> anyhow::Result<()> {
-///     whisker_plugin::run_as_subprocess(MyPlugin)
+///     whisker_plugin::run_as_subprocess(Demo)
 /// }
 /// ```
 ///
@@ -798,7 +798,7 @@ mod tests {
 
     // Tiny plugin to exercise the trait shape — verifies the
     // associated-type bound compiles and default methods kick in.
-    struct NullPlugin;
+    struct Null;
 
     #[derive(Default, Serialize, Deserialize)]
     struct NullConfig {
@@ -810,7 +810,7 @@ mod tests {
         const NAME: &'static str = "null";
     }
 
-    impl Plugin for NullPlugin {
+    impl Plugin for Null {
         type Config = NullConfig;
         fn apply(&self, _ctx: &mut GenerateContext, _config: &Self::Config) -> anyhow::Result<()> {
             Ok(())
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn plugin_trait_default_methods_work() {
-        let p = NullPlugin;
+        let p = Null;
         assert_eq!(p.name(), "null");
         assert!(p.after().is_empty());
         assert!(p.before().is_empty());
@@ -857,9 +857,9 @@ mod tests {
         const NAME: &'static str = "test-permission";
     }
 
-    struct PermissionPlugin;
+    struct Permission;
 
-    impl Plugin for PermissionPlugin {
+    impl Plugin for Permission {
         type Config = PermissionConfig;
         fn apply(&self, ctx: &mut GenerateContext, cfg: &PermissionConfig) -> anyhow::Result<()> {
             let android = ctx.android.as_mut().ok_or_else(|| {
@@ -888,7 +888,7 @@ mod tests {
         };
         let input = serde_json::to_string(&request).unwrap();
 
-        let output = run_with_pipes(PermissionPlugin, &input).unwrap();
+        let output = run_with_pipes(Permission, &input).unwrap();
         let response: PluginResponse = serde_json::from_str(&output).unwrap();
 
         let android = response.context.android.expect("android should be present");
@@ -915,7 +915,7 @@ mod tests {
             context: GenerateContext::default(),
         };
         let input = serde_json::to_string(&request).unwrap();
-        let err = run_with_pipes(PermissionPlugin, &input).unwrap_err();
+        let err = run_with_pipes(Permission, &input).unwrap_err();
         assert!(err.to_string().contains("name mismatch"), "{err}");
     }
 
@@ -929,7 +929,7 @@ mod tests {
             context: GenerateContext::default(),
         };
         let input = serde_json::to_string(&request).unwrap();
-        let err = run_with_pipes(PermissionPlugin, &input).unwrap_err();
+        let err = run_with_pipes(Permission, &input).unwrap_err();
         assert!(err.to_string().contains("requires android"), "{err}");
     }
 }

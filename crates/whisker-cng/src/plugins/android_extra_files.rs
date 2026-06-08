@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<AndroidExtraFilesConfig>(|c| c
+//! app.plugin::<AndroidExtraFiles>(|c| c
 //!     .add("app/google-services.json", json_str)
 //!     .add("app/proguard-rules-extra.pro", proguard_text));
 //! ```
@@ -55,9 +55,9 @@ impl PluginConfig for AndroidExtraFilesConfig {
     const NAME: &'static str = "whisker-android-extra-files";
 }
 
-pub struct AndroidExtraFilesPlugin;
+pub struct AndroidExtraFiles;
 
-impl Plugin for AndroidExtraFilesPlugin {
+impl Plugin for AndroidExtraFiles {
     type Config = AndroidExtraFilesConfig;
     fn apply(
         &self,
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
-        AndroidExtraFilesPlugin
+        AndroidExtraFiles
             .apply(&mut ctx, &AndroidExtraFilesConfig::default())
             .unwrap();
         assert!(ctx.android.unwrap().extra_files.is_empty());
@@ -111,7 +111,7 @@ mod tests {
         cfg.add("app/google-services.json", "{\"foo\": 1}")
             .add_with_mode("scripts/build.sh", "#!/bin/sh\n", 0o755);
         let mut ctx = ctx_with_android();
-        AndroidExtraFilesPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidExtraFiles.apply(&mut ctx, &cfg).unwrap();
         let files = ctx.android.unwrap().extra_files;
         assert_eq!(files.len(), 2);
         assert_eq!(

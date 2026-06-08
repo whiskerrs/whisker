@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<GradlePluginsConfig>(|c| c
+//! app.plugin::<GradlePlugins>(|c| c
 //!     .add("com.google.gms.google-services")
 //!     .add_raw("id(\"com.android.dynamic-feature\") version \"8.5.0\""));
 //! ```
@@ -46,9 +46,9 @@ impl PluginConfig for GradlePluginsConfig {
     const NAME: &'static str = "whisker-gradle-plugins";
 }
 
-pub struct GradlePluginsPlugin;
+pub struct GradlePlugins;
 
-impl Plugin for GradlePluginsPlugin {
+impl Plugin for GradlePlugins {
     type Config = GradlePluginsConfig;
     fn apply(&self, ctx: &mut GenerateContext, cfg: &GradlePluginsConfig) -> anyhow::Result<()> {
         let Some(android) = ctx.android.as_mut() else {
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
-        GradlePluginsPlugin
+        GradlePlugins
             .apply(&mut ctx, &GradlePluginsConfig::default())
             .unwrap();
         assert!(ctx.android.unwrap().gradle.apply_plugins.is_empty());
@@ -97,7 +97,7 @@ mod tests {
         cfg.add("com.google.gms.google-services")
             .add_raw("id(\"com.android.dynamic-feature\") version \"8.5.0\"");
         let mut ctx = ctx_with_android();
-        GradlePluginsPlugin.apply(&mut ctx, &cfg).unwrap();
+        GradlePlugins.apply(&mut ctx, &cfg).unwrap();
         let plugins = ctx.android.unwrap().gradle.apply_plugins;
         assert_eq!(plugins.len(), 2);
         assert_eq!(plugins[0], "com.google.gms.google-services");
@@ -112,7 +112,7 @@ mod tests {
         let mut cfg = GradlePluginsConfig::default();
         cfg.add("a").add("b").add("c");
         let mut ctx = ctx_with_android();
-        GradlePluginsPlugin.apply(&mut ctx, &cfg).unwrap();
+        GradlePlugins.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(ctx.journal.records.len(), 1);
         let r = &ctx.journal.records[0];
         assert_eq!(r.plugin, "whisker-gradle-plugins");

@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<AndroidPermissionsConfig>(|c| c
+//! app.plugin::<AndroidPermissions>(|c| c
 //!     .add("android.permission.CAMERA")
 //!     .add("android.permission.RECORD_AUDIO"));
 //! ```
@@ -37,9 +37,9 @@ impl PluginConfig for AndroidPermissionsConfig {
     const NAME: &'static str = "whisker-android-permissions";
 }
 
-pub struct AndroidPermissionsPlugin;
+pub struct AndroidPermissions;
 
-impl Plugin for AndroidPermissionsPlugin {
+impl Plugin for AndroidPermissions {
     type Config = AndroidPermissionsConfig;
 
     fn apply(
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
-        AndroidPermissionsPlugin
+        AndroidPermissions
             .apply(&mut ctx, &AndroidPermissionsConfig::default())
             .unwrap();
         assert!(ctx.android.unwrap().manifest.permissions.is_empty());
@@ -93,7 +93,7 @@ mod tests {
         cfg.add("android.permission.CAMERA")
             .add("android.permission.RECORD_AUDIO");
         let mut ctx = ctx_with_android();
-        AndroidPermissionsPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidPermissions.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(
             ctx.android.unwrap().manifest.permissions,
             vec![
@@ -108,7 +108,7 @@ mod tests {
         let mut cfg = AndroidPermissionsConfig::default();
         cfg.add("a").add("b").add("c");
         let mut ctx = ctx_with_android();
-        AndroidPermissionsPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidPermissions.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(ctx.journal.records.len(), 1);
         let r = &ctx.journal.records[0];
         assert_eq!(r.plugin, "whisker-android-permissions");
@@ -121,7 +121,7 @@ mod tests {
         let mut cfg = AndroidPermissionsConfig::default();
         cfg.add("android.permission.CAMERA");
         let mut ctx = GenerateContext::default();
-        AndroidPermissionsPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidPermissions.apply(&mut ctx, &cfg).unwrap();
         assert!(ctx.journal.records.is_empty());
     }
 }
