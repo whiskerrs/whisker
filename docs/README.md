@@ -15,6 +15,9 @@ Design docs and architectural notes. See the workspace
   new `whisker-*` module
 - [`module-author-guide.md`](module-author-guide.md) — mechanics of
   wiring Kotlin / Swift / Rust into one module crate
+- [`plugin-author-guide.md`](plugin-author-guide.md) — how to write
+  a Whisker plugin: typed Config, `apply` against the iOS/Android
+  IR, subprocess bin, `[package.metadata.whisker.plugins.*]` registration
 - [`comment-style.md`](comment-style.md) — rustdoc vs. internal
   comment standard. Cite in code review
 
