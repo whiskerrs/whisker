@@ -31,11 +31,11 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_app_config::AppConfig;
-use whisker_plugin::PlistValue;
+use whisker_plugin::{GenerateContext, PlistValue};
 
 use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
-use crate::render::render;
+use crate::render::{escape_xml, render};
 
 const PBXPROJ: &str = include_str!("templates/ios/Project.xcodeproj/project.pbxproj");
 const XCWORKSPACEDATA: &str =
@@ -168,21 +168,6 @@ fn render_extra_info_plist_kvs(entries: &BTreeMap<String, String>) -> String {
     // before `</dict>` isn't doubled up.
     if out.ends_with('\n') {
         out.pop();
-    }
-    out
-}
-
-fn escape_xml(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            c => out.push(c),
-        }
     }
     out
 }
@@ -360,9 +345,7 @@ pub fn inputs_from(
 /// template is hand-rolled XML and can't represent dicts / arrays
 /// safely. A future renderer that emits real plist XML can lift
 /// this restriction without changing the IR.
-fn extract_info_plist_string_kvs(
-    ctx: &whisker_plugin::GenerateContext,
-) -> BTreeMap<String, String> {
+fn extract_info_plist_string_kvs(ctx: &GenerateContext) -> BTreeMap<String, String> {
     let Some(ios) = ctx.ios.as_ref() else {
         return BTreeMap::new();
     };

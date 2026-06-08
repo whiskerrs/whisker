@@ -35,7 +35,7 @@ use whisker_plugin::MetaDataEntry;
 
 use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
-use crate::render::render;
+use crate::render::{escape_xml, render};
 
 // ---- Embedded templates ----------------------------------------------------
 //
@@ -220,21 +220,6 @@ fn render_extra_meta_data(entries: &[MetaDataEntry]) -> String {
     }
     if out.ends_with('\n') {
         out.pop();
-    }
-    out
-}
-
-fn escape_xml(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            c => out.push(c),
-        }
     }
     out
 }
