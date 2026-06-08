@@ -3,12 +3,33 @@
 //! Deliberately minimal — no conditionals, no escaping, no nested
 //! constructs. Templates are project scaffolding; if a value needs
 //! escaping (quote-heavy XML attributes, etc.) the renderer caller is
-//! responsible. Errors are returned for unknown placeholders so a
-//! typo'd `{{`-block fails loudly at sync time instead of writing a
-//! broken file the user has to debug.
+//! responsible — see [`escape_xml`]. Errors are returned for unknown
+//! placeholders so a typo'd `{{`-block fails loudly at sync time
+//! instead of writing a broken file the user has to debug.
 
 use anyhow::{bail, Result};
 use std::collections::HashMap;
+
+/// Escape the five XML special characters (`&`, `<`, `>`, `"`,
+/// `'`). Used by the per-platform `template_vars` builders when
+/// they emit plugin-supplied strings into hand-rolled XML
+/// (Info.plist, AndroidManifest.xml). Keys generally come from
+/// Rust string constants in plugin Configs and don't need
+/// escaping; values are user-supplied and do.
+pub(crate) fn escape_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
 
 /// Replace every `{{key}}` in `template` with `vars[key]`. Returns
 /// `Err` if a placeholder doesn't have a corresponding entry — that

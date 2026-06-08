@@ -6,12 +6,14 @@
          reverse` in non-emulator setups). Harmless in release builds
          since the dev-runtime is feature-gated out. -->
     <uses-permission android:name="android.permission.INTERNET" />
+{{extra_uses_permissions}}
 
     <application
         android:name=".{{android_application_class}}"
         android:label="{{app_name}}"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.AppCompat.NoActionBar">
+{{extra_application_meta_data}}
         <activity
             android:name=".MainActivity"
             android:exported="true">
