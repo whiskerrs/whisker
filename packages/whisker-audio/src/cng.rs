@@ -9,9 +9,9 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! use whisker_audio::cng::WhiskerAudioCfg;
+//! use whisker_audio::cng::WhiskerAudioConfig;
 //!
-//! app.plugin::<WhiskerAudioCfg>(|c| c
+//! app.plugin::<WhiskerAudioConfig>(|c| c
 //!     .microphone_permission("Record audio clips for podcasts.")
 //!     .record_audio_android(true)
 //!     .enable_background_playback(true));
@@ -21,10 +21,10 @@
 //!
 //! | Field                          | Effect |
 //! |--------------------------------|---|
-//! | [`microphone_permission`](WhiskerAudioCfg::microphone_permission) | Sets `Info.plist.NSMicrophoneUsageDescription` to the supplied string. Required on iOS before `AVAudioSession` can record. |
-//! | [`record_audio_android`](WhiskerAudioCfg::record_audio_android) | Appends `android.permission.RECORD_AUDIO` to the Android manifest. Required for runtime audio capture. |
-//! | [`enable_background_recording`](WhiskerAudioCfg::enable_background_recording) | Adds `"audio"` to `Info.plist.UIBackgroundModes` so capture survives backgrounding. Bundled with the playback variant — both flags share the same plist entry. |
-//! | [`enable_background_playback`](WhiskerAudioCfg::enable_background_playback) | Same `UIBackgroundModes` entry as above, but expresses playback intent for App Store review. |
+//! | [`microphone_permission`](WhiskerAudioConfig::microphone_permission) | Sets `Info.plist.NSMicrophoneUsageDescription` to the supplied string. Required on iOS before `AVAudioSession` can record. |
+//! | [`record_audio_android`](WhiskerAudioConfig::record_audio_android) | Appends `android.permission.RECORD_AUDIO` to the Android manifest. Required for runtime audio capture. |
+//! | [`enable_background_recording`](WhiskerAudioConfig::enable_background_recording) | Adds `"audio"` to `Info.plist.UIBackgroundModes` so capture survives backgrounding. Bundled with the playback variant — both flags share the same plist entry. |
+//! | [`enable_background_playback`](WhiskerAudioConfig::enable_background_playback) | Same `UIBackgroundModes` entry as above, but expresses playback intent for App Store review. |
 //!
 //! When neither background flag is set, `UIBackgroundModes` stays
 //! untouched. When at least one is set, the renderer emits the
@@ -34,9 +34,9 @@ use serde::{Deserialize, Serialize};
 use whisker_plugin::{GenerateContext, Operation, PlistValue, Plugin, PluginConfig, Target};
 
 /// Typed config the user spells in `whisker.rs` via
-/// `app.plugin::<WhiskerAudioCfg>(|c| …)`.
+/// `app.plugin::<WhiskerAudioConfig>(|c| …)`.
 #[derive(Default, Serialize, Deserialize)]
-pub struct WhiskerAudioCfg {
+pub struct WhiskerAudioConfig {
     /// `NSMicrophoneUsageDescription` text. `None` → don't add
     /// the key; iOS will deny `AVAudioSession` recording attempts
     /// at runtime if the user app actually tries to record.
@@ -57,7 +57,7 @@ pub struct WhiskerAudioCfg {
     pub enable_background_playback: bool,
 }
 
-impl WhiskerAudioCfg {
+impl WhiskerAudioConfig {
     /// Fluent setter for [`Self::microphone_permission`].
     pub fn microphone_permission(&mut self, description: impl Into<String>) -> &mut Self {
         self.microphone_permission = Some(description.into());
@@ -80,7 +80,7 @@ impl WhiskerAudioCfg {
     }
 }
 
-impl PluginConfig for WhiskerAudioCfg {
+impl PluginConfig for WhiskerAudioConfig {
     const NAME: &'static str = "whisker-audio";
 }
 
@@ -90,8 +90,8 @@ impl PluginConfig for WhiskerAudioCfg {
 pub struct WhiskerAudioPlugin;
 
 impl Plugin for WhiskerAudioPlugin {
-    type Config = WhiskerAudioCfg;
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &WhiskerAudioCfg) -> anyhow::Result<()> {
+    type Config = WhiskerAudioConfig;
+    fn apply(&self, ctx: &mut GenerateContext, cfg: &WhiskerAudioConfig) -> anyhow::Result<()> {
         // ----- iOS Info.plist contributions ------------------------------
         if let Some(ios) = ctx.ios.as_mut() {
             if let Some(desc) = cfg.microphone_permission.as_ref() {
@@ -100,7 +100,7 @@ impl Plugin for WhiskerAudioPlugin {
                     PlistValue::String(desc.clone()),
                 );
                 ctx.journal.record(
-                    WhiskerAudioCfg::NAME,
+                    WhiskerAudioConfig::NAME,
                     Target::Ios,
                     "info_plist.NSMicrophoneUsageDescription",
                     Operation::Set,
@@ -117,7 +117,7 @@ impl Plugin for WhiskerAudioPlugin {
                     PlistValue::Array(vec![PlistValue::String("audio".into())]),
                 );
                 ctx.journal.record(
-                    WhiskerAudioCfg::NAME,
+                    WhiskerAudioConfig::NAME,
                     Target::Ios,
                     "info_plist.UIBackgroundModes",
                     Operation::Set,
@@ -133,7 +133,7 @@ impl Plugin for WhiskerAudioPlugin {
                     .permissions
                     .push("android.permission.RECORD_AUDIO".into());
                 ctx.journal.record(
-                    WhiskerAudioCfg::NAME,
+                    WhiskerAudioConfig::NAME,
                     Target::Android,
                     "manifest.permissions",
                     Operation::ArrayPush { count: 1 },
@@ -162,7 +162,7 @@ mod tests {
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_both();
         WhiskerAudioPlugin
-            .apply(&mut ctx, &WhiskerAudioCfg::default())
+            .apply(&mut ctx, &WhiskerAudioConfig::default())
             .unwrap();
         assert!(ctx.ios.unwrap().info_plist.is_empty());
         assert!(ctx.android.unwrap().manifest.permissions.is_empty());
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn microphone_permission_writes_info_plist_entry() {
-        let mut cfg = WhiskerAudioCfg::default();
+        let mut cfg = WhiskerAudioConfig::default();
         cfg.microphone_permission("Record audio clips.");
         let mut ctx = ctx_both();
         WhiskerAudioPlugin.apply(&mut ctx, &cfg).unwrap();
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn record_audio_android_appends_permission() {
-        let mut cfg = WhiskerAudioCfg::default();
+        let mut cfg = WhiskerAudioConfig::default();
         cfg.record_audio_android(true);
         let mut ctx = ctx_both();
         WhiskerAudioPlugin.apply(&mut ctx, &cfg).unwrap();
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn record_audio_android_default_false_appends_nothing() {
-        let cfg = WhiskerAudioCfg::default(); // record_audio_android = false
+        let cfg = WhiskerAudioConfig::default(); // record_audio_android = false
         let mut ctx = ctx_both();
         WhiskerAudioPlugin.apply(&mut ctx, &cfg).unwrap();
         assert!(ctx.android.unwrap().manifest.permissions.is_empty());
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn enable_background_recording_sets_audio_in_ui_background_modes() {
-        let mut cfg = WhiskerAudioCfg::default();
+        let mut cfg = WhiskerAudioConfig::default();
         cfg.enable_background_recording(true);
         let mut ctx = ctx_both();
         WhiskerAudioPlugin.apply(&mut ctx, &cfg).unwrap();
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn enable_background_playback_sets_audio_in_ui_background_modes() {
-        let mut cfg = WhiskerAudioCfg::default();
+        let mut cfg = WhiskerAudioConfig::default();
         cfg.enable_background_playback(true);
         let mut ctx = ctx_both();
         WhiskerAudioPlugin.apply(&mut ctx, &cfg).unwrap();
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn both_background_flags_set_audio_exactly_once() {
-        let mut cfg = WhiskerAudioCfg::default();
+        let mut cfg = WhiskerAudioConfig::default();
         cfg.enable_background_recording(true)
             .enable_background_playback(true);
         let mut ctx = ctx_both();
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn full_config_writes_all_three_kinds_of_entries() {
-        let mut cfg = WhiskerAudioCfg::default();
+        let mut cfg = WhiskerAudioConfig::default();
         cfg.microphone_permission("Record podcasts.")
             .record_audio_android(true)
             .enable_background_recording(true)
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn no_ios_target_skips_ios_entries() {
         // Single-target compose run for Android only.
-        let mut cfg = WhiskerAudioCfg::default();
+        let mut cfg = WhiskerAudioConfig::default();
         cfg.microphone_permission("…").record_audio_android(true);
         let mut ctx = GenerateContext {
             android: Some(AndroidProjectIr::default()),

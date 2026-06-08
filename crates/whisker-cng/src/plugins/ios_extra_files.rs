@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<IosExtraFilesCfg>(|c| c
+//! app.plugin::<IosExtraFilesConfig>(|c| c
 //!     .add("Sources/Helper.swift", SWIFT_SRC)
 //!     .add("Resources/Config.json", json_str)
 //!     .add_with_mode("Scripts/run.sh", SCRIPT, 0o755));
@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use whisker_plugin::{FileEntry, GenerateContext, Operation, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct IosExtraFilesCfg {
+pub struct IosExtraFilesConfig {
     /// Path → file. Path is relative to `gen/ios/`. `BTreeMap` for
     /// deterministic iteration order — the fingerprint hashes the
     /// IR and `HashMap` random ordering would break the skip path.
@@ -30,7 +30,7 @@ pub struct IosExtraFilesCfg {
     pub files: BTreeMap<PathBuf, FileEntry>,
 }
 
-impl IosExtraFilesCfg {
+impl IosExtraFilesConfig {
     /// Add (or replace) one file with default `0o644` permissions.
     pub fn add(&mut self, path: impl Into<PathBuf>, contents: impl Into<String>) -> &mut Self {
         self.files.insert(
@@ -61,15 +61,15 @@ impl IosExtraFilesCfg {
     }
 }
 
-impl PluginConfig for IosExtraFilesCfg {
+impl PluginConfig for IosExtraFilesConfig {
     const NAME: &'static str = "whisker-ios-extra-files";
 }
 
 pub struct IosExtraFilesPlugin;
 
 impl Plugin for IosExtraFilesPlugin {
-    type Config = IosExtraFilesCfg;
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &IosExtraFilesCfg) -> anyhow::Result<()> {
+    type Config = IosExtraFilesConfig;
+    fn apply(&self, ctx: &mut GenerateContext, cfg: &IosExtraFilesConfig) -> anyhow::Result<()> {
         let Some(ios) = ctx.ios.as_mut() else {
             return Ok(());
         };
@@ -81,7 +81,7 @@ impl Plugin for IosExtraFilesPlugin {
             ios.extra_files.insert(path.clone(), entry.clone());
         }
         ctx.journal.record(
-            IosExtraFilesCfg::NAME,
+            IosExtraFilesConfig::NAME,
             Target::Ios,
             "extra_files",
             Operation::ArrayPush { count },
@@ -106,7 +106,7 @@ mod tests {
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_ios();
         IosExtraFilesPlugin
-            .apply(&mut ctx, &IosExtraFilesCfg::default())
+            .apply(&mut ctx, &IosExtraFilesConfig::default())
             .unwrap();
         assert!(ctx.ios.unwrap().extra_files.is_empty());
         assert!(ctx.journal.records.is_empty());
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn populated_config_writes_each_file_to_ir() {
-        let mut cfg = IosExtraFilesCfg::default();
+        let mut cfg = IosExtraFilesConfig::default();
         cfg.add("Sources/Helper.swift", "// helper").add_with_mode(
             "Scripts/run.sh",
             "#!/bin/sh\necho ok\n",
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn one_array_push_event_per_invocation() {
-        let mut cfg = IosExtraFilesCfg::default();
+        let mut cfg = IosExtraFilesConfig::default();
         cfg.add("a.swift", "").add("b.swift", "").add("c.swift", "");
         let mut ctx = ctx_with_ios();
         IosExtraFilesPlugin.apply(&mut ctx, &cfg).unwrap();
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn no_ios_target_means_no_op() {
-        let mut cfg = IosExtraFilesCfg::default();
+        let mut cfg = IosExtraFilesConfig::default();
         cfg.add("a.swift", "");
         let mut ctx = GenerateContext::default();
         IosExtraFilesPlugin.apply(&mut ctx, &cfg).unwrap();

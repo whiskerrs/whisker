@@ -36,9 +36,9 @@ crate-type = ["rlib"]
 # consuming app's dep tree, picks this entry up, builds the
 # `whisker-audio-plugin` binary below, and registers it as a
 # `SubprocessPlugin` with the engine. The user opts into actual
-# behaviour by calling `app.plugin::<WhiskerAudioCfg>(|c| …)` in
+# behaviour by calling `app.plugin::<WhiskerAudioConfig>(|c| …)` in
 # their `whisker.rs`; with no opt-in the plugin runs with
-# `Cfg::default()` and contributes nothing.
+# `Config::default()` and contributes nothing.
 [package.metadata.whisker.plugins.whisker-audio]
 bin = "whisker-audio-plugin"
 

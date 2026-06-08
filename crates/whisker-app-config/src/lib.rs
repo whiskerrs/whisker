@@ -21,7 +21,7 @@
 //!     // blocks. The Config struct's `PluginConfig::NAME` keys the
 //!     // entry inside `plugins`, so this call replaces any prior
 //!     // configuration for the same plugin.
-//!     app.plugin::<FirebaseCfg>(|c| c
+//!     app.plugin::<FirebaseConfig>(|c| c
 //!         .google_service_path("ios/GoogleService-Info.plist"));
 //! }
 //! ```
@@ -206,16 +206,16 @@ mod tests {
     use super::*;
 
     #[derive(Default, Serialize, Deserialize)]
-    struct PermissionsCfg {
+    struct PermissionsConfig {
         camera_reason: Option<String>,
         permissions: Vec<String>,
     }
 
-    impl PluginConfig for PermissionsCfg {
+    impl PluginConfig for PermissionsConfig {
         const NAME: &'static str = "whisker-permissions";
     }
 
-    impl PermissionsCfg {
+    impl PermissionsConfig {
         fn camera_reason(&mut self, r: impl Into<String>) -> &mut Self {
             self.camera_reason = Some(r.into());
             self
@@ -227,15 +227,15 @@ mod tests {
     }
 
     #[derive(Default, Serialize, Deserialize)]
-    struct FirebaseCfg {
+    struct FirebaseConfig {
         google_service_path: Option<String>,
     }
 
-    impl PluginConfig for FirebaseCfg {
+    impl PluginConfig for FirebaseConfig {
         const NAME: &'static str = "whisker-firebase";
     }
 
-    impl FirebaseCfg {
+    impl FirebaseConfig {
         fn google_service_path(&mut self, p: impl Into<String>) -> &mut Self {
             self.google_service_path = Some(p.into());
             self
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn plugin_call_stores_serialized_config_keyed_by_name() {
         let mut app = AppConfig::default();
-        app.plugin::<FirebaseCfg>(|c| {
+        app.plugin::<FirebaseConfig>(|c| {
             c.google_service_path("ios/GoogleService-Info.plist");
         });
 
@@ -265,7 +265,7 @@ mod tests {
         let mut app = AppConfig::default();
         // closure leaves the config at default — entry should still
         // exist (the plugin was declared, just unconfigured).
-        app.plugin::<FirebaseCfg>(|_| {});
+        app.plugin::<FirebaseConfig>(|_| {});
         let v = app.plugins.get("whisker-firebase").unwrap();
         assert!(v.is_object());
         assert!(v.get("google_service_path").unwrap().is_null());
@@ -274,10 +274,10 @@ mod tests {
     #[test]
     fn plugin_call_replaces_prior_entry_for_same_type() {
         let mut app = AppConfig::default();
-        app.plugin::<FirebaseCfg>(|c| {
+        app.plugin::<FirebaseConfig>(|c| {
             c.google_service_path("old.plist");
         });
-        app.plugin::<FirebaseCfg>(|c| {
+        app.plugin::<FirebaseConfig>(|c| {
             c.google_service_path("new.plist");
         });
 
@@ -291,10 +291,10 @@ mod tests {
     #[test]
     fn multiple_distinct_plugins_coexist() {
         let mut app = AppConfig::default();
-        app.plugin::<FirebaseCfg>(|c| {
+        app.plugin::<FirebaseConfig>(|c| {
             c.google_service_path("ios/GoogleService-Info.plist");
         });
-        app.plugin::<PermissionsCfg>(|c| {
+        app.plugin::<PermissionsConfig>(|c| {
             c.camera_reason("Take photos for the app")
                 .add("android.permission.CAMERA");
         });
@@ -313,7 +313,7 @@ mod tests {
     fn appconfig_round_trips_through_json_with_plugins_field() {
         let mut app = AppConfig::default();
         app.name("Demo");
-        app.plugin::<FirebaseCfg>(|c| {
+        app.plugin::<FirebaseConfig>(|c| {
             c.google_service_path("ios/GoogleService-Info.plist");
         });
 

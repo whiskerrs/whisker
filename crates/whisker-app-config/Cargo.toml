@@ -16,8 +16,8 @@ description = "AppConfig types used in whisker.rs to declare app metadata."
 # what makes the probe build cheap (single-digit seconds first time,
 # cached afterwards).
 serde = { workspace = true }
-# `app.plugin::<Cfg>(|c| ...)` serializes the typed Config into a
-# `serde_json::Value` stored under `plugins[Cfg::NAME]`. The probe
+# `app.plugin::<Config>(|c| ...)` serializes the typed Config into a
+# `serde_json::Value` stored under `plugins[Config::NAME]`. The probe
 # already pulls serde_json transitively, so adding it here just
 # makes the dep explicit.
 serde_json = { workspace = true }

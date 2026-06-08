@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<GradleDependenciesCfg>(|c| c
+//! app.plugin::<GradleDependenciesConfig>(|c| c
 //!     .add("implementation(\"com.google.firebase:firebase-analytics:21.5.0\")")
 //!     .add("kapt(\"androidx.room:room-compiler:2.6.0\")"));
 //! ```
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use whisker_plugin::{GenerateContext, Operation, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct GradleDependenciesCfg {
+pub struct GradleDependenciesConfig {
     /// Raw `<configuration>("coordinate")` lines, e.g.
     /// `"implementation(\"com.google.firebase:firebase-analytics:21.5.0\")"`.
     /// Renderer emits each verbatim inside `dependencies { }`.
@@ -27,22 +27,26 @@ pub struct GradleDependenciesCfg {
     pub entries: Vec<String>,
 }
 
-impl GradleDependenciesCfg {
+impl GradleDependenciesConfig {
     pub fn add(&mut self, line: impl Into<String>) -> &mut Self {
         self.entries.push(line.into());
         self
     }
 }
 
-impl PluginConfig for GradleDependenciesCfg {
+impl PluginConfig for GradleDependenciesConfig {
     const NAME: &'static str = "whisker-gradle-dependencies";
 }
 
 pub struct GradleDependenciesPlugin;
 
 impl Plugin for GradleDependenciesPlugin {
-    type Config = GradleDependenciesCfg;
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &GradleDependenciesCfg) -> anyhow::Result<()> {
+    type Config = GradleDependenciesConfig;
+    fn apply(
+        &self,
+        ctx: &mut GenerateContext,
+        cfg: &GradleDependenciesConfig,
+    ) -> anyhow::Result<()> {
         let Some(android) = ctx.android.as_mut() else {
             return Ok(());
         };
@@ -52,7 +56,7 @@ impl Plugin for GradleDependenciesPlugin {
         let count = cfg.entries.len();
         android.gradle.dependencies.extend(cfg.entries.clone());
         ctx.journal.record(
-            GradleDependenciesCfg::NAME,
+            GradleDependenciesConfig::NAME,
             Target::Android,
             "gradle.dependencies",
             Operation::ArrayPush { count },
@@ -77,7 +81,7 @@ mod tests {
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
         GradleDependenciesPlugin
-            .apply(&mut ctx, &GradleDependenciesCfg::default())
+            .apply(&mut ctx, &GradleDependenciesConfig::default())
             .unwrap();
         assert!(ctx.android.unwrap().gradle.dependencies.is_empty());
         assert!(ctx.journal.records.is_empty());
@@ -85,7 +89,7 @@ mod tests {
 
     #[test]
     fn populated_config_appends_each_entry_preserving_order() {
-        let mut cfg = GradleDependenciesCfg::default();
+        let mut cfg = GradleDependenciesConfig::default();
         cfg.add("implementation(\"com.google.firebase:firebase-analytics:21.5.0\")")
             .add("kapt(\"androidx.room:room-compiler:2.6.0\")");
         let mut ctx = ctx_with_android();
@@ -98,7 +102,7 @@ mod tests {
 
     #[test]
     fn one_array_push_event_per_invocation() {
-        let mut cfg = GradleDependenciesCfg::default();
+        let mut cfg = GradleDependenciesConfig::default();
         cfg.add("implementation(\"a:b:1\")")
             .add("implementation(\"c:d:1\")");
         let mut ctx = ctx_with_android();

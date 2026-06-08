@@ -21,7 +21,7 @@ fn subprocess_plugin_pushes_permission_through_a_real_spawn() {
     let mut engine = Engine::new();
     engine.register_subprocess(plugin);
 
-    // User-side config: simulate what `app.plugin::<EchoCfg>(|c| ...)`
+    // User-side config: simulate what `app.plugin::<EchoConfig>(|c| ...)`
     // would have stored into AppConfig.plugins.
     let mut app = AppConfig::default();
     app.name("Demo");
@@ -48,7 +48,7 @@ fn subprocess_plugin_pushes_permission_through_a_real_spawn() {
 #[test]
 fn subprocess_plugin_runs_with_default_config_when_user_omitted_declaration() {
     // No app.plugins entry → engine sends a Null config; the
-    // fixture's EchoCfg::default() has an empty permission, so
+    // fixture's EchoConfig::default() has an empty permission, so
     // nothing should be added to the Android manifest.
     let plugin = SubprocessPlugin::new("fixture-echo-plugin", fixture_binary_path());
     let mut engine = Engine::new();

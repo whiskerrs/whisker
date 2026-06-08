@@ -99,7 +99,7 @@ impl Engine {
     /// Like [`Engine::new`] but pre-registers every built-in
     /// plugin shipped under [`crate::plugins`]. The standard entry
     /// point for `inputs_from` / `whisker generate` — built-ins
-    /// are opt-in (their `Cfg::default()` is empty), so apps that
+    /// are opt-in (their `Config::default()` is empty), so apps that
     /// never call `app.plugin::<…>(|c| …)` see the same output as
     /// pre-engine `whisker-cng`.
     pub fn with_builtins() -> Self {
@@ -297,7 +297,7 @@ fn check_no_unregistered_plugin_configs(
         unknown.sort();
         bail!(
             "AppConfig declares plugin(s) not registered with the engine: {}. \
-             Either install the plugin crate or remove the `app.plugin::<{{Cfg}}>(…)` call.",
+             Either install the plugin crate or remove the `app.plugin::<{{Config}}>(…)` call.",
             unknown
                 .iter()
                 .map(|s| format!("`{s}`"))
@@ -612,17 +612,17 @@ mod tests {
     // ----- Test plugins ----------------------------------------------------
 
     #[derive(Default, Serialize, Deserialize)]
-    struct BundleIdCfg {
+    struct BundleIdConfig {
         #[serde(default)]
         suffix: String,
     }
-    impl PluginConfig for BundleIdCfg {
+    impl PluginConfig for BundleIdConfig {
         const NAME: &'static str = "set-bundle-id";
     }
     struct BundleIdPlugin;
     impl Plugin for BundleIdPlugin {
-        type Config = BundleIdCfg;
-        fn apply(&self, ctx: &mut GenerateContext, cfg: &BundleIdCfg) -> Result<()> {
+        type Config = BundleIdConfig;
+        fn apply(&self, ctx: &mut GenerateContext, cfg: &BundleIdConfig) -> Result<()> {
             let bundle_id = format!("{}{}", "rs.whisker.demo", cfg.suffix);
             if let Some(ios) = ctx.ios.as_mut() {
                 ios.info_plist
@@ -639,17 +639,17 @@ mod tests {
     }
 
     #[derive(Default, Serialize, Deserialize)]
-    struct PermissionsCfg {
+    struct PermissionsConfig {
         #[serde(default)]
         permissions: Vec<String>,
     }
-    impl PluginConfig for PermissionsCfg {
+    impl PluginConfig for PermissionsConfig {
         const NAME: &'static str = "permissions";
     }
     struct PermissionsPlugin;
     impl Plugin for PermissionsPlugin {
-        type Config = PermissionsCfg;
-        fn apply(&self, ctx: &mut GenerateContext, cfg: &PermissionsCfg) -> Result<()> {
+        type Config = PermissionsConfig;
+        fn apply(&self, ctx: &mut GenerateContext, cfg: &PermissionsConfig) -> Result<()> {
             if let Some(a) = ctx.android.as_mut() {
                 for p in &cfg.permissions {
                     a.manifest.permissions.push(p.clone());
@@ -671,14 +671,14 @@ mod tests {
 
     /// Conflicts with BundleIdPlugin if both `Set` the same key.
     #[derive(Default, Serialize, Deserialize)]
-    struct AnotherBundleIdCfg {}
-    impl PluginConfig for AnotherBundleIdCfg {
+    struct AnotherBundleIdConfig {}
+    impl PluginConfig for AnotherBundleIdConfig {
         const NAME: &'static str = "another-bundle-id";
     }
     struct AnotherBundleIdPlugin;
     impl Plugin for AnotherBundleIdPlugin {
-        type Config = AnotherBundleIdCfg;
-        fn apply(&self, ctx: &mut GenerateContext, _cfg: &AnotherBundleIdCfg) -> Result<()> {
+        type Config = AnotherBundleIdConfig;
+        fn apply(&self, ctx: &mut GenerateContext, _cfg: &AnotherBundleIdConfig) -> Result<()> {
             if let Some(ios) = ctx.ios.as_mut() {
                 ios.info_plist.insert(
                     "CFBundleIdentifier".into(),
@@ -697,17 +697,17 @@ mod tests {
 
     /// Like AnotherBundleIdPlugin but uses Override.
     #[derive(Default, Serialize, Deserialize)]
-    struct OverrideBundleIdCfg {}
-    impl PluginConfig for OverrideBundleIdCfg {
+    struct OverrideBundleIdConfig {}
+    impl PluginConfig for OverrideBundleIdConfig {
         const NAME: &'static str = "override-bundle-id";
     }
     struct OverrideBundleIdPlugin;
     impl Plugin for OverrideBundleIdPlugin {
-        type Config = OverrideBundleIdCfg;
+        type Config = OverrideBundleIdConfig;
         fn after(&self) -> &'static [&'static str] {
             &["set-bundle-id"]
         }
-        fn apply(&self, ctx: &mut GenerateContext, _cfg: &OverrideBundleIdCfg) -> Result<()> {
+        fn apply(&self, ctx: &mut GenerateContext, _cfg: &OverrideBundleIdConfig) -> Result<()> {
             if let Some(ios) = ctx.ios.as_mut() {
                 ios.info_plist.insert(
                     "CFBundleIdentifier".into(),
@@ -780,7 +780,7 @@ mod tests {
         let mut engine = Engine::new();
         engine.register(BundleIdPlugin);
         let mut app = base_app_config();
-        app.plugin::<BundleIdCfg>(|c| {
+        app.plugin::<BundleIdConfig>(|c| {
             c.suffix = ".staging".into();
         });
         let ctx = engine.compose(&app, EnabledTargets::ios_only()).unwrap();
@@ -793,8 +793,8 @@ mod tests {
 
     #[test]
     fn plugin_falls_back_to_default_config_when_not_declared() {
-        // No app.plugin::<BundleIdCfg> call → engine still runs the
-        // registered plugin with BundleIdCfg::default().
+        // No app.plugin::<BundleIdConfig> call → engine still runs the
+        // registered plugin with BundleIdConfig::default().
         let mut engine = Engine::new();
         engine.register(BundleIdPlugin);
         let ctx = engine
@@ -841,30 +841,30 @@ mod tests {
         struct A;
         struct B;
         #[derive(Default, Serialize, Deserialize)]
-        struct CfgA;
-        impl PluginConfig for CfgA {
+        struct ConfigA;
+        impl PluginConfig for ConfigA {
             const NAME: &'static str = "a";
         }
         #[derive(Default, Serialize, Deserialize)]
-        struct CfgB;
-        impl PluginConfig for CfgB {
+        struct ConfigB;
+        impl PluginConfig for ConfigB {
             const NAME: &'static str = "b";
         }
         impl Plugin for A {
-            type Config = CfgA;
+            type Config = ConfigA;
             fn after(&self) -> &'static [&'static str] {
                 &["b"]
             }
-            fn apply(&self, _: &mut GenerateContext, _: &CfgA) -> Result<()> {
+            fn apply(&self, _: &mut GenerateContext, _: &ConfigA) -> Result<()> {
                 Ok(())
             }
         }
         impl Plugin for B {
-            type Config = CfgB;
+            type Config = ConfigB;
             fn after(&self) -> &'static [&'static str] {
                 &["a"]
             }
-            fn apply(&self, _: &mut GenerateContext, _: &CfgB) -> Result<()> {
+            fn apply(&self, _: &mut GenerateContext, _: &ConfigB) -> Result<()> {
                 Ok(())
             }
         }
@@ -881,16 +881,16 @@ mod tests {
     fn after_referencing_an_unregistered_plugin_is_rejected() {
         struct A;
         #[derive(Default, Serialize, Deserialize)]
-        struct CfgA;
-        impl PluginConfig for CfgA {
+        struct ConfigA;
+        impl PluginConfig for ConfigA {
             const NAME: &'static str = "a";
         }
         impl Plugin for A {
-            type Config = CfgA;
+            type Config = ConfigA;
             fn after(&self) -> &'static [&'static str] {
                 &["non-existent"]
             }
-            fn apply(&self, _: &mut GenerateContext, _: &CfgA) -> Result<()> {
+            fn apply(&self, _: &mut GenerateContext, _: &ConfigA) -> Result<()> {
                 Ok(())
             }
         }
@@ -933,16 +933,16 @@ mod tests {
     fn validate_failure_aborts_before_apply_runs() {
         struct Picky;
         #[derive(Default, Serialize, Deserialize)]
-        struct PickyCfg;
-        impl PluginConfig for PickyCfg {
+        struct PickyConfig;
+        impl PluginConfig for PickyConfig {
             const NAME: &'static str = "picky";
         }
         impl Plugin for Picky {
-            type Config = PickyCfg;
-            fn validate(&self, _: &PickyCfg) -> Result<()> {
+            type Config = PickyConfig;
+            fn validate(&self, _: &PickyConfig) -> Result<()> {
                 bail!("nope")
             }
-            fn apply(&self, _: &mut GenerateContext, _: &PickyCfg) -> Result<()> {
+            fn apply(&self, _: &mut GenerateContext, _: &PickyConfig) -> Result<()> {
                 panic!("apply should not run when validate fails")
             }
         }
@@ -1047,7 +1047,7 @@ mod tests {
         // Plugin expects suffix: String but we hand it `{"suffix": 7}`.
         let mut app = base_app_config();
         app.plugins.insert(
-            BundleIdCfg::NAME.to_string(),
+            BundleIdConfig::NAME.to_string(),
             serde_json::json!({"suffix": 7}),
         );
         let mut engine = Engine::new();
@@ -1063,10 +1063,10 @@ mod tests {
     #[test]
     fn full_pipeline_with_permissions_and_bundle_id_succeeds() {
         let mut app = base_app_config();
-        app.plugin::<BundleIdCfg>(|c| {
+        app.plugin::<BundleIdConfig>(|c| {
             c.suffix = ".dev".into();
         });
-        app.plugin::<PermissionsCfg>(|c| {
+        app.plugin::<PermissionsConfig>(|c| {
             c.permissions.extend([
                 "android.permission.CAMERA".into(),
                 "android.permission.LOCATION".into(),

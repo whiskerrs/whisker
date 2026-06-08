@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<IosPbxprojOpsCfg>(|c| c
+//! app.plugin::<IosPbxprojOpsConfig>(|c| c
 //!     .add_resource("GoogleService-Info.plist")
 //!     .link_system_framework("AVFoundation.framework")
 //!     .set_build_setting("OTHER_LDFLAGS", "-ObjC"));
@@ -22,12 +22,12 @@ use std::path::PathBuf;
 use whisker_plugin::{GenerateContext, Operation, PbxprojOp, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct IosPbxprojOpsCfg {
+pub struct IosPbxprojOpsConfig {
     #[serde(default)]
     pub ops: Vec<PbxprojOp>,
 }
 
-impl IosPbxprojOpsCfg {
+impl IosPbxprojOpsConfig {
     /// Register a file as a Resource (bundled into the `.app`).
     /// Use for `GoogleService-Info.plist` etc. The file itself
     /// should already exist on disk — drop it via
@@ -64,15 +64,15 @@ impl IosPbxprojOpsCfg {
     }
 }
 
-impl PluginConfig for IosPbxprojOpsCfg {
+impl PluginConfig for IosPbxprojOpsConfig {
     const NAME: &'static str = "whisker-ios-pbxproj-ops";
 }
 
 pub struct IosPbxprojOpsPlugin;
 
 impl Plugin for IosPbxprojOpsPlugin {
-    type Config = IosPbxprojOpsCfg;
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &IosPbxprojOpsCfg) -> anyhow::Result<()> {
+    type Config = IosPbxprojOpsConfig;
+    fn apply(&self, ctx: &mut GenerateContext, cfg: &IosPbxprojOpsConfig) -> anyhow::Result<()> {
         let Some(ios) = ctx.ios.as_mut() else {
             return Ok(());
         };
@@ -82,7 +82,7 @@ impl Plugin for IosPbxprojOpsPlugin {
         let count = cfg.ops.len();
         ios.pbxproj_ops.extend(cfg.ops.clone());
         ctx.journal.record(
-            IosPbxprojOpsCfg::NAME,
+            IosPbxprojOpsConfig::NAME,
             Target::Ios,
             "pbxproj_ops",
             Operation::ArrayPush { count },
@@ -107,7 +107,7 @@ mod tests {
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_ios();
         IosPbxprojOpsPlugin
-            .apply(&mut ctx, &IosPbxprojOpsCfg::default())
+            .apply(&mut ctx, &IosPbxprojOpsConfig::default())
             .unwrap();
         assert!(ctx.ios.unwrap().pbxproj_ops.is_empty());
         assert!(ctx.journal.records.is_empty());
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn populated_config_appends_each_op_preserving_order() {
-        let mut cfg = IosPbxprojOpsCfg::default();
+        let mut cfg = IosPbxprojOpsConfig::default();
         cfg.add_resource("GoogleService-Info.plist")
             .link_system_framework("AVFoundation.framework")
             .set_build_setting("OTHER_LDFLAGS", "-ObjC");
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn one_array_push_event_per_invocation() {
-        let mut cfg = IosPbxprojOpsCfg::default();
+        let mut cfg = IosPbxprojOpsConfig::default();
         cfg.add_resource("a").add_source("b.swift");
         let mut ctx = ctx_with_ios();
         IosPbxprojOpsPlugin.apply(&mut ctx, &cfg).unwrap();

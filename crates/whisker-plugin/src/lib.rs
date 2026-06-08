@@ -111,9 +111,9 @@ use std::path::PathBuf;
 /// Trait implemented by the typed config struct each plugin defines.
 ///
 /// Carries the plugin's stable kebab-case identifier as a const so
-/// the `app.plugin::<Cfg>(|c| ...)` builder in `whisker-app-config`
+/// the `app.plugin::<Config>(|c| ...)` builder in `whisker-app-config`
 /// can derive the plugin name from the *type alone* — the call site
-/// only sees `Cfg`, not the [`Plugin`] impl that runs against it,
+/// only sees `Config`, not the [`Plugin`] impl that runs against it,
 /// so the binding has to live on the Config side.
 ///
 /// ## Why `Serialize + DeserializeOwned`
@@ -131,7 +131,7 @@ use std::path::PathBuf;
 ///
 /// ## Why `Default`
 ///
-/// `app.plugin::<Cfg>(|c| ...)` starts from `Cfg::default()` and
+/// `app.plugin::<Config>(|c| ...)` starts from `Config::default()` and
 /// lets the closure mutate it. A user who declares a plugin without
 /// touching any options should still get a working config.
 ///
@@ -153,7 +153,7 @@ pub trait PluginConfig: Serialize + for<'de> Deserialize<'de> + Default {
 /// What a plugin implements.
 pub trait Plugin {
     /// Plugin-specific config. The user passes this in via
-    /// `app.plugin::<Cfg>(|c| c.field(...))` inside `whisker.rs`.
+    /// `app.plugin::<Config>(|c| c.field(...))` inside `whisker.rs`.
     type Config: PluginConfig;
 
     /// Stable plugin identifier, used in:
@@ -849,25 +849,25 @@ mod tests {
     }
 
     #[derive(Default, serde::Serialize, serde::Deserialize)]
-    struct PermissionCfg {
+    struct PermissionConfig {
         permission: String,
     }
 
-    impl PluginConfig for PermissionCfg {
+    impl PluginConfig for PermissionConfig {
         const NAME: &'static str = "test-permission";
     }
 
     struct PermissionPlugin;
 
     impl Plugin for PermissionPlugin {
-        type Config = PermissionCfg;
-        fn apply(&self, ctx: &mut GenerateContext, cfg: &PermissionCfg) -> anyhow::Result<()> {
+        type Config = PermissionConfig;
+        fn apply(&self, ctx: &mut GenerateContext, cfg: &PermissionConfig) -> anyhow::Result<()> {
             let android = ctx.android.as_mut().ok_or_else(|| {
                 anyhow::anyhow!("test-permission requires android target enabled")
             })?;
             android.manifest.permissions.push(cfg.permission.clone());
             ctx.journal.record(
-                PermissionCfg::NAME,
+                PermissionConfig::NAME,
                 Target::Android,
                 "manifest.permissions",
                 Operation::ArrayPush { count: 1 },

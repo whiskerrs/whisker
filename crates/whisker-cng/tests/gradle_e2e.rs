@@ -17,8 +17,8 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use whisker_app_config::AppConfig;
-use whisker_cng::plugins::android_gradle_dependencies::GradleDependenciesCfg;
-use whisker_cng::plugins::android_gradle_plugins::GradlePluginsCfg;
+use whisker_cng::plugins::android_gradle_dependencies::GradleDependenciesConfig;
+use whisker_cng::plugins::android_gradle_plugins::GradlePluginsConfig;
 
 fn unique_tempdir() -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -64,7 +64,7 @@ fn sync_and_read_gradle(app: &AppConfig) -> String {
 #[test]
 fn gradle_bare_plugin_id_is_wrapped_in_id_call() {
     let mut app = base_android_app();
-    app.plugin::<GradlePluginsCfg>(|c| {
+    app.plugin::<GradlePluginsConfig>(|c| {
         c.add("com.google.gms.google-services");
     });
     let gradle = sync_and_read_gradle(&app);
@@ -77,7 +77,7 @@ fn gradle_bare_plugin_id_is_wrapped_in_id_call() {
 #[test]
 fn gradle_raw_id_line_passes_through_verbatim() {
     let mut app = base_android_app();
-    app.plugin::<GradlePluginsCfg>(|c| {
+    app.plugin::<GradlePluginsConfig>(|c| {
         c.add_raw("id(\"com.android.dynamic-feature\") version \"8.5.0\"");
     });
     let gradle = sync_and_read_gradle(&app);
@@ -92,7 +92,7 @@ fn gradle_version_catalog_alias_passes_through_verbatim() {
     // Version catalog form — the renderer recognises `(` as a
     // "this is already DSL" marker and doesn't double-wrap.
     let mut app = base_android_app();
-    app.plugin::<GradlePluginsCfg>(|c| {
+    app.plugin::<GradlePluginsConfig>(|c| {
         c.add_raw("alias(libs.plugins.kotlin.android)");
     });
     let gradle = sync_and_read_gradle(&app);
@@ -111,7 +111,7 @@ fn gradle_version_catalog_alias_passes_through_verbatim() {
 #[test]
 fn gradle_plugin_entry_lands_inside_the_plugins_block() {
     let mut app = base_android_app();
-    app.plugin::<GradlePluginsCfg>(|c| {
+    app.plugin::<GradlePluginsConfig>(|c| {
         c.add("com.google.gms.google-services");
     });
     let gradle = sync_and_read_gradle(&app);
@@ -132,7 +132,7 @@ fn gradle_plugin_entry_lands_inside_the_plugins_block() {
 #[test]
 fn gradle_dependency_line_emitted_verbatim() {
     let mut app = base_android_app();
-    app.plugin::<GradleDependenciesCfg>(|c| {
+    app.plugin::<GradleDependenciesConfig>(|c| {
         c.add("implementation(\"com.google.firebase:firebase-analytics:21.5.0\")");
     });
     let gradle = sync_and_read_gradle(&app);
@@ -145,7 +145,7 @@ fn gradle_dependency_line_emitted_verbatim() {
 #[test]
 fn gradle_dependencies_land_inside_the_dependencies_block() {
     let mut app = base_android_app();
-    app.plugin::<GradleDependenciesCfg>(|c| {
+    app.plugin::<GradleDependenciesConfig>(|c| {
         c.add("implementation(\"com.example:lib:1.0\")");
     });
     let gradle = sync_and_read_gradle(&app);
@@ -161,7 +161,7 @@ fn gradle_dependencies_land_inside_the_dependencies_block() {
 #[test]
 fn gradle_dependencies_preserve_insertion_order() {
     let mut app = base_android_app();
-    app.plugin::<GradleDependenciesCfg>(|c| {
+    app.plugin::<GradleDependenciesConfig>(|c| {
         c.add("implementation(\"com.example:a:1.0\")")
             .add("implementation(\"com.example:b:1.0\")")
             .add("implementation(\"com.example:c:1.0\")");
@@ -179,7 +179,7 @@ fn gradle_supports_non_implementation_configurations() {
     // various configurations. The raw-line approach must let
     // users emit any of them.
     let mut app = base_android_app();
-    app.plugin::<GradleDependenciesCfg>(|c| {
+    app.plugin::<GradleDependenciesConfig>(|c| {
         c.add("kapt(\"androidx.room:room-compiler:2.6.0\")")
             .add("runtimeOnly(\"com.example:plugin:1.0\")");
     });
@@ -214,10 +214,10 @@ fn gradle_firebase_scenario_reaches_the_rendered_file() {
     // Recreate the exact pattern a `whisker-firebase` plugin
     // (Phase 4 dogfood) would produce.
     let mut app = base_android_app();
-    app.plugin::<GradlePluginsCfg>(|c| {
+    app.plugin::<GradlePluginsConfig>(|c| {
         c.add("com.google.gms.google-services");
     });
-    app.plugin::<GradleDependenciesCfg>(|c| {
+    app.plugin::<GradleDependenciesConfig>(|c| {
         c.add("implementation(platform(\"com.google.firebase:firebase-bom:33.1.0\"))")
             .add("implementation(\"com.google.firebase:firebase-analytics\")");
     });

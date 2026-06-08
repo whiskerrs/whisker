@@ -37,7 +37,7 @@ pub fn configure(app: &mut whisker_app_config::AppConfig) {
     //   - enable_background_{recording,playback} → Info.plist.UIBackgroundModes
     //
     // Using the raw `app.plugins` map here rather than the typed
-    // `app.plugin::<WhiskerAudioCfg>(|c| …)` builder because the
+    // `app.plugin::<WhiskerAudioConfig>(|c| …)` builder because the
     // config probe (`crates/whisker-cli/src/probe.rs`) is
     // deliberately tiny and only depends on `whisker-app-config` +
     // `serde_json`. Pulling `whisker-audio` into the probe would

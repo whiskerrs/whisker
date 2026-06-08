@@ -22,7 +22,7 @@
 //! ## Why discovery instead of explicit registration
 //!
 //! In Phase 2+ the user's `whisker.rs` will declare typed plugin
-//! Configs via `app.plugin::<MyCfg>(|c| ...)`. The Config type's
+//! Configs via `app.plugin::<MyConfig>(|c| ...)`. The Config type's
 //! `PluginConfig::NAME` matches the discovery table's key, so
 //! "what plugin runs" is decided entirely by what crates the app
 //! depends on plus how the user spelled `app.plugin::<…>(…)`. The

@@ -80,7 +80,7 @@ use whisker::{module, ArcReadSignal, ArcRwSignal, ReadSignal};
 
 /// Whisker CNG plugin — adds `Info.plist` / `AndroidManifest.xml`
 /// entries when the consuming app declares
-/// `app.plugin::<WhiskerAudioCfg>(|c| …)` in `whisker.rs`.
+/// `app.plugin::<WhiskerAudioConfig>(|c| …)` in `whisker.rs`.
 pub mod cng;
 
 /// Current playback state. Updated by the native side and read

@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<GradlePluginsCfg>(|c| c
+//! app.plugin::<GradlePluginsConfig>(|c| c
 //!     .add("com.google.gms.google-services")
 //!     .add_raw("id(\"com.android.dynamic-feature\") version \"8.5.0\""));
 //! ```
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use whisker_plugin::{GenerateContext, Operation, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct GradlePluginsCfg {
+pub struct GradlePluginsConfig {
     /// Plugin identifiers to apply. Each entry is either:
     ///   - a bare gradle plugin id (e.g. `"com.google.gms.google-services"`),
     ///     which the renderer wraps in `id("…")`
@@ -29,7 +29,7 @@ pub struct GradlePluginsCfg {
     pub entries: Vec<String>,
 }
 
-impl GradlePluginsCfg {
+impl GradlePluginsConfig {
     /// Bare plugin id. Renderer wraps it in `id("…")`.
     pub fn add(&mut self, id: impl Into<String>) -> &mut Self {
         self.entries.push(id.into());
@@ -42,15 +42,15 @@ impl GradlePluginsCfg {
     }
 }
 
-impl PluginConfig for GradlePluginsCfg {
+impl PluginConfig for GradlePluginsConfig {
     const NAME: &'static str = "whisker-gradle-plugins";
 }
 
 pub struct GradlePluginsPlugin;
 
 impl Plugin for GradlePluginsPlugin {
-    type Config = GradlePluginsCfg;
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &GradlePluginsCfg) -> anyhow::Result<()> {
+    type Config = GradlePluginsConfig;
+    fn apply(&self, ctx: &mut GenerateContext, cfg: &GradlePluginsConfig) -> anyhow::Result<()> {
         let Some(android) = ctx.android.as_mut() else {
             return Ok(());
         };
@@ -60,7 +60,7 @@ impl Plugin for GradlePluginsPlugin {
         let count = cfg.entries.len();
         android.gradle.apply_plugins.extend(cfg.entries.clone());
         ctx.journal.record(
-            GradlePluginsCfg::NAME,
+            GradlePluginsConfig::NAME,
             Target::Android,
             "gradle.apply_plugins",
             Operation::ArrayPush { count },
@@ -85,7 +85,7 @@ mod tests {
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
         GradlePluginsPlugin
-            .apply(&mut ctx, &GradlePluginsCfg::default())
+            .apply(&mut ctx, &GradlePluginsConfig::default())
             .unwrap();
         assert!(ctx.android.unwrap().gradle.apply_plugins.is_empty());
         assert!(ctx.journal.records.is_empty());
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn populated_config_appends_each_entry_preserving_order() {
-        let mut cfg = GradlePluginsCfg::default();
+        let mut cfg = GradlePluginsConfig::default();
         cfg.add("com.google.gms.google-services")
             .add_raw("id(\"com.android.dynamic-feature\") version \"8.5.0\"");
         let mut ctx = ctx_with_android();
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn one_array_push_event_per_invocation() {
-        let mut cfg = GradlePluginsCfg::default();
+        let mut cfg = GradlePluginsConfig::default();
         cfg.add("a").add("b").add("c");
         let mut ctx = ctx_with_android();
         GradlePluginsPlugin.apply(&mut ctx, &cfg).unwrap();

@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<AndroidMetaDataCfg>(|c| c
+//! app.plugin::<AndroidMetaDataConfig>(|c| c
 //!     .add("com.google.firebase.messaging.default_notification_icon",
 //!          "@drawable/ic_notification")
 //!     .add("com.google.android.geo.API_KEY", "AIza..."));
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use whisker_plugin::{GenerateContext, MetaDataEntry, Operation, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct AndroidMetaDataCfg {
+pub struct AndroidMetaDataConfig {
     /// `(name, value)` pairs the renderer emits as
     /// `<meta-data android:name="…" android:value="…"/>` inside
     /// `<application>`. Stored ordered so multiple plugins
@@ -27,7 +27,7 @@ pub struct AndroidMetaDataCfg {
     pub entries: Vec<MetaDataEntry>,
 }
 
-impl AndroidMetaDataCfg {
+impl AndroidMetaDataConfig {
     pub fn add(&mut self, name: impl Into<String>, value: impl Into<String>) -> &mut Self {
         self.entries.push(MetaDataEntry {
             name: name.into(),
@@ -37,16 +37,16 @@ impl AndroidMetaDataCfg {
     }
 }
 
-impl PluginConfig for AndroidMetaDataCfg {
+impl PluginConfig for AndroidMetaDataConfig {
     const NAME: &'static str = "whisker-android-meta-data";
 }
 
 pub struct AndroidMetaDataPlugin;
 
 impl Plugin for AndroidMetaDataPlugin {
-    type Config = AndroidMetaDataCfg;
+    type Config = AndroidMetaDataConfig;
 
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &AndroidMetaDataCfg) -> anyhow::Result<()> {
+    fn apply(&self, ctx: &mut GenerateContext, cfg: &AndroidMetaDataConfig) -> anyhow::Result<()> {
         let Some(android) = ctx.android.as_mut() else {
             return Ok(());
         };
@@ -59,7 +59,7 @@ impl Plugin for AndroidMetaDataPlugin {
             .application_meta_data
             .extend(cfg.entries.clone());
         ctx.journal.record(
-            AndroidMetaDataCfg::NAME,
+            AndroidMetaDataConfig::NAME,
             Target::Android,
             "manifest.application_meta_data",
             Operation::ArrayPush { count },
@@ -84,7 +84,7 @@ mod tests {
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
         AndroidMetaDataPlugin
-            .apply(&mut ctx, &AndroidMetaDataCfg::default())
+            .apply(&mut ctx, &AndroidMetaDataConfig::default())
             .unwrap();
         assert!(ctx
             .android
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn populated_config_appends_each_entry() {
-        let mut cfg = AndroidMetaDataCfg::default();
+        let mut cfg = AndroidMetaDataConfig::default();
         cfg.add(
             "com.google.firebase.messaging.default_notification_icon",
             "@drawable/ic_notification",
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn one_array_push_event_per_invocation() {
-        let mut cfg = AndroidMetaDataCfg::default();
+        let mut cfg = AndroidMetaDataConfig::default();
         cfg.add("a", "1").add("b", "2");
         let mut ctx = ctx_with_android();
         AndroidMetaDataPlugin.apply(&mut ctx, &cfg).unwrap();
