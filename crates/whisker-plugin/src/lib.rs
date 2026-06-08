@@ -571,8 +571,18 @@ pub fn run_as_subprocess<P: Plugin>(plugin: P) -> anyhow::Result<()> {
         ));
     }
 
-    let config: P::Config = serde_json::from_value(request.config)
-        .map_err(|e| anyhow::anyhow!("decode plugin config for `{}`: {e}", plugin.name()))?;
+    // `null` config arrives when the user didn't declare the plugin
+    // in `whisker.rs` at all — the engine's wire protocol uses Null
+    // to mean "use the Config's `Default`". This matches the
+    // in-process path's `Option::is_none` → `Default::default()`
+    // fallback, keeping the same semantics regardless of which
+    // execution mode a plugin runs in.
+    let config: P::Config = if request.config.is_null() {
+        Default::default()
+    } else {
+        serde_json::from_value(request.config)
+            .map_err(|e| anyhow::anyhow!("decode plugin config for `{}`: {e}", plugin.name()))?
+    };
 
     plugin
         .validate(&config)

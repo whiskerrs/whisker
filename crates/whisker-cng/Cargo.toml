@@ -28,3 +28,15 @@ whisker-app-config = { workspace = true }
 # `AppConfig.plugins[name]` JSON entry back into the plugin's typed
 # Config via this crate's helpers.
 whisker-plugin = { workspace = true }
+
+# Tiny stdin/stdout echo-style plugin binary the subprocess
+# integration test in `tests/subprocess.rs` spawns. Declared here
+# so it gets a `CARGO_BIN_EXE_whisker-cng-fixture-echo-plugin` env
+# var available inside the integration test. Not intended for end
+# users; safe to ignore in any `cargo install` flow (pre-alpha).
+[[bin]]
+name = "whisker-cng-fixture-echo-plugin"
+path = "tests/fixtures/echo_plugin.rs"
+test = false
+bench = false
+doc = false
