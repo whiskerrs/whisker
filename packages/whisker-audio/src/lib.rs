@@ -69,20 +69,21 @@
 //! - iOS: `packages/whisker-audio/ios/Sources/WhiskerAudio/AudioModule.swift`
 //! - Android: `packages/whisker-audio/android/src/main/kotlin/rs/whisker/modules/audio/AudioModule.kt`
 
-/// Whisker CNG plugin — adds `Info.plist` / `AndroidManifest.xml`
+/// Whisker plugin — adds `Info.plist` / `AndroidManifest.xml`
 /// entries when the consuming app declares
 /// `app.plugin::<WhiskerAudio>(|c| …)` in `whisker.rs`. Always
-/// available — independent of the `runtime` feature so the config
-/// probe (which only pulls this crate with `default-features = false`)
-/// can still resolve `WhiskerAudio` from `whisker.rs`.
-pub mod cng;
+/// available — independent of the `runtime` feature so the
+/// `whisker.rs` config probe (which pulls this crate with
+/// `default-features = false`) can still resolve `WhiskerAudio`.
+mod plugin;
+pub use plugin::*;
 
 /// Player + reactive `PlaybackStatus` runtime. Gated behind the
 /// default-on `runtime` feature so the config probe build path can
 /// skip the heavyweight `whisker` umbrella crate (Lynx bridge,
 /// driver, render layer). Apps depending on `whisker-audio` for
 /// actual playback get this re-exported automatically; the probe
-/// only sees `cng`.
+/// only sees the plugin types.
 #[cfg(feature = "runtime")]
 mod runtime;
 #[cfg(feature = "runtime")]
