@@ -519,15 +519,13 @@ fn find_libcxx_shared(ndk: &Path, abi: &str) -> Result<PathBuf> {
 /// plugin builds the release-shaped `.so` it always has.
 ///
 /// `capture` is forwarded to the gradle subprocess as the same env
-/// envelope `cargo_build_dylib` would have applied directly
-/// (`RUSTC_WORKSPACE_WRAPPER` + cache dirs + `CARGO_TARGET_*_LINKER`
-/// + `CARGO_TARGET_*_RUSTFLAGS`). Child processes inherit by default,
-/// so the gradle plugin's `whisker-build android` subprocess sees the
-/// same envelope when it spawns cargo — without this, the gradle-built
-/// `.so` skips `-Clink-arg=-Wl,--export-dynamic` and the patch dylib
-/// dlopen fails with `cannot locate symbol "<crate>::SYMBOL"` for any
-/// inter-crate reference the patch carries (`whisker_audio::runtime::NEXT_ID`
-/// in practice).
+/// envelope `cargo_build_dylib` would apply directly. The env vars
+/// inherit naturally to the gradle plugin's `whisker-build android`
+/// subprocess and then to cargo, so the gradle-built `.so` picks up
+/// the same `-Csave-temps` / `-Cdebug-assertions=on` / `--export-dynamic`
+/// flags. Without this the gradle-built `.so` lacks `--export-dynamic`
+/// and the patch dylib dlopen fails with `cannot locate symbol` for any
+/// inter-crate reference (`whisker_audio::runtime::NEXT_ID` in practice).
 pub fn run_gradle_assemble(
     gen_android: &Path,
     profile: Profile,
