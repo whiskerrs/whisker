@@ -35,11 +35,11 @@ crate-type = ["rlib"]
 
 # Plugin registration — Whisker walks the consuming app's dep
 # tree, picks this entry up, builds the `whisker-audio-plugin`
-# binary below, and runs it during `whisker generate`. The user
-# opts into actual behaviour by calling
-# `app.plugin::<WhiskerAudio>(|c| …)` in their `whisker.rs`; with
-# no opt-in the plugin runs with `Config::default()` and
-# contributes nothing.
+# binary below, and runs it as part of every `whisker build` /
+# `whisker run` gen-tree sync. The user opts into actual
+# behaviour by calling `app.plugin::<WhiskerAudio>(|c| …)` in
+# their `whisker.rs`; with no opt-in the plugin runs with
+# `Config::default()` and contributes nothing.
 [package.metadata.whisker.plugins.whisker-audio]
 bin = "whisker-audio-plugin"
 
