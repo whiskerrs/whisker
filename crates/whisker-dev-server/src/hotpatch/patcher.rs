@@ -108,8 +108,9 @@ impl Patcher {
         real_linker: &Path,
         original_binary: &Path,
         target_os: LinkerOs,
+        target_triple: Option<&str>,
     ) -> Result<Self> {
-        let captured_rustc_args = load_captured_args(rustc_cache_dir)
+        let captured_rustc_args = load_captured_args(rustc_cache_dir, target_triple)
             .with_context(|| format!("load rustc cache {}", rustc_cache_dir.display()))?;
         let captured_linker_args = load_captured_linker_args(linker_cache_dir)
             .with_context(|| format!("load linker cache {}", linker_cache_dir.display()))?;

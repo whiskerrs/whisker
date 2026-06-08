@@ -269,6 +269,11 @@ pub struct XcodeRunScriptInputs<'a> {
     /// `platform == "iphonesimulator"` — the iphoneos slice is always
     /// arm64 today.
     pub archs: &'a [&'a str],
+    /// Cargo `--features` to forward to each slice's cross-compile.
+    /// `whisker run` populates `["whisker/hot-reload"]` so the user
+    /// dylib carries the dev-runtime WebSocket client; `whisker build`
+    /// leaves this empty for prod.
+    pub features: &'a [String],
 }
 
 /// Cross-compile + framework-wrap path for the Xcode Run Script
@@ -339,7 +344,7 @@ pub fn build_framework_for_xcode_run_script(
             inputs.workspace_root,
             inputs.package,
             triple,
-            &[],
+            inputs.features,
             None,
             &modules_env,
             &s,

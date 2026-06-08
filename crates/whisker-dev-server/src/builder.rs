@@ -55,6 +55,14 @@ impl Builder {
         self
     }
 
+    /// Read-only view of the features currently configured. The dev
+    /// loop reads this when constructing the [`Installer`] so the iOS
+    /// xcodebuild env var (`WHISKER_FEATURES`) stays in sync with what
+    /// the Builder would have passed to a direct cargo invocation.
+    pub fn features(&self) -> &[String] {
+        &self.features
+    }
+
     /// Elevate the next build into a fat build. The cache dirs and
     /// shim binaries from `capture` get folded into the cargo
     /// invocation via env vars — see
@@ -127,6 +135,8 @@ impl Builder {
             whisker_build::android::run_gradle_assemble(
                 &gen_android,
                 whisker_build::Profile::Debug,
+                &features,
+                capture.as_ref(),
             )?;
             Ok(())
         })

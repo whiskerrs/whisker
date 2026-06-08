@@ -135,6 +135,14 @@ struct IosArgs {
     /// embed-frameworks build phase picks it up automatically.
     #[arg(long)]
     built_products_dir: PathBuf,
+
+    /// Cargo `--features` to forward to the cross-compile. Repeatable.
+    /// `whisker run` passes `whisker/hot-reload` here via the Build
+    /// Phase script's `$WHISKER_FEATURES` env var expansion so the
+    /// user dylib carries the dev-runtime WebSocket client; `whisker
+    /// build` leaves this empty for prod.
+    #[arg(long)]
+    features: Vec<String>,
 }
 
 #[derive(Args)]
@@ -169,6 +177,14 @@ struct AndroidArgs {
     /// API level to pick the right sysroot binaries.
     #[arg(long, default_value = "24")]
     min_sdk: u32,
+
+    /// Cargo `--features` to forward to the cross-compile. Repeatable.
+    /// `whisker run` passes `whisker/hot-reload` here via the gradle
+    /// plugin's `$WHISKER_FEATURES` env var expansion so the user
+    /// dylib carries the dev-runtime WebSocket client; `whisker build`
+    /// leaves this empty for prod.
+    #[arg(long)]
+    features: Vec<String>,
 }
 
 /// Inputs for the `modules` discovery subcommand. Workspace + app
@@ -259,6 +275,7 @@ fn run_ios(args: IosArgs) -> Result<()> {
             package: &args.package,
             platform: &args.platform,
             archs: &archs,
+            features: &args.features,
         },
         &args.built_products_dir,
     )
@@ -316,7 +333,7 @@ fn run_android(args: AndroidArgs) -> Result<()> {
         package: &args.package,
         toolchain: &toolchain,
         profile,
-        features: &[],
+        features: &args.features,
         capture: None,
     })
     .context("cargo cross-compile for Android")?;

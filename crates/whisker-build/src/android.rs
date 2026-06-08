@@ -509,7 +509,29 @@ fn find_libcxx_shared(ndk: &Path, abi: &str) -> Result<PathBuf> {
 
 /// Invoke `./gradlew :app:assemble{Release,Debug}` on the gen tree.
 /// Returns the path to the produced APK.
-pub fn run_gradle_assemble(gen_android: &Path, profile: Profile) -> Result<PathBuf> {
+///
+/// `features` is forwarded to the gradle plugin's `WhiskerBuildTask`
+/// via the `WHISKER_FEATURES` env var (space-separated). The Kotlin
+/// task splits it back into `--features <feat>` args on every
+/// `whisker-build android` invocation so the resulting `.so` carries
+/// the dev-runtime WebSocket client when `whisker run` asks for
+/// `whisker/hot-reload`. Empty list → env stays unset and the gradle
+/// plugin builds the release-shaped `.so` it always has.
+///
+/// `capture` is forwarded to the gradle subprocess as the same env
+/// envelope `cargo_build_dylib` would apply directly. The env vars
+/// inherit naturally to the gradle plugin's `whisker-build android`
+/// subprocess and then to cargo, so the gradle-built `.so` picks up
+/// the same `-Csave-temps` / `-Cdebug-assertions=on` / `--export-dynamic`
+/// flags. Without this the gradle-built `.so` lacks `--export-dynamic`
+/// and the patch dylib dlopen fails with `cannot locate symbol` for any
+/// inter-crate reference (`whisker_audio::runtime::NEXT_ID` in practice).
+pub fn run_gradle_assemble(
+    gen_android: &Path,
+    profile: Profile,
+    features: &[String],
+    capture: Option<&CaptureShims>,
+) -> Result<PathBuf> {
     let task = match profile {
         Profile::Release => ":app:assembleRelease",
         Profile::Debug => ":app:assembleDebug",
@@ -523,11 +545,20 @@ pub fn run_gradle_assemble(gen_android: &Path, profile: Profile) -> Result<PathB
             gradlew.display(),
         ));
     }
-    let status = Command::new(&gradlew)
-        .arg(task)
+    let mut cmd = Command::new(&gradlew);
+    cmd.arg(task)
         .arg("--no-daemon")
         .current_dir(gen_android)
-        .env("JAVA_HOME", &java_home)
+        .env("JAVA_HOME", &java_home);
+    if !features.is_empty() {
+        cmd.env("WHISKER_FEATURES", features.join(" "));
+    }
+    if let Some(c) = capture {
+        for (k, v) in capture_env_vars(c) {
+            cmd.env(k, v);
+        }
+    }
+    let status = cmd
         .status()
         .with_context(|| format!("spawn {}", gradlew.display()))?;
     if !status.success() {

@@ -95,16 +95,29 @@ abstract class WhiskerBuildTask : DefaultTask() {
         // even though our task is already (variant, abi)-scoped.
         val abiSubdir = jniLibsDir.get().asFile.resolve(abi.get())
         abiSubdir.mkdirs()
+        // `whisker run` sets WHISKER_FEATURES=whisker/hot-reload (space-
+        // separated if multiple) on the gradle subprocess so the user
+        // dylib carries the dev-runtime WebSocket client. Without it the
+        // app never reports its `aslr_reference` to the dev-server, and
+        // every change falls through to a Tier 2 cold rebuild + relaunch.
+        // `./gradlew assembleRelease` runs from CI with the env unset;
+        // production builds skip the dev-runtime entirely.
+        val featureArgs = (System.getenv("WHISKER_FEATURES") ?: "")
+            .split(Regex("\\s+"))
+            .filter { it.isNotEmpty() }
+            .flatMap { listOf("--features", it) }
         execOperations.exec {
             commandLine(
-                "whisker-build",
-                "android",
-                "--workspace=$ws",
-                "--package=${packageName.get()}",
-                "--profile=${profile.get()}",
-                "--abi=${abi.get()}",
-                "--jni-libs-dir=${abiSubdir.absolutePath}",
-                "--min-sdk=${minSdk.get()}",
+                listOf(
+                    "whisker-build",
+                    "android",
+                    "--workspace=$ws",
+                    "--package=${packageName.get()}",
+                    "--profile=${profile.get()}",
+                    "--abi=${abi.get()}",
+                    "--jni-libs-dir=${abiSubdir.absolutePath}",
+                    "--min-sdk=${minSdk.get()}",
+                ) + featureArgs,
             )
         }
     }
