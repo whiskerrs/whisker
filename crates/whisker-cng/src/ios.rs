@@ -279,43 +279,42 @@ pub fn inputs_from(
     workspace_root: PathBuf,
     user_package: String,
 ) -> Result<IosInputs> {
-    let app_name = app_config
-        .name
+    // Run the plugin pipeline with built-ins. `build_initial_context`
+    // seeds the IR with core fields from `AppConfig`; plugins can
+    // override any of them via `Operation::Override`. The renderer
+    // reads the post-pipeline IR — `inputs_from`'s job is now
+    // strictly extraction + ergonomic defaults for fields the
+    // engine left as `None`.
+    let ctx = Engine::with_builtins()
+        .compose(app_config, EnabledTargets::ios_only())
+        .context("compose Whisker CNG plugin pipeline for iOS")?;
+    let ios_ir = ctx
+        .ios
+        .as_ref()
+        .expect("EnabledTargets::ios_only guarantees Some");
+
+    let app_name = ios_ir
+        .app_name
         .clone()
         .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required"))?;
-    let version = app_config
+    let version = ios_ir
         .version
         .clone()
         .unwrap_or_else(|| "0.1.0".to_string());
-    let build_number = app_config.build_number.unwrap_or(1);
-    let scheme = app_config
-        .ios
-        .scheme
-        .clone()
-        .unwrap_or_else(|| app_name.clone());
-    let bundle_id = app_config
-        .ios
-        .bundle_id
-        .clone()
-        .or_else(|| app_config.bundle_id.clone())
-        .ok_or_else(|| {
-            anyhow!(
+    let build_number = ios_ir.build_number.unwrap_or(1);
+    // Scheme defaults to the app name — the engine doesn't apply
+    // ergonomic defaults; that's `inputs_from`'s contract.
+    let scheme = ios_ir.scheme.clone().unwrap_or_else(|| app_name.clone());
+    let bundle_id = ios_ir.bundle_id.clone().ok_or_else(|| {
+        anyhow!(
             "whisker.rs: app.ios(|i| i.bundle_id(\"…\")) (or app.bundle_id) is required for iOS"
         )
-        })?;
-    let deployment_target = app_config
-        .ios
+    })?;
+    let deployment_target = ios_ir
         .deployment_target
         .clone()
         .unwrap_or_else(|| "13.0".to_string());
 
-    // Run the plugin pipeline with built-ins. Apps that never call
-    // `app.plugin::<…>(…)` get an empty IR back; the resulting
-    // `extra_info_plist_kvs` is empty and the Info.plist render is
-    // bit-identical to the pre-Phase-3 output.
-    let ctx = Engine::with_builtins()
-        .compose(app_config, EnabledTargets::ios_only())
-        .context("compose Whisker CNG plugin pipeline for iOS")?;
     let extra_info_plist_kvs = extract_info_plist_string_kvs(&ctx);
 
     Ok(IosInputs {
@@ -330,12 +329,14 @@ pub fn inputs_from(
         workspace_root,
         user_package,
         extra_info_plist_kvs,
-        // Bumped 9 → 10 for RFC #164 Phase 2/3: the Info.plist
-        // template gained the `{{extra_info_plist_kvs}}`
-        // placeholder. Existing `gen/ios/` trees regenerate so the
-        // placeholder substitutes correctly even before any
-        // plugin contributes content.
-        template_version: 10,
+        // Bumped 10 → 11 for the IR-canonical refactor (RFC #164
+        // B-direction PR 1): core fields now flow through the
+        // engine's IR rather than direct AppConfig reads. The
+        // rendered output is bit-identical for apps that don't
+        // override any core field via a plugin, but the
+        // fingerprint shape changed so existing `gen/ios/` trees
+        // regenerate once.
+        template_version: 11,
     })
 }
 
@@ -389,7 +390,7 @@ mod tests {
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
             extra_info_plist_kvs: BTreeMap::new(),
-            template_version: 10,
+            template_version: 11,
         }
     }
 
