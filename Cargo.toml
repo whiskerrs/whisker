@@ -6,7 +6,6 @@ members = [
     "crates/whisker-build",
     "crates/whisker-cli",
     "crates/whisker-cng",
-    "crates/whisker-cng-protocol",
     "crates/whisker-dev-runtime",
     "crates/whisker-dev-server",
     "crates/whisker-driver",
@@ -62,7 +61,6 @@ whisker = { path = "crates/whisker", version = "0.1.0" }
 whisker-app-config = { path = "crates/whisker-app-config", version = "0.1.0" }
 whisker-build = { path = "crates/whisker-build", version = "0.1.0" }
 whisker-cng = { path = "crates/whisker-cng", version = "0.1.0" }
-whisker-cng-protocol = { path = "crates/whisker-cng-protocol", version = "0.1.0" }
 whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.1.0" }
 whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.1.0" }
 whisker-driver = { path = "crates/whisker-driver", version = "0.1.0" }

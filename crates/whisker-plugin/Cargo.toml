@@ -6,10 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Surface 3rd-party Whisker CNG plugin authors depend on. Re-exports the Plugin trait + IR types from whisker-cng-protocol and bundles a subprocess runner."
+description = "Plugin surface for Whisker CNG — Plugin trait, IR types, JSON envelope, and the subprocess runner 3rd-party plugin binaries use."
 
 [dependencies]
-whisker-cng-protocol = { workspace = true }
+# Plugin trait's `Config` associated type round-trips through JSON
+# (config probe in `whisker-cli`, stdin envelope for 3rd-party
+# plugins). Mutation journal + IR types share the same wire path.
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
