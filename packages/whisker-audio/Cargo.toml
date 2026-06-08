@@ -16,6 +16,8 @@ include = [
     "Package.swift",
     "build.gradle.kts",
     "src/lib.rs",
+    "src/cng.rs",
+    "bin/**/*.rs",
     "android/**/*.kt",
     "ios/**/*.swift",
     "README.md",
@@ -30,5 +32,33 @@ crate-type = ["rlib"]
 # Android Gradle subproject + iOS SwiftPM package into the host build.
 [package.metadata.whisker]
 
+# CNG plugin registration — `whisker-cng::discovery` walks the
+# consuming app's dep tree, picks this entry up, builds the
+# `whisker-audio-plugin` binary below, and registers it as a
+# `SubprocessPlugin` with the engine. The user opts into actual
+# behaviour by calling `app.plugin::<WhiskerAudioCfg>(|c| …)` in
+# their `whisker.rs`; with no opt-in the plugin runs with
+# `Cfg::default()` and contributes nothing.
+[package.metadata.whisker.plugins.whisker-audio]
+bin = "whisker-audio-plugin"
+
+# Subprocess binary entry point the CNG engine spawns. Reads a
+# `PluginRequest` JSON from stdin, mutates the IR via
+# `WhiskerAudioPlugin::apply`, writes a `PluginResponse` JSON to
+# stdout.
+[[bin]]
+name = "whisker-audio-plugin"
+path = "bin/whisker_audio_plugin.rs"
+test = false
+bench = false
+doc = false
+
 [dependencies]
 whisker = { workspace = true }
+
+# CNG plugin support — pulled in unconditionally because the
+# `[[bin]]` above always builds. Light deps (trait + IR types +
+# JSON envelope + subprocess runner).
+whisker-plugin = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }

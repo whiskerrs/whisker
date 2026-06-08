@@ -16,9 +16,11 @@
 //! `build` subcommands call this before kicking off the rest of the
 //! build pipeline.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use whisker_app_config::AppConfig;
+use whisker_cng::{discover_plugins, DiscoveredPlugin, Engine, SubprocessPlugin};
 use whisker_dev_server::Target;
 
 /// Run the platform-appropriate sync for `target`. Returns the gen
@@ -101,7 +103,9 @@ fn sync_android(
     // of looking less portable in diffs (acceptable — these files
     // are AUTO-GENERATED and not meant to be committed).
     let workspace_path = workspace_root.to_path_buf();
-    let inputs = whisker_cng::android::inputs_from(
+    let engine = build_engine_with_discovered_plugins(workspace_root, package)?;
+    let inputs = whisker_cng::android::inputs_from_with_engine(
+        &engine,
         app_config,
         package.replace('-', "_"),
         workspace_path,
@@ -134,7 +138,9 @@ fn sync_ios(
     // needs an *absolute* path to that directory at sync time, so we
     // pre-compute it here even though the contents will land later.
     let whisker_modules = gen_dir.join("whisker_modules");
-    let inputs = whisker_cng::ios::inputs_from(
+    let engine = build_engine_with_discovered_plugins(workspace_root, package)?;
+    let inputs = whisker_cng::ios::inputs_from_with_engine(
+        &engine,
         app_config,
         whisker_runtime,
         whisker_modules,
@@ -149,6 +155,80 @@ fn sync_ios(
         gen_dir,
         regenerated,
     })
+}
+
+/// Build a [`whisker_cng::Engine`] populated with built-ins plus
+/// every 3rd-party plugin discovered via `[package.metadata.whisker.plugins]`
+/// in the user app's dep graph. Each discovered plugin's `[[bin]]`
+/// target gets `cargo build`d (debug profile, workspace target dir)
+/// and registered as a [`SubprocessPlugin`] pointing at the
+/// resulting binary.
+fn build_engine_with_discovered_plugins(
+    workspace_root: &Path,
+    user_package: &str,
+) -> Result<Engine> {
+    let manifest_path = workspace_root.join("Cargo.toml");
+    let discovered = discover_plugins(&manifest_path, user_package)
+        .with_context(|| format!("discover Whisker CNG plugins for `{user_package}`"))?;
+
+    let mut engine = Engine::with_builtins();
+    if discovered.is_empty() {
+        return Ok(engine);
+    }
+
+    // Single `cargo build` invocation listing every plugin's
+    // `--bin` + `--package` pair. Cheaper than spawning cargo once
+    // per plugin and shares the build graph / unit cache.
+    build_discovered_plugins(workspace_root, &discovered)?;
+
+    let target_dir = workspace_root.join("target/debug");
+    for plugin in discovered {
+        let binary_path = target_dir.join(&plugin.bin_target_name);
+        if !binary_path.exists() {
+            return Err(anyhow!(
+                "discovered plugin `{}` (from crate `{}`) declared bin = `{}` \
+                 but `cargo build` did not produce `{}`. Check that the bin \
+                 target is declared correctly in `{}/Cargo.toml`.",
+                plugin.name,
+                plugin.source_crate,
+                plugin.bin_target_name,
+                binary_path.display(),
+                plugin.source_manifest_dir.display(),
+            ));
+        }
+        engine.register_subprocess(
+            SubprocessPlugin::new(plugin.name.clone(), binary_path)
+                .after(plugin.after.clone())
+                .before(plugin.before.clone()),
+        );
+    }
+    Ok(engine)
+}
+
+/// Run a single `cargo build` that builds every discovered
+/// plugin's `[[bin]]` target. We use the workspace's existing
+/// `target/debug` so subsequent runs are no-op when the plugin
+/// crates haven't changed (cargo's own incremental cache).
+fn build_discovered_plugins(workspace_root: &Path, discovered: &[DiscoveredPlugin]) -> Result<()> {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build").current_dir(workspace_root);
+    for plugin in discovered {
+        cmd.arg("--bin")
+            .arg(&plugin.bin_target_name)
+            .arg("--package")
+            .arg(&plugin.source_crate);
+    }
+    let status = cmd
+        .status()
+        .with_context(|| "spawn `cargo build` for discovered Whisker CNG plugin binaries")?;
+    if !status.success() {
+        return Err(anyhow!(
+            "`cargo build` for discovered Whisker CNG plugin binaries exited with {status}. \
+             Re-run with `RUST_BACKTRACE=1 cargo build --bin <bin> --package <crate>` to see \
+             the underlying compile error."
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

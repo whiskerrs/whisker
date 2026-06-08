@@ -204,10 +204,7 @@ fn set_build_setting_escapes_quotes_in_value() {
     // surrounding OpenStep plist string and break the parser.
     let mut app = base_app();
     app.plugin::<IosPbxprojOpsCfg>(|c| {
-        c.set_build_setting(
-            "GCC_PREPROCESSOR_DEFINITIONS",
-            "FOO=\"bar baz\"",
-        );
+        c.set_build_setting("GCC_PREPROCESSOR_DEFINITIONS", "FOO=\"bar baz\"");
     });
     let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
     // The escaped form ends up inside the quoted literal.

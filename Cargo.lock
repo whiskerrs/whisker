@@ -1860,7 +1860,10 @@ dependencies = [
 name = "whisker-audio"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "serde",
  "whisker",
+ "whisker-plugin",
 ]
 
 [[package]]

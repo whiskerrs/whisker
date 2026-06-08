@@ -31,7 +31,7 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_app_config::AppConfig;
-use whisker_plugin::{FileEntry, GenerateContext, PbxprojOp, PlistValue};
+use whisker_plugin::{FileEntry, PbxprojOp, PlistValue};
 
 use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
@@ -79,19 +79,18 @@ pub struct IosInputs {
     /// Cargo package name (the user app crate) — the Rust side of
     /// `whisker-build ios --package=...`. Step 7.
     pub user_package: String,
-    /// `(key, string-value)` pairs sourced from the engine's
-    /// post-pipeline IR (`ctx.ios.info_plist`). Emitted into the
-    /// rendered `Info.plist` just before the closing `</dict>`. The
-    /// renderer XML-escapes values; keys are assumed safe because
-    /// they come from Rust string constants in plugin Configs.
+    /// Plugin-supplied `Info.plist` entries sourced from the
+    /// engine's post-pipeline IR (`ctx.ios.info_plist`). Emitted
+    /// just before the closing `</dict>`.
     ///
-    /// Only `PlistValue::String` entries surface here for now;
-    /// dict / array values are dropped because the Info.plist
-    /// template is hand-rolled XML rather than a real plist
-    /// serializer. Adding richer value support is a future
-    /// renderer change, not a wire-format break.
+    /// Supported `PlistValue` variants: `String`, `Boolean`,
+    /// `Integer`, and `Array<String>`. Other shapes (nested Dict,
+    /// Array of non-strings, Real) are silently dropped; the
+    /// Info.plist template is hand-rolled XML rather than a real
+    /// plist serializer, and we extend the variant set on demand
+    /// as built-in or 3rd-party plugins require it.
     #[serde(default)]
-    pub extra_info_plist_kvs: BTreeMap<String, String>,
+    pub extra_info_plist: BTreeMap<String, PlistValue>,
     /// Plugin-supplied additional files dropped into `gen/ios/`.
     /// Keys are relative paths (validated to be relative + free of
     /// `..` traversal at write time); values are
@@ -156,7 +155,7 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
     v.insert("whisker_user_package", inputs.user_package.clone());
     v.insert(
         "extra_info_plist_kvs",
-        render_extra_info_plist_kvs(&inputs.extra_info_plist_kvs),
+        render_extra_info_plist(&inputs.extra_info_plist),
     );
     let pbx = render_pbxproj_op_placeholders(&inputs.pbxproj_ops);
     v.insert("extra_pbxproj_build_file_entries", pbx.build_file_entries);
@@ -363,24 +362,65 @@ fn pbxproj_uuid(seed: &str) -> String {
     format!("{a}{}", &b[..8]).to_uppercase()
 }
 
-/// Render the engine-supplied `(key, string)` pairs as XML
-/// `<key>…</key><string>…</string>` rows ready to drop straight
-/// into the Info.plist template just before `</dict>`. Empty map
-/// → empty string (no whitespace) so the template still parses
-/// cleanly.
-fn render_extra_info_plist_kvs(entries: &BTreeMap<String, String>) -> String {
+/// Render the engine-supplied plist entries as XML rows ready to
+/// drop straight into the Info.plist template just before
+/// `</dict>`. Empty map → empty string (no whitespace) so the
+/// template still parses cleanly.
+///
+/// Supported `PlistValue` variants:
+///   - `String` → `<string>…</string>`
+///   - `Boolean` → `<true/>` / `<false/>`
+///   - `Integer` → `<integer>…</integer>`
+///   - `Array<String>` → `<array><string>…</string>…</array>`
+///
+/// Anything else (nested `Dict`, `Array` of non-strings, `Real`)
+/// is silently dropped — the Info.plist template is hand-rolled
+/// XML, not a real plist serializer; extending the variant set is
+/// additive when a built-in or 3rd-party plugin asks for it.
+fn render_extra_info_plist(entries: &BTreeMap<String, PlistValue>) -> String {
     if entries.is_empty() {
         return String::new();
     }
-    // Indent matching the rest of the template (tab characters,
-    // matching the hand-rolled Info.plist's existing style).
     let mut out = String::new();
     for (key, value) in entries {
-        out.push_str(&format!(
-            "\t<key>{}</key>\n\t<string>{}</string>\n",
-            escape_xml(key),
-            escape_xml(value),
-        ));
+        match value {
+            PlistValue::String(s) => {
+                out.push_str(&format!(
+                    "\t<key>{}</key>\n\t<string>{}</string>\n",
+                    escape_xml(key),
+                    escape_xml(s),
+                ));
+            }
+            PlistValue::Boolean(b) => {
+                out.push_str(&format!(
+                    "\t<key>{}</key>\n\t<{}/>\n",
+                    escape_xml(key),
+                    if *b { "true" } else { "false" },
+                ));
+            }
+            PlistValue::Integer(i) => {
+                out.push_str(&format!(
+                    "\t<key>{}</key>\n\t<integer>{i}</integer>\n",
+                    escape_xml(key),
+                ));
+            }
+            PlistValue::Array(items) => {
+                // Only String-of-string arrays land in the rendered
+                // plist; mixed arrays are dropped (see docs above).
+                if !items.iter().all(|v| matches!(v, PlistValue::String(_))) {
+                    continue;
+                }
+                out.push_str(&format!("\t<key>{}</key>\n\t<array>\n", escape_xml(key)));
+                for item in items {
+                    if let PlistValue::String(s) = item {
+                        out.push_str(&format!("\t\t<string>{}</string>\n", escape_xml(s)));
+                    }
+                }
+                out.push_str("\t</array>\n");
+            }
+            // Real / Dict / unsupported variants → drop.
+            _ => {}
+        }
     }
     // Strip the trailing newline so the template's own newline
     // before `</dict>` isn't doubled up.
@@ -530,6 +570,12 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Pull the iOS-relevant subset of `AppConfig` into the renderer
 /// input struct. Errors out on required fields. `scheme` defaults to
 /// `name`; `bundle_id` defaults to the top-level `app.bundle_id`.
+///
+/// Thin wrapper over [`inputs_from_with_engine`] using
+/// [`Engine::with_builtins`]. Callers that want to register
+/// additional plugins (subprocess plugins discovered via
+/// `cargo metadata`, custom in-process plugins) should call the
+/// `_with_engine` form directly.
 pub fn inputs_from(
     app_config: &AppConfig,
     whisker_runtime_path: PathBuf,
@@ -537,13 +583,34 @@ pub fn inputs_from(
     workspace_root: PathBuf,
     user_package: String,
 ) -> Result<IosInputs> {
-    // Run the plugin pipeline with built-ins. `build_initial_context`
-    // seeds the IR with core fields from `AppConfig`; plugins can
-    // override any of them via `Operation::Override`. The renderer
-    // reads the post-pipeline IR — `inputs_from`'s job is now
-    // strictly extraction + ergonomic defaults for fields the
-    // engine left as `None`.
-    let ctx = Engine::with_builtins()
+    inputs_from_with_engine(
+        &Engine::with_builtins(),
+        app_config,
+        whisker_runtime_path,
+        whisker_modules_path,
+        workspace_root,
+        user_package,
+    )
+}
+
+/// Like [`inputs_from`] but takes a pre-built [`Engine`] so the
+/// caller can register additional plugins (e.g. subprocess plugins
+/// discovered from `[package.metadata.whisker.plugins]`).
+pub fn inputs_from_with_engine(
+    engine: &Engine,
+    app_config: &AppConfig,
+    whisker_runtime_path: PathBuf,
+    whisker_modules_path: PathBuf,
+    workspace_root: PathBuf,
+    user_package: String,
+) -> Result<IosInputs> {
+    // Run the plugin pipeline. `build_initial_context` seeds the
+    // IR with core fields from `AppConfig`; plugins can override
+    // any of them via `Operation::Override`. The renderer reads
+    // the post-pipeline IR — `inputs_from`'s job is now strictly
+    // extraction + ergonomic defaults for fields the engine left
+    // as `None`.
+    let ctx = engine
         .compose(app_config, EnabledTargets::ios_only())
         .context("compose Whisker CNG plugin pipeline for iOS")?;
     let ios_ir = ctx
@@ -573,7 +640,7 @@ pub fn inputs_from(
         .clone()
         .unwrap_or_else(|| "13.0".to_string());
 
-    let extra_info_plist_kvs = extract_info_plist_string_kvs(&ctx);
+    let extra_info_plist = ios_ir.info_plist.clone();
     let extra_files = ios_ir.extra_files.clone();
     let pbxproj_ops = ios_ir.pbxproj_ops.clone();
 
@@ -588,36 +655,18 @@ pub fn inputs_from(
         whisker_modules_path,
         workspace_root,
         user_package,
-        extra_info_plist_kvs,
+        extra_info_plist,
         extra_files,
         pbxproj_ops,
-        // Bumped 12 → 13 for `pbxproj_ops` template-injection
-        // (RFC #164 B-direction PR 4). The pbxproj template grew
-        // seven new placeholders + a PBXResourcesBuildPhase
-        // section + a "Whisker Plugin Files" group; existing
-        // `gen/ios/` trees regenerate so the new sections render
-        // correctly even before any plugin contributes content.
-        template_version: 13,
+        // Bumped 13 → 14 for richer Info.plist value support.
+        // `IosInputs::extra_info_plist` is now
+        // `BTreeMap<String, PlistValue>` (was previously
+        // `BTreeMap<String, String>` — String-only).
+        // The renderer handles String, Boolean, Integer, and
+        // Array<String> variants; existing `gen/ios/` trees
+        // regenerate so the new placeholder rendering takes effect.
+        template_version: 14,
     })
-}
-
-/// Project the iOS info_plist BTreeMap (the IR layer) into the
-/// `(key, string-value)` shape the template renderer accepts.
-/// Non-string `PlistValue` variants are silently dropped — the
-/// template is hand-rolled XML and can't represent dicts / arrays
-/// safely. A future renderer that emits real plist XML can lift
-/// this restriction without changing the IR.
-fn extract_info_plist_string_kvs(ctx: &GenerateContext) -> BTreeMap<String, String> {
-    let Some(ios) = ctx.ios.as_ref() else {
-        return BTreeMap::new();
-    };
-    ios.info_plist
-        .iter()
-        .filter_map(|(k, v)| match v {
-            PlistValue::String(s) => Some((k.clone(), s.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 // ============================================================================
@@ -650,10 +699,10 @@ mod tests {
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
-            extra_info_plist_kvs: BTreeMap::new(),
+            extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),
-            template_version: 13,
+            template_version: 14,
         }
     }
 

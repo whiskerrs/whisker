@@ -78,6 +78,11 @@ use std::sync::OnceLock;
 use whisker::platform_module::WhiskerValue;
 use whisker::{module, ArcReadSignal, ArcRwSignal, ReadSignal};
 
+/// Whisker CNG plugin — adds `Info.plist` / `AndroidManifest.xml`
+/// entries when the consuming app declares
+/// `app.plugin::<WhiskerAudioCfg>(|c| …)` in `whisker.rs`.
+pub mod cng;
+
 /// Current playback state. Updated by the native side and read
 /// through the reactive signal returned by [`Player::status`].
 ///
