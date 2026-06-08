@@ -85,10 +85,15 @@ pub struct DiscoveredPlugin {
 /// transitive deps' `[package.metadata.whisker.plugins.<name>]`
 /// tables.
 ///
-/// The order is a stable depth-first traversal of the resolution
-/// graph. Two plugins with the same `name` across different deps
-/// is a hard error — there's no way to disambiguate them at
-/// dispatch time.
+/// The iteration order is deterministic for a given dep tree
+/// (DFS over `cargo metadata`'s resolution graph + alphabetical
+/// within each crate's plugin table), but not part of the
+/// stability contract — downstream consumers that need a
+/// specific ordering should sort by `name` themselves.
+///
+/// Two plugins with the same `name` across different deps is a
+/// hard error — there's no way to disambiguate them at dispatch
+/// time.
 ///
 /// Errors:
 /// - `cargo metadata` failure (workspace broken, manifest_path
