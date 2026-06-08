@@ -88,6 +88,27 @@ fn gradle_raw_id_line_passes_through_verbatim() {
 }
 
 #[test]
+fn gradle_version_catalog_alias_passes_through_verbatim() {
+    // Version catalog form — the renderer recognises `(` as a
+    // "this is already DSL" marker and doesn't double-wrap.
+    let mut app = base_android_app();
+    app.plugin::<GradlePluginsCfg>(|c| {
+        c.add_raw("alias(libs.plugins.kotlin.android)");
+    });
+    let gradle = sync_and_read_gradle(&app);
+    assert!(
+        gradle.contains("alias(libs.plugins.kotlin.android)"),
+        "{gradle}",
+    );
+    // Specifically, the renderer must NOT have wrapped it as
+    // `id("alias(libs.plugins.kotlin.android)")`.
+    assert!(
+        !gradle.contains("id(\"alias("),
+        "renderer wrapped a DSL call: {gradle}",
+    );
+}
+
+#[test]
 fn gradle_plugin_entry_lands_inside_the_plugins_block() {
     let mut app = base_android_app();
     app.plugin::<GradlePluginsCfg>(|c| {

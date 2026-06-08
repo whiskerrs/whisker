@@ -206,16 +206,23 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
 }
 
 /// Render `apply_plugins` entries as Kotlin DSL lines inside the
-/// `plugins { … }` block. Bare ids → `id("…")`; lines that already
-/// start with `id(` pass through verbatim (callers attach
-/// `version "…"` / `apply false` qualifiers themselves).
+/// `plugins { … }` block. Two shapes:
+///
+///   - Bare gradle plugin id (e.g. `"com.google.gms.google-services"`)
+///     → wrapped in `id("…")`.
+///   - Anything containing a `(` character (e.g. `id("…") version "X"`,
+///     `alias(libs.plugins.foo)`, `kotlin("jvm")`) → emitted
+///     verbatim. The Kotlin DSL's plugin block accepts every
+///     callable that returns a `PluginDependencySpec`, and bare
+///     gradle plugin ids never contain `(`, so this is a safe
+///     discriminator.
 fn render_extra_gradle_plugins(entries: &[String]) -> String {
     if entries.is_empty() {
         return String::new();
     }
     let mut out = String::new();
     for entry in entries {
-        if entry.starts_with("id(") {
+        if entry.contains('(') {
             out.push_str(&format!("    {entry}\n"));
         } else {
             out.push_str(&format!("    id(\"{entry}\")\n"));
