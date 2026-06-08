@@ -7,7 +7,7 @@
 //! the spawn / pipe / merge wiring end-to-end.
 
 use serde::{Deserialize, Serialize};
-use whisker_plugin::{GenerateContext, MutationJournal, Operation, Plugin, PluginConfig, Target};
+use whisker_plugin::{GenerateContext, Operation, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
 struct EchoCfg {
@@ -27,8 +27,7 @@ impl Plugin for EchoPlugin {
         if let Some(android) = ctx.android.as_mut() {
             if !cfg.permission.is_empty() {
                 android.manifest.permissions.push(cfg.permission.clone());
-                <MutationJournal>::record(
-                    &mut ctx.journal,
+                ctx.journal.record(
                     EchoCfg::NAME,
                     Target::Android,
                     "manifest.permissions",

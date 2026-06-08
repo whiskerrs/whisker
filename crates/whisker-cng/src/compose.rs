@@ -519,8 +519,13 @@ fn spawn_and_exchange(
             .write_all(&json)
             .with_context(|| format!("write PluginRequest to plugin `{plugin_name}`"))?;
     }
-    // Drop stdin so the child sees EOF and proceeds to write
-    // its response. `wait_with_output` re-takes ownership.
+    // No explicit `child.stdin.take()` here — `wait_with_output`
+    // does it internally before reading stdout, which is what
+    // signals EOF to the child. If we closed stdin first AND the
+    // child wrote a stdout response larger than the pipe buffer,
+    // we'd deadlock (parent waiting on child exit, child waiting
+    // on parent to drain stdout). The wait_with_output path
+    // serialises them safely.
 
     let output = child
         .wait_with_output()
