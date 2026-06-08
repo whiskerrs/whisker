@@ -32,6 +32,7 @@ pub mod build;
 pub mod doctor;
 pub mod linker_shim;
 pub mod manifest;
+pub mod new_app;
 pub mod new_module;
 pub mod platforms;
 pub mod probe;
@@ -74,6 +75,12 @@ enum Command {
     /// build.gradle.kts, and skeleton Rust / Swift / Kotlin sources.
     /// See `docs/module-author-guide.md`.
     NewModule(new_module::NewModuleArgs),
+    /// Scaffold a new Whisker app — single-crate workspace with
+    /// `Cargo.toml`, a `#[whisker::main]` `src/lib.rs`, the
+    /// `whisker.rs` `AppConfig` probe, `.gitignore`, and `README.md`.
+    /// The result compiles standalone; run `whisker run --target
+    /// host` from inside the new directory.
+    New(new_app::NewAppArgs),
 }
 
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
@@ -95,6 +102,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Command::Run(a) => run::run(a),
         Command::Build(a) => build::run(a),
         Command::NewModule(a) => new_module::run(a),
+        Command::New(a) => new_app::run(a),
     }
 }
 
