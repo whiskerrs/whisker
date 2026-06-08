@@ -302,9 +302,21 @@ impl Step {
     }
 }
 
-/// Read `stream` line-by-line; route cargo-progress lines through
-/// the spinner's `set_message`, everything else through
-/// [`ProgressBar::println`] (or `eprintln!` when there's no bar).
+/// Read `stream` line-by-line, classifying each line into one of
+/// three buckets:
+///
+/// 1. **Progress** (cargo/gradle/xcodebuild status line) — folded into
+///    the spinner's `set_message` so the step row stays one live line.
+/// 2. **Known noise** (gradle daemon advisories, gradle's
+///    deprecation banner) — dropped silently. These are advisory text
+///    the user can't act on, and they're the main offender behind
+///    the "gradle build のログが見づらい" complaint.
+/// 3. **Everything else** — printed above the bar so it persists in
+///    scrollback for triage (rustc errors, gradle task failures,
+///    user `println!`s reaching this path through `cmd.pipe`).
+///
+/// Verbose mode (`WHISKER_VERBOSE=1`) bypasses 1 + 2 and emits every
+/// non-empty line verbatim — useful when debugging the filter itself.
 fn stream_through_bar<R: std::io::Read + Send + 'static>(
     stream: Option<R>,
     bar: Option<ProgressBar>,
@@ -313,7 +325,7 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
     let Some(s) = stream else { return };
     let reader = BufReader::new(s);
     for line in reader.lines().map_while(Result::ok) {
-        if let Some(progress) = cargo_progress_text(&line) {
+        if let Some(progress) = subprocess_progress_text(&line) {
             if let Some(bar) = &bar {
                 bar.set_message(progress.to_string());
                 // No steady_tick anymore (see step() docs) so we
@@ -327,6 +339,13 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
                 eprintln!("[whisker] {line}");
             }
         } else if !line.is_empty() {
+            // In curated mode, drop known-noise advisory lines that
+            // the user can't act on. Verbose mode keeps everything
+            // so the user has a chance to diagnose the filter
+            // itself if a real diagnostic ever gets misclassified.
+            if matches!(mode(), Mode::Curated) && is_subprocess_noise(&line) {
+                continue;
+            }
             // Diagnostics / errors / unrecognised tool output:
             // persist in scrollback. Use multi.suspend (not
             // bar.println) so the bar is properly cleared before
@@ -342,6 +361,24 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
             }
         }
     }
+}
+
+/// Tag a line as a progress-status line worth folding into the
+/// spinner. Currently recognises three tool families:
+///
+/// - **cargo** — `    Compiling foo v0.1.0`, `    Finished …`, etc.
+///   See [`cargo_progress_text`].
+/// - **gradle** — `> Task :app:assembleDebug`, with optional
+///   `UP-TO-DATE` / `NO-SOURCE` / `FROM-CACHE` suffix. See
+///   [`gradle_progress_text`].
+/// - **gradle terminal** — `BUILD SUCCESSFUL in 18s` /
+///   `BUILD FAILED in 18s`. Surfaced as the spinner's last frame
+///   before the step finishes.
+fn subprocess_progress_text(line: &str) -> Option<String> {
+    if let Some(s) = cargo_progress_text(line) {
+        return Some(s.to_string());
+    }
+    gradle_progress_text(line)
 }
 
 /// Recognise a cargo-style progress line (`    Compiling foo v0.1.0`,
@@ -379,6 +416,60 @@ fn cargo_progress_text(line: &str) -> Option<&str> {
     } else {
         None
     }
+}
+
+/// Recognise a gradle progress line and return its display form:
+///
+/// - `> Task :path:assembleDebug` → `gradle: :path:assembleDebug`
+/// - `> Task :path:assembleDebug UP-TO-DATE` → `gradle: :path:assembleDebug UP-TO-DATE`
+/// - `BUILD SUCCESSFUL in 18s` → `gradle: BUILD SUCCESSFUL in 18s`
+/// - `BUILD FAILED in 18s` → `gradle: BUILD FAILED in 18s`
+/// - `137 actionable tasks: 6 executed, 131 up-to-date` → same prefixed
+///
+/// Returns `None` for anything else. Gradle's output is dominated by
+/// these patterns, so folding them into the spinner removes the
+/// ~50-line scroll-burst per `whisker run` that the curated layout
+/// was drowning in.
+fn gradle_progress_text(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("> Task ") {
+        return Some(format!("gradle: {rest}"));
+    }
+    if trimmed.starts_with("BUILD SUCCESSFUL") || trimmed.starts_with("BUILD FAILED") {
+        return Some(format!("gradle: {trimmed}"));
+    }
+    if trimmed.contains(" actionable task") {
+        return Some(format!("gradle: {trimmed}"));
+    }
+    None
+}
+
+/// Identify lines that are pure advisory noise from the gradle daemon
+/// or related JVM tooling — output the user can neither act on nor
+/// learn anything from. Dropping them removes the multi-line block
+/// gradle emits on every assemble that says "we forked a JVM, here's
+/// a link to documentation about it." Real diagnostics (compile
+/// errors, task failures, custom output) flow through unchanged.
+fn is_subprocess_noise(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() {
+        return true;
+    }
+    // Gradle daemon JVM advisory — five-line block emitted by every
+    // assemble. Match the salient prefix of each line.
+    const GRADLE_NOISE_PREFIXES: &[&str] = &[
+        "To honour the JVM settings for this build",
+        "Daemon will be stopped at the end of the build",
+        "Deprecated Gradle features were used in this build",
+        "You can use '--warning-mode all'",
+        "For more on this, please refer to",
+    ];
+    for prefix in GRADLE_NOISE_PREFIXES {
+        if t.starts_with(prefix) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Strip a leading sequence of ANSI escape codes — `\x1b[…m` SGR
@@ -629,5 +720,109 @@ mod tests {
         assert!(line.contains("compile"));
         assert!(line.contains("hello-world"));
         assert!(line.contains("6.7s"));
+    }
+
+    // ----- subprocess output classifiers ----------------------------
+
+    #[test]
+    fn cargo_progress_recognised_with_leading_whitespace() {
+        assert_eq!(
+            cargo_progress_text("    Compiling foo v0.1.0"),
+            Some("Compiling foo v0.1.0"),
+        );
+        assert_eq!(
+            cargo_progress_text("   Finished `release` target(s) in 12.3s"),
+            Some("Finished `release` target(s) in 12.3s"),
+        );
+    }
+
+    #[test]
+    fn cargo_progress_rejects_diagnostics_and_user_output() {
+        assert!(cargo_progress_text("error[E0277]: ...").is_none());
+        assert!(cargo_progress_text("warning: unused").is_none());
+        assert!(cargo_progress_text("user println output").is_none());
+    }
+
+    #[test]
+    fn gradle_task_lines_fold_into_progress() {
+        assert_eq!(
+            gradle_progress_text("> Task :app:assembleDebug"),
+            Some("gradle: :app:assembleDebug".to_string()),
+        );
+        assert_eq!(
+            gradle_progress_text("> Task :app:assembleDebug UP-TO-DATE"),
+            Some("gradle: :app:assembleDebug UP-TO-DATE".to_string()),
+        );
+        assert_eq!(
+            gradle_progress_text("> Task :whisker-image:mergeDebugJniLibFolders NO-SOURCE"),
+            Some("gradle: :whisker-image:mergeDebugJniLibFolders NO-SOURCE".to_string()),
+        );
+    }
+
+    #[test]
+    fn gradle_build_terminal_status_recognised() {
+        assert_eq!(
+            gradle_progress_text("BUILD SUCCESSFUL in 18s"),
+            Some("gradle: BUILD SUCCESSFUL in 18s".to_string()),
+        );
+        assert_eq!(
+            gradle_progress_text("BUILD FAILED in 1m 12s"),
+            Some("gradle: BUILD FAILED in 1m 12s".to_string()),
+        );
+        assert_eq!(
+            gradle_progress_text("137 actionable tasks: 6 executed, 131 up-to-date"),
+            Some("gradle: 137 actionable tasks: 6 executed, 131 up-to-date".to_string()),
+        );
+    }
+
+    #[test]
+    fn gradle_progress_rejects_non_gradle_lines() {
+        assert!(gradle_progress_text("Compiling foo v0.1.0").is_none());
+        assert!(gradle_progress_text("regular line").is_none());
+        // A `>` prefix without `Task` doesn't qualify — gradle's
+        // configure phase emits `> Configure project :app` blocks
+        // that the user may want to triage; let them surface.
+        assert!(gradle_progress_text("> Configure project :app").is_none());
+    }
+
+    #[test]
+    fn subprocess_progress_combines_both_recognisers() {
+        assert!(subprocess_progress_text("    Compiling foo v0.1.0").is_some());
+        assert!(subprocess_progress_text("> Task :app:assembleDebug").is_some());
+        assert!(subprocess_progress_text("BUILD SUCCESSFUL in 18s").is_some());
+        assert!(subprocess_progress_text("regular diagnostic line").is_none());
+    }
+
+    #[test]
+    fn subprocess_noise_filters_gradle_daemon_advisory() {
+        assert!(is_subprocess_noise(
+            "To honour the JVM settings for this build a single-use Daemon process will be forked. ..."
+        ));
+        assert!(is_subprocess_noise(
+            "Daemon will be stopped at the end of the build"
+        ));
+        assert!(is_subprocess_noise(
+            "Deprecated Gradle features were used in this build, making it incompatible ..."
+        ));
+        assert!(is_subprocess_noise(
+            "You can use '--warning-mode all' to show the individual deprecation warnings ..."
+        ));
+        assert!(is_subprocess_noise(
+            "For more on this, please refer to https://docs.gradle.org/..."
+        ));
+    }
+
+    #[test]
+    fn subprocess_noise_leaves_real_diagnostics_alone() {
+        // Real failures should NOT be filtered — they need to land in
+        // scrollback so the user sees what to fix.
+        assert!(!is_subprocess_noise(
+            "FAILURE: Build failed with an exception."
+        ));
+        assert!(!is_subprocess_noise("* What went wrong:"));
+        assert!(!is_subprocess_noise("error: linker `cc` not found"));
+        assert!(!is_subprocess_noise(
+            "> Task :app:compileDebugJavaWithJavac FAILED"
+        ));
     }
 }
