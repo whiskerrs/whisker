@@ -106,7 +106,9 @@ impl Engine {
         let mut e = Self::new();
         e.register(crate::plugins::info_plist_extra::InfoPlistExtraPlugin)
             .register(crate::plugins::android_permissions::AndroidPermissionsPlugin)
-            .register(crate::plugins::android_meta_data::AndroidMetaDataPlugin);
+            .register(crate::plugins::android_meta_data::AndroidMetaDataPlugin)
+            .register(crate::plugins::android_gradle_plugins::GradlePluginsPlugin)
+            .register(crate::plugins::android_gradle_dependencies::GradleDependenciesPlugin);
         e
     }
 

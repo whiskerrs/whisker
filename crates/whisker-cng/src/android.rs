@@ -114,6 +114,20 @@ pub struct AndroidInputs {
     /// plugins contributing entries see deterministic output.
     #[serde(default)]
     pub extra_meta_data: Vec<MetaDataEntry>,
+    /// Extra entries the renderer drops into the app module's
+    /// `plugins { … }` block, just after the baseline Whisker /
+    /// AGP / Kotlin plugin ids. Bare ids (e.g.
+    /// `"com.google.gms.google-services"`) get wrapped in
+    /// `id("…")`; raw `id(...)` lines pass through verbatim so
+    /// users can attach `version "…"` / `apply false` qualifiers.
+    #[serde(default)]
+    pub extra_gradle_plugins: Vec<String>,
+    /// Extra raw lines the renderer drops into the app module's
+    /// `dependencies { … }` block. Each entry is emitted verbatim
+    /// (e.g.
+    /// `"implementation(\"com.google.firebase:firebase-analytics:21.5.0\")"`).
+    #[serde(default)]
+    pub extra_gradle_dependencies: Vec<String>,
     /// Bumped whenever the template *shape* changes (added file,
     /// renamed placeholder, …). The fingerprint mixes this in so
     /// existing `gen/` trees regenerate after an upgrade.
@@ -180,7 +194,58 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
         "extra_application_meta_data",
         render_extra_meta_data(&inputs.extra_meta_data),
     );
+    v.insert(
+        "extra_gradle_plugins",
+        render_extra_gradle_plugins(&inputs.extra_gradle_plugins),
+    );
+    v.insert(
+        "extra_gradle_dependencies",
+        render_extra_gradle_dependencies(&inputs.extra_gradle_dependencies),
+    );
     v
+}
+
+/// Render `apply_plugins` entries as Kotlin DSL lines inside the
+/// `plugins { … }` block. Two shapes:
+///
+///   - Bare gradle plugin id (e.g. `"com.google.gms.google-services"`)
+///     → wrapped in `id("…")`.
+///   - Anything containing a `(` character (e.g. `id("…") version "X"`,
+///     `alias(libs.plugins.foo)`, `kotlin("jvm")`) → emitted
+///     verbatim. The Kotlin DSL's plugin block accepts every
+///     callable that returns a `PluginDependencySpec`, and bare
+///     gradle plugin ids never contain `(`, so this is a safe
+///     discriminator.
+fn render_extra_gradle_plugins(entries: &[String]) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for entry in entries {
+        if entry.contains('(') {
+            out.push_str(&format!("    {entry}\n"));
+        } else {
+            out.push_str(&format!("    id(\"{entry}\")\n"));
+        }
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn render_extra_gradle_dependencies(entries: &[String]) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for entry in entries {
+        out.push_str(&format!("    {entry}\n"));
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 /// Render the engine-supplied permissions as `<uses-permission>`
@@ -476,6 +541,8 @@ pub fn inputs_from(
 
     let extra_permissions = android_ir.manifest.permissions.clone();
     let extra_meta_data = android_ir.manifest.application_meta_data.clone();
+    let extra_gradle_plugins = android_ir.gradle.apply_plugins.clone();
+    let extra_gradle_dependencies = android_ir.gradle.dependencies.clone();
 
     Ok(AndroidInputs {
         app_name,
@@ -493,14 +560,16 @@ pub fn inputs_from(
         lynx_maven_url,
         extra_permissions,
         extra_meta_data,
-        // Bumped 6 → 7 for the IR-canonical refactor (RFC #164
-        // B-direction PR 1): core fields (application_id, sdk
-        // versions, etc.) now flow through the engine's IR rather
-        // than direct AppConfig reads. The rendered output is
-        // bit-identical for apps that don't override anything; the
-        // fingerprint shape changed so existing `gen/android/`
-        // trees regenerate once.
-        template_version: 7,
+        extra_gradle_plugins,
+        extra_gradle_dependencies,
+        // Bumped 7 → 8 for the gradle-IR pass-through (RFC #164
+        // B-direction PR 2): `app/build.gradle.kts` gained
+        // `{{extra_gradle_plugins}}` and
+        // `{{extra_gradle_dependencies}}` placeholders. Existing
+        // `gen/android/` trees regenerate so the placeholders
+        // substitute correctly even before any plugin contributes
+        // content (they collapse to empty strings).
+        template_version: 8,
     })
 }
 
@@ -539,7 +608,9 @@ mod tests {
             lynx_maven_url: "https://whiskerrs.github.io/lynx/maven".into(),
             extra_permissions: Vec::new(),
             extra_meta_data: Vec::new(),
-            template_version: 7,
+            extra_gradle_plugins: Vec::new(),
+            extra_gradle_dependencies: Vec::new(),
+            template_version: 8,
         }
     }
 

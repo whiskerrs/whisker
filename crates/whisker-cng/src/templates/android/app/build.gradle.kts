@@ -19,6 +19,7 @@ plugins {
     // into AGP's source sets. Version is inherited from the
     // `pluginManagement.plugins` block in settings.gradle.kts.
     id("rs.whisker.gradle")
+{{extra_gradle_plugins}}
 }
 
 android {
@@ -67,4 +68,5 @@ dependencies {
     implementation("rs.whisker:whisker-runtime-android:{{whisker_sdk_version}}")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
+{{extra_gradle_dependencies}}
 }
