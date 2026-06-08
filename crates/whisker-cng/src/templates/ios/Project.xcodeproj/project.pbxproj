@@ -10,12 +10,14 @@
 		46E97003F6597438A0AC93C0 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BEF20C6F91CCD1A10D66BCE /* AppDelegate.swift */; };
 		E5C85D1F07153227204F81D6 /* WhiskerRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = F920EEBD91D9E8039DA5A3F9 /* WhiskerRuntime */; };
 		8B41E0C2B6A95E8F70D2A38B /* WhiskerModules in Frameworks */ = {isa = PBXBuildFile; productRef = A4F2BE0925D17CE83AB061F7 /* WhiskerModules */; };
+{{extra_pbxproj_build_file_entries}}
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		35D466DB8920E7A52C599EBC /* {{ios_scheme}}.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "{{ios_scheme}}.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4BEF20C6F91CCD1A10D66BCE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		D3F08A1D5C9B6E7A2F104B59 /* whisker_modules */ = {isa = PBXFileReference; lastKnownFileType = folder; name = whisker_modules; path = "{{whisker_modules_ios_path}}"; sourceTree = "<absolute>"; };
+{{extra_pbxproj_file_reference_entries}}
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -25,6 +27,7 @@
 			files = (
 				E5C85D1F07153227204F81D6 /* WhiskerRuntime in Frameworks */,
 				8B41E0C2B6A95E8F70D2A38B /* WhiskerModules in Frameworks */,
+{{extra_pbxproj_frameworks_phase_files}}
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -52,6 +55,7 @@
 			children = (
 				E8E7FE2E076C1851BADE1012 /* Packages */,
 				2AFB6256646F5C748E027F5E /* Sources */,
+				F1F2F3F4F5F6F7F8F9FAFBFC /* Whisker Plugin Files */,
 				00961668E9C919BF4554CF95 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -64,6 +68,14 @@
 			name = Packages;
 			sourceTree = "<group>";
 		};
+		F1F2F3F4F5F6F7F8F9FAFBFC /* Whisker Plugin Files */ = {
+			isa = PBXGroup;
+			children = (
+{{extra_pbxproj_plugin_files_group_children}}
+			);
+			name = "Whisker Plugin Files";
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -73,6 +85,7 @@
 			buildPhases = (
 				7E2B91D0F46A1C73B5A5DE91 /* Whisker Generate */,
 				4A590CB0D847DB4C38DDCDFC /* Sources */,
+				A1A2A3A4A5A6A7A8A9AAAB00 /* Resources */,
 				D4C57884A372C8EC69F16CAD /* Frameworks */,
 				3F69E4C8A2D75B6E81C094BB /* Whisker Embed Framework */,
 			);
@@ -167,12 +180,24 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		A1A2A3A4A5A6A7A8A9AAAB00 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+{{extra_pbxproj_resources_phase_files}}
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		4A590CB0D847DB4C38DDCDFC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				46E97003F6597438A0AC93C0 /* AppDelegate.swift in Sources */,
+{{extra_pbxproj_sources_phase_files}}
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -258,6 +283,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "{{ios_bundle_id}}";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+{{extra_pbxproj_target_build_settings}}
 			};
 			name = Debug;
 		};
@@ -274,6 +300,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "{{ios_bundle_id}}";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+{{extra_pbxproj_target_build_settings}}
 			};
 			name = Release;
 		};

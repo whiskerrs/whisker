@@ -110,7 +110,8 @@ impl Engine {
             .register(crate::plugins::android_gradle_plugins::GradlePluginsPlugin)
             .register(crate::plugins::android_gradle_dependencies::GradleDependenciesPlugin)
             .register(crate::plugins::ios_extra_files::IosExtraFilesPlugin)
-            .register(crate::plugins::android_extra_files::AndroidExtraFilesPlugin);
+            .register(crate::plugins::android_extra_files::AndroidExtraFilesPlugin)
+            .register(crate::plugins::ios_pbxproj_ops::IosPbxprojOpsPlugin);
         e
     }
 

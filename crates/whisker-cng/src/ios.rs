@@ -31,7 +31,7 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_app_config::AppConfig;
-use whisker_plugin::{FileEntry, GenerateContext, PlistValue};
+use whisker_plugin::{FileEntry, GenerateContext, PbxprojOp, PlistValue};
 
 use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
@@ -98,6 +98,16 @@ pub struct IosInputs {
     /// [`FileEntry`]s — UTF-8 contents + optional POSIX mode.
     #[serde(default)]
     pub extra_files: BTreeMap<PathBuf, FileEntry>,
+    /// Plugin-supplied structural mutations against the Xcode
+    /// `project.pbxproj`. Each variant maps to a small set of
+    /// generated entries in the rendered pbxproj — see
+    /// [`PbxprojOp`] for the supported ops and
+    /// [`render_pbxproj_op_placeholders`] for the renderer's
+    /// behaviour. Deterministic UUIDs (FNV-1a over each op's
+    /// content) keep the rendered file byte-identical across
+    /// rebuilds.
+    #[serde(default)]
+    pub pbxproj_ops: Vec<PbxprojOp>,
     pub template_version: u32,
 }
 
@@ -148,7 +158,190 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         "extra_info_plist_kvs",
         render_extra_info_plist_kvs(&inputs.extra_info_plist_kvs),
     );
+    let pbx = render_pbxproj_op_placeholders(&inputs.pbxproj_ops);
+    v.insert("extra_pbxproj_build_file_entries", pbx.build_file_entries);
+    v.insert(
+        "extra_pbxproj_file_reference_entries",
+        pbx.file_reference_entries,
+    );
+    v.insert("extra_pbxproj_sources_phase_files", pbx.sources_phase_files);
+    v.insert(
+        "extra_pbxproj_resources_phase_files",
+        pbx.resources_phase_files,
+    );
+    v.insert(
+        "extra_pbxproj_frameworks_phase_files",
+        pbx.frameworks_phase_files,
+    );
+    v.insert(
+        "extra_pbxproj_plugin_files_group_children",
+        pbx.plugin_files_group_children,
+    );
+    v.insert(
+        "extra_pbxproj_target_build_settings",
+        pbx.target_build_settings,
+    );
     v
+}
+
+/// Bundled output of [`render_pbxproj_op_placeholders`] — one
+/// field per pbxproj-template placeholder so adding a new
+/// op-derived section stays a single-line change here + a
+/// matching `{{…}}` in the template.
+struct PbxprojRendered {
+    build_file_entries: String,
+    file_reference_entries: String,
+    sources_phase_files: String,
+    resources_phase_files: String,
+    frameworks_phase_files: String,
+    plugin_files_group_children: String,
+    target_build_settings: String,
+}
+
+/// Translate the engine's `Vec<PbxprojOp>` into the seven
+/// pbxproj-template placeholder strings the renderer needs. Empty
+/// inputs → empty strings for every placeholder so the template
+/// stays valid pbxproj even with no plugin contributions.
+///
+/// UUIDs are deterministic ([`pbxproj_uuid`]). A given
+/// `(op variant, payload)` pair produces the same UUID across
+/// every render, which keeps the rendered file byte-identical
+/// across rebuilds and lets the fingerprint cache skip path do
+/// its job.
+fn render_pbxproj_op_placeholders(ops: &[PbxprojOp]) -> PbxprojRendered {
+    let mut build_file_entries = String::new();
+    let mut file_reference_entries = String::new();
+    let mut sources_phase_files = String::new();
+    let mut resources_phase_files = String::new();
+    let mut frameworks_phase_files = String::new();
+    let mut plugin_files_group_children = String::new();
+    let mut target_build_settings = String::new();
+
+    for op in ops {
+        match op {
+            PbxprojOp::AddResource { path } => {
+                let path_str = path.display().to_string();
+                let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:{path_str}"));
+                let buildfile_uuid = pbxproj_uuid(&format!("PBXBuildFile:Resources:{path_str}"));
+                let file_type = last_known_file_type(path);
+                build_file_entries.push_str(&format!(
+                    "\t\t{buildfile_uuid} /* {path_str} in Resources */ = \
+                     {{isa = PBXBuildFile; fileRef = {fileref_uuid} /* {path_str} */; }};\n",
+                ));
+                file_reference_entries.push_str(&format!(
+                    "\t\t{fileref_uuid} /* {path_str} */ = \
+                     {{isa = PBXFileReference; lastKnownFileType = {file_type}; \
+                     path = \"{path_str}\"; sourceTree = \"<group>\"; }};\n",
+                ));
+                resources_phase_files.push_str(&format!(
+                    "\t\t\t\t{buildfile_uuid} /* {path_str} in Resources */,\n",
+                ));
+                plugin_files_group_children
+                    .push_str(&format!("\t\t\t\t{fileref_uuid} /* {path_str} */,\n",));
+            }
+            PbxprojOp::AddSource { path } => {
+                let path_str = path.display().to_string();
+                let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:{path_str}"));
+                let buildfile_uuid = pbxproj_uuid(&format!("PBXBuildFile:Sources:{path_str}"));
+                let file_type = last_known_file_type(path);
+                build_file_entries.push_str(&format!(
+                    "\t\t{buildfile_uuid} /* {path_str} in Sources */ = \
+                     {{isa = PBXBuildFile; fileRef = {fileref_uuid} /* {path_str} */; }};\n",
+                ));
+                file_reference_entries.push_str(&format!(
+                    "\t\t{fileref_uuid} /* {path_str} */ = \
+                     {{isa = PBXFileReference; lastKnownFileType = {file_type}; \
+                     path = \"{path_str}\"; sourceTree = \"<group>\"; }};\n",
+                ));
+                sources_phase_files.push_str(&format!(
+                    "\t\t\t\t{buildfile_uuid} /* {path_str} in Sources */,\n",
+                ));
+                plugin_files_group_children
+                    .push_str(&format!("\t\t\t\t{fileref_uuid} /* {path_str} */,\n",));
+            }
+            PbxprojOp::LinkSystemFramework { name } => {
+                let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:Framework:{name}"));
+                let buildfile_uuid = pbxproj_uuid(&format!("PBXBuildFile:Frameworks:{name}"));
+                build_file_entries.push_str(&format!(
+                    "\t\t{buildfile_uuid} /* {name} in Frameworks */ = \
+                     {{isa = PBXBuildFile; fileRef = {fileref_uuid} /* {name} */; }};\n",
+                ));
+                file_reference_entries.push_str(&format!(
+                    "\t\t{fileref_uuid} /* {name} */ = \
+                     {{isa = PBXFileReference; lastKnownFileType = wrapper.framework; \
+                     name = \"{name}\"; path = \"System/Library/Frameworks/{name}\"; \
+                     sourceTree = SDKROOT; }};\n",
+                ));
+                frameworks_phase_files.push_str(&format!(
+                    "\t\t\t\t{buildfile_uuid} /* {name} in Frameworks */,\n",
+                ));
+                plugin_files_group_children
+                    .push_str(&format!("\t\t\t\t{fileref_uuid} /* {name} */,\n",));
+            }
+            PbxprojOp::SetBuildSetting { key, value } => {
+                target_build_settings.push_str(&format!("\t\t\t\t\t{key} = \"{value}\";\n"));
+            }
+        }
+    }
+
+    // Trim trailing newlines so the surrounding template's own
+    // newlines aren't doubled up. Empty strings stay empty.
+    fn trim(s: &mut String) {
+        if s.ends_with('\n') {
+            s.pop();
+        }
+    }
+    trim(&mut build_file_entries);
+    trim(&mut file_reference_entries);
+    trim(&mut sources_phase_files);
+    trim(&mut resources_phase_files);
+    trim(&mut frameworks_phase_files);
+    trim(&mut plugin_files_group_children);
+    trim(&mut target_build_settings);
+
+    PbxprojRendered {
+        build_file_entries,
+        file_reference_entries,
+        sources_phase_files,
+        resources_phase_files,
+        frameworks_phase_files,
+        plugin_files_group_children,
+        target_build_settings,
+    }
+}
+
+/// Pick a `lastKnownFileType` for a file path, by extension. Falls
+/// back to `text` for anything unknown — Xcode tolerates a wrong
+/// guess; it just affects the navigator icon.
+fn last_known_file_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("swift") => "sourcecode.swift",
+        Some("m") => "sourcecode.c.objc",
+        Some("mm") => "sourcecode.cpp.objcpp",
+        Some("h") => "sourcecode.c.h",
+        Some("plist") => "text.plist.xml",
+        Some("json") => "text.json",
+        Some("png") => "image.png",
+        Some("jpg") | Some("jpeg") => "image.jpeg",
+        Some("xcassets") => "folder.assetcatalog",
+        Some("storyboard") => "file.storyboard",
+        Some("xib") => "file.xib",
+        _ => "text",
+    }
+}
+
+/// Deterministic 24-hex-char UUID for a stable string seed.
+/// Pbxproj refs are 24-char hex strings (96-bit). We splice two
+/// FNV-1a hashes (16 hex each, salted differently) and take the
+/// first 24 chars so the output stays in the canonical shape Xcode
+/// produces. Determinism is what matters — collision risk across
+/// `seed` strings within a single sync is negligible at this
+/// length and the rendered pbxproj would fail to parse on
+/// collision anyway, surfacing the bug immediately.
+fn pbxproj_uuid(seed: &str) -> String {
+    let a = crate::fingerprint::fingerprint(seed.as_bytes());
+    let b = crate::fingerprint::fingerprint(format!("{seed}-salt").as_bytes());
+    format!("{a}{}", &b[..8]).to_uppercase()
 }
 
 /// Render the engine-supplied `(key, string)` pairs as XML
@@ -363,6 +556,7 @@ pub fn inputs_from(
 
     let extra_info_plist_kvs = extract_info_plist_string_kvs(&ctx);
     let extra_files = ios_ir.extra_files.clone();
+    let pbxproj_ops = ios_ir.pbxproj_ops.clone();
 
     Ok(IosInputs {
         app_name,
@@ -377,10 +571,14 @@ pub fn inputs_from(
         user_package,
         extra_info_plist_kvs,
         extra_files,
-        // Bumped 11 → 12 for `extra_files` write-through (RFC #164
-        // B-direction PR 3). The fingerprint shape grew an
-        // `extra_files` field; existing trees regenerate.
-        template_version: 12,
+        pbxproj_ops,
+        // Bumped 12 → 13 for `pbxproj_ops` template-injection
+        // (RFC #164 B-direction PR 4). The pbxproj template grew
+        // seven new placeholders + a PBXResourcesBuildPhase
+        // section + a "Whisker Plugin Files" group; existing
+        // `gen/ios/` trees regenerate so the new sections render
+        // correctly even before any plugin contributes content.
+        template_version: 13,
     })
 }
 
@@ -435,7 +633,8 @@ mod tests {
             user_package: "hello-world".into(),
             extra_info_plist_kvs: BTreeMap::new(),
             extra_files: BTreeMap::new(),
-            template_version: 12,
+            pbxproj_ops: Vec::new(),
+            template_version: 13,
         }
     }
 

@@ -41,3 +41,4 @@ pub mod android_meta_data;
 pub mod android_permissions;
 pub mod info_plist_extra;
 pub mod ios_extra_files;
+pub mod ios_pbxproj_ops;
