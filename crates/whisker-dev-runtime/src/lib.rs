@@ -15,4 +15,10 @@
 pub mod hot_reload;
 
 #[cfg(feature = "hot-reload")]
+pub mod log_capture;
+
+#[cfg(feature = "hot-reload")]
 pub use hot_reload::{devlog, start_receiver, take_pending_patch};
+
+#[cfg(feature = "hot-reload")]
+pub use log_capture::start_log_capture;

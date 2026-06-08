@@ -206,6 +206,22 @@ pub enum Event {
     ClientConnected,
     ClientDisconnected,
     PatchSent,
+    /// A line captured from the device-side app's stdout / stderr (via
+    /// the `whisker-dev-runtime::log_capture` `dup2` hook), forwarded
+    /// over the WS connection. `whisker-cli` surfaces these in the
+    /// dev-loop UI so users don't need a separate `adb logcat` /
+    /// `simctl log stream` terminal to read their own `println!`s.
+    DeviceLog {
+        /// `"stdout"` or `"stderr"` — kept as a string mirror of the
+        /// on-wire field so the variant stays trivially serialisable
+        /// without dragging a `LogStream` enum across crate
+        /// boundaries.
+        stream: String,
+        line: String,
+        /// Device-stamped microseconds since UNIX_EPOCH. `0` if the
+        /// device's clock was unavailable when the line was captured.
+        ts_micros: u128,
+    },
 }
 
 // ----- Server ---------------------------------------------------------------

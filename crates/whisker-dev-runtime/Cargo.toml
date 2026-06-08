@@ -21,6 +21,7 @@ hot-reload = [
     "dep:serde_json",
     "dep:subsecond",
     "dep:subsecond-types",
+    "dep:libc",
 ]
 
 [dependencies]
@@ -34,3 +35,7 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 subsecond = { workspace = true, optional = true }
 subsecond-types = { workspace = true, optional = true }
+# `pipe(2)` / `dup2` / `read` / `STDOUT_FILENO` for `log_capture` —
+# every device target we support is POSIX (Android NDK, iOS, macOS host,
+# Linux host), so libc covers the whole matrix.
+libc = { workspace = true, optional = true }

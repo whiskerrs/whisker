@@ -82,6 +82,11 @@ pub fn run<F>(
     if engine_raw.is_null() {
         return;
     }
+    // Install stdout/stderr capture BEFORE the user's `app_fn` runs so
+    // every `println!` / `log::*` / panic message from user code reaches
+    // `whisker run`. No-op in release builds (the hot-reload feature
+    // gates the module out entirely).
+    start_log_capture();
     // Boxed init context, handed across the C ABI via raw pointer.
     let ctx = Box::new(InitCtx {
         engine: engine_raw as *mut WhiskerEngine,
@@ -172,6 +177,14 @@ fn start_hot_reload_receiver() {
 
 #[cfg(not(feature = "hot-reload"))]
 fn start_hot_reload_receiver() {}
+
+#[cfg(feature = "hot-reload")]
+fn start_log_capture() {
+    whisker_dev_runtime::start_log_capture();
+}
+
+#[cfg(not(feature = "hot-reload"))]
+fn start_log_capture() {}
 
 /// Apply the next pending hot patch, if any. Returns `true` when a
 /// patch was successfully applied so the caller can force a flush

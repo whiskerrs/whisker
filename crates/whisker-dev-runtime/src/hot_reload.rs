@@ -189,9 +189,29 @@ where
     ));
     ws.send(Message::Text(hello)).await?;
 
-    while let Some(msg) = ws.next().await {
-        let msg = msg?;
-        match msg {
+    loop {
+        tokio::select! {
+            // device → host: forward any captured stdout/stderr lines
+            // accumulated by `log_capture`. Drains in batches so a
+            // burst of `println!`s sends one frame per round-trip
+            // rather than one frame per line.
+            lines = crate::log_capture::drain_pending_logs() => {
+                for line in lines {
+                    let frame = serde_json::json!({
+                        "kind": "log",
+                        "stream": line.stream.as_wire(),
+                        "line": line.text,
+                        "ts_micros": line.ts_micros.to_string(),
+                    })
+                    .to_string();
+                    ws.send(Message::Text(frame)).await?;
+                }
+            }
+            // host → device: receive patches + close.
+            msg = ws.next() => {
+                let Some(msg) = msg else { return Ok(()); };
+                let msg = msg?;
+                match msg {
             Message::Binary(bytes) => {
                 devlog(&format!("patch frame received ({} bytes)", bytes.len()));
                 match parse_patch_frame(&bytes) {
@@ -228,9 +248,10 @@ where
             }
             Message::Close(_) => return Ok(()),
             _ => {} // ignore Text (no server→client text frames today) / Ping / Pong
+                }
+            }
         }
     }
-    Ok(())
 }
 
 /// Write the patch dylib payload to a local file under the app's
