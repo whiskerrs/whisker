@@ -135,6 +135,8 @@ impl Builder {
             whisker_build::android::run_gradle_assemble(
                 &gen_android,
                 whisker_build::Profile::Debug,
+                &features,
+                capture.as_ref(),
             )?;
             Ok(())
         })

@@ -134,7 +134,7 @@ fn build_android_apk(m: &manifest::ResolvedManifest, workspace_root: &Path) -> R
     android::stage_jni_libs(&sync.gen_dir, abi, &so, &toolchain)?;
 
     // 4. Gradle release.
-    let apk = android::run_gradle_assemble(&sync.gen_dir, Profile::Release)?;
+    let apk = android::run_gradle_assemble(&sync.gen_dir, Profile::Release, &[], None)?;
     println!("\n✅ APK: {}", apk.display());
     Ok(())
 }
