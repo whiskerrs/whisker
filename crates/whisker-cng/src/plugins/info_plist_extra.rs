@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<InfoPlistExtraCfg>(|c| c
+//! app.plugin::<InfoPlistExtra>(|c| c
 //!     .add("NSCameraUsageDescription", "Take photos for posts.")
 //!     .add("LSApplicationQueriesSchemes", "comgooglemaps"));
 //! ```
@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use whisker_plugin::{GenerateContext, Operation, PlistValue, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct InfoPlistExtraCfg {
+pub struct InfoPlistExtraConfig {
     /// `(key, value)` pairs added to `Info.plist`. `BTreeMap` for
     /// deterministic iteration order — the engine's fingerprint
     /// hashes the IR, and `HashMap` random ordering would invalidate
@@ -38,7 +38,7 @@ pub struct InfoPlistExtraCfg {
     pub entries: BTreeMap<String, String>,
 }
 
-impl InfoPlistExtraCfg {
+impl InfoPlistExtraConfig {
     /// Add (or replace) one `(key, value)` pair. Returns `&mut Self`
     /// for fluent chaining inside the `app.plugin::<…>(|c| …)`
     /// closure.
@@ -48,16 +48,16 @@ impl InfoPlistExtraCfg {
     }
 }
 
-impl PluginConfig for InfoPlistExtraCfg {
+impl PluginConfig for InfoPlistExtraConfig {
     const NAME: &'static str = "whisker-info-plist-extra";
 }
 
-pub struct InfoPlistExtraPlugin;
+pub struct InfoPlistExtra;
 
-impl Plugin for InfoPlistExtraPlugin {
-    type Config = InfoPlistExtraCfg;
+impl Plugin for InfoPlistExtra {
+    type Config = InfoPlistExtraConfig;
 
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &InfoPlistExtraCfg) -> anyhow::Result<()> {
+    fn apply(&self, ctx: &mut GenerateContext, cfg: &InfoPlistExtraConfig) -> anyhow::Result<()> {
         let Some(ios) = ctx.ios.as_mut() else {
             // Target not enabled — nothing to do.
             return Ok(());
@@ -66,7 +66,7 @@ impl Plugin for InfoPlistExtraPlugin {
             ios.info_plist
                 .insert(key.clone(), PlistValue::String(value.clone()));
             ctx.journal.record(
-                InfoPlistExtraCfg::NAME,
+                InfoPlistExtraConfig::NAME,
                 Target::Ios,
                 &format!("info_plist.{key}"),
                 Operation::Set,
@@ -91,8 +91,8 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_ios();
-        InfoPlistExtraPlugin
-            .apply(&mut ctx, &InfoPlistExtraCfg::default())
+        InfoPlistExtra
+            .apply(&mut ctx, &InfoPlistExtraConfig::default())
             .unwrap();
         assert!(ctx.ios.unwrap().info_plist.is_empty());
         assert!(ctx.journal.records.is_empty());
@@ -100,11 +100,11 @@ mod tests {
 
     #[test]
     fn populated_config_writes_each_entry_to_info_plist() {
-        let mut cfg = InfoPlistExtraCfg::default();
+        let mut cfg = InfoPlistExtraConfig::default();
         cfg.add("NSCameraUsageDescription", "Take photos.")
             .add("LSApplicationQueriesSchemes", "comgooglemaps");
         let mut ctx = ctx_with_ios();
-        InfoPlistExtraPlugin.apply(&mut ctx, &cfg).unwrap();
+        InfoPlistExtra.apply(&mut ctx, &cfg).unwrap();
         let plist = ctx.ios.unwrap().info_plist;
         assert_eq!(
             plist["NSCameraUsageDescription"],
@@ -118,10 +118,10 @@ mod tests {
 
     #[test]
     fn each_entry_records_a_journal_event() {
-        let mut cfg = InfoPlistExtraCfg::default();
+        let mut cfg = InfoPlistExtraConfig::default();
         cfg.add("Key1", "v1").add("Key2", "v2");
         let mut ctx = ctx_with_ios();
-        InfoPlistExtraPlugin.apply(&mut ctx, &cfg).unwrap();
+        InfoPlistExtra.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(ctx.journal.records.len(), 2);
         for r in &ctx.journal.records {
             assert_eq!(r.plugin, "whisker-info-plist-extra");
@@ -132,10 +132,10 @@ mod tests {
 
     #[test]
     fn no_ios_target_means_no_op() {
-        let mut cfg = InfoPlistExtraCfg::default();
+        let mut cfg = InfoPlistExtraConfig::default();
         cfg.add("k", "v");
         let mut ctx = GenerateContext::default(); // ios = None
-        InfoPlistExtraPlugin.apply(&mut ctx, &cfg).unwrap();
+        InfoPlistExtra.apply(&mut ctx, &cfg).unwrap();
         assert!(ctx.journal.records.is_empty());
     }
 }

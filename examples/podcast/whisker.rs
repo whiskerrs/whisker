@@ -28,4 +28,20 @@ pub fn configure(app: &mut whisker_app_config::AppConfig) {
             .scheme("Podcast")
             .deployment_target("13.0");
     });
+
+    // Whisker-audio CNG plugin — mirrors expo-audio's plugin
+    // surface. Exercise every option so the generated project
+    // shows we're contributing the right entries:
+    //   - microphone_permission → Info.plist.NSMicrophoneUsageDescription
+    //   - record_audio_android → AndroidManifest <uses-permission RECORD_AUDIO>
+    //   - enable_background_{recording,playback} → Info.plist.UIBackgroundModes
+    //
+    // The probe pulls `whisker-audio` with `default-features = false`
+    // so only the `cng` module is built (no Lynx bridge / runtime
+    // overhead) — see `crates/whisker-cli/src/probe.rs`.
+    app.plugin::<whisker_audio::cng::WhiskerAudio>(|c| {
+        c.microphone_permission("Record clips for podcast episodes.")
+            .record_audio_android(true)
+            .enable_background_playback(true);
+    });
 }

@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<AndroidPermissionsCfg>(|c| c
+//! app.plugin::<AndroidPermissions>(|c| c
 //!     .add("android.permission.CAMERA")
 //!     .add("android.permission.RECORD_AUDIO"));
 //! ```
@@ -19,30 +19,34 @@ use serde::{Deserialize, Serialize};
 use whisker_plugin::{GenerateContext, Operation, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct AndroidPermissionsCfg {
+pub struct AndroidPermissionsConfig {
     /// Permission strings exactly as they appear in
     /// `android:name="…"`. e.g. `"android.permission.CAMERA"`.
     #[serde(default)]
     pub permissions: Vec<String>,
 }
 
-impl AndroidPermissionsCfg {
+impl AndroidPermissionsConfig {
     pub fn add(&mut self, name: impl Into<String>) -> &mut Self {
         self.permissions.push(name.into());
         self
     }
 }
 
-impl PluginConfig for AndroidPermissionsCfg {
+impl PluginConfig for AndroidPermissionsConfig {
     const NAME: &'static str = "whisker-android-permissions";
 }
 
-pub struct AndroidPermissionsPlugin;
+pub struct AndroidPermissions;
 
-impl Plugin for AndroidPermissionsPlugin {
-    type Config = AndroidPermissionsCfg;
+impl Plugin for AndroidPermissions {
+    type Config = AndroidPermissionsConfig;
 
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &AndroidPermissionsCfg) -> anyhow::Result<()> {
+    fn apply(
+        &self,
+        ctx: &mut GenerateContext,
+        cfg: &AndroidPermissionsConfig,
+    ) -> anyhow::Result<()> {
         let Some(android) = ctx.android.as_mut() else {
             return Ok(());
         };
@@ -52,7 +56,7 @@ impl Plugin for AndroidPermissionsPlugin {
         let count = cfg.permissions.len();
         android.manifest.permissions.extend(cfg.permissions.clone());
         ctx.journal.record(
-            AndroidPermissionsCfg::NAME,
+            AndroidPermissionsConfig::NAME,
             Target::Android,
             "manifest.permissions",
             Operation::ArrayPush { count },
@@ -76,8 +80,8 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
-        AndroidPermissionsPlugin
-            .apply(&mut ctx, &AndroidPermissionsCfg::default())
+        AndroidPermissions
+            .apply(&mut ctx, &AndroidPermissionsConfig::default())
             .unwrap();
         assert!(ctx.android.unwrap().manifest.permissions.is_empty());
         assert!(ctx.journal.records.is_empty());
@@ -85,11 +89,11 @@ mod tests {
 
     #[test]
     fn populated_config_appends_each_permission() {
-        let mut cfg = AndroidPermissionsCfg::default();
+        let mut cfg = AndroidPermissionsConfig::default();
         cfg.add("android.permission.CAMERA")
             .add("android.permission.RECORD_AUDIO");
         let mut ctx = ctx_with_android();
-        AndroidPermissionsPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidPermissions.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(
             ctx.android.unwrap().manifest.permissions,
             vec![
@@ -101,10 +105,10 @@ mod tests {
 
     #[test]
     fn one_array_push_event_per_invocation() {
-        let mut cfg = AndroidPermissionsCfg::default();
+        let mut cfg = AndroidPermissionsConfig::default();
         cfg.add("a").add("b").add("c");
         let mut ctx = ctx_with_android();
-        AndroidPermissionsPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidPermissions.apply(&mut ctx, &cfg).unwrap();
         assert_eq!(ctx.journal.records.len(), 1);
         let r = &ctx.journal.records[0];
         assert_eq!(r.plugin, "whisker-android-permissions");
@@ -114,10 +118,10 @@ mod tests {
 
     #[test]
     fn no_android_target_means_no_op() {
-        let mut cfg = AndroidPermissionsCfg::default();
+        let mut cfg = AndroidPermissionsConfig::default();
         cfg.add("android.permission.CAMERA");
         let mut ctx = GenerateContext::default();
-        AndroidPermissionsPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidPermissions.apply(&mut ctx, &cfg).unwrap();
         assert!(ctx.journal.records.is_empty());
     }
 }

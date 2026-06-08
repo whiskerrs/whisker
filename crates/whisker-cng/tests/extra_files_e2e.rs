@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use whisker_app_config::AppConfig;
-use whisker_cng::plugins::android_extra_files::AndroidExtraFilesCfg;
-use whisker_cng::plugins::ios_extra_files::IosExtraFilesCfg;
+use whisker_cng::plugins::android_extra_files::AndroidExtraFiles;
+use whisker_cng::plugins::ios_extra_files::IosExtraFiles;
 
 fn unique_tempdir() -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -72,7 +72,7 @@ fn sync_android(app: &AppConfig) -> (PathBuf, PathBuf) {
 #[test]
 fn ios_extra_file_lands_at_the_declared_relative_path() {
     let mut app = base_ios_app();
-    app.plugin::<IosExtraFilesCfg>(|c| {
+    app.plugin::<IosExtraFiles>(|c| {
         c.add("Sources/Helper.swift", "// helper code\n");
     });
     let (tmp, out) = sync_ios(&app);
@@ -88,7 +88,7 @@ fn ios_extra_file_lands_at_the_declared_relative_path() {
 #[test]
 fn ios_extra_file_creates_intermediate_directories() {
     let mut app = base_ios_app();
-    app.plugin::<IosExtraFilesCfg>(|c| {
+    app.plugin::<IosExtraFiles>(|c| {
         c.add(
             "Resources/Config/Endpoints/prod.json",
             "{\"api\": \"prod\"}",
@@ -105,7 +105,7 @@ fn ios_extra_file_creates_intermediate_directories() {
 fn ios_extra_file_mode_is_applied_on_unix() {
     use std::os::unix::fs::PermissionsExt;
     let mut app = base_ios_app();
-    app.plugin::<IosExtraFilesCfg>(|c| {
+    app.plugin::<IosExtraFiles>(|c| {
         c.add_with_mode("Scripts/run.sh", "#!/bin/sh\necho ok\n", 0o755);
     });
     let (tmp, out) = sync_ios(&app);
@@ -118,7 +118,7 @@ fn ios_extra_file_mode_is_applied_on_unix() {
 #[test]
 fn ios_extra_file_with_absolute_path_is_rejected() {
     let mut app = base_ios_app();
-    app.plugin::<IosExtraFilesCfg>(|c| {
+    app.plugin::<IosExtraFiles>(|c| {
         c.add("/etc/passwd", "malicious");
     });
     let inputs = whisker_cng::ios::inputs_from(
@@ -140,7 +140,7 @@ fn ios_extra_file_with_absolute_path_is_rejected() {
 #[test]
 fn ios_extra_file_with_parent_dir_traversal_is_rejected() {
     let mut app = base_ios_app();
-    app.plugin::<IosExtraFilesCfg>(|c| {
+    app.plugin::<IosExtraFiles>(|c| {
         c.add("Sources/../escape.swift", "escape attempt");
     });
     let inputs = whisker_cng::ios::inputs_from(
@@ -176,7 +176,7 @@ fn ios_no_plugin_means_no_extra_files_written() {
 #[test]
 fn android_extra_file_lands_at_the_declared_relative_path() {
     let mut app = base_android_app();
-    app.plugin::<AndroidExtraFilesCfg>(|c| {
+    app.plugin::<AndroidExtraFiles>(|c| {
         c.add("app/google-services.json", "{\"project\": \"demo\"}");
     });
     let (tmp, out) = sync_android(&app);
@@ -194,7 +194,7 @@ fn android_extra_file_lands_at_the_declared_relative_path() {
 fn android_extra_file_mode_is_applied_on_unix() {
     use std::os::unix::fs::PermissionsExt;
     let mut app = base_android_app();
-    app.plugin::<AndroidExtraFilesCfg>(|c| {
+    app.plugin::<AndroidExtraFiles>(|c| {
         c.add_with_mode("scripts/precheck.sh", "#!/bin/sh\n", 0o755);
     });
     let (tmp, out) = sync_android(&app);
@@ -207,7 +207,7 @@ fn android_extra_file_mode_is_applied_on_unix() {
 #[test]
 fn android_extra_file_with_absolute_path_is_rejected() {
     let mut app = base_android_app();
-    app.plugin::<AndroidExtraFilesCfg>(|c| {
+    app.plugin::<AndroidExtraFiles>(|c| {
         c.add("/etc/passwd", "malicious");
     });
     let inputs = whisker_cng::android::inputs_from(
@@ -239,7 +239,7 @@ fn android_firebase_google_services_json_drops_at_app_root() {
     // would do for Android — drop `google-services.json` next to
     // the app's `build.gradle.kts`.
     let mut app = base_android_app();
-    app.plugin::<AndroidExtraFilesCfg>(|c| {
+    app.plugin::<AndroidExtraFiles>(|c| {
         c.add(
             "app/google-services.json",
             "{\"project_info\": {\"project_id\": \"demo\"}}",

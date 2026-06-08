@@ -65,6 +65,14 @@ pub struct ManifestRaw {
     pub ios: Option<IosSectionRaw>,
     #[serde(default)]
     pub android: Option<AndroidSectionRaw>,
+    /// `[package.metadata.whisker.plugins.<name>]` entries —
+    /// consumed by `whisker_cng::discovery`, not by the module
+    /// system. Captured here as raw JSON so its presence doesn't
+    /// trip the `deny_unknown_fields` check on this struct.
+    /// Validation of the plugin entry's shape lives in
+    /// `whisker_cng::discovery::PluginEntryRaw`.
+    #[serde(default)]
+    pub plugins: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]

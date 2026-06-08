@@ -10,9 +10,9 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use whisker_app_config::AppConfig;
-use whisker_cng::plugins::android_meta_data::AndroidMetaDataCfg;
-use whisker_cng::plugins::android_permissions::AndroidPermissionsCfg;
-use whisker_cng::plugins::info_plist_extra::InfoPlistExtraCfg;
+use whisker_cng::plugins::android_meta_data::AndroidMetaData;
+use whisker_cng::plugins::android_permissions::AndroidPermissions;
+use whisker_cng::plugins::info_plist_extra::InfoPlistExtra;
 
 fn unique_tempdir() -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -45,7 +45,7 @@ fn base_android_app() -> AppConfig {
 #[test]
 fn ios_info_plist_extra_keys_reach_the_rendered_plist() {
     let mut app = base_ios_app();
-    app.plugin::<InfoPlistExtraCfg>(|c| {
+    app.plugin::<InfoPlistExtra>(|c| {
         c.add("NSCameraUsageDescription", "Take photos.")
             .add("LSApplicationQueriesSchemes", "comgooglemaps");
     });
@@ -80,7 +80,7 @@ fn ios_info_plist_extra_keys_reach_the_rendered_plist() {
 #[test]
 fn ios_info_plist_extra_escapes_xml_in_values() {
     let mut app = base_ios_app();
-    app.plugin::<InfoPlistExtraCfg>(|c| {
+    app.plugin::<InfoPlistExtra>(|c| {
         c.add("NSCameraUsageDescription", "Photos for <Foo & Bar>.");
     });
 
@@ -140,7 +140,7 @@ fn ios_no_plugin_declared_means_no_extra_keys_in_plist() {
 #[test]
 fn android_extra_permissions_reach_the_rendered_manifest() {
     let mut app = base_android_app();
-    app.plugin::<AndroidPermissionsCfg>(|c| {
+    app.plugin::<AndroidPermissions>(|c| {
         c.add("android.permission.CAMERA")
             .add("android.permission.RECORD_AUDIO");
     });
@@ -179,7 +179,7 @@ fn android_extra_permissions_reach_the_rendered_manifest() {
 #[test]
 fn android_duplicate_permissions_are_dedup_in_the_rendered_manifest() {
     let mut app = base_android_app();
-    app.plugin::<AndroidPermissionsCfg>(|c| {
+    app.plugin::<AndroidPermissions>(|c| {
         c.add("android.permission.CAMERA")
             .add("android.permission.CAMERA");
     });
@@ -210,7 +210,7 @@ fn android_duplicate_permissions_are_dedup_in_the_rendered_manifest() {
 #[test]
 fn android_meta_data_reaches_the_rendered_manifest_inside_application() {
     let mut app = base_android_app();
-    app.plugin::<AndroidMetaDataCfg>(|c| {
+    app.plugin::<AndroidMetaData>(|c| {
         c.add("com.google.android.geo.API_KEY", "AIza-XYZ");
     });
 

@@ -4,7 +4,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! app.plugin::<AndroidExtraFilesCfg>(|c| c
+//! app.plugin::<AndroidExtraFiles>(|c| c
 //!     .add("app/google-services.json", json_str)
 //!     .add("app/proguard-rules-extra.pro", proguard_text));
 //! ```
@@ -17,13 +17,13 @@ use std::path::PathBuf;
 use whisker_plugin::{FileEntry, GenerateContext, Operation, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct AndroidExtraFilesCfg {
+pub struct AndroidExtraFilesConfig {
     /// Path → file. Path is relative to `gen/android/`.
     #[serde(default)]
     pub files: BTreeMap<PathBuf, FileEntry>,
 }
 
-impl AndroidExtraFilesCfg {
+impl AndroidExtraFilesConfig {
     pub fn add(&mut self, path: impl Into<PathBuf>, contents: impl Into<String>) -> &mut Self {
         self.files.insert(
             path.into(),
@@ -51,15 +51,19 @@ impl AndroidExtraFilesCfg {
     }
 }
 
-impl PluginConfig for AndroidExtraFilesCfg {
+impl PluginConfig for AndroidExtraFilesConfig {
     const NAME: &'static str = "whisker-android-extra-files";
 }
 
-pub struct AndroidExtraFilesPlugin;
+pub struct AndroidExtraFiles;
 
-impl Plugin for AndroidExtraFilesPlugin {
-    type Config = AndroidExtraFilesCfg;
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &AndroidExtraFilesCfg) -> anyhow::Result<()> {
+impl Plugin for AndroidExtraFiles {
+    type Config = AndroidExtraFilesConfig;
+    fn apply(
+        &self,
+        ctx: &mut GenerateContext,
+        cfg: &AndroidExtraFilesConfig,
+    ) -> anyhow::Result<()> {
         let Some(android) = ctx.android.as_mut() else {
             return Ok(());
         };
@@ -71,7 +75,7 @@ impl Plugin for AndroidExtraFilesPlugin {
             android.extra_files.insert(path.clone(), entry.clone());
         }
         ctx.journal.record(
-            AndroidExtraFilesCfg::NAME,
+            AndroidExtraFilesConfig::NAME,
             Target::Android,
             "extra_files",
             Operation::ArrayPush { count },
@@ -95,19 +99,19 @@ mod tests {
     #[test]
     fn default_config_contributes_nothing() {
         let mut ctx = ctx_with_android();
-        AndroidExtraFilesPlugin
-            .apply(&mut ctx, &AndroidExtraFilesCfg::default())
+        AndroidExtraFiles
+            .apply(&mut ctx, &AndroidExtraFilesConfig::default())
             .unwrap();
         assert!(ctx.android.unwrap().extra_files.is_empty());
     }
 
     #[test]
     fn populated_config_writes_each_file_to_ir() {
-        let mut cfg = AndroidExtraFilesCfg::default();
+        let mut cfg = AndroidExtraFilesConfig::default();
         cfg.add("app/google-services.json", "{\"foo\": 1}")
             .add_with_mode("scripts/build.sh", "#!/bin/sh\n", 0o755);
         let mut ctx = ctx_with_android();
-        AndroidExtraFilesPlugin.apply(&mut ctx, &cfg).unwrap();
+        AndroidExtraFiles.apply(&mut ctx, &cfg).unwrap();
         let files = ctx.android.unwrap().extra_files;
         assert_eq!(files.len(), 2);
         assert_eq!(

@@ -1851,6 +1851,7 @@ dependencies = [
 name = "whisker-app-config"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
  "serde_json",
  "whisker-plugin",
@@ -1860,7 +1861,10 @@ dependencies = [
 name = "whisker-audio"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "serde",
  "whisker",
+ "whisker-plugin",
 ]
 
 [[package]]

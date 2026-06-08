@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use whisker_app_config::AppConfig;
-use whisker_cng::plugins::ios_pbxproj_ops::IosPbxprojOpsCfg;
+use whisker_cng::plugins::ios_pbxproj_ops::IosPbxprojOps;
 
 fn unique_tempdir() -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -56,7 +56,7 @@ fn sync_and_read_pbxproj(app: &AppConfig) -> (PathBuf, String) {
 #[test]
 fn add_resource_emits_pbx_build_file_and_file_reference() {
     let mut app = base_app();
-    app.plugin::<IosPbxprojOpsCfg>(|c| {
+    app.plugin::<IosPbxprojOps>(|c| {
         c.add_resource("GoogleService-Info.plist");
     });
     let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
@@ -75,7 +75,7 @@ fn add_resource_emits_pbx_build_file_and_file_reference() {
 #[test]
 fn add_resource_appears_in_resources_build_phase_files_list() {
     let mut app = base_app();
-    app.plugin::<IosPbxprojOpsCfg>(|c| {
+    app.plugin::<IosPbxprojOps>(|c| {
         c.add_resource("GoogleService-Info.plist");
     });
     let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
@@ -97,7 +97,7 @@ fn add_resource_appears_in_resources_build_phase_files_list() {
 #[test]
 fn add_resource_appears_in_whisker_plugin_files_group() {
     let mut app = base_app();
-    app.plugin::<IosPbxprojOpsCfg>(|c| {
+    app.plugin::<IosPbxprojOps>(|c| {
         c.add_resource("GoogleService-Info.plist");
     });
     let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
@@ -119,7 +119,7 @@ fn add_resource_appears_in_whisker_plugin_files_group() {
 #[test]
 fn add_source_lands_in_sources_build_phase() {
     let mut app = base_app();
-    app.plugin::<IosPbxprojOpsCfg>(|c| {
+    app.plugin::<IosPbxprojOps>(|c| {
         c.add_source("Sources/PluginContrib.swift");
     });
     let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
@@ -147,7 +147,7 @@ fn add_source_lands_in_sources_build_phase() {
 #[test]
 fn link_system_framework_emits_sdkroot_file_ref_and_appears_in_frameworks_phase() {
     let mut app = base_app();
-    app.plugin::<IosPbxprojOpsCfg>(|c| {
+    app.plugin::<IosPbxprojOps>(|c| {
         c.link_system_framework("AVFoundation.framework");
     });
     let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
@@ -179,7 +179,7 @@ fn link_system_framework_emits_sdkroot_file_ref_and_appears_in_frameworks_phase(
 #[test]
 fn set_build_setting_appears_in_both_debug_and_release_target_configs() {
     let mut app = base_app();
-    app.plugin::<IosPbxprojOpsCfg>(|c| {
+    app.plugin::<IosPbxprojOps>(|c| {
         c.set_build_setting("OTHER_LDFLAGS", "$(inherited) -ObjC");
     });
     let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
@@ -203,11 +203,8 @@ fn set_build_setting_escapes_quotes_in_value() {
     // Without escaping, the plain `"` would terminate the
     // surrounding OpenStep plist string and break the parser.
     let mut app = base_app();
-    app.plugin::<IosPbxprojOpsCfg>(|c| {
-        c.set_build_setting(
-            "GCC_PREPROCESSOR_DEFINITIONS",
-            "FOO=\"bar baz\"",
-        );
+    app.plugin::<IosPbxprojOps>(|c| {
+        c.set_build_setting("GCC_PREPROCESSOR_DEFINITIONS", "FOO=\"bar baz\"");
     });
     let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
     // The escaped form ends up inside the quoted literal.
@@ -225,7 +222,7 @@ fn set_build_setting_escapes_quotes_in_value() {
 #[test]
 fn rendering_twice_with_same_input_yields_byte_identical_pbxproj() {
     let mut app = base_app();
-    app.plugin::<IosPbxprojOpsCfg>(|c| {
+    app.plugin::<IosPbxprojOps>(|c| {
         c.add_resource("GoogleService-Info.plist")
             .link_system_framework("AVFoundation.framework");
     });
@@ -274,7 +271,7 @@ fn firebase_ios_scenario_emits_resource_registration_and_objc_flag() {
     //   3. Some Firebase SDKs require -ObjC linker flag for
     //      categories on NSObject subclasses
     let mut app = base_app();
-    app.plugin::<IosPbxprojOpsCfg>(|c| {
+    app.plugin::<IosPbxprojOps>(|c| {
         c.add_resource("GoogleService-Info.plist")
             .set_build_setting("OTHER_LDFLAGS", "$(inherited) -ObjC");
     });

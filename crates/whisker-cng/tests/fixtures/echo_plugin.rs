@@ -10,25 +10,25 @@ use serde::{Deserialize, Serialize};
 use whisker_plugin::{GenerateContext, Operation, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
-struct EchoCfg {
+struct EchoConfig {
     #[serde(default)]
     permission: String,
 }
 
-impl PluginConfig for EchoCfg {
+impl PluginConfig for EchoConfig {
     const NAME: &'static str = "fixture-echo-plugin";
 }
 
-struct EchoPlugin;
+struct Echo;
 
-impl Plugin for EchoPlugin {
-    type Config = EchoCfg;
-    fn apply(&self, ctx: &mut GenerateContext, cfg: &EchoCfg) -> anyhow::Result<()> {
+impl Plugin for Echo {
+    type Config = EchoConfig;
+    fn apply(&self, ctx: &mut GenerateContext, cfg: &EchoConfig) -> anyhow::Result<()> {
         if let Some(android) = ctx.android.as_mut() {
             if !cfg.permission.is_empty() {
                 android.manifest.permissions.push(cfg.permission.clone());
                 ctx.journal.record(
-                    EchoCfg::NAME,
+                    EchoConfig::NAME,
                     Target::Android,
                     "manifest.permissions",
                     Operation::ArrayPush { count: 1 },
@@ -40,5 +40,5 @@ impl Plugin for EchoPlugin {
 }
 
 fn main() -> anyhow::Result<()> {
-    whisker_plugin::run_as_subprocess(EchoPlugin)
+    whisker_plugin::run_as_subprocess(Echo)
 }

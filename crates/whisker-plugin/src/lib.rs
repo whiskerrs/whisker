@@ -28,24 +28,24 @@
 //! use whisker_plugin::{Operation, Plugin, PluginConfig, GenerateContext, PlistValue, Target};
 //!
 //! #[derive(Default, serde::Serialize, serde::Deserialize)]
-//! struct MyConfig {
+//! struct DemoConfig {
 //!     bundle_suffix: String,
 //! }
 //!
-//! impl PluginConfig for MyConfig {
+//! impl PluginConfig for DemoConfig {
 //!     const NAME: &'static str = "example-plugin";
 //! }
 //!
-//! struct MyPlugin;
+//! struct Demo;
 //!
-//! impl Plugin for MyPlugin {
-//!     type Config = MyConfig;
-//!     fn apply(&self, ctx: &mut GenerateContext, cfg: &MyConfig) -> anyhow::Result<()> {
+//! impl Plugin for Demo {
+//!     type Config = DemoConfig;
+//!     fn apply(&self, ctx: &mut GenerateContext, cfg: &DemoConfig) -> anyhow::Result<()> {
 //!         if let Some(ios) = ctx.ios.as_mut() {
 //!             let key = "CFBundleSuffix".to_string();
 //!             ios.info_plist.insert(key.clone(), PlistValue::String(cfg.bundle_suffix.clone()));
 //!             ctx.journal.record(
-//!                 MyConfig::NAME,
+//!                 DemoConfig::NAME,
 //!                 Target::Ios,
 //!                 &format!("info_plist.{key}"),
 //!                 Operation::Set,
@@ -56,7 +56,7 @@
 //! }
 //!
 //! fn main() -> anyhow::Result<()> {
-//!     whisker_plugin::run_as_subprocess(MyPlugin)
+//!     whisker_plugin::run_as_subprocess(Demo)
 //! }
 //! ```
 //!
@@ -111,10 +111,8 @@ use std::path::PathBuf;
 /// Trait implemented by the typed config struct each plugin defines.
 ///
 /// Carries the plugin's stable kebab-case identifier as a const so
-/// the `app.plugin::<Cfg>(|c| ...)` builder in `whisker-app-config`
-/// can derive the plugin name from the *type alone* — the call site
-/// only sees `Cfg`, not the [`Plugin`] impl that runs against it,
-/// so the binding has to live on the Config side.
+/// the `app.plugin::<MyPlugin>(|c| ...)` builder in `whisker-app-config`
+/// can resolve the storage key via `<MyPlugin as Plugin>::Config::NAME`.
 ///
 /// ## Why `Serialize + DeserializeOwned`
 ///
@@ -131,9 +129,10 @@ use std::path::PathBuf;
 ///
 /// ## Why `Default`
 ///
-/// `app.plugin::<Cfg>(|c| ...)` starts from `Cfg::default()` and
-/// lets the closure mutate it. A user who declares a plugin without
-/// touching any options should still get a working config.
+/// `app.plugin::<MyPlugin>(|c| ...)` starts from `Config::default()`
+/// and lets the closure mutate it. A user who declares a plugin
+/// without touching any options should still get a working config —
+/// the call site reads as `app.plugin::<MyPlugin>(|_| {})`.
 ///
 /// ## Convention for `NAME`
 ///
@@ -153,7 +152,8 @@ pub trait PluginConfig: Serialize + for<'de> Deserialize<'de> + Default {
 /// What a plugin implements.
 pub trait Plugin {
     /// Plugin-specific config. The user passes this in via
-    /// `app.plugin::<Cfg>(|c| c.field(...))` inside `whisker.rs`.
+    /// `app.plugin::<Self>(|c| c.field(...))` inside `whisker.rs` —
+    /// the `c` parameter is `&mut Self::Config`.
     type Config: PluginConfig;
 
     /// Stable plugin identifier, used in:
@@ -631,7 +631,7 @@ pub struct PluginResponse {
 ///
 /// ```ignore
 /// fn main() -> anyhow::Result<()> {
-///     whisker_plugin::run_as_subprocess(MyPlugin)
+///     whisker_plugin::run_as_subprocess(Demo)
 /// }
 /// ```
 ///
@@ -798,7 +798,7 @@ mod tests {
 
     // Tiny plugin to exercise the trait shape — verifies the
     // associated-type bound compiles and default methods kick in.
-    struct NullPlugin;
+    struct Null;
 
     #[derive(Default, Serialize, Deserialize)]
     struct NullConfig {
@@ -810,7 +810,7 @@ mod tests {
         const NAME: &'static str = "null";
     }
 
-    impl Plugin for NullPlugin {
+    impl Plugin for Null {
         type Config = NullConfig;
         fn apply(&self, _ctx: &mut GenerateContext, _config: &Self::Config) -> anyhow::Result<()> {
             Ok(())
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn plugin_trait_default_methods_work() {
-        let p = NullPlugin;
+        let p = Null;
         assert_eq!(p.name(), "null");
         assert!(p.after().is_empty());
         assert!(p.before().is_empty());
@@ -849,25 +849,25 @@ mod tests {
     }
 
     #[derive(Default, serde::Serialize, serde::Deserialize)]
-    struct PermissionCfg {
+    struct PermissionConfig {
         permission: String,
     }
 
-    impl PluginConfig for PermissionCfg {
+    impl PluginConfig for PermissionConfig {
         const NAME: &'static str = "test-permission";
     }
 
-    struct PermissionPlugin;
+    struct Permission;
 
-    impl Plugin for PermissionPlugin {
-        type Config = PermissionCfg;
-        fn apply(&self, ctx: &mut GenerateContext, cfg: &PermissionCfg) -> anyhow::Result<()> {
+    impl Plugin for Permission {
+        type Config = PermissionConfig;
+        fn apply(&self, ctx: &mut GenerateContext, cfg: &PermissionConfig) -> anyhow::Result<()> {
             let android = ctx.android.as_mut().ok_or_else(|| {
                 anyhow::anyhow!("test-permission requires android target enabled")
             })?;
             android.manifest.permissions.push(cfg.permission.clone());
             ctx.journal.record(
-                PermissionCfg::NAME,
+                PermissionConfig::NAME,
                 Target::Android,
                 "manifest.permissions",
                 Operation::ArrayPush { count: 1 },
@@ -888,7 +888,7 @@ mod tests {
         };
         let input = serde_json::to_string(&request).unwrap();
 
-        let output = run_with_pipes(PermissionPlugin, &input).unwrap();
+        let output = run_with_pipes(Permission, &input).unwrap();
         let response: PluginResponse = serde_json::from_str(&output).unwrap();
 
         let android = response.context.android.expect("android should be present");
@@ -915,7 +915,7 @@ mod tests {
             context: GenerateContext::default(),
         };
         let input = serde_json::to_string(&request).unwrap();
-        let err = run_with_pipes(PermissionPlugin, &input).unwrap_err();
+        let err = run_with_pipes(Permission, &input).unwrap_err();
         assert!(err.to_string().contains("name mismatch"), "{err}");
     }
 
@@ -929,7 +929,7 @@ mod tests {
             context: GenerateContext::default(),
         };
         let input = serde_json::to_string(&request).unwrap();
-        let err = run_with_pipes(PermissionPlugin, &input).unwrap_err();
+        let err = run_with_pipes(Permission, &input).unwrap_err();
         assert!(err.to_string().contains("requires android"), "{err}");
     }
 }

@@ -529,6 +529,11 @@ fn write_file(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
 /// Pull the Android-relevant subset of `AppConfig` into the renderer
 /// input struct. Errors out on required-but-missing fields (an
 /// applicationId is mandatory; everything else has a default).
+///
+/// Thin wrapper over [`inputs_from_with_engine`] using
+/// [`Engine::with_builtins`]. Callers that want extra plugins
+/// (e.g. subprocess plugins discovered via cargo metadata) should
+/// call the `_with_engine` form directly.
 // Eight arguments — over clippy's seven-arg default. Bundling them
 // behind a builder or a config struct would just push the same value
 // list one level deeper without changing the call site, so allow.
@@ -543,12 +548,38 @@ pub fn inputs_from(
     whisker_maven_url: String,
     lynx_maven_url: String,
 ) -> Result<AndroidInputs> {
-    // Run the plugin pipeline with built-ins. `build_initial_context`
-    // seeds the IR with core fields from `AppConfig`; plugins can
-    // override any of them. The renderer reads the post-pipeline
-    // IR — `inputs_from`'s job is now strictly extraction +
-    // ergonomic defaults for fields the engine left as `None`.
-    let ctx = Engine::with_builtins()
+    inputs_from_with_engine(
+        &Engine::with_builtins(),
+        app_config,
+        rust_lib_name,
+        whisker_workspace_path,
+        whisker_user_package,
+        whisker_sdk_version,
+        whisker_gradle_plugin_version,
+        whisker_maven_url,
+        lynx_maven_url,
+    )
+}
+
+/// Like [`inputs_from`] but takes a pre-built [`Engine`] so the
+/// caller can register additional plugins (e.g. subprocess plugins
+/// discovered from `[package.metadata.whisker.plugins]`).
+#[allow(clippy::too_many_arguments)]
+pub fn inputs_from_with_engine(
+    engine: &Engine,
+    app_config: &AppConfig,
+    rust_lib_name: String,
+    whisker_workspace_path: PathBuf,
+    whisker_user_package: String,
+    whisker_sdk_version: String,
+    whisker_gradle_plugin_version: String,
+    whisker_maven_url: String,
+    lynx_maven_url: String,
+) -> Result<AndroidInputs> {
+    // Run the plugin pipeline. `build_initial_context` seeds the
+    // IR with core fields from `AppConfig`; plugins can override
+    // any of them. The renderer reads the post-pipeline IR.
+    let ctx = engine
         .compose(app_config, EnabledTargets::android_only())
         .context("compose Whisker CNG plugin pipeline for Android")?;
     let android_ir = ctx
