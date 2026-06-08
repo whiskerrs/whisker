@@ -111,11 +111,10 @@ use std::path::PathBuf;
 /// Trait implemented by the typed config struct each plugin defines.
 ///
 /// Carries the plugin's stable kebab-case identifier as a const so
-/// the [`AppConfig::plugin`](https://docs.rs/whisker-app-config/)
-/// builder can derive the plugin name from the *type alone* —
-/// `app.plugin::<FirebaseCfg>(|c| ...)` only sees `FirebaseCfg`, not
-/// the `Plugin` impl that runs against it, so the binding has to
-/// live on the Config side.
+/// the `app.plugin::<Cfg>(|c| ...)` builder in `whisker-app-config`
+/// can derive the plugin name from the *type alone* — the call site
+/// only sees `Cfg`, not the [`Plugin`] impl that runs against it,
+/// so the binding has to live on the Config side.
 ///
 /// ## Why `Serialize + DeserializeOwned`
 ///
@@ -139,8 +138,10 @@ use std::path::PathBuf;
 /// ## Convention for `NAME`
 ///
 /// Kebab-case; prefix 1st-party plugins with `whisker-`
-/// (e.g. `whisker-info-plist`, `whisker-permissions`). Must match
-/// the `Plugin::name()` of the plugin that consumes this Config.
+/// (e.g. `whisker-info-plist`, `whisker-permissions`). The default
+/// [`Plugin::name`] implementation returns this value, so under
+/// normal use the plugin's name and its Config's `NAME` are the
+/// same string by construction.
 pub trait PluginConfig: Serialize + for<'de> Deserialize<'de> + Default {
     const NAME: &'static str;
 }
@@ -164,8 +165,10 @@ pub trait Plugin {
     ///
     /// Defaults to `Self::Config::NAME` so the binding between the
     /// plugin's Config type and the plugin's name only has to be
-    /// declared once. Override only when a single Plugin impl
-    /// wraps multiple Config types (rare).
+    /// declared once (on the Config). The override slot is mostly
+    /// there for tests and shims that want to expose the same
+    /// Config under a different identifier; production plugins
+    /// should leave it at the default.
     fn name(&self) -> &'static str {
         <Self::Config as PluginConfig>::NAME
     }
