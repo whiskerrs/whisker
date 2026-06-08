@@ -1910,6 +1910,7 @@ name = "whisker-cng"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cargo_metadata",
  "serde",
  "serde_json",
  "whisker-app-config",

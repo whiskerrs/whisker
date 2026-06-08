@@ -30,11 +30,13 @@
 
 pub mod android;
 pub mod compose;
+pub mod discovery;
 mod fingerprint;
 pub mod ios;
 mod render;
 
 pub use android::{sync as sync_android, AndroidInputs};
 pub use compose::{EnabledTargets, Engine, SubprocessPlugin};
+pub use discovery::{discover_plugins, DiscoveredPlugin};
 pub use ios::{sync as sync_ios, IosInputs};
 pub use whisker_app_config::AppConfig;

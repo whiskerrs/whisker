@@ -23,6 +23,12 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 whisker-app-config = { workspace = true }
+# Walks the user crate's dep graph to find dependencies that declare
+# `[package.metadata.whisker.plugins.<name>]` in their `Cargo.toml`.
+# Same crate `whisker-build` uses for module discovery — pinned at
+# the same major version so both subsystems agree on the dep-graph
+# shape.
+cargo_metadata = "0.18"
 # `Plugin` / `PluginConfig` trait + IR types the engine drives the
 # plugin pipeline against. The compose module turns each user-side
 # `AppConfig.plugins[name]` JSON entry back into the plugin's typed
