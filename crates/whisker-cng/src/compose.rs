@@ -32,10 +32,13 @@
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use whisker_app_config::AppConfig;
 use whisker_plugin::{
     AndroidProjectIr, AppMeta, GenerateContext, IosProjectIr, MutationJournal, MutationRecord,
-    Operation, Plugin, Target,
+    Operation, Plugin, PluginRequest, PluginResponse, Target,
 };
 
 // ============================================================================
@@ -159,25 +162,32 @@ impl Engine {
 // ============================================================================
 
 /// Erased [`Plugin`] surface. One blanket impl on every `P: Plugin`
-/// turns typed configs into JSON-keyed dispatch.
+/// for in-process plugins; an explicit impl on [`SubprocessPlugin`]
+/// for 3rd-party binaries.
+///
+/// Return shapes are owned-string-ish (`&str`, `Vec<&str>`) rather
+/// than `&'static`-pinned: subprocess plugins read their name and
+/// ordering hints at runtime (from Cargo metadata in PR 3c), so the
+/// trait has to accept dynamic strings as well as the
+/// `&'static`-clean shape `Plugin` exposes.
 pub(crate) trait DynPlugin {
-    fn name(&self) -> &'static str;
-    fn after(&self) -> &'static [&'static str];
-    fn before(&self) -> &'static [&'static str];
+    fn name(&self) -> &str;
+    fn after(&self) -> Vec<&str>;
+    fn before(&self) -> Vec<&str>;
     /// Run validate + apply with `user_config` (or the Config's
     /// `Default` when `None`).
     fn run(&self, ctx: &mut GenerateContext, user_config: Option<&Value>) -> Result<()>;
 }
 
 impl<P: Plugin> DynPlugin for P {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         Plugin::name(self)
     }
-    fn after(&self) -> &'static [&'static str] {
-        Plugin::after(self)
+    fn after(&self) -> Vec<&str> {
+        Plugin::after(self).to_vec()
     }
-    fn before(&self) -> &'static [&'static str] {
-        Plugin::before(self)
+    fn before(&self) -> Vec<&str> {
+        Plugin::before(self).to_vec()
     }
     fn run(&self, ctx: &mut GenerateContext, user_config: Option<&Value>) -> Result<()> {
         let cfg: P::Config = match user_config {
@@ -264,7 +274,11 @@ fn topo_sort(plugins: &[Box<dyn DynPlugin>]) -> Result<Vec<usize>> {
     // name → index. Only used for `after()` / `before()` lookups;
     // determinism of the final order comes from sort_by_key on the
     // ready-queue below, not from iteration of this map.
-    let mut name_to_idx: BTreeMap<&'static str, usize> = BTreeMap::new();
+    //
+    // Keys are borrowed-from-plugin (`&str`), since subprocess
+    // plugins' names live in a `String` field rather than a
+    // `&'static str` constant.
+    let mut name_to_idx: BTreeMap<&str, usize> = BTreeMap::new();
     for (i, p) in plugins.iter().enumerate() {
         if name_to_idx.insert(p.name(), i).is_some() {
             bail!("two plugins registered with the same name `{}`", p.name());
@@ -329,7 +343,7 @@ fn topo_sort(plugins: &[Box<dyn DynPlugin>]) -> Result<Vec<usize>> {
     }
 
     if order.len() != plugins.len() {
-        let unfinished: Vec<&'static str> = (0..plugins.len())
+        let unfinished: Vec<&str> = (0..plugins.len())
             .filter(|i| !order.contains(i))
             .map(|i| plugins[i].name())
             .collect();
@@ -375,6 +389,167 @@ fn detect_conflicts(journal: &MutationJournal) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// ============================================================================
+// Subprocess plugins
+// ============================================================================
+
+/// 3rd-party plugin shipped as a standalone binary, driven by JSON
+/// over stdin/stdout. The corresponding author-side helper is
+/// `whisker_plugin::run_as_subprocess`.
+///
+/// From [`Engine`]'s perspective a subprocess plugin behaves
+/// exactly like an in-process one: same `name` / `after` / `before`
+/// surface, same dispatch into [`DynPlugin::run`]. The difference
+/// is what `run` does — spawn a child process, write a
+/// [`PluginRequest`] to its stdin, parse a [`PluginResponse`] back
+/// from its stdout, swap the response's context into the engine's
+/// running context.
+///
+/// ## Journal continuity
+///
+/// The engine hands the subprocess the full running
+/// [`GenerateContext`], including the [`MutationJournal`] entries
+/// previous plugins already wrote. The subprocess's
+/// `whisker_plugin::run_as_subprocess` helper preserves those
+/// records and appends new ones via `MutationJournal::record`,
+/// which keeps sequence indices monotonic across the in-process /
+/// subprocess boundary.
+///
+/// A malicious or buggy subprocess could drop existing journal
+/// entries. PR 3c (discovery) is the right place to surface that
+/// guarantee as a hard check; for now we trust the response.
+pub struct SubprocessPlugin {
+    name: String,
+    binary: PathBuf,
+    after: Vec<String>,
+    before: Vec<String>,
+}
+
+impl SubprocessPlugin {
+    pub fn new(name: impl Into<String>, binary: impl Into<PathBuf>) -> Self {
+        Self {
+            name: name.into(),
+            binary: binary.into(),
+            after: Vec::new(),
+            before: Vec::new(),
+        }
+    }
+
+    pub fn after(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.after = names.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn before(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.before = names.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+impl DynPlugin for SubprocessPlugin {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn after(&self) -> Vec<&str> {
+        self.after.iter().map(String::as_str).collect()
+    }
+    fn before(&self) -> Vec<&str> {
+        self.before.iter().map(String::as_str).collect()
+    }
+    fn run(&self, ctx: &mut GenerateContext, user_config: Option<&Value>) -> Result<()> {
+        let request = build_request(self.name.clone(), user_config, ctx);
+        let response = spawn_and_exchange(&self.binary, &self.name, &request)
+            .with_context(|| format!("subprocess plugin `{}` failed", self.name))?;
+        merge_response(ctx, response);
+        Ok(())
+    }
+}
+
+impl Engine {
+    /// Register a subprocess plugin. The engine spawns
+    /// `plugin.binary` on every [`Engine::compose`] call that
+    /// dispatches to it.
+    pub fn register_subprocess(&mut self, plugin: SubprocessPlugin) -> &mut Self {
+        self.plugins.push(Box::new(plugin));
+        self
+    }
+}
+
+fn build_request(
+    name: String,
+    user_config: Option<&Value>,
+    ctx: &GenerateContext,
+) -> PluginRequest {
+    PluginRequest {
+        name,
+        config: user_config.cloned().unwrap_or(Value::Null),
+        context: ctx.clone(),
+    }
+}
+
+fn merge_response(ctx: &mut GenerateContext, response: PluginResponse) {
+    *ctx = response.context;
+}
+
+/// Spawn the plugin binary, pipe JSON, parse the response. stderr
+/// is inherited so plugin diagnostics reach the user during
+/// `whisker generate --verbose`.
+fn spawn_and_exchange(
+    binary: &Path,
+    plugin_name: &str,
+    request: &PluginRequest,
+) -> Result<PluginResponse> {
+    let mut child = Command::new(binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("spawn plugin `{plugin_name}` binary `{}`", binary.display(),))?;
+
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("plugin `{plugin_name}` stdin pipe missing"))?;
+        let json = serde_json::to_vec(request)
+            .with_context(|| format!("encode PluginRequest for plugin `{plugin_name}`"))?;
+        stdin
+            .write_all(&json)
+            .with_context(|| format!("write PluginRequest to plugin `{plugin_name}`"))?;
+    }
+    // Drop stdin so the child sees EOF and proceeds to write
+    // its response. `wait_with_output` re-takes ownership.
+
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("wait for plugin `{plugin_name}`"))?;
+
+    check_exit_status(plugin_name, output.status)?;
+    decode_response_bytes(plugin_name, &output.stdout)
+}
+
+fn check_exit_status(plugin_name: &str, status: std::process::ExitStatus) -> Result<()> {
+    if !status.success() {
+        bail!(
+            "plugin `{plugin_name}` exited with non-zero status ({status}). \
+             Check its stderr for the error message."
+        );
+    }
+    Ok(())
+}
+
+fn decode_response_bytes(plugin_name: &str, bytes: &[u8]) -> Result<PluginResponse> {
+    if bytes.is_empty() {
+        bail!(
+            "plugin `{plugin_name}` produced empty stdout. \
+             A 3rd-party plugin binary should write exactly one \
+             PluginResponse JSON envelope and exit 0."
+        );
+    }
+    serde_json::from_slice(bytes)
+        .with_context(|| format!("decode PluginResponse JSON from plugin `{plugin_name}`'s stdout"))
 }
 
 // ============================================================================
@@ -862,5 +1037,81 @@ mod tests {
         assert_eq!(ctx.android.as_ref().unwrap().manifest.permissions.len(), 2);
         // 1 record from bundle id (Set) + 1 from permissions (ArrayPush)
         assert_eq!(ctx.journal.records.len(), 2);
+    }
+
+    // ----- Subprocess plumbing (pure helpers) --------------------------
+
+    #[test]
+    fn build_request_carries_name_config_and_full_context() {
+        let mut ctx = GenerateContext::default();
+        ctx.app_meta.name = "Demo".into();
+        ctx.journal.record(
+            "earlier-plugin",
+            Target::Ios,
+            "info_plist.X",
+            Operation::Set,
+        );
+        let req = build_request(
+            "my-plugin".into(),
+            Some(&serde_json::json!({"opt": true})),
+            &ctx,
+        );
+        assert_eq!(req.name, "my-plugin");
+        assert_eq!(req.config["opt"], true);
+        // The journal entry already in the engine context must be
+        // visible to the subprocess so its sequence counter continues
+        // monotonically — `next_sequence_index` will be 1 there.
+        assert_eq!(req.context.journal.next_sequence_index, 1);
+        assert_eq!(req.context.app_meta.name, "Demo");
+    }
+
+    #[test]
+    fn build_request_uses_null_for_missing_user_config() {
+        let ctx = GenerateContext::default();
+        let req = build_request("my-plugin".into(), None, &ctx);
+        assert!(req.config.is_null());
+    }
+
+    #[test]
+    fn merge_response_replaces_the_engine_context() {
+        let mut ctx = GenerateContext::default();
+        ctx.app_meta.name = "Old".into();
+        let mut new_ctx = GenerateContext::default();
+        new_ctx.app_meta.name = "New".into();
+        new_ctx.journal.record(
+            "subprocess-plugin",
+            Target::Android,
+            "manifest.permissions",
+            Operation::ArrayPush { count: 1 },
+        );
+        merge_response(&mut ctx, PluginResponse { context: new_ctx });
+        assert_eq!(ctx.app_meta.name, "New");
+        assert_eq!(ctx.journal.records.len(), 1);
+    }
+
+    #[test]
+    fn decode_response_bytes_handles_empty_stdout() {
+        let err = decode_response_bytes("p", b"").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("empty"), "{msg}");
+        assert!(msg.contains("`p`"), "{msg}");
+    }
+
+    #[test]
+    fn decode_response_bytes_surfaces_invalid_json_with_plugin_name() {
+        let err = decode_response_bytes("p", b"not json").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("`p`"), "{msg}");
+        assert!(msg.contains("decode"), "{msg}");
+    }
+
+    #[test]
+    fn decode_response_bytes_accepts_a_valid_envelope() {
+        let envelope = serde_json::to_vec(&PluginResponse {
+            context: GenerateContext::default(),
+        })
+        .unwrap();
+        let resp = decode_response_bytes("p", &envelope).unwrap();
+        assert_eq!(resp.context.journal.records.len(), 0);
     }
 }
