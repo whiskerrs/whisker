@@ -54,6 +54,14 @@ pub struct Args {
     /// development. Pair with `WHISKER_VERBOSE=1` for the full picture.
     #[arg(long)]
     pub show_native_logs: bool,
+
+    /// Disable the inline ratatui status bar at the bottom of the
+    /// terminal. On by default when stderr is a TTY; auto-off when
+    /// piping to a file or running under CI. Use this when running
+    /// against a tmux pane that doesn't like inline viewports, or
+    /// when you specifically want grep'able scrollback-only output.
+    #[arg(long)]
+    pub no_tui: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,9 +158,88 @@ pub fn run(args: Args) -> Result<()> {
         .build()
         .context("build tokio runtime")?;
     let show_native_logs = args.show_native_logs;
-    let server =
-        DevServer::new(config)?.on_event(move |e| forward_event_to_ui(e, show_native_logs));
-    rt.block_on(server.run())
+
+    // TUI is on iff stderr is a TTY AND the user didn't opt out. The
+    // env var is the cross-crate signal `whisker_build::ui` reads to
+    // suppress its indicatif spinners; the local boolean gates the
+    // ratatui setup below.
+    let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
+    if tui_enabled {
+        std::env::set_var("WHISKER_TUI", "1");
+    }
+
+    let target_label = target_label(target);
+    let bind_label = args.bind.to_string();
+
+    // The TUI runs on a dedicated OS thread because ratatui's
+    // `Terminal<CrosstermBackend<Stderr>>` isn't `Send` and so can't
+    // ride inside a tokio task. The render thread polls a shared
+    // `TuiState` Mutex; the dev-server's `on_event` callback (which
+    // does run on tokio threads) writes to the same Mutex. Shutdown
+    // is signalled via an `AtomicBool` once `server.run()` returns.
+    let (tui_state, tui_shutdown, tui_handle) = if tui_enabled {
+        match crate::tui::Tui::start(crate::tui::TuiState::new(target_label, bind_label.clone())) {
+            Ok(mut tui) => {
+                let state = tui.state_handle();
+                let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let thread_shutdown = std::sync::Arc::clone(&shutdown);
+                let handle = std::thread::Builder::new()
+                    .name("whisker-tui".into())
+                    .spawn(move || {
+                        while !thread_shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                            let _ = tui.draw();
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        }
+                        // Final paint so the visible state matches the
+                        // exit outcome before the viewport tears down.
+                        let _ = tui.draw();
+                        let _ = tui.shutdown();
+                    })
+                    .ok();
+                (Some(state), Some(shutdown), handle)
+            }
+            Err(e) => {
+                whisker_build::ui::warn(format!(
+                    "couldn't start inline TUI ({e:#}); falling back to plain output"
+                ));
+                (None, None, None)
+            }
+        }
+    } else {
+        (None, None, None)
+    };
+
+    let server = DevServer::new(config)?.on_event(move |e| {
+        if let Some(state) = &tui_state {
+            if let Ok(mut s) = state.lock() {
+                crate::tui::apply_event(&mut s, &e);
+            }
+        }
+        forward_event_to_ui(e, show_native_logs);
+    });
+
+    let result = rt.block_on(server.run());
+
+    // Tell the render thread we're done; wait for it to clear the
+    // viewport so the user's prompt lands at column 0 of a clean line.
+    if let Some(shutdown) = tui_shutdown {
+        shutdown.store(true, std::sync::atomic::Ordering::Release);
+    }
+    if let Some(handle) = tui_handle {
+        let _ = handle.join();
+    }
+    result
+}
+
+/// Friendly label for the TUI header. `whisker_dev_server::Target`'s
+/// Debug impl renders `IosSimulator` which is a mouthful — pick a
+/// short noun for screen real estate.
+fn target_label(target: Target) -> &'static str {
+    match target {
+        Target::Host => "Host",
+        Target::Android => "Android",
+        Target::IosSimulator => "iOS Simulator",
+    }
 }
 
 /// Translate dev-server [`Event`]s into the existing line-based UI

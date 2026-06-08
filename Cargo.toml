@@ -104,6 +104,14 @@ serde_json = "1"
 # Embed the patch dylib bytes in the JSON envelope (text frame).
 base64 = "0.22"
 
+# Inline TUI for `whisker run`. ratatui's Inline viewport anchors a
+# small region at the bottom of the terminal while scrollback flows
+# normally above — existing line-based output (sections, steps,
+# device logs) stays grep'able. `crossterm` is ratatui's default
+# backend.
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+crossterm = { version = "0.28", default-features = false, features = ["events"] }
+
 # Host-side dev server (whisker-dev-server). Heavy deps confined here.
 axum = { version = "0.8", default-features = false, features = ["ws", "tokio", "http1"] }
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }

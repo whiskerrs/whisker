@@ -72,13 +72,27 @@ enum Mode {
     Curated,
     /// `WHISKER_VERBOSE=1` — plain `[whisker] …` lines, no spinners.
     Verbose,
+    /// `WHISKER_TUI=1` — whisker-cli is rendering a ratatui inline
+    /// viewport at the bottom of the terminal. Same curated
+    /// formatting as [`Mode::Curated`] (section headers, `✓`/`⏵` step
+    /// glyphs, color), but routed through plain `eprintln!` so the
+    /// lines scroll above the viewport as normal terminal content.
+    /// indicatif spinners are suppressed — they'd race with ratatui's
+    /// redraw and corrupt both surfaces.
+    Tui,
 }
 
 fn mode() -> Mode {
     static MODE: OnceLock<Mode> = OnceLock::new();
     *MODE.get_or_init(|| {
+        // Order matters: verbose wins over TUI so `WHISKER_VERBOSE=1`
+        // remains the universal "show me everything plain" override
+        // even when the cli kicked the TUI on. Otherwise TUI wins over
+        // Curated when set.
         if is_verbose() {
             Mode::Verbose
+        } else if is_tui() {
+            Mode::Tui
         } else {
             Mode::Curated
         }
@@ -91,6 +105,18 @@ fn mode() -> Mode {
 /// can opt out under verbose mode and let everything through.
 pub fn is_verbose() -> bool {
     std::env::var("WHISKER_VERBOSE")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
+}
+
+/// `true` when `WHISKER_TUI=1` is set — `whisker-cli` sets this when
+/// it's rendering an inline TUI status bar. The flag exists so the
+/// `ui::*` surface can suppress indicatif animations (which would
+/// race with ratatui's own redraw) while still producing the curated
+/// `✓` / `⏵` formatting via plain `eprintln!`. Public so other
+/// crates can check the same state if needed.
+pub fn is_tui() -> bool {
+    std::env::var("WHISKER_TUI")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false)
 }
@@ -174,10 +200,12 @@ pub fn section(name: &str) {
         Mode::Verbose => {
             eprintln!("[whisker] ─── {name} ───");
         }
-        Mode::Curated => {
+        Mode::Curated | Mode::Tui => {
             // Line drawing matches what `cargo` itself emits during
             // its "Compiling" / "Finished" phases — a single visual
-            // rhythm across the whole pipeline.
+            // rhythm across the whole pipeline. Color codes are SGR
+            // (no cursor motion) so they're safe to emit even in TUI
+            // mode where the ratatui viewport owns the bottom region.
             let bar_chars = "─".repeat(40usize.saturating_sub(name.len()));
             let line = if is_tty() {
                 format!("\n\x1b[1;36m──── {name} {bar_chars}\x1b[0m")
@@ -187,6 +215,14 @@ pub fn section(name: &str) {
             emit_above_bars(&line);
         }
     }
+}
+
+/// `true` when indicatif's in-place redraw machinery is allowed to
+/// run. Off in TUI mode: ratatui owns the cursor and would race with
+/// indicatif's bar redraws if we let MultiProgress animate spinners
+/// or `suspend()` around eprintlns.
+fn indicatif_active() -> bool {
+    matches!(mode(), Mode::Curated) && is_tty()
 }
 
 /// Print a line, routing through the shared MultiProgress when a
@@ -203,7 +239,12 @@ fn emit_above_bars(line: &str) {
     // scrollback every time it pushed a line above the bars —
     // that's what produced the "`⠁ compile …` then `✓ compile …`
     // on two separate lines" duplication users reported.
-    if !is_tty() {
+    if !indicatif_active() {
+        // Non-TTY, verbose, or TUI mode: indicatif isn't drawing
+        // anything to interleave with, so a plain `eprintln!` is
+        // both correct and necessary — `multi.suspend` here in TUI
+        // mode would still flush stale indicatif state into the
+        // ratatui-owned region.
         eprintln!("{line}");
         return;
     }
@@ -532,6 +573,20 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
                 detail,
             }
         }
+        Mode::Tui => {
+            // TUI mode: ratatui owns the bottom region, so indicatif
+            // bars would race with the inline viewport's redraw.
+            // Emit the curated "started" line via plain eprintln so
+            // the row scrolls above; `finish()` will emit the final
+            // state (✓/✗) the same way.
+            eprintln!("  ⏵ {name:<12} {detail}");
+            Step {
+                bar: None,
+                started_at,
+                name,
+                detail,
+            }
+        }
         Mode::Curated if is_tty() => {
             let bar = ProgressBar::new_spinner();
             // 12-char fixed-width name column keeps verbs left-aligned
@@ -616,7 +671,7 @@ pub fn info(msg: impl AsRef<str>) {
     let m = msg.as_ref();
     match mode() {
         Mode::Verbose => eprintln!("[whisker] {m}"),
-        Mode::Curated => {
+        Mode::Curated | Mode::Tui => {
             if is_tty() {
                 emit_above_bars(&format!("  \x1b[90m·\x1b[0m {m}"));
             } else {
@@ -634,7 +689,7 @@ pub fn warn(msg: impl AsRef<str>) {
     let m = msg.as_ref();
     match mode() {
         Mode::Verbose => eprintln!("[whisker] warn: {m}"),
-        Mode::Curated => {
+        Mode::Curated | Mode::Tui => {
             if is_tty() {
                 emit_above_bars(&format!("  \x1b[33m⚠\x1b[0m {m}"));
             } else {
@@ -655,7 +710,7 @@ pub fn debug(msg: impl AsRef<str>) {
             let m = msg.as_ref();
             eprintln!("[whisker] debug: {m}");
         }
-        Mode::Curated => {}
+        Mode::Curated | Mode::Tui => {}
     }
 }
 
@@ -667,7 +722,7 @@ pub fn error(msg: impl AsRef<str>) {
     let m = msg.as_ref();
     match mode() {
         Mode::Verbose => eprintln!("[whisker] error: {m}"),
-        Mode::Curated => {
+        Mode::Curated | Mode::Tui => {
             if is_tty() {
                 emit_above_bars(&format!("  \x1b[31m✗\x1b[0m {m}"));
             } else {
