@@ -1,0 +1,15 @@
+[package]
+name = "whisker-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Surface 3rd-party Whisker CNG plugin authors depend on. Re-exports the Plugin trait + IR types from whisker-cng-protocol and bundles a subprocess runner."
+
+[dependencies]
+whisker-cng-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

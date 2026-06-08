@@ -6,12 +6,14 @@ members = [
     "crates/whisker-build",
     "crates/whisker-cli",
     "crates/whisker-cng",
+    "crates/whisker-cng-protocol",
     "crates/whisker-dev-runtime",
     "crates/whisker-dev-server",
     "crates/whisker-driver",
     "crates/whisker-driver-sys",
     "crates/whisker-macros",
     "crates/whisker-css",
+    "crates/whisker-plugin",
     "crates/whisker-runtime",
     "crates/whisker-subsecond",
     "examples/podcast",
@@ -60,12 +62,14 @@ whisker = { path = "crates/whisker", version = "0.1.0" }
 whisker-app-config = { path = "crates/whisker-app-config", version = "0.1.0" }
 whisker-build = { path = "crates/whisker-build", version = "0.1.0" }
 whisker-cng = { path = "crates/whisker-cng", version = "0.1.0" }
+whisker-cng-protocol = { path = "crates/whisker-cng-protocol", version = "0.1.0" }
 whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.1.0" }
 whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.1.0" }
 whisker-driver = { path = "crates/whisker-driver", version = "0.1.0" }
 whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.1.0" }
 whisker-macros = { path = "crates/whisker-macros", version = "0.1.0" }
 whisker-css = { path = "crates/whisker-css", version = "0.1.0" }
+whisker-plugin = { path = "crates/whisker-plugin", version = "0.1.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.1.0" }
 whisker-router = { path = "packages/whisker-router", version = "0.1.0" }
 whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.1.0" }

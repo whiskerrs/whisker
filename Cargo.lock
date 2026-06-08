@@ -1914,6 +1914,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-cng-protocol"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "whisker-css"
 version = "0.1.0"
 dependencies = [
@@ -2012,6 +2021,16 @@ dependencies = [
  "serde",
  "serde_json",
  "syn",
+]
+
+[[package]]
+name = "whisker-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "whisker-cng-protocol",
 ]
 
 [[package]]
