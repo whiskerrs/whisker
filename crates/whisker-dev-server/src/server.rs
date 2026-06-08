@@ -232,6 +232,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             if let Ok(mut g) = state.aslr_reference.lock() {
                                 *g = Some(aslr);
                             }
+                        } else if let Some(log) = parse_client_log(&t) {
+                            if let Some(cb) = &state.on_event {
+                                cb(Event::DeviceLog {
+                                    stream: log.stream,
+                                    line: log.line,
+                                    ts_micros: log.ts_micros,
+                                });
+                            }
                         }
                     }
                     _ => {}
@@ -277,6 +285,49 @@ fn parse_client_aslr_reference(text: &str) -> Option<u64> {
     } else {
         None
     }
+}
+
+/// Decoded payload of a `{"kind":"log",…}` text frame emitted by the
+/// device-side `log_capture` module.
+struct ClientLog {
+    stream: String,
+    line: String,
+    ts_micros: u128,
+}
+
+/// Parse a client log envelope. Returns `None` for any other text
+/// frame so the caller can fall through to other handlers (the hello
+/// envelope is the only other text frame today).
+///
+/// `ts_micros` arrives as a string on the wire because `u128` doesn't
+/// round-trip through JSON's number type cleanly (>2^53 is lossy in
+/// most decoders). The device serializes via `to_string`; we decode
+/// with `parse`, defaulting to `0` on parse failure rather than
+/// rejecting the whole frame — the line itself is more valuable than
+/// a precise timestamp.
+fn parse_client_log(text: &str) -> Option<ClientLog> {
+    #[derive(serde::Deserialize)]
+    struct Log {
+        kind: String,
+        stream: String,
+        line: String,
+        #[serde(default)]
+        ts_micros: Option<String>,
+    }
+    let h: Log = serde_json::from_str(text).ok()?;
+    if h.kind != "log" {
+        return None;
+    }
+    let ts_micros = h
+        .ts_micros
+        .as_deref()
+        .and_then(|s| s.parse::<u128>().ok())
+        .unwrap_or(0);
+    Some(ClientLog {
+        stream: h.stream,
+        line: h.line,
+        ts_micros,
+    })
 }
 
 // ============================================================================
@@ -465,5 +516,81 @@ mod tests {
 
         // sender stays usable across the whole flow.
         assert_eq!(sender.client_count(), 0);
+    }
+
+    #[test]
+    fn parse_client_log_decodes_a_well_formed_frame() {
+        let log = parse_client_log(
+            r#"{"kind":"log","stream":"stdout","line":"hello world","ts_micros":"12345"}"#,
+        )
+        .expect("valid log envelope");
+        assert_eq!(log.stream, "stdout");
+        assert_eq!(log.line, "hello world");
+        assert_eq!(log.ts_micros, 12345);
+    }
+
+    #[test]
+    fn parse_client_log_falls_back_to_zero_ts_when_missing() {
+        let log =
+            parse_client_log(r#"{"kind":"log","stream":"stderr","line":"oops"}"#).expect("valid");
+        assert_eq!(log.stream, "stderr");
+        assert_eq!(log.line, "oops");
+        assert_eq!(log.ts_micros, 0);
+    }
+
+    #[test]
+    fn parse_client_log_rejects_other_kinds() {
+        assert!(parse_client_log(r#"{"kind":"hello","aslr_reference":42}"#,).is_none());
+    }
+
+    #[tokio::test]
+    async fn on_event_callback_fires_with_device_log_lines() {
+        use std::sync::Mutex;
+        let captured: Arc<Mutex<Vec<(String, String, u128)>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = Arc::clone(&captured);
+        let on_event: Arc<dyn Fn(Event) + Send + Sync> = Arc::new(move |e| {
+            if let Event::DeviceLog {
+                stream,
+                line,
+                ts_micros,
+            } = e
+            {
+                captured_clone
+                    .lock()
+                    .unwrap()
+                    .push((stream, line, ts_micros));
+            }
+        });
+
+        let (sender, addr) = spawn_test_server(Some(on_event)).await;
+        let mut client = connect(addr).await;
+        for _ in 0..100 {
+            if sender.client_count() > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(sender.client_count(), 1);
+
+        client
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"log","stream":"stdout","line":"hi from device","ts_micros":"42"}"#
+                    .into(),
+            ))
+            .await
+            .expect("send log frame");
+
+        // Wait for the server to dispatch the callback.
+        for _ in 0..100 {
+            if !captured.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let g = captured.lock().unwrap();
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].0, "stdout");
+        assert_eq!(g[0].1, "hi from device");
+        assert_eq!(g[0].2, 42);
     }
 }

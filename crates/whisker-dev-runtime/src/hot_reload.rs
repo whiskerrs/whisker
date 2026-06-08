@@ -189,48 +189,74 @@ where
     ));
     ws.send(Message::Text(hello)).await?;
 
-    while let Some(msg) = ws.next().await {
-        let msg = msg?;
-        match msg {
-            Message::Binary(bytes) => {
-                devlog(&format!("patch frame received ({} bytes)", bytes.len()));
-                match parse_patch_frame(&bytes) {
-                    Ok((mut table, dylib_bytes)) => {
-                        devlog(&format!(
-                            "frame parsed (map={} entries, dylib={} bytes)",
-                            table.map.len(),
-                            dylib_bytes.len(),
-                        ));
-                        match materialise_patch_dylib(dylib_bytes) {
-                            Ok(local) => {
-                                devlog(
-                                    &format!("patch dylib materialised at {}", local.display(),),
-                                );
-                                table.lib = local;
-                                if let Ok(mut p) = PENDING.lock() {
-                                    *p = Some(table);
-                                    devlog("patch queued");
-                                }
-                                // Wake the host so a frame is
-                                // scheduled — `take_pending_patch`
-                                // only runs inside `tick_callback`
-                                // and the TASM thread is idle when
-                                // nothing else is happening.
-                                whisker_runtime::host_wake::wake_runtime();
-                            }
-                            Err(e) => {
-                                devlog(&format!("could not materialise patch dylib: {e}"));
-                            }
-                        }
-                    }
-                    Err(e) => devlog(&format!("malformed patch frame: {e}")),
+    loop {
+        tokio::select! {
+            // device → host: forward any captured stdout/stderr lines
+            // accumulated by `log_capture`. Drains in batches so a
+            // burst of `println!`s sends one frame per round-trip
+            // rather than one frame per line.
+            lines = crate::log_capture::drain_pending_logs() => {
+                for line in lines {
+                    let frame = serde_json::json!({
+                        "kind": "log",
+                        "stream": line.stream.as_wire(),
+                        "line": line.text,
+                        "ts_micros": line.ts_micros.to_string(),
+                    })
+                    .to_string();
+                    ws.send(Message::Text(frame)).await?;
                 }
             }
-            Message::Close(_) => return Ok(()),
-            _ => {} // ignore Text (no server→client text frames today) / Ping / Pong
+            // host → device: receive patches + close.
+            msg = ws.next() => {
+                let Some(msg) = msg else { return Ok(()); };
+                match msg? {
+                    Message::Binary(bytes) => handle_patch_frame(&bytes),
+                    Message::Close(_) => return Ok(()),
+                    // Ignore Ping/Pong (auto-handled) and Text (no
+                    // server→client text frames defined today).
+                    _ => {}
+                }
+            }
         }
     }
-    Ok(())
+}
+
+/// Decode one patch frame from the dev-server and park it in
+/// [`PENDING`] for the TASM thread to apply on the next tick. Pulled
+/// out so [`handle_session`]'s `select!` arm stays readable; the
+/// match-arm depth was 7 levels otherwise.
+fn handle_patch_frame(bytes: &[u8]) {
+    devlog(&format!("patch frame received ({} bytes)", bytes.len()));
+    let (mut table, dylib_bytes) = match parse_patch_frame(bytes) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            devlog(&format!("malformed patch frame: {e}"));
+            return;
+        }
+    };
+    devlog(&format!(
+        "frame parsed (map={} entries, dylib={} bytes)",
+        table.map.len(),
+        dylib_bytes.len(),
+    ));
+    let local = match materialise_patch_dylib(dylib_bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            devlog(&format!("could not materialise patch dylib: {e}"));
+            return;
+        }
+    };
+    devlog(&format!("patch dylib materialised at {}", local.display()));
+    table.lib = local;
+    if let Ok(mut p) = PENDING.lock() {
+        *p = Some(table);
+        devlog("patch queued");
+    }
+    // Wake the host so a frame is scheduled — `take_pending_patch`
+    // only runs inside `tick_callback` and the TASM thread is idle
+    // when nothing else is happening.
+    whisker_runtime::host_wake::wake_runtime();
 }
 
 /// Write the patch dylib payload to a local file under the app's

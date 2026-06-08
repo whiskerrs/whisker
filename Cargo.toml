@@ -89,6 +89,13 @@ subsecond-types = "0.7"
 # Dev-time WebSocket receiver — pulled in only via the `hot-reload`
 # feature, never present in release builds. Async stack kept minimal:
 # current-thread tokio + tungstenite over std TcpStream.
+#
+# `libc` is the POSIX syscall surface for `whisker-dev-runtime`'s
+# `log_capture` module (`dup2` over stdout/stderr → reader thread →
+# WS log frame). Every device target we support is POSIX (Android
+# NDK, iOS, macOS host, Linux host), so one workspace pin covers
+# the whole matrix.
+libc = "0.2"
 tokio = { version = "1", default-features = false }
 tokio-tungstenite = { version = "0.21", default-features = false }
 futures-util = { version = "0.3", default-features = false }

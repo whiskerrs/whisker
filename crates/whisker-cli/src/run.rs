@@ -141,7 +141,34 @@ pub fn run(args: Args) -> Result<()> {
         .enable_all()
         .build()
         .context("build tokio runtime")?;
-    rt.block_on(DevServer::new(config)?.run())
+    let server = DevServer::new(config)?.on_event(forward_event_to_ui);
+    rt.block_on(server.run())
+}
+
+/// Translate dev-server [`Event`]s into the existing line-based UI
+/// output. Phase 2 (ratatui TUI) will replace this with a routed
+/// dispatch into per-pane state; until then, the relevant signal we
+/// need to surface is the device's own stdout/stderr — everything else
+/// is already covered by `whisker_build::ui` calls inside the dev
+/// loop.
+fn forward_event_to_ui(event: whisker_dev_server::Event) {
+    use whisker_dev_server::Event;
+    if let Event::DeviceLog {
+        stream,
+        line,
+        ts_micros: _,
+    } = event
+    {
+        // Short `[device]` / `[device:err]` prefix keeps the column
+        // alignment compact next to `whisker-build::ui::info`'s own
+        // output. The Phase-2 TUI can surface stream / timestamp /
+        // colour separately.
+        let tag = match stream.as_str() {
+            "stderr" => "device:err",
+            _ => "device",
+        };
+        whisker_build::ui::info(format!("[{tag}] {line}"));
+    }
 }
 
 /// Build [`AndroidParams`] from the resolved manifest. Returns an
