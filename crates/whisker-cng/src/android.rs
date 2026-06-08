@@ -444,42 +444,38 @@ pub fn inputs_from(
     whisker_maven_url: String,
     lynx_maven_url: String,
 ) -> Result<AndroidInputs> {
-    let app_name = app_config
-        .name
-        .clone()
-        .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required"))?;
-    let version = app_config
-        .version
-        .clone()
-        .unwrap_or_else(|| "0.1.0".to_string());
-    let build_number = app_config.build_number.unwrap_or(1);
-    let application_id = app_config
-        .android
-        .application_id
-        .clone()
-        .or_else(|| app_config.bundle_id.clone())
-        .ok_or_else(|| anyhow!(
-            "whisker.rs: app.android(|a| a.application_id(\"…\")) (or app.bundle_id) is required for Android"
-        ))?;
-    let min_sdk = app_config.android.min_sdk.unwrap_or(24);
-    let target_sdk = app_config.android.target_sdk.unwrap_or(34);
-
-    // Run the plugin pipeline with built-ins. Apps that never call
-    // `app.plugin::<…>(…)` get an empty IR back; the resulting
-    // `extra_permissions` / `extra_meta_data` are empty and the
-    // AndroidManifest render is bit-identical to the pre-Phase-3
-    // output (the placeholder substitutes into an empty string).
+    // Run the plugin pipeline with built-ins. `build_initial_context`
+    // seeds the IR with core fields from `AppConfig`; plugins can
+    // override any of them. The renderer reads the post-pipeline
+    // IR — `inputs_from`'s job is now strictly extraction +
+    // ergonomic defaults for fields the engine left as `None`.
     let ctx = Engine::with_builtins()
         .compose(app_config, EnabledTargets::android_only())
         .context("compose Whisker CNG plugin pipeline for Android")?;
-    let (extra_permissions, extra_meta_data) = if let Some(android) = ctx.android.as_ref() {
-        (
-            android.manifest.permissions.clone(),
-            android.manifest.application_meta_data.clone(),
+    let android_ir = ctx
+        .android
+        .as_ref()
+        .expect("EnabledTargets::android_only guarantees Some");
+
+    let app_name = android_ir
+        .app_name
+        .clone()
+        .ok_or_else(|| anyhow!("whisker.rs: app.name(\"…\") is required"))?;
+    let version = android_ir
+        .version
+        .clone()
+        .unwrap_or_else(|| "0.1.0".to_string());
+    let build_number = android_ir.build_number.unwrap_or(1);
+    let application_id = android_ir.application_id.clone().ok_or_else(|| {
+        anyhow!(
+            "whisker.rs: app.android(|a| a.application_id(\"…\")) (or app.bundle_id) is required for Android"
         )
-    } else {
-        (Vec::new(), Vec::new())
-    };
+    })?;
+    let min_sdk = android_ir.min_sdk.unwrap_or(24);
+    let target_sdk = android_ir.target_sdk.unwrap_or(34);
+
+    let extra_permissions = android_ir.manifest.permissions.clone();
+    let extra_meta_data = android_ir.manifest.application_meta_data.clone();
 
     Ok(AndroidInputs {
         app_name,
@@ -497,12 +493,14 @@ pub fn inputs_from(
         lynx_maven_url,
         extra_permissions,
         extra_meta_data,
-        // Bumped 5 → 6 for RFC #164 Phase 2/3: AndroidManifest.xml
-        // template gained `{{extra_uses_permissions}}` and
-        // `{{extra_application_meta_data}}` placeholders. Existing
-        // `gen/android/` trees regenerate so the placeholders
-        // substitute correctly even before any plugin contributes.
-        template_version: 6,
+        // Bumped 6 → 7 for the IR-canonical refactor (RFC #164
+        // B-direction PR 1): core fields (application_id, sdk
+        // versions, etc.) now flow through the engine's IR rather
+        // than direct AppConfig reads. The rendered output is
+        // bit-identical for apps that don't override anything; the
+        // fingerprint shape changed so existing `gen/android/`
+        // trees regenerate once.
+        template_version: 7,
     })
 }
 
@@ -541,7 +539,7 @@ mod tests {
             lynx_maven_url: "https://whiskerrs.github.io/lynx/maven".into(),
             extra_permissions: Vec::new(),
             extra_meta_data: Vec::new(),
-            template_version: 6,
+            template_version: 7,
         }
     }
 

@@ -247,10 +247,33 @@ fn build_initial_context(app_config: &AppConfig, enabled: EnabledTargets) -> Gen
         },
     };
 
+    // Seed the IRs with core fields from `AppConfig` before any
+    // plugin runs. Plugins then mutate from this baseline — the
+    // canonical layering is "engine seeds defaults; plugins
+    // override via Operation::Override".
+    let ios = enabled.ios.then(|| IosProjectIr {
+        app_name: app_config.name.clone(),
+        version: app_config.version.clone(),
+        build_number: app_config.build_number,
+        bundle_id: app_meta.ios_bundle_id.clone(),
+        scheme: app_config.ios.scheme.clone(),
+        deployment_target: app_config.ios.deployment_target.clone(),
+        ..Default::default()
+    });
+    let android = enabled.android.then(|| AndroidProjectIr {
+        app_name: app_config.name.clone(),
+        version: app_config.version.clone(),
+        build_number: app_config.build_number,
+        application_id: app_meta.android_application_id.clone(),
+        min_sdk: app_config.android.min_sdk,
+        target_sdk: app_config.android.target_sdk,
+        ..Default::default()
+    });
+
     GenerateContext {
         app_meta,
-        ios: enabled.ios.then(IosProjectIr::default),
-        android: enabled.android.then(AndroidProjectIr::default),
+        ios,
+        android,
         journal: MutationJournal::default(),
     }
 }

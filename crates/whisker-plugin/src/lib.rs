@@ -273,8 +273,46 @@ pub struct AppMeta {
 /// the fingerprint-based skip path in `whisker-cng`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct IosProjectIr {
+    // ----- Core fields ------------------------------------------------------
+    //
+    // These were string substitutions baked into the renderer's
+    // template up to RFC #164 Phase 4. Promoting them onto the IR
+    // lets a 3rd-party plugin override any of them via
+    // `Operation::Override` — e.g. a flavor plugin can append
+    // `.staging` to `bundle_id` without forking the user app's
+    // `whisker.rs`. The engine's `build_initial_context` seeds
+    // every field below from `AppConfig`; the inputs-extraction
+    // step (`crate::ios::inputs_from`) reads them back.
+    /// `CFBundleDisplayName` / pbxproj `PRODUCT_NAME` source.
+    /// Seeded from `AppConfig.name`.
+    #[serde(default)]
+    pub app_name: Option<String>,
+    /// `CFBundleShortVersionString` source. Seeded from
+    /// `AppConfig.version` (default `"0.1.0"`).
+    #[serde(default)]
+    pub version: Option<String>,
+    /// `CFBundleVersion` source. Seeded from
+    /// `AppConfig.build_number` (default `1`).
+    #[serde(default)]
+    pub build_number: Option<u32>,
+    /// pbxproj `PRODUCT_BUNDLE_IDENTIFIER` source. Seeded from
+    /// `AppConfig.ios.bundle_id`, falling back to the top-level
+    /// `AppConfig.bundle_id`.
+    #[serde(default)]
+    pub bundle_id: Option<String>,
+    /// Xcode scheme name. Seeded from `AppConfig.ios.scheme`,
+    /// falling back to `AppConfig.name`.
+    #[serde(default)]
+    pub scheme: Option<String>,
+    /// pbxproj `IPHONEOS_DEPLOYMENT_TARGET` source. Seeded from
+    /// `AppConfig.ios.deployment_target` (default `"13.0"`).
+    #[serde(default)]
+    pub deployment_target: Option<String>,
+
+    // ----- Plugin-additive fields ----------------------------------------
     /// `Info.plist` as a plist object tree. Renderer turns this
     /// back into XML at the end of the pipeline.
+    #[serde(default)]
     pub info_plist: BTreeMap<String, PlistValue>,
 
     /// Deferred pbxproj structural ops. Full pbxproj round-tripping
@@ -336,11 +374,44 @@ pub enum PbxprojOp {
 /// mutate. Same shape rationale as [`IosProjectIr`].
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AndroidProjectIr {
+    // ----- Core fields ------------------------------------------------------
+    //
+    // Seeded by `build_initial_context` from `AppConfig`; mirror
+    // of the iOS core block above. See [`IosProjectIr`]'s rationale.
+    /// Activity label / `manifest.application.android:label` source.
+    /// Seeded from `AppConfig.name`.
+    #[serde(default)]
+    pub app_name: Option<String>,
+    /// Gradle `versionName` source. Seeded from
+    /// `AppConfig.version` (default `"0.1.0"`).
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Gradle `versionCode` source. Seeded from
+    /// `AppConfig.build_number` (default `1`).
+    #[serde(default)]
+    pub build_number: Option<u32>,
+    /// Gradle `applicationId` source. Seeded from
+    /// `AppConfig.android.application_id`, falling back to the
+    /// top-level `AppConfig.bundle_id`.
+    #[serde(default)]
+    pub application_id: Option<String>,
+    /// Gradle `minSdk` source. Seeded from
+    /// `AppConfig.android.min_sdk` (default `24`).
+    #[serde(default)]
+    pub min_sdk: Option<u32>,
+    /// Gradle `targetSdk` source. Seeded from
+    /// `AppConfig.android.target_sdk` (default `34`).
+    #[serde(default)]
+    pub target_sdk: Option<u32>,
+
+    // ----- Plugin-additive fields ----------------------------------------
     /// Structured AndroidManifest.xml model.
+    #[serde(default)]
     pub manifest: AndroidManifest,
 
     /// Gradle DSL for the app module. Renderer turns this into
     /// `app/build.gradle.kts` additions.
+    #[serde(default)]
     pub gradle: GradleDsl,
 
     /// Arbitrary files to drop into `gen/android/`. Same role as
