@@ -2015,6 +2015,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "whisker-router"
 version = "0.1.0"
 dependencies = [

@@ -12,6 +12,7 @@ members = [
     "crates/whisker-driver-sys",
     "crates/whisker-macros",
     "crates/whisker-css",
+    "crates/whisker-plugin",
     "crates/whisker-runtime",
     "crates/whisker-subsecond",
     "examples/podcast",
@@ -66,6 +67,7 @@ whisker-driver = { path = "crates/whisker-driver", version = "0.1.0" }
 whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.1.0" }
 whisker-macros = { path = "crates/whisker-macros", version = "0.1.0" }
 whisker-css = { path = "crates/whisker-css", version = "0.1.0" }
+whisker-plugin = { path = "crates/whisker-plugin", version = "0.1.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.1.0" }
 whisker-router = { path = "packages/whisker-router", version = "0.1.0" }
 whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.1.0" }

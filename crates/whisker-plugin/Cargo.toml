@@ -1,0 +1,17 @@
+[package]
+name = "whisker-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Plugin surface for Whisker CNG — Plugin trait, IR types, JSON envelope, and the subprocess runner 3rd-party plugin binaries use."
+
+[dependencies]
+# Plugin trait's `Config` associated type round-trips through JSON
+# (config probe in `whisker-cli`, stdin envelope for 3rd-party
+# plugins). Mutation journal + IR types share the same wire path.
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
