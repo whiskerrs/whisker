@@ -29,10 +29,12 @@
 //! makes it cheap to unit-test against tempdirs.
 
 pub mod android;
+pub mod compose;
 mod fingerprint;
 pub mod ios;
 mod render;
 
 pub use android::{sync as sync_android, AndroidInputs};
+pub use compose::{EnabledTargets, Engine};
 pub use ios::{sync as sync_ios, IosInputs};
 pub use whisker_app_config::AppConfig;
