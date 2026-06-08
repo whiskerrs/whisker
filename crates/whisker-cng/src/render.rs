@@ -31,6 +31,31 @@ pub(crate) fn escape_xml(s: &str) -> String {
     out
 }
 
+/// Reject plugin-supplied `extra_files` paths that would escape
+/// the gen root: absolute paths, `..` traversal, and Windows
+/// drive prefixes (caught by `is_absolute` on Windows hosts).
+///
+/// Called by [`crate::ios`] / [`crate::android`] before writing
+/// any `extra_files` entry — a malicious or buggy plugin can't
+/// drop a file into the user's home dir / out of the workspace.
+pub(crate) fn validate_extra_file_path(path: &std::path::Path) -> anyhow::Result<()> {
+    if path.is_absolute() {
+        anyhow::bail!(
+            "extra_files path must be relative to the gen root: `{}`",
+            path.display(),
+        );
+    }
+    for component in path.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            anyhow::bail!(
+                "extra_files path must not contain `..` (would escape gen root): `{}`",
+                path.display(),
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Replace every `{{key}}` in `template` with `vars[key]`. Returns
 /// `Err` if a placeholder doesn't have a corresponding entry — that
 /// almost always means a template was edited without updating the
@@ -102,5 +127,32 @@ mod tests {
     fn errors_on_unterminated_open_brace() {
         let err = render("hello {{name", &vars(&[("name", "x")])).unwrap_err();
         assert!(err.to_string().contains("unterminated"), "got: {err:#}");
+    }
+
+    use std::path::PathBuf;
+
+    #[test]
+    fn validate_extra_file_path_accepts_simple_relative_paths() {
+        validate_extra_file_path(&PathBuf::from("Sources/Helper.swift")).unwrap();
+        validate_extra_file_path(&PathBuf::from("app/google-services.json")).unwrap();
+        validate_extra_file_path(&PathBuf::from("file.txt")).unwrap();
+    }
+
+    #[test]
+    fn validate_extra_file_path_rejects_absolute_paths() {
+        let err = validate_extra_file_path(&PathBuf::from("/etc/passwd")).unwrap_err();
+        assert!(err.to_string().contains("must be relative"), "{err}");
+    }
+
+    #[test]
+    fn validate_extra_file_path_rejects_parent_dir_traversal() {
+        let err = validate_extra_file_path(&PathBuf::from("../../escape")).unwrap_err();
+        assert!(err.to_string().contains(".."), "{err}");
+    }
+
+    #[test]
+    fn validate_extra_file_path_rejects_middle_dot_dot() {
+        let err = validate_extra_file_path(&PathBuf::from("Sources/../escape")).unwrap_err();
+        assert!(err.to_string().contains(".."), "{err}");
     }
 }

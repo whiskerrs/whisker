@@ -31,7 +31,7 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_app_config::AppConfig;
-use whisker_plugin::{GenerateContext, PlistValue};
+use whisker_plugin::{FileEntry, GenerateContext, PlistValue};
 
 use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
@@ -92,6 +92,12 @@ pub struct IosInputs {
     /// renderer change, not a wire-format break.
     #[serde(default)]
     pub extra_info_plist_kvs: BTreeMap<String, String>,
+    /// Plugin-supplied additional files dropped into `gen/ios/`.
+    /// Keys are relative paths (validated to be relative + free of
+    /// `..` traversal at write time); values are
+    /// [`FileEntry`]s — UTF-8 contents + optional POSIX mode.
+    #[serde(default)]
+    pub extra_files: BTreeMap<PathBuf, FileEntry>,
     pub template_version: u32,
 }
 
@@ -220,6 +226,46 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
         xcscheme.as_bytes(),
     )?;
 
+    // Plugin-supplied `extra_files`. Paths are validated to be
+    // relative + traversal-free; on Unix, `mode` is applied
+    // verbatim. iOS doesn't typically need the executable bit, but
+    // shipping the helper means a plugin can drop a code-signing
+    // script alongside the project.
+    for (rel, entry) in &inputs.extra_files {
+        crate::render::validate_extra_file_path(rel).with_context(|| {
+            format!(
+                "extra_files entry `{}` (iOS plugin contribution)",
+                rel.display(),
+            )
+        })?;
+        let abs = out_dir.join(rel);
+        write_file(&abs, entry.contents.as_bytes())?;
+        apply_mode(&abs, entry.mode)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn apply_mode(path: &Path, mode: Option<u32>) -> Result<()> {
+    if let Some(m) = mode {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .with_context(|| format!("stat {} for chmod", path.display()))?
+            .permissions();
+        perms.set_mode(m);
+        std::fs::set_permissions(path, perms)
+            .with_context(|| format!("chmod {:o} on {}", m, path.display()))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn apply_mode(_path: &Path, _mode: Option<u32>) -> Result<()> {
+    // POSIX mode bits don't translate cleanly to Windows ACLs.
+    // The IR is platform-agnostic so we accept the field on every
+    // host and silently ignore it on Windows — matches how cargo
+    // and rustc handle the same situation in `[[bin]]` targets.
     Ok(())
 }
 
@@ -316,6 +362,7 @@ pub fn inputs_from(
         .unwrap_or_else(|| "13.0".to_string());
 
     let extra_info_plist_kvs = extract_info_plist_string_kvs(&ctx);
+    let extra_files = ios_ir.extra_files.clone();
 
     Ok(IosInputs {
         app_name,
@@ -329,14 +376,11 @@ pub fn inputs_from(
         workspace_root,
         user_package,
         extra_info_plist_kvs,
-        // Bumped 10 → 11 for the IR-canonical refactor (RFC #164
-        // B-direction PR 1): core fields now flow through the
-        // engine's IR rather than direct AppConfig reads. The
-        // rendered output is bit-identical for apps that don't
-        // override any core field via a plugin, but the
-        // fingerprint shape changed so existing `gen/ios/` trees
-        // regenerate once.
-        template_version: 11,
+        extra_files,
+        // Bumped 11 → 12 for `extra_files` write-through (RFC #164
+        // B-direction PR 3). The fingerprint shape grew an
+        // `extra_files` field; existing trees regenerate.
+        template_version: 12,
     })
 }
 
@@ -390,7 +434,8 @@ mod tests {
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
             extra_info_plist_kvs: BTreeMap::new(),
-            template_version: 11,
+            extra_files: BTreeMap::new(),
+            template_version: 12,
         }
     }
 

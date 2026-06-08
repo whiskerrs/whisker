@@ -28,10 +28,11 @@
 //! `rs/whisker/examples/helloworld/`.
 
 use anyhow::{anyhow, Context, Result};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use whisker_app_config::AppConfig;
-use whisker_plugin::MetaDataEntry;
+use whisker_plugin::{FileEntry, MetaDataEntry};
 
 use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
@@ -128,6 +129,11 @@ pub struct AndroidInputs {
     /// `"implementation(\"com.google.firebase:firebase-analytics:21.5.0\")"`).
     #[serde(default)]
     pub extra_gradle_dependencies: Vec<String>,
+    /// Plugin-supplied additional files dropped into `gen/android/`.
+    /// Keys are relative paths (validated at write time); values
+    /// are [`FileEntry`]s — UTF-8 contents + optional POSIX mode.
+    #[serde(default)]
+    pub extra_files: BTreeMap<PathBuf, FileEntry>,
     /// Bumped whenever the template *shape* changes (added file,
     /// renamed placeholder, …). The fingerprint mixes this in so
     /// existing `gen/` trees regenerate after an upgrade.
@@ -378,6 +384,25 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
         false,
     )?;
 
+    // Plugin-supplied `extra_files`. Paths are validated to be
+    // relative and traversal-free; on Unix, `mode` is applied via
+    // the existing `write_file` executable flag (0o755 when set
+    // and `>= 0o100`, otherwise the default 0o644).
+    for (rel, entry) in &inputs.extra_files {
+        crate::render::validate_extra_file_path(rel).with_context(|| {
+            format!(
+                "extra_files entry `{}` (Android plugin contribution)",
+                rel.display(),
+            )
+        })?;
+        let abs = out_dir.join(rel);
+        // The Android renderer's `write_file` takes a `bool`
+        // executable flag (0o755 on Unix). Apply that for any
+        // mode that has the user-execute bit set.
+        let executable = entry.mode.map(|m| m & 0o100 != 0).unwrap_or(false);
+        write_file(&abs, entry.contents.as_bytes(), executable)?;
+    }
+
     Ok(())
 }
 
@@ -543,6 +568,7 @@ pub fn inputs_from(
     let extra_meta_data = android_ir.manifest.application_meta_data.clone();
     let extra_gradle_plugins = android_ir.gradle.apply_plugins.clone();
     let extra_gradle_dependencies = android_ir.gradle.dependencies.clone();
+    let extra_files = android_ir.extra_files.clone();
 
     Ok(AndroidInputs {
         app_name,
@@ -562,14 +588,11 @@ pub fn inputs_from(
         extra_meta_data,
         extra_gradle_plugins,
         extra_gradle_dependencies,
-        // Bumped 7 → 8 for the gradle-IR pass-through (RFC #164
-        // B-direction PR 2): `app/build.gradle.kts` gained
-        // `{{extra_gradle_plugins}}` and
-        // `{{extra_gradle_dependencies}}` placeholders. Existing
-        // `gen/android/` trees regenerate so the placeholders
-        // substitute correctly even before any plugin contributes
-        // content (they collapse to empty strings).
-        template_version: 8,
+        extra_files,
+        // Bumped 8 → 9 for `extra_files` write-through (RFC #164
+        // B-direction PR 3). The fingerprint shape grew an
+        // `extra_files` field; existing trees regenerate.
+        template_version: 9,
     })
 }
 
@@ -610,7 +633,8 @@ mod tests {
             extra_meta_data: Vec::new(),
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
-            template_version: 8,
+            extra_files: BTreeMap::new(),
+            template_version: 9,
         }
     }
 
