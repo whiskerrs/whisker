@@ -249,10 +249,23 @@ fn reader_loop(read_fd: c_int, original_fd: c_int, stream: Stream, buffer: Arc<L
     let mut partial: Vec<u8> = Vec::new();
     loop {
         let n = unsafe { libc::read(read_fd, read_buf.as_mut_ptr() as *mut _, read_buf.len()) };
-        if n <= 0 {
-            // EOF (n == 0) or error (n < 0). Either way the pipe is
-            // unusable; the thread exits and the original_fd /
-            // read_fd entries become caller-cleaned (process exit).
+        if n == -1 {
+            // EINTR = signal interrupted the syscall before any bytes
+            // were transferred. The POSIX idiom is to retry; without
+            // it a stray signal silently kills log capture for the
+            // rest of the session. Other errors (EBADF, EFAULT, …)
+            // mean the pipe is unrecoverably broken — exit.
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return;
+        }
+        if n == 0 {
+            // EOF: every write end of the pipe is closed. In normal
+            // operation this should never fire — the process keeps
+            // STDOUT_FILENO / STDERR_FILENO open for life — but
+            // returning cleanly is safer than spinning.
             return;
         }
         let chunk = &read_buf[..n as usize];

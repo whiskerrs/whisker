@@ -159,9 +159,10 @@ fn forward_event_to_ui(event: whisker_dev_server::Event) {
         ts_micros: _,
     } = event
     {
-        // Two-letter prefix keeps the column alignment compact next
-        // to `whisker-build::ui::info`'s own output. Future TUI can
-        // surface stream / timestamp / colour separately.
+        // Short `[device]` / `[device:err]` prefix keeps the column
+        // alignment compact next to `whisker-build::ui::info`'s own
+        // output. The Phase-2 TUI can surface stream / timestamp /
+        // colour separately.
         let tag = match stream.as_str() {
             "stderr" => "device:err",
             _ => "device",
