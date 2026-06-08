@@ -207,6 +207,22 @@ impl Tui {
             },
         )?;
         let state = Arc::new(Mutex::new(state));
+
+        // Cleanup hooks for the two ways a `whisker run` can exit
+        // without our normal `Tui::shutdown` running:
+        //
+        // 1. **Panic** — `std::panic::set_hook` chains: our hook
+        //    restores cursor visibility + clears below it before
+        //    chaining to whatever was installed before us (typically
+        //    the default panic printer, which writes the message to
+        //    stderr — that lands in a clean terminal because we
+        //    cleaned up first).
+        // 2. **Ctrl-C** — the default SIGINT handler kills the
+        //    process before any Drop / shutdown code runs, leaving
+        //    the cursor hidden. `ctrlc::set_handler` installs an
+        //    OS-level handler that runs our cleanup then exits.
+        install_terminal_cleanup_once();
+
         Ok(Self { terminal, state })
     }
 
@@ -290,6 +306,39 @@ impl Tui {
         let _ = stderr.execute(Clear(ClearType::FromCursorDown));
         Ok(())
     }
+}
+
+/// Restore the cursor + clear anything below it. Used by both the
+/// panic hook and the Ctrl-C handler.
+fn emergency_terminal_reset() {
+    let mut stderr = std::io::stderr();
+    let _ = stderr.execute(cursor::Show);
+    let _ = stderr.execute(Clear(ClearType::FromCursorDown));
+}
+
+/// Install the panic hook + SIGINT handler. Idempotent — only the
+/// first `Tui::start` of the process installs anything; later calls
+/// are no-ops. The handlers stay registered for the rest of the
+/// process lifetime (no good way to unregister either), but that's
+/// fine: their cleanup is a no-op on already-cooked stderr.
+fn install_terminal_cleanup_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        emergency_terminal_reset();
+        prev_hook(info);
+    }));
+    // `ctrlc::set_handler` errors if a handler is already registered.
+    // We treat that as benign — somebody else cared about the same
+    // cleanup, our reset would just run twice in the worst case.
+    let _ = ctrlc::set_handler(|| {
+        emergency_terminal_reset();
+        std::process::exit(130); // 128 + SIGINT
+    });
 }
 
 /// `1.2s` / `730ms` / `2m05s` formatter mirroring
