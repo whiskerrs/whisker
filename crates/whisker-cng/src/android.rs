@@ -28,8 +28,7 @@
 //! `rs/whisker/examples/helloworld/`.
 
 use anyhow::{anyhow, Context, Result};
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_app_config::AppConfig;
 use whisker_plugin::{FileEntry, MetaDataEntry};
@@ -132,6 +131,16 @@ pub struct AndroidInputs {
     /// Plugin-supplied additional files dropped into `gen/android/`.
     /// Keys are relative paths (validated at write time); values
     /// are [`FileEntry`]s — UTF-8 contents + optional POSIX mode.
+    ///
+    /// Mode handling on Android is intentionally coarser than the
+    /// iOS renderer's: the existing `write_file` helper takes a
+    /// `bool` executable flag, so the renderer projects
+    /// `FileEntry::mode` onto "executable yes/no" (any mode with
+    /// the user-execute bit set → 0o755, otherwise 0o644). Plugins
+    /// that need finer-grained Android permissions today would have
+    /// to ship a wrapper script that `chmod`s at build time —
+    /// loosening this is a one-line `write_file` refactor when the
+    /// first consumer needs it.
     #[serde(default)]
     pub extra_files: BTreeMap<PathBuf, FileEntry>,
     /// Bumped whenever the template *shape* changes (added file,
