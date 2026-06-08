@@ -108,8 +108,11 @@ base64 = "0.22"
 # small region at the bottom of the terminal while scrollback flows
 # normally above — existing line-based output (sections, steps,
 # device logs) stays grep'able. `crossterm` is ratatui's default
-# backend.
-ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+# backend. `scrolling-regions` enables the DECSTBM-based fast path
+# for `Terminal::insert_before`, the API the `whisker run` TUI uses
+# to commit captured cargo/gradle stderr into the terminal's normal
+# scrollback while the live region redraws at the bottom.
+ratatui = { version = "0.29", default-features = false, features = ["crossterm", "scrolling-regions"] }
 crossterm = { version = "0.28", default-features = false, features = ["events"] }
 
 # Host-side dev server (whisker-dev-server). Heavy deps confined here.

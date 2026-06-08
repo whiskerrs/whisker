@@ -118,9 +118,8 @@ pub fn run(args: Args) -> Result<()> {
     // render with a proper progress indicator instead of leaking
     // ahead of an inline status bar.
     let tui_pieces = if tui_enabled {
-        match crate::tui::Tui::start(crate::tui::TuiState::new(target_label, bundle.clone())) {
-            Ok(tui) => {
-                let handle = tui.handle();
+        match crate::tui::Tui::start(target_label.to_string(), bundle.clone()) {
+            Ok((tui, handle)) => {
                 handle.set_phase(crate::tui::AppPhase::Setup);
                 let render_handle = std::thread::Builder::new()
                     .name("whisker-tui-render".into())
@@ -157,7 +156,19 @@ pub fn run(args: Args) -> Result<()> {
 
 fn run_tui_render_loop(mut tui: crate::tui::Tui) {
     let _ = tui.render_until_quit();
+    let user_quit = tui.was_user_quit();
     let _ = tui.shutdown();
+    if user_quit {
+        // The dev-server runs to completion (i.e. forever) inside
+        // `rt.block_on(server.run())` on the cli thread, so simply
+        // tearing the TUI down here would leave a headless `whisker
+        // run` process alive after `q`. Hard-exit with a normal
+        // status; tokio sockets / file watchers get reaped by the
+        // kernel. cli-initiated shutdowns (build failed, etc.) take
+        // the other branch and let `run()`'s normal return path
+        // surface the error.
+        std::process::exit(0);
+    }
 }
 
 fn run_inner(
@@ -170,9 +181,9 @@ fn run_inner(
     // Sync the native host project (gen/{android,ios}/) before doing
     // anything else. The cargo-side `build_discovered_plugins` step
     // happens inside `sync_for_target` and is the long pole here.
-    if let Some(t) = tui {
-        t.set_phase(crate::tui::AppPhase::Setup);
-    }
+    // `set_phase(Setup)` already fired from `run()` before we got
+    // here, so re-issuing it would duplicate the "▶ Setup" entry in
+    // scrollback.
     let sync = crate::platforms::sync_for_target(
         target,
         &m.config,
