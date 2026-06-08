@@ -9,8 +9,8 @@
 //! Modelled on Expo's CNG: the source of truth is the declarative
 //! config, the platforms directory are build artifacts (never
 //! committed). Unlike Expo, regeneration is *implicit* — there's no
-//! `whisker prebuild` command. Whichever command needs the native
-//! tree (today: `whisker run` / `whisker build`) calls
+//! separate `whisker generate` command. Whichever command needs the
+//! native tree (today: `whisker run` / `whisker build`) calls
 //! [`sync_android`] / [`sync_ios`] first; the fast path (fingerprint
 //! match) is a single file read and returns instantly.
 //!

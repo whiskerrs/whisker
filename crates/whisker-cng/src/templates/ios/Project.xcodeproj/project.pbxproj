@@ -71,7 +71,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 39A71CFC79D014E76D4445EB /* Build configuration list for PBXNativeTarget "{{ios_scheme}}" */;
 			buildPhases = (
-				7E2B91D0F46A1C73B5A5DE91 /* Whisker Prebuild */,
+				7E2B91D0F46A1C73B5A5DE91 /* Whisker Generate */,
 				4A590CB0D847DB4C38DDCDFC /* Sources */,
 				D4C57884A372C8EC69F16CAD /* Frameworks */,
 				3F69E4C8A2D75B6E81C094BB /* Whisker Embed Framework */,
@@ -92,7 +92,7 @@
 /* End PBXNativeTarget section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		7E2B91D0F46A1C73B5A5DE91 /* Whisker Prebuild */ = {
+		7E2B91D0F46A1C73B5A5DE91 /* Whisker Generate */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -102,7 +102,7 @@
 			);
 			inputPaths = (
 			);
-			name = "Whisker Prebuild";
+			name = "Whisker Generate";
 			outputFileListPaths = (
 			);
 			outputPaths = (
@@ -131,7 +131,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\n# Step-7 Embed: copies WhiskerDriver.framework from the build-products\n# search path into the .app bundle's Frameworks/. The earlier\n# 'Whisker Prebuild' phase dropped it at $BUILT_PRODUCTS_DIR/Frameworks/\n# so FRAMEWORK_SEARCH_PATHS picks it up for the linker; this phase\n# completes the journey by placing it where dyld looks at app launch\n# (via LD_RUNPATH_SEARCH_PATHS=@executable_path/Frameworks).\nSRC=\"$BUILT_PRODUCTS_DIR/Frameworks/WhiskerDriver.framework\"\nDST_DIR=\"$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/Frameworks\"\nmkdir -p \"$DST_DIR\"\nrm -rf \"$DST_DIR/WhiskerDriver.framework\"\ncp -R \"$SRC\" \"$DST_DIR/\"\n# Codesign — required on device builds; harmless on simulator.\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --preserve-metadata=identifier,entitlements --timestamp=none \"$DST_DIR/WhiskerDriver.framework\"\nfi\n";
+			shellScript = "set -euo pipefail\n# Step-7 Embed: copies WhiskerDriver.framework from the build-products\n# search path into the .app bundle's Frameworks/. The earlier\n# 'Whisker Generate' phase dropped it at $BUILT_PRODUCTS_DIR/Frameworks/\n# so FRAMEWORK_SEARCH_PATHS picks it up for the linker; this phase\n# completes the journey by placing it where dyld looks at app launch\n# (via LD_RUNPATH_SEARCH_PATHS=@executable_path/Frameworks).\nSRC=\"$BUILT_PRODUCTS_DIR/Frameworks/WhiskerDriver.framework\"\nDST_DIR=\"$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/Frameworks\"\nmkdir -p \"$DST_DIR\"\nrm -rf \"$DST_DIR/WhiskerDriver.framework\"\ncp -R \"$SRC\" \"$DST_DIR/\"\n# Codesign — required on device builds; harmless on simulator.\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --preserve-metadata=identifier,entitlements --timestamp=none \"$DST_DIR/WhiskerDriver.framework\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -248,7 +248,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				// Step-7: WhiskerDriver.framework is produced by the
-				// "Whisker Prebuild" Build Phase into
+				// "Whisker Generate" Build Phase into
 				// $(BUILT_PRODUCTS_DIR)/Frameworks/. The linker needs to
 				// see it via -F + -framework at the Frameworks phase.
 				FRAMEWORK_SEARCH_PATHS = "$(inherited) $(BUILT_PRODUCTS_DIR)/Frameworks";

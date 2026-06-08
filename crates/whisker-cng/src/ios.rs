@@ -273,13 +273,14 @@ pub fn inputs_from(
         whisker_modules_path,
         workspace_root,
         user_package,
-        // Bumped 7 → 8: cng now also emits a shared
-        // `xcshareddata/xcschemes/<scheme>.xcscheme` so Xcode.app
-        // opens the project with the same Build / Run / Test /
-        // Profile actions every contributor sees, instead of letting
-        // Xcode auto-create a per-user (unshared, unsourced) scheme
-        // on first open.
-        template_version: 8,
+        // Bumped 8 → 9 for RFC #164 Phase 0: the pbxproj template's
+        // Run Script Build Phase rename "Whisker Prebuild" →
+        // "Whisker Generate". Aligns with the RFC's "Generate"
+        // vocabulary (cng = Continuous Native Generation) and away
+        // from Expo's "Prebuild" loaner. Forces existing `gen/ios/`
+        // trees to regenerate so the Build Phase name in any open
+        // Xcode project window updates.
+        template_version: 9,
     })
 }
 
@@ -313,7 +314,7 @@ mod tests {
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
-            template_version: 8,
+            template_version: 9,
         }
     }
 

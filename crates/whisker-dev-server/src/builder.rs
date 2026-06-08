@@ -140,7 +140,7 @@ impl Builder {
         // and the cargo cross-compile that produces
         // `WhiskerDriver.framework` — happens during xcodebuild in
         // `installer.rs::ios_install_and_launch`, via the cng-generated
-        // pbxproj's "Whisker Prebuild" Run Script Build Phase.
+        // pbxproj's "Whisker Generate" Run Script Build Phase.
         //
         // Pre-Step-7 this method also ran `build_xcframework_with` to
         // produce `target/whisker-driver/WhiskerDriver.xcframework`

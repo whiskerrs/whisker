@@ -191,7 +191,7 @@ fn build_ios_app(
     // 3. xcodebuild release.
     //
     // Step-7 dropped the explicit `build_xcframework` call here: the
-    // cng-generated pbxproj now carries a "Whisker Prebuild" Build
+    // cng-generated pbxproj now carries a "Whisker Generate" Build
     // Phase that invokes `whisker-build ios` to produce
     // `WhiskerDriver.framework` during the xcodebuild run itself.
     // Doing it here AND letting the Build Phase re-do it would burn
