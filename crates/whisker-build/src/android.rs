@@ -536,7 +536,7 @@ pub fn run_gradle_assemble(
         Profile::Release => ":app:assembleRelease",
         Profile::Debug => ":app:assembleDebug",
     };
-    let _gradle_step = crate::ui::step("gradle", task.to_string());
+    let gradle_step = crate::ui::step("gradle", task.to_string());
     let java_home = resolve_java_home()?;
     let gradlew = gen_android.join("gradlew");
     if !gradlew.is_file() {
@@ -558,12 +558,20 @@ pub fn run_gradle_assemble(
             cmd.env(k, v);
         }
     }
-    let status = cmd
-        .status()
+    // Pipe stdout + stderr through the spinner. Gradle's per-task
+    // chatter (`> Task :app:assembleDebug`, BUILD SUCCESSFUL, …) and
+    // the JVM daemon advisory block fold into the spinner message
+    // instead of leaking into scrollback, mirroring the cargo build
+    // path's behaviour and matching the user's expectation that
+    // `whisker run` shows one summary line per subprocess.
+    let status = gradle_step
+        .pipe(&mut cmd)
         .with_context(|| format!("spawn {}", gradlew.display()))?;
     if !status.success() {
+        gradle_step.fail(format!("{status}"));
         return Err(anyhow!("gradle {task} failed ({status})"));
     }
+    gradle_step.done("");
     let kind = profile.dir_name();
     // Release APKs are unsigned by default; sniff both filenames so the
     // function works whether the user has wired up a signingConfig.
