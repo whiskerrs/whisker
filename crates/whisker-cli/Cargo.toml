@@ -64,3 +64,7 @@ toml = "0.8"
 # the terminal, scrollback above for sections/steps/device logs.
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+# Ctrl-C handler so the TUI can restore cursor visibility before the
+# process exits — without it, the shell ends up with a hidden cursor
+# after `^C`. Tiny crate, no async runtime.
+ctrlc = "3"

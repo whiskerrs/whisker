@@ -103,11 +103,19 @@ impl Builder {
     }
 
     async fn build_android(&self) -> Result<()> {
-        // Dev loop uses a single ABI; the gen template's compileSdk
-        // can differ from the NDK API level — the NDK 24 default has
-        // worked across Whisker's supported devices.
-        let abi = "arm64-v8a".to_string();
-        let api: u32 = 24;
+        // Dev loop only stages module Kotlin sources, then drives
+        // gradle. Gradle's own `whiskerBuildDebugArm64V8a` task runs
+        // `whisker-build android` (which runs cargo + stages the .so +
+        // libc++_shared.so into the generated jniLibs source dir AGP
+        // mergeJniLibFolders picks up), so a *second* pre-cargo build
+        // here would just produce the same `.so` twice and leak its
+        // output across the curated dev-loop UI.
+        //
+        // Mirrors what iOS already does: cargo runs only inside
+        // xcodebuild's Build Phase; the dev-server's `build_ios_simulator`
+        // is module-source-staging only. Aligning Android to the same
+        // shape halves the wall-clock of every Tier 2 rebuild on a
+        // cache-warm cargo and removes one race against the TUI viewport.
         let ws = self.workspace_root.clone();
         let crate_dir = self.crate_dir.clone();
         let pkg = self.package.clone();
@@ -115,23 +123,12 @@ impl Builder {
         let capture = self.capture.clone();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let tc = whisker_build::android::resolve_toolchain(&abi, api)?;
-            let so =
-                whisker_build::android::cargo_build_dylib(&whisker_build::android::CargoBuild {
-                    workspace_root: &ws,
-                    package: &pkg,
-                    toolchain: &tc,
-                    profile: whisker_build::Profile::Debug,
-                    features: &features,
-                    capture: capture.as_ref(),
-                })?;
             let gen_android = crate_dir.join("gen/android");
             // Stage discovered Whisker modules' Android Kotlin
             // sources before gradle runs. Empty when no module
             // declares android.kotlin_sources.
             let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
             whisker_build::android::stage_module_kotlin_sources(&gen_android, &modules)?;
-            whisker_build::android::stage_jni_libs(&gen_android, &abi, &so, &tc)?;
             whisker_build::android::run_gradle_assemble(
                 &gen_android,
                 whisker_build::Profile::Debug,

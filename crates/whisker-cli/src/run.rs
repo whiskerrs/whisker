@@ -82,6 +82,23 @@ impl From<CliTarget> for Target {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    // Decide and announce the TUI mode BEFORE any `whisker_build::ui::*`
+    // call fires — that crate caches its `Mode` lookup in a `OnceLock`
+    // on the first call to `mode()`, so by the time
+    // `build_discovered_plugins` (run inside `sync_for_target` below)
+    // emits its first `ui::step`, the cache is locked. If we set
+    // `WHISKER_TUI=1` later the way the previous iteration of this
+    // file did, every subsequent `step()` keeps using indicatif's
+    // animated bar — which then leaks padded fixed-width rows next
+    // to the ratatui viewport once the TUI actually starts. Setting
+    // the env var here, before any other code path can touch the
+    // ui module, makes every `step()` go through the plain-line
+    // branch and lets the viewport own the bottom region cleanly.
+    let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
+    if tui_enabled {
+        std::env::set_var("WHISKER_TUI", "1");
+    }
+
     let m = manifest::resolve(args.manifest_path.as_deref())
         .context("resolve user-crate manifest (Cargo.toml + whisker.rs)")?;
 
@@ -159,14 +176,11 @@ pub fn run(args: Args) -> Result<()> {
         .context("build tokio runtime")?;
     let show_native_logs = args.show_native_logs;
 
-    // TUI is on iff stderr is a TTY AND the user didn't opt out. The
-    // env var is the cross-crate signal `whisker_build::ui` reads to
-    // suppress its indicatif spinners; the local boolean gates the
-    // ratatui setup below.
+    // `tui_enabled` was decided + the env var was set at the very top
+    // of this function so the early `ui::step` calls inside
+    // `sync_for_target` would see the right `Mode`. Reuse the same
+    // detection here so the ratatui setup matches.
     let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
-    if tui_enabled {
-        std::env::set_var("WHISKER_TUI", "1");
-    }
 
     let target_label = target_label(target);
     let bind_label = args.bind.to_string();
@@ -188,7 +202,18 @@ pub fn run(args: Args) -> Result<()> {
                     .spawn(move || {
                         while !thread_shutdown.load(std::sync::atomic::Ordering::Acquire) {
                             let _ = tui.draw();
-                            std::thread::sleep(std::time::Duration::from_millis(200));
+                            // 1Hz redraw. ratatui's inline viewport and
+                            // foreign `eprintln!` from the rest of the
+                            // dev loop both write to stderr without
+                            // a shared lock, so every frame is a chance
+                            // for output to interleave with the bar's
+                            // redraw. Polling at 5Hz (the original)
+                            // multiplied that race window by 5×; 1Hz
+                            // is plenty for human-perceivable elapsed
+                            // ticks while letting the bulk of the
+                            // build's stderr output land cleanly
+                            // between frames.
+                            std::thread::sleep(std::time::Duration::from_millis(1000));
                         }
                         // Final paint so the visible state matches the
                         // exit outcome before the viewport tears down.

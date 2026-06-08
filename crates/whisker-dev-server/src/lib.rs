@@ -692,18 +692,33 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
     let crate_underscored = config.package.replace('-', "_");
     match config.target {
         Target::Android => {
+            // Read from cargo's workspace `target/<triple>/release/`
+            // dir, which is where `whisker-build android` (run inside
+            // gradle's `whiskerBuildDebugArm64V8a` task) deposits the
+            // freshly-cross-compiled .so. We deliberately don't reach
+            // into `gen/android/.../app/src/main/jniLibs/<abi>/` even
+            // though that path also exists after a successful gradle
+            // assemble — that file is a copy AGP made for jniLibs
+            // merging, and the symbol-loading order rustc uses pins
+            // its addresses to the canonical cargo output anyway.
             let android = config.android.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "target=Android but Config.android is None — cli should have populated it from whisker.rs"
                 )
             })?;
-            // `whisker-build`'s NDK build drops the `lib<crate>.so`
-            // into the Gradle jniLibs tree before APK packaging.
+            let triple = match android.abi.as_str() {
+                "arm64-v8a" => "aarch64-linux-android",
+                "armeabi-v7a" => "armv7-linux-androideabi",
+                "x86_64" => "x86_64-linux-android",
+                "x86" => "i686-linux-android",
+                other => anyhow::bail!("unknown Android ABI: {other}"),
+            };
             let so_name = format!("lib{crate_underscored}.so");
-            let candidate = android
-                .project_dir
-                .join("app/src/main/jniLibs")
-                .join(&android.abi)
+            let candidate = config
+                .workspace_root
+                .join("target")
+                .join(triple)
+                .join("release")
                 .join(&so_name);
             if !candidate.is_file() {
                 anyhow::bail!(
@@ -927,19 +942,19 @@ mod tests {
     }
 
     #[test]
-    fn original_binary_path_finds_android_so_under_jni_libs() {
-        // Set up a fake Android project layout matching what the
-        // dev-server's `Config::android.project_dir` would point at.
+    fn original_binary_path_finds_android_so_under_cargo_target() {
+        // Reflects the post-#XXX layout: gradle's whiskerBuild*Android
+        // task drops the .so at `target/<triple>/release/` rather than
+        // the dev-server pre-staging into `app/src/main/jniLibs/`.
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let ws = std::env::temp_dir().join(format!("whisker-dev-test-orig-{pid}-{n}"));
         let _ = std::fs::remove_dir_all(&ws);
-        // `mk_config` sets project_dir = ws/android — match that.
-        let abi_dir = ws.join("android/app/src/main/jniLibs/arm64-v8a");
-        std::fs::create_dir_all(&abi_dir).unwrap();
-        let so = abi_dir.join("libhello_world.so");
+        let release_dir = ws.join("target/aarch64-linux-android/release");
+        std::fs::create_dir_all(&release_dir).unwrap();
+        let so = release_dir.join("libhello_world.so");
         std::fs::write(&so, b"fake").unwrap();
 
         let cfg = mk_config(ws.clone(), Target::Android);
