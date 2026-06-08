@@ -60,3 +60,7 @@ whisker-build = { workspace = true }
 # TOML parser for reading `[package].name` from the user crate's
 # Cargo.toml. Lightweight, no async runtime.
 toml = "0.8"
+# Inline TUI for `whisker run` — anchored status bar at the bottom of
+# the terminal, scrollback above for sections/steps/device logs.
+ratatui = { workspace = true }
+crossterm = { workspace = true }

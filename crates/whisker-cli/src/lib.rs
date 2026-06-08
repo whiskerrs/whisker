@@ -38,6 +38,7 @@ pub mod platforms;
 pub mod probe;
 pub mod run;
 pub mod rustc_shim;
+pub mod tui;
 
 #[derive(Parser, Debug)]
 #[command(
