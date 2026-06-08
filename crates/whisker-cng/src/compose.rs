@@ -45,7 +45,13 @@ use whisker_plugin::{
 /// Which platform targets the current `compose` invocation should
 /// produce IRs for. Plugins see `ctx.ios.is_some()` /
 /// `ctx.android.is_some()` matching these flags.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+///
+/// No `Default` impl — "neither target enabled" is almost always a
+/// misconfiguration, so callers spell their intent via
+/// [`ios_only`](Self::ios_only) / [`android_only`](Self::android_only) /
+/// [`both`](Self::both). Construct the literal yourself if you
+/// genuinely want a no-op pipeline (e.g. validate-without-build).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnabledTargets {
     pub ios: bool,
     pub android: bool,
@@ -255,7 +261,9 @@ fn check_no_unregistered_plugin_configs(
 /// `(plugins, AppConfig)` pair always produces the same execution
 /// order. The fingerprint path downstream depends on this.
 fn topo_sort(plugins: &[Box<dyn DynPlugin>]) -> Result<Vec<usize>> {
-    // name → index, deterministic via BTreeMap iteration
+    // name → index. Only used for `after()` / `before()` lookups;
+    // determinism of the final order comes from sort_by_key on the
+    // ready-queue below, not from iteration of this map.
     let mut name_to_idx: BTreeMap<&'static str, usize> = BTreeMap::new();
     for (i, p) in plugins.iter().enumerate() {
         if name_to_idx.insert(p.name(), i).is_some() {
