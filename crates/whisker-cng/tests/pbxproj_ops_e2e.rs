@@ -196,6 +196,28 @@ fn set_build_setting_appears_in_both_debug_and_release_target_configs() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+#[test]
+fn set_build_setting_escapes_quotes_in_value() {
+    // Some compiler defines need quotes inside the value, e.g.
+    // `-DFOO="bar"` becomes `-DFOO=\"bar\"` in the pbxproj.
+    // Without escaping, the plain `"` would terminate the
+    // surrounding OpenStep plist string and break the parser.
+    let mut app = base_app();
+    app.plugin::<IosPbxprojOpsCfg>(|c| {
+        c.set_build_setting(
+            "GCC_PREPROCESSOR_DEFINITIONS",
+            "FOO=\"bar baz\"",
+        );
+    });
+    let (tmp, pbxproj) = sync_and_read_pbxproj(&app);
+    // The escaped form ends up inside the quoted literal.
+    assert!(
+        pbxproj.contains("GCC_PREPROCESSOR_DEFINITIONS = \"FOO=\\\"bar baz\\\"\""),
+        "value not escaped: {pbxproj}",
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 // ============================================================================
 // Determinism — same input → same UUIDs across renders
 // ============================================================================

@@ -279,7 +279,10 @@ fn render_pbxproj_op_placeholders(ops: &[PbxprojOp]) -> PbxprojRendered {
                     .push_str(&format!("\t\t\t\t{fileref_uuid} /* {name} */,\n",));
             }
             PbxprojOp::SetBuildSetting { key, value } => {
-                target_build_settings.push_str(&format!("\t\t\t\t\t{key} = \"{value}\";\n"));
+                target_build_settings.push_str(&format!(
+                    "\t\t\t\t\t{key} = \"{}\";\n",
+                    escape_pbxproj_string(value),
+                ));
             }
         }
     }
@@ -308,6 +311,22 @@ fn render_pbxproj_op_placeholders(ops: &[PbxprojOp]) -> PbxprojRendered {
         plugin_files_group_children,
         target_build_settings,
     }
+}
+
+/// Escape a string for inclusion inside a pbxproj double-quoted
+/// literal. The pbxproj "OpenStep plist" lexer treats `"` and `\`
+/// as the only chars that need backslash-escape inside `"…"`;
+/// everything else (whitespace, `$`, `(`, `)`, etc.) is fine.
+fn escape_pbxproj_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Pick a `lastKnownFileType` for a file path, by extension. Falls
