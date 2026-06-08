@@ -123,7 +123,20 @@ pub fn run_fat_build(
 /// the most-recent timestamp. Empty / unparseable files are skipped
 /// with a warning rather than aborting the whole load — a partial
 /// fat build shouldn't take the dev loop down.
-pub fn load_captured_args(cache_dir: &Path) -> Result<HashMap<String, CapturedRustcInvocation>> {
+///
+/// `target_triple_filter` restricts the load to entries whose
+/// captured `--target` matches. Multi-arch fat builds (e.g. iOS Simulator
+/// on Apple Silicon, which xcodebuild compiles for both
+/// `aarch64-apple-ios-sim` and `x86_64-apple-ios`) write one JSON per
+/// (crate, triple) pair; without the filter the newest-timestamp wins
+/// regardless of triple, leaving the patcher likely to pick the wrong
+/// arch and emit an `.o` that fails to link into the runtime dylib
+/// (`found architecture 'x86_64', required architecture 'arm64'`).
+/// Pass `None` to disable filtering (host / single-arch paths).
+pub fn load_captured_args(
+    cache_dir: &Path,
+    target_triple_filter: Option<&str>,
+) -> Result<HashMap<String, CapturedRustcInvocation>> {
     let mut by_crate: HashMap<String, CapturedRustcInvocation> = HashMap::new();
     if !cache_dir.is_dir() {
         return Ok(by_crate); // empty cache is fine, just nothing to do
@@ -150,9 +163,30 @@ pub fn load_captured_args(cache_dir: &Path) -> Result<HashMap<String, CapturedRu
                 continue;
             }
         };
+        if let Some(want) = target_triple_filter {
+            if invocation_target_triple(&inv) != Some(want) {
+                continue;
+            }
+        }
         keep_newest(&mut by_crate, inv);
     }
     Ok(by_crate)
+}
+
+/// Extract `--target <triple>` from a captured rustc args list, if
+/// present. Returns `None` for host-build invocations (which omit
+/// `--target` and let cargo's default kick in).
+fn invocation_target_triple(inv: &CapturedRustcInvocation) -> Option<&str> {
+    let mut iter = inv.args.iter();
+    while let Some(a) = iter.next() {
+        if a == "--target" {
+            return iter.next().map(String::as_str);
+        }
+        if let Some(rest) = a.strip_prefix("--target=") {
+            return Some(rest);
+        }
+    }
+    None
 }
 
 /// Pure helper for the load loop's "keep most-recent per crate"
@@ -316,8 +350,48 @@ mod tests {
 
     #[test]
     fn load_captured_args_returns_empty_for_missing_cache_dir() {
-        let map = load_captured_args(Path::new("/nope/does/not/exist")).unwrap();
+        let map = load_captured_args(Path::new("/nope/does/not/exist"), None).unwrap();
         assert!(map.is_empty());
+    }
+
+    #[test]
+    fn load_captured_args_filters_by_target_triple_when_specified() {
+        // Multi-arch fat build (iOS Simulator on Apple Silicon): one
+        // invocation per triple lands in the cache, both with the same
+        // crate name. Without filtering, the newest-timestamp wins
+        // regardless of triple — which is wrong when the dev-server's
+        // runtime triple is the older one, and the patcher's resulting
+        // `.o` fails to link into the runtime dylib (`found architecture
+        // 'x86_64', required architecture 'arm64'`). Verify the filter
+        // picks the matching triple even when its timestamp is older.
+        let dir = unique_tempdir();
+        write_invocation(
+            &dir,
+            &CapturedRustcInvocation {
+                crate_name: "podcast".into(),
+                args: s(&[
+                    "--crate-name",
+                    "podcast",
+                    "--target",
+                    "aarch64-apple-ios-sim",
+                ]),
+                timestamp_micros: 100,
+            },
+        );
+        write_invocation(
+            &dir,
+            &CapturedRustcInvocation {
+                crate_name: "podcast".into(),
+                args: s(&["--crate-name", "podcast", "--target", "x86_64-apple-ios"]),
+                timestamp_micros: 200,
+            },
+        );
+
+        let map = load_captured_args(&dir, Some("aarch64-apple-ios-sim")).unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["podcast"].timestamp_micros, 100);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -340,7 +414,7 @@ mod tests {
             },
         );
 
-        let map = load_captured_args(&dir).unwrap();
+        let map = load_captured_args(&dir, None).unwrap();
         assert_eq!(map.len(), 2);
         assert_eq!(map["foo"].args, s(&["--crate-name", "foo", "src/lib.rs"]));
         assert_eq!(map["bar"].args, s(&["--crate-name", "bar", "src/lib.rs"]));
@@ -370,7 +444,7 @@ mod tests {
             },
         );
 
-        let map = load_captured_args(&dir).unwrap();
+        let map = load_captured_args(&dir, None).unwrap();
         assert_eq!(map.len(), 1);
         assert_eq!(map["foo"].timestamp_micros, 200);
         assert_eq!(map["foo"].args, s(&["--newer-args", "--more"]));
@@ -391,7 +465,7 @@ mod tests {
             },
         );
 
-        let map = load_captured_args(&dir).unwrap();
+        let map = load_captured_args(&dir, None).unwrap();
         assert_eq!(map.len(), 1);
         assert!(map.contains_key("foo"));
 
@@ -411,7 +485,7 @@ mod tests {
             },
         );
 
-        let map = load_captured_args(&dir).unwrap();
+        let map = load_captured_args(&dir, None).unwrap();
         assert_eq!(map.len(), 1);
         assert!(map.contains_key("good"));
 

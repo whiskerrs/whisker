@@ -135,6 +135,14 @@ struct IosArgs {
     /// embed-frameworks build phase picks it up automatically.
     #[arg(long)]
     built_products_dir: PathBuf,
+
+    /// Cargo `--features` to forward to the cross-compile. Repeatable.
+    /// `whisker run` passes `whisker/hot-reload` here via the Build
+    /// Phase script's `$WHISKER_FEATURES` env var expansion so the
+    /// user dylib carries the dev-runtime WebSocket client; `whisker
+    /// build` leaves this empty for prod.
+    #[arg(long)]
+    features: Vec<String>,
 }
 
 #[derive(Args)]
@@ -259,6 +267,7 @@ fn run_ios(args: IosArgs) -> Result<()> {
             package: &args.package,
             platform: &args.platform,
             archs: &archs,
+            features: &args.features,
         },
         &args.built_products_dir,
     )

@@ -35,6 +35,14 @@ pub struct Installer {
     /// produces an artifact xcodebuild's Build Phase rebuilds anyway,
     /// so the capture wiring moves here.
     capture: Option<CaptureShims>,
+    /// Cargo features forwarded to the iOS Build Phase via the
+    /// `WHISKER_FEATURES` env var (the pbxproj's shell script expands
+    /// it into `--features <feat>` args). `whisker run` populates this
+    /// with `["whisker/hot-reload"]` so the dev-runtime WebSocket
+    /// client gets compiled into the user dylib — without it the app
+    /// never sends its `aslr_reference` and every change falls back to
+    /// a Tier 2 cold rebuild.
+    features: Vec<String>,
 }
 
 impl Installer {
@@ -45,6 +53,7 @@ impl Installer {
         workspace_root: PathBuf,
         package: String,
         capture: Option<CaptureShims>,
+        features: Vec<String>,
     ) -> Self {
         Self {
             target,
@@ -53,6 +62,7 @@ impl Installer {
             workspace_root,
             package,
             capture,
+            features,
         }
     }
 
@@ -74,6 +84,7 @@ impl Installer {
                     &self.workspace_root,
                     &self.package,
                     self.capture.as_ref(),
+                    &self.features,
                 )
                 .await
             }
@@ -341,6 +352,7 @@ async fn ios_install_and_launch(
     workspace_root: &std::path::Path,
     package: &str,
     capture: Option<&CaptureShims>,
+    features: &[String],
 ) -> Result<()> {
     let xcode_project = p.project_dir.join(format!("{}.xcodeproj", p.scheme));
     if !xcode_project.is_dir() {
@@ -390,6 +402,16 @@ async fn ios_install_and_launch(
         for (k, v) in whisker_build::capture_env_vars_for_triple(c, Some(sim_triple)) {
             xc_cmd.env(k, v);
         }
+    }
+    // Forward cargo features through to the Build Phase's
+    // `whisker-build ios` invocation as a space-separated list. The
+    // pbxproj's shell script expands each entry into `--features <feat>`
+    // before invoking the binary. `whisker run` puts `whisker/hot-reload`
+    // here so the user dylib carries the dev-runtime WebSocket client;
+    // without that the app never reports `aslr_reference` and every
+    // patch falls through to a Tier 2 cold rebuild + relaunch.
+    if !features.is_empty() {
+        xc_cmd.env("WHISKER_FEATURES", features.join(" "));
     }
     let xc_status = run_filtered(xc_cmd, SimctlNoise::Xcodebuild)
         .await
@@ -509,7 +531,15 @@ mod tests {
 
     #[test]
     fn installer_for_host_doesnt_need_android_or_ios() {
-        let inst = Installer::new(Target::Host, None, None, PathBuf::new(), "x".into(), None);
+        let inst = Installer::new(
+            Target::Host,
+            None,
+            None,
+            PathBuf::new(),
+            "x".into(),
+            None,
+            Vec::new(),
+        );
         // Just exercise the `host_skip` branch via the public API —
         // it doesn't await anything async so we can run it on the
         // current thread without a runtime.
@@ -528,6 +558,7 @@ mod tests {
             PathBuf::new(),
             "x".into(),
             None,
+            Vec::new(),
         );
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -547,6 +578,7 @@ mod tests {
             PathBuf::new(),
             "x".into(),
             None,
+            Vec::new(),
         );
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()

@@ -349,6 +349,7 @@ impl DevServer {
             self.config.workspace_root.clone(),
             self.config.package.clone(),
             tier1_init.as_ref().map(|p| p.capture.clone()),
+            builder.features().to_vec(),
         );
 
         // Initial build + install + launch. Without this the dev
@@ -658,6 +659,7 @@ fn init_patcher_for(config: &Config, prep: &Tier1Prep) -> Result<hotpatch::Patch
         &prep.real_linker,
         &original_binary,
         target_os_for(config.target),
+        prep.capture.target_triple.as_deref(),
     )
 }
 
