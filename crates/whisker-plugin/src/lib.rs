@@ -75,8 +75,9 @@
 //!
 //! ## Mutation journal
 //!
-//! Every mutation a plugin makes through the [`GenerateContext`] is
-//! recorded in [`MutationJournal`]. The engine uses it to:
+//! Plugins record every IR mutation by calling
+//! [`MutationJournal::record`] on `ctx.journal` alongside the
+//! mutation itself. The engine uses the resulting log to:
 //!
 //! - Attribute conflicts ("plugin A and plugin B both `set`
 //!   `info_plist.CFBundleIdentifier` — that's a hard error unless
@@ -164,9 +165,9 @@ pub trait Plugin {
 
     /// Actually mutate the [`GenerateContext`]. This is where the
     /// plugin reads `config`, decides what IR fields to touch, and
-    /// calls into the IR's methods. Journal entries are added via
-    /// [`MutationJournal::record`] — plugins never construct
-    /// [`MutationRecord`]s by hand.
+    /// writes them. For each mutation the plugin also calls
+    /// [`MutationJournal::record`] on `ctx.journal` so the engine
+    /// can attribute conflicts and produce a verbose summary.
     fn apply(&self, ctx: &mut GenerateContext, config: &Self::Config) -> anyhow::Result<()>;
 }
 
@@ -402,9 +403,6 @@ pub struct FileEntry {
 pub enum Target {
     Ios,
     Android,
-    /// Anything that isn't tied to a single platform — currently
-    /// unused, kept for forward compatibility.
-    Shared,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -443,9 +441,10 @@ pub struct MutationRecord {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct MutationJournal {
     pub records: Vec<MutationRecord>,
-    /// Last-allocated sequence index. Wraps the journal's "what's
-    /// next" cursor explicit so resuming an interrupted pipeline
-    /// (a follow-up feature) doesn't drift.
+    /// Next index `record()` will hand out. Stored explicitly rather
+    /// than derived from `records.len()` so the cursor stays correct
+    /// if the engine ever filters / merges entries during conflict
+    /// resolution.
     #[serde(default)]
     pub next_sequence_index: u64,
 }
