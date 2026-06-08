@@ -96,6 +96,20 @@ impl Engine {
         Self::default()
     }
 
+    /// Like [`Engine::new`] but pre-registers every built-in
+    /// plugin shipped under [`crate::plugins`]. The standard entry
+    /// point for `inputs_from` / `whisker generate` — built-ins
+    /// are opt-in (their `Cfg::default()` is empty), so apps that
+    /// never call `app.plugin::<…>(|c| …)` see the same output as
+    /// pre-engine `whisker-cng`.
+    pub fn with_builtins() -> Self {
+        let mut e = Self::new();
+        e.register(crate::plugins::info_plist_extra::InfoPlistExtraPlugin)
+            .register(crate::plugins::android_permissions::AndroidPermissionsPlugin)
+            .register(crate::plugins::android_meta_data::AndroidMetaDataPlugin);
+        e
+    }
+
     /// Register a typed [`Plugin`] with the engine. The engine
     /// retains ownership for the rest of its lifetime; plugins are
     /// run in topologically-sorted order on every `compose` call,

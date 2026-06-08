@@ -27,5 +27,6 @@
 	</dict>
 	<key>UILaunchScreen</key>
 	<dict/>
+{{extra_info_plist_kvs}}
 </dict>
 </plist>

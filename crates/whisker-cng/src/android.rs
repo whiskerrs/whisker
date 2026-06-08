@@ -31,7 +31,9 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use whisker_app_config::AppConfig;
+use whisker_plugin::MetaDataEntry;
 
+use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
 use crate::render::render;
 
@@ -100,6 +102,18 @@ pub struct AndroidInputs {
     /// gh-pages Maven URL hosting the Lynx fork AARs that
     /// `whisker-runtime-android` pulls transitively.
     pub lynx_maven_url: String,
+    /// `<uses-permission android:name="…"/>` rows from the engine's
+    /// post-pipeline IR. Emitted after the template's hardcoded
+    /// `INTERNET` permission. Dedup'd: the same permission
+    /// contributed by multiple plugins shows up once.
+    #[serde(default)]
+    pub extra_permissions: Vec<String>,
+    /// `<meta-data android:name="…" android:value="…"/>` rows from
+    /// the engine's post-pipeline IR. Emitted inside the
+    /// `<application>` block. Preserves insertion order — multiple
+    /// plugins contributing entries see deterministic output.
+    #[serde(default)]
+    pub extra_meta_data: Vec<MetaDataEntry>,
     /// Bumped whenever the template *shape* changes (added file,
     /// renamed placeholder, …). The fingerprint mixes this in so
     /// existing `gen/` trees regenerate after an upgrade.
@@ -158,7 +172,71 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
     );
     v.insert("whisker_maven_url", inputs.whisker_maven_url.clone());
     v.insert("lynx_maven_url", inputs.lynx_maven_url.clone());
+    v.insert(
+        "extra_uses_permissions",
+        render_extra_permissions(&inputs.extra_permissions),
+    );
+    v.insert(
+        "extra_application_meta_data",
+        render_extra_meta_data(&inputs.extra_meta_data),
+    );
     v
+}
+
+/// Render the engine-supplied permissions as `<uses-permission>`
+/// rows, dedup'd. Empty input → empty string so the template still
+/// parses when no plugin contributed.
+fn render_extra_permissions(perms: &[String]) -> String {
+    if perms.is_empty() {
+        return String::new();
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = String::new();
+    for p in perms {
+        if seen.insert(p.as_str()) {
+            out.push_str(&format!(
+                "    <uses-permission android:name=\"{}\" />\n",
+                escape_xml(p),
+            ));
+        }
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn render_extra_meta_data(entries: &[MetaDataEntry]) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for e in entries {
+        out.push_str(&format!(
+            "        <meta-data android:name=\"{}\" android:value=\"{}\" />\n",
+            escape_xml(&e.name),
+            escape_xml(&e.value),
+        ));
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn escape_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Application class. `HelloWorld` → `HelloWorldApplication`. Strips
@@ -400,6 +478,24 @@ pub fn inputs_from(
         ))?;
     let min_sdk = app_config.android.min_sdk.unwrap_or(24);
     let target_sdk = app_config.android.target_sdk.unwrap_or(34);
+
+    // Run the plugin pipeline with built-ins. Apps that never call
+    // `app.plugin::<…>(…)` get an empty IR back; the resulting
+    // `extra_permissions` / `extra_meta_data` are empty and the
+    // AndroidManifest render is bit-identical to the pre-Phase-3
+    // output (the placeholder substitutes into an empty string).
+    let ctx = Engine::with_builtins()
+        .compose(app_config, EnabledTargets::android_only())
+        .context("compose Whisker CNG plugin pipeline for Android")?;
+    let (extra_permissions, extra_meta_data) = if let Some(android) = ctx.android.as_ref() {
+        (
+            android.manifest.permissions.clone(),
+            android.manifest.application_meta_data.clone(),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     Ok(AndroidInputs {
         app_name,
         version,
@@ -414,11 +510,14 @@ pub fn inputs_from(
         whisker_gradle_plugin_version,
         whisker_maven_url,
         lynx_maven_url,
-        // Bumped 4 → 5 for Step 5-Android: templates switched from
-        // path-based composite-build + flatDir refs to Maven
-        // coordinates. Existing fingerprints invalidate so gen trees
-        // re-render their settings.gradle.kts + app/build.gradle.kts.
-        template_version: 5,
+        extra_permissions,
+        extra_meta_data,
+        // Bumped 5 → 6 for RFC #164 Phase 2/3: AndroidManifest.xml
+        // template gained `{{extra_uses_permissions}}` and
+        // `{{extra_application_meta_data}}` placeholders. Existing
+        // `gen/android/` trees regenerate so the placeholders
+        // substitute correctly even before any plugin contributes.
+        template_version: 6,
     })
 }
 
@@ -455,7 +554,9 @@ mod tests {
             whisker_gradle_plugin_version: "0.1.0".into(),
             whisker_maven_url: "https://whiskerrs.github.io/whisker/maven".into(),
             lynx_maven_url: "https://whiskerrs.github.io/lynx/maven".into(),
-            template_version: 5,
+            extra_permissions: Vec::new(),
+            extra_meta_data: Vec::new(),
+            template_version: 6,
         }
     }
 

@@ -28,10 +28,12 @@
 //! template via xcodegen once and re-templatize.
 
 use anyhow::{anyhow, Context, Result};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_app_config::AppConfig;
+use whisker_plugin::PlistValue;
 
+use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
 use crate::render::render;
 
@@ -77,6 +79,19 @@ pub struct IosInputs {
     /// Cargo package name (the user app crate) — the Rust side of
     /// `whisker-build ios --package=...`. Step 7.
     pub user_package: String,
+    /// `(key, string-value)` pairs sourced from the engine's
+    /// post-pipeline IR (`ctx.ios.info_plist`). Emitted into the
+    /// rendered `Info.plist` just before the closing `</dict>`. The
+    /// renderer XML-escapes values; keys are assumed safe because
+    /// they come from Rust string constants in plugin Configs.
+    ///
+    /// Only `PlistValue::String` entries surface here for now;
+    /// dict / array values are dropped because the Info.plist
+    /// template is hand-rolled XML rather than a real plist
+    /// serializer. Adding richer value support is a future
+    /// renderer change, not a wire-format break.
+    #[serde(default)]
+    pub extra_info_plist_kvs: BTreeMap<String, String>,
     pub template_version: u32,
 }
 
@@ -123,7 +138,53 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         inputs.workspace_root.display().to_string(),
     );
     v.insert("whisker_user_package", inputs.user_package.clone());
+    v.insert(
+        "extra_info_plist_kvs",
+        render_extra_info_plist_kvs(&inputs.extra_info_plist_kvs),
+    );
     v
+}
+
+/// Render the engine-supplied `(key, string)` pairs as XML
+/// `<key>…</key><string>…</string>` rows ready to drop straight
+/// into the Info.plist template just before `</dict>`. Empty map
+/// → empty string (no whitespace) so the template still parses
+/// cleanly.
+fn render_extra_info_plist_kvs(entries: &BTreeMap<String, String>) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+    // Indent matching the rest of the template (tab characters,
+    // matching the hand-rolled Info.plist's existing style).
+    let mut out = String::new();
+    for (key, value) in entries {
+        out.push_str(&format!(
+            "\t<key>{}</key>\n\t<string>{}</string>\n",
+            escape_xml(key),
+            escape_xml(value),
+        ));
+    }
+    // Strip the trailing newline so the template's own newline
+    // before `</dict>` isn't doubled up.
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn escape_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
@@ -262,6 +323,16 @@ pub fn inputs_from(
         .deployment_target
         .clone()
         .unwrap_or_else(|| "13.0".to_string());
+
+    // Run the plugin pipeline with built-ins. Apps that never call
+    // `app.plugin::<…>(…)` get an empty IR back; the resulting
+    // `extra_info_plist_kvs` is empty and the Info.plist render is
+    // bit-identical to the pre-Phase-3 output.
+    let ctx = Engine::with_builtins()
+        .compose(app_config, EnabledTargets::ios_only())
+        .context("compose Whisker CNG plugin pipeline for iOS")?;
+    let extra_info_plist_kvs = extract_info_plist_string_kvs(&ctx);
+
     Ok(IosInputs {
         app_name,
         version,
@@ -273,15 +344,35 @@ pub fn inputs_from(
         whisker_modules_path,
         workspace_root,
         user_package,
-        // Bumped 8 → 9 for RFC #164 Phase 0: the pbxproj template's
-        // Run Script Build Phase rename "Whisker Prebuild" →
-        // "Whisker Generate". Aligns with the RFC's "Generate"
-        // vocabulary (cng = Continuous Native Generation) and away
-        // from Expo's "Prebuild" loaner. Forces existing `gen/ios/`
-        // trees to regenerate so the Build Phase name in any open
-        // Xcode project window updates.
-        template_version: 9,
+        extra_info_plist_kvs,
+        // Bumped 9 → 10 for RFC #164 Phase 2/3: the Info.plist
+        // template gained the `{{extra_info_plist_kvs}}`
+        // placeholder. Existing `gen/ios/` trees regenerate so the
+        // placeholder substitutes correctly even before any
+        // plugin contributes content.
+        template_version: 10,
     })
+}
+
+/// Project the iOS info_plist BTreeMap (the IR layer) into the
+/// `(key, string-value)` shape the template renderer accepts.
+/// Non-string `PlistValue` variants are silently dropped — the
+/// template is hand-rolled XML and can't represent dicts / arrays
+/// safely. A future renderer that emits real plist XML can lift
+/// this restriction without changing the IR.
+fn extract_info_plist_string_kvs(
+    ctx: &whisker_plugin::GenerateContext,
+) -> BTreeMap<String, String> {
+    let Some(ios) = ctx.ios.as_ref() else {
+        return BTreeMap::new();
+    };
+    ios.info_plist
+        .iter()
+        .filter_map(|(k, v)| match v {
+            PlistValue::String(s) => Some((k.clone(), s.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 // ============================================================================
@@ -314,7 +405,8 @@ mod tests {
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
-            template_version: 9,
+            extra_info_plist_kvs: BTreeMap::new(),
+            template_version: 10,
         }
     }
 

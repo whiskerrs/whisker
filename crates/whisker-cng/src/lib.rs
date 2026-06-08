@@ -33,6 +33,7 @@ pub mod compose;
 pub mod discovery;
 mod fingerprint;
 pub mod ios;
+pub mod plugins;
 mod render;
 
 pub use android::{sync as sync_android, AndroidInputs};
