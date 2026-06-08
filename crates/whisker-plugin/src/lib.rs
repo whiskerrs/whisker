@@ -243,10 +243,23 @@ pub struct GenerateContext {
     pub journal: MutationJournal,
 }
 
-/// Subset of `AppConfig` plugins are allowed to read. Intentionally
-/// flat + cloneable: anything plugins need from the app config has
-/// to surface here rather than pulling in the whole `AppConfig`
-/// type, which keeps the wire format stable when `AppConfig` grows.
+/// Snapshot of the user-spelled `AppConfig` values at pipeline
+/// entry. Intentionally flat + cloneable: anything plugins need
+/// from the app config has to surface here rather than pulling in
+/// the whole `AppConfig` type, which keeps the wire format stable
+/// when `AppConfig` grows.
+///
+/// ## Read this for "what the user said"; read the IR for
+/// "what the renderer will use"
+///
+/// `AppMeta` is **frozen at pipeline entry** — plugins don't update
+/// it. The per-target IR ([`IosProjectIr`] / [`AndroidProjectIr`])
+/// is the canonical source of truth for fields the renderer
+/// eventually consumes. If a plugin overrides `IosProjectIr.bundle_id`
+/// via `Operation::Override`, downstream plugins reading
+/// `ctx.app_meta.ios_bundle_id` will still see the *original* user
+/// value. Use `AppMeta` for attribution and diagnostics; use the
+/// IR for values that flow into the rendered project.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AppMeta {
     pub name: String,
