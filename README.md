@@ -68,7 +68,7 @@ whisker/
 │   ├── whisker-driver           Backend driver (host shim, BridgeRenderer)
 │   ├── whisker-driver-sys       Raw FFI bindings + C++ bridge sources (bridge/)
 │   ├── whisker-macros           Proc macros (#[whisker::main], #[component], render!)
-│   ├── whisker-plugin           Plugin trait + PrebuildContext + typed mod APIs
+│   ├── whisker-plugin           Plugin trait + GenerateContext + typed mod APIs
 │   └── whisker-runtime          Core runtime (reactive arena, view layer)
 ├── native/
 │   ├── android/               Kotlin runtime (WhiskerApplication / WhiskerView etc.)
@@ -145,7 +145,7 @@ GitHub.
 | `render!` macro | ✅ |
 | `Signal<T>` unified prop reactivity (Phase 7-Φ) | ✅ |
 | `#[whisker::platform_component]` (iOS only for now) | ✅ |
-| CNG (`whisker prebuild`) | ⏳ |
+| CNG (continuous native generation, plugin-driven) | ⏳ |
 | `whisker run` (Tier 1 hot reload) | ✅ (iOS) / ⏳ (Android) |
 | iOS xcframework build | ✅ |
 | Android AAR build | ⏳ |
