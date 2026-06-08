@@ -21,9 +21,9 @@
 //!
 //! ## Why discovery instead of explicit registration
 //!
-//! In Phase 2+ the user's `whisker.rs` will declare typed plugin
-//! Configs via `app.plugin::<MyConfig>(|c| ...)`. The Config type's
-//! `PluginConfig::NAME` matches the discovery table's key, so
+//! In Phase 2+ the user's `whisker.rs` declares typed plugins via
+//! `app.plugin::<MyPlugin>(|c| ...)`. The plugin's
+//! `Plugin::Config::NAME` matches the discovery table's key, so
 //! "what plugin runs" is decided entirely by what crates the app
 //! depends on plus how the user spelled `app.plugin::<…>(…)`. The
 //! CLI never needs an `Engine::register(...)` call site for

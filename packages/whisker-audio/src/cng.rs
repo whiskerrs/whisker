@@ -9,7 +9,7 @@
 //! ## Usage in `whisker.rs`
 //!
 //! ```ignore
-//! use whisker_audio::cng::WhiskerAudioConfig;
+//! use whisker_audio::cng::WhiskerAudio;
 //!
 //! app.plugin::<WhiskerAudio>(|c| c
 //!     .microphone_permission("Record audio clips for podcasts.")
@@ -86,7 +86,7 @@ impl PluginConfig for WhiskerAudioConfig {
 
 /// The plugin the CNG engine drives in-process (1st-party) or
 /// spawns as a subprocess (3rd-party path via the
-/// `whisker-audio-cng` binary).
+/// `whisker-audio-plugin` binary).
 pub struct WhiskerAudio;
 
 impl Plugin for WhiskerAudio {

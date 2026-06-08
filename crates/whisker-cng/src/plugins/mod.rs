@@ -12,7 +12,7 @@
 //! Every built-in is opt-in: the engine runs it on every
 //! `compose()` call, but it only writes IR entries when the user
 //! supplied a non-default Config via
-//! `app.plugin::<…Config>(|c| …)`. A built-in's `Config::default()`
+//! `app.plugin::<MyPlugin>(|c| …)`. A built-in's `Config::default()`
 //! produces an empty contribution, so apps that don't declare any
 //! built-in see the legacy behavior bit-identical.
 //!

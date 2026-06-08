@@ -28,24 +28,24 @@
 //! use whisker_plugin::{Operation, Plugin, PluginConfig, GenerateContext, PlistValue, Target};
 //!
 //! #[derive(Default, serde::Serialize, serde::Deserialize)]
-//! struct MyConfig {
+//! struct DemoConfig {
 //!     bundle_suffix: String,
 //! }
 //!
-//! impl PluginConfig for MyConfig {
+//! impl PluginConfig for DemoConfig {
 //!     const NAME: &'static str = "example-plugin";
 //! }
 //!
 //! struct Demo;
 //!
 //! impl Plugin for Demo {
-//!     type Config = MyConfig;
-//!     fn apply(&self, ctx: &mut GenerateContext, cfg: &MyConfig) -> anyhow::Result<()> {
+//!     type Config = DemoConfig;
+//!     fn apply(&self, ctx: &mut GenerateContext, cfg: &DemoConfig) -> anyhow::Result<()> {
 //!         if let Some(ios) = ctx.ios.as_mut() {
 //!             let key = "CFBundleSuffix".to_string();
 //!             ios.info_plist.insert(key.clone(), PlistValue::String(cfg.bundle_suffix.clone()));
 //!             ctx.journal.record(
-//!                 MyConfig::NAME,
+//!                 DemoConfig::NAME,
 //!                 Target::Ios,
 //!                 &format!("info_plist.{key}"),
 //!                 Operation::Set,
@@ -111,10 +111,8 @@ use std::path::PathBuf;
 /// Trait implemented by the typed config struct each plugin defines.
 ///
 /// Carries the plugin's stable kebab-case identifier as a const so
-/// the `app.plugin::<Config>(|c| ...)` builder in `whisker-app-config`
-/// can derive the plugin name from the *type alone* — the call site
-/// only sees `Config`, not the [`Plugin`] impl that runs against it,
-/// so the binding has to live on the Config side.
+/// the `app.plugin::<MyPlugin>(|c| ...)` builder in `whisker-app-config`
+/// can resolve the storage key via `<MyPlugin as Plugin>::Config::NAME`.
 ///
 /// ## Why `Serialize + DeserializeOwned`
 ///
@@ -131,9 +129,10 @@ use std::path::PathBuf;
 ///
 /// ## Why `Default`
 ///
-/// `app.plugin::<Config>(|c| ...)` starts from `Config::default()` and
-/// lets the closure mutate it. A user who declares a plugin without
-/// touching any options should still get a working config.
+/// `app.plugin::<MyPlugin>(|c| ...)` starts from `Config::default()`
+/// and lets the closure mutate it. A user who declares a plugin
+/// without touching any options should still get a working config —
+/// the call site reads as `app.plugin::<MyPlugin>(|_| {})`.
 ///
 /// ## Convention for `NAME`
 ///
@@ -153,7 +152,8 @@ pub trait PluginConfig: Serialize + for<'de> Deserialize<'de> + Default {
 /// What a plugin implements.
 pub trait Plugin {
     /// Plugin-specific config. The user passes this in via
-    /// `app.plugin::<Config>(|c| c.field(...))` inside `whisker.rs`.
+    /// `app.plugin::<Self>(|c| c.field(...))` inside `whisker.rs` —
+    /// the `c` parameter is `&mut Self::Config`.
     type Config: PluginConfig;
 
     /// Stable plugin identifier, used in:

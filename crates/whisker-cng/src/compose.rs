@@ -297,7 +297,7 @@ fn check_no_unregistered_plugin_configs(
         unknown.sort();
         bail!(
             "AppConfig declares plugin(s) not registered with the engine: {}. \
-             Either install the plugin crate or remove the `app.plugin::<{{Config}}>(…)` call.",
+             Either install the plugin crate or remove the `app.plugin::<{{Plugin}}>(…)` call.",
             unknown
                 .iter()
                 .map(|s| format!("`{s}`"))

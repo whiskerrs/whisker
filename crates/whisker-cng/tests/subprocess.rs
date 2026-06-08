@@ -21,7 +21,7 @@ fn subprocess_plugin_pushes_permission_through_a_real_spawn() {
     let mut engine = Engine::new();
     engine.register_subprocess(plugin);
 
-    // User-side config: simulate what `app.plugin::<EchoConfig>(|c| ...)`
+    // User-side config: simulate what `app.plugin::<Echo>(|c| ...)`
     // would have stored into AppConfig.plugins.
     let mut app = AppConfig::default();
     app.name("Demo");
