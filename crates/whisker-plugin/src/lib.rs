@@ -20,28 +20,32 @@
 //!
 //! ## Writing a 3rd-party plugin
 //!
-//! Add `whisker-plugin` as a dep, implement [`Plugin`] on a unit
-//! struct, and call [`run_as_subprocess`] from `main`:
+//! Implement [`PluginConfig`] on a Config struct (this gives the
+//! plugin its name) and [`Plugin`] on a unit struct that owns the
+//! apply logic, then call [`run_as_subprocess`] from `main`:
 //!
 //! ```no_run
-//! use whisker_plugin::{Operation, Plugin, GenerateContext, PlistValue, Target};
+//! use whisker_plugin::{Operation, Plugin, PluginConfig, GenerateContext, PlistValue, Target};
 //!
 //! #[derive(Default, serde::Serialize, serde::Deserialize)]
 //! struct MyConfig {
 //!     bundle_suffix: String,
 //! }
 //!
+//! impl PluginConfig for MyConfig {
+//!     const NAME: &'static str = "example-plugin";
+//! }
+//!
 //! struct MyPlugin;
 //!
 //! impl Plugin for MyPlugin {
 //!     type Config = MyConfig;
-//!     fn name(&self) -> &'static str { "example-plugin" }
 //!     fn apply(&self, ctx: &mut GenerateContext, cfg: &MyConfig) -> anyhow::Result<()> {
 //!         if let Some(ios) = ctx.ios.as_mut() {
 //!             let key = "CFBundleSuffix".to_string();
 //!             ios.info_plist.insert(key.clone(), PlistValue::String(cfg.bundle_suffix.clone()));
 //!             ctx.journal.record(
-//!                 "example-plugin",
+//!                 MyConfig::NAME,
 //!                 Target::Ios,
 //!                 &format!("info_plist.{key}"),
 //!                 Operation::Set,
@@ -101,43 +105,70 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 
 // ----------------------------------------------------------------------------
-// Plugin trait
+// PluginConfig trait
 // ----------------------------------------------------------------------------
 
-/// What a plugin implements.
+/// Trait implemented by the typed config struct each plugin defines.
 ///
-/// ## Why `Config` is `Serialize + DeserializeOwned`
+/// Carries the plugin's stable kebab-case identifier as a const so
+/// the [`AppConfig::plugin`](https://docs.rs/whisker-app-config/)
+/// builder can derive the plugin name from the *type alone* —
+/// `app.plugin::<FirebaseCfg>(|c| ...)` only sees `FirebaseCfg`, not
+/// the `Plugin` impl that runs against it, so the binding has to
+/// live on the Config side.
+///
+/// ## Why `Serialize + DeserializeOwned`
 ///
 /// Three reasons, all wire-related:
 ///
-/// 1. The user's `whisker.rs` declares plugin config as a Rust
-///    struct via `app.plugin::<MyPluginCfg>(|cfg| ...)`. That value
-///    has to ride along through the config probe → whisker-cli →
-///    whisker-cng path, all of which use JSON.
+/// 1. `whisker.rs` builds the Config struct, then `whisker-cli`
+///    serializes the resulting `AppConfig` (including this Config
+///    nested under `plugins[NAME]`) to JSON via the config probe.
 /// 2. 3rd-party plugins are subprocesses — their config arrives as
-///    JSON in the stdin envelope.
+///    JSON in the [`PluginRequest`] envelope.
 /// 3. The mutation journal records the config that produced each
 ///    mutation, so we can attribute "plugin X with config Y" in
 ///    error messages.
 ///
-/// `Default` is required so config blocks omitted in `whisker.rs`
-/// fall back to a sensible value instead of erroring.
+/// ## Why `Default`
+///
+/// `app.plugin::<Cfg>(|c| ...)` starts from `Cfg::default()` and
+/// lets the closure mutate it. A user who declares a plugin without
+/// touching any options should still get a working config.
+///
+/// ## Convention for `NAME`
+///
+/// Kebab-case; prefix 1st-party plugins with `whisker-`
+/// (e.g. `whisker-info-plist`, `whisker-permissions`). Must match
+/// the `Plugin::name()` of the plugin that consumes this Config.
+pub trait PluginConfig: Serialize + for<'de> Deserialize<'de> + Default {
+    const NAME: &'static str;
+}
+
+// ----------------------------------------------------------------------------
+// Plugin trait
+// ----------------------------------------------------------------------------
+
+/// What a plugin implements.
 pub trait Plugin {
     /// Plugin-specific config. The user passes this in via
     /// `app.plugin::<Cfg>(|c| c.field(...))` inside `whisker.rs`.
-    type Config: Serialize + for<'de> Deserialize<'de> + Default;
+    type Config: PluginConfig;
 
     /// Stable plugin identifier, used in:
     ///
-    /// - The `[package.metadata.whisker.plugins.<name>]` declaration
-    ///   in a user crate's `Cargo.toml`
     /// - `after()` / `before()` cross-references
     /// - The mutation journal
     /// - Error messages
+    /// - The [`PluginRequest`] envelope's `name` field
     ///
-    /// Convention: kebab-case, prefix 1st-party plugins with
-    /// `whisker-` (e.g. `whisker-info-plist`, `whisker-permissions`).
-    fn name(&self) -> &'static str;
+    /// Defaults to `Self::Config::NAME` so the binding between the
+    /// plugin's Config type and the plugin's name only has to be
+    /// declared once. Override only when a single Plugin impl
+    /// wraps multiple Config types (rare).
+    fn name(&self) -> &'static str {
+        <Self::Config as PluginConfig>::NAME
+    }
 
     /// Plugins this one must run **after**. Used by the topological
     /// sort in `whisker-cng::compose`. Default: empty (no ordering
@@ -678,11 +709,12 @@ mod tests {
         flag: bool,
     }
 
+    impl PluginConfig for NullConfig {
+        const NAME: &'static str = "null";
+    }
+
     impl Plugin for NullPlugin {
         type Config = NullConfig;
-        fn name(&self) -> &'static str {
-            "null"
-        }
         fn apply(&self, _ctx: &mut GenerateContext, _config: &Self::Config) -> anyhow::Result<()> {
             Ok(())
         }
@@ -724,20 +756,21 @@ mod tests {
         permission: String,
     }
 
+    impl PluginConfig for PermissionCfg {
+        const NAME: &'static str = "test-permission";
+    }
+
     struct PermissionPlugin;
 
     impl Plugin for PermissionPlugin {
         type Config = PermissionCfg;
-        fn name(&self) -> &'static str {
-            "test-permission"
-        }
         fn apply(&self, ctx: &mut GenerateContext, cfg: &PermissionCfg) -> anyhow::Result<()> {
             let android = ctx.android.as_mut().ok_or_else(|| {
                 anyhow::anyhow!("test-permission requires android target enabled")
             })?;
             android.manifest.permissions.push(cfg.permission.clone());
             ctx.journal.record(
-                "test-permission",
+                PermissionCfg::NAME,
                 Target::Android,
                 "manifest.permissions",
                 Operation::ArrayPush { count: 1 },
