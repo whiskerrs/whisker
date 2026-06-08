@@ -548,6 +548,15 @@ pub fn run_gradle_assemble(
     let mut cmd = Command::new(&gradlew);
     cmd.arg(task)
         .arg("--no-daemon")
+        // `--console=plain` forces gradle to emit line-by-line output
+        // instead of its default `auto` heuristic, which on a TTY
+        // upgrades to ANSI-escape-driven in-place progress redraws.
+        // We pipe gradle through `Step::pipe` so the ANSI codes never
+        // reach a real terminal — but our line-based classifier
+        // doesn't know how to strip them, and the curated TUI's inline
+        // viewport gets corrupted by cursor-moving sequences leaking
+        // through. Plain console mode side-steps both.
+        .arg("--console=plain")
         .current_dir(gen_android)
         .env("JAVA_HOME", &java_home);
     if !features.is_empty() {

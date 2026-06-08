@@ -209,7 +209,19 @@ fn build_engine_with_discovered_plugins(
 /// plugin's `[[bin]]` target. We use the workspace's existing
 /// `target/debug` so subsequent runs are no-op when the plugin
 /// crates haven't changed (cargo's own incremental cache).
+///
+/// Output streams through the curated `Step::pipe` machinery so the
+/// cargo progress (`    Compiling …` / `    Finished …` lines) folds
+/// into a single spinner row instead of leaking unfiltered ahead of
+/// the dev loop's `── whisker run ──` section header — and, with
+/// the TUI on, ahead of the inline status bar where stray
+/// `eprintln!`s race the viewport redraw.
 fn build_discovered_plugins(workspace_root: &Path, discovered: &[DiscoveredPlugin]) -> Result<()> {
+    let bins: Vec<&str> = discovered
+        .iter()
+        .map(|p| p.bin_target_name.as_str())
+        .collect();
+    let step = whisker_build::ui::step("compile", format!("plugins ({})", bins.join(", ")));
     let mut cmd = Command::new("cargo");
     cmd.arg("build").current_dir(workspace_root);
     for plugin in discovered {
@@ -218,16 +230,18 @@ fn build_discovered_plugins(workspace_root: &Path, discovered: &[DiscoveredPlugi
             .arg("--package")
             .arg(&plugin.source_crate);
     }
-    let status = cmd
-        .status()
+    let status = step
+        .pipe(&mut cmd)
         .with_context(|| "spawn `cargo build` for discovered Whisker CNG plugin binaries")?;
     if !status.success() {
+        step.fail(format!("{status}"));
         return Err(anyhow!(
             "`cargo build` for discovered Whisker CNG plugin binaries exited with {status}. \
              Re-run with `RUST_BACKTRACE=1 cargo build --bin <bin> --package <crate>` to see \
              the underlying compile error."
         ));
     }
+    step.done("");
     Ok(())
 }
 
