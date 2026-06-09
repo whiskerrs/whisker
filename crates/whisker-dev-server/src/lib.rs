@@ -805,18 +805,18 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
                 "x86_64" => "x86_64-apple-ios",
                 arch => anyhow::bail!("unsupported host arch {arch} for iOS Simulator target"),
             };
-            // The dev-loop's `Builder` is hard-coded to
-            // `Profile::Debug`, and xcodebuild's Build Phase Run
-            // Script (`whisker-build ios`) invokes cargo with the
-            // same debug profile, so the dylib lands in
-            // `target/<triple>/debug/`. Previously we read from
-            // `release/` and the patcher init silently fell back to
-            // Tier 2 on every run.
+            // xcodebuild's Build Phase Run Script (`whisker-build
+            // ios`) invokes cargo with `--release` (see
+            // `crates/whisker-build/src/ios.rs::cargo_build_ios_dylib`:
+            // the comment there spells out that iOS dev wants the
+            // same optimised codegen prod ships, so debug profile is
+            // deliberately not used). Android uses Debug; the two
+            // platforms can't share this path.
             let dylib = config
                 .workspace_root
                 .join("target")
                 .join(triple)
-                .join("debug")
+                .join("release")
                 .join(&dylib_name);
             if !dylib.is_file() {
                 anyhow::bail!(
@@ -974,9 +974,9 @@ mod tests {
             "x86_64" => "x86_64-apple-ios",
             other => panic!("unsupported test host arch {other}"),
         };
-        let debug_dir = ws.join("target").join(triple).join("debug");
-        std::fs::create_dir_all(&debug_dir).unwrap();
-        let dylib = debug_dir.join("libhello_world.dylib");
+        let release_dir = ws.join("target").join(triple).join("release");
+        std::fs::create_dir_all(&release_dir).unwrap();
+        let dylib = release_dir.join("libhello_world.dylib");
         std::fs::write(&dylib, b"fake-macho").unwrap();
 
         let cfg = mk_config(ws.clone(), Target::IosSimulator);
