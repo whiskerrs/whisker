@@ -323,22 +323,27 @@ impl DevServer {
         // deferred until *after* the WS is bound, because the device
         // app spins up its `whisker-dev-runtime` socket as soon as it
         // launches and would race a not-yet-bound dev-server.
-        // A build failure isn't fatal: the loop still enters so
-        // fixing the source and saving recovers.
+        //
+        // A build failure here is fatal: there's nothing actionable
+        // the dev-loop can do (no app to patch, no install to
+        // recover from a source-edit save), so we surface the error
+        // and exit. The previous behaviour of "enter the loop anyway
+        // and recover on next save" was misleading — users routinely
+        // missed the warn line and assumed the build had succeeded.
         whisker_build::ui::section("Initial build");
         emit(&self.on_event, Event::BuildingFull);
-        let initial_build_ok = match builder.build().await {
-            Ok(()) => {
-                emit(&self.on_event, Event::BuildSucceeded);
-                true
-            }
-            Err(e) => {
-                let msg = format!("{e:#}");
-                whisker_build::ui::error(format!("initial build failed: {msg}"));
-                emit(&self.on_event, Event::BuildFailed(msg));
-                false
-            }
-        };
+        if let Err(e) = builder.build().await {
+            let msg = format!("{e:#}");
+            emit(&self.on_event, Event::BuildFailed(msg.clone()));
+            // cli main prints the bail message via `ui::error` (it
+            // formats `e.root_cause()`), so emitting our own
+            // `ui::error` here would double-print every install /
+            // build failure to the user. Keep the bail message
+            // user-actionable; the verbose chain is still reachable
+            // via `WHISKER_VERBOSE=1`.
+            anyhow::bail!("initial build failed: {msg}");
+        }
+        emit(&self.on_event, Event::BuildSucceeded);
 
         // Now bind the WS so `install_and_launch` (next) has
         // somewhere for the device's `whisker-dev-runtime` to dial.
@@ -395,19 +400,23 @@ impl DevServer {
         }
         emit(&self.on_event, Event::Started);
 
-        // Install + launch the freshly-built artifact. Skipped when
-        // the build failed — the loop's first save will retry via
-        // the rebuild path. `run_build_cycle` reuses this codepath
-        // for rebuilds inside the loop (where WS is already bound).
-        if initial_build_ok {
-            if let Err(e) = installer.install_and_launch().await {
-                whisker_build::ui::error(format!("initial install failed: {e}"));
-            }
-            whisker_build::ui::info(format!(
-                "initial done · {} client(s) connected",
-                sender.client_count()
-            ));
+        // Install + launch the freshly-built artifact. A failure
+        // here is fatal for the same reason a build failure is —
+        // there's nothing to dev-loop against if the app never made
+        // it onto the device (no `INSTALL_FAILED_INSUFFICIENT_STORAGE`
+        // recovery story over file watching). `run_build_cycle`
+        // reuses the build + install codepath for rebuilds inside
+        // the loop (where WS is already bound and a failure there
+        // does fall through — the user can then save again to retry).
+        if let Err(e) = installer.install_and_launch().await {
+            // See the `initial build failed` arm above for why we
+            // bail instead of `ui::error`-ing here.
+            anyhow::bail!("initial install failed: {e:#}");
         }
+        whisker_build::ui::info(format!(
+            "initial done · {} client(s) connected",
+            sender.client_count()
+        ));
 
         // After the fat build has happened, Patcher::initialize can
         // read the now-populated caches. Failure here is non-fatal
@@ -725,11 +734,16 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
     let crate_underscored = config.package.replace('-', "_");
     match config.target {
         Target::Android => {
-            // Read from cargo's workspace `target/<triple>/release/`
+            // Read from cargo's workspace `target/<triple>/debug/`
             // dir, which is where `whisker-build android` (run inside
             // gradle's `whiskerBuildDebugArm64V8a` task) deposits the
-            // freshly-cross-compiled .so. We deliberately don't reach
-            // into `gen/android/.../app/src/main/jniLibs/<abi>/` even
+            // freshly-cross-compiled .so during the dev loop. The
+            // dev-loop's `Builder` is hard-coded to `Profile::Debug`
+            // (`crates/whisker-dev-server/src/builder.rs`), so the
+            // patcher's expectation must match that — earlier code
+            // here used `release/` and silently fell back to Tier 2.
+            // We deliberately don't reach into
+            // `gen/android/.../app/src/main/jniLibs/<abi>/` even
             // though that path also exists after a successful gradle
             // assemble — that file is a copy AGP made for jniLibs
             // merging, and the symbol-loading order rustc uses pins
@@ -751,11 +765,11 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
                 .workspace_root
                 .join("target")
                 .join(triple)
-                .join("release")
+                .join("debug")
                 .join(&so_name);
             if !candidate.is_file() {
                 anyhow::bail!(
-                    "no Android cdylib at {} — run `whisker build --target android` first",
+                    "no Android cdylib at {} — initial build didn't drop the artifact where the dev loop expects it",
                     candidate.display(),
                 );
             }
@@ -791,18 +805,23 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
                 "x86_64" => "x86_64-apple-ios",
                 arch => anyhow::bail!("unsupported host arch {arch} for iOS Simulator target"),
             };
+            // The dev-loop's `Builder` is hard-coded to
+            // `Profile::Debug`, and xcodebuild's Build Phase Run
+            // Script (`whisker-build ios`) invokes cargo with the
+            // same debug profile, so the dylib lands in
+            // `target/<triple>/debug/`. Previously we read from
+            // `release/` and the patcher init silently fell back to
+            // Tier 2 on every run.
             let dylib = config
                 .workspace_root
                 .join("target")
                 .join(triple)
-                .join("release")
+                .join("debug")
                 .join(&dylib_name);
             if !dylib.is_file() {
                 anyhow::bail!(
                     "no iOS Simulator dylib at {} — \
-                     `whisker run --target ios` would have built it; \
-                     reaching this branch means the initial build was \
-                     skipped or failed",
+                     initial xcodebuild didn't drop the artifact where the dev loop expects it",
                     dylib.display(),
                 );
             }
@@ -955,9 +974,9 @@ mod tests {
             "x86_64" => "x86_64-apple-ios",
             other => panic!("unsupported test host arch {other}"),
         };
-        let release_dir = ws.join("target").join(triple).join("release");
-        std::fs::create_dir_all(&release_dir).unwrap();
-        let dylib = release_dir.join("libhello_world.dylib");
+        let debug_dir = ws.join("target").join(triple).join("debug");
+        std::fs::create_dir_all(&debug_dir).unwrap();
+        let dylib = debug_dir.join("libhello_world.dylib");
         std::fs::write(&dylib, b"fake-macho").unwrap();
 
         let cfg = mk_config(ws.clone(), Target::IosSimulator);
@@ -977,17 +996,18 @@ mod tests {
     #[test]
     fn original_binary_path_finds_android_so_under_cargo_target() {
         // Reflects the post-#XXX layout: gradle's whiskerBuild*Android
-        // task drops the .so at `target/<triple>/release/` rather than
-        // the dev-server pre-staging into `app/src/main/jniLibs/`.
+        // task drops the .so at `target/<triple>/debug/` (the dev loop
+        // builds with `Profile::Debug`) rather than the dev-server
+        // pre-staging into `app/src/main/jniLibs/`.
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let ws = std::env::temp_dir().join(format!("whisker-dev-test-orig-{pid}-{n}"));
         let _ = std::fs::remove_dir_all(&ws);
-        let release_dir = ws.join("target/aarch64-linux-android/release");
-        std::fs::create_dir_all(&release_dir).unwrap();
-        let so = release_dir.join("libhello_world.so");
+        let debug_dir = ws.join("target/aarch64-linux-android/debug");
+        std::fs::create_dir_all(&debug_dir).unwrap();
+        let so = debug_dir.join("libhello_world.so");
         std::fs::write(&so, b"fake").unwrap();
 
         let cfg = mk_config(ws.clone(), Target::Android);

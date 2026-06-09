@@ -574,12 +574,15 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             }
         }
         Mode::Tui => {
-            // TUI mode: ratatui owns the bottom region, so indicatif
-            // bars would race with the inline viewport's redraw.
-            // Emit the curated "started" line via plain eprintln so
-            // the row scrolls above; `finish()` will emit the final
-            // state (✓/✗) the same way.
-            eprintln!("  ⏵ {name:<12} {detail}");
+            // TUI mode: the inline ratatui viewport captures stderr
+            // and `insert_before`s each captured line into scrollback.
+            // Emitting a "⏵ started" line here would just be
+            // immediately followed by the "✓ done" line from
+            // `finish()`, doubling the row count — there's no
+            // overwrite mechanism for already-committed scrollback
+            // lines (unlike indicatif's spinner in Curated mode).
+            // Defer all output to `finish()` so each step occupies
+            // exactly one row.
             Step {
                 bar: None,
                 started_at,
