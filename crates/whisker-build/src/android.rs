@@ -559,6 +559,21 @@ pub fn run_gradle_assemble(
         .arg("--console=plain")
         .current_dir(gen_android)
         .env("JAVA_HOME", &java_home);
+    // Forward the TUI-mode + verbose env vars down to `whisker-build
+    // android`, which gradle invokes inside `WhiskerBuildTask` via
+    // `execOperations.exec`. `Command` *does* inherit env by default
+    // — but the gradle Plugin sits behind a published Maven artifact,
+    // so older plugin versions whose `exec {}` block doesn't
+    // explicitly forward env names won't propagate them to grandchild
+    // processes on every gradle version. Setting the vars on the
+    // outermost gradle invocation keeps the dev-loop UI consistent
+    // regardless of which plugin version a given gen tree pins.
+    if crate::ui::is_tui() {
+        cmd.env("WHISKER_TUI", "1");
+    }
+    if crate::ui::is_verbose() {
+        cmd.env("WHISKER_VERBOSE", "1");
+    }
     if !features.is_empty() {
         cmd.env("WHISKER_FEATURES", features.join(" "));
     }

@@ -742,42 +742,46 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
     let crate_underscored = config.package.replace('-', "_");
     match config.target {
         Target::Android => {
-            // Read from cargo's workspace `target/<triple>/debug/`
-            // dir, which is where `whisker-build android` (run inside
-            // gradle's `whiskerBuildDebugArm64V8a` task) deposits the
-            // freshly-cross-compiled .so during the dev loop. The
-            // dev-loop's `Builder` is hard-coded to `Profile::Debug`
-            // (`crates/whisker-dev-server/src/builder.rs`), so the
-            // patcher's expectation must match that — earlier code
-            // here used `release/` and silently fell back to Tier 2.
-            // We deliberately don't reach into
-            // `gen/android/.../app/src/main/jniLibs/<abi>/` even
-            // though that path also exists after a successful gradle
-            // assemble — that file is a copy AGP made for jniLibs
-            // merging, and the symbol-loading order rustc uses pins
-            // its addresses to the canonical cargo output anyway.
+            // Read from the *gradle plugin's* output directory rather
+            // than from `<workspace>/target/<triple>/debug/`. Why:
+            // gradle's `WhiskerBuildTask` declares its `jniLibsDir`
+            // as an `@OutputDirectory` but the cargo target dir as
+            // `@Internal` (see
+            // `platforms/android/gradle-plugin/whisker-gradle-plugin/
+            // src/main/kotlin/rs/whisker/gradle/WhiskerBuildTask.kt`),
+            // which means gradle treats the jniLibs path as the
+            // ground-truth output it must guarantee, but happily
+            // skips the task when only the cargo target dir is
+            // missing. If the user runs `cargo clean` (or anything
+            // that nukes `target/<triple>/debug/`) between sessions
+            // gradle still reports UP-TO-DATE and the dev-server
+            // sees nothing under the workspace's target dir.
+            //
+            // Stage location: `whisker_build::android::stage_so_files`
+            // copies the freshly-built `.so` into the abi subdir of
+            // gradle's `@OutputDirectory`. The directory layout is
+            // `gen/android/app/build/generated/jniLibs/
+            //  whiskerBuild<Variant><AbiCamel>/<abi>/lib<pkg>.so`,
+            // where `<AbiCamel>` is the abi name with each `-`/`_`
+            // segment titlecased (`arm64-v8a` → `Arm64V8a`,
+            // `x86_64` → `X8664`) and `<Variant>` is the AGP build
+            // type ("Debug" for the dev loop).
             let android = config.android.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "target=Android but Config.android is None — cli should have populated it from whisker.rs"
                 )
             })?;
-            let triple = match android.abi.as_str() {
-                "arm64-v8a" => "aarch64-linux-android",
-                "armeabi-v7a" => "armv7-linux-androideabi",
-                "x86_64" => "x86_64-linux-android",
-                "x86" => "i686-linux-android",
-                other => anyhow::bail!("unknown Android ABI: {other}"),
-            };
             let so_name = format!("lib{crate_underscored}.so");
+            let abi_camel = android_abi_to_camel(&android.abi);
             let candidate = config
-                .workspace_root
-                .join("target")
-                .join(triple)
-                .join("debug")
+                .crate_dir
+                .join("gen/android/app/build/generated/jniLibs")
+                .join(format!("whiskerBuildDebug{abi_camel}"))
+                .join(&android.abi)
                 .join(&so_name);
             if !candidate.is_file() {
                 anyhow::bail!(
-                    "no Android cdylib at {} — initial build didn't drop the artifact where the dev loop expects it",
+                    "no Android cdylib at {} — gradle's whiskerBuildDebug{abi_camel} task didn't produce its output (run `whisker run --target android` first)",
                     candidate.display(),
                 );
             }
@@ -836,6 +840,25 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
             Ok(dylib)
         }
     }
+}
+
+/// Map an Android ABI name to the camel-cased form gradle's
+/// `WhiskerProjectPlugin` uses when synthesising
+/// `whiskerBuild<Variant><AbiCamel>` task names. Each `-` or `_`
+/// segment is titlecased and the parts are concatenated:
+/// `arm64-v8a` → `Arm64V8a`, `armeabi-v7a` → `ArmeabiV7a`,
+/// `x86_64` → `X8664`, `x86` → `X86`. Mirrors `String.toCamelCase()`
+/// in `WhiskerProjectPlugin.kt`.
+fn android_abi_to_camel(abi: &str) -> String {
+    abi.split(['-', '_'])
+        .map(|seg| {
+            let mut chars = seg.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect()
 }
 
 fn target_os_for(target: Target) -> hotpatch::LinkerOs {
@@ -1002,20 +1025,27 @@ mod tests {
     }
 
     #[test]
-    fn original_binary_path_finds_android_so_under_cargo_target() {
-        // Reflects the post-#XXX layout: gradle's whiskerBuild*Android
-        // task drops the .so at `target/<triple>/debug/` (the dev loop
-        // builds with `Profile::Debug`) rather than the dev-server
-        // pre-staging into `app/src/main/jniLibs/`.
+    fn original_binary_path_finds_android_so_under_gradle_output() {
+        // Reads from the gradle plugin's `@OutputDirectory`, not from
+        // `target/<triple>/debug/` — the latter can be cleaned out by
+        // `cargo clean` while gradle still reports its task as
+        // UP-TO-DATE (the cargo target dir is `@Internal`, not an
+        // input). See `original_binary_path` for the rationale.
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let ws = std::env::temp_dir().join(format!("whisker-dev-test-orig-{pid}-{n}"));
         let _ = std::fs::remove_dir_all(&ws);
-        let debug_dir = ws.join("target/aarch64-linux-android/debug");
-        std::fs::create_dir_all(&debug_dir).unwrap();
-        let so = debug_dir.join("libhello_world.so");
+        // `mk_config` sets `crate_dir = ws` for Android, so the path
+        // the patcher checks is `<ws>/gen/android/app/build/generated/
+        // jniLibs/whiskerBuildDebug<AbiCamel>/<abi>/lib<pkg>.so`.
+        let gradle_out_dir = ws
+            .join("gen/android/app/build/generated/jniLibs")
+            .join("whiskerBuildDebugArm64V8a")
+            .join("arm64-v8a");
+        std::fs::create_dir_all(&gradle_out_dir).unwrap();
+        let so = gradle_out_dir.join("libhello_world.so");
         std::fs::write(&so, b"fake").unwrap();
 
         let cfg = mk_config(ws.clone(), Target::Android);
@@ -1023,6 +1053,17 @@ mod tests {
         assert_eq!(resolved, so);
 
         let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn android_abi_to_camel_matches_gradle_plugin_naming() {
+        // Mirrors `WhiskerProjectPlugin.kt::String.toCamelCase`. The
+        // patcher's task-name suffix has to match exactly or the
+        // gradle output path won't resolve.
+        assert_eq!(android_abi_to_camel("arm64-v8a"), "Arm64V8a");
+        assert_eq!(android_abi_to_camel("armeabi-v7a"), "ArmeabiV7a");
+        assert_eq!(android_abi_to_camel("x86_64"), "X8664");
+        assert_eq!(android_abi_to_camel("x86"), "X86");
     }
 
     #[test]

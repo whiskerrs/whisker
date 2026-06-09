@@ -258,6 +258,14 @@ enum SimctlNoise {
     /// preamble lines, and the post-build "xcframework written"
     /// confirmation all belong here.
     Xcodebuild,
+    /// `adb install -r` — stdout banners "Performing Streamed
+    /// Install" and "Success" duplicate the `install_step.done()`
+    /// row our UI already prints.
+    AdbInstall,
+    /// `adb shell am start` — stdout banner `Starting: Intent
+    /// { cmp=... }` duplicates what the launch step's label
+    /// already says.
+    AdbAmStart,
 }
 
 impl SimctlNoise {
@@ -276,6 +284,7 @@ impl SimctlNoise {
             }
             SimctlNoise::Other => false,
             SimctlNoise::Xcodebuild => is_benign_xcodebuild_line(line),
+            SimctlNoise::AdbInstall | SimctlNoise::AdbAmStart => false,
         }
     }
 
@@ -292,6 +301,13 @@ impl SimctlNoise {
             // success; it duplicates info our `step.done(...)`
             // already covers.
             SimctlNoise::Other => line.contains(": ") && line.chars().any(|c| c.is_ascii_digit()),
+            // `adb install -r`: two stdout lines on success — both
+            // are subsumed by the `install` step's ✓ row.
+            SimctlNoise::AdbInstall => line == "Performing Streamed Install" || line == "Success",
+            // `adb shell am start -n <component>`: the one stdout
+            // line "Starting: Intent { cmp=… }" duplicates the
+            // launch step's label.
+            SimctlNoise::AdbAmStart => line.starts_with("Starting: Intent {"),
             _ => false,
         }
     }
@@ -309,37 +325,51 @@ async fn android_install_and_launch(p: &AndroidParams) -> Result<()> {
     // on-device dev-runtime can reach our WebSocket without knowing
     // the emulator-gateway IP (10.0.2.2). Best-effort: it might
     // already be set from a previous run, or the device might be a
-    // non-emulator that doesn't need it.
-    let _ = Command::new("adb")
-        .args(["reverse", "tcp:9876", "tcp:9876"])
-        .status()
-        .await;
+    // non-emulator that doesn't need it. Routed through
+    // `run_filtered` rather than `.status()` so its stdio doesn't
+    // bypass the TUI's stderr-capture pipe and overlay the live
+    // region — same reason every other adb call below now uses it.
+    let mut reverse_cmd = Command::new("adb");
+    reverse_cmd.args(["reverse", "tcp:9876", "tcp:9876"]);
+    let _ = run_filtered(reverse_cmd, SimctlNoise::Other).await;
 
-    let install = Command::new("adb")
-        .args(["install", "-r"])
-        .arg(&apk)
-        .status()
+    let install_step = whisker_build::ui::step(
+        "install",
+        apk.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "app-debug.apk".into()),
+    );
+    let mut install_cmd = Command::new("adb");
+    install_cmd.args(["install", "-r"]).arg(&apk);
+    let install = run_filtered(install_cmd, SimctlNoise::AdbInstall)
         .await
         .context("spawn adb install")?;
     if !install.success() {
+        install_step.fail(format!("{install}"));
         anyhow::bail!("adb install -r {} failed ({install})", apk.display());
     }
+    install_step.done("");
 
-    // adb shell am force-stop  (so the relaunch actually re-bootstraps)
-    let _ = Command::new("adb")
-        .args(["shell", "am", "force-stop", &p.application_id])
-        .status()
-        .await;
+    // adb shell am force-stop  (so the relaunch actually re-bootstraps).
+    // `force-stop` is silent on success; route through `run_filtered`
+    // anyway so any error preamble lands in scrollback rather than on
+    // top of the live region.
+    let mut stop_cmd = Command::new("adb");
+    stop_cmd.args(["shell", "am", "force-stop", &p.application_id]);
+    let _ = run_filtered(stop_cmd, SimctlNoise::Other).await;
 
     let component = format!("{}/{}", p.application_id, p.launcher_activity);
-    let launch = Command::new("adb")
-        .args(["shell", "am", "start", "-n", &component])
-        .status()
+    let launch_step = whisker_build::ui::step("launch", component.clone());
+    let mut launch_cmd = Command::new("adb");
+    launch_cmd.args(["shell", "am", "start", "-n", &component]);
+    let launch = run_filtered(launch_cmd, SimctlNoise::AdbAmStart)
         .await
         .context("spawn adb am start")?;
     if !launch.success() {
+        launch_step.fail(format!("{launch}"));
         anyhow::bail!("adb am start {component} failed ({launch})");
     }
+    launch_step.done("");
     Ok(())
 }
 

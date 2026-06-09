@@ -417,11 +417,12 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
                 eprintln!("[whisker] {line}");
             }
         } else if !line.is_empty() {
-            // In curated mode, drop known-noise advisory lines that
-            // the user can't act on. Verbose mode keeps everything
-            // so the user has a chance to diagnose the filter
-            // itself if a real diagnostic ever gets misclassified.
-            if matches!(mode(), Mode::Curated) && is_subprocess_noise(&line) {
+            // Drop known-noise advisory lines that the user can't
+            // act on (gradle daemon JVM banner, etc.). Both curated
+            // and TUI modes filter — Verbose keeps everything so
+            // the user has a chance to diagnose the filter itself
+            // if a real diagnostic ever gets misclassified.
+            if matches!(mode(), Mode::Curated | Mode::Tui) && is_subprocess_noise(&line) {
                 continue;
             }
             // Diagnostics / errors / unrecognised tool output:

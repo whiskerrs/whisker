@@ -119,6 +119,21 @@ abstract class WhiskerBuildTask : DefaultTask() {
                     "--min-sdk=${minSdk.get()}",
                 ) + featureArgs,
             )
+            // Forward the dev-loop UI mode env vars to the child.
+            // `exec {}` inherits the gradle daemon's env by default,
+            // but the daemon's env is captured at fork-time and may
+            // predate the `whisker run` cli setting `WHISKER_TUI=1`
+            // (especially with `--daemon` reuse across sessions).
+            // Without these explicit forwards, `whisker-build android`
+            // calls `whisker_build::ui::step` in non-TUI mode and
+            // emits the `⏵ …` row that the whisker-cli capture
+            // thread treats as plain scrollback output, then
+            // immediately follows with the `✓ …` row from
+            // `Step::finish` — doubling the row count for every
+            // step the child runs.
+            for (name in listOf("WHISKER_TUI", "WHISKER_VERBOSE")) {
+                System.getenv(name)?.let { value -> environment(name, value) }
+            }
         }
     }
 
