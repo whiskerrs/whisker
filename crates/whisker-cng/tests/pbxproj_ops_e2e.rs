@@ -12,8 +12,8 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use whisker_app_config::AppConfig;
 use whisker_cng::plugins::ios_pbxproj_ops::IosPbxprojOps;
+use whisker_config::Config;
 
 fn unique_tempdir() -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -24,14 +24,14 @@ fn unique_tempdir() -> PathBuf {
     p
 }
 
-fn base_app() -> AppConfig {
-    let mut a = AppConfig::default();
+fn base_app() -> Config {
+    let mut a = Config::default();
     a.name("HelloWorld")
         .bundle_id("rs.whisker.examples.helloWorld");
     a
 }
 
-fn sync_and_read_pbxproj(app: &AppConfig) -> (PathBuf, String) {
+fn sync_and_read_pbxproj(app: &Config) -> (PathBuf, String) {
     let inputs = whisker_cng::ios::inputs_from(
         app,
         PathBuf::from("/abs/platforms/ios"),

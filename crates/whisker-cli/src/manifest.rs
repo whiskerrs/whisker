@@ -4,7 +4,7 @@
 //! The dev-server itself is manifest-agnostic — it accepts flat
 //! parameters (paths, bundle ids, application ids, …) via
 //! `whisker_dev_server::Config`. Translating the user's
-//! `whisker.rs::configure(&mut AppConfig)` result into those flat
+//! `whisker.rs::configure(&mut Config)` result into those flat
 //! values is the CLI's job and lives in [`super::run`].
 //!
 //! ## Discovery
@@ -21,7 +21,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
-use whisker_app_config::AppConfig;
+use whisker_config::Config;
 
 use crate::probe;
 
@@ -39,7 +39,7 @@ pub struct ResolvedManifest {
     /// Result of running the user's `whisker.rs::configure`. Owned
     /// (decoded from JSON) so subsequent CLI logic can pattern-match
     /// on optional fields without rerunning the probe.
-    pub config: AppConfig,
+    pub config: Config,
 }
 
 /// Resolve the manifest. `cargo_toml_override` (set via
@@ -72,7 +72,7 @@ pub fn resolve(cargo_toml_override: Option<&Path>) -> Result<ResolvedManifest> {
     let whisker_rs = crate_dir.join("whisker.rs");
     if !whisker_rs.is_file() {
         anyhow::bail!(
-            "no whisker.rs next to {} — every Whisker app needs a `whisker.rs` at the crate root that defines `fn configure(app: &mut AppConfig)`",
+            "no whisker.rs next to {} — every Whisker app needs a `whisker.rs` at the crate root that defines `fn configure(app: &mut Config)`",
             cargo_toml.display(),
         );
     }

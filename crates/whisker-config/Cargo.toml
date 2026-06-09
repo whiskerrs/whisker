@@ -1,15 +1,15 @@
 [package]
-name = "whisker-app-config"
+name = "whisker-config"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "AppConfig types used in whisker.rs to declare app metadata."
+description = "Config types used in whisker.rs to declare app metadata."
 
 [dependencies]
-# Serde derives ride along on the AppConfig types so the `whisker run`
+# Serde derives ride along on the Config types so the `whisker run`
 # config probe can serialize the user's `whisker.rs::configure` output
 # as JSON for the dev-server to consume. The probe pulls in only this
 # crate + serde + serde_json — keeping the dependency graph small is

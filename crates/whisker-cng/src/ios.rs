@@ -1,5 +1,5 @@
 //! Render the iOS host project under `gen/ios/` from an
-//! [`AppConfig`].
+//! [`Config`].
 //!
 //! The output is a complete Xcode project — `.pbxproj` is rendered
 //! directly from a template, no `xcodegen` step:
@@ -30,7 +30,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use whisker_app_config::AppConfig;
+use whisker_config::Config;
 use whisker_plugin::{FileEntry, PbxprojOp, PlistValue};
 
 use crate::compose::{EnabledTargets, Engine};
@@ -567,7 +567,7 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
     std::fs::write(path, bytes).with_context(|| format!("write {}", path.display()))
 }
 
-/// Pull the iOS-relevant subset of `AppConfig` into the renderer
+/// Pull the iOS-relevant subset of `Config` into the renderer
 /// input struct. Errors out on required fields. `scheme` defaults to
 /// `name`; `bundle_id` defaults to the top-level `app.bundle_id`.
 ///
@@ -577,7 +577,7 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
 /// `cargo metadata`, custom in-process plugins) should call the
 /// `_with_engine` form directly.
 pub fn inputs_from(
-    app_config: &AppConfig,
+    app_config: &Config,
     whisker_runtime_path: PathBuf,
     whisker_modules_path: PathBuf,
     workspace_root: PathBuf,
@@ -598,14 +598,14 @@ pub fn inputs_from(
 /// discovered from `[package.metadata.whisker.plugins]`).
 pub fn inputs_from_with_engine(
     engine: &Engine,
-    app_config: &AppConfig,
+    app_config: &Config,
     whisker_runtime_path: PathBuf,
     whisker_modules_path: PathBuf,
     workspace_root: PathBuf,
     user_package: String,
 ) -> Result<IosInputs> {
     // Run the plugin pipeline. `build_initial_context` seeds the
-    // IR with core fields from `AppConfig`; plugins can override
+    // IR with core fields from `Config`; plugins can override
     // any of them via `Operation::Override`. The renderer reads
     // the post-pipeline IR — `inputs_from`'s job is now strictly
     // extraction + ergonomic defaults for fields the engine left
@@ -788,9 +788,9 @@ mod tests {
 
     #[test]
     fn inputs_from_errors_when_bundle_id_unset() {
-        let cfg = AppConfig {
+        let cfg = Config {
             name: Some("X".into()),
-            ..AppConfig::default()
+            ..Config::default()
         };
         let err = inputs_from(
             &cfg,

@@ -5,11 +5,11 @@
 // applicationId `adb am start` expects, the launcher activity, etc.
 //
 // `whisker run` compiles this file as part of a small probe binary
-// that serializes the resulting `AppConfig` to JSON. The host shell
+// that serializes the resulting `Config` to JSON. The host shell
 // (`whisker-cli`) reads that JSON and projects the fields it needs
 // into a flat `whisker_dev_server::Config`.
 
-pub fn configure(app: &mut whisker_app_config::AppConfig) {
+pub fn configure(app: &mut whisker_config::Config) {
     app.name("Podcast")
         .bundle_id("rs.whisker.podcast")
         .version("0.1.0")

@@ -61,7 +61,7 @@ for the full design.
 whisker/
 ├── crates/                    Rust workspace
 │   ├── whisker                  Umbrella crate (re-exports for users)
-│   ├── whisker-app-config       AppConfig types used in whisker.rs
+│   ├── whisker-config       Config types used in whisker.rs
 │   ├── whisker-cli              `whisker` / `cargo-whisker` CLI binary
 │   ├── whisker-codegen          CNG (Continuous Native Generation) codegen
 │   ├── whisker-dev-runtime      Dev-only runtime (WebSocket, hot reload)

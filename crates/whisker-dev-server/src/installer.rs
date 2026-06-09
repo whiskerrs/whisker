@@ -8,7 +8,7 @@
 //! Application identity (bundle id, applicationId, launcher activity,
 //! scheme, …) is **not** baked in here. The cli passes those as
 //! `Config::android` / `Config::ios` after reading the user's
-//! `whisker.rs::configure(&mut AppConfig)`, so this module has zero
+//! `whisker.rs::configure(&mut Config)`, so this module has zero
 //! knowledge of which example or external user crate is in play.
 
 use anyhow::{Context, Result};

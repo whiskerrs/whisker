@@ -1,4 +1,4 @@
-pub fn configure(app: &mut whisker_app_config::AppConfig) {
+pub fn configure(app: &mut whisker_config::Config) {
     app.name("WhiskerRouterExample")
         .bundle_id("rs.whisker.routerexample")
         .version("0.1.0")

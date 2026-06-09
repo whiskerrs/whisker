@@ -1,6 +1,6 @@
 // `whisker.rs` for the `whisker-audio` example.
 
-pub fn configure(app: &mut whisker_app_config::AppConfig) {
+pub fn configure(app: &mut whisker_config::Config) {
     app.name("WhiskerAudioExample")
         .bundle_id("rs.whisker.audioexample")
         .version("0.1.0")

@@ -3,7 +3,7 @@
 //! Creates a directory matching the supplied crate name with the
 //! minimum-viable Whisker app skeleton: a single-crate workspace
 //! `Cargo.toml`, a tiny `src/lib.rs` with `#[whisker::main]`, the
-//! `whisker.rs` `AppConfig` probe, a `.gitignore`, and a `README.md`.
+//! `whisker.rs` `Config` probe, a `.gitignore`, and a `README.md`.
 //! The result compiles standalone — the user runs `whisker run
 //! --target host` (or `--target ios` / `android` if their machine
 //! passes `whisker doctor`) and sees an interactive counter.
@@ -203,10 +203,10 @@ fn whisker_rs(v: &Vars) -> String {
         r#"// `whisker.rs` — Whisker app configuration.
 //
 // `whisker run` compiles this file as a tiny probe binary that
-// serializes the resulting `AppConfig` to JSON; the CLI reads that
+// serializes the resulting `Config` to JSON; the CLI reads that
 // JSON and projects it into the dev-server's flat `Config`.
 
-pub fn configure(app: &mut whisker_app_config::AppConfig) {{
+pub fn configure(app: &mut whisker_config::Config) {{
     app.name("{display}")
         .bundle_id("{bundle_id}")
         .version("0.1.0")

@@ -11,8 +11,8 @@ the **`whisker run` hot-reload dev loop** wires them together.
                                             │
                                             │ rsx! / #[whisker::main]
                                             ▼
-   whisker-app-config ─────────► whisker (umbrella)
-   (AppConfig types)                │   prelude
+   whisker-config ─────────► whisker (umbrella)
+   (Config types)                │   prelude
                                     │   __main_runtime
                                     │
                                     ├──► whisker-runtime
@@ -28,7 +28,7 @@ the **`whisker run` hot-reload dev loop** wires them together.
 
    User crate (e.g. examples/hello-world)
    ├── src/lib.rs              — user code: `#[whisker::main] fn app() { rsx!{…} }`
-   ├── whisker.rs              — `fn configure(&mut AppConfig)` for `whisker run`
+   ├── whisker.rs              — `fn configure(&mut Config)` for `whisker run`
    ├── android/                — Gradle project
    ├── ios/                    — Xcode project (xcodegen-generated)
    └── Cargo.toml              — depends on `whisker` (umbrella)
@@ -36,14 +36,14 @@ the **`whisker run` hot-reload dev loop** wires them together.
    Host shells
    whisker-cli                 — `whisker run`, manifest+probe, doctor
    ├── manifest.rs             — Cargo.toml discovery
-   ├── probe.rs                — compile+run user's whisker.rs → AppConfig JSON
-   └── run.rs                  — AppConfig → dev_server::Config (flat)
+   ├── probe.rs                — compile+run user's whisker.rs → Config JSON
+   └── run.rs                  — Config → dev_server::Config (flat)
         │
         ▼
    whisker-dev-server          — file-watch + `whisker-build` invocations
                                  + install/launch + Tier 1 subsecond patches
                                  + WebSocket push. **Does not depend on
-                                 whisker-app-config — accepts only flat
+                                 whisker-config — accepts only flat
                                  fields via `Config`.**
 
    crates/whisker-build        — Lynx artifact fetch + per-platform cargo +
@@ -60,7 +60,7 @@ the **`whisker run` hot-reload dev loop** wires them together.
 
 | Crate | One-line | Depended on by |
 |---|---|---|
-| `whisker-app-config` | App-metadata types users build in `whisker.rs` | `whisker` (umbrella), `whisker-cli` |
+| `whisker-config` | App-metadata types users build in `whisker.rs` | `whisker` (umbrella), `whisker-cli` |
 | `whisker-runtime` | Element tree, diff, reactive signals. Renderer-agnostic. | `whisker-driver` |
 | `whisker-driver-sys` | Unsafe `extern "C"` declarations matching the C++ bridge | `whisker-driver` |
 | `whisker-driver` | Safe Rust wrappers + Lynx backend; bootstraps `subsecond` when `hot-reload` is on | `whisker` |
@@ -68,7 +68,7 @@ the **`whisker run` hot-reload dev loop** wires them together.
 | `whisker-macros` | `#[whisker::main]` and `rsx!` proc-macros | `whisker` |
 | `whisker` | Umbrella crate users `use whisker::prelude::*` from | user crates |
 | `whisker-dev-server` | Host dev loop, manifest-agnostic. Drives Tier 1 patch construction. | `whisker-cli` |
-| `whisker-cli` | `whisker run`, manifest probe, doctor. Resolves AppConfig and hands flat Config to dev-server. | (binary) |
+| `whisker-cli` | `whisker run`, manifest probe, doctor. Resolves Config and hands flat Config to dev-server. | (binary) |
 | `whisker-build` | Lynx artifact fetch, cargo cross-compile, AAR/xcframework packaging | `whisker-cli`, `whisker-dev-server` |
 | `whisker-subsecond` | Forked subsecond engine — anchors ASLR on `whisker_aslr_anchor` instead of `main`. Exposed as `subsecond` to consumers via `[lib] name = "subsecond"`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
@@ -153,12 +153,12 @@ thin rustc rebuild.
 A few decisions worth remembering:
 
 - **dev-server is manifest-agnostic.** It accepts flat fields
-  (`AndroidParams`, `IosParams`), not `AppConfig`. The cli does the
-  `whisker.rs` → probe → `AppConfig` → flat translation. Lets a
+  (`AndroidParams`, `IosParams`), not `Config`. The cli does the
+  `whisker.rs` → probe → `Config` → flat translation. Lets a
   future editor plugin construct the same flat `Config` and reuse
-  the dev loop without dragging in `whisker-app-config`.
+  the dev loop without dragging in `whisker-config`.
 
-- **`whisker-app-config` is intentionally tiny.** It's the only
+- **`whisker-config` is intentionally tiny.** It's the only
   thing the `whisker run` config-probe binary depends on (plus
   `serde_json`). Pulling in the umbrella `whisker` crate would
   inflate probe builds from seconds to minutes (Lynx headers,

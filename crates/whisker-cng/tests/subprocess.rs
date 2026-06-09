@@ -7,8 +7,8 @@
 //! the only place we actually fork() a real process.
 
 use std::path::PathBuf;
-use whisker_app_config::AppConfig;
 use whisker_cng::{EnabledTargets, Engine, SubprocessPlugin};
+use whisker_config::Config;
 
 fn fixture_binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whisker-cng-fixture-echo-plugin"))
@@ -22,8 +22,8 @@ fn subprocess_plugin_pushes_permission_through_a_real_spawn() {
     engine.register_subprocess(plugin);
 
     // User-side config: simulate what `app.plugin::<Echo>(|c| ...)`
-    // would have stored into AppConfig.plugins.
-    let mut app = AppConfig::default();
+    // would have stored into Config.plugins.
+    let mut app = Config::default();
     app.name("Demo");
     app.plugins.insert(
         "fixture-echo-plugin".into(),
@@ -54,7 +54,7 @@ fn subprocess_plugin_runs_with_default_config_when_user_omitted_declaration() {
     let mut engine = Engine::new();
     engine.register_subprocess(plugin);
 
-    let mut app = AppConfig::default();
+    let mut app = Config::default();
     app.name("Demo");
 
     let ctx = engine
@@ -75,7 +75,7 @@ fn subprocess_plugin_with_a_bad_binary_path_surfaces_spawn_error() {
     let mut engine = Engine::new();
     engine.register_subprocess(plugin);
 
-    let mut app = AppConfig::default();
+    let mut app = Config::default();
     app.name("Demo");
 
     let err = engine

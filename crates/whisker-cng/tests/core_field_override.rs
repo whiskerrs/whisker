@@ -5,15 +5,15 @@
 //!
 //! The override path used to require forking `whisker-cng` itself
 //! before the RFC #164 B-direction refactor — core fields were
-//! read straight out of `AppConfig` in `inputs_from` and never
+//! read straight out of `Config` in `inputs_from` and never
 //! touched the IR.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use whisker_app_config::AppConfig;
 use whisker_cng::{EnabledTargets, Engine};
+use whisker_config::Config;
 use whisker_plugin::{GenerateContext, Operation, Plugin, PluginConfig, Target};
 
 fn unique_tempdir() -> PathBuf {
@@ -80,8 +80,8 @@ impl Plugin for FlavorSuffix {
     }
 }
 
-fn base_app() -> AppConfig {
-    let mut a = AppConfig::default();
+fn base_app() -> Config {
+    let mut a = Config::default();
     a.name("HelloWorld").bundle_id("rs.whisker.examples.hello");
     a
 }
@@ -133,10 +133,10 @@ fn build_initial_context_seeds_core_android_fields_from_app_config() {
 
 #[test]
 fn ios_bundle_id_falls_back_to_top_level_when_ios_section_unset() {
-    // `AppConfig.bundle_id` is set; `AppConfig.ios.bundle_id` is not.
+    // `Config.bundle_id` is set; `Config.ios.bundle_id` is not.
     // The fallback already existed in inputs_from pre-refactor; this
     // verifies it survives via the engine's seeding step.
-    let mut app = AppConfig::default();
+    let mut app = Config::default();
     app.name("X").bundle_id("rs.fallback");
     let engine = Engine::new();
     let ctx = engine.compose(&app, EnabledTargets::ios_only()).unwrap();
@@ -206,7 +206,7 @@ fn custom_plugin_can_override_android_application_id() {
 #[test]
 fn inputs_from_ios_still_produces_correct_pbxproj_after_ir_refactor() {
     // Just verify the default path (no override) renders the
-    // bundle_id from AppConfig into the pbxproj exactly as
+    // bundle_id from Config into the pbxproj exactly as
     // pre-refactor.
     let app = base_app();
     let inputs = whisker_cng::ios::inputs_from(
@@ -232,7 +232,7 @@ fn inputs_from_ios_still_produces_correct_pbxproj_after_ir_refactor() {
 
 #[test]
 fn inputs_from_android_still_produces_correct_manifest_after_ir_refactor() {
-    let mut app = AppConfig::default();
+    let mut app = Config::default();
     app.name("HelloWorld").android(|a| {
         a.application_id("rs.whisker.examples.helloworld");
     });

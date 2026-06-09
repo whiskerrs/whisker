@@ -1,7 +1,7 @@
 # Whisker CNG (Continuous Native Generation).
 #
 # Generates the Android / iOS host projects under `gen/{android,ios}/`
-# from the user's `whisker.rs` (= `whisker_app_config::AppConfig`).
+# from the user's `whisker.rs` (= `whisker_config::Config`).
 # Modelled on Expo's CNG: the source of truth is the declarative
 # config, the platforms directory are build artifacts, never committed.
 #
@@ -22,7 +22,7 @@ description = "Whisker Continuous Native Generation — declarative Android/iOS 
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-whisker-app-config = { workspace = true }
+whisker-config = { workspace = true }
 # Walks the user crate's dep graph to find dependencies that declare
 # `[package.metadata.whisker.plugins.<name>]` in their `Cargo.toml`.
 # Same crate `whisker-build` uses for module discovery — pinned at
@@ -31,7 +31,7 @@ whisker-app-config = { workspace = true }
 cargo_metadata = "0.18"
 # `Plugin` / `PluginConfig` trait + IR types the engine drives the
 # plugin pipeline against. The compose module turns each user-side
-# `AppConfig.plugins[name]` JSON entry back into the plugin's typed
+# `Config.plugins[name]` JSON entry back into the plugin's typed
 # Config via this crate's helpers.
 whisker-plugin = { workspace = true }
 
