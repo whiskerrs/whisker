@@ -44,13 +44,12 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // No Lynx section: Android pulls the Lynx aar from gradle's
-    // `whiskerrs.github.io/lynx/maven` repository (no local cache
-    // ever touched by the doctor), and iOS auto-downloads the
-    // xcframeworks into `~/.cache/whisker/lynx/<version>/ios` the
-    // first time `whisker run ios` / `whisker build ios-sim` needs
-    // them. Pre-checking either was busywork — the cache is a
-    // build-time concern, not a "is this dev machine ready"
-    // concern.
+    // `whiskerrs.github.io/lynx/maven` repository, and iOS resolves
+    // the four Lynx xcframeworks via SPM's `binaryTarget(url:checksum:)`
+    // declarations in `platforms/ios/Package.swift` during xcodebuild's
+    // package-resolution step. Neither writes to `~/.cache/whisker/`;
+    // the doctor has nothing useful to assert about Lynx before a
+    // build runs.
 
     report.print_summary();
     if report.has_errors() {

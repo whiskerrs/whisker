@@ -6,7 +6,7 @@
 //! `whisker-dev-server`. This binary is a thin arg-parse shim that
 //! routes Xcode / Gradle environment values into the same lib
 //! functions, so the same orchestration logic powers both the
-//! external CLI ("whisker run", "whisker build") and the IDE
+//! external CLI ("whisker run") and the IDE
 //! standalone path ("Cmd+B in Xcode" / "Sync now in Android
 //! Studio").
 //!
@@ -181,7 +181,7 @@ struct AndroidArgs {
     /// Cargo `--features` to forward to the cross-compile. Repeatable.
     /// `whisker run` passes `whisker/hot-reload` here via the gradle
     /// plugin's `$WHISKER_FEATURES` env var expansion so the user
-    /// dylib carries the dev-runtime WebSocket client; `whisker build`
+    /// dylib carries the dev-runtime WebSocket client; CI / direct gradle invocations
     /// leaves this empty for prod.
     #[arg(long)]
     features: Vec<String>,
@@ -307,15 +307,13 @@ fn run_android(args: AndroidArgs) -> Result<()> {
 
     let profile = parse_profile(&args.profile)?;
 
-    // `whisker-driver-sys`'s build.rs reads Lynx Android headers +
-    // .so from `<workspace>/target/lynx-android*`. Fetch the pinned
-    // tarball + create the symlinks before cargo runs so the cc-rs
-    // include search finds Lynx without a pre-existing whisker CLI
-    // bootstrap.
-    let _cache =
-        whisker_build::ensure_lynx_android().context("fetch pinned Lynx Android artifacts")?;
-    whisker_build::link_lynx_into_workspace(&args.workspace, whisker_build::LynxPlatform::Android)
-        .context("symlink target/lynx-android* into workspace")?;
+    // No Lynx pre-fetch on Android either. `whisker-driver-sys`'s
+    // cargo build for Android references `bridge/include/lynx_capi.h`
+    // (vendored in this repo) — the bridge calls into Lynx via
+    // `dlopen("liblynx.so")` + `dlsym` at engine-attach time, so
+    // there is nothing for `cc::Build` to include from a Lynx
+    // header tree. gradle picks up the actual `lynx-android.aar`
+    // transitively from the Maven repo on `whiskerrs.github.io`.
 
     let toolchain = whisker_build::android::resolve_toolchain(&args.abi, args.min_sdk)
         .with_context(|| {

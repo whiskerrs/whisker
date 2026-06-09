@@ -1,4 +1,4 @@
-//! Curated terminal output for `whisker run` / `whisker build`.
+//! Curated terminal output for `whisker run`.
 //!
 //! Replaces ad-hoc `eprintln!("[whisker-build] …")` /
 //! `eprintln!("[whisker-dev-server] …")` lines with a single, uniform

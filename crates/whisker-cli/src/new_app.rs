@@ -240,10 +240,10 @@ target/
 # format pass; harmless to keep ignored).
 **/*.rs.bk
 
-# Whisker-generated host projects — refreshed on every `whisker run` /
-# `whisker build`. Includes gradle's `.gradle/` + `build/` caches and
-# xcodebuild's `xcuserdata/` / `*.xcuserstate` under here, so no need
-# to list those separately.
+# Whisker-generated host projects — refreshed on every `whisker run`.
+# Includes gradle's `.gradle/` + `build/` caches and xcodebuild's
+# `xcuserdata/` / `*.xcuserstate` under here, so no need to list those
+# separately.
 gen/
 
 # Environment / secrets. Copy the pattern (e.g. `.env.example`) when
@@ -301,10 +301,21 @@ project.
 
 ## Build for release
 
+Whisker doesn't wrap release builds — drive xcodebuild / gradle the
+same way CI does:
+
 ```sh
-whisker build ios-sim   # .app for the simulator
-whisker build android   # release .apk
+# Android release APK
+( cd gen/android && ./gradlew :app:assembleRelease )
+
+# iOS Simulator .app (Release configuration)
+xcodebuild -project gen/ios/<Scheme>.xcodeproj \
+  -scheme <Scheme> -configuration Release \
+  -destination 'generic/platform=iOS Simulator' build
 ```
+
+The `gen/` tree is refreshed automatically on every `whisker run`;
+delete it whenever you want a clean re-generate.
 "##,
         display = v.display_name,
     )

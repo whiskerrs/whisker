@@ -24,13 +24,13 @@ dependencyResolutionManagement {
             url = uri("https://whiskerrs.github.io/lynx/maven")
         }
 
-        // flatDir for the CLI-driven flow. Resolves :LynxAndroid /
-        // :LynxBase / :LynxTrace / :ServiceAPI when the user app's
-        // settings.gradle.kts has staged them there via the existing
-        // `whisker build` pipeline. Empty in the SDK publish CI;
-        // declared anyway because Gradle accepts empty flatDirs and
-        // the SDK build's resolution falls back to the Maven repo
-        // above once `-PwhiskerSdkRelease=true` is set.
+        // flatDir kept for legacy CLI flows that staged Lynx aars
+        // into the workspace. Modern `whisker run` lets gradle pull
+        // them from the Maven repo above transitively via the SDK
+        // pom, so this directory is typically empty — declared
+        // anyway because Gradle accepts empty flatDirs and the SDK
+        // publish CI relies on the Maven fallback once
+        // `-PwhiskerSdkRelease=true` is set.
         flatDir {
             dirs(rootDir.parentFile.parentFile.resolve("target/lynx-android"))
         }

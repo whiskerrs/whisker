@@ -2,15 +2,22 @@
 //!
 //! ## Subcommands
 //!
-//! - `doctor` — environment / toolchain health check
-//!   (Rust targets, Android NDK/SDK/JDK, Xcode + CocoaPods, the
-//!   Lynx artifacts under `target/`).
+//! - `doctor` — environment / toolchain health check (Rust targets,
+//!   Android NDK/SDK/JDK, Xcode).
 //! - `run` — `whisker run`: build → install → launch → file-watch +
 //!   hot-patch loop. Thin wrapper around
 //!   [`whisker_dev_server::DevServer`]; the cli's job is to resolve
 //!   the user crate's `whisker.rs` (via [`manifest`] + [`probe`])
 //!   and project the resulting `AppConfig` into the dev-server's
 //!   flat [`whisker_dev_server::Config`].
+//! - `new` / `new-module` — scaffolding.
+//!
+//! No `build` subcommand: production builds happen through the same
+//! `xcodebuild` / `gradle assembleRelease` invocations CI uses. Past
+//! revisions shipped a `whisker build` convenience wrapper, but it
+//! existed mostly to manage the `~/.cache/whisker/lynx/` user cache,
+//! which is itself gone now (iOS uses SPM remote binary targets,
+//! Android pulls aars from Maven).
 //!
 //! ## Internal binaries
 //!
@@ -28,7 +35,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-pub mod build;
 pub mod doctor;
 pub mod linker_shim;
 pub mod manifest;
@@ -62,15 +68,11 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Inspect the local toolchain — Rust targets, Android NDK/SDK/JDK,
-    /// Xcode + CocoaPods, and the Lynx artifacts under `target/`.
+    /// Xcode.
     Doctor(doctor::Args),
     /// Build, install, and dev-loop a Whisker app — file watch + rebuild
     /// + subsecond hot patches over WebSocket.
     Run(run::Args),
-    /// Production build of a Whisker app — release-mode cargo build +
-    /// gradle / xcodebuild without the dev-server. Output is the
-    /// shippable `.apk` / `.app`.
-    Build(build::Args),
     /// Scaffold a new Whisker module crate — Cargo.toml (with the
     /// `[package.metadata.whisker]` marker), Package.swift,
     /// build.gradle.kts, and skeleton Rust / Swift / Kotlin sources.
@@ -101,7 +103,6 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     match cli.command {
         Command::Doctor(a) => doctor::run(a),
         Command::Run(a) => run::run(a),
-        Command::Build(a) => build::run(a),
         Command::NewModule(a) => new_module::run(a),
         Command::New(a) => new_app::run(a),
     }
