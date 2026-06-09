@@ -265,9 +265,18 @@ fn run_inner(
 
     let server = DevServer::new(config)?.on_event(move |e| {
         if let Some(h) = &tui_for_events {
+            // TUI mode: the handle's `apply_event` already pushes
+            // `Event::DeviceLog` into scrollback via `insert_before`
+            // as a `[device]` / `[device:err]` row. Routing the
+            // same event through `forward_event_to_ui` would
+            // double-print every device log line (once raw, once
+            // wrapped in `whisker_build::ui::info`'s `· ` prefix
+            // and captured back through stderr). Skip the legacy
+            // path entirely when the TUI is on.
             h.apply_event(&e);
+        } else {
+            forward_event_to_ui(e, show_native_logs);
         }
-        forward_event_to_ui(e, show_native_logs);
     });
 
     rt.block_on(server.run())
