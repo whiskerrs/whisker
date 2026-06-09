@@ -849,14 +849,18 @@ fn render_live(frame: &mut ratatui::Frame, state: &LiveState, spinner_idx: usize
 fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    // Header line: ` whisker run · target · bundle · phase ` with
-    // phase-elapsed when the phase is wall-clock-meaningful.
+    // Header line: ` <STATUS>  <target> · <bundle> [· <elapsed>] `.
+    // The leading chip used to be a static ` whisker run ` brand
+    // mark; it now doubles as the phase indicator. Background color
+    // + label change with the dev loop's state, so the user reads
+    // the run's situation without parsing the trailing word.
+    let (chip_label, chip_bg, chip_fg) = status_chip(state);
     let mut header: Vec<Span<'static>> = vec![
         Span::styled(
-            " whisker run ",
+            format!(" {chip_label} "),
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .fg(chip_fg)
+                .bg(chip_bg)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
@@ -866,29 +870,6 @@ fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>>
         ),
         Span::styled(" · ", Style::default().fg(Color::DarkGray)),
         Span::raw(state.bundle.clone()),
-        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            // When a step is in flight (e.g. `xcodebuild` inside
-            // `installer.install_and_launch`, which fires after
-            // `Event::BuildSucceeded` has already moved the phase to
-            // `Idle`), show "running" instead of the underlying
-            // phase so the header doesn't say "idle" while a
-            // spinner is plainly active.
-            if state.current_step.is_some() && matches!(state.phase, AppPhase::Idle) {
-                "running".to_string()
-            } else {
-                phase_label(&state.phase)
-            },
-            Style::default()
-                .fg(
-                    if state.current_step.is_some() && matches!(state.phase, AppPhase::Idle) {
-                        Color::Yellow
-                    } else {
-                        phase_color(&state.phase)
-                    },
-                )
-                .add_modifier(Modifier::BOLD),
-        ),
     ];
     if let Some(extra) = phase_elapsed(&state.phase) {
         header.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
@@ -900,12 +881,15 @@ fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>>
     match (&state.current_step, &state.phase) {
         (Some(label), _) => {
             let spinner = SPINNER_FRAMES[spinner_idx % SPINNER_FRAMES.len()];
+            // Spinner colour = chip background so the eye reads the
+            // header + step row as one indicator. `chip_bg` is the
+            // RUNNING-or-BUILDING-or-PATCHING colour and is already
+            // computed for the header above; recompute here so the
+            // helper stays self-contained.
+            let (_, chip_bg, _) = status_chip(state);
             lines.push(Line::from(vec![
                 Span::raw(" "),
-                Span::styled(
-                    spinner.to_string(),
-                    Style::default().fg(phase_color(&state.phase)),
-                ),
+                Span::styled(spinner.to_string(), Style::default().fg(chip_bg)),
                 Span::raw("  "),
                 Span::raw(label.clone()),
             ]));
@@ -1068,15 +1052,40 @@ fn write_lines_to_buffer(buf: &mut Buffer, lines: &[Line<'static>]) {
     }
 }
 
-fn phase_label(phase: &AppPhase) -> String {
-    match phase {
-        AppPhase::Setup => "setup".into(),
-        AppPhase::Initializing => "initializing".into(),
-        AppPhase::Building { .. } => "building".into(),
-        AppPhase::Idle => "idle".into(),
-        AppPhase::Patching { .. } => "patching".into(),
-        AppPhase::Failed { phase, .. } => format!("{phase} failed"),
+/// Picks the leading status chip's (label, background, foreground)
+/// triple for the current live state. Combines `LiveState::phase`
+/// with `LiveState::current_step` so a long-running step that fires
+/// AFTER `Event::BuildSucceeded` (e.g. `xcodebuild` inside
+/// `installer.install_and_launch` — which runs while the phase is
+/// already `Idle`) still surfaces as `BUILDING`. Once the launch
+/// step finishes and `current_step` clears, the chip flips to
+/// `RUNNING`. Order of checks is significant: `Failed` outranks
+/// everything; `Patching` outranks both Building and Idle; in-flight
+/// step outranks bare Idle.
+fn status_chip(state: &LiveState) -> (&'static str, Color, Color) {
+    if matches!(state.phase, AppPhase::Failed { .. }) {
+        return ("FAILED", Color::Red, Color::White);
     }
+    if matches!(state.phase, AppPhase::Patching { .. }) {
+        return ("PATCHING", Color::Magenta, Color::Black);
+    }
+    if matches!(state.phase, AppPhase::Building { .. }) {
+        return ("BUILDING", Color::Yellow, Color::Black);
+    }
+    // Idle: distinguish "actively doing install / launch work" (a
+    // step is in flight, even though the phase-machine has moved on
+    // from Building) from "truly settled and the app is live on the
+    // device".
+    if matches!(state.phase, AppPhase::Idle) {
+        if state.current_step.is_some() {
+            return ("BUILDING", Color::Yellow, Color::Black);
+        }
+        return ("RUNNING", Color::Green, Color::Black);
+    }
+    // Setup / Initializing — the very brief pre-build phases. Render
+    // as a neutral chip so the user knows the loop is alive but not
+    // doing anything heavy yet.
+    ("STARTING", Color::DarkGray, Color::White)
 }
 
 fn phase_elapsed(phase: &AppPhase) -> Option<String> {
@@ -1085,15 +1094,6 @@ fn phase_elapsed(phase: &AppPhase) -> Option<String> {
             Some(fmt_elapsed(started_at.elapsed()))
         }
         _ => None,
-    }
-}
-
-fn phase_color(phase: &AppPhase) -> Color {
-    match phase {
-        AppPhase::Setup | AppPhase::Initializing => Color::DarkGray,
-        AppPhase::Building { .. } | AppPhase::Patching { .. } => Color::Yellow,
-        AppPhase::Idle => Color::Green,
-        AppPhase::Failed { .. } => Color::Red,
     }
 }
 
