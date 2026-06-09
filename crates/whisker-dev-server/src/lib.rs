@@ -263,11 +263,20 @@ impl DevServer {
     /// `ChangeKind::RustCode` events. Patcher initialisation or
     /// `build_patch` failure falls back to Tier 2 silently.
     pub async fn run(self) -> Result<()> {
-        whisker_build::ui::section("whisker run");
-        whisker_build::ui::info(format!(
-            "{} · {:?}",
-            self.config.package, self.config.target,
-        ));
+        // In TUI mode the live region's header already shows the
+        // package + target + phase; the `──── whisker run ────` +
+        // `· podcast · Android` rows above just duplicated that
+        // information. The `mode={:?}` debug line is debug-only
+        // anyway, so it never made it to scrollback in the
+        // production curated path. Non-TUI runs (CI, `--no-tui`)
+        // still get the intro section + info line.
+        if !whisker_build::ui::is_tui() {
+            whisker_build::ui::section("whisker run");
+            whisker_build::ui::info(format!(
+                "{} · {:?}",
+                self.config.package, self.config.target,
+            ));
+        }
         whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
         // Configure the initial build first. The Builder + Installer
@@ -330,7 +339,16 @@ impl DevServer {
         // and exit. The previous behaviour of "enter the loop anyway
         // and recover on next save" was misleading — users routinely
         // missed the warn line and assumed the build had succeeded.
-        whisker_build::ui::section("Initial build");
+        //
+        // The `──── Initial build ────` section header is only
+        // emitted in non-TUI mode. In TUI mode the live region's
+        // phase indicator (`building`) + spinner already make it
+        // obvious that the build started; the section divider
+        // becomes pure noise above the in-line cargo/gradle/
+        // xcodebuild step rows.
+        if !whisker_build::ui::is_tui() {
+            whisker_build::ui::section("Initial build");
+        }
         emit(&self.on_event, Event::BuildingFull);
         if let Err(e) = builder.build().await {
             let msg = format!("{e:#}");
@@ -452,7 +470,12 @@ impl DevServer {
         // the dev loop from being killed by a transient build
         // glitch.
         while let Some(change) = rx.recv().await {
-            whisker_build::ui::section("Change");
+            // `──── Change ────` only in non-TUI mode (live
+            // region's phase flip to `building` / `patching`
+            // already announces a save has been picked up).
+            if !whisker_build::ui::is_tui() {
+                whisker_build::ui::section("Change");
+            }
             whisker_build::ui::debug(format!(
                 "{:?} — {} path(s)",
                 change.kind,
