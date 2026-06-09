@@ -304,14 +304,22 @@ pub fn apply_event(
         Event::ClientDisconnected => {
             state.client_count = state.client_count.saturating_sub(1);
         }
+        Event::PatchBuilding => {
+            // Flip into Patching the moment the dev-server starts
+            // assembling the hot patch (cargo + symbol-table diff
+            // + ASLR rebase, the wall-clock-heavy bit of the loop).
+            // `Event::PatchSent` flips back to Idle on completion;
+            // `Event::BuildingFull` covers the Tier 2 fallback case
+            // where Tier 1 errored out mid-build and the loop fell
+            // through to a cold rebuild — that event resets phase
+            // to Building, overriding this Patching state.
+            state.phase = AppPhase::Patching {
+                started_at: Instant::now(),
+            };
+        }
         Event::PatchSent => {
             if let AppPhase::Patching { started_at } = &state.phase {
                 let elapsed = started_at.elapsed();
-                history.push(HistoryItem::PhaseDone {
-                    label: "Hot patch".into(),
-                    status: StepStatus::Done,
-                    elapsed,
-                });
                 state.last_patch = Some(fmt_elapsed(elapsed));
             }
             state.phase = AppPhase::Idle;
@@ -1189,7 +1197,23 @@ mod tests {
         let h = drain(&mut st, &Event::PatchSent);
         assert!(matches!(st.phase, AppPhase::Idle));
         assert!(st.last_patch.is_some());
-        assert!(h.iter().any(|i| matches!(i, HistoryItem::PhaseDone { .. })));
+        // PhaseDone is no longer emitted on PatchSent — the dev-server
+        // already emits `✓ patch tier 1 …` via `ui::step` and a
+        // duplicate "Hot patch" summary row would just clutter
+        // scrollback.
+        assert!(h.is_empty());
+    }
+
+    #[test]
+    fn patch_building_transitions_phase_to_patching() {
+        let mut st = s();
+        st.phase = AppPhase::Idle;
+        let h = drain(&mut st, &Event::PatchBuilding);
+        assert!(
+            matches!(st.phase, AppPhase::Patching { .. }),
+            "phase should be Patching after PatchBuilding"
+        );
+        assert!(h.is_empty(), "PatchBuilding shouldn't emit history rows");
     }
 
     #[test]

@@ -205,6 +205,13 @@ pub enum Event {
     BuildFailed(String),
     ClientConnected,
     ClientDisconnected,
+    /// A Tier 1 hot patch build kicked off. Fires *before* the
+    /// `Patcher::build_patch` call so consumers (the cli TUI) can
+    /// flip into "patching" state while the patch is still being
+    /// compiled — without this paired event, `PatchSent` is the
+    /// only signal and arrives so close to its own completion that
+    /// any UI keying off it never shows a patch-in-flight indicator.
+    PatchBuilding,
     PatchSent,
     /// A line captured from the device-side app's stdout / stderr (via
     /// the `whisker-dev-runtime::log_capture` `dup2` hook), forwarded
@@ -493,6 +500,11 @@ impl DevServer {
                     // wire-up so the user sees a single elapsed
                     // duration for "edit → app updated".
                     let patch_step = whisker_build::ui::step("patch", "tier 1");
+                    // Tell the cli to flip into "patching" right now —
+                    // the patcher work that follows (`build_patch` +
+                    // dylib read + send) is the wall-clock-heavy bit,
+                    // and the matching `PatchSent` flips back to Idle.
+                    emit(&self.on_event, Event::PatchBuilding);
                     // Map the changed file paths to the owning crate.
                     // None = batch spans multiple crates, or a path
                     // outside every known src dir — fall back to a
