@@ -57,7 +57,7 @@
 // from downstream crates.
 extern crate self as whisker;
 
-pub use whisker_app_config as app_config;
+pub use whisker_config as app_config;
 pub use whisker_runtime as runtime;
 
 pub use whisker_css as css;

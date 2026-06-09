@@ -1,5 +1,5 @@
 //! Drift detection between the in-tree `gen/` directory and the
-//! current `AppConfig` (+ a few related inputs).
+//! current `Config` (+ a few related inputs).
 //!
 //! The fingerprint is a stable hex string written to
 //! `gen/<platform>/.whisker-fingerprint`. On the next sync we recompute

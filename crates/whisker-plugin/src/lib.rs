@@ -65,7 +65,7 @@
 //! [`IosProjectIr`] and [`AndroidProjectIr`] each carry two
 //! layers:
 //!
-//! 1. **Core fields** seeded from `AppConfig` by the engine before
+//! 1. **Core fields** seeded from `Config` by the engine before
 //!    any plugin runs — `app_name`, `version`, `bundle_id` /
 //!    `application_id`, `scheme`, `deployment_target`, `min_sdk`,
 //!    `target_sdk`. A plugin can read them to make decisions or
@@ -124,7 +124,7 @@ use std::path::PathBuf;
 /// Trait implemented by the typed config struct each plugin defines.
 ///
 /// Carries the plugin's stable kebab-case identifier as a const so
-/// the `app.plugin::<MyPlugin>(|c| ...)` builder in `whisker-app-config`
+/// the `app.plugin::<MyPlugin>(|c| ...)` builder in `whisker-config`
 /// can resolve the storage key via `<MyPlugin as Plugin>::Config::NAME`.
 ///
 /// ## Why `Serialize + DeserializeOwned`
@@ -132,7 +132,7 @@ use std::path::PathBuf;
 /// Three reasons, all wire-related:
 ///
 /// 1. `whisker.rs` builds the Config struct, then `whisker-cli`
-///    serializes the resulting `AppConfig` (including this Config
+///    serializes the resulting `Config` (including this Config
 ///    nested under `plugins[NAME]`) to JSON via the config probe.
 /// 2. 3rd-party plugins are subprocesses — their config arrives as
 ///    JSON in the [`PluginRequest`] envelope.
@@ -234,7 +234,7 @@ pub trait Plugin {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct GenerateContext {
     /// Read-only basic facts about the app, derived from
-    /// `AppConfig`. Plugins use these as defaults — e.g. an
+    /// `Config`. Plugins use these as defaults — e.g. an
     /// Info.plist plugin sets `CFBundleIdentifier` from
     /// `app_meta.ios_bundle_id`.
     pub app_meta: AppMeta,
@@ -256,11 +256,11 @@ pub struct GenerateContext {
     pub journal: MutationJournal,
 }
 
-/// Snapshot of the user-spelled `AppConfig` values at pipeline
+/// Snapshot of the user-spelled `Config` values at pipeline
 /// entry. Intentionally flat + cloneable: anything plugins need
 /// from the app config has to surface here rather than pulling in
-/// the whole `AppConfig` type, which keeps the wire format stable
-/// when `AppConfig` grows.
+/// the whole `Config` type, which keeps the wire format stable
+/// when `Config` grows.
 ///
 /// ## Read this for "what the user said"; read the IR for
 /// "what the renderer will use"
@@ -294,7 +294,7 @@ pub struct AppMeta {
 ///
 /// Serializes 1:1 to the JSON envelope so a 3rd-party plugin can
 /// receive it, mutate it locally, and send it back. Field ordering
-/// inside `BTreeMap`s is deterministic, so the same `(AppConfig,
+/// inside `BTreeMap`s is deterministic, so the same `(Config,
 /// plugin set)` produces a byte-identical envelope — important for
 /// the fingerprint-based skip path in `whisker-cng`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -307,31 +307,31 @@ pub struct IosProjectIr {
     // `Operation::Override` — e.g. a flavor plugin can append
     // `.staging` to `bundle_id` without forking the user app's
     // `whisker.rs`. The engine's `build_initial_context` seeds
-    // every field below from `AppConfig`; the inputs-extraction
+    // every field below from `Config`; the inputs-extraction
     // step (`crate::ios::inputs_from`) reads them back.
     /// `CFBundleDisplayName` / pbxproj `PRODUCT_NAME` source.
-    /// Seeded from `AppConfig.name`.
+    /// Seeded from `Config.name`.
     #[serde(default)]
     pub app_name: Option<String>,
     /// `CFBundleShortVersionString` source. Seeded from
-    /// `AppConfig.version` (default `"0.1.0"`).
+    /// `Config.version` (default `"0.1.0"`).
     #[serde(default)]
     pub version: Option<String>,
     /// `CFBundleVersion` source. Seeded from
-    /// `AppConfig.build_number` (default `1`).
+    /// `Config.build_number` (default `1`).
     #[serde(default)]
     pub build_number: Option<u32>,
     /// pbxproj `PRODUCT_BUNDLE_IDENTIFIER` source. Seeded from
-    /// `AppConfig.ios.bundle_id`, falling back to the top-level
-    /// `AppConfig.bundle_id`.
+    /// `Config.ios.bundle_id`, falling back to the top-level
+    /// `Config.bundle_id`.
     #[serde(default)]
     pub bundle_id: Option<String>,
-    /// Xcode scheme name. Seeded from `AppConfig.ios.scheme`,
-    /// falling back to `AppConfig.name`.
+    /// Xcode scheme name. Seeded from `Config.ios.scheme`,
+    /// falling back to `Config.name`.
     #[serde(default)]
     pub scheme: Option<String>,
     /// pbxproj `IPHONEOS_DEPLOYMENT_TARGET` source. Seeded from
-    /// `AppConfig.ios.deployment_target` (default `"13.0"`).
+    /// `Config.ios.deployment_target` (default `"13.0"`).
     #[serde(default)]
     pub deployment_target: Option<String>,
 
@@ -402,31 +402,31 @@ pub enum PbxprojOp {
 pub struct AndroidProjectIr {
     // ----- Core fields ------------------------------------------------------
     //
-    // Seeded by `build_initial_context` from `AppConfig`; mirror
+    // Seeded by `build_initial_context` from `Config`; mirror
     // of the iOS core block above. See [`IosProjectIr`]'s rationale.
     /// Activity label / `manifest.application.android:label` source.
-    /// Seeded from `AppConfig.name`.
+    /// Seeded from `Config.name`.
     #[serde(default)]
     pub app_name: Option<String>,
     /// Gradle `versionName` source. Seeded from
-    /// `AppConfig.version` (default `"0.1.0"`).
+    /// `Config.version` (default `"0.1.0"`).
     #[serde(default)]
     pub version: Option<String>,
     /// Gradle `versionCode` source. Seeded from
-    /// `AppConfig.build_number` (default `1`).
+    /// `Config.build_number` (default `1`).
     #[serde(default)]
     pub build_number: Option<u32>,
     /// Gradle `applicationId` source. Seeded from
-    /// `AppConfig.android.application_id`, falling back to the
-    /// top-level `AppConfig.bundle_id`.
+    /// `Config.android.application_id`, falling back to the
+    /// top-level `Config.bundle_id`.
     #[serde(default)]
     pub application_id: Option<String>,
     /// Gradle `minSdk` source. Seeded from
-    /// `AppConfig.android.min_sdk` (default `24`).
+    /// `Config.android.min_sdk` (default `24`).
     #[serde(default)]
     pub min_sdk: Option<u32>,
     /// Gradle `targetSdk` source. Seeded from
-    /// `AppConfig.android.target_sdk` (default `34`).
+    /// `Config.android.target_sdk` (default `34`).
     #[serde(default)]
     pub target_sdk: Option<u32>,
 

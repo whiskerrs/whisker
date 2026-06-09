@@ -2,13 +2,13 @@
 //!
 //! Thin wrapper: resolves the user crate's `whisker.rs` config (via
 //! [`super::manifest::resolve`] + [`super::probe::run`]), translates
-//! the resulting [`whisker_app_config::AppConfig`] into a flat
+//! the resulting [`whisker_config::Config`] into a flat
 //! [`whisker_dev_server::Config`], and hands off to
 //! `DevServer::run`. All the heavy lifting (file watch / cargo build
 //! / WebSocket push / subsecond patches) lives in
 //! `whisker-dev-server` so other host shells (an editor plugin, a
 //! notebook front-end, …) can reuse the same loop without a
-//! whisker-app-config dependency.
+//! whisker-config dependency.
 
 use anyhow::{anyhow, Context, Result};
 use std::net::SocketAddr;

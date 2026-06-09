@@ -1,8 +1,8 @@
 //! App configuration types used by `whisker.rs`.
 //!
-//! Users build an `AppConfig` via the builder API:
+//! Users build an `Config` via the builder API:
 //! ```ignore
-//! pub fn configure(app: &mut AppConfig) {
+//! pub fn configure(app: &mut Config) {
 //!     app.name("MyApp")
 //!        .bundle_id("dev.example.myapp")
 //!        .version("1.0.0");
@@ -27,7 +27,7 @@
 //! ```
 //!
 //! `whisker run` compiles a tiny probe binary that includes the user's
-//! `whisker.rs` and serializes the resulting `AppConfig` to JSON over
+//! `whisker.rs` and serializes the resulting `Config` to JSON over
 //! stdout. The host shell (`whisker-cli`) parses that JSON, projects
 //! the fields it needs (paths, application id, bundle id, scheme, …),
 //! and passes them as flat parameters to `whisker-dev-server`. The
@@ -38,7 +38,7 @@ use std::collections::BTreeMap;
 use whisker_plugin::{Plugin, PluginConfig};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct AppConfig {
+pub struct Config {
     pub name: Option<String>,
     pub bundle_id: Option<String>,
     pub version: Option<String>,
@@ -51,13 +51,13 @@ pub struct AppConfig {
     /// to one `app.plugin::<T>(|cfg| ...)` call in `whisker.rs`.
     ///
     /// `BTreeMap` over `HashMap` for deterministic iteration order:
-    /// `whisker-cng`'s fingerprint hashes the serialized AppConfig,
+    /// `whisker-cng`'s fingerprint hashes the serialized Config,
     /// and HashMap's random ordering would break the skip path.
     #[serde(default)]
     pub plugins: BTreeMap<String, serde_json::Value>,
 }
 
-impl AppConfig {
+impl Config {
     pub fn name(&mut self, name: impl Into<String>) -> &mut Self {
         self.name = Some(name.into());
         self
@@ -129,7 +129,7 @@ impl AppConfig {
         f(&mut cfg);
         let name = <P::Config as PluginConfig>::NAME;
         let json = serde_json::to_value(&cfg).unwrap_or_else(|e| {
-            panic!("AppConfig::plugin: failed to serialize Config for plugin `{name}`: {e}",)
+            panic!("Config::plugin: failed to serialize Config for plugin `{name}`: {e}",)
         });
         self.plugins.insert(name.to_string(), json);
         self
@@ -141,7 +141,7 @@ pub struct IosConfig {
     /// CFBundleIdentifier of the iOS app. Used by `xcrun simctl
     /// install / terminate / launch` and as the right-hand side of
     /// the `am start -n` style component string. Falls back to the
-    /// top-level [`AppConfig::bundle_id`] if unset (since iOS and
+    /// top-level [`Config::bundle_id`] if unset (since iOS and
     /// Android often share a bundle id but not always).
     pub bundle_id: Option<String>,
     /// Xcode scheme + the `<scheme>.app` filename xcodebuild
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn plugin_call_stores_serialized_config_keyed_by_name() {
-        let mut app = AppConfig::default();
+        let mut app = Config::default();
         app.plugin::<Firebase>(|c| {
             c.google_service_path("ios/GoogleService-Info.plist");
         });
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn plugin_default_config_round_trips() {
-        let mut app = AppConfig::default();
+        let mut app = Config::default();
         // closure leaves the config at default — entry should still
         // exist (the plugin was declared, just unconfigured).
         app.plugin::<Firebase>(|_| {});
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn plugin_call_replaces_prior_entry_for_same_type() {
-        let mut app = AppConfig::default();
+        let mut app = Config::default();
         app.plugin::<Firebase>(|c| {
             c.google_service_path("old.plist");
         });
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn multiple_distinct_plugins_coexist() {
-        let mut app = AppConfig::default();
+        let mut app = Config::default();
         app.plugin::<Firebase>(|c| {
             c.google_service_path("ios/GoogleService-Info.plist");
         });
@@ -339,14 +339,14 @@ mod tests {
 
     #[test]
     fn appconfig_round_trips_through_json_with_plugins_field() {
-        let mut app = AppConfig::default();
+        let mut app = Config::default();
         app.name("Demo");
         app.plugin::<Firebase>(|c| {
             c.google_service_path("ios/GoogleService-Info.plist");
         });
 
         let json = serde_json::to_string(&app).unwrap();
-        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        let back: Config = serde_json::from_str(&json).unwrap();
         assert_eq!(back.name.as_deref(), Some("Demo"));
         assert_eq!(back.plugins.len(), 1);
         assert!(back.plugins.contains_key("whisker-firebase"));
@@ -364,7 +364,7 @@ mod tests {
         // probe always emits them. Including them keeps this test
         // focused on the plugins-field omission.)
         let json = r#"{"name":"OldApp","ios":{},"android":{}}"#;
-        let back: AppConfig = serde_json::from_str(json).unwrap();
+        let back: Config = serde_json::from_str(json).unwrap();
         assert_eq!(back.name.as_deref(), Some("OldApp"));
         assert!(back.plugins.is_empty());
     }

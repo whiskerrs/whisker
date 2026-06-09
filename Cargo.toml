@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "crates/whisker",
-    "crates/whisker-app-config",
+    "crates/whisker-config",
     "crates/whisker-build",
     "crates/whisker-cli",
     "crates/whisker-cng",
@@ -58,7 +58,7 @@ authors = ["itome <dev@itome.team>"]
 
 [workspace.dependencies]
 whisker = { path = "crates/whisker", version = "0.1.0" }
-whisker-app-config = { path = "crates/whisker-app-config", version = "0.1.0" }
+whisker-config = { path = "crates/whisker-config", version = "0.1.0" }
 whisker-build = { path = "crates/whisker-build", version = "0.1.0" }
 whisker-cng = { path = "crates/whisker-cng", version = "0.1.0" }
 whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.1.0" }

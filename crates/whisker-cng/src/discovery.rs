@@ -57,7 +57,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredPlugin {
     /// The plugin's stable name. Matches `Plugin::name()` /
-    /// `PluginConfig::NAME` and the `AppConfig.plugins` map key.
+    /// `PluginConfig::NAME` and the `Config.plugins` map key.
     pub name: String,
     /// The cargo package that declared this plugin. Used for
     /// diagnostic messages and to anchor `bin_target_name` to a

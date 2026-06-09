@@ -16,9 +16,9 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use whisker_app_config::AppConfig;
 use whisker_cng::plugins::android_gradle_dependencies::GradleDependencies;
 use whisker_cng::plugins::android_gradle_plugins::GradlePlugins;
+use whisker_config::Config;
 
 fn unique_tempdir() -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -29,15 +29,15 @@ fn unique_tempdir() -> PathBuf {
     p
 }
 
-fn base_android_app() -> AppConfig {
-    let mut a = AppConfig::default();
+fn base_android_app() -> Config {
+    let mut a = Config::default();
     a.name("HelloWorld").android(|x| {
         x.application_id("rs.whisker.examples.helloworld");
     });
     a
 }
 
-fn sync_and_read_gradle(app: &AppConfig) -> String {
+fn sync_and_read_gradle(app: &Config) -> String {
     let inputs = whisker_cng::android::inputs_from(
         app,
         "hello_world".into(),

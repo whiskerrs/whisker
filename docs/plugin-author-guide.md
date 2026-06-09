@@ -196,7 +196,7 @@ impl Plugin for WhiskerFoo {
         if let Some(ios) = ctx.ios.as_mut() {
             if let Some(suffix) = cfg.bundle_suffix.as_ref() {
                 // Read the core field, mutate it, journal the change as
-                // Override (since it was previously seeded from AppConfig).
+                // Override (since it was previously seeded from Config).
                 let new_id = format!(
                     "{}{}",
                     ios.bundle_id.as_deref().unwrap_or("rs.whisker.app"),
@@ -249,7 +249,7 @@ platform only) plus a shared `app_meta` and `journal`:
 
 ```rust
 pub struct GenerateContext {
-    pub app_meta: AppMeta,                    // read-only snapshot of AppConfig
+    pub app_meta: AppMeta,                    // read-only snapshot of Config
     pub ios: Option<IosProjectIr>,
     pub android: Option<AndroidProjectIr>,
     pub journal: MutationJournal,
@@ -258,7 +258,7 @@ pub struct GenerateContext {
 
 Each per-target IR has two layers:
 
-**Core fields** — seeded from `AppConfig` by the engine before any
+**Core fields** — seeded from `Config` by the engine before any
 plugin runs. Read them as defaults; override them via
 `Operation::Override` when you intentionally stomp the user's value
 (e.g. a flavor plugin appending `.staging` to the bundle id):
@@ -305,7 +305,7 @@ Three operation kinds:
 | `Operation` | Meaning |
 |---|---|
 | `Set` | First write to a previously-unset field. Two `Set`s to the same path from different plugins is a hard error. |
-| `Override` | Explicit stomp of a prior value. Use this when overwriting a core field (seeded from `AppConfig`) or another plugin's write. Pair with `after()` so the ordering is intentional. |
+| `Override` | Explicit stomp of a prior value. Use this when overwriting a core field (seeded from `Config`) or another plugin's write. Pair with `after()` so the ordering is intentional. |
 | `ArrayPush { count }` | Appended `count` items to an array-shaped field (permissions, meta-data, pbxproj ops…). `count` lets the engine summarize "plugin X added 3 permissions" without recording each push individually. |
 
 ```rust
@@ -408,7 +408,7 @@ whisker-foo = "0.1"
 
 ```rust
 // app/whisker.rs
-pub fn configure(app: &mut whisker_app_config::AppConfig) {
+pub fn configure(app: &mut whisker_config::Config) {
     app.name("My App")
         .bundle_id("rs.example.myapp")
         // ...
@@ -438,7 +438,7 @@ manifest entries), the two halves are gated apart with a cargo
 feature so the **config probe build path stays fast**.
 
 The config probe is the small binary `whisker-cli` builds from your
-app's `whisker.rs` to extract the typed `AppConfig` (including
+app's `whisker.rs` to extract the typed `Config` (including
 plugin configs). It pulls every plugin crate with
 `default-features = false`. If the plugin crate's heavy runtime is
 behind a non-default feature, the probe builds in seconds; otherwise
@@ -519,5 +519,5 @@ surface; the module half exposes a `Player` runtime.
 | `PlistValue`, `PbxprojOp`, `MetaDataEntry`, `FileEntry` | `whisker-plugin` | IR value types |
 | `MutationJournal`, `Operation`, `Target` | `whisker-plugin` | `ctx.journal.record(...)` |
 | `run_as_subprocess` | `whisker-plugin` | The `bin/` `main()` |
-| `app.plugin::<P>` | `whisker-app-config` | Consumer's `whisker.rs` |
+| `app.plugin::<P>` | `whisker-config` | Consumer's `whisker.rs` |
 | `[package.metadata.whisker.plugins.<name>]` table | `Cargo.toml` | Engine discovery |

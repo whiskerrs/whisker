@@ -1,7 +1,7 @@
 //! Whisker CNG (Continuous Native Generation).
 //!
 //! Renders the Android / iOS host projects under `gen/{android,ios}/`
-//! from the user's `whisker.rs` (= [`whisker_app_config::AppConfig`]).
+//! from the user's `whisker.rs` (= [`whisker_config::Config`]).
 //! Drift between the in-tree files and the current config is detected
 //! via a content-hashed fingerprint stored alongside each generated
 //! tree (`gen/<platform>/.whisker-fingerprint`).
@@ -21,7 +21,7 @@
 //! - [`AndroidInputs`] / [`IosInputs`] — the renderer's input bundle.
 //!   Build them yourself for full control, or use
 //!   [`android::inputs_from`] / [`ios::inputs_from`] for the
-//!   "extract from AppConfig + defaults" path.
+//!   "extract from Config + defaults" path.
 //!
 //! The crate has no CLI surface and shells out to nothing —
 //! `whisker-cli` is responsible for running `xcodegen`, `gradle`, etc.
@@ -40,4 +40,4 @@ pub use android::{sync as sync_android, AndroidInputs};
 pub use compose::{EnabledTargets, Engine, SubprocessPlugin};
 pub use discovery::{discover_plugins, DiscoveredPlugin};
 pub use ios::{sync as sync_ios, IosInputs};
-pub use whisker_app_config::AppConfig;
+pub use whisker_config::Config;

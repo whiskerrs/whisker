@@ -1,6 +1,6 @@
 //! In-process plugin engine.
 //!
-//! Takes a registered set of [`Plugin`]s plus a user `AppConfig`,
+//! Takes a registered set of [`Plugin`]s plus a user `Config`,
 //! topologically orders the plugins via their `after()` / `before()`
 //! constraints, runs each one with its user-supplied config (or the
 //! Config's default when the user didn't declare it), and returns
@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use whisker_app_config::AppConfig;
+use whisker_config::Config;
 use whisker_plugin::{
     AndroidProjectIr, AppMeta, GenerateContext, IosProjectIr, MutationJournal, MutationRecord,
     Operation, Plugin, PluginRequest, PluginResponse, Target,
@@ -81,7 +81,7 @@ impl EnabledTargets {
     }
 }
 
-/// Registry of plugins the engine runs against an [`AppConfig`].
+/// Registry of plugins the engine runs against an [`Config`].
 ///
 /// Holds a homogeneous list of erased plugins regardless of their
 /// concrete `Config` type. Construct via [`Engine::new`], add
@@ -149,15 +149,11 @@ impl Engine {
     /// 5. Walk the [`MutationJournal`] for `Set`/`Set` collisions
     ///    on the same `(target, path)` and reject them. `Override`
     ///    is the escape hatch.
-    pub fn compose(
-        &self,
-        app_config: &AppConfig,
-        enabled: EnabledTargets,
-    ) -> Result<GenerateContext> {
+    pub fn compose(&self, app_config: &Config, enabled: EnabledTargets) -> Result<GenerateContext> {
         let mut ctx = build_initial_context(app_config, enabled);
 
         check_no_unregistered_plugin_configs(app_config, &self.plugins)
-            .context("validate AppConfig.plugins against registered plugins")?;
+            .context("validate Config.plugins against registered plugins")?;
 
         let order = topo_sort(&self.plugins).context("topologically sort plugins")?;
 
@@ -227,7 +223,7 @@ impl<P: Plugin> DynPlugin for P {
 // Internal — pipeline steps
 // ============================================================================
 
-fn build_initial_context(app_config: &AppConfig, enabled: EnabledTargets) -> GenerateContext {
+fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> GenerateContext {
     let app_meta = AppMeta {
         name: app_config.name.clone().unwrap_or_default(),
         version: app_config.version.clone().unwrap_or_default(),
@@ -252,7 +248,7 @@ fn build_initial_context(app_config: &AppConfig, enabled: EnabledTargets) -> Gen
         },
     };
 
-    // Seed the IRs with core fields from `AppConfig` before any
+    // Seed the IRs with core fields from `Config` before any
     // plugin runs. Plugins then mutate from this baseline — the
     // canonical layering is "engine seeds defaults; plugins
     // override via Operation::Override".
@@ -284,7 +280,7 @@ fn build_initial_context(app_config: &AppConfig, enabled: EnabledTargets) -> Gen
 }
 
 fn check_no_unregistered_plugin_configs(
-    app_config: &AppConfig,
+    app_config: &Config,
     plugins: &[Box<dyn DynPlugin>],
 ) -> Result<()> {
     let registered: std::collections::HashSet<&str> = plugins.iter().map(|p| p.name()).collect();
@@ -296,7 +292,7 @@ fn check_no_unregistered_plugin_configs(
     if !unknown.is_empty() {
         unknown.sort();
         bail!(
-            "AppConfig declares plugin(s) not registered with the engine: {}. \
+            "Config declares plugin(s) not registered with the engine: {}. \
              Either install the plugin crate or remove the `app.plugin::<{{Plugin}}>(…)` call.",
             unknown
                 .iter()
@@ -310,7 +306,7 @@ fn check_no_unregistered_plugin_configs(
 
 /// Kahn's algorithm with deterministic ordering: ties between
 /// candidates are broken alphabetically by plugin name so the same
-/// `(plugins, AppConfig)` pair always produces the same execution
+/// `(plugins, Config)` pair always produces the same execution
 /// order. The fingerprint path downstream depends on this.
 fn topo_sort(plugins: &[Box<dyn DynPlugin>]) -> Result<Vec<usize>> {
     // name → index. Only used for `after()` / `before()` lookups;
@@ -724,8 +720,8 @@ mod tests {
         }
     }
 
-    fn base_app_config() -> AppConfig {
-        let mut a = AppConfig::default();
+    fn base_app_config() -> Config {
+        let mut a = Config::default();
         a.name("Demo").bundle_id("rs.whisker.demo");
         a
     }

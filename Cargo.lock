@@ -2202,22 +2202,12 @@ dependencies = [
 name = "whisker"
 version = "0.1.0"
 dependencies = [
- "whisker-app-config",
+ "whisker-config",
  "whisker-css",
  "whisker-driver",
  "whisker-macros",
  "whisker-runtime",
  "whisker-subsecond",
-]
-
-[[package]]
-name = "whisker-app-config"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "whisker-plugin",
 ]
 
 [[package]]
@@ -2267,9 +2257,9 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml",
- "whisker-app-config",
  "whisker-build",
  "whisker-cng",
+ "whisker-config",
  "whisker-dev-server",
 ]
 
@@ -2281,7 +2271,17 @@ dependencies = [
  "cargo_metadata",
  "serde",
  "serde_json",
- "whisker-app-config",
+ "whisker-config",
+ "whisker-plugin",
+]
+
+[[package]]
+name = "whisker-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
  "whisker-plugin",
 ]
 

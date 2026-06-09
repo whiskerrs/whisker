@@ -1,5 +1,5 @@
 //! Render the Android host project under `gen/android/` from an
-//! [`AppConfig`].
+//! [`Config`].
 //!
 //! The output mirrors a small AGP-flavoured Android Studio project:
 //!
@@ -30,7 +30,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use whisker_app_config::AppConfig;
+use whisker_config::Config;
 use whisker_plugin::{FileEntry, MetaDataEntry};
 
 use crate::compose::{EnabledTargets, Engine};
@@ -58,7 +58,7 @@ const GRADLE_WRAPPER_PROPERTIES: &str =
 const GRADLE_WRAPPER_JAR: &[u8] =
     include_bytes!("templates/android/gradle/wrapper/gradle-wrapper.jar");
 
-/// Inputs the Android renderer pulls out of `AppConfig` (+ a few
+/// Inputs the Android renderer pulls out of `Config` (+ a few
 /// values the cli passes in like the dylib name and the workspace's
 /// `platforms/android/whisker-runtime` location).
 ///
@@ -526,7 +526,7 @@ fn write_file(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
     Ok(())
 }
 
-/// Pull the Android-relevant subset of `AppConfig` into the renderer
+/// Pull the Android-relevant subset of `Config` into the renderer
 /// input struct. Errors out on required-but-missing fields (an
 /// applicationId is mandatory; everything else has a default).
 ///
@@ -539,7 +539,7 @@ fn write_file(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
 // list one level deeper without changing the call site, so allow.
 #[allow(clippy::too_many_arguments)]
 pub fn inputs_from(
-    app_config: &AppConfig,
+    app_config: &Config,
     rust_lib_name: String,
     whisker_workspace_path: PathBuf,
     whisker_user_package: String,
@@ -567,7 +567,7 @@ pub fn inputs_from(
 #[allow(clippy::too_many_arguments)]
 pub fn inputs_from_with_engine(
     engine: &Engine,
-    app_config: &AppConfig,
+    app_config: &Config,
     rust_lib_name: String,
     whisker_workspace_path: PathBuf,
     whisker_user_package: String,
@@ -577,7 +577,7 @@ pub fn inputs_from_with_engine(
     lynx_maven_url: String,
 ) -> Result<AndroidInputs> {
     // Run the plugin pipeline. `build_initial_context` seeds the
-    // IR with core fields from `AppConfig`; plugins can override
+    // IR with core fields from `Config`; plugins can override
     // any of them. The renderer reads the post-pipeline IR.
     let ctx = engine
         .compose(app_config, EnabledTargets::android_only())
@@ -813,9 +813,9 @@ mod tests {
 
     #[test]
     fn inputs_from_errors_when_application_id_unset() {
-        let cfg = AppConfig {
+        let cfg = Config {
             name: Some("X".into()),
-            ..AppConfig::default()
+            ..Config::default()
         };
         let err = inputs_from(
             &cfg,

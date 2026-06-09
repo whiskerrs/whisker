@@ -2,7 +2,7 @@
 //!
 //! Responsibilities split:
 //!
-//! - `whisker-cng` owns the *pure* renderer: AppConfig + paths → files
+//! - `whisker-cng` owns the *pure* renderer: Config + paths → files
 //!   on disk. No shelling out, no environment assumptions. Pure logic
 //!   so it stays unit-testable against tempdirs.
 //! - This module decides *where* the gen dirs live (always
@@ -19,8 +19,8 @@
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use whisker_app_config::AppConfig;
 use whisker_cng::{discover_plugins, DiscoveredPlugin, Engine, SubprocessPlugin};
+use whisker_config::Config;
 use whisker_dev_server::Target;
 
 /// Run the platform-appropriate sync for `target`. Returns the gen
@@ -28,7 +28,7 @@ use whisker_dev_server::Target;
 /// even for the fast-path (`regenerated == false`) case.
 pub fn sync_for_target(
     target: Target,
-    app_config: &AppConfig,
+    app_config: &Config,
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,
@@ -85,7 +85,7 @@ const WHISKER_MAVEN_URL: &str = "https://whiskerrs.github.io/whisker/maven";
 const LYNX_MAVEN_URL: &str = "https://whiskerrs.github.io/lynx/maven";
 
 fn sync_android(
-    app_config: &AppConfig,
+    app_config: &Config,
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,
@@ -119,7 +119,7 @@ fn sync_android(
 }
 
 fn sync_ios(
-    app_config: &AppConfig,
+    app_config: &Config,
     crate_dir: &Path,
     workspace_root: &Path,
     package: &str,

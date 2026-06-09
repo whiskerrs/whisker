@@ -20,8 +20,8 @@
 //!   `adb install` / `simctl install + launch`. Identity (bundle id,
 //!   applicationId, scheme, …) comes in flat via
 //!   [`AndroidParams`] / [`IosParams`]; the cli resolves these from
-//!   the user's `whisker.rs::configure(&mut AppConfig)`. This crate
-//!   never depends on `whisker-app-config`.
+//!   the user's `whisker.rs::configure(&mut Config)`. This crate
+//!   never depends on `whisker-config`.
 //! - `watcher` — `notify`-based, debounced, classifies events into
 //!   `ChangeKind::{RustCode, CargoToml, Other}`.
 //! - `server` — `axum` WebSocket endpoint at
@@ -38,7 +38,7 @@
 //! ## Layering
 //!
 //! Stays manifest-agnostic on purpose. The cli does the
-//! `whisker.rs` → `AppConfig` translation; this crate accepts only
+//! `whisker.rs` → `Config` translation; this crate accepts only
 //! flat `String` / `PathBuf` fields. That keeps the dev-server
 //! reusable from any host shell that can produce the same flat
 //! `Config` (the cli is one; an editor plugin could be another).
@@ -69,11 +69,11 @@ pub use workspace::{discover_path_deps, identify_crate_for_paths, PathDepCrate};
 /// `whisker.rs` (via the cli's manifest/probe pipeline); or by an
 /// editor plugin / test harness directly.
 ///
-/// **Flat params, not AppConfig.** Anything platform-specific lives
+/// **Flat params, not Config.** Anything platform-specific lives
 /// inside [`AndroidParams`] / [`IosParams`] as simple strings and
 /// paths — the dev-server intentionally doesn't depend on
-/// `whisker-app-config`. Translating the user's `configure(&mut
-/// AppConfig)` into these fields is the cli's job.
+/// `whisker-config`. Translating the user's `configure(&mut
+/// Config)` into these fields is the cli's job.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Workspace root (`Cargo.toml` with `[workspace]`). Used by
@@ -121,7 +121,7 @@ impl Config {
 }
 
 /// Flat Android install/launch parameters. Populated by `whisker-cli`
-/// from the user's `whisker.rs::configure(&mut AppConfig)` plus a few
+/// from the user's `whisker.rs::configure(&mut Config)` plus a few
 /// hard defaults (jniLibs lives at `<project_dir>/app/src/main/jniLibs`,
 /// APK at `<project_dir>/app/build/outputs/apk/debug/app-debug.apk`,
 /// etc.). The dev-server never invents these values — if any are

@@ -4,9 +4,9 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use whisker_app_config::AppConfig;
 use whisker_cng::plugins::android_extra_files::AndroidExtraFiles;
 use whisker_cng::plugins::ios_extra_files::IosExtraFiles;
+use whisker_config::Config;
 
 fn unique_tempdir() -> PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -17,22 +17,22 @@ fn unique_tempdir() -> PathBuf {
     p
 }
 
-fn base_ios_app() -> AppConfig {
-    let mut a = AppConfig::default();
+fn base_ios_app() -> Config {
+    let mut a = Config::default();
     a.name("HelloWorld")
         .bundle_id("rs.whisker.examples.helloWorld");
     a
 }
 
-fn base_android_app() -> AppConfig {
-    let mut a = AppConfig::default();
+fn base_android_app() -> Config {
+    let mut a = Config::default();
     a.name("HelloWorld").android(|x| {
         x.application_id("rs.whisker.examples.helloworld");
     });
     a
 }
 
-fn sync_ios(app: &AppConfig) -> (PathBuf, PathBuf) {
+fn sync_ios(app: &Config) -> (PathBuf, PathBuf) {
     let inputs = whisker_cng::ios::inputs_from(
         app,
         PathBuf::from("/abs/platforms/ios"),
@@ -47,7 +47,7 @@ fn sync_ios(app: &AppConfig) -> (PathBuf, PathBuf) {
     (tmp, out)
 }
 
-fn sync_android(app: &AppConfig) -> (PathBuf, PathBuf) {
+fn sync_android(app: &Config) -> (PathBuf, PathBuf) {
     let inputs = whisker_cng::android::inputs_from(
         app,
         "hello_world".into(),
