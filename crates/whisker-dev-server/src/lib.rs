@@ -270,11 +270,80 @@ impl DevServer {
         ));
         whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
-        // Dev-server status flows through `set_status`; deduped so
-        // back-to-back transitions (startup → bound → first
-        // connect) don't stack lines.
-        whisker_build::ui::ensure_status("dev-server");
+        // Configure the initial build first. The Builder + Installer
+        // pair doesn't need the WS server, so we wire them up before
+        // touching the socket — this lets the user see a clean
+        // "Initial build" section open immediately after the
+        // top-level "whisker run" section, with no intervening
+        // dev-server chatter. Once the cargo step (the long pole)
+        // succeeds we bind the WS, then `install_and_launch` so the
+        // device app has somewhere to connect to.
+        //
+        // For Tier 1 mode this build doubles as the fat build that
+        // fills the rustc / linker capture caches; the shims are
+        // resolved (built if missing) and installed into the builder
+        // *before* the spawn. The same Builder is reused for Tier 2
+        // fallback rebuilds inside the change loop.
+        let mut builder = Builder::new(
+            self.config.workspace_root.clone(),
+            self.config.crate_dir.clone(),
+            self.config.package.clone(),
+            self.config.target,
+        )
+        .with_features(vec!["whisker/hot-reload".into()]);
 
+        let tier1_init = if self.config.hot_patch_mode == HotPatchMode::Tier1Subsecond {
+            match prepare_tier1_capture(&self.config) {
+                Ok(prep) => {
+                    builder = builder.with_capture(prep.capture.clone());
+                    Some(prep)
+                }
+                Err(e) => {
+                    whisker_build::ui::warn(format!(
+                        "Tier 1 capture setup failed ({e:#}); falling back to Tier 2 cold rebuilds",
+                    ));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let installer = Installer::new(
+            self.config.target,
+            self.config.android.clone(),
+            self.config.ios.clone(),
+            self.config.workspace_root.clone(),
+            self.config.package.clone(),
+            tier1_init.as_ref().map(|p| p.capture.clone()),
+            builder.features().to_vec(),
+        );
+
+        // Initial build — cargo only. `install_and_launch` is
+        // deferred until *after* the WS is bound, because the device
+        // app spins up its `whisker-dev-runtime` socket as soon as it
+        // launches and would race a not-yet-bound dev-server.
+        // A build failure isn't fatal: the loop still enters so
+        // fixing the source and saving recovers.
+        whisker_build::ui::section("Initial build");
+        emit(&self.on_event, Event::BuildingFull);
+        let initial_build_ok = match builder.build().await {
+            Ok(()) => {
+                emit(&self.on_event, Event::BuildSucceeded);
+                true
+            }
+            Err(e) => {
+                let msg = format!("{e:#}");
+                whisker_build::ui::error(format!("initial build failed: {msg}"));
+                emit(&self.on_event, Event::BuildFailed(msg));
+                false
+            }
+        };
+
+        // Now bind the WS so `install_and_launch` (next) has
+        // somewhere for the device's `whisker-dev-runtime` to dial.
+        whisker_build::ui::section("dev server");
+        whisker_build::ui::ensure_status("dev-server");
         let (sender, bound, _server_handle) =
             server::serve(self.config.bind_addr, self.on_event.clone()).await?;
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
@@ -326,55 +395,19 @@ impl DevServer {
         }
         emit(&self.on_event, Event::Started);
 
-        // Configure the initial build. For Tier 1 it doubles as the
-        // fat build that fills the rustc / linker capture caches —
-        // the shims are resolved (built if missing) and installed
-        // into the builder *before* the spawn. The same Builder
-        // object is then reused for Tier 2 fallback rebuilds, which
-        // just inherit the capture env (harmless if the patcher
-        // never reads the new captures).
-        let mut builder = Builder::new(
-            self.config.workspace_root.clone(),
-            self.config.crate_dir.clone(),
-            self.config.package.clone(),
-            self.config.target,
-        )
-        .with_features(vec!["whisker/hot-reload".into()]);
-
-        let tier1_init = if self.config.hot_patch_mode == HotPatchMode::Tier1Subsecond {
-            match prepare_tier1_capture(&self.config) {
-                Ok(prep) => {
-                    builder = builder.with_capture(prep.capture.clone());
-                    Some(prep)
-                }
-                Err(e) => {
-                    whisker_build::ui::warn(format!(
-                        "Tier 1 capture setup failed ({e:#}); falling back to Tier 2 cold rebuilds",
-                    ));
-                    None
-                }
+        // Install + launch the freshly-built artifact. Skipped when
+        // the build failed — the loop's first save will retry via
+        // the rebuild path. `run_build_cycle` reuses this codepath
+        // for rebuilds inside the loop (where WS is already bound).
+        if initial_build_ok {
+            if let Err(e) = installer.install_and_launch().await {
+                whisker_build::ui::error(format!("initial install failed: {e}"));
             }
-        } else {
-            None
-        };
-
-        let installer = Installer::new(
-            self.config.target,
-            self.config.android.clone(),
-            self.config.ios.clone(),
-            self.config.workspace_root.clone(),
-            self.config.package.clone(),
-            tier1_init.as_ref().map(|p| p.capture.clone()),
-            builder.features().to_vec(),
-        );
-
-        // Initial build + install + launch. Without this the dev
-        // server would just sit there until the user touched a file —
-        // unfriendly when you've started an emulator and want the app
-        // up immediately. A failure here doesn't abort: the loop
-        // still enters, so fixing the source and saving recovers.
-        whisker_build::ui::section("Initial build");
-        run_build_cycle(&builder, &installer, &self.on_event, &sender, "initial").await;
+            whisker_build::ui::info(format!(
+                "initial done · {} client(s) connected",
+                sender.client_count()
+            ));
+        }
 
         // After the fat build has happened, Patcher::initialize can
         // read the now-populated caches. Failure here is non-fatal
