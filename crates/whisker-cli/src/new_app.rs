@@ -233,18 +233,40 @@ pub fn configure(app: &mut whisker_app_config::AppConfig) {{
 }
 
 const GITIGNORE: &str = "\
-# Cargo + Whisker build artifacts.
+# Cargo build artifacts.
 target/
-Cargo.lock
 
-# Whisker-generated host projects (refreshed on every `whisker run` / `whisker build`).
+# rustfmt backup files (older toolchains left these behind on a failed
+# format pass; harmless to keep ignored).
+**/*.rs.bk
+
+# Whisker-generated host projects — refreshed on every `whisker run` /
+# `whisker build`. Includes gradle's `.gradle/` + `build/` caches and
+# xcodebuild's `xcuserdata/` / `*.xcuserstate` under here, so no need
+# to list those separately.
 gen/
 
-# IDE / OS noise.
-.DS_Store
+# Environment / secrets. Copy the pattern (e.g. `.env.example`) when
+# you need to share a template across the team without committing the
+# real values.
+.env
+.env.local
+.env.*.local
+
+# IDE / editor noise.
 .idea/
 .vscode/
 *.iml
+.vs/
+
+# OS noise.
+.DS_Store
+Thumbs.db
+
+# NOTE: `Cargo.lock` is deliberately NOT ignored. A Whisker user crate
+# is shaped like an application (compiled into the device-side dylib),
+# so the lock file is what guarantees every CI / teammate / production
+# build resolves to the same dependency tree. Commit it.
 ";
 
 fn readme(v: &Vars) -> String {
@@ -426,6 +448,22 @@ mod tests {
         // Default display name + bundle id are derived.
         assert!(whisker_rs.contains("Demo App"));
         assert!(whisker_rs.contains("rs.example.demo_app"));
+
+        let gitignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
+        // Sanity-check the load-bearing entries — losing either of
+        // these would surface as committed `target/` artifacts or a
+        // committed `gen/` tree on the user's first push.
+        assert!(
+            gitignore.contains("target/"),
+            "missing target/ in .gitignore",
+        );
+        assert!(gitignore.contains("gen/"), "missing gen/ in .gitignore");
+        // `Cargo.lock` must NOT be ignored — a Whisker app's lock
+        // file pins the dep tree the CI / production build resolves.
+        assert!(
+            !gitignore.lines().any(|l| l.trim() == "Cargo.lock"),
+            ".gitignore must NOT exclude Cargo.lock",
+        );
 
         std::fs::remove_dir_all(&tmp).ok();
     }
