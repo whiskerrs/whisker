@@ -25,8 +25,10 @@ pub struct Args {
     #[arg(long)]
     pub manifest_path: Option<PathBuf>,
 
-    /// Where to deploy the rebuilt artifact.
-    #[arg(long, value_enum, default_value_t = CliTarget::Host)]
+    /// Where to deploy the rebuilt artifact. Positional so the
+    /// common case (`whisker run android` / `whisker run ios`) reads
+    /// naturally without a `--target=` prefix.
+    #[arg(value_enum)]
     pub target: CliTarget,
 
     /// WebSocket bind address. The Whisker app on the device dials this
@@ -66,7 +68,6 @@ pub struct Args {
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CliTarget {
-    Host,
     Android,
     Ios,
 }
@@ -74,7 +75,6 @@ pub enum CliTarget {
 impl From<CliTarget> for Target {
     fn from(t: CliTarget) -> Self {
         match t {
-            CliTarget::Host => Target::Host,
             CliTarget::Android => Target::Android,
             CliTarget::Ios => Target::IosSimulator,
         }
@@ -82,28 +82,22 @@ impl From<CliTarget> for Target {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    // Decide and announce the TUI mode BEFORE any `whisker_build::ui::*`
-    // call fires — that crate caches its `Mode` lookup in a `OnceLock`
-    // on the first call to `mode()`, so by the time
-    // `build_discovered_plugins` (run inside `sync_for_target` below)
-    // emits its first `ui::step`, the cache is locked. If we set
-    // `WHISKER_TUI=1` later the way the previous iteration of this
-    // file did, every subsequent `step()` keeps using indicatif's
-    // animated bar — which then leaks padded fixed-width rows next
-    // to the ratatui viewport once the TUI actually starts. Setting
-    // the env var here, before any other code path can touch the
-    // ui module, makes every `step()` go through the plain-line
-    // branch and lets the viewport own the bottom region cleanly.
+    // Set the cross-crate TUI signal before any `whisker_build::ui::*`
+    // call fires — `whisker_build::ui::mode()` caches its lookup in a
+    // `OnceLock` on the first call, so flipping this env later doesn't
+    // unstick a `Curated` cache.
     let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
     if tui_enabled {
         std::env::set_var("WHISKER_TUI", "1");
     }
 
+    // Resolve the user-facing manifest before doing anything UI-y so
+    // that the TUI header can display the bundle id from the moment
+    // it first paints.
     let m = manifest::resolve(args.manifest_path.as_deref())
         .context("resolve user-crate manifest (Cargo.toml + whisker.rs)")?;
-
-    let workspace_root = match args.workspace_root {
-        Some(p) => p,
+    let workspace_root = match &args.workspace_root {
+        Some(p) => p.clone(),
         None => find_workspace_root(&m.crate_dir).ok_or_else(|| {
             anyhow!(
                 "no [workspace] Cargo.toml at or above {}",
@@ -111,20 +105,106 @@ pub fn run(args: Args) -> Result<()> {
             )
         })?,
     };
-
     let target: Target = args.target.into();
+    let target_label = target_label(target);
+    let bundle = m
+        .config
+        .bundle_id
+        .clone()
+        .unwrap_or_else(|| m.package.clone());
 
-    // Ensure Lynx artifacts for the target platform are cached and
-    // linked into `target/lynx-*` (where gradle's flatDir, SPM's
-    // binaryTarget paths, and whisker-driver-sys/build.rs all expect
-    // to find them). On cache hit this is a few stat() syscalls.
-    ensure_lynx_for_target(target, &workspace_root)?;
+    // Start the TUI as the very first user-visible action so the
+    // long setup steps (sync, plugin build, initial build, install)
+    // render with a proper progress indicator instead of leaking
+    // ahead of an inline status bar.
+    let tui_pieces = if tui_enabled {
+        match crate::tui::Tui::start(target_label.to_string(), bundle.clone()) {
+            Ok((tui, handle)) => {
+                handle.set_phase(crate::tui::AppPhase::Setup);
+                let render_handle = std::thread::Builder::new()
+                    .name("whisker-tui-render".into())
+                    .spawn(move || run_tui_render_loop(tui))
+                    .ok();
+                Some((handle, render_handle))
+            }
+            Err(e) => {
+                eprintln!("couldn't start TUI ({e:#}); falling back to plain output");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let tui_handle = tui_pieces.as_ref().map(|(h, _)| h.clone());
 
+    // Run the rest of the cli pipeline. Each phase pushes its progress
+    // through `tui_handle`. If the TUI isn't running, every step is
+    // a no-op + the existing `whisker_build::ui::*` lines fall back
+    // to scrollback.
+    let result = run_inner(args, m, workspace_root, target, tui_handle.as_ref());
+
+    // Stop the render thread + restore the terminal. Use should_quit
+    // as the signal so the render thread exits cleanly.
+    if let Some((handle, render_thread)) = tui_pieces {
+        handle.request_quit();
+        if let Some(t) = render_thread {
+            let _ = t.join();
+        }
+    }
+    result
+}
+
+fn run_tui_render_loop(mut tui: crate::tui::Tui) {
+    let _ = tui.render_until_quit();
+    let user_quit = tui.was_user_quit();
+    let _ = tui.shutdown();
+    if user_quit {
+        // The dev-server runs to completion (i.e. forever) inside
+        // `rt.block_on(server.run())` on the cli thread, so simply
+        // tearing the TUI down here would leave a headless `whisker
+        // run` process alive after `q`. Hard-exit with a normal
+        // status; tokio sockets / file watchers get reaped by the
+        // kernel. cli-initiated shutdowns (build failed, etc.) take
+        // the other branch and let `run()`'s normal return path
+        // surface the error.
+        std::process::exit(0);
+    }
+}
+
+fn run_inner(
+    args: Args,
+    m: manifest::ResolvedManifest,
+    workspace_root: PathBuf,
+    target: Target,
+    tui: Option<&crate::tui::TuiHandle>,
+) -> Result<()> {
     // Sync the native host project (gen/{android,ios}/) before doing
-    // anything else. Fast-path on fingerprint match — typical run is
-    // a single file read. Errors here (missing whisker.rs fields,
-    // missing native runtime) are fatal: there's no point starting
-    // the dev loop if we can't build the app it would deploy.
+    // anything else. The cargo-side `build_discovered_plugins` step
+    // happens inside `sync_for_target` and is the long pole here.
+    // `set_phase(Setup)` already fired from `run()` before we got
+    // here, so re-issuing it would duplicate the "▶ Setup" entry in
+    // scrollback.
+    // iOS only: populate `target/lynx-ios/` with the Lynx SDK
+    // download and create the workspace-relative symlinks the
+    // cng-generated SPM `Package.swift` points its `binaryTarget`s
+    // at. Without this, xcodebuild's package-resolution step (which
+    // runs *before* any Run Script Build Phase) fails with
+    //
+    //     local binary target 'Lynx' at '…/target/lynx-ios/Lynx.xcframework'
+    //     does not contain a binary artifact.
+    //
+    // Android skips this entirely because gradle pulls the Lynx aar
+    // from the `whiskerrs.github.io/lynx/maven` repo transitively
+    // via the SDK pom; nothing in the workspace tree references a
+    // local Lynx artifact for Android. Host has no Lynx dependency
+    // at all (the driver dlopens it lazily).
+    if matches!(target, Target::IosSimulator) {
+        whisker_build::ensure_lynx_ios()
+            .context("populate target/lynx-ios with Lynx SDK XCFrameworks")?;
+        whisker_build::link_lynx_into_workspace(&workspace_root, whisker_build::LynxPlatform::Ios)
+            .context("link Lynx XCFrameworks into the workspace")?;
+    }
+
     let sync = crate::platforms::sync_for_target(
         target,
         &m.config,
@@ -156,11 +236,8 @@ pub fn run(args: Args) -> Result<()> {
         crate_dir: m.crate_dir,
         package: m.package,
         target,
-        watch_paths,
+        watch_paths: watch_paths.clone(),
         bind_addr: args.bind,
-        // Tier 1 is the dev-loop default — `--no-hot-patch` is the
-        // emergency-exit when subsecond is misbehaving and you just
-        // need a working cold-rebuild loop.
         hot_patch_mode: if args.no_hot_patch {
             HotPatchMode::Tier2ColdRebuild
         } else {
@@ -170,90 +247,39 @@ pub fn run(args: Args) -> Result<()> {
         ios,
     };
 
+    let watching_paths: Vec<String> = watch_paths
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    if let Some(t) = tui {
+        t.set_dev_server(config.bind_addr.to_string(), watching_paths);
+        t.set_phase(crate::tui::AppPhase::Initializing);
+    }
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("build tokio runtime")?;
     let show_native_logs = args.show_native_logs;
-
-    // `tui_enabled` was decided + the env var was set at the very top
-    // of this function so the early `ui::step` calls inside
-    // `sync_for_target` would see the right `Mode`. Reuse the same
-    // detection here so the ratatui setup matches.
-    let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
-
-    let target_label = target_label(target);
-    let bind_label = args.bind.to_string();
-
-    // The TUI runs on a dedicated OS thread because ratatui's
-    // `Terminal<CrosstermBackend<Stderr>>` isn't `Send` and so can't
-    // ride inside a tokio task. The render thread polls a shared
-    // `TuiState` Mutex; the dev-server's `on_event` callback (which
-    // does run on tokio threads) writes to the same Mutex. Shutdown
-    // is signalled via an `AtomicBool` once `server.run()` returns.
-    let (tui_state, tui_shutdown, tui_handle) = if tui_enabled {
-        match crate::tui::Tui::start(crate::tui::TuiState::new(target_label, bind_label.clone())) {
-            Ok(mut tui) => {
-                let state = tui.state_handle();
-                let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let thread_shutdown = std::sync::Arc::clone(&shutdown);
-                let handle = std::thread::Builder::new()
-                    .name("whisker-tui".into())
-                    .spawn(move || {
-                        while !thread_shutdown.load(std::sync::atomic::Ordering::Acquire) {
-                            let _ = tui.draw();
-                            // 1Hz redraw. ratatui's inline viewport and
-                            // foreign `eprintln!` from the rest of the
-                            // dev loop both write to stderr without
-                            // a shared lock, so every frame is a chance
-                            // for output to interleave with the bar's
-                            // redraw. Polling at 5Hz (the original)
-                            // multiplied that race window by 5×; 1Hz
-                            // is plenty for human-perceivable elapsed
-                            // ticks while letting the bulk of the
-                            // build's stderr output land cleanly
-                            // between frames.
-                            std::thread::sleep(std::time::Duration::from_millis(1000));
-                        }
-                        // Final paint so the visible state matches the
-                        // exit outcome before the viewport tears down.
-                        let _ = tui.draw();
-                        let _ = tui.shutdown();
-                    })
-                    .ok();
-                (Some(state), Some(shutdown), handle)
-            }
-            Err(e) => {
-                whisker_build::ui::warn(format!(
-                    "couldn't start inline TUI ({e:#}); falling back to plain output"
-                ));
-                (None, None, None)
-            }
-        }
-    } else {
-        (None, None, None)
-    };
+    let tui_for_events = tui.cloned();
 
     let server = DevServer::new(config)?.on_event(move |e| {
-        if let Some(state) = &tui_state {
-            if let Ok(mut s) = state.lock() {
-                crate::tui::apply_event(&mut s, &e);
-            }
+        if let Some(h) = &tui_for_events {
+            // TUI mode: the handle's `apply_event` already pushes
+            // `Event::DeviceLog` into scrollback via `insert_before`
+            // as a `[device]` / `[device:err]` row. Routing the
+            // same event through `forward_event_to_ui` would
+            // double-print every device log line (once raw, once
+            // wrapped in `whisker_build::ui::info`'s `· ` prefix
+            // and captured back through stderr). Skip the legacy
+            // path entirely when the TUI is on.
+            h.apply_event(&e);
+        } else {
+            forward_event_to_ui(e, show_native_logs);
         }
-        forward_event_to_ui(e, show_native_logs);
     });
 
-    let result = rt.block_on(server.run());
-
-    // Tell the render thread we're done; wait for it to clear the
-    // viewport so the user's prompt lands at column 0 of a clean line.
-    if let Some(shutdown) = tui_shutdown {
-        shutdown.store(true, std::sync::atomic::Ordering::Release);
-    }
-    if let Some(handle) = tui_handle {
-        let _ = handle.join();
-    }
-    result
+    rt.block_on(server.run())
 }
 
 /// Friendly label for the TUI header. `whisker_dev_server::Target`'s
@@ -261,7 +287,6 @@ pub fn run(args: Args) -> Result<()> {
 /// short noun for screen real estate.
 fn target_label(target: Target) -> &'static str {
     match target {
-        Target::Host => "Host",
         Target::Android => "Android",
         Target::IosSimulator => "iOS Simulator",
     }
@@ -395,7 +420,7 @@ fn android_params_from(
         .or_else(|| m.config.bundle_id.clone())
         .ok_or_else(|| {
             anyhow!(
-                "whisker.rs: app.android(|a| a.application_id(\"…\")) is required for --target android"
+                "whisker.rs: app.android(|a| a.application_id(\"…\")) is required for the android target"
             )
         })?;
     let launcher_activity = a
@@ -422,7 +447,7 @@ fn ios_params_from(m: &manifest::ResolvedManifest, project_dir: &Path) -> Result
         .or_else(|| m.config.bundle_id.clone())
         .ok_or_else(|| {
             anyhow!(
-                "whisker.rs: app.ios(|i| i.bundle_id(\"…\")) or app.bundle_id(\"…\") is required for --target ios"
+                "whisker.rs: app.ios(|i| i.bundle_id(\"…\")) or app.bundle_id(\"…\") is required for the ios target"
             )
         })?;
     let scheme = i
@@ -431,7 +456,7 @@ fn ios_params_from(m: &manifest::ResolvedManifest, project_dir: &Path) -> Result
         .or_else(|| m.config.name.clone())
         .ok_or_else(|| {
             anyhow!(
-                "whisker.rs: app.ios(|i| i.scheme(\"…\")) or app.name(\"…\") is required for --target ios"
+                "whisker.rs: app.ios(|i| i.scheme(\"…\")) or app.name(\"…\") is required for the ios target"
             )
         })?;
     Ok(IosParams {
@@ -440,27 +465,6 @@ fn ios_params_from(m: &manifest::ResolvedManifest, project_dir: &Path) -> Result
         bundle_id,
         device_override: std::env::var("WHISKER_IOS_SIMULATOR").ok(),
     })
-}
-
-/// Populate the Lynx artifact cache for `target` and (re)create the
-/// workspace symlinks downstream consumers read from. No-op for
-/// `Target::Host`. Duplicated in `build.rs::ensure_lynx_for_target`;
-/// if a third consumer shows up, factor into a helper module.
-fn ensure_lynx_for_target(target: Target, workspace_root: &Path) -> Result<()> {
-    use whisker_build::LynxPlatform;
-    match target {
-        Target::Host => Ok(()),
-        Target::Android => {
-            whisker_build::ensure_lynx_android()?;
-            whisker_build::link_lynx_into_workspace(workspace_root, LynxPlatform::Android)?;
-            Ok(())
-        }
-        Target::IosSimulator => {
-            whisker_build::ensure_lynx_ios()?;
-            whisker_build::link_lynx_into_workspace(workspace_root, LynxPlatform::Ios)?;
-            Ok(())
-        }
-    }
 }
 
 /// Walk up from `start` looking for a `Cargo.toml` containing a
@@ -495,7 +499,6 @@ mod tests {
 
     #[test]
     fn cli_target_maps_to_dev_server_target() {
-        assert_eq!(Target::from(CliTarget::Host), Target::Host);
         assert_eq!(Target::from(CliTarget::Android), Target::Android);
         assert_eq!(Target::from(CliTarget::Ios), Target::IosSimulator);
     }

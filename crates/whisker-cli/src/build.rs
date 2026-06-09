@@ -36,8 +36,10 @@ pub struct Args {
     #[arg(long)]
     pub manifest_path: Option<PathBuf>,
 
-    /// Where to package for.
-    #[arg(long, value_enum)]
+    /// Where to package for. Positional so the common case
+    /// (`whisker build android` / `whisker build ios-sim`) reads
+    /// naturally without a `--target=` prefix.
+    #[arg(value_enum)]
     pub target: BuildTarget,
 
     /// Override the workspace root. Defaults to walking up from the
@@ -75,9 +77,9 @@ pub fn run(args: Args) -> Result<()> {
         BuildTarget::Android => build_android_apk(&m, &workspace_root),
         BuildTarget::IosSim => build_ios_app(&m, &workspace_root, IosFlavour::Simulator),
         BuildTarget::IosDevice => Err(anyhow!(
-            "`whisker build --target ios-device` is not yet implemented. \
+            "`whisker build ios-device` is not yet implemented. \
              Codesigning + provisioning + `xcodebuild archive` are coming \
-             in a follow-up. Use `whisker build --target ios-sim` for a \
+             in a follow-up. Use `whisker build ios-sim` for a \
              Simulator-installable .app today."
         )),
     }

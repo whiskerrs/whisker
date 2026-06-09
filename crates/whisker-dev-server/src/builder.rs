@@ -7,9 +7,8 @@
 //! doubles as a **fat build** that fills the rustc + linker capture
 //! caches the Tier 1 hot-patch pipeline replays later.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use std::path::PathBuf;
-use tokio::process::Command;
 
 use crate::Target;
 use whisker_build::CaptureShims;
@@ -75,7 +74,6 @@ impl Builder {
     /// Run the build for the current target. Inherits stdout/stderr.
     pub async fn build(&self) -> Result<()> {
         match self.target {
-            Target::Host => self.build_host().await,
             Target::Android => self.build_android().await,
             Target::IosSimulator => self.build_ios_simulator().await,
         }
@@ -87,20 +85,6 @@ impl Builder {
     }
 
     // ----- per-target build paths ------------------------------------------
-
-    async fn build_host(&self) -> Result<()> {
-        let mut cmd = Command::new("cargo");
-        cmd.args(["build", "-p", &self.package]);
-        for f in &self.features {
-            cmd.args(["--features", f]);
-        }
-        cmd.current_dir(&self.workspace_root);
-        let s = cmd.status().await.context("spawn cargo")?;
-        if !s.success() {
-            return Err(anyhow!("cargo build failed ({s})"));
-        }
-        Ok(())
-    }
 
     async fn build_android(&self) -> Result<()> {
         // Dev loop only stages module Kotlin sources, then drives
@@ -195,7 +179,7 @@ mod tests {
 
     #[test]
     fn builder_can_be_constructed_for_each_target() {
-        for t in [Target::Host, Target::Android, Target::IosSimulator] {
+        for t in [Target::Android, Target::IosSimulator] {
             let b = Builder::new(
                 PathBuf::from("/tmp/ws"),
                 PathBuf::from("/tmp/ws/examples/x"),
@@ -213,7 +197,7 @@ mod tests {
             PathBuf::from("/tmp/ws"),
             PathBuf::from("/tmp/ws/examples/x"),
             "x".into(),
-            Target::Host,
+            Target::Android,
         )
         .with_features(vec!["whisker/hot-reload".into(), "extra".into()]);
         assert_eq!(b.features, vec!["whisker/hot-reload", "extra"]);

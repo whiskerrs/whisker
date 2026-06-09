@@ -162,6 +162,11 @@ static LAST_STATUS: Mutex<Option<String>> = Mutex::new(None);
 /// in `whisker-dev-server` use it as a sentinel that says "you're
 /// allowed to call `set_status` after this point".
 pub fn ensure_status(_label: impl Into<String>) {
+    if matches!(mode(), Mode::Tui) {
+        // Live region carries the same data — no-op the legacy
+        // status surface to avoid double-displaying it.
+        return;
+    }
     if let Ok(mut guard) = LAST_STATUS.lock() {
         *guard = Some(String::new());
     }
@@ -171,7 +176,17 @@ pub fn ensure_status(_label: impl Into<String>) {
 /// emission so back-to-back `set_status("X")` calls don't double-
 /// print the same content. The line goes through `info()` so it
 /// shares the `· <msg>` visual style with other one-shot lines.
+///
+/// In TUI mode this is a no-op: `whisker-cli`'s live region at the
+/// bottom of the terminal already renders the ws addr and the
+/// client count (via the dev-server's `Event::ClientConnected /
+/// Disconnected` stream), so emitting the legacy `· dev-server · …`
+/// line just duplicates the same information one row above the
+/// pinned status panel.
 pub fn set_status(msg: impl Into<String>) {
+    if matches!(mode(), Mode::Tui) {
+        return;
+    }
     let m = msg.into();
     let m_for_dedupe = m.clone();
     if let Ok(mut guard) = LAST_STATUS.lock() {
@@ -185,8 +200,12 @@ pub fn set_status(msg: impl Into<String>) {
 
 /// Emit a final dev-server status line on shutdown. Same code path
 /// as `set_status` minus the dedupe (we want the goodbye visible
-/// even if it matches the previous status).
+/// even if it matches the previous status). Also no-ops in TUI
+/// mode — the live region disappearing IS the goodbye.
 pub fn finish_status(final_msg: impl Into<String>) {
+    if matches!(mode(), Mode::Tui) {
+        return;
+    }
     info(format!("dev-server · {}", final_msg.into()));
 }
 
@@ -338,10 +357,28 @@ impl Step {
             );
             bar.finish_with_message(line);
         } else {
+            // Tui + non-TTY Curated both fall through here. In TUI
+            // mode, also emit the matching END marker so the cli
+            // clears the live-region's `current_step` field — see
+            // the START marker emitted in `step()` above.
+            if matches!(mode(), Mode::Tui) {
+                eprintln!("{TUI_STEP_END_MARKER}");
+            }
             eprintln!("{line}");
         }
     }
 }
+
+/// Marker prefix the cli's capture thread looks for to learn that a
+/// step has *started*. Followed by `\x1e<name>\x1e<detail>` and a
+/// newline — i.e. one line per START. The `\x1e` (ASCII RS, "record
+/// separator") is deliberately non-printable so it can't collide
+/// with legitimate user output. See
+/// `whisker_cli::tui::capture_reader_loop`.
+pub const TUI_STEP_START_MARKER: &str = "\x1eWHISKER-TUI-STEP-START";
+/// Marker the cli's capture thread looks for to learn that the
+/// active step has *finished*. One token per line, no payload.
+pub const TUI_STEP_END_MARKER: &str = "\x1eWHISKER-TUI-STEP-END";
 
 /// Read `stream` line-by-line, classifying each line into one of
 /// three buckets:
@@ -380,11 +417,12 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
                 eprintln!("[whisker] {line}");
             }
         } else if !line.is_empty() {
-            // In curated mode, drop known-noise advisory lines that
-            // the user can't act on. Verbose mode keeps everything
-            // so the user has a chance to diagnose the filter
-            // itself if a real diagnostic ever gets misclassified.
-            if matches!(mode(), Mode::Curated) && is_subprocess_noise(&line) {
+            // Drop known-noise advisory lines that the user can't
+            // act on (gradle daemon JVM banner, etc.). Both curated
+            // and TUI modes filter — Verbose keeps everything so
+            // the user has a chance to diagnose the filter itself
+            // if a real diagnostic ever gets misclassified.
+            if matches!(mode(), Mode::Curated | Mode::Tui) && is_subprocess_noise(&line) {
                 continue;
             }
             // Diagnostics / errors / unrecognised tool output:
@@ -574,12 +612,25 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             }
         }
         Mode::Tui => {
-            // TUI mode: ratatui owns the bottom region, so indicatif
-            // bars would race with the inline viewport's redraw.
-            // Emit the curated "started" line via plain eprintln so
-            // the row scrolls above; `finish()` will emit the final
-            // state (✓/✗) the same way.
-            eprintln!("  ⏵ {name:<12} {detail}");
+            // TUI mode: the inline ratatui viewport captures stderr
+            // and `insert_before`s each captured line into scrollback.
+            // Emitting a "⏵ started" line here would just be
+            // immediately followed by the "✓ done" line from
+            // `finish()`, doubling the row count — there's no
+            // overwrite mechanism for already-committed scrollback
+            // lines (unlike indicatif's spinner in Curated mode).
+            //
+            // Instead, emit a structured marker on stderr that
+            // whisker-cli's capture thread recognises and routes
+            // into the live region's `current_step` field, so the
+            // user sees an animated spinner during long steps
+            // (`xcodebuild`, `gradle :app:assembleDebug`, etc.)
+            // without that label entering scrollback. `finish()`
+            // emits a matching END marker plus the regular
+            // `✓ <name> <detail> <elapsed>` line that DOES enter
+            // scrollback. See `whisker_cli::tui::capture_reader_loop`
+            // for the consuming side.
+            eprintln!("{TUI_STEP_START_MARKER}\x1e{name}\x1e{detail}");
             Step {
                 bar: None,
                 started_at,

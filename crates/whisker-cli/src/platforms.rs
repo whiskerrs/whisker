@@ -36,10 +36,6 @@ pub fn sync_for_target(
     match target {
         Target::Android => sync_android(app_config, crate_dir, workspace_root, package),
         Target::IosSimulator => sync_ios(app_config, crate_dir, workspace_root, package),
-        Target::Host => Ok(PlatformSync {
-            gen_dir: crate_dir.to_path_buf(),
-            regenerated: false,
-        }),
     }
 }
 
@@ -47,8 +43,7 @@ pub fn sync_for_target(
 #[derive(Debug, Clone)]
 pub struct PlatformSync {
     /// Where the generated project tree lives — `gen/android/` or
-    /// `gen/ios/` under `crate_dir`. For `Target::Host` this is just
-    /// `crate_dir` (no native project to generate).
+    /// `gen/ios/` under `crate_dir`.
     pub gen_dir: PathBuf,
     /// `true` if the renderer rewrote files this pass, `false` if the
     /// fingerprint matched and the existing tree was reused.
@@ -243,19 +238,4 @@ fn build_discovered_plugins(workspace_root: &Path, discovered: &[DiscoveredPlugi
     }
     step.done("");
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn host_target_returns_crate_dir_without_regenerating() {
-        let cfg = AppConfig::default();
-        let crate_dir = PathBuf::from("/tmp/crate");
-        let ws = PathBuf::from("/tmp/ws");
-        let sync = sync_for_target(Target::Host, &cfg, &crate_dir, &ws, "pkg").unwrap();
-        assert_eq!(sync.gen_dir, crate_dir);
-        assert!(!sync.regenerated);
-    }
 }

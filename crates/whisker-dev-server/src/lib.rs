@@ -170,9 +170,6 @@ pub struct IosParams {
 /// What kind of binary the dev server is rebuilding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    /// Plain host binary — no Lynx, no device, mostly for runtime
-    /// experiments (the `subsecond-poc` sort of thing).
-    Host,
     /// Android cdylib + APK + adb install + launch.
     Android,
     /// iOS Simulator app + xcrun simctl install + launch.
@@ -205,6 +202,13 @@ pub enum Event {
     BuildFailed(String),
     ClientConnected,
     ClientDisconnected,
+    /// A Tier 1 hot patch build kicked off. Fires *before* the
+    /// `Patcher::build_patch` call so consumers (the cli TUI) can
+    /// flip into "patching" state while the patch is still being
+    /// compiled — without this paired event, `PatchSent` is the
+    /// only signal and arrives so close to its own completion that
+    /// any UI keying off it never shows a patch-in-flight indicator.
+    PatchBuilding,
     PatchSent,
     /// A line captured from the device-side app's stdout / stderr (via
     /// the `whisker-dev-runtime::log_capture` `dup2` hook), forwarded
@@ -263,18 +267,118 @@ impl DevServer {
     /// `ChangeKind::RustCode` events. Patcher initialisation or
     /// `build_patch` failure falls back to Tier 2 silently.
     pub async fn run(self) -> Result<()> {
-        whisker_build::ui::section("whisker run");
-        whisker_build::ui::info(format!(
-            "{} · {:?}",
-            self.config.package, self.config.target,
-        ));
+        // In TUI mode the live region's header already shows the
+        // package + target + phase; the `──── whisker run ────` +
+        // `· podcast · Android` rows above just duplicated that
+        // information. The `mode={:?}` debug line is debug-only
+        // anyway, so it never made it to scrollback in the
+        // production curated path. Non-TUI runs (CI, `--no-tui`)
+        // still get the intro section + info line.
+        if !whisker_build::ui::is_tui() {
+            whisker_build::ui::section("whisker run");
+            whisker_build::ui::info(format!(
+                "{} · {:?}",
+                self.config.package, self.config.target,
+            ));
+        }
         whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
-        // Dev-server status flows through `set_status`; deduped so
-        // back-to-back transitions (startup → bound → first
-        // connect) don't stack lines.
-        whisker_build::ui::ensure_status("dev-server");
+        // Configure the initial build first. The Builder + Installer
+        // pair doesn't need the WS server, so we wire them up before
+        // touching the socket — this lets the user see a clean
+        // "Initial build" section open immediately after the
+        // top-level "whisker run" section, with no intervening
+        // dev-server chatter. Once the cargo step (the long pole)
+        // succeeds we bind the WS, then `install_and_launch` so the
+        // device app has somewhere to connect to.
+        //
+        // For Tier 1 mode this build doubles as the fat build that
+        // fills the rustc / linker capture caches; the shims are
+        // resolved (built if missing) and installed into the builder
+        // *before* the spawn. The same Builder is reused for Tier 2
+        // fallback rebuilds inside the change loop.
+        let mut builder = Builder::new(
+            self.config.workspace_root.clone(),
+            self.config.crate_dir.clone(),
+            self.config.package.clone(),
+            self.config.target,
+        )
+        .with_features(vec!["whisker/hot-reload".into()]);
 
+        let tier1_init = if self.config.hot_patch_mode == HotPatchMode::Tier1Subsecond {
+            match prepare_tier1_capture(&self.config) {
+                Ok(prep) => {
+                    builder = builder.with_capture(prep.capture.clone());
+                    Some(prep)
+                }
+                Err(e) => {
+                    whisker_build::ui::warn(format!(
+                        "Tier 1 capture setup failed ({e:#}); falling back to Tier 2 cold rebuilds",
+                    ));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let installer = Installer::new(
+            self.config.target,
+            self.config.android.clone(),
+            self.config.ios.clone(),
+            self.config.workspace_root.clone(),
+            self.config.package.clone(),
+            tier1_init.as_ref().map(|p| p.capture.clone()),
+            builder.features().to_vec(),
+        );
+
+        // Initial build — cargo only. `install_and_launch` is
+        // deferred until *after* the WS is bound, because the device
+        // app spins up its `whisker-dev-runtime` socket as soon as it
+        // launches and would race a not-yet-bound dev-server.
+        //
+        // A build failure here is fatal: there's nothing actionable
+        // the dev-loop can do (no app to patch, no install to
+        // recover from a source-edit save), so we surface the error
+        // and exit. The previous behaviour of "enter the loop anyway
+        // and recover on next save" was misleading — users routinely
+        // missed the warn line and assumed the build had succeeded.
+        //
+        // The `──── Initial build ────` section header is only
+        // emitted in non-TUI mode. In TUI mode the live region's
+        // phase indicator (`building`) + spinner already make it
+        // obvious that the build started; the section divider
+        // becomes pure noise above the in-line cargo/gradle/
+        // xcodebuild step rows.
+        if !whisker_build::ui::is_tui() {
+            whisker_build::ui::section("Initial build");
+        }
+        emit(&self.on_event, Event::BuildingFull);
+        if let Err(e) = builder.build().await {
+            let msg = format!("{e:#}");
+            emit(&self.on_event, Event::BuildFailed(msg.clone()));
+            // cli main prints the bail message via `ui::error` (it
+            // formats `e.root_cause()`), so emitting our own
+            // `ui::error` here would double-print every install /
+            // build failure to the user. Keep the bail message
+            // user-actionable; the verbose chain is still reachable
+            // via `WHISKER_VERBOSE=1`.
+            anyhow::bail!("initial build failed: {msg}");
+        }
+        emit(&self.on_event, Event::BuildSucceeded);
+
+        // Now bind the WS so `install_and_launch` (next) has
+        // somewhere for the device's `whisker-dev-runtime` to dial.
+        // `whisker_build::ui::section("dev server")` used to live
+        // here as a visual divider between the cargo build and the
+        // device install/launch. The TUI's live region already
+        // surfaces the ws addr + client count, so the section
+        // header was a redundant row of dashes. `ensure_status` /
+        // `set_status` are no-ops in TUI mode (see
+        // `whisker_build::ui::set_status`); we keep them for the
+        // `--no-tui` and CI paths where the legacy status surface
+        // is still the only signal.
+        whisker_build::ui::ensure_status("dev-server");
         let (sender, bound, _server_handle) =
             server::serve(self.config.bind_addr, self.on_event.clone()).await?;
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
@@ -326,55 +430,23 @@ impl DevServer {
         }
         emit(&self.on_event, Event::Started);
 
-        // Configure the initial build. For Tier 1 it doubles as the
-        // fat build that fills the rustc / linker capture caches —
-        // the shims are resolved (built if missing) and installed
-        // into the builder *before* the spawn. The same Builder
-        // object is then reused for Tier 2 fallback rebuilds, which
-        // just inherit the capture env (harmless if the patcher
-        // never reads the new captures).
-        let mut builder = Builder::new(
-            self.config.workspace_root.clone(),
-            self.config.crate_dir.clone(),
-            self.config.package.clone(),
-            self.config.target,
-        )
-        .with_features(vec!["whisker/hot-reload".into()]);
-
-        let tier1_init = if self.config.hot_patch_mode == HotPatchMode::Tier1Subsecond {
-            match prepare_tier1_capture(&self.config) {
-                Ok(prep) => {
-                    builder = builder.with_capture(prep.capture.clone());
-                    Some(prep)
-                }
-                Err(e) => {
-                    whisker_build::ui::warn(format!(
-                        "Tier 1 capture setup failed ({e:#}); falling back to Tier 2 cold rebuilds",
-                    ));
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let installer = Installer::new(
-            self.config.target,
-            self.config.android.clone(),
-            self.config.ios.clone(),
-            self.config.workspace_root.clone(),
-            self.config.package.clone(),
-            tier1_init.as_ref().map(|p| p.capture.clone()),
-            builder.features().to_vec(),
-        );
-
-        // Initial build + install + launch. Without this the dev
-        // server would just sit there until the user touched a file —
-        // unfriendly when you've started an emulator and want the app
-        // up immediately. A failure here doesn't abort: the loop
-        // still enters, so fixing the source and saving recovers.
-        whisker_build::ui::section("Initial build");
-        run_build_cycle(&builder, &installer, &self.on_event, &sender, "initial").await;
+        // Install + launch the freshly-built artifact. A failure
+        // here is fatal for the same reason a build failure is —
+        // there's nothing to dev-loop against if the app never made
+        // it onto the device (no `INSTALL_FAILED_INSUFFICIENT_STORAGE`
+        // recovery story over file watching). `run_build_cycle`
+        // reuses the build + install codepath for rebuilds inside
+        // the loop (where WS is already bound and a failure there
+        // does fall through — the user can then save again to retry).
+        if let Err(e) = installer.install_and_launch().await {
+            // See the `initial build failed` arm above for why we
+            // bail instead of `ui::error`-ing here.
+            anyhow::bail!("initial install failed: {e:#}");
+        }
+        whisker_build::ui::info(format!(
+            "initial done · {} client(s) connected",
+            sender.client_count()
+        ));
 
         // After the fat build has happened, Patcher::initialize can
         // read the now-populated caches. Failure here is non-fatal
@@ -402,7 +474,12 @@ impl DevServer {
         // the dev loop from being killed by a transient build
         // glitch.
         while let Some(change) = rx.recv().await {
-            whisker_build::ui::section("Change");
+            // `──── Change ────` only in non-TUI mode (live
+            // region's phase flip to `building` / `patching`
+            // already announces a save has been picked up).
+            if !whisker_build::ui::is_tui() {
+                whisker_build::ui::section("Change");
+            }
             whisker_build::ui::debug(format!(
                 "{:?} — {} path(s)",
                 change.kind,
@@ -420,6 +497,11 @@ impl DevServer {
                     // wire-up so the user sees a single elapsed
                     // duration for "edit → app updated".
                     let patch_step = whisker_build::ui::step("patch", "tier 1");
+                    // Tell the cli to flip into "patching" right now —
+                    // the patcher work that follows (`build_patch` +
+                    // dylib read + send) is the wall-clock-heavy bit,
+                    // and the matching `PatchSent` flips back to Idle.
+                    emit(&self.on_event, Event::PatchBuilding);
                     // Map the changed file paths to the owning crate.
                     // None = batch spans multiple crates, or a path
                     // outside every known src dir — fall back to a
@@ -635,7 +717,6 @@ fn target_triple_for(config: &Config) -> Option<String> {
             };
             Some(triple.to_string())
         }
-        Target::Host => None,
     }
 }
 
@@ -659,7 +740,7 @@ fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
             hotpatch::android_ndk::android_clang_for(abi, api)
                 .with_context(|| format!("resolve NDK clang for ABI {abi} API {api}"))
         }
-        Target::Host | Target::IosSimulator => Ok(hotpatch::wrapper::resolve_host_linker()),
+        Target::IosSimulator => Ok(hotpatch::wrapper::resolve_host_linker()),
     }
 }
 
@@ -680,59 +761,59 @@ fn init_patcher_for(config: &Config, prep: &Tier1Prep) -> Result<hotpatch::Patch
 }
 
 /// Locate the device-loadable original binary for the configured
-/// target. Tier 1 only supports targets that produce a
-/// `.so`/`.dylib` we can mmap and diff against; `Host` (which
-/// produces just an `.rlib` today) returns `Err` so the caller
-/// falls back to Tier 2.
-///
-/// Reads paths from `Config::android` / `Config::ios` rather than
+/// target. Both [`Target::Android`] and [`Target::IosSimulator`]
+/// produce a `.so` / `.dylib` we can mmap and diff against; reads
+/// the paths from `Config::android` / `Config::ios` rather than
 /// guessing — the cli populates these from the user's
 /// `whisker.rs::configure` output.
 fn original_binary_path(config: &Config) -> Result<PathBuf> {
     let crate_underscored = config.package.replace('-', "_");
     match config.target {
         Target::Android => {
-            // Read from cargo's workspace `target/<triple>/release/`
-            // dir, which is where `whisker-build android` (run inside
-            // gradle's `whiskerBuildDebugArm64V8a` task) deposits the
-            // freshly-cross-compiled .so. We deliberately don't reach
-            // into `gen/android/.../app/src/main/jniLibs/<abi>/` even
-            // though that path also exists after a successful gradle
-            // assemble — that file is a copy AGP made for jniLibs
-            // merging, and the symbol-loading order rustc uses pins
-            // its addresses to the canonical cargo output anyway.
+            // Read from the *gradle plugin's* output directory rather
+            // than from `<workspace>/target/<triple>/debug/`. Why:
+            // gradle's `WhiskerBuildTask` declares its `jniLibsDir`
+            // as an `@OutputDirectory` but the cargo target dir as
+            // `@Internal` (see
+            // `platforms/android/gradle-plugin/whisker-gradle-plugin/
+            // src/main/kotlin/rs/whisker/gradle/WhiskerBuildTask.kt`),
+            // which means gradle treats the jniLibs path as the
+            // ground-truth output it must guarantee, but happily
+            // skips the task when only the cargo target dir is
+            // missing. If the user runs `cargo clean` (or anything
+            // that nukes `target/<triple>/debug/`) between sessions
+            // gradle still reports UP-TO-DATE and the dev-server
+            // sees nothing under the workspace's target dir.
+            //
+            // Stage location: `whisker_build::android::stage_so_files`
+            // copies the freshly-built `.so` into the abi subdir of
+            // gradle's `@OutputDirectory`. The directory layout is
+            // `gen/android/app/build/generated/jniLibs/
+            //  whiskerBuild<Variant><AbiCamel>/<abi>/lib<pkg>.so`,
+            // where `<AbiCamel>` is the abi name with each `-`/`_`
+            // segment titlecased (`arm64-v8a` → `Arm64V8a`,
+            // `x86_64` → `X8664`) and `<Variant>` is the AGP build
+            // type ("Debug" for the dev loop).
             let android = config.android.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "target=Android but Config.android is None — cli should have populated it from whisker.rs"
                 )
             })?;
-            let triple = match android.abi.as_str() {
-                "arm64-v8a" => "aarch64-linux-android",
-                "armeabi-v7a" => "armv7-linux-androideabi",
-                "x86_64" => "x86_64-linux-android",
-                "x86" => "i686-linux-android",
-                other => anyhow::bail!("unknown Android ABI: {other}"),
-            };
             let so_name = format!("lib{crate_underscored}.so");
+            let abi_camel = android_abi_to_camel(&android.abi);
             let candidate = config
-                .workspace_root
-                .join("target")
-                .join(triple)
-                .join("release")
+                .crate_dir
+                .join("gen/android/app/build/generated/jniLibs")
+                .join(format!("whiskerBuildDebug{abi_camel}"))
+                .join(&android.abi)
                 .join(&so_name);
             if !candidate.is_file() {
                 anyhow::bail!(
-                    "no Android cdylib at {} — run `whisker build --target android` first",
+                    "no Android cdylib at {} — gradle's whiskerBuildDebug{abi_camel} task didn't produce its output (run `whisker run android` first)",
                     candidate.display(),
                 );
             }
             Ok(candidate)
-        }
-        Target::Host => {
-            anyhow::bail!(
-                "Tier 1 not supported for Host target yet \
-                 (the user crate is rlib-only — no patchable shared library)"
-            );
         }
         Target::IosSimulator => {
             // Use the single-arch dylib that cargo dropped directly,
@@ -758,6 +839,13 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
                 "x86_64" => "x86_64-apple-ios",
                 arch => anyhow::bail!("unsupported host arch {arch} for iOS Simulator target"),
             };
+            // xcodebuild's Build Phase Run Script (`whisker-build
+            // ios`) invokes cargo with `--release` (see
+            // `crates/whisker-build/src/ios.rs::cargo_build_ios_dylib`:
+            // the comment there spells out that iOS dev wants the
+            // same optimised codegen prod ships, so debug profile is
+            // deliberately not used). Android uses Debug; the two
+            // platforms can't share this path.
             let dylib = config
                 .workspace_root
                 .join("target")
@@ -767,9 +855,7 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
             if !dylib.is_file() {
                 anyhow::bail!(
                     "no iOS Simulator dylib at {} — \
-                     `whisker run --target ios` would have built it; \
-                     reaching this branch means the initial build was \
-                     skipped or failed",
+                     initial xcodebuild didn't drop the artifact where the dev loop expects it",
                     dylib.display(),
                 );
             }
@@ -778,11 +864,29 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
     }
 }
 
+/// Map an Android ABI name to the camel-cased form gradle's
+/// `WhiskerProjectPlugin` uses when synthesising
+/// `whiskerBuild<Variant><AbiCamel>` task names. Each `-` or `_`
+/// segment is titlecased and the parts are concatenated:
+/// `arm64-v8a` → `Arm64V8a`, `armeabi-v7a` → `ArmeabiV7a`,
+/// `x86_64` → `X8664`, `x86` → `X86`. Mirrors `String.toCamelCase()`
+/// in `WhiskerProjectPlugin.kt`.
+fn android_abi_to_camel(abi: &str) -> String {
+    abi.split(['-', '_'])
+        .map(|seg| {
+            let mut chars = seg.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
 fn target_os_for(target: Target) -> hotpatch::LinkerOs {
     match target {
         Target::Android => hotpatch::LinkerOs::Linux,
         Target::IosSimulator => hotpatch::LinkerOs::Macos,
-        Target::Host => hotpatch::linker_os_for_host(),
     }
 }
 
@@ -842,11 +946,11 @@ mod tests {
         let cfg = Config::defaults_for(
             PathBuf::from("/tmp/ws"),
             "hello-world".to_string(),
-            Target::Host,
+            Target::Android,
         );
         assert_eq!(cfg.workspace_root, Path::new("/tmp/ws"));
         assert_eq!(cfg.package, "hello-world");
-        assert_eq!(cfg.target, Target::Host);
+        assert_eq!(cfg.target, Target::Android);
         assert_eq!(cfg.bind_addr.port(), 9876);
         assert!(cfg.bind_addr.ip().is_loopback());
         assert_eq!(cfg.hot_patch_mode, HotPatchMode::Tier2ColdRebuild);
@@ -870,7 +974,7 @@ mod tests {
         let cfg = Config::defaults_for(
             PathBuf::from("/tmp/ws"),
             "hello-world".to_string(),
-            Target::Host,
+            Target::Android,
         );
         assert!(DevServer::new(cfg).is_ok());
     }
@@ -897,16 +1001,8 @@ mod tests {
                     device_override: None,
                 });
             }
-            Target::Host => {}
         }
         cfg
-    }
-
-    #[test]
-    fn original_binary_path_errors_for_host_target() {
-        let cfg = mk_config(PathBuf::from("/tmp/ws"), Target::Host);
-        let err = original_binary_path(&cfg).unwrap_err();
-        assert!(format!("{err:#}").contains("Host"), "got: {err:#}");
     }
 
     #[test]
@@ -942,19 +1038,27 @@ mod tests {
     }
 
     #[test]
-    fn original_binary_path_finds_android_so_under_cargo_target() {
-        // Reflects the post-#XXX layout: gradle's whiskerBuild*Android
-        // task drops the .so at `target/<triple>/release/` rather than
-        // the dev-server pre-staging into `app/src/main/jniLibs/`.
+    fn original_binary_path_finds_android_so_under_gradle_output() {
+        // Reads from the gradle plugin's `@OutputDirectory`, not from
+        // `target/<triple>/debug/` — the latter can be cleaned out by
+        // `cargo clean` while gradle still reports its task as
+        // UP-TO-DATE (the cargo target dir is `@Internal`, not an
+        // input). See `original_binary_path` for the rationale.
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let ws = std::env::temp_dir().join(format!("whisker-dev-test-orig-{pid}-{n}"));
         let _ = std::fs::remove_dir_all(&ws);
-        let release_dir = ws.join("target/aarch64-linux-android/release");
-        std::fs::create_dir_all(&release_dir).unwrap();
-        let so = release_dir.join("libhello_world.so");
+        // `mk_config` sets `crate_dir = ws` for Android, so the path
+        // the patcher checks is `<ws>/gen/android/app/build/generated/
+        // jniLibs/whiskerBuildDebug<AbiCamel>/<abi>/lib<pkg>.so`.
+        let gradle_out_dir = ws
+            .join("gen/android/app/build/generated/jniLibs")
+            .join("whiskerBuildDebugArm64V8a")
+            .join("arm64-v8a");
+        std::fs::create_dir_all(&gradle_out_dir).unwrap();
+        let so = gradle_out_dir.join("libhello_world.so");
         std::fs::write(&so, b"fake").unwrap();
 
         let cfg = mk_config(ws.clone(), Target::Android);
@@ -962,6 +1066,17 @@ mod tests {
         assert_eq!(resolved, so);
 
         let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn android_abi_to_camel_matches_gradle_plugin_naming() {
+        // Mirrors `WhiskerProjectPlugin.kt::String.toCamelCase`. The
+        // patcher's task-name suffix has to match exactly or the
+        // gradle output path won't resolve.
+        assert_eq!(android_abi_to_camel("arm64-v8a"), "Arm64V8a");
+        assert_eq!(android_abi_to_camel("armeabi-v7a"), "ArmeabiV7a");
+        assert_eq!(android_abi_to_camel("x86_64"), "X8664");
+        assert_eq!(android_abi_to_camel("x86"), "X86");
     }
 
     #[test]

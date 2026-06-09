@@ -79,8 +79,8 @@ enum Command {
     /// Scaffold a new Whisker app — single-crate workspace with
     /// `Cargo.toml`, a `#[whisker::main]` `src/lib.rs`, the
     /// `whisker.rs` `AppConfig` probe, `.gitignore`, and `README.md`.
-    /// The result compiles standalone; run `whisker run --target
-    /// host` from inside the new directory.
+    /// The result compiles standalone; run `whisker run android` or
+    /// `whisker run ios` from inside the new directory.
     New(new_app::NewAppArgs),
 }
 
@@ -126,19 +126,21 @@ mod tests {
             Command::Doctor(a) => {
                 assert!(!a.no_ios);
                 assert!(!a.no_android);
-                assert!(!a.no_lynx);
             }
             other => panic!("expected Doctor, got {other:?}"),
         }
     }
 
     #[test]
-    fn parses_run_with_defaults() {
-        let cli = parse(["whisker", "run"]).unwrap();
+    fn parses_run_with_only_target() {
+        // `target` is now required (no default), so the bare
+        // `whisker run` form is gone — supply a positional target
+        // and assert the rest of the args adopt their defaults.
+        let cli = parse(["whisker", "run", "android"]).unwrap();
         match cli.command {
             Command::Run(a) => {
                 assert!(a.manifest_path.is_none());
-                assert_eq!(a.target, run::CliTarget::Host);
+                assert_eq!(a.target, run::CliTarget::Android);
                 assert_eq!(a.bind.port(), 9876);
                 // Hot-patch is the dev default — opt out with --no-hot-patch.
                 assert!(!a.no_hot_patch);
@@ -149,13 +151,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_run_without_target_fails() {
+        // `whisker run` with no positional target is now an error
+        // (Host was the previous default and has been removed).
+        let res = parse(["whisker", "run"]);
+        assert!(res.is_err(), "expected clap error, got {res:?}");
+    }
+
+    #[test]
     fn parses_run_with_explicit_target_and_flags() {
+        // `target` moved from `--target <value>` to a positional
+        // argument (`whisker run android`) — clap accepts it in any
+        // position relative to the named flags, so the test mixes
+        // them deliberately.
         let cli = parse([
             "whisker",
             "run",
             "--manifest-path",
             "/tmp/my-app/Cargo.toml",
-            "--target",
             "android",
             "--bind",
             "0.0.0.0:1234",
@@ -178,12 +191,11 @@ mod tests {
 
     #[test]
     fn parses_doctor_skip_flags() {
-        let cli = parse(["whisker", "doctor", "--no-ios", "--no-lynx"]).unwrap();
+        let cli = parse(["whisker", "doctor", "--no-ios", "--no-android"]).unwrap();
         match cli.command {
             Command::Doctor(a) => {
                 assert!(a.no_ios);
-                assert!(!a.no_android);
-                assert!(a.no_lynx);
+                assert!(a.no_android);
             }
             other => panic!("expected Doctor, got {other:?}"),
         }

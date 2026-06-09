@@ -2285,6 +2285,7 @@ dependencies = [
  "crossterm",
  "ctrlc",
  "indicatif",
+ "libc",
  "ratatui",
  "serde",
  "serde_json",

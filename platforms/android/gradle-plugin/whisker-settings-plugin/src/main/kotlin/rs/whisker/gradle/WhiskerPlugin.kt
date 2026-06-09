@@ -67,7 +67,7 @@ class WhiskerPlugin : Plugin<Settings> {
                     "rs.whisker: workspace path baked into settings.gradle.kts no longer " +
                         "exists: $workspace. The project was likely moved or renamed " +
                         "after \\`whisker build\\` first generated gen/android. Re-run " +
-                        "\\`whisker build --target=android\\` from the (new) workspace root " +
+                        "\\`whisker build android\\` from the (new) workspace root " +
                         "to refresh the gen tree.",
                 )
             }
