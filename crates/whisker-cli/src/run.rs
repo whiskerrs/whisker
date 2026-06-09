@@ -184,26 +184,13 @@ fn run_inner(
     // `set_phase(Setup)` already fired from `run()` before we got
     // here, so re-issuing it would duplicate the "▶ Setup" entry in
     // scrollback.
-    // iOS only: populate `target/lynx-ios/` with the Lynx SDK
-    // download and create the workspace-relative symlinks the
-    // cng-generated SPM `Package.swift` points its `binaryTarget`s
-    // at. Without this, xcodebuild's package-resolution step (which
-    // runs *before* any Run Script Build Phase) fails with
     //
-    //     local binary target 'Lynx' at '…/target/lynx-ios/Lynx.xcframework'
-    //     does not contain a binary artifact.
-    //
-    // Android skips this entirely because gradle pulls the Lynx aar
-    // from the `whiskerrs.github.io/lynx/maven` repo transitively
-    // via the SDK pom; nothing in the workspace tree references a
-    // local Lynx artifact for Android. Host has no Lynx dependency
-    // at all (the driver dlopens it lazily).
-    if matches!(target, Target::IosSimulator) {
-        whisker_build::ensure_lynx_ios()
-            .context("populate target/lynx-ios with Lynx SDK XCFrameworks")?;
-        whisker_build::link_lynx_into_workspace(&workspace_root, whisker_build::LynxPlatform::Ios)
-            .context("link Lynx XCFrameworks into the workspace")?;
-    }
+    // No iOS Lynx pre-fetch: `platforms/ios/Package.swift` now uses
+    // `binaryTarget(url:checksum:)`, so xcodebuild resolves the four
+    // xcframeworks via SPM during package resolution. Android pulls
+    // its aar from `whiskerrs.github.io/lynx/maven` transitively via
+    // the SDK pom. Neither path needs the workspace `target/lynx-*`
+    // tree the cli used to stage here.
 
     let sync = crate::platforms::sync_for_target(
         target,

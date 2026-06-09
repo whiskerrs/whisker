@@ -112,7 +112,6 @@ fn cargo_build_ios_dylib(
     triple: &str,
     features: &[String],
     capture: Option<&CaptureShims>,
-    modules_env: &str,
     step: &crate::ui::Step,
 ) -> Result<()> {
     let mut cmd = Command::new("cargo");
@@ -133,11 +132,6 @@ fn cargo_build_ios_dylib(
     for sym in BRIDGE_EXPORTS {
         cmd.arg(format!("-Clink-arg=-Wl,-exported_symbol,{sym}"));
     }
-    // Hand the module-discovery output down to
-    // `whisker-driver-sys`'s build.rs. When empty, build.rs just
-    // skips the module loop — no behaviour change relative to the
-    // no-modules case.
-    cmd.env("WHISKER_IOS_MODULE_NATIVE_SOURCES", modules_env);
     if let Some(c) = capture {
         std::fs::create_dir_all(&c.rustc_cache_dir)
             .with_context(|| format!("create rustc cache dir {}", c.rustc_cache_dir.display()))?;
@@ -316,22 +310,6 @@ pub fn build_framework_for_xcode_run_script(
         ));
     }
 
-    // Same module discovery the xcframework path runs — pulls the
-    // `[package.metadata.whisker]` deps and stuffs their iOS native
-    // sources into `WHISKER_IOS_MODULE_NATIVE_SOURCES` so
-    // `whisker-driver-sys`'s build.rs folds them into the bridge cc
-    // build.
-    let workspace_manifest = inputs.workspace_root.join("Cargo.toml");
-    let modules =
-        crate::modules::discover(&workspace_manifest, inputs.package).with_context(|| {
-            format!(
-                "discover whisker modules for `{}` (workspace_manifest={})",
-                inputs.package,
-                workspace_manifest.display(),
-            )
-        })?;
-    let modules_env = crate::modules::ios_sources_env_value(&modules);
-
     let lib_stem = inputs.package.replace('-', "_");
     let cargo_dylib_name = format!("lib{lib_stem}.dylib");
 
@@ -346,7 +324,6 @@ pub fn build_framework_for_xcode_run_script(
             triple,
             inputs.features,
             None,
-            &modules_env,
             &s,
         )?;
         s.done("");
