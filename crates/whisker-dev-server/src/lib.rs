@@ -816,7 +816,7 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
                 .join(&so_name);
             if !candidate.is_file() {
                 anyhow::bail!(
-                    "no Android cdylib at {} — gradle's whiskerBuildDebug{abi_camel} task didn't produce its output (run `whisker run --target android` first)",
+                    "no Android cdylib at {} — gradle's whiskerBuildDebug{abi_camel} task didn't produce its output (run `whisker run android` first)",
                     candidate.display(),
                 );
             }

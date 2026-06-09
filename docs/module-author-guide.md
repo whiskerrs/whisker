@@ -338,9 +338,9 @@ fn app() -> Element {
 ```
 
 No separate `Podfile`, `Package.swift`, `build.gradle` change required
-in the consuming app. `whisker run --target ios` / `--target android`
-picks up the new dep automatically through cargo metadata + the
-host-project staging step.
+in the consuming app. `whisker run ios` / `whisker run android` picks
+up the new dep automatically through cargo metadata + the host-project
+staging step.
 
 ## Directory layout reference
 

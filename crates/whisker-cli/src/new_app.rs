@@ -98,9 +98,9 @@ pub fn run(args: NewAppArgs) -> Result<()> {
          \n\
          Next steps:\n  \
          1. cd {}\n  \
-         2. whisker run --target host     # fastest iteration; no device needed\n  \
-         3. whisker run --target ios      # requires Xcode + iOS simulator\n  \
-         4. whisker run --target android  # requires Android SDK + emulator\n  \
+         2. whisker run host     # fastest iteration; no device needed\n  \
+         3. whisker run ios      # requires Xcode + iOS simulator\n  \
+         4. whisker run android  # requires Android SDK + emulator\n  \
          \n\
          Run `whisker doctor` first to verify your toolchain.",
         target_dir.display(),
@@ -258,13 +258,13 @@ A [Whisker](https://github.com/whiskerrs/whisker) app.
 
 ```sh
 # Fastest iteration — no emulator / simulator required.
-whisker run --target host
+whisker run host
 
 # On an iOS Simulator (macOS only).
-whisker run --target ios
+whisker run ios
 
 # On an Android device or emulator.
-whisker run --target android
+whisker run android
 ```
 
 Run `whisker doctor` first to verify your toolchain is set up for each
@@ -284,8 +284,8 @@ project.
 ## Build for release
 
 ```sh
-whisker build --target ios-sim   # .app for the simulator
-whisker build --target android   # release .apk
+whisker build ios-sim   # .app for the simulator
+whisker build android   # release .apk
 ```
 "##,
         display = v.display_name,

@@ -79,8 +79,8 @@ enum Command {
     /// Scaffold a new Whisker app — single-crate workspace with
     /// `Cargo.toml`, a `#[whisker::main]` `src/lib.rs`, the
     /// `whisker.rs` `AppConfig` probe, `.gitignore`, and `README.md`.
-    /// The result compiles standalone; run `whisker run --target
-    /// host` from inside the new directory.
+    /// The result compiles standalone; run `whisker run host` from
+    /// inside the new directory.
     New(new_app::NewAppArgs),
 }
 
@@ -150,12 +150,15 @@ mod tests {
 
     #[test]
     fn parses_run_with_explicit_target_and_flags() {
+        // `target` moved from `--target <value>` to a positional
+        // argument (`whisker run android`) — clap accepts it in any
+        // position relative to the named flags, so the test mixes
+        // them deliberately.
         let cli = parse([
             "whisker",
             "run",
             "--manifest-path",
             "/tmp/my-app/Cargo.toml",
-            "--target",
             "android",
             "--bind",
             "0.0.0.0:1234",

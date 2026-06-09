@@ -25,8 +25,13 @@ pub struct Args {
     #[arg(long)]
     pub manifest_path: Option<PathBuf>,
 
-    /// Where to deploy the rebuilt artifact.
-    #[arg(long, value_enum, default_value_t = CliTarget::Host)]
+    /// Where to deploy the rebuilt artifact. Positional so the
+    /// common case (`whisker run android` / `whisker run ios`) reads
+    /// naturally without a `--target=` prefix. Defaults to `host`,
+    /// which compiles the user crate for the dev machine — useful
+    /// for unit-test-style iteration without an emulator/simulator
+    /// up.
+    #[arg(value_enum, default_value_t = CliTarget::Host)]
     pub target: CliTarget,
 
     /// WebSocket bind address. The Whisker app on the device dials this
@@ -421,7 +426,7 @@ fn android_params_from(
         .or_else(|| m.config.bundle_id.clone())
         .ok_or_else(|| {
             anyhow!(
-                "whisker.rs: app.android(|a| a.application_id(\"…\")) is required for --target android"
+                "whisker.rs: app.android(|a| a.application_id(\"…\")) is required for the android target"
             )
         })?;
     let launcher_activity = a
@@ -448,7 +453,7 @@ fn ios_params_from(m: &manifest::ResolvedManifest, project_dir: &Path) -> Result
         .or_else(|| m.config.bundle_id.clone())
         .ok_or_else(|| {
             anyhow!(
-                "whisker.rs: app.ios(|i| i.bundle_id(\"…\")) or app.bundle_id(\"…\") is required for --target ios"
+                "whisker.rs: app.ios(|i| i.bundle_id(\"…\")) or app.bundle_id(\"…\") is required for the ios target"
             )
         })?;
     let scheme = i
@@ -457,7 +462,7 @@ fn ios_params_from(m: &manifest::ResolvedManifest, project_dir: &Path) -> Result
         .or_else(|| m.config.name.clone())
         .ok_or_else(|| {
             anyhow!(
-                "whisker.rs: app.ios(|i| i.scheme(\"…\")) or app.name(\"…\") is required for --target ios"
+                "whisker.rs: app.ios(|i| i.scheme(\"…\")) or app.name(\"…\") is required for the ios target"
             )
         })?;
     Ok(IosParams {
