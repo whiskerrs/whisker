@@ -247,12 +247,12 @@ enum SimctlNoise {
     /// fires when the sim is already up, which is the normal case
     /// after the first `whisker run`.
     Boot,
-    /// `xcrun simctl terminate` — "found nothing to terminate" fires
-    /// on the very first run before the app exists in the sim.
-    Terminate,
     /// `xcrun simctl install` / `launch` — generally low-noise but
     /// can emit POSIX prefixes; treat anything matching the known
-    /// boilerplate as suppressed.
+    /// boilerplate as suppressed. `simctl launch
+    /// --terminate-running-process` is also routed through here
+    /// (the previous separate `simctl terminate` step was rolled
+    /// into the launch flag — see `ios_install_and_launch`).
     Other,
     /// `xcodebuild` — `[MT] IDERunDestination`, the date-time
     /// preamble lines, and the post-build "xcframework written"
@@ -273,18 +273,6 @@ impl SimctlNoise {
             SimctlNoise::Boot => {
                 line.contains("Unable to boot device in current state: Booted")
                     || line.starts_with("(code=405)")
-            }
-            SimctlNoise::Terminate => {
-                line.contains("found nothing to terminate")
-                    || line.contains("(domain=NSPOSIXErrorDomain, code=3)")
-                    // Fires on every first launch — the dev loop
-                    // terminates the previous run before relaunching
-                    // so the runtime re-bootstraps, but on a cold
-                    // start the previous run never existed and
-                    // simctl emits this benign warning. Filtered
-                    // here instead of upstream so a real "couldn't
-                    // kill a stuck process" is still surfaced.
-                    || line.contains("Simulator device failed to terminate")
             }
             SimctlNoise::Other => false,
             SimctlNoise::Xcodebuild => is_benign_xcodebuild_line(line),
@@ -469,19 +457,29 @@ async fn ios_install_and_launch(
     }
     install_step.done("");
 
-    // Force the previous run to die so the relaunch re-bootstraps the
-    // runtime + reconnects the dev WebSocket. Errors here are benign
-    // (first launch — nothing running yet).
-    let mut term_cmd = Command::new("xcrun");
-    term_cmd.args(["simctl", "terminate", "booted", &p.bundle_id]);
-    let _ = run_filtered(term_cmd, SimctlNoise::Terminate).await;
-
     // `SIMCTL_CHILD_<NAME>` shows up as `<NAME>` inside the launched
     // app's env — that's how the dev-runtime finds us.
+    //
+    // `--terminate-running-process` makes simctl atomically kill the
+    // previous instance (so the runtime re-bootstraps + reconnects
+    // the dev WebSocket) and immediately launch the fresh build. We
+    // used to do this as two steps — `simctl terminate` followed by
+    // `simctl launch` — but the terminate call emits
+    // `Simulator device failed to terminate <bundle>.` to stderr
+    // whenever the app exists on the simulator but isn't actually
+    // running (which is every cold start, and also the "user
+    // backgrounded the app between rebuilds" case). The flag bundles
+    // both operations and handles the not-running case silently.
     let launch_step = whisker_build::ui::step("launch", p.bundle_id.clone());
     let mut launch_cmd = Command::new("xcrun");
     launch_cmd
-        .args(["simctl", "launch", "booted", &p.bundle_id])
+        .args([
+            "simctl",
+            "launch",
+            "--terminate-running-process",
+            "booted",
+            &p.bundle_id,
+        ])
         .env("SIMCTL_CHILD_WHISKER_DEV_ADDR", "127.0.0.1:9876");
     let launch = run_filtered(launch_cmd, SimctlNoise::Other)
         .await

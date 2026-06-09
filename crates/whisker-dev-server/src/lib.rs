@@ -347,7 +347,15 @@ impl DevServer {
 
         // Now bind the WS so `install_and_launch` (next) has
         // somewhere for the device's `whisker-dev-runtime` to dial.
-        whisker_build::ui::section("dev server");
+        // `whisker_build::ui::section("dev server")` used to live
+        // here as a visual divider between the cargo build and the
+        // device install/launch. The TUI's live region already
+        // surfaces the ws addr + client count, so the section
+        // header was a redundant row of dashes. `ensure_status` /
+        // `set_status` are no-ops in TUI mode (see
+        // `whisker_build::ui::set_status`); we keep them for the
+        // `--no-tui` and CI paths where the legacy status surface
+        // is still the only signal.
         whisker_build::ui::ensure_status("dev-server");
         let (sender, bound, _server_handle) =
             server::serve(self.config.bind_addr, self.on_event.clone()).await?;

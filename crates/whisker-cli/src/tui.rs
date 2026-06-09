@@ -180,8 +180,12 @@ impl LiveState {
     }
 }
 
-/// One entry the render thread will push into the terminal's
-/// scrollback via [`Terminal::insert_before`].
+/// One message the render thread receives from upstream producers
+/// (cli code, dev-server events, and the stderr capture thread).
+/// Most variants paint a row into the terminal's scrollback via
+/// [`Terminal::insert_before`]; the `SetCurrentStep` variant is the
+/// exception — it only mutates [`LiveState::current_step`] so the
+/// inline live region can show a spinner during the next frame.
 #[derive(Debug, Clone)]
 pub enum HistoryItem {
     /// Phase-transition heading: "▶ Initial build".
@@ -205,6 +209,15 @@ pub enum HistoryItem {
     DeviceLog { stream: String, line: String },
     /// One-shot failure description for the scrollback.
     Failure(String),
+    /// Update the live region's `current_step` field. `Some(label)`
+    /// makes the spinner visible with the given label; `None`
+    /// hides it. Synthesised by the stderr capture thread when it
+    /// sees `whisker_build::ui::TUI_STEP_START_MARKER` /
+    /// `TUI_STEP_END_MARKER` — those markers let the dev-server's
+    /// `ui::step` calls drive the live spinner without committing
+    /// a "⏵ started" row that would later double-up with the
+    /// matching "✓ done" row in scrollback.
+    SetCurrentStep(Option<String>),
 }
 
 // ============================================================================
@@ -246,15 +259,18 @@ pub fn apply_event(
         Event::BuildSucceeded => {
             if let AppPhase::Building { started_at, kind } = &state.phase {
                 let elapsed = started_at.elapsed();
-                let label = match kind {
-                    BuildKind::Initial => "Initial build",
-                    BuildKind::Rebuild => "Rebuild",
-                };
-                history.push(HistoryItem::PhaseDone {
-                    label: label.into(),
-                    status: StepStatus::Done,
-                    elapsed,
-                });
+                // Don't emit a `HistoryItem::PhaseDone` summary for
+                // builds. On iOS the `Event::BuildSucceeded` fires
+                // after `builder.build()` (= staging Swift sources,
+                // ~100ms); the *actual* cargo + xcodebuild work
+                // happens later inside `installer.install_and_launch`
+                // and gets its own `✓ xcodebuild Podcast … XX.Xs`
+                // row via `whisker_build::ui::step`. The Build
+                // section is already delimited by
+                // `──── Initial build ────` plus the in-line step
+                // rows, so an aggregate "✓ Initial build XXms"
+                // line either misleads (iOS) or duplicates the
+                // section header (Android / Host).
                 state.last_build = Some(format!(
                     "{} · {}",
                     if matches!(kind, BuildKind::Initial) {
@@ -542,6 +558,14 @@ impl Tui {
     fn drain_history_into_scrollback(&mut self) -> Result<()> {
         loop {
             match self.rx.try_recv() {
+                Ok(HistoryItem::SetCurrentStep(label)) => {
+                    // Live-region-only update: don't `insert_before`,
+                    // just mutate the shared `LiveState` so the next
+                    // frame picks up the new spinner label.
+                    if let Ok(mut s) = self.live.lock() {
+                        s.current_step = label;
+                    }
+                }
                 Ok(item) => {
                     let lines = render_history_item(&item);
                     let height = lines.len().min(u16::MAX as usize) as u16;
@@ -694,6 +718,26 @@ fn capture_reader_loop(read_fd: c_int, tx: Sender<HistoryItem>) {
                 Ok(s) => s,
                 Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
             };
+            // Step markers are detected *before* `strip_ansi`, which
+            // drops C0 control bytes including the `\x1e` (RS) that
+            // frames our markers. The marker prefix is identical to
+            // `whisker_build::ui::TUI_STEP_*_MARKER`; we duplicate
+            // the constants as literals here to avoid pulling the
+            // `whisker-build` crate into a tighter ABI contract over
+            // an internal protocol.
+            if let Some(rest) = text.strip_prefix("\x1eWHISKER-TUI-STEP-START\x1e") {
+                let label = rest.replace('\x1e', " ").trim().to_string();
+                if !label.is_empty() && tx.send(HistoryItem::SetCurrentStep(Some(label))).is_err() {
+                    return;
+                }
+                continue;
+            }
+            if text == "\x1eWHISKER-TUI-STEP-END" {
+                if tx.send(HistoryItem::SetCurrentStep(None)).is_err() {
+                    return;
+                }
+                continue;
+            }
             let text = strip_ansi(&text);
             if !text.is_empty() && tx.send(HistoryItem::CapturedStderr(text)).is_err() {
                 return;
@@ -824,9 +868,25 @@ fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>>
         Span::raw(state.bundle.clone()),
         Span::styled(" · ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            phase_label(&state.phase),
+            // When a step is in flight (e.g. `xcodebuild` inside
+            // `installer.install_and_launch`, which fires after
+            // `Event::BuildSucceeded` has already moved the phase to
+            // `Idle`), show "running" instead of the underlying
+            // phase so the header doesn't say "idle" while a
+            // spinner is plainly active.
+            if state.current_step.is_some() && matches!(state.phase, AppPhase::Idle) {
+                "running".to_string()
+            } else {
+                phase_label(&state.phase)
+            },
             Style::default()
-                .fg(phase_color(&state.phase))
+                .fg(
+                    if state.current_step.is_some() && matches!(state.phase, AppPhase::Idle) {
+                        Color::Yellow
+                    } else {
+                        phase_color(&state.phase)
+                    },
+                )
                 .add_modifier(Modifier::BOLD),
         ),
     ];
@@ -981,6 +1041,11 @@ fn render_history_item(item: &HistoryItem) -> Vec<Line<'static>> {
             ),
             Span::styled(reason.clone(), Style::default().fg(Color::Red)),
         ])],
+        HistoryItem::SetCurrentStep(_) => {
+            // Live-region-only; consumed by
+            // `drain_history_into_scrollback` before reaching here.
+            Vec::new()
+        }
     }
 }
 
@@ -1075,7 +1140,11 @@ mod tests {
         let done = drain(&mut st, &Event::BuildSucceeded);
         assert!(matches!(st.phase, AppPhase::Idle));
         assert!(st.last_build.is_some());
-        assert!(matches!(done[0], HistoryItem::PhaseDone { .. }));
+        // BuildSucceeded no longer emits a `PhaseDone` summary —
+        // the section header + per-step rows in scrollback are
+        // enough. `last_build` is the only state mutation we care
+        // about here, plus the phase transition above.
+        assert!(done.is_empty());
     }
 
     #[test]

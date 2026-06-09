@@ -357,10 +357,28 @@ impl Step {
             );
             bar.finish_with_message(line);
         } else {
+            // Tui + non-TTY Curated both fall through here. In TUI
+            // mode, also emit the matching END marker so the cli
+            // clears the live-region's `current_step` field — see
+            // the START marker emitted in `step()` above.
+            if matches!(mode(), Mode::Tui) {
+                eprintln!("{TUI_STEP_END_MARKER}");
+            }
             eprintln!("{line}");
         }
     }
 }
+
+/// Marker prefix the cli's capture thread looks for to learn that a
+/// step has *started*. Followed by `\x1e<name>\x1e<detail>` and a
+/// newline — i.e. one line per START. The `\x1e` (ASCII RS, "record
+/// separator") is deliberately non-printable so it can't collide
+/// with legitimate user output. See
+/// `whisker_cli::tui::capture_reader_loop`.
+pub const TUI_STEP_START_MARKER: &str = "\x1eWHISKER-TUI-STEP-START";
+/// Marker the cli's capture thread looks for to learn that the
+/// active step has *finished*. One token per line, no payload.
+pub const TUI_STEP_END_MARKER: &str = "\x1eWHISKER-TUI-STEP-END";
 
 /// Read `stream` line-by-line, classifying each line into one of
 /// three buckets:
@@ -600,8 +618,18 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             // `finish()`, doubling the row count — there's no
             // overwrite mechanism for already-committed scrollback
             // lines (unlike indicatif's spinner in Curated mode).
-            // Defer all output to `finish()` so each step occupies
-            // exactly one row.
+            //
+            // Instead, emit a structured marker on stderr that
+            // whisker-cli's capture thread recognises and routes
+            // into the live region's `current_step` field, so the
+            // user sees an animated spinner during long steps
+            // (`xcodebuild`, `gradle :app:assembleDebug`, etc.)
+            // without that label entering scrollback. `finish()`
+            // emits a matching END marker plus the regular
+            // `✓ <name> <detail> <elapsed>` line that DOES enter
+            // scrollback. See `whisker_cli::tui::capture_reader_loop`
+            // for the consuming side.
+            eprintln!("{TUI_STEP_START_MARKER}\x1e{name}\x1e{detail}");
             Step {
                 bar: None,
                 started_at,
