@@ -605,6 +605,20 @@ impl Tui {
         // to the shell.
         let _ = self.terminal.clear();
         let _ = self.terminal.show_cursor();
+        // Force the cursor to column 0 of a fresh row before we
+        // hand the terminal back. `terminal.clear()` *should* leave
+        // the cursor at the viewport's top-left, but if the user
+        // hit `Ctrl-C` and the libc signal beat our `KeyEvent`
+        // handler to the punch, the in-flight render's last
+        // `\x1b[<row>;<col>H` is the position the shell's PS1
+        // inherits — and the visible symptom is a prompt that
+        // starts at column ~113 instead of 0. `\r` re-aligns,
+        // `\n` drops the prompt onto a brand-new row below the
+        // (now-blank) live region. Both bytes go through the saved
+        // stderr fd so they reach the real terminal even while
+        // STDERR_FILENO is still pointing at the capture pipe.
+        let mut original = OriginalStderr(self.saved_stderr_fd);
+        let _ = original.write_all(b"\r\n");
         let _ = disable_raw_mode();
         // Restore STDERR_FILENO to the saved fd so callers can
         // continue to `eprintln!` after the TUI is gone; close the
@@ -751,6 +765,11 @@ fn strip_ansi(s: &str) -> String {
 fn emergency_terminal_reset(original_stderr_fd: c_int) {
     let mut o = OriginalStderr(original_stderr_fd);
     let _ = o.execute(cursor::Show);
+    // Mirror `Tui::shutdown`'s cursor reset (see the comment
+    // there): without `\r\n` after `cursor::Show`, the shell
+    // prompt that takes over on `process::exit(130)` starts at
+    // whatever column the last live-region draw left the cursor.
+    let _ = o.write_all(b"\r\n");
     let _ = disable_raw_mode();
 }
 

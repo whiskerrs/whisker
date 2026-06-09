@@ -277,6 +277,14 @@ impl SimctlNoise {
             SimctlNoise::Terminate => {
                 line.contains("found nothing to terminate")
                     || line.contains("(domain=NSPOSIXErrorDomain, code=3)")
+                    // Fires on every first launch — the dev loop
+                    // terminates the previous run before relaunching
+                    // so the runtime re-bootstraps, but on a cold
+                    // start the previous run never existed and
+                    // simctl emits this benign warning. Filtered
+                    // here instead of upstream so a real "couldn't
+                    // kill a stuck process" is still surfaced.
+                    || line.contains("Simulator device failed to terminate")
             }
             SimctlNoise::Other => false,
             SimctlNoise::Xcodebuild => is_benign_xcodebuild_line(line),

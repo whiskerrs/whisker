@@ -162,6 +162,11 @@ static LAST_STATUS: Mutex<Option<String>> = Mutex::new(None);
 /// in `whisker-dev-server` use it as a sentinel that says "you're
 /// allowed to call `set_status` after this point".
 pub fn ensure_status(_label: impl Into<String>) {
+    if matches!(mode(), Mode::Tui) {
+        // Live region carries the same data — no-op the legacy
+        // status surface to avoid double-displaying it.
+        return;
+    }
     if let Ok(mut guard) = LAST_STATUS.lock() {
         *guard = Some(String::new());
     }
@@ -171,7 +176,17 @@ pub fn ensure_status(_label: impl Into<String>) {
 /// emission so back-to-back `set_status("X")` calls don't double-
 /// print the same content. The line goes through `info()` so it
 /// shares the `· <msg>` visual style with other one-shot lines.
+///
+/// In TUI mode this is a no-op: `whisker-cli`'s live region at the
+/// bottom of the terminal already renders the ws addr and the
+/// client count (via the dev-server's `Event::ClientConnected /
+/// Disconnected` stream), so emitting the legacy `· dev-server · …`
+/// line just duplicates the same information one row above the
+/// pinned status panel.
 pub fn set_status(msg: impl Into<String>) {
+    if matches!(mode(), Mode::Tui) {
+        return;
+    }
     let m = msg.into();
     let m_for_dedupe = m.clone();
     if let Ok(mut guard) = LAST_STATUS.lock() {
@@ -185,8 +200,12 @@ pub fn set_status(msg: impl Into<String>) {
 
 /// Emit a final dev-server status line on shutdown. Same code path
 /// as `set_status` minus the dedupe (we want the goodbye visible
-/// even if it matches the previous status).
+/// even if it matches the previous status). Also no-ops in TUI
+/// mode — the live region disappearing IS the goodbye.
 pub fn finish_status(final_msg: impl Into<String>) {
+    if matches!(mode(), Mode::Tui) {
+        return;
+    }
     info(format!("dev-server · {}", final_msg.into()));
 }
 
