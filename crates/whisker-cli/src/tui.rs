@@ -873,14 +873,18 @@ fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>>
         lines.push(Line::from(""));
     }
 
-    // Spacer + footer hint.
+    // Spacer + footer hint. The key chip uses `White` (not `Black`)
+    // on the dark-gray background so it stays legible in
+    // dark-themed terminals where ANSI color 0 (`Color::Black`)
+    // resolves to the terminal's *background* hue and visually
+    // disappears against the chip's fill.
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::raw(" "),
         Span::styled(
             " q ",
             Style::default()
-                .fg(Color::Black)
+                .fg(Color::White)
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         ),
