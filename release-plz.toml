@@ -1,0 +1,27 @@
+# release-plz workspace-wide configuration.
+#
+# Defaults handle most of what we want — this file only overrides
+# behaviour that needs to diverge for Whisker. See
+# https://release-plz.dev/docs/config for the full schema.
+
+[workspace]
+# Single source of truth for the next version: when release-plz bumps
+# `[workspace.package] version` in the root `Cargo.toml`, every crate
+# that uses `version.workspace = true` (i.e. all of `crates/*` except
+# `whisker-subsecond`, plus all of `packages/*`) follows along. The
+# fork crate `whisker-subsecond` pins its own `version = "0.7.x"` and
+# is bumped independently when commits touch `crates/whisker-subsecond/`.
+dependencies_update = true
+# Generate `CHANGELOG.md` per crate from conventional-commit history.
+# git-cliff defaults map: `feat:` → minor, `fix:`/`refactor:`/`perf:` →
+# patch, trailing `!` or `BREAKING CHANGE:` footer → major.
+changelog_update = true
+# Don't open an empty release PR when nothing has landed since the
+# last release — keeps the "PR appears when there's something to
+# release" signal honest.
+release_always = false
+# Per-crate git tag (`<crate>-v<version>`) + GitHub release populated
+# from the changelog. Useful for browsing release history per crate
+# on the GitHub UI.
+git_tag_enable = true
+git_release_enable = true
