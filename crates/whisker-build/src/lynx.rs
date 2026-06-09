@@ -387,7 +387,15 @@ pub fn link_into_workspace(workspace_root: &Path, platform: LynxPlatform) -> Res
             )?;
         }
         LynxPlatform::Ios => {
-            relink(&target.join("lynx-ios"), &cache)?;
+            // No `target/lynx-ios` symlink anymore. The four xcframeworks
+            // are resolved by SPM via remote `binaryTarget(url:checksum:)`
+            // in `platforms/ios/Package.swift`, so xcodebuild gets them
+            // from the SPM cache without needing the workspace-relative
+            // path the old `binaryTarget(path:)` form required. The
+            // `lynx-headers` symlink below is still set up because
+            // `whisker-driver-sys`'s cargo build reads PrimJS C++
+            // headers out of the tarball cache — that consumer is in
+            // line for a follow-up that frees it from PrimJS entirely.
         }
     }
     let headers = cache.join("headers");

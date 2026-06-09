@@ -5,9 +5,17 @@ import PackageDescription
 // composes:
 //
 //   Lynx*.xcframework       — Lynx engine + PrimJS, dynamic frameworks
-//                             fetched at SPM resolve time from the
-//                             monorepo-local `target/lynx-ios/` cache
-//                             (`whisker-build` ensures it exists).
+//                             resolved by SPM via remote
+//                             `binaryTarget(url:checksum:)` against
+//                             whiskerrs/lynx's GitHub Releases. SPM
+//                             caches them under the Xcode-managed
+//                             SourcePackages dir; no local `target/`
+//                             pre-population is required for the
+//                             binaries themselves. The PrimJS public
+//                             headers are still staged out of the
+//                             tarball cache for `whisker-driver-sys`'s
+//                             cargo build until that consumer is
+//                             refactored.
 //   WhiskerCBridge          — header-only systemLibrary exposing the
 //                             Whisker C ABI declarations. The actual
 //                             implementation lives in
@@ -70,23 +78,44 @@ let package = Package(
         .library(name: "PrimJS", targets: ["PrimJS"]),
     ],
     targets: [
-        // Lynx engine + dependencies, as xcframeworks built from upstream
-        // CocoaPods source via `cargo xtask ios build-lynx-frameworks`.
+        // Lynx engine + dependencies, as xcframeworks built from the
+        // whiskerrs/lynx fork and published per release alongside the
+        // legacy tarball. Each archive's SwiftPM-format checksum lives
+        // in the matching release's `swiftpm-manifest-<ver>.txt`
+        // (https://github.com/whiskerrs/lynx/releases). Bumping the
+        // pinned tag means refreshing both the URL `<ver>` segment AND
+        // the corresponding `checksum:` here — keep them in lockstep.
+        //
+        // SPM resolves these during xcodebuild's package-resolution
+        // step (before any Build Phase runs), caches the unpacked
+        // xcframeworks under the user's per-Xcode-project SourcePackages
+        // dir, and shares them across every WhiskerRuntime consumer.
+        // The previous `binaryTarget(path:)` form required the cli to
+        // pre-populate `target/lynx-ios/*.xcframework` via
+        // `ensure_lynx_ios` + `link_lynx_into_workspace(Ios)` before
+        // xcodebuild started — that prerequisite no longer applies for
+        // the binaries themselves (PrimJS *headers* are still staged
+        // by `whisker-driver-sys`'s build.rs out of `target/lynx-headers`
+        // until the matching module-side refactor lands).
         .binaryTarget(
             name: "Lynx",
-            path: "../../target/lynx-ios/Lynx.xcframework"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.6/Lynx-3.8.0-whisker.6.xcframework.zip",
+            checksum: "a467fceb0bd6b0318c80fcc93fe9b14e26f268dc6b2b9e06bf0365f50cb76fc5"
         ),
         .binaryTarget(
             name: "LynxBase",
-            path: "../../target/lynx-ios/LynxBase.xcframework"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.6/LynxBase-3.8.0-whisker.6.xcframework.zip",
+            checksum: "309dd1e544a4cd035b71e1c786532e7344653c470d7206fbb28e1493b7f8e36e"
         ),
         .binaryTarget(
             name: "LynxServiceAPI",
-            path: "../../target/lynx-ios/LynxServiceAPI.xcframework"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.6/LynxServiceAPI-3.8.0-whisker.6.xcframework.zip",
+            checksum: "59bc9fcf07704d288de63b78ec1717fa81ade0af1cacea2f3712b57a220cb92f"
         ),
         .binaryTarget(
             name: "PrimJS",
-            path: "../../target/lynx-ios/PrimJS.xcframework"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.6/PrimJS-3.8.0-whisker.6.xcframework.zip",
+            checksum: "a7069cd487834f96af28a335da049220b61317b0448768f040c171224f891651"
         ),
 
         // Phase J — minimal module-author surface. Carved out of the
