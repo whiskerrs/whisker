@@ -126,7 +126,6 @@ mod tests {
             Command::Doctor(a) => {
                 assert!(!a.no_ios);
                 assert!(!a.no_android);
-                assert!(!a.no_lynx);
             }
             other => panic!("expected Doctor, got {other:?}"),
         }
@@ -192,12 +191,11 @@ mod tests {
 
     #[test]
     fn parses_doctor_skip_flags() {
-        let cli = parse(["whisker", "doctor", "--no-ios", "--no-lynx"]).unwrap();
+        let cli = parse(["whisker", "doctor", "--no-ios", "--no-android"]).unwrap();
         match cli.command {
             Command::Doctor(a) => {
                 assert!(a.no_ios);
-                assert!(!a.no_android);
-                assert!(a.no_lynx);
+                assert!(a.no_android);
             }
             other => panic!("expected Doctor, got {other:?}"),
         }

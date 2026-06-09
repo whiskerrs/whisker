@@ -15,7 +15,7 @@
 
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -27,9 +27,6 @@ pub struct Args {
     /// Skip the Android section.
     #[arg(long)]
     pub no_android: bool,
-    /// Skip the Lynx-artifact section.
-    #[arg(long)]
-    pub no_lynx: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -45,9 +42,15 @@ pub fn run(args: Args) -> Result<()> {
     if !args.no_ios {
         report.add_section("iOS", check_ios);
     }
-    if !args.no_lynx {
-        report.add_section("Lynx artifacts", check_lynx);
-    }
+
+    // No Lynx section: Android pulls the Lynx aar from gradle's
+    // `whiskerrs.github.io/lynx/maven` repository (no local cache
+    // ever touched by the doctor), and iOS auto-downloads the
+    // xcframeworks into `~/.cache/whisker/lynx/<version>/ios` the
+    // first time `whisker run ios` / `whisker build ios-sim` needs
+    // them. Pre-checking either was busywork — the cache is a
+    // build-time concern, not a "is this dev machine ready"
+    // concern.
 
     report.print_summary();
     if report.has_errors() {
@@ -398,138 +401,6 @@ fn check_ios() -> Vec<Check> {
     out
 }
 
-// ----- Lynx artifacts (user-cache) -------------------------------------------
-
-fn check_lynx() -> Vec<Check> {
-    let mut out = Vec::new();
-
-    // Pinned version + source.
-    out.push(Check::ok(
-        "Pinned Lynx fork",
-        format!("{} (from whiskerrs/lynx)", whisker_build::LYNX_FORK_TAG,),
-    ));
-
-    // Override status.
-    if let Some(dir) = std::env::var_os("WHISKER_LYNX_DIR") {
-        let p = PathBuf::from(&dir);
-        out.push(Check::ok("WHISKER_LYNX_DIR override", short_path(&p)));
-    }
-
-    // Per-platform cache state.
-    for (label, platform, sentinel) in [
-        (
-            "Android cache",
-            whisker_build::LynxPlatform::Android,
-            "LynxAndroid.aar",
-        ),
-        (
-            "iOS cache",
-            whisker_build::LynxPlatform::Ios,
-            "Lynx.xcframework",
-        ),
-    ] {
-        match whisker_build::lynx_cache_dir(platform) {
-            Ok(dir) if dir.join(sentinel).exists() => {
-                out.push(Check::ok(label, format!("cached at {}", short_path(&dir))));
-            }
-            Ok(dir) => {
-                out.push(Check::warn(
-                    label,
-                    format!(
-                        "not cached — will be downloaded on next `whisker run/build` (would land at {})",
-                        short_path(&dir),
-                    ),
-                ));
-            }
-            Err(e) => {
-                out.push(Check::warn(
-                    label,
-                    format!("cache path unresolvable: {e:#}"),
-                ));
-            }
-        }
-    }
-
-    // Workspace symlinks (created by ensure_lynx_for_target). Useful
-    // sanity check for "did my last whisker run / build sync the
-    // symlinks?" — if they're stale, the next invocation rebuilds.
-    if let Some(ws) = workspace_root() {
-        let target = ws.join("target");
-        for (label, name) in [
-            ("Android jniLibs symlink", "lynx-android-unpacked"),
-            ("Android AAR symlink", "lynx-android"),
-            ("iOS xcframeworks symlink", "lynx-ios"),
-            ("Lynx headers symlink", "lynx-headers"),
-        ] {
-            let path = target.join(name);
-            match std::fs::symlink_metadata(&path) {
-                Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(&path) {
-                    Ok(dest) => out.push(Check::ok(label, format!("→ {}", short_path(&dest)))),
-                    Err(_) => out.push(Check::warn(label, "broken symlink".to_string())),
-                },
-                Ok(_) => {
-                    out.push(Check::warn(
-                        label,
-                        format!(
-                            "{} exists but isn't a symlink — `rm -rf` it to let \
-                             `whisker run/build` recreate the link",
-                            short_path(&path),
-                        ),
-                    ));
-                }
-                Err(_) => {
-                    // Missing is fine pre-first-run; whisker run/build creates it.
-                }
-            }
-        }
-    }
-
-    out
-}
-
-fn short_path(p: &Path) -> String {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    short_path_with_home(p, home.as_deref())
-}
-
-/// Pure-function core of [`short_path`]: replace a leading `home` prefix
-/// with `~`. Factored out so unit tests don't have to mutate `$HOME`.
-fn short_path_with_home(p: &Path, home: Option<&Path>) -> String {
-    if let Some(home) = home {
-        if let Ok(rest) = p.strip_prefix(home) {
-            return format!("~/{}", rest.display());
-        }
-    }
-    p.display().to_string()
-}
-
-/// Best-effort workspace root: walk up from CWD looking for a Cargo.toml
-/// whose `[workspace]` table mentions whisker-driver-sys (cheap heuristic).
-fn workspace_root() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    workspace_root_from(&cwd)
-}
-
-/// Pure-function core of [`workspace_root`]: start the upward walk from
-/// the supplied directory rather than the process CWD. Factored out so
-/// unit tests can drive it with a tempdir.
-fn workspace_root_from(start: &Path) -> Option<PathBuf> {
-    let mut cur = start.to_path_buf();
-    loop {
-        let cargo = cur.join("Cargo.toml");
-        if cargo.is_file() {
-            if let Ok(txt) = std::fs::read_to_string(&cargo) {
-                if txt.contains("[workspace]") && txt.contains("whisker-driver-sys") {
-                    return Some(cur);
-                }
-            }
-        }
-        if !cur.pop() {
-            return None;
-        }
-    }
-}
-
 // ----- Tiny helpers ----------------------------------------------------------
 
 fn run_capture(cmd: &str, args: &[&str]) -> Result<String> {
@@ -558,7 +429,6 @@ fn which(cmd: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     // ----- parse_rustc_version ------------------------------------------------
 
@@ -660,108 +530,5 @@ mod tests {
         assert!(!r.has_errors(), "warnings alone don't constitute errors");
         r.err = 1;
         assert!(r.has_errors());
-    }
-
-    // ----- short_path_with_home -----------------------------------------------
-
-    #[test]
-    fn short_path_with_home_substitutes_tilde() {
-        let home = PathBuf::from("/home/itome");
-        assert_eq!(
-            short_path_with_home(Path::new("/home/itome/projects/whisker"), Some(&home),),
-            "~/projects/whisker",
-        );
-    }
-
-    #[test]
-    fn short_path_with_home_leaves_unrelated_paths_alone() {
-        let home = PathBuf::from("/home/itome");
-        assert_eq!(
-            short_path_with_home(Path::new("/etc/hosts"), Some(&home)),
-            "/etc/hosts",
-        );
-    }
-
-    #[test]
-    fn short_path_with_home_none_returns_full_path() {
-        assert_eq!(short_path_with_home(Path::new("/tmp/x"), None), "/tmp/x",);
-    }
-
-    #[test]
-    fn short_path_with_home_does_not_match_overlapping_prefix() {
-        // `/home/itome2` must not get its `/home/itome` prefix stripped.
-        let home = PathBuf::from("/home/itome");
-        assert_eq!(
-            short_path_with_home(Path::new("/home/itome2/work"), Some(&home)),
-            "/home/itome2/work",
-        );
-    }
-
-    // ----- workspace_root_from ------------------------------------------------
-
-    fn write_workspace_marker(dir: &Path) {
-        fs::write(
-            dir.join("Cargo.toml"),
-            "[workspace]\nmembers = [\"crates/whisker-driver-sys\"]\n",
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn workspace_root_from_finds_root_at_start_dir() {
-        let tmp = tempdir();
-        write_workspace_marker(tmp.path());
-        assert_eq!(workspace_root_from(tmp.path()).as_deref(), Some(tmp.path()),);
-    }
-
-    #[test]
-    fn workspace_root_from_walks_up_to_find_root() {
-        let tmp = tempdir();
-        write_workspace_marker(tmp.path());
-        let nested = tmp.path().join("crates/whisker-cli/src");
-        fs::create_dir_all(&nested).unwrap();
-        assert_eq!(workspace_root_from(&nested).as_deref(), Some(tmp.path()),);
-    }
-
-    #[test]
-    fn workspace_root_from_ignores_unrelated_cargo_tomls() {
-        // A non-workspace Cargo.toml in the start dir must NOT match —
-        // we only want the one with `[workspace]` + whisker-driver-sys.
-        let tmp = tempdir();
-        fs::write(tmp.path().join("Cargo.toml"), "[package]\nname = \"foo\"\n").unwrap();
-        assert_eq!(workspace_root_from(tmp.path()), None);
-    }
-
-    #[test]
-    fn workspace_root_from_returns_none_when_no_root_above() {
-        // Bare tempdir, no Cargo.toml anywhere on the path.
-        let tmp = tempdir();
-        assert_eq!(workspace_root_from(tmp.path()), None);
-    }
-
-    // ----- tempdir helper -----------------------------------------------------
-    //
-    // The test suite is too small to justify pulling in the `tempfile`
-    // crate as a dev-dependency; this hand-rolled helper is enough.
-
-    struct TempDir(PathBuf);
-    impl TempDir {
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-    fn tempdir() -> TempDir {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static SEQ: AtomicU64 = AtomicU64::new(0);
-        let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let pid = std::process::id();
-        let p = std::env::temp_dir().join(format!("whisker-cli-test-{pid}-{n}"));
-        fs::create_dir_all(&p).unwrap();
-        TempDir(p)
     }
 }
