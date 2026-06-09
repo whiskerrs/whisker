@@ -170,9 +170,6 @@ pub struct IosParams {
 /// What kind of binary the dev server is rebuilding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    /// Plain host binary — no Lynx, no device, mostly for runtime
-    /// experiments (the `subsecond-poc` sort of thing).
-    Host,
     /// Android cdylib + APK + adb install + launch.
     Android,
     /// iOS Simulator app + xcrun simctl install + launch.
@@ -720,7 +717,6 @@ fn target_triple_for(config: &Config) -> Option<String> {
             };
             Some(triple.to_string())
         }
-        Target::Host => None,
     }
 }
 
@@ -744,7 +740,7 @@ fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
             hotpatch::android_ndk::android_clang_for(abi, api)
                 .with_context(|| format!("resolve NDK clang for ABI {abi} API {api}"))
         }
-        Target::Host | Target::IosSimulator => Ok(hotpatch::wrapper::resolve_host_linker()),
+        Target::IosSimulator => Ok(hotpatch::wrapper::resolve_host_linker()),
     }
 }
 
@@ -765,12 +761,9 @@ fn init_patcher_for(config: &Config, prep: &Tier1Prep) -> Result<hotpatch::Patch
 }
 
 /// Locate the device-loadable original binary for the configured
-/// target. Tier 1 only supports targets that produce a
-/// `.so`/`.dylib` we can mmap and diff against; `Host` (which
-/// produces just an `.rlib` today) returns `Err` so the caller
-/// falls back to Tier 2.
-///
-/// Reads paths from `Config::android` / `Config::ios` rather than
+/// target. Both [`Target::Android`] and [`Target::IosSimulator`]
+/// produce a `.so` / `.dylib` we can mmap and diff against; reads
+/// the paths from `Config::android` / `Config::ios` rather than
 /// guessing — the cli populates these from the user's
 /// `whisker.rs::configure` output.
 fn original_binary_path(config: &Config) -> Result<PathBuf> {
@@ -821,12 +814,6 @@ fn original_binary_path(config: &Config) -> Result<PathBuf> {
                 );
             }
             Ok(candidate)
-        }
-        Target::Host => {
-            anyhow::bail!(
-                "Tier 1 not supported for Host target yet \
-                 (the user crate is rlib-only — no patchable shared library)"
-            );
         }
         Target::IosSimulator => {
             // Use the single-arch dylib that cargo dropped directly,
@@ -900,7 +887,6 @@ fn target_os_for(target: Target) -> hotpatch::LinkerOs {
     match target {
         Target::Android => hotpatch::LinkerOs::Linux,
         Target::IosSimulator => hotpatch::LinkerOs::Macos,
-        Target::Host => hotpatch::linker_os_for_host(),
     }
 }
 
@@ -960,11 +946,11 @@ mod tests {
         let cfg = Config::defaults_for(
             PathBuf::from("/tmp/ws"),
             "hello-world".to_string(),
-            Target::Host,
+            Target::Android,
         );
         assert_eq!(cfg.workspace_root, Path::new("/tmp/ws"));
         assert_eq!(cfg.package, "hello-world");
-        assert_eq!(cfg.target, Target::Host);
+        assert_eq!(cfg.target, Target::Android);
         assert_eq!(cfg.bind_addr.port(), 9876);
         assert!(cfg.bind_addr.ip().is_loopback());
         assert_eq!(cfg.hot_patch_mode, HotPatchMode::Tier2ColdRebuild);
@@ -988,7 +974,7 @@ mod tests {
         let cfg = Config::defaults_for(
             PathBuf::from("/tmp/ws"),
             "hello-world".to_string(),
-            Target::Host,
+            Target::Android,
         );
         assert!(DevServer::new(cfg).is_ok());
     }
@@ -1015,16 +1001,8 @@ mod tests {
                     device_override: None,
                 });
             }
-            Target::Host => {}
         }
         cfg
-    }
-
-    #[test]
-    fn original_binary_path_errors_for_host_target() {
-        let cfg = mk_config(PathBuf::from("/tmp/ws"), Target::Host);
-        let err = original_binary_path(&cfg).unwrap_err();
-        assert!(format!("{err:#}").contains("Host"), "got: {err:#}");
     }
 
     #[test]

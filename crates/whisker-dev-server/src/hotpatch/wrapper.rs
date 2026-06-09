@@ -589,7 +589,7 @@ mod tests {
         let res = run_fat_build(
             &bad_workspace,
             "no-such-package",
-            Target::Host,
+            Target::Android,
             Path::new("/bin/true"),
             &cache,
             None,
@@ -618,7 +618,7 @@ mod tests {
         let res = run_fat_build(
             &bad_workspace,
             "no-such-package",
-            Target::Host,
+            Target::Android,
             Path::new("/bin/true"),
             &rustc_cache,
             Some(&lc),

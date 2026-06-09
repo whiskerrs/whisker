@@ -3,8 +3,7 @@
 //! After a successful cold-rebuild, the freshly-built artifact has to
 //! land on the target and start (re-bootstrapping the dev-runtime so
 //! it dials the dev-server back). For Android we shell out to `adb`;
-//! for iOS Simulator to `xcrun simctl`; for `Host` we no-op (the user
-//! runs the host binary themselves).
+//! for iOS Simulator to `xcrun simctl`.
 //!
 //! Application identity (bundle id, applicationId, launcher activity,
 //! scheme, …) is **not** baked in here. The cli passes those as
@@ -68,7 +67,6 @@ impl Installer {
 
     pub async fn install_and_launch(&self) -> Result<()> {
         match self.target {
-            Target::Host => self.host_skip(),
             Target::Android => {
                 let p = self.android.as_ref().context(
                     "target=Android but no AndroidParams — cli must populate Config.android",
@@ -89,13 +87,6 @@ impl Installer {
                 .await
             }
         }
-    }
-
-    fn host_skip(&self) -> Result<()> {
-        whisker_build::ui::info(
-            "host target: install/launch is the user's job — run the binary manually",
-        );
-        Ok(())
     }
 }
 
@@ -563,26 +554,6 @@ mod tests {
             launcher_activity: ".MainActivity".into(),
             abi: "arm64-v8a".into(),
         }
-    }
-
-    #[test]
-    fn installer_for_host_doesnt_need_android_or_ios() {
-        let inst = Installer::new(
-            Target::Host,
-            None,
-            None,
-            PathBuf::new(),
-            "x".into(),
-            None,
-            Vec::new(),
-        );
-        // Just exercise the `host_skip` branch via the public API —
-        // it doesn't await anything async so we can run it on the
-        // current thread without a runtime.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        rt.block_on(async { inst.install_and_launch().await.unwrap() });
     }
 
     #[test]

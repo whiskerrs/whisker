@@ -27,11 +27,8 @@ pub struct Args {
 
     /// Where to deploy the rebuilt artifact. Positional so the
     /// common case (`whisker run android` / `whisker run ios`) reads
-    /// naturally without a `--target=` prefix. Defaults to `host`,
-    /// which compiles the user crate for the dev machine — useful
-    /// for unit-test-style iteration without an emulator/simulator
-    /// up.
-    #[arg(value_enum, default_value_t = CliTarget::Host)]
+    /// naturally without a `--target=` prefix.
+    #[arg(value_enum)]
     pub target: CliTarget,
 
     /// WebSocket bind address. The Whisker app on the device dials this
@@ -71,7 +68,6 @@ pub struct Args {
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CliTarget {
-    Host,
     Android,
     Ios,
 }
@@ -79,7 +75,6 @@ pub enum CliTarget {
 impl From<CliTarget> for Target {
     fn from(t: CliTarget) -> Self {
         match t {
-            CliTarget::Host => Target::Host,
             CliTarget::Android => Target::Android,
             CliTarget::Ios => Target::IosSimulator,
         }
@@ -292,7 +287,6 @@ fn run_inner(
 /// short noun for screen real estate.
 fn target_label(target: Target) -> &'static str {
     match target {
-        Target::Host => "Host",
         Target::Android => "Android",
         Target::IosSimulator => "iOS Simulator",
     }
@@ -505,7 +499,6 @@ mod tests {
 
     #[test]
     fn cli_target_maps_to_dev_server_target() {
-        assert_eq!(Target::from(CliTarget::Host), Target::Host);
         assert_eq!(Target::from(CliTarget::Android), Target::Android);
         assert_eq!(Target::from(CliTarget::Ios), Target::IosSimulator);
     }

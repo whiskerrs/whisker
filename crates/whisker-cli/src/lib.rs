@@ -79,8 +79,8 @@ enum Command {
     /// Scaffold a new Whisker app — single-crate workspace with
     /// `Cargo.toml`, a `#[whisker::main]` `src/lib.rs`, the
     /// `whisker.rs` `AppConfig` probe, `.gitignore`, and `README.md`.
-    /// The result compiles standalone; run `whisker run host` from
-    /// inside the new directory.
+    /// The result compiles standalone; run `whisker run android` or
+    /// `whisker run ios` from inside the new directory.
     New(new_app::NewAppArgs),
 }
 
@@ -133,12 +133,15 @@ mod tests {
     }
 
     #[test]
-    fn parses_run_with_defaults() {
-        let cli = parse(["whisker", "run"]).unwrap();
+    fn parses_run_with_only_target() {
+        // `target` is now required (no default), so the bare
+        // `whisker run` form is gone — supply a positional target
+        // and assert the rest of the args adopt their defaults.
+        let cli = parse(["whisker", "run", "android"]).unwrap();
         match cli.command {
             Command::Run(a) => {
                 assert!(a.manifest_path.is_none());
-                assert_eq!(a.target, run::CliTarget::Host);
+                assert_eq!(a.target, run::CliTarget::Android);
                 assert_eq!(a.bind.port(), 9876);
                 // Hot-patch is the dev default — opt out with --no-hot-patch.
                 assert!(!a.no_hot_patch);
@@ -146,6 +149,14 @@ mod tests {
             }
             other => panic!("expected Run, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_run_without_target_fails() {
+        // `whisker run` with no positional target is now an error
+        // (Host was the previous default and has been removed).
+        let res = parse(["whisker", "run"]);
+        assert!(res.is_err(), "expected clap error, got {res:?}");
     }
 
     #[test]
