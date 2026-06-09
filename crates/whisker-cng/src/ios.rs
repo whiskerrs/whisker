@@ -55,13 +55,12 @@ pub struct IosInputs {
     pub deployment_target: String,
     /// Path the generated pbxproj's `XCLocalSwiftPackageReference`
     /// for `WhiskerRuntime` points at — typically
-    /// `<workspace>/platforms/ios` in the monorepo. The published
-    /// `XCRemoteSwiftPackageReference` flow that root `Package.swift`
-    /// supports is gated on every Whisker module's `Package.swift`
-    /// moving off the env-var path-based `.package(path:)`
-    /// resolution onto the same remote URL — until that lands,
-    /// the cng output stays local-path to avoid product-name
-    /// conflicts.
+    /// `<workspace>/platforms/ios` in the monorepo. cng emits a local-
+    /// path reference because each Whisker module's `Package.swift`
+    /// pulls `WhiskerRuntime` via `.package(path:)` against the same
+    /// directory; until module manifests migrate to a shared remote
+    /// URL, mixing a remote root reference with local module refs
+    /// would produce duplicate `WhiskerRuntime` SwiftPM identities.
     pub whisker_runtime_path: PathBuf,
     /// Path to the auto-generated `WhiskerModules` SwiftPM package
     /// — typically `<crate_dir>/gen/ios/whisker_modules`. Pointed
@@ -736,10 +735,9 @@ mod tests {
             std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
         assert!(pbxproj.contains("PRODUCT_BUNDLE_IDENTIFIER = \"rs.whisker.examples.helloWorld\""));
         assert!(pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = \"13.0\""));
-        // XCLocalSwiftPackageReference for WhiskerRuntime (monorepo
-        // workflow). The XCRemoteSwiftPackageReference form behind
-        // root Package.swift stays available for future
-        // published-consumer flows.
+        // XCLocalSwiftPackageReference for WhiskerRuntime — the only
+        // iOS integration path. cng points at `platforms/ios`;
+        // module Package.swifts pull the same dir via `.package(path:)`.
         assert!(pbxproj.contains("relativePath = \"/abs/platforms/ios\""));
         // WhiskerModules resolves through the per-app gen-tree dir.
         assert!(pbxproj.contains("relativePath = \"/abs/gen/ios/whisker_modules\""));
