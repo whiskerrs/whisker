@@ -1,6 +1,6 @@
 //! Whisker module-system — discovery + manifest parsing.
 //!
-//! When `whisker run` / `whisker build` builds an app crate for
+//! When `whisker run` builds an app crate for
 //! iOS or Android, every cargo dependency may optionally contribute
 //! native code (Swift / Obj-C++ on iOS, Kotlin / JNI on Android) to
 //! the final host binary. A crate opts in by declaring a

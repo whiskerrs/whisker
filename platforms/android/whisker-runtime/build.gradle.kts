@@ -6,12 +6,12 @@
 //
 // Two consumption modes coexist on a single source tree:
 //
-//   1. **Existing CLI flow** (`whisker build / whisker run`) — the
-//      cng-generated `settings.gradle.kts` registers
-//      `target/lynx-android/` as a `flatDir` and includes
-//      `platforms/android` as a path-based composite include. The
-//      `:LynxAndroid@aar` style refs below resolve through
-//      `flatDir`.
+//   1. **Legacy local-aar flow** — historical builds registered
+//      `target/lynx-android/` as a `flatDir` and resolved
+//      `:LynxAndroid@aar` style refs through it. Modern `whisker run`
+//      lets gradle pull the same artefacts from the Maven repo (mode
+//      2 below) instead; the flatDir entry remains harmless when
+//      empty.
 //
 //   2. **Maven-driven flow** (Step 5-Android target) — the user
 //      app pulls this AAR by Maven coord, and its transitive deps

@@ -1,9 +1,9 @@
 # Whisker build orchestration.
 #
 # Cross-platform cargo + gradle + xcodebuild invocation, factored out
-# of `whisker-cli` and `whisker-dev-server` so both can share it
-# without crate-cycle gymnastics. Tier 2 cold rebuilds (dev-server)
-# and `whisker build` (cli) both go through this crate.
+# of `whisker-cli`, `whisker-dev-server`, and the `whisker-build`
+# binary (called by gradle / xcodebuild during `whisker run`) so all
+# three can share it without crate-cycle gymnastics.
 #
 # Tier 1 hot-patch construction lives in `whisker-dev-server::hotpatch`,
 # not here — this crate's contract is "spawn cargo / gradle /
@@ -22,21 +22,14 @@ description = "Whisker build orchestration: cargo cross-compile + gradle / xcode
 
 [dependencies]
 anyhow = { workspace = true }
-# Lynx artifact fetcher (whisker-build::lynx) deps. ureq picked over
-# reqwest for the sync API and small footprint — we have exactly two
-# downloads to make and no need for an async runtime here. tls=rustls
-# avoids dragging in OpenSSL/libsystem TLS coupling.
-ureq = { version = "2", default-features = false, features = ["tls"] }
-tar = "0.4"
-flate2 = "1"
-# SHA-256 verification of downloaded tarballs against the constants
-# hard-coded in src/lynx.rs.
+# SHA-256 hashing for `whisker-build modules`' `cargo_lock_sha256`
+# field — the Gradle plugin keys its disk cache off that value.
 sha2 = "0.10"
-# Curated terminal output for `whisker run` / `whisker build`. Used by
-# the `ui` module to replace ad-hoc `eprintln!` calls scattered across
-# whisker-build / whisker-dev-server / whisker-cli with structured
-# step + status events. Stays a single shared crate so the three
-# orchestration layers all hit the same look + feel.
+# Curated terminal output for the dev loop. Used by the `ui` module to
+# replace ad-hoc `eprintln!` calls across whisker-build /
+# whisker-dev-server / whisker-cli with structured step + status
+# events. Stays a single shared crate so the three orchestration
+# layers all hit the same look + feel.
 indicatif = "0.17"
 # Module-system discovery deserializes the `[package.metadata.whisker]`
 # table, which cargo_metadata surfaces as a `serde_json::Value`.

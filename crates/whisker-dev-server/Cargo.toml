@@ -22,7 +22,8 @@ object = { workspace = true }
 # deps of the user crate so the file watcher can cover their src/
 # trees and the patcher knows which crate a changed file belongs to.
 cargo_metadata = "0.18"
-# Cold-rebuild orchestration. Shared with whisker-cli's `whisker build`.
+# Cold-rebuild orchestration. The same crate the `whisker-build`
+# binary (called from gradle / xcodebuild Build Phase) drives.
 whisker-build = { workspace = true }
 
 [dev-dependencies]

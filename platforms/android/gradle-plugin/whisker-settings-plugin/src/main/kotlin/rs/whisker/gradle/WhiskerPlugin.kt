@@ -54,11 +54,11 @@ class WhiskerPlugin : Plugin<Settings> {
         settings.gradle.settingsEvaluated {
             val workspace = ext.workspace.orNull?.asFile
                 ?: error("rs.whisker: `whisker { workspace = file(...) }` is required.")
-            // Sanity-check the workspace exists. `whisker build` /
-            // `whisker run` bake an absolute path into
+            // Sanity-check the workspace exists. `whisker run` bakes
+            // an absolute path into
             // `gen/android/.whisker/config.properties` (the value the
             // Settings extension reads). If the user moved or
-            // renamed the project tree after the last `whisker build`,
+            // renamed the project tree after the last `whisker run`,
             // Gradle Sync silently falls through to "modules report
             // missing" downstream — much harder to diagnose than the
             // one-line check here.
@@ -66,8 +66,8 @@ class WhiskerPlugin : Plugin<Settings> {
                 error(
                     "rs.whisker: workspace path baked into settings.gradle.kts no longer " +
                         "exists: $workspace. The project was likely moved or renamed " +
-                        "after \\`whisker build\\` first generated gen/android. Re-run " +
-                        "\\`whisker build android\\` from the (new) workspace root " +
+                        "after `whisker run android` first generated gen/android. Re-run " +
+                        "`whisker run android` from the (new) workspace root " +
                         "to refresh the gen tree.",
                 )
             }
