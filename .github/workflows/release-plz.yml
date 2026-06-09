@@ -1,0 +1,93 @@
+# Release-plz — PR-based crates.io releases.
+#
+# How it works:
+#   1. Every push to `main` runs the `release-plz-pr` job. It scans
+#      git history for conventional-commit-bumping changes since the
+#      last release, decides the next version per crate (semver rules
+#      based on `feat:` / `fix:` / `!` breaking marker), updates
+#      `Cargo.toml` versions + per-crate `CHANGELOG.md`, and opens or
+#      updates a single PR titled `chore: release` on a
+#      `release-plz/main` branch. The PR is idempotent — subsequent
+#      pushes amend it rather than stacking new ones.
+#   2. Merging that release PR runs the `release-plz-release` job on
+#      the resulting tip-of-main. It picks up each crate whose version
+#      changed in the merge, runs `cargo publish` in topological order
+#      (respecting workspace dep edges), then creates per-crate git
+#      tags + GitHub releases populated from the per-crate changelog.
+#
+# Required repository secrets (set under Settings → Secrets and
+# variables → Actions):
+#   CARGO_REGISTRY_TOKEN  — a crates.io API token with publish scope
+#                           covering all whisker* crates. Mint at
+#                           https://crates.io/me with the
+#                           "publish-update" scope.
+#
+# Optional but recommended:
+#   - Replace the `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` lines
+#     with a fine-grained personal access token (PAT). The default
+#     `GITHUB_TOKEN` cannot trigger downstream workflows, so CI does
+#     NOT automatically run on the release PR that this workflow
+#     opens — a reviewer has to push a no-op commit to wake the
+#     ci.yml workflow. A PAT (named e.g. `RELEASE_PLZ_TOKEN`) avoids
+#     that footgun. The PAT needs `Contents: write` +
+#     `Pull requests: write` on this repo.
+#
+# Concurrency:
+#   The PR job is locked so two rapid `main` pushes don't race on the
+#   release branch. The release job stays parallel-friendly because
+#   it's keyed to the merge commit, not the branch.
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  release-plz-release:
+    # cargo publish + git tags + GitHub releases. No-ops when the
+    # commit that triggered this run isn't a release PR merge.
+    name: release-plz / release (publish + tag)
+    runs-on: ubuntu-latest
+    # Skip on forks — only the canonical repo can publish.
+    if: github.repository_owner == 'whiskerrs'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so release-plz can read changelogs back to
+          # the previous release tag.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run release-plz release
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release-plz-pr:
+    # Opens / updates the `chore: release` PR.
+    name: release-plz / open release PR
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'whiskerrs'
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run release-plz release-pr
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
