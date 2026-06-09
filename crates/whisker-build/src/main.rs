@@ -261,13 +261,10 @@ fn run_modules(args: ModulesArgs) -> Result<()> {
 }
 
 fn run_ios(args: IosArgs) -> Result<()> {
-    // Lynx iOS xcframework needs to be on disk before the bridge cc
-    // build resolves `<staged>/Lynx/...` includes. Mirrors the
-    // Android path's `ensure_lynx_android()`.
-    let _cache = whisker_build::ensure_lynx_ios().context("fetch pinned Lynx iOS artifacts")?;
-    whisker_build::link_lynx_into_workspace(&args.workspace, whisker_build::LynxPlatform::Ios)
-        .context("symlink target/lynx-ios into workspace")?;
-
+    // No Lynx pre-fetch here. The bridge cc build no longer touches
+    // any Lynx header path, and the host xcodebuild invocation
+    // resolves Lynx xcframeworks via SPM's
+    // `binaryTarget(url:checksum:)` directly.
     let archs: Vec<&str> = args.archs.split_whitespace().collect();
     let fw = whisker_build::ios::build_framework_for_xcode_run_script(
         &whisker_build::ios::XcodeRunScriptInputs {

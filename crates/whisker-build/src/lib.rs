@@ -37,8 +37,8 @@ pub use capture::{
 };
 pub use lynx::{
     cache_dir as lynx_cache_dir, cache_version_root as lynx_cache_version_root,
-    ensure_lynx_android, ensure_lynx_ios, link_into_workspace as link_lynx_into_workspace,
-    LynxPlatform, LYNX_FORK_TAG, LYNX_VERSION,
+    ensure_lynx_android, link_into_workspace as link_lynx_into_workspace, LynxPlatform,
+    LYNX_FORK_TAG, LYNX_VERSION,
 };
 
 /// Build profile. Maps to `cargo --release` and to the

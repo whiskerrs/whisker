@@ -155,9 +155,10 @@ fn build_ios_app(
     workspace_root: &Path,
     flavour: IosFlavour,
 ) -> Result<()> {
-    // 0. Ensure Lynx artifacts are cached + symlinked into `target/`.
-    whisker_build::ensure_lynx_ios()?;
-    whisker_build::link_lynx_into_workspace(workspace_root, whisker_build::LynxPlatform::Ios)?;
+    // 0. No iOS Lynx pre-fetch. `platforms/ios/Package.swift` uses
+    //    `binaryTarget(url:checksum:)`, so xcodebuild's SPM
+    //    resolution downloads the four xcframeworks itself during
+    //    the build below.
 
     // 1. Sync `gen/ios/` (renders project.yml + Info.plist + AppDelegate
     //    and runs `xcodegen generate`).

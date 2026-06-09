@@ -28,12 +28,19 @@
 //! #   ios/Package.swift          — SwiftPM library
 //! # whisker-build discovers those per-platform manifests directly,
 //! # so no source-file list is needed for DSL modules.
-//!
-//! # Optional: legacy `.mm` / `.m` modules can still declare raw
-//! # Obj-C++ sources to be compiled into the host dylib's bridge.
-//! [package.metadata.whisker.ios]
-//! native_sources = ["src/native/whisker_hello_element.mm"]
 //! ```
+//!
+//! Older revisions also accepted `[package.metadata.whisker.ios]
+//! native_sources = [...]` to declare raw Obj-C++ files compiled
+//! into the host dylib's bridge — that path was rewired through
+//! `WHISKER_IOS_MODULE_NATIVE_SOURCES` + the Lynx-header stage in
+//! `whisker-driver-sys/build.rs`, and required Whisker to download
+//! the Lynx iOS tarball just to satisfy PrimJS `#include`s. No
+//! module in this monorepo (or in any external module surveyed)
+//! ever declared `native_sources`, so the field is no longer
+//! recognised — re-introducing iOS Obj-C++ sources can be done
+//! cleanly through SwiftPM target dependencies in `ios/Package.swift`
+//! without re-creating the bespoke env-var plumbing.
 //!
 //! All paths are resolved relative to the directory containing the
 //! manifest (the crate's `Cargo.toml`). The resolver returns
@@ -78,15 +85,6 @@ pub struct ManifestRaw {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IosSectionRaw {
-    /// Paths to `.m` / `.mm` source files that should be compiled
-    /// into the host dylib alongside the bridge code. Paths are
-    /// relative to the manifest's directory.
-    ///
-    /// Legacy entry point — Phase 7-Φ.D introduced `swift_sources`
-    /// as the preferred way to author iOS platform components. `.mm`
-    /// modules still work, but new authors should prefer Swift.
-    #[serde(default)]
-    pub native_sources: Vec<String>,
     /// Paths to Swift source files that get staged into the
     /// consuming app's gen tree under
     /// `gen/ios/Sources/WhiskerModules/<crate-name>/` and compiled
@@ -131,9 +129,6 @@ pub struct AndroidSectionRaw {
 pub struct ResolvedModule {
     pub package: String,
     pub manifest_dir: PathBuf,
-    /// Absolute, existence-checked paths to `.m` / `.mm` sources.
-    /// Empty when the module declares no iOS contributions.
-    pub ios_native_sources: Vec<PathBuf>,
     /// Absolute, existence-checked paths to `.swift` sources.
     /// Empty when the module declares no Swift contributions.
     pub ios_swift_sources: Vec<PathBuf>,
@@ -258,21 +253,8 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
             serde_json::from_value(whisker_meta.clone()).with_context(|| {
                 format!("parse [package.metadata.whisker] in {}", pkg.manifest_path,)
             })?;
-        let mut ios_sources: Vec<PathBuf> = Vec::new();
         let mut ios_swift: Vec<PathBuf> = Vec::new();
         if let Some(ios) = manifest.ios {
-            for raw_path in ios.native_sources {
-                let resolved_path = manifest_dir.join(&raw_path);
-                let canonical = resolved_path.canonicalize().with_context(|| {
-                    format!(
-                        "module `{}` declares metadata.whisker.ios.native_sources = \
-                         [..., {raw_path:?}] but {} does not exist",
-                        pkg.name,
-                        resolved_path.display(),
-                    )
-                })?;
-                ios_sources.push(canonical);
-            }
             for raw_path in ios.swift_sources {
                 let resolved_path = manifest_dir.join(&raw_path);
                 let canonical = resolved_path.canonicalize().with_context(|| {
@@ -317,7 +299,6 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
         resolved.push(ResolvedModule {
             package: pkg.name.clone(),
             manifest_dir,
-            ios_native_sources: ios_sources,
             ios_swift_sources: ios_swift,
             android_kotlin_sources: android_kotlin,
             android_jni_sources: android_jni,
@@ -325,31 +306,16 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
     }
 
     // Stable ordering by package name so two consecutive runs produce
-    // the same WHISKER_IOS_MODULE_NATIVE_SOURCES env var value (and
-    // cargo doesn't re-run the bridge build for spurious env-change
-    // reasons).
+    // deterministic gen-tree output (and gradle / cargo don't re-run
+    // downstream tasks for spurious permutation reasons).
     resolved.sort_by(|a, b| a.package.cmp(&b.package));
     Ok(resolved)
 }
 
-/// Flatten every discovered module's iOS sources into a single
-/// colon-separated string, suitable for passing as the
-/// `WHISKER_IOS_MODULE_NATIVE_SOURCES` env var to a cargo build.
-/// Modules are kept in `discover`'s sort order; within a module
-/// sources are kept in the manifest's declaration order.
-pub fn ios_sources_env_value(modules: &[ResolvedModule]) -> String {
-    let mut paths: Vec<String> = Vec::new();
-    for m in modules {
-        for p in &m.ios_native_sources {
-            paths.push(p.to_string_lossy().into_owned());
-        }
-    }
-    paths.join(":")
-}
-
-/// Same shape as [`ios_sources_env_value`] but for Android Kotlin
-/// sources. The Android orchestration uses these paths to extend
-/// gradle's main source set (see `whisker-build::android`).
+/// Flatten every discovered module's Android Kotlin sources into a
+/// colon-separated string. The Android orchestration uses these
+/// paths to extend gradle's main source set (see
+/// `whisker-build::android`).
 pub fn android_kotlin_sources_env_value(modules: &[ResolvedModule]) -> String {
     let mut paths: Vec<String> = Vec::new();
     for m in modules {
@@ -397,8 +363,7 @@ pub struct ModulesReportModule {
     /// directory at the package root.
     pub android: Option<AndroidModuleReport>,
     /// iOS-side surface. `None` when the module declares neither
-    /// `ios_native_sources` nor `ios_swift_sources` nor an
-    /// `ios/Package.swift`.
+    /// `ios_swift_sources` nor an `ios/Package.swift`.
     pub ios: Option<IosModuleReport>,
 }
 
@@ -419,13 +384,11 @@ pub struct AndroidModuleReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IosModuleReport {
-    /// SwiftPM module / framework name. Absent for modules whose
-    /// only iOS surface is raw `.m` / `.mm` sources without a
-    /// `Package.swift`.
+    /// SwiftPM module / framework name. `Some` whenever the module
+    /// ships an `ios/Package.swift`; `None` for legacy-shape modules
+    /// whose Swift sources are declared via
+    /// `[package.metadata.whisker.ios] swift_sources` instead.
     pub swift_module: Option<String>,
-    /// `.m` / `.mm` source paths (absolute) the host bridge cc-build
-    /// should fold in. Empty for the common DSL case.
-    pub native_sources: Vec<PathBuf>,
     /// `.swift` source paths declared via the legacy
     /// `[package.metadata.whisker.ios] swift_sources = [...]`. Empty
     /// for the common Expo-style case (Swift lives in
@@ -460,7 +423,7 @@ pub struct ModulesReport {
 ///     module is rooted at the package root; its Kotlin source set
 ///     points at `android/` internally).
 ///   * iOS: `<manifest_dir>/Package.swift` exists, OR
-///     `ios_native_sources` / `ios_swift_sources` is non-empty.
+///     `ios_swift_sources` is non-empty.
 pub fn build_modules_report(workspace_root: &Path, user_package: &str) -> Result<ModulesReport> {
     let manifest_path = workspace_root.join("Cargo.toml");
     let resolved = discover(&manifest_path, user_package)
@@ -482,9 +445,7 @@ pub fn build_modules_report(workspace_root: &Path, user_package: &str) -> Result
                 None
             };
             let swift_pkg = m.manifest_dir.join("Package.swift");
-            let has_ios = !m.ios_native_sources.is_empty()
-                || !m.ios_swift_sources.is_empty()
-                || swift_pkg.is_file();
+            let has_ios = !m.ios_swift_sources.is_empty() || swift_pkg.is_file();
             let ios = if has_ios {
                 Some(IosModuleReport {
                     swift_module: if swift_pkg.is_file() {
@@ -492,7 +453,6 @@ pub fn build_modules_report(workspace_root: &Path, user_package: &str) -> Result
                     } else {
                         None
                     },
-                    native_sources: m.ios_native_sources,
                     swift_sources: m.ios_swift_sources,
                 })
             } else {

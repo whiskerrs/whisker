@@ -38,11 +38,13 @@
 //!
 //! ## SHA-256 verification policy
 //!
-//! Every download is verified against [`LYNX_ANDROID_SHA256`] /
-//! [`LYNX_IOS_SHA256`]. An empty constant means "no release artifact
-//! exists yet" — the fetcher refuses to download in that state and
-//! demands `WHISKER_LYNX_DIR`. Once the fork's CI produces the first
-//! tagged release, bump the version + paste in the real checksums.
+//! Every download is verified against [`LYNX_ANDROID_SHA256`]. An
+//! empty constant means "no release artifact exists yet" — the
+//! fetcher refuses to download in that state and demands
+//! `WHISKER_LYNX_DIR`. Once the fork's CI produces the first tagged
+//! release, bump the version + paste in the real checksums. iOS no
+//! longer has a tarball; SPM resolves Lynx xcframeworks via remote
+//! `binaryTarget(url:checksum:)` in `platforms/ios/Package.swift`.
 
 use anyhow::{anyhow, bail, Context, Result};
 use sha2::{Digest, Sha256};
@@ -88,19 +90,6 @@ pub const LYNX_VERSION: &str = "3.8.0-whisker.6";
 pub const LYNX_ANDROID_SHA256: &str =
     "bc9d79e3580b9a3a4a64a4682dbc91cf12691b65f423d54072880c99544b8c50";
 
-/// SHA-256 of `whisker-lynx-ios-<LYNX_VERSION>.tar.gz`.
-///
-/// Built from fork source directly via three fork-controlled
-/// podspecs (`Lynx.podspec.json`, `LynxBase.podspec.json`,
-/// `LynxServiceAPI.podspec.json`) at the fork root that point all
-/// source globs at the fork tree itself via `source: {path: "."}`.
-/// `Lynx.framework/Lynx` exports the native renderer C API symbols
-/// (`lynx_list_set_native_item_provider`, `lynx_element_*`, etc.)
-/// from `core/native_renderer_capi/`, so the bridge in
-/// `crates/whisker-driver-sys/` no longer vendors them.
-pub const LYNX_IOS_SHA256: &str =
-    "8651a809e440de9d05b6d620aa1022f7e73043b9a037a57bc910e8a9f96f6586";
-
 /// GitHub Releases URL template. The `<{ver}>` and `<{plat}>`
 /// placeholders are filled by [`download_url`].
 const URL_TEMPLATE: &str =
@@ -109,24 +98,28 @@ const URL_TEMPLATE: &str =
 // ----- Public API -----------------------------------------------------------
 
 /// Platform the caller wants Lynx artifacts for.
+///
+/// iOS is intentionally absent. `platforms/ios/Package.swift`
+/// resolves the four Lynx xcframeworks via SPM's remote
+/// `binaryTarget(url:checksum:)`, so the cli no longer needs to
+/// pre-fetch a tarball into `~/.cache/whisker/lynx/<ver>/ios/`.
+/// Android still uses the tarball because gradle treats it as the
+/// canonical source for the AGP-merged aar + headers tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LynxPlatform {
     Android,
-    Ios,
 }
 
 impl LynxPlatform {
     fn as_str(self) -> &'static str {
         match self {
             LynxPlatform::Android => "android",
-            LynxPlatform::Ios => "ios",
         }
     }
 
     fn expected_sha256(self) -> &'static str {
         match self {
             LynxPlatform::Android => LYNX_ANDROID_SHA256,
-            LynxPlatform::Ios => LYNX_IOS_SHA256,
         }
     }
 }
@@ -135,12 +128,6 @@ impl LynxPlatform {
 /// the path to the per-platform cache subdir.
 pub fn ensure_lynx_android() -> Result<PathBuf> {
     ensure_lynx(LynxPlatform::Android)
-}
-
-/// Ensure the iOS Lynx artifacts are cached locally and return the
-/// path to the per-platform cache subdir.
-pub fn ensure_lynx_ios() -> Result<PathBuf> {
-    ensure_lynx(LynxPlatform::Ios)
 }
 
 /// Lower-level entry point — useful for the doctor subcommand which
@@ -248,7 +235,6 @@ fn is_cache_populated(cache: &Path, platform: LynxPlatform) -> bool {
 fn sentinel_filename(platform: LynxPlatform) -> &'static str {
     match platform {
         LynxPlatform::Android => "LynxAndroid.aar",
-        LynxPlatform::Ios => "Lynx.xcframework",
     }
 }
 
@@ -357,22 +343,21 @@ pub fn tarball_filename(platform: LynxPlatform) -> String {
 // them on next invocation.
 
 /// Create the per-workspace symlinks for `platform`'s Lynx
-/// artifacts. Must be called after [`ensure_lynx_android`] /
-/// [`ensure_lynx_ios`] for that platform.
+/// artifacts. Must be called after [`ensure_lynx_android`] for that
+/// platform.
 ///
-/// Symlinks created:
+/// Symlinks created (Android only — iOS resolves via remote SPM):
 ///
-/// | platform | symlink path | target |
-/// |---|---|---|
-/// | Android | `<ws>/target/lynx-android`          | `<cache>/<ver>/android`         |
-/// | Android | `<ws>/target/lynx-android-unpacked` | `<cache>/<ver>/android/unpacked`|
-/// | iOS     | `<ws>/target/lynx-ios`              | `<cache>/<ver>/ios`             |
-/// | both    | `<ws>/target/lynx-headers`          | `<cache>/<ver>/<plat>/headers`  |
+/// | symlink path                          | target                            |
+/// |---------------------------------------|-----------------------------------|
+/// | `<ws>/target/lynx-android`            | `<cache>/<ver>/android`           |
+/// | `<ws>/target/lynx-android-unpacked`   | `<cache>/<ver>/android/unpacked`  |
+/// | `<ws>/target/lynx-headers` (optional) | `<cache>/<ver>/android/headers`   |
 ///
-/// `lynx-headers` is created by whichever platform call runs first;
-/// the headers are byte-identical between the two tarballs so a
-/// second call is a no-op when the symlink already points at a valid
-/// destination.
+/// The headers symlink is staged when the cache happens to ship a
+/// `headers/` subdir. Nothing in the current `whisker-driver-sys`
+/// build reads from it, but it's preserved so external tooling that
+/// pokes at the workspace cache layout doesn't regress.
 pub fn link_into_workspace(workspace_root: &Path, platform: LynxPlatform) -> Result<()> {
     let cache = cache_dir(platform)?;
     let target = workspace_root.join("target");
@@ -385,17 +370,6 @@ pub fn link_into_workspace(workspace_root: &Path, platform: LynxPlatform) -> Res
                 &target.join("lynx-android-unpacked"),
                 &cache.join("unpacked"),
             )?;
-        }
-        LynxPlatform::Ios => {
-            // No `target/lynx-ios` symlink anymore. The four xcframeworks
-            // are resolved by SPM via remote `binaryTarget(url:checksum:)`
-            // in `platforms/ios/Package.swift`, so xcodebuild gets them
-            // from the SPM cache without needing the workspace-relative
-            // path the old `binaryTarget(path:)` form required. The
-            // `lynx-headers` symlink below is still set up because
-            // `whisker-driver-sys`'s cargo build reads PrimJS C++
-            // headers out of the tarball cache — that consumer is in
-            // line for a follow-up that frees it from PrimJS entirely.
         }
     }
     let headers = cache.join("headers");
@@ -509,10 +483,10 @@ mod tests {
 
     #[test]
     fn tarball_filename_matches_url_segment() {
-        let name = tarball_filename(LynxPlatform::Ios);
-        assert_eq!(name, format!("whisker-lynx-ios-{LYNX_VERSION}.tar.gz"));
+        let name = tarball_filename(LynxPlatform::Android);
+        assert_eq!(name, format!("whisker-lynx-android-{LYNX_VERSION}.tar.gz"));
         // The URL should embed exactly the same filename.
-        assert!(download_url(LynxPlatform::Ios).ends_with(&name));
+        assert!(download_url(LynxPlatform::Android).ends_with(&name));
     }
 
     #[test]
@@ -526,9 +500,7 @@ mod tests {
             std::env::set_var("WHISKER_LYNX_DIR", &tmp);
         }
         let android = cache_dir(LynxPlatform::Android).unwrap();
-        let ios = cache_dir(LynxPlatform::Ios).unwrap();
         assert_eq!(android, tmp.join("android"));
-        assert_eq!(ios, tmp.join("ios"));
         unsafe {
             std::env::remove_var("WHISKER_LYNX_DIR");
         }
