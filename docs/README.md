@@ -20,6 +20,11 @@ Design docs and architectural notes. See the workspace
   IR, subprocess bin, `[package.metadata.whisker.plugins.*]` registration
 - [`comment-style.md`](comment-style.md) — rustdoc vs. internal
   comment standard. Cite in code review
+- [`ios-spm-distribution.md`](ios-spm-distribution.md) — how iOS apps
+  resolve the runtime from the remote `whisker` SwiftPM package, the
+  version/tag lockstep, and the **caveat for editing `platforms/ios`
+  Swift sources locally** (no local-path fallback — use a URL redirect
+  or re-tag)
 
 ## Planned documents
 
