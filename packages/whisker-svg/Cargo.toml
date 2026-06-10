@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Whisker SVG widget — `Svg(content: …, color: …, style: …)`. Compiles inline SVG XML to the v1 display-list byte stream defined in `SPEC.md` and hands it to the iOS / Android replayer modules over `WhiskerValue::Bytes` (base64-cased through the existing string Prop pipeline to avoid C ABI churn)."
 
 # Explicit include — mirrors whisker-image / whisker-safe-area:

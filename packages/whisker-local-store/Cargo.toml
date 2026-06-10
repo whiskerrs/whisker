@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Reference Whisker platform module — persistent key-value local store wrapping UserDefaults on iOS and SharedPreferences on Android. Doubles as the documented template for first-party Whisker platform modules."
 
 include = [

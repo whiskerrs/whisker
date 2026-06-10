@@ -30,7 +30,9 @@ pub fn provide_context<T: 'static>(value: T) {
         let Some(owner) = rt.owners.get_mut(owner_id) else {
             return false;
         };
-        owner.contexts.insert(TypeId::of::<T>(), Box::new(value));
+        owner
+            .contexts
+            .insert(TypeId::of::<T>(), std::rc::Rc::new(value));
         true
     });
     if !registered {
@@ -59,18 +61,24 @@ pub fn with_context<T: 'static, R>(f: impl FnOnce(&T) -> R) -> Option<R> {
     // are not on a hot path.
     let owner_id = with_runtime(|rt| find_owner_with::<T>(rt, rt.current_owner()))?;
 
-    // Pull a stable reference shape: a raw pointer to the value
-    // boxed inside `contexts`. Lifetime safety: the box can't be
-    // moved or freed while we hold the runtime borrow during the
-    // call to `f`; we do not let `f` mutate the contexts map.
-    with_runtime(|rt| {
+    // Clone the `Rc` handle out under a short borrow, then DROP the
+    // runtime borrow before invoking `f`. This is what makes `f` free
+    // to re-enter the runtime (read signals, create effects, nested
+    // `use_context`) — calling `f` while the thread-local runtime was
+    // still borrowed would double-borrow its `RefCell` and panic.
+    //
+    // Holding our own `Rc` clone also means the value stays alive for
+    // the whole call even if `f` re-provides the same `T` on this owner
+    // (which would replace the map entry); `f` simply observes the
+    // value that was current at lookup time.
+    let any_rc: std::rc::Rc<dyn Any> = with_runtime(|rt| {
         let owner = rt.owners.get(owner_id)?;
-        let any_box: &Box<dyn Any> = owner.contexts.get(&TypeId::of::<T>())?;
-        let typed: &T = any_box
-            .downcast_ref::<T>()
-            .expect("context type tag mismatched stored value");
-        Some(f(typed))
-    })
+        owner.contexts.get(&TypeId::of::<T>()).cloned()
+    })?;
+    let typed: &T = any_rc
+        .downcast_ref::<T>()
+        .expect("context type tag mismatched stored value");
+    Some(f(typed))
 }
 
 /// Walk from `start` upward through `parent` links, returning the

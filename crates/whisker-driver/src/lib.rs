@@ -24,8 +24,8 @@ pub mod lynx;
 pub mod module;
 
 pub use element_ref::{
-    element_ref, BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo,
-    ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo,
+    BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
+    TextBoundingRect, TextHandle, UiInfo,
 };
 pub use lynx::bootstrap;
 pub use lynx::renderer::BridgeRenderer;
@@ -142,6 +142,10 @@ pub fn invoke_element_method_with_params(
 /// `Element::Animate` `animation_data` table). [`Default`] yields a
 /// 300ms linear forwards animation that plays once.
 ///
+/// Build with [`AnimateOptions::new`] (defaults) plus the chained
+/// setters; the struct is `#[non_exhaustive]`, so construct it through
+/// the builder rather than a struct literal.
+///
 /// ```ignore
 /// use whisker_driver::{animate_start, AnimateOptions};
 ///
@@ -152,14 +156,11 @@ pub fn invoke_element_method_with_params(
 ///         ("0%",   &[("opacity", "0")]),
 ///         ("100%", &[("opacity", "1")]),
 ///     ],
-///     &AnimateOptions {
-///         duration_ms: 200,
-///         easing: "ease-out".into(),
-///         ..AnimateOptions::default()
-///     },
+///     &AnimateOptions::new().duration_ms(200).easing("ease-out"),
 /// )?;
 /// ```
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct AnimateOptions {
     /// Duration in milliseconds.
     pub duration_ms: u32,
@@ -187,6 +188,56 @@ impl Default for AnimateOptions {
             fill: "forwards".into(),
             delay_ms: 0,
         }
+    }
+}
+
+impl AnimateOptions {
+    /// Start from the defaults (300ms linear forwards, plays once) and
+    /// override fields with the chained setters below.
+    ///
+    /// Because `AnimateOptions` is `#[non_exhaustive]`, this builder is
+    /// the construction path for code outside `whisker-driver` — a
+    /// struct literal won't compile across the crate boundary, which is
+    /// what lets new fields be added without a breaking change.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Duration in milliseconds.
+    pub fn duration_ms(mut self, v: u32) -> Self {
+        self.duration_ms = v;
+        self
+    }
+
+    /// Easing string — `"linear"`, `"ease-in"`, `"ease-out"`,
+    /// `"ease-in-out"`, or a `"cubic-bezier(...)"` literal.
+    pub fn easing(mut self, v: impl Into<String>) -> Self {
+        self.easing = v.into();
+        self
+    }
+
+    /// Iteration count. Use `f64::INFINITY` for `"infinite"`.
+    pub fn iterations(mut self, v: f64) -> Self {
+        self.iterations = v;
+        self
+    }
+
+    /// `"normal" | "reverse" | "alternate" | "alternate-reverse"`.
+    pub fn direction(mut self, v: impl Into<String>) -> Self {
+        self.direction = v.into();
+        self
+    }
+
+    /// `"none" | "forwards" | "backwards" | "both"`.
+    pub fn fill(mut self, v: impl Into<String>) -> Self {
+        self.fill = v.into();
+        self
+    }
+
+    /// Delay before the animation starts, milliseconds.
+    pub fn delay_ms(mut self, v: u32) -> Self {
+        self.delay_ms = v;
+        self
     }
 }
 

@@ -72,6 +72,22 @@ pub fn flush() {
         return;
     }
 
+    // RAII reset of the `flushing` flag. A re-running effect runs
+    // arbitrary user code (step 3 of `run_node_if_alive`) which may
+    // panic. Without this guard the trailing `rt.flushing = false`
+    // would be skipped on unwind, latching the flag true — every
+    // subsequent `flush` would then early-return as a no-op and the UI
+    // would freeze permanently. The guard restores the flag on both the
+    // normal return and the unwind path. (Safe to touch the runtime in
+    // `drop`: user code only ever runs while the runtime is unborrowed.)
+    struct FlushGuard;
+    impl Drop for FlushGuard {
+        fn drop(&mut self) {
+            with_runtime(|rt| rt.flushing = false);
+        }
+    }
+    let _flush_guard = FlushGuard;
+
     // Drain loop. We `take` the current queue so signals written
     // during a re-run land in a fresh queue and don't perturb the
     // ordering of the current wave.
@@ -98,8 +114,7 @@ pub fn flush() {
             run_node_if_alive(node);
         }
     }
-
-    with_runtime(|rt| rt.flushing = false);
+    // `_flush_guard` resets `rt.flushing = false` on drop here.
 }
 
 /// Re-run the compute closure for an effect or computed, if it's still
@@ -182,17 +197,30 @@ fn run_node_if_alive(node: NodeId) {
         arc_src.unsubscribe(node);
     }
 
+    // Step 4 as an RAII guard so the tracker/owner-stack book-keeping
+    // is restored even if the compute body panics. Without this, a
+    // panicking effect would leave `current_tracker` pointing at a
+    // disposed node and a stale owner pushed on `owner_stack` —
+    // corrupting dependency tracking and owner scoping for every later
+    // reactive operation (only observable if the panic is caught at the
+    // FFI boundary; otherwise the process aborts). Mirrors the
+    // pre-existing `untrack` Drop guard.
+    struct RunGuard;
+    impl Drop for RunGuard {
+        fn drop(&mut self) {
+            with_runtime(|rt| {
+                rt.owner_stack.pop();
+                rt.current_tracker = None;
+            });
+        }
+    }
+    let _run_guard = RunGuard;
+
     // Step 3: invoke compute. The runtime is unborrowed at this
     // point, so user code inside is free to enter `with_runtime`.
     {
         let mut borrow = compute.borrow_mut();
         (*borrow)();
     }
-
-    // Step 4: restore book-keeping — pop the owner we pushed and
-    // clear the tracker.
-    with_runtime(|rt| {
-        rt.owner_stack.pop();
-        rt.current_tracker = None;
-    });
+    // `_run_guard` restores the tracker + owner stack on drop here.
 }

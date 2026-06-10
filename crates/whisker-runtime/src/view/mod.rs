@@ -44,11 +44,25 @@ pub use list_mount::list_mount;
 pub use list_provider::{NativeItemProvider, INVALID_ITEM_INDEX};
 #[doc(hidden)]
 pub use renderer::__reset_children_mirror_for_tests;
+
+// Element-manipulation + lifecycle surface the `render!` macro expands
+// against and that framework-extension authors (custom control flow,
+// platform-component module crates) legitimately reach for.
 pub use renderer::{
     append_child, child_index, children_of, create_element, create_element_by_name,
-    create_phantom_element, current_renderer_id, dispatch_event, element_sign, flush,
-    insert_child_at, install_list_native_item_provider, install_renderer, is_phantom,
-    module_component_ptr, previous_sibling, release_element, remove_child, set_attribute,
-    set_event_listener, set_inline_styles, set_root, set_update_list_info, uninstall_renderer,
-    with_installed_renderer, BindType, DynRenderer, EventDispatchPlan, PHANTOM_BASE,
+    create_phantom_element, dispatch_event, flush, insert_child_at,
+    install_list_native_item_provider, is_phantom, previous_sibling, release_element, remove_child,
+    set_attribute, set_event_listener, set_inline_styles, set_root, set_update_list_info, BindType,
+};
+
+// Renderer-wiring internals. Public because `whisker-driver` (and test
+// renderers) link against them across the crate boundary and the macro
+// expansions name them by path — but NOT part of the app- or
+// module-author API. `#[doc(hidden)]` keeps them out of docs.rs and
+// signals "do not depend on this" without breaking the existing
+// cross-crate references.
+#[doc(hidden)]
+pub use renderer::{
+    current_renderer_id, element_sign, install_renderer, module_component_ptr, uninstall_renderer,
+    with_installed_renderer, DynRenderer, EventDispatchPlan, PHANTOM_BASE,
 };

@@ -59,6 +59,7 @@ pub trait Route: Clone + PartialEq + 'static {
 /// Implements [`std::error::Error`] so callers can bubble it through
 /// `?` in deep-link handlers.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RouteError {
     /// The input didn't match any defined route. Payload is the
     /// original path for diagnostics.

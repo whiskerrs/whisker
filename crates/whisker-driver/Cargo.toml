@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Backend driver for Whisker. Wraps the engine FFI and exposes the host shim helpers (run/tick) the iOS/Android shells call into via #[whisker::main]."
 
 [lib]

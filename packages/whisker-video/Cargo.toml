@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Whisker platform component module — `whisker-video:Video` element backed by AVPlayer on iOS / Media3 ExoPlayer on Android. Demonstrates `@WhiskerUIMethod` (`play()`, `pause()`, `seek(position)`) and `ElementRef<T>` for imperative Rust-side control of a mounted element."
 
 # Phase K — explicit `include` list so a `cargo publish` of this crate

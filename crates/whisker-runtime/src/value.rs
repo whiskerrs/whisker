@@ -42,6 +42,13 @@ use serde::Deserialize;
 /// `String`/`Bytes`/`Array`/`Map` are Rust-allocated and dropped on
 /// scope exit. Conversion to/from the C `WhiskerValueRaw` form
 /// happens at the FFI boundary in `whisker-driver`.
+///
+/// This enum is intentionally **closed** (not `#[non_exhaustive]`): it
+/// models a sealed tagged union mirroring the C `WhiskerValueRaw`
+/// discriminator, and the FFI encoder in `whisker-driver` must handle
+/// every variant exhaustively. Adding a variant is a deliberate,
+/// breaking wire-format change touching both sides of the boundary, so
+/// callers may rely on matching it exhaustively.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum WhiskerValue {
     #[default]

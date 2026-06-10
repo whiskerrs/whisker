@@ -10,8 +10,8 @@
 //! #[whisker::main]
 //! fn app() -> Element {
 //!     render! {
-//!         page { style: "background: white;",
-//!             text { value: "Hello, Whisker" }
+//!         page(style: "background: white;") {
+//!             text(value: "Hello, Whisker")
 //!         }
 //!     }
 //! }
@@ -41,7 +41,7 @@
 //!   [`__tags`]; the [`__tags::ElementBuilder`] trait provides the
 //!   shared `style` / `class` / `on_<event>` / … methods.
 //! - **Platform bridges** — [`PlatformModule`] + [`module!`] for
-//!   function-shaped native modules, [`ElementRef`] / [`element_ref()`]
+//!   function-shaped native modules, [`ElementRef`]
 //!   for imperative methods on mounted components, [`ElementHandle`]
 //!   et al for the typed return values.
 //! - **Typed attribute enums** — see [`attrs`] for the closed-set
@@ -57,7 +57,7 @@
 // from downstream crates.
 extern crate self as whisker;
 
-pub use whisker_config as app_config;
+pub use whisker_config as config;
 pub use whisker_runtime as runtime;
 
 pub use whisker_css as css;
@@ -66,10 +66,16 @@ pub use whisker_css as css;
 // the C bridge keys element creation off the same enum.
 pub use whisker_runtime::element::ElementTag;
 
+/// The return type of a `#[component]` / `#[whisker::main]` function —
+/// an opaque handle to a mounted view subtree. Re-exported at the
+/// crate root (and in the [`prelude`]) so component signatures read
+/// `-> Element` without an internal `runtime::view` import.
+pub use whisker_runtime::view::Element;
+
 pub use whisker_macros::{component, main, module_component, render};
 
 pub use whisker_driver::{
-    animate_cancel, animate_start, element_ref, invoke_element_animate, AnimateOp, AnimateOptions,
+    animate_cancel, animate_start, invoke_element_animate, AnimateOp, AnimateOptions,
     BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
     TextBoundingRect, TextHandle, UiInfo,
 };
@@ -115,11 +121,16 @@ macro_rules! module {
 }
 
 pub use whisker_runtime::reactive::{
-    arc_signal, computed, effect, flush, flush_mounts, mount_component, on_cleanup, on_mount,
-    provide_context, resource, resource_sync, signal, unmount_component, use_context, with_context,
-    ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource, ResourceState, RwSignal,
-    Signal, StoredValue, WriteSignal,
+    arc_signal, computed, effect, flush, on_cleanup, on_mount, provide_context, resource,
+    resource_sync, signal, use_context, with_context, ArcReadSignal, ArcRwSignal, ArcWriteSignal,
+    ReadSignal, Resource, ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
 };
+// Component mount/unmount + mount-queue machinery. Driven by the
+// `#[component]` expansion and the hot-reload remount path, not by app
+// code — `#[doc(hidden)]` keeps it out of the public docs while
+// remaining reachable for the macro and framework internals.
+#[doc(hidden)]
+pub use whisker_runtime::reactive::{flush_mounts, mount_component, unmount_component};
 // Owner / scope API. Application code rarely touches these —
 // `#[component]` + `on_cleanup` cover the common case. Framework
 // extension code (custom control-flow, custom routers, advanced
@@ -127,7 +138,10 @@ pub use whisker_runtime::reactive::{
 // scopes manually.
 pub use whisker_runtime::reactive::owner;
 pub use whisker_runtime::reactive::Owner;
-pub use whisker_runtime::tasks::{run_blocking, run_until_stalled, spawn_local};
+pub use whisker_runtime::tasks::{run_blocking, spawn_local};
+// Frame-driving internal used by the host tick loop, not app code.
+#[doc(hidden)]
+pub use whisker_runtime::tasks::run_until_stalled;
 mod control_flow;
 mod style;
 
@@ -140,7 +154,7 @@ pub use whisker_runtime::view::Children;
 pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
 
 /// Built-in tag builders. The `render!` macro lowers each built-in
-/// element invocation (`view { style: "x", on_tap: || {} }`) into a
+/// element invocation (`view(style: "x", on_tap: move |_| {})`) into a
 /// builder method chain on one of these types
 /// (`__tags::view().style(|| "x").on_tap(|| {}).__h()`). Methods
 /// internally invoke the imperative runtime primitives
@@ -208,9 +222,9 @@ pub mod __tags {
         /// signal changes.
         ///
         /// ```ignore
-        /// view { style: "padding: 8px; background: red;" }
-        /// view { style: Css::new().padding(8.px()).background(NamedColor::Red) }
-        /// view { style: computed(move || format!("opacity: {}", alpha.get())) }
+        /// view(style: "padding: 8px; background: red;")
+        /// view(style: Css::new().padding(8.px()).background(NamedColor::Red))
+        /// view(style: computed(move || format!("opacity: {}", alpha.get())))
         /// ```
         fn style<V>(self, v: V) -> Self
         where
@@ -508,7 +522,7 @@ pub mod __tags {
         /// variants.
         ///
         /// ```ignore
-        /// view { on_tap: |e| println!("tap at {:?}", e.detail) }
+        /// view(on_tap: move |e| println!("tap at {:?}", e.detail))
         /// ```
         fn on_tap<F: Fn(TouchEvent) + 'static>(self, f: F) -> Self {
             bind_typed(self.__element(), "tap", BindType::Bind, f);
@@ -794,8 +808,8 @@ pub mod __tags {
     /// #[whisker::main]
     /// fn app() -> Element {
     ///     render! {
-    ///         page { style: "background: white;",
-    ///             text { value: "Hello" }
+    ///         page(style: "background: white;") {
+    ///             text(value: "Hello")
     ///         }
     ///     }
     /// }
@@ -828,11 +842,12 @@ pub mod __tags {
     ///
     /// ```ignore
     /// render! {
-    ///     view {
+    ///     view(
     ///         style: "flex-direction: column; padding: 16px;",
-    ///         on_tap: |_| println!("tapped"),
-    ///         text { value: "Title" }
-    ///         text { value: "Subtitle" }
+    ///         on_tap: move |_| println!("tapped"),
+    ///     ) {
+    ///         text(value: "Title")
+    ///         text(value: "Subtitle")
     ///     }
     /// }
     /// ```
@@ -1202,11 +1217,11 @@ pub mod __tags {
     /// ```ignore
     /// let items = signal(vec!["alpha".to_string(), "beta".to_string()]);
     /// render! {
-    ///     list {
+    ///     list(
     ///         each: move || items.get(),
     ///         key: |s: &String| s.clone(),
-    ///         children: |s: String| render! { view { text { value: s } } },
-    ///     }
+    ///         children: |s: String| render! { view { text(value: s) } },
+    ///     )
     /// }
     /// ```
     ///
@@ -1704,7 +1719,8 @@ pub mod __hot {
 /// - **Control flow** — [`ForEach`], [`Show`], plus the
 ///   function-shaped prop types ([`EachFn`], [`KeyFn`], [`ItemFn`],
 ///   [`WhenFn`], [`Fallback`]).
-/// - **Refs** — [`ElementRef`], [`element_ref()`], and the typed
+/// - **Refs** — [`ElementRef`] (construct with `ElementRef::new()`),
+///   and the typed
 ///   handle / return types ([`ElementHandle`], [`ScrollViewHandle`],
 ///   [`TextHandle`], [`BoundingClientRect`], [`ScrollInfo`],
 ///   [`TextBoundingRect`], [`RefError`]).
@@ -1732,7 +1748,7 @@ pub mod prelude {
         Length, NamedColor, ToCss,
     };
     pub use crate::Children;
-    pub use crate::ElementTag;
+    pub use crate::{Element, ElementTag};
     pub use crate::{
         arc_signal, computed, effect, on_cleanup, on_mount, provide_context, resource,
         resource_sync, run_blocking, run_on_main_thread, signal, spawn_local, use_context,
@@ -1741,8 +1757,8 @@ pub mod prelude {
     };
     pub use crate::{component, main, render};
     pub use crate::{
-        element_ref, BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo,
-        ScrollViewHandle, TextBoundingRect, TextHandle,
+        BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
+        TextBoundingRect, TextHandle,
     };
     pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};

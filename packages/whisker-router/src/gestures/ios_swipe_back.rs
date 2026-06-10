@@ -317,11 +317,9 @@ fn animate_to_pose(
         element,
         animation_name,
         &[("0%", &from_kf), ("100%", &to_kf)],
-        &AnimateOptions {
-            duration_ms,
-            easing: "ease-out".into(),
-            fill: "forwards".into(),
-            ..Default::default()
-        },
+        &AnimateOptions::new()
+            .duration_ms(duration_ms)
+            .easing("ease-out")
+            .fill("forwards"),
     );
 }

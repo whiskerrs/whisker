@@ -406,7 +406,19 @@ extern "C" fn whisker_event_dispatch_entry(
         // the bridge, valid for this call. `from_raw` copies it out.
         unsafe { crate::module::from_raw(&*body) }
     };
-    whisker_runtime::view::dispatch_event(target_sign, name, value)
+    // Contain panics from user event handlers (`on_tap`, etc.) so a
+    // bad `unwrap()` in a handler drops the event instead of unwinding
+    // across the C ABI and aborting the app. Report "not consumed" on
+    // panic so the bridge falls back to its native chain.
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        whisker_runtime::view::dispatch_event(target_sign, name, value)
+    })) {
+        Ok(consumed) => consumed,
+        Err(_) => {
+            eprintln!("whisker: panic in event handler for `{name}`; event dropped");
+            false
+        }
+    }
 }
 
 /// Register [`whisker_event_dispatch_entry`] with the bridge so the

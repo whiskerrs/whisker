@@ -404,6 +404,28 @@ pub(crate) struct RawBuilder {
 }
 
 impl RawBuilder {
+    /// Encode a Rust `&str` into an owned NUL-terminated C string and
+    /// return a `WhiskerStringRef` pointing at it. The returned `len`
+    /// is derived from the actual buffer, never from the source `&str`.
+    ///
+    /// Rust `String`s may contain interior NUL bytes; `CString` cannot.
+    /// `CString::new` therefore fails on such input and we fall back to
+    /// an empty C string. The advertised `len` MUST match that buffer —
+    /// the previous code set `len = s.len()` (the *original* length)
+    /// while the buffer was the empty fallback, so the C side read past
+    /// the 1-byte allocation (OOB read). Deriving `len` from
+    /// `c.as_bytes()` keeps the two in lockstep: an interior NUL now
+    /// degrades to an empty string instead of an out-of-bounds read.
+    fn push_str_ref(&mut self, s: &str) -> ffi::WhiskerStringRef {
+        let c = CString::new(s).unwrap_or_default();
+        let r = ffi::WhiskerStringRef {
+            ptr: c.as_ptr(),
+            len: c.as_bytes().len(),
+        };
+        self.strings.push(c);
+        r
+    }
+
     pub(crate) fn encode(&mut self, v: &WhiskerValue) -> ffi::WhiskerValueRaw {
         match v {
             WhiskerValue::Null => empty_raw(ffi::WhiskerValueType::Null),
@@ -423,13 +445,9 @@ impl RawBuilder {
                 raw
             }
             WhiskerValue::String(s) => {
-                let c = CString::new(s.as_str()).unwrap_or_default();
+                let s_ref = self.push_str_ref(s.as_str());
                 let mut raw = empty_raw(ffi::WhiskerValueType::String);
-                raw.v.s = ffi::WhiskerStringRef {
-                    ptr: c.as_ptr(),
-                    len: s.len(),
-                };
-                self.strings.push(c);
+                raw.v.s = s_ref;
                 raw
             }
             WhiskerValue::Bytes(b) => {
@@ -457,12 +475,7 @@ impl RawBuilder {
                 let mut entries: Vec<ffi::WhiskerKeyValueRaw> = map
                     .iter()
                     .map(|(k, v)| {
-                        let key_c = CString::new(k.as_str()).unwrap_or_default();
-                        let key_ref = ffi::WhiskerStringRef {
-                            ptr: key_c.as_ptr(),
-                            len: k.len(),
-                        };
-                        self.strings.push(key_c);
+                        let key_ref = self.push_str_ref(k.as_str());
                         let value = self.encode(v);
                         ffi::WhiskerKeyValueRaw {
                             key: key_ref,
@@ -479,13 +492,9 @@ impl RawBuilder {
                 raw
             }
             WhiskerValue::Error(msg) => {
-                let c = CString::new(msg.as_str()).unwrap_or_default();
+                let s_ref = self.push_str_ref(msg.as_str());
                 let mut raw = empty_raw(ffi::WhiskerValueType::Error);
-                raw.v.s = ffi::WhiskerStringRef {
-                    ptr: c.as_ptr(),
-                    len: msg.len(),
-                };
-                self.strings.push(c);
+                raw.v.s = s_ref;
                 raw
             }
         }
@@ -662,6 +671,43 @@ mod tests {
         // WhiskerKeyValueRaw = 16 (key WhiskerStringRef) + 24
         // (value WhiskerValueRaw) = 40.
         assert_eq!(std::mem::size_of::<ffi::WhiskerKeyValueRaw>(), 40);
+    }
+
+    /// A string with an interior NUL byte must never advertise a `len`
+    /// longer than the buffer it points at. `CString` can't hold an
+    /// interior NUL, so the encoder falls back to an empty buffer — and
+    /// the advertised `len` has to follow, or the C side reads OOB. We
+    /// assert the encoded `len` matches the actual NUL-terminated buffer
+    /// for both the `String` and `Error` (and map-key) paths.
+    #[test]
+    fn interior_nul_len_matches_buffer() {
+        // SAFETY: we only read the `len` field and compare against the
+        // owned buffer the builder keeps alive; no dereference past it.
+        let assert_consistent = |value: &WhiskerValue| {
+            let mut builder = RawBuilder::default();
+            let raw = builder.encode(value);
+            // The owned CString backing this ref is the last one pushed.
+            let buf = builder.strings.last().expect("string was pushed");
+            let advertised = unsafe { raw.v.s.len };
+            assert_eq!(
+                advertised,
+                buf.as_bytes().len(),
+                "advertised len must match the owned buffer for {value:?}"
+            );
+            // Interior NUL can't survive a CString, so it degrades to
+            // empty rather than reading out of bounds.
+            assert_eq!(advertised, 0, "interior-NUL string degrades to empty");
+        };
+        assert_consistent(&WhiskerValue::String("a\0b".into()));
+        assert_consistent(&WhiskerValue::Error("x\0y".into()));
+
+        // Map key with an interior NUL: encode must not panic and the
+        // key ref len must match its buffer.
+        let mut builder = RawBuilder::default();
+        let raw = builder.encode(&WhiskerValue::map([("k\0ey", WhiskerValue::Int(1))]));
+        let key_buf = builder.strings.last().expect("key string was pushed");
+        let key_len = unsafe { (*raw.v.map.entries).key.len };
+        assert_eq!(key_len, key_buf.as_bytes().len());
     }
 
     /// `as_error` shortcut.

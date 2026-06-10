@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Host-side dev server for `whisker run`. File watch + cargo build + WebSocket push of subsecond patches. Pulled in by whisker-cli; no presence in release builds."
 
 [dependencies]

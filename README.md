@@ -4,13 +4,15 @@ Cross-platform mobile UI framework for Rust, built on the [Lynx](https://github.
 
 Website: [whisker.rs](https://whisker.rs) · Source: [github.com/whiskerrs/whisker](https://github.com/whiskerrs/whisker)
 
-> **Status**: Pre-alpha. Active development on the initial scaffold. Not usable yet.
+> **Status**: Early release (`0.1.x`). The core runtime, `render!` macro,
+> routing, hot reload, and the iOS/Android pipelines work end-to-end.
+> APIs may still change before `1.0` — see [Status](#status) for the
+> per-area breakdown and [known gaps](#known-gaps).
 
 Whisker lets you build native iOS and Android apps in Rust with a Leptos-style **fine-grained reactive** API — components run once, signals + effects drive granular updates, no virtual DOM. Under the hood, the [Lynx](https://github.com/lynx-family/lynx) engine drives platform-native widgets — no self-rendering, no JavaScript runtime.
 
 ```rust
 use whisker::prelude::*;
-use whisker::runtime::view::Element;
 
 #[whisker::main]
 fn app() -> Element {
@@ -21,7 +23,7 @@ fn app() -> Element {
             text(value: label)
             view(
                 style: "padding: 8px 16px; background: #3b82f6; border-radius: 6px;",
-                on_tap: move || count.update(|n| *n += 1),
+                on_tap: move |_| count.update(|n| *n += 1),
             ) {
                 text(style: "color: white;", value: "+1")
             }
@@ -29,6 +31,42 @@ fn app() -> Element {
     }
 }
 ```
+
+## Getting started
+
+Whisker apps are regular Rust crates driven by the `whisker` CLI.
+
+```sh
+# 1. Install the CLI (and the Android build helper, if you target Android).
+cargo install whisker-cli
+cargo install whisker-build   # only needed for `whisker run android`
+
+# 2. Check your local toolchain (Rust targets, Android NDK/SDK/JDK, Xcode).
+whisker doctor
+
+# 3. Scaffold and run an app.
+whisker new my-app
+cd my-app
+whisker run ios       # or: whisker run android
+```
+
+`whisker run` watches `src/lib.rs` and hot-patches the running app in
+under a second — no restart, no state loss. App-level config (bundle id,
+app name, deployment settings) lives in `whisker.rs`.
+
+**Prerequisites**
+
+- **Rust** 1.85+ with the relevant target(s):
+  `rustup target add aarch64-apple-ios-sim aarch64-linux-android`
+- **iOS**: Xcode + Command Line Tools (Simulator builds work out of the box).
+- **Android**: Android SDK + NDK `21.1.6352462` + a JDK. `whisker doctor`
+  reports exactly what's missing.
+
+> **Note**: the iOS dev pipeline currently expects to run from a checkout
+> of this repository (it resolves the bundled Swift runtime by path).
+> Standalone iOS support from a `cargo install`-only setup is in progress
+> — see [known gaps](#known-gaps). Android is distributed via Maven and
+> works standalone.
 
 The reactive contract at a glance:
 
@@ -61,19 +99,25 @@ for the full design.
 whisker/
 ├── crates/                    Rust workspace
 │   ├── whisker                  Umbrella crate (re-exports for users)
-│   ├── whisker-config       Config types used in whisker.rs
+│   ├── whisker-config           Config types used in whisker.rs
 │   ├── whisker-cli              `whisker` / `cargo-whisker` CLI binary
-│   ├── whisker-codegen          CNG (Continuous Native Generation) codegen
-│   ├── whisker-dev-runtime      Dev-only runtime (WebSocket, hot reload)
+│   ├── whisker-build            Android build helper (cargo install whisker-build)
+│   ├── whisker-cng              CNG (Continuous Native Generation) codegen
+│   ├── whisker-dev-server       Host-side dev server (file watch, hot patch)
+│   ├── whisker-dev-runtime      Dev-only device runtime (WebSocket, hot reload)
 │   ├── whisker-driver           Backend driver (host shim, BridgeRenderer)
 │   ├── whisker-driver-sys       Raw FFI bindings + C++ bridge sources (bridge/)
+│   ├── whisker-css              Typed CSS keyword / `css!` helpers
 │   ├── whisker-macros           Proc macros (#[whisker::main], #[component], render!)
 │   ├── whisker-plugin           Plugin trait + GenerateContext + typed mod APIs
-│   └── whisker-runtime          Core runtime (reactive arena, view layer)
-├── native/
-│   ├── android/               Kotlin runtime (WhiskerApplication / WhiskerView etc.)
-│   └── ios/                   Swift runtime (WhiskerAppDelegate / WhiskerView etc.)
-├── examples/                  Sample apps
+│   ├── whisker-runtime          Core runtime (reactive arena, view layer)
+│   └── whisker-subsecond        Whisker fork of Dioxus `subsecond` (hot patch)
+├── packages/                  First-party modules (router, image, svg, icons,
+│                                video, audio, safe-area, local-store)
+├── platforms/
+│   ├── android/               Kotlin runtime + Gradle plugins
+│   └── ios/                   Swift runtime (WhiskerView / WhiskerModule etc.)
+├── examples/                  Sample apps (see examples/podcast)
 └── docs/                      Documentation
 ```
 
@@ -138,17 +182,34 @@ GitHub.
 
 | Component | Status |
 |---|---|
-| Workspace scaffold | ✅ |
 | Lynx prebuilt integration | ✅ |
 | Element PAPI Obj-C++/JNI bridge | ✅ |
 | Reactive runtime (signals, effects, computed, resource) | ✅ |
 | `render!` macro | ✅ |
-| `Signal<T>` unified prop reactivity (Phase 7-Φ) | ✅ |
-| `#[whisker::platform_component]` (iOS only for now) | ✅ |
-| CNG (continuous native generation, plugin-driven) | ⏳ |
-| `whisker run` (Tier 1 hot reload) | ✅ (iOS) / ⏳ (Android) |
+| `Signal<T>` unified prop reactivity | ✅ |
+| Routing (`whisker-router`: stack / tabs / modal, transitions) | ✅ |
+| First-party modules (image, svg, icons, video, audio, local-store, safe-area) | ✅ |
+| `#[whisker::platform_component]` (iOS) | ✅ |
+| CNG (continuous native generation, plugin-driven) | ✅ |
+| `whisker run` (Tier 1 hot reload) | ✅ iOS / ✅ Android |
 | iOS xcframework build | ✅ |
-| Android AAR build | ⏳ |
+| Android AAR build (Maven-distributed) | ✅ |
+
+### Known gaps
+
+Things to be aware of before adopting (tracked for upcoming releases):
+
+- **No text input.** Built-in tags are `page` / `view` / `text` /
+  `raw_text` / `scroll_view` / `list` / `fragment`. There is no
+  `TextInput` / `TextField` equivalent yet, so forms and search boxes
+  aren't buildable today.
+- **iOS needs a repo checkout.** `whisker run ios` resolves the bundled
+  Swift runtime by path; standalone `cargo install`-only iOS support is
+  in progress. Android works standalone via Maven.
+- **Deep linking is a stub** (`whisker-router` `linking` always returns
+  no initial URL).
+- **No release-build / code-signing wrapper.** Drive `xcodebuild` /
+  `gradle` directly (the generated app's README shows how).
 
 ## License
 

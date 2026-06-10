@@ -44,12 +44,10 @@ impl StackTransition for Fade {
             element,
             name,
             &[("0%", &[("opacity", from)]), ("100%", &[("opacity", to)])],
-            &AnimateOptions {
-                duration_ms: self.duration_ms,
-                easing: self.easing.into(),
-                fill: "forwards".into(),
-                ..Default::default()
-            },
+            &AnimateOptions::new()
+                .duration_ms(self.duration_ms)
+                .easing(self.easing)
+                .fill("forwards"),
         );
     }
 

@@ -93,6 +93,12 @@ pub struct Config {
     pub watch_paths: Vec<PathBuf>,
     /// Address the WebSocket server binds.
     pub bind_addr: SocketAddr,
+    /// Shared dev-session token. When `Some`, the WebSocket server only
+    /// arms the patch channel for a client whose `hello` carries the
+    /// matching token, and the cli delivers it to the device (iOS env /
+    /// Android system property). `None` runs unauthenticated (the prior
+    /// behaviour). `whisker run` generates a random one per session.
+    pub dev_token: Option<String>,
     /// Strategy for reflecting code edits onto the running app.
     pub hot_patch_mode: HotPatchMode,
     /// Android install / launch params. Required iff
@@ -113,6 +119,7 @@ impl Config {
             target,
             watch_paths: Vec::new(),
             bind_addr: "127.0.0.1:9876".parse().expect("valid default addr"),
+            dev_token: None,
             hot_patch_mode: HotPatchMode::Tier2ColdRebuild,
             android: None,
             ios: None,
@@ -330,6 +337,8 @@ impl DevServer {
             self.config.package.clone(),
             tier1_init.as_ref().map(|p| p.capture.clone()),
             builder.features().to_vec(),
+            self.config.bind_addr.port(),
+            self.config.dev_token.clone(),
         );
 
         // Initial build — cargo only. `install_and_launch` is
@@ -379,8 +388,12 @@ impl DevServer {
         // `--no-tui` and CI paths where the legacy status surface
         // is still the only signal.
         whisker_build::ui::ensure_status("dev-server");
-        let (sender, bound, _server_handle) =
-            server::serve(self.config.bind_addr, self.on_event.clone()).await?;
+        let (sender, bound, _server_handle) = server::serve(
+            self.config.bind_addr,
+            self.on_event.clone(),
+            self.config.dev_token.clone(),
+        )
+        .await?;
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
         whisker_build::ui::debug(format!("ws://{bound}/whisker-dev"));
 

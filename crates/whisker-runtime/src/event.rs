@@ -96,6 +96,7 @@ where
 /// `target` (where the event originated) and `currentTarget` (the
 /// element whose handler is firing).
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct Target {
     /// The element's `id` attribute (empty when unset).
     pub id: String,
@@ -178,6 +179,7 @@ impl<'de> Deserialize<'de> for Target {
 /// A 2-D point in LynxView coordinates — the `detail` of a
 /// [`TouchEvent`] (position of the first touch point).
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[non_exhaustive]
 pub struct Point {
     #[serde(default)]
     pub x: f64,
@@ -188,6 +190,7 @@ pub struct Point {
 /// A single active touch point inside a [`TouchEvent`].
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct Touch {
     /// Stable id for the lifetime of one finger's touch sequence.
     #[serde(default)]
@@ -211,6 +214,7 @@ pub struct Touch {
 
 /// Base event shape — fields present on every Lynx event.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
 pub struct Event {
     /// Event name (`"tap"`, `"touchstart"`, …).
     #[serde(rename = "type", default)]
@@ -231,6 +235,7 @@ pub struct Event {
 /// `changed_touches` carry the full per-finger detail.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct TouchEvent {
     #[serde(rename = "type", default)]
     pub kind: String,
@@ -253,6 +258,7 @@ pub struct TouchEvent {
 
 /// Keyframe / transition animation lifecycle event.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
 pub struct AnimationEvent {
     #[serde(rename = "type", default)]
     pub kind: String,
@@ -276,6 +282,7 @@ pub struct AnimationEvent {
 /// The payload shape is component-specific, so `detail` stays an
 /// opaque [`WhiskerValue`] the handler inspects itself.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
 pub struct CustomEvent {
     #[serde(rename = "type", default)]
     pub kind: String,
@@ -292,6 +299,7 @@ pub struct CustomEvent {
 
 /// A 2-D size — `width` / `height` in px.
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[non_exhaustive]
 pub struct Size {
     #[serde(default)]
     pub width: f64,
@@ -307,6 +315,7 @@ pub struct Size {
 /// these have no catch/capture variants — see Lynx `CustomEvent`
 /// defaults `Capture::kNo, Bubbles::kNo`.)
 #[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
 pub struct ScrollEvent {
     #[serde(rename = "type", default)]
     pub kind: String,
@@ -324,6 +333,7 @@ pub struct ScrollEvent {
 /// `detail` dict — see Lynx `LynxScrollEventManager`).
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct ScrollDetail {
     /// Horizontal content offset (px).
     #[serde(default)]
@@ -352,6 +362,7 @@ pub struct ScrollDetail {
 
 /// `layout` on `<text>` — fired after text layout completes.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
 pub struct TextLayoutEvent {
     #[serde(rename = "type", default)]
     pub kind: String,
@@ -368,6 +379,7 @@ pub struct TextLayoutEvent {
 /// Layout info carried by a [`TextLayoutEvent`].
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct TextLayoutDetail {
     /// Number of laid-out lines.
     #[serde(default)]
@@ -383,6 +395,7 @@ pub struct TextLayoutDetail {
 /// One laid-out text line inside a [`TextLayoutDetail`].
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct TextLineInfo {
     /// Character index of the line's first glyph.
     #[serde(default)]
@@ -398,6 +411,7 @@ pub struct TextLineInfo {
 
 /// `selectionchange` on `<text>` — the selected text range changed.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
 pub struct SelectionChangeEvent {
     #[serde(rename = "type", default)]
     pub kind: String,
@@ -413,6 +427,7 @@ pub struct SelectionChangeEvent {
 
 /// Selection range carried by a [`SelectionChangeEvent`].
 #[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
 pub struct SelectionDetail {
     /// Start character index, or -1 when there's no selection.
     #[serde(default)]

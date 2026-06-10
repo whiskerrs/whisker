@@ -139,9 +139,17 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
     v.insert("ios_scheme", inputs.scheme.clone());
     v.insert("ios_bundle_id", inputs.bundle_id.clone());
     v.insert("ios_deployment_target", inputs.deployment_target.clone());
+    // WhiskerRuntime now resolves from the remote `whisker` SwiftPM
+    // package (pbxproj `XCRemoteSwiftPackageReference`) rather than a
+    // local `platforms/ios` path, so the generated project builds
+    // outside the monorepo.
     v.insert(
-        "whisker_runtime_ios_path",
-        inputs.whisker_runtime_path.display().to_string(),
+        "whisker_ios_spm_url",
+        whisker_build::ios::WHISKER_IOS_SPM_URL.to_string(),
+    );
+    v.insert(
+        "whisker_ios_spm_version",
+        whisker_build::ios::WHISKER_IOS_SPM_VERSION.to_string(),
     );
     v.insert(
         "whisker_modules_ios_path",
@@ -735,11 +743,21 @@ mod tests {
             std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
         assert!(pbxproj.contains("PRODUCT_BUNDLE_IDENTIFIER = \"rs.whisker.examples.helloWorld\""));
         assert!(pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = \"13.0\""));
-        // XCLocalSwiftPackageReference for WhiskerRuntime — the only
-        // iOS integration path. cng points at `platforms/ios`;
-        // module Package.swifts pull the same dir via `.package(path:)`.
-        assert!(pbxproj.contains("relativePath = \"/abs/platforms/ios\""));
-        // WhiskerModules resolves through the per-app gen-tree dir.
+        // WhiskerRuntime resolves from the remote `whisker` SwiftPM
+        // package (so apps build outside the monorepo); module
+        // Package.swifts pull the same remote identity.
+        assert!(pbxproj.contains("isa = XCRemoteSwiftPackageReference;"));
+        assert!(pbxproj.contains(&format!(
+            "repositoryURL = \"{}\"",
+            whisker_build::ios::WHISKER_IOS_SPM_URL
+        )));
+        assert!(pbxproj.contains(&format!(
+            "version = \"{}\"",
+            whisker_build::ios::WHISKER_IOS_SPM_VERSION
+        )));
+        // The product dependency must link to the remote package ref.
+        assert!(pbxproj.contains("package = B25ED1A6F9E42E26D051E805"));
+        // WhiskerModules still resolves through the per-app gen-tree dir.
         assert!(pbxproj.contains("relativePath = \"/abs/gen/ios/whisker_modules\""));
         assert!(pbxproj.contains("name = \"HelloWorld\""));
         assert!(pbxproj.contains("productName = \"HelloWorld\""));

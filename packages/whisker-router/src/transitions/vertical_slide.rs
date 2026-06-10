@@ -64,12 +64,10 @@ impl StackTransition for VerticalSlide {
                 ("0%", &[("transform", from)]),
                 ("100%", &[("transform", to)]),
             ],
-            &AnimateOptions {
-                duration_ms: self.duration_ms,
-                easing: self.easing.into(),
-                fill: "forwards".into(),
-                ..Default::default()
-            },
+            &AnimateOptions::new()
+                .duration_ms(self.duration_ms)
+                .easing(self.easing)
+                .fill("forwards"),
         );
     }
 }

@@ -25,6 +25,7 @@ public final class WhiskerView: LynxView {
 
     private var engine: OpaquePointer?
     private var displayLink: CADisplayLink?
+    private var displayLinkProxy: DisplayLinkProxy?
 
     public override init(frame: CGRect) {
         super.init(builderBlock: { builder in
@@ -55,7 +56,20 @@ public final class WhiskerView: LynxView {
         //
         // Creating the link upfront makes the trampoline's unpause
         // actually take effect.
-        let link = CADisplayLink(target: self, selector: #selector(handleDisplayLink(_:)))
+        //
+        // Route through a weak proxy rather than `target: self`. A
+        // CADisplayLink added to a run loop is retained by that run
+        // loop, and the link strongly retains its `target`; `target:
+        // self` therefore forms a retain cycle (run loop → link → view)
+        // that keeps the WhiskerView — and the whole Rust engine it
+        // owns — alive forever. `deinit` would never run, so
+        // `invalidate()` / `whisker_bridge_engine_release` would never
+        // fire (a per-view leak). The proxy holds the view weakly, so
+        // the cycle is broken and `deinit` runs when the hierarchy lets
+        // go of the view.
+        let proxy = DisplayLinkProxy(target: self)
+        self.displayLinkProxy = proxy
+        let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick(_:)))
         link.isPaused = true
         link.add(to: .main, forMode: .common)
         self.displayLink = link
@@ -79,7 +93,7 @@ public final class WhiskerView: LynxView {
         }
     }
 
-    @objc private func handleDisplayLink(_ link: CADisplayLink) {
+    fileprivate func handleDisplayLink(_ link: CADisplayLink) {
         guard let engine = engine else { return }
         let idle = whisker_tick(UnsafeMutableRawPointer(engine))
         if idle {
@@ -148,4 +162,23 @@ public final class WhiskerView: LynxView {
     /// `userInfo` key carrying the `UIEdgeInsets` payload of
     /// [`safeAreaInsetsDidChangeNotification`].
     public static let safeAreaInsetsKey = "WhiskerViewSafeAreaInsets"
+}
+
+/// Weak forwarding target for the `CADisplayLink`, so the link (and the
+/// run loop that retains it) does not strongly retain the
+/// `WhiskerView`. See the comment at the link's creation in `init` for
+/// why a direct `target: self` would leak the view and its engine.
+private final class DisplayLinkProxy {
+    weak var target: WhiskerView?
+
+    init(target: WhiskerView) {
+        self.target = target
+    }
+
+    @objc func tick(_ link: CADisplayLink) {
+        // If the view has been deallocated the weak ref is nil and the
+        // tick is a no-op; the view's `deinit` will have invalidated the
+        // link by then anyway.
+        target?.handleDisplayLink(link)
+    }
 }

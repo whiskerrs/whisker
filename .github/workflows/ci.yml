@@ -47,6 +47,52 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  msrv:
+    name: MSRV (rust 1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The version here must match `rust-version` in the root
+      # Cargo.toml's `[workspace.package]`. If you bump one, bump both.
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets
+
+  deny:
+    name: cargo deny (advisories / bans / sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # `licenses` is intentionally omitted until the allow-list in
+          # deny.toml is confirmed against every transitive dep; the
+          # other three are the security-relevant gates.
+          command: check advisories bans sources
+
+  cross-build-ios:
+    name: cross build (aarch64-apple-ios-sim)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      # Check the user-facing umbrella crate (pulls in runtime + driver
+      # + driver-sys) for the iOS device target. `whisker-driver-sys`'s
+      # build.rs compiles the C++ bridge with `cc`, which finds the iOS
+      # SDK clang from Xcode on the macOS runner — no extra toolchain
+      # setup needed. Catches Rust-level regressions in the device build
+      # (cfg gates, FFI signatures). The Rust source is shared across
+      # iOS/Android, so this covers the bulk of the device-build surface.
+      #
+      # An Android cross-check (aarch64-linux-android) is NOT included
+      # yet: `cargo check` still runs build.rs, which cross-compiles the
+      # C++ bridge and therefore needs the Android NDK clang on PATH.
+      # Add it via `cargo-ndk` / an NDK setup step when wiring Android CI.
+      - run: cargo check -p whisker --target aarch64-apple-ios-sim
+
   coverage:
     name: coverage (cargo-llvm-cov)
     runs-on: ubuntu-latest

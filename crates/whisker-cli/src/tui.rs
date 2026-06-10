@@ -840,6 +840,10 @@ fn install_terminal_cleanup_once(original_stderr_fd: c_int) {
     }));
     let _ = ctrlc::set_handler(|| {
         emergency_terminal_reset(SAVED_FD.load(Ordering::Acquire));
+        // SIGTERM any in-flight build before the hard-exit skips Drop,
+        // so Ctrl-C during a build doesn't orphan cargo / gradle /
+        // xcodebuild.
+        whisker_build::child_guard::kill_all();
         std::process::exit(130);
     });
 }

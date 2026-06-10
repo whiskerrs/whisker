@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Plugin surface for Whisker CNG — Plugin trait, IR types, JSON envelope, and the subprocess runner 3rd-party plugin binaries use."
 
 [dependencies]

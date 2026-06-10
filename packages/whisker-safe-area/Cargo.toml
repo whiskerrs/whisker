@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Whisker module exposing the host view's safe-area insets as a reactive ReadSignal<SafeAreaInsets>. iOS reads UIView.safeAreaInsets; Android reads WindowInsetsCompat (systemBars + displayCutout). Android edge-to-edge off → all-zero insets (graceful degrade)."
 
 # Explicit `include` list — mirrors `whisker-image` / `whisker-video`.

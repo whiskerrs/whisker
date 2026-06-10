@@ -251,6 +251,27 @@ pub fn tick(engine_raw: *mut c_void) -> bool {
 }
 
 extern "C" fn tick_callback(_user_data: *mut c_void) {
+    // Contain panics from user code (effects, async tasks, on_mount
+    // callbacks) so a single bad `unwrap()` degrades to "this frame is
+    // dropped, the app keeps running" instead of unwinding across the C
+    // ABI and aborting the whole process. The runtime's internal RAII
+    // guards (`flush`'s flushing flag, `run_node_if_alive`'s tracker /
+    // owner-stack restore) keep reactive state consistent after a caught
+    // panic, so the next tick proceeds cleanly.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(tick_frame));
+    if let Err(_panic) = result {
+        // The panic message itself already reached stderr via the
+        // default hook (captured and forwarded to `whisker run` in dev).
+        log_tick_panic();
+    }
+    // Always clear PENDING so `tick()` reports a definite idle/busy
+    // state even when the frame bailed out mid-way.
+    PENDING.with(|p| p.set(false));
+}
+
+/// The body of one frame. Split out of `tick_callback` so the whole
+/// thing can run under `catch_unwind` without an `extern "C"` closure.
+fn tick_frame() {
     // Drain any pending hot-reload patch before the reactive flush so
     // any patched closures run with their new bodies when the queue
     // fires. Returns the list of host-side fn pointers that were
@@ -280,7 +301,16 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
     // frame.
     reactive_flush_mounts();
     renderer_flush();
-    PENDING.with(|p| p.set(false));
+}
+
+#[cfg(feature = "hot-reload")]
+fn log_tick_panic() {
+    whisker_dev_runtime::devlog("tick: user code panicked; frame dropped, app continues");
+}
+
+#[cfg(not(feature = "hot-reload"))]
+fn log_tick_panic() {
+    eprintln!("whisker: panic in tick; frame dropped, app continues");
 }
 
 /// Type-erased shim handed to `whisker_runtime::main_thread`. The

@@ -1,0 +1,48 @@
+# cargo-deny configuration — supply-chain hygiene for the workspace.
+#
+# Run locally with `cargo install cargo-deny` then `cargo deny check`.
+# CI gates on `advisories`, `bans`, and `sources` (see
+# .github/workflows/ci.yml); `licenses` is configured here for local
+# use and can be promoted to a CI gate once the allow-list below is
+# confirmed to cover every transitive dependency.
+
+[advisories]
+# RUSTSEC advisory database. Fail the check on any vulnerable or
+# yanked crate in the dependency tree.
+version = 2
+yanked = "deny"
+
+[bans]
+# The tree currently double-pins `tungstenite` / `tokio-tungstenite`
+# (0.21 via the dev-runtime client, 0.29 via axum on the host). Warn
+# rather than deny so this is visible without blocking CI until the
+# versions are unified.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[licenses]
+# Permissive licenses compatible with Whisker's own MIT OR Apache-2.0.
+# Not yet a CI gate — see the file header.
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+]
+
+[sources]
+# Only allow crates from crates.io. Any git or alternative-registry
+# dependency must be added here explicitly — keeps an accidental
+# unaudited git dep from sneaking in.
+unknown-registry = "deny"
+unknown-git = "deny"

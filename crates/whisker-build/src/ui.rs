@@ -325,6 +325,10 @@ impl Step {
         cmd.stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         let mut child = cmd.spawn()?;
+        // Track the PID so `whisker run`'s hard-exit quit path can
+        // SIGTERM this build (cargo / gradle / xcodebuild) instead of
+        // orphaning it. The guard unregisters when `pipe` returns.
+        let _child_guard = crate::child_guard::track(child.id());
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let bar_stdout = self.bar.clone();

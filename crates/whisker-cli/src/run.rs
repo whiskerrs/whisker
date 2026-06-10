@@ -167,6 +167,12 @@ fn run_tui_render_loop(mut tui: crate::tui::Tui) {
         // kernel. cli-initiated shutdowns (build failed, etc.) take
         // the other branch and let `run()`'s normal return path
         // surface the error.
+        //
+        // `exit` skips destructors, so an in-flight cargo / gradle /
+        // xcodebuild would be orphaned — SIGTERM the tracked build
+        // children first (the gradle daemon, in its own session, is
+        // spared).
+        whisker_build::child_guard::kill_all();
         std::process::exit(0);
     }
 }
@@ -225,6 +231,12 @@ fn run_inner(
         target,
         watch_paths: watch_paths.clone(),
         bind_addr: args.bind,
+        // Random per-session token authenticating the device to the
+        // hot-reload WebSocket. The patch channel `dlopen`s whatever it
+        // receives, so without this an unauthenticated peer on a
+        // LAN-exposed bind could push arbitrary native code; the gate
+        // also defends an accidental `--bind 0.0.0.0`.
+        dev_token: Some(generate_dev_token()),
         hot_patch_mode: if args.no_hot_patch {
             HotPatchMode::Tier2ColdRebuild
         } else {
@@ -272,6 +284,37 @@ fn run_inner(
 /// Friendly label for the TUI header. `whisker_dev_server::Target`'s
 /// Debug impl renders `IosSimulator` which is a mouthful — pick a
 /// short noun for screen real estate.
+/// Generate a random hex token for the hot-reload session.
+///
+/// Reads 16 bytes from `/dev/urandom` (every host we run on is POSIX)
+/// and hex-encodes them into a 32-char token. If `/dev/urandom` is
+/// somehow unreadable we fall back to a time+pid-seeded value — weaker,
+/// but the token only needs to be unguessable within a dev session on
+/// the local machine, and the dev loop shouldn't hard-fail over it.
+fn generate_dev_token() -> String {
+    let mut buf = [0u8; 16];
+    let strong = std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf))
+        .is_ok();
+    if !strong {
+        // Fallback seed: nanos since epoch XOR pid, splatted across the
+        // buffer. Not cryptographic, but non-constant per session.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let seed = nanos ^ (std::process::id() as u128);
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = (seed >> ((i % 16) * 8)) as u8;
+        }
+    }
+    let mut s = String::with_capacity(32);
+    for b in buf {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
 fn target_label(target: Target) -> &'static str {
     match target {
         Target::Android => "Android",

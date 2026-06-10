@@ -6,7 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Whisker platform component module — `whisker-image:Image` element backed by Kingfisher on iOS / Coil on Android. Fetches HTTP(S) URLs and renders into a UIImageView / ImageView with built-in memory + disk cache. Demonstrates the `@WhiskerModule` `Prop` setter pattern from `whisker-video` against a network-fetching native widget."
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Network image component for Whisker — fetches HTTP(S) URLs and renders into a native image view (Kingfisher on iOS, Coil on Android) with built-in memory + disk caching."
 
 # Explicit `include` list — mirrors `whisker-video`. A `cargo publish`
 # ships the Kotlin + Swift platform sources alongside `src/lib.rs`,

@@ -51,7 +51,7 @@ use crate::reactive::{effect, on_cleanup, Owner};
 
 use super::handle::Element;
 use super::list_provider::{NativeItemProvider, INVALID_ITEM_INDEX};
-use super::renderer::{install_list_native_item_provider, set_update_list_info};
+use super::renderer::{element_sign, install_list_native_item_provider, set_update_list_info};
 
 /// One live item — its FiberElement (`element`) and the reactive
 /// owner under which the body closure ran. Dropped when the slot is
@@ -121,7 +121,13 @@ pub fn list_mount<T, K, ItemsFn, KeyFn, BodyFn>(
                 // body get cleaned up when the slot is enqueued out.
                 let owner = Owner::new(None);
                 let element = owner.with(|| (body)(item));
-                let sign = element.id() as i32;
+                // Lynx keys slots by the element's *sign* (its
+                // bridge-side `impl_id`), NOT by `Element::id()` (a
+                // renderer-internal Vec index). `enqueue_component` is
+                // later called with the real sign, so keying `slots`
+                // by anything else leaks the slot's owner (it can never
+                // be found to dispose). Use `element_sign`.
+                let sign = element_sign(element);
                 slots.borrow_mut().insert(sign, Slot { element, owner });
                 sign
             })
@@ -180,6 +186,13 @@ mod tests {
             Element::from_raw(id)
         }
         fn release_element(&mut self, _h: Element) {}
+        // Model the Lynx sign as the element's own id so signs are
+        // distinct per element (a real renderer returns the bridge
+        // `impl_id`). Without this the trait default returns 0 for
+        // every element and the provider's slot map collides.
+        fn element_sign(&self, handle: Element) -> i32 {
+            handle.id() as i32
+        }
         fn set_attribute(&mut self, _h: Element, _k: &str, _v: &str) {}
         fn set_inline_styles(&mut self, _h: Element, _css: &str) {}
         fn set_update_list_info(&mut self, _h: Element, count: i32) {

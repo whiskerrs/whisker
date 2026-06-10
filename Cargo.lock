@@ -2237,6 +2237,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "indicatif",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
@@ -2271,6 +2272,7 @@ dependencies = [
  "cargo_metadata",
  "serde",
  "serde_json",
+ "whisker-build",
  "whisker-config",
  "whisker-plugin",
 ]

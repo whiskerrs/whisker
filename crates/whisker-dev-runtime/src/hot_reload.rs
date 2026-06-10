@@ -165,6 +165,59 @@ fn device_aslr_reference() -> u64 {
     subsecond::aslr_reference() as u64
 }
 
+/// The shared dev-session token, if `whisker run` provisioned one.
+///
+/// `whisker run` generates a random token per session and hands it to
+/// the device so the dev-server can reject any other client that
+/// connects to its WebSocket (the patch channel `dlopen`s whatever it
+/// receives, so an unauthenticated connection on a LAN-exposed bind is
+/// a remote-code-execution surface). Delivery is per-platform:
+///   * iOS Simulator / host: the `WHISKER_DEV_TOKEN` env var (set via
+///     `SIMCTL_CHILD_WHISKER_DEV_TOKEN`).
+///   * Android: the `debug.whisker_dev_token` system property (the app
+///     process doesn't inherit adb-set env vars), set with
+///     `adb shell setprop`.
+///
+/// `None` when no token was provisioned — older `whisker run`s, or a
+/// token-less local setup; the server then runs unauthenticated as
+/// before.
+fn dev_token() -> Option<String> {
+    if let Ok(t) = std::env::var("WHISKER_DEV_TOKEN") {
+        if !t.is_empty() {
+            return Some(t);
+        }
+    }
+    #[cfg(target_os = "android")]
+    {
+        if let Some(t) = android_system_property("debug.whisker_dev_token") {
+            if !t.is_empty() {
+                return Some(t);
+            }
+        }
+    }
+    None
+}
+
+/// Read an Android system property by name via bionic's
+/// `__system_property_get`. The value buffer is `PROP_VALUE_MAX` (92)
+/// bytes including the NUL, per the platform contract.
+#[cfg(target_os = "android")]
+fn android_system_property(name: &str) -> Option<String> {
+    let cname = std::ffi::CString::new(name).ok()?;
+    // PROP_VALUE_MAX = 92.
+    let mut buf = [0i8; 92];
+    // SAFETY: `cname` is a valid NUL-terminated C string; `buf` is a
+    // 92-byte buffer matching PROP_VALUE_MAX, which is the size bionic
+    // writes into. The return value is the length written (excluding
+    // NUL), or <= 0 when the property is unset.
+    let len = unsafe { libc::__system_property_get(cname.as_ptr(), buf.as_mut_ptr()) };
+    if len <= 0 {
+        return None;
+    }
+    let bytes: Vec<u8> = buf[..len as usize].iter().map(|&b| b as u8).collect();
+    String::from_utf8(bytes).ok()
+}
+
 async fn handle_session<S>(
     mut ws: tokio_tungstenite::WebSocketStream<S>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
@@ -181,6 +234,7 @@ where
     let hello = serde_json::json!({
         "kind": "hello",
         "aslr_reference": device_aslr_reference(),
+        "token": dev_token(),
     })
     .to_string();
     devlog(&format!(

@@ -88,6 +88,39 @@ fn effect_reruns_on_dep_change() {
 }
 
 #[test]
+fn panicking_effect_does_not_latch_flushing_flag() {
+    fresh();
+    // An effect that panics on its second run (when the dep flips to 1).
+    let (count, set_count) = signal(0_i32);
+    effect(move || {
+        if count.get() == 1 {
+            panic!("boom");
+        }
+    });
+
+    // Drive the panicking re-run through a caught flush. Without the
+    // RAII `FlushGuard`, the unwind would skip `flushing = false` and
+    // latch the flag — every later flush would become a silent no-op.
+    set_count.set(1);
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(flush));
+    assert!(caught.is_err(), "the effect was supposed to panic");
+
+    // A fresh effect created after the panic must still run on flush —
+    // proof the runtime recovered (flushing flag cleared, tracker/owner
+    // stack restored).
+    let ran = Rc::new(RefCell::new(0));
+    let r = ran.clone();
+    let (dep, set_dep) = signal(0_i32);
+    effect(move || {
+        dep.get();
+        *r.borrow_mut() += 1;
+    });
+    set_dep.set(5);
+    flush();
+    assert_eq!(*ran.borrow(), 2, "post-panic flush must still run effects");
+}
+
+#[test]
 fn effect_only_reruns_for_tracked_deps() {
     fresh();
     let (tracked, set_tracked) = signal(0_i32);
@@ -545,6 +578,28 @@ fn context_round_trip_in_same_owner() {
     owner.with(|| {
         provide_context(Theme("dark"));
         assert_eq!(use_context::<Theme>(), Some(Theme("dark")));
+    });
+}
+
+#[test]
+fn with_context_closure_can_reenter_runtime() {
+    // The `with_context` closure must be able to call back into the
+    // runtime (read signals, nested context lookups). Before the Rc
+    // fix, `f` ran while the thread-local runtime was still borrowed,
+    // so any re-entry double-borrowed its RefCell and panicked.
+    fresh();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        provide_context(Theme("ctx"));
+        let (count, _set) = signal(7_i32);
+        // Read a signal AND do a nested context lookup from inside the
+        // with_context closure — both re-enter the runtime.
+        let combined = with_context::<Theme, _>(|theme| {
+            let n = count.get();
+            let nested = use_context::<Theme>();
+            format!("{}-{}-{}", theme.0, n, nested.unwrap().0)
+        });
+        assert_eq!(combined, Some("ctx-7-ctx".to_string()));
     });
 }
 

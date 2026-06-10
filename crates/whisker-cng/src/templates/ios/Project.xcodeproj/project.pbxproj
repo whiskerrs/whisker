@@ -167,7 +167,7 @@
 			mainGroup = E8630311BAB2B628B85BC5D2;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				B25ED1A6F9E42E26D051E805 /* XCLocalSwiftPackageReference "WhiskerRuntime" */,
+				B25ED1A6F9E42E26D051E805 /* XCRemoteSwiftPackageReference "whisker" */,
 				C97DA5F310E249B0FCB72E81 /* XCLocalSwiftPackageReference "WhiskerModules" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -384,19 +384,27 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		B25ED1A6F9E42E26D051E805 /* XCLocalSwiftPackageReference "WhiskerRuntime" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "{{whisker_runtime_ios_path}}";
-		};
 		C97DA5F310E249B0FCB72E81 /* XCLocalSwiftPackageReference "WhiskerModules" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "{{whisker_modules_ios_path}}";
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		B25ED1A6F9E42E26D051E805 /* XCRemoteSwiftPackageReference "whisker" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "{{whisker_ios_spm_url}}";
+			requirement = {
+				kind = exactVersion;
+				version = "{{whisker_ios_spm_version}}";
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		F920EEBD91D9E8039DA5A3F9 /* WhiskerRuntime */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = B25ED1A6F9E42E26D051E805 /* XCRemoteSwiftPackageReference "whisker" */;
 			productName = WhiskerRuntime;
 		};
 		A4F2BE0925D17CE83AB061F7 /* WhiskerModules */ = {

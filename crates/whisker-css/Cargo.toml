@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Type-safe CSS builder for Whisker. Mirrors the Lynx CSS surface."
 
 [dependencies]

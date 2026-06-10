@@ -48,6 +48,7 @@ use crate::module::WhiskerValue;
 /// UI method). Every field is `#[serde(default)]`, so any key the
 /// platform omits reads back as `0.0` rather than failing the decode.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[non_exhaustive]
 pub struct BoundingClientRect {
     #[serde(default)]
     pub left: f64,
@@ -72,6 +73,7 @@ pub struct BoundingClientRect {
 /// `scroll_x`/`scroll_y` plus `scroll_width`/`scroll_height`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct ScrollInfo {
     #[serde(default)]
     pub scroll_x: f64,
@@ -92,6 +94,7 @@ pub struct ScrollInfo {
 /// [`BoundingClientRect`]).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct TextBoundingRect {
     #[serde(default)]
     pub bounding_rect: BoundingClientRect,
@@ -119,6 +122,7 @@ struct SelectedTextResult {
 /// [`ScrollInfo`] — `requestUIInfo` just bundles them.)
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct UiInfo {
     #[serde(default)]
     pub id: String,
@@ -150,6 +154,7 @@ pub struct UiInfo {
 /// [`ElementRef::invoke`] collapses both variants into
 /// `WhiskerValue::Error` instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RefError {
     /// Ref isn't bound to a mounted element. Either the component
     /// hasn't been rendered yet, or it has unmounted. Most UI
@@ -698,25 +703,6 @@ impl Default for TextHandle {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Allocate a fresh, unbound `ElementRef`. Pair with a `ref:` prop in
-/// `render!` to bind it on mount.
-///
-/// The generic parameter is **ignored**. It's kept on the function
-/// signature so existing callers like `element_ref::<VideoProps>()`
-/// keep compiling; a future cleanup will drop this shim in favour of
-/// typed `XxxHandle::new()` constructors.
-///
-/// ```ignore
-/// let r = ElementRef::new();
-/// render! {
-///     VideoSys(ref: r.clone(), src: "https://example.com/clip.mp4")
-/// }
-/// ```
-pub fn element_ref<T: ?Sized>() -> ElementRef {
-    let _ = std::marker::PhantomData::<*const T>;
-    ElementRef::new()
 }
 
 #[cfg(test)]

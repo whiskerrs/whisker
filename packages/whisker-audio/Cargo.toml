@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Whisker platform module — audio playback backed by ExoPlayer (Android) / AVPlayer (iOS). Mirrors expo-audio's surface: a `<whisker-audio:Player>` element wired to a `Player` typed handle for imperative play/pause/seek, with reactive `position` / `duration` / `is_playing` signals fed by native playback events."
 
 # Phase K — explicit `include` list so a `cargo publish` of this

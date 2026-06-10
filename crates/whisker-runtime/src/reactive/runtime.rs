@@ -157,7 +157,13 @@ pub struct Scope {
     pub parent: Option<Owner>,
     pub children: Vec<Owner>,
     pub nodes: Vec<NodeId>,
-    pub contexts: HashMap<TypeId, Box<dyn Any>>,
+    // `Rc` (not `Box`) so `with_context` can clone the handle out in a
+    // short runtime borrow, drop the borrow, and only then invoke the
+    // user closure — letting the closure safely re-enter the runtime
+    // (read signals, nested `use_context`, etc.) without a double
+    // borrow, and keeping the value alive even if the closure
+    // re-provides the same type mid-call.
+    pub contexts: HashMap<TypeId, Rc<dyn Any>>,
     pub cleanups: Vec<Box<dyn FnOnce()>>,
     /// Function-pointer fingerprint of the component fn that created
     /// this scope. Used by Strategy C hot reload (A6) to map

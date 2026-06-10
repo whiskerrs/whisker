@@ -118,7 +118,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-whisker-config = {{ path = "{app_config_path}" }}
+whisker-config = {whisker_config_dep}
 serde_json = "1"
 {plugin_dep_lines}
 [[bin]]
@@ -130,18 +130,7 @@ path = "src/main.rs"
 # match here. Stand-alone keeps the probe immune to workspace churn.
 [workspace]
 "#,
-        // The probe lives under target/.whisker/config-probe/, so
-        // whisker-config is 4 ../../../../ up from there:
-        //   <user-crate>/target/.whisker/config-probe/
-        //   ../.., ../.., …, up to the workspace root, then over to
-        //   crates/whisker-config.
-        //
-        // For external Whisker users this won't work — the published
-        // version of whisker-config from crates.io should be used
-        // instead. For now Whisker development happens inside this
-        // workspace; once we publish, swap this for
-        // `version = "0.1"` and let cargo resolve from crates.io.
-        app_config_path = whisker_config_path()?.display(),
+        whisker_config_dep = whisker_config_dep_spec(),
     );
     std::fs::write(probe_dir.join("Cargo.toml"), cargo_toml)
         .with_context(|| format!("write {}/Cargo.toml", probe_dir.display()))?;
@@ -194,9 +183,6 @@ fn run_cargo_probe(probe_dir: &Path, _crate_name: &str) -> Result<String> {
     String::from_utf8(out.stdout).context("probe stdout not valid UTF-8")
 }
 
-/// Path to `whisker-config`'s source dir as referenced by the
-/// probe's `Cargo.toml`. For in-workspace development this lives
-/// under the same parent workspace as `whisker-cli`; if Whisker is
 /// Format each discovered Whisker CNG plugin crate as a probe
 /// `[dependencies]` line:
 ///
@@ -229,20 +215,36 @@ fn render_plugin_dep_lines(plugins: &[DiscoveredPlugin]) -> String {
     out
 }
 
-fn whisker_config_path() -> Result<PathBuf> {
-    // `CARGO_MANIFEST_DIR` of `whisker-cli` at build time is
-    // `<workspace>/crates/whisker-cli`. Its great-grandparent path
-    // dance puts us at `<workspace>/crates/whisker-config`.
-    let cli_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let app_config = cli_dir
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("whisker-cli has no parent dir"))?
-        .join("whisker-config");
-    if !app_config.is_dir() {
-        anyhow::bail!(
-            "whisker-config source dir not found at {}",
-            app_config.display(),
-        );
+/// The `whisker-config` dependency spec the probe's `Cargo.toml`
+/// should use.
+///
+/// Two cases, distinguished by whether the local source dir exists:
+///
+///   * **In-workspace development** (this `whisker-cli` was built from
+///     a checkout of the Whisker monorepo): point the probe at the
+///     local `crates/whisker-config` source via `path` so edits to
+///     `whisker-config` are picked up without a publish/version bump.
+///   * **External users** (this `whisker-cli` was installed from
+///     crates.io): the local path doesn't exist, so depend on the
+///     published `whisker-config` whose version matches this
+///     `whisker-cli` build. `whisker-config` shares the workspace
+///     version with `whisker-cli`, so `CARGO_PKG_VERSION` is the
+///     correct, in-lockstep version to request from crates.io.
+fn whisker_config_dep_spec() -> String {
+    match in_workspace_config_path() {
+        Some(path) => format!("{{ path = {:?} }}", path.display().to_string()),
+        None => format!("\"{}\"", env!("CARGO_PKG_VERSION")),
     }
-    Ok(app_config)
+}
+
+/// The local `crates/whisker-config` source dir, if this `whisker-cli`
+/// was built from a monorepo checkout. `CARGO_MANIFEST_DIR` is baked
+/// at compile time: in-workspace it's `<workspace>/crates/whisker-cli`
+/// (sibling `whisker-config` exists); installed from crates.io it's
+/// the registry `src/.../whisker-cli-<v>` dir (no sibling
+/// `whisker-config` dir), so this returns `None`.
+fn in_workspace_config_path() -> Option<PathBuf> {
+    let cli_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let app_config = cli_dir.parent()?.join("whisker-config");
+    app_config.is_dir().then_some(app_config)
 }

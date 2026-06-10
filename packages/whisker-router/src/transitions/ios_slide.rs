@@ -105,12 +105,10 @@ impl StackTransition for IosSlide {
             element,
             name,
             &[("0%", &from), ("100%", &to)],
-            &AnimateOptions {
-                duration_ms: self.duration_ms,
-                easing: self.easing.into(),
-                fill: "forwards".into(),
-                ..Default::default()
-            },
+            &AnimateOptions::new()
+                .duration_ms(self.duration_ms)
+                .easing(self.easing)
+                .fill("forwards"),
         );
     }
 

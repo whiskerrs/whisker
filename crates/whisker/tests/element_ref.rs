@@ -250,17 +250,6 @@ fn try_from_whisker_value_primitives_roundtrip() {
 }
 
 #[test]
-fn element_ref_legacy_function_still_works() {
-    with_test_env(|| {
-        // `element_ref::<T>()` is the transitional alias kept for
-        // existing module crates. The generic `T` is unused; the
-        // returned `ElementRef` is the new non-generic one.
-        let r: ElementRef = element_ref::<XRefTargetProps>();
-        assert!(!r.is_bound());
-    });
-}
-
-#[test]
 fn element_ref_is_copy() {
     with_test_env(|| {
         let r = ElementRef::new();

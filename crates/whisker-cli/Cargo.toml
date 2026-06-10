@@ -6,7 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Whisker CLI: `whisker` and `cargo-whisker` (hybrid)."
+homepage.workspace = true
+keywords.workspace = true
+categories = ["development-tools", "command-line-utilities"]
+description = "Whisker CLI: `whisker` and `cargo-whisker` (hybrid) — scaffold, doctor, and dev-loop Whisker apps."
 
 [[bin]]
 name = "whisker"

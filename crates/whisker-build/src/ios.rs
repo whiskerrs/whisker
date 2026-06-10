@@ -38,6 +38,19 @@ use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Remote SwiftPM source for the `Whisker` package — provides
+/// `WhiskerRuntime`, the `Lynx*` binary frameworks, and the
+/// `WhiskerModuleCodegenPlugin`. The generated aggregator `Package.swift`
+/// and every module manifest reference this single identity (`whisker`,
+/// the lowercased last URL path component) so the SwiftPM build graph has
+/// one `WhiskerRuntime`. This is what lets iOS apps build outside the
+/// monorepo — no `platforms/ios` local path required.
+///
+/// Keep in lockstep with the `Package.swift` at the repo root and the
+/// `v<version>` git tag published for SwiftPM to resolve.
+pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
+pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.0";
+
 use crate::capture::{capture_env_vars_for_triple, CaptureShims};
 
 const FRAMEWORK_NAME: &str = "WhiskerDriver";
@@ -279,6 +292,46 @@ pub struct XcodeRunScriptInputs<'a> {
 /// `OTHER_LDFLAGS += -framework WhiskerDriver`.
 ///
 /// Returns the path to the produced `.framework` directory.
+/// Resolve the `include` dirs of `whisker-driver` (`whisker.h` +
+/// `module.modulemap`) and `whisker-driver-sys` (`whisker_bridge.h`).
+///
+/// Uses `cargo metadata` against `workspace_root` so the paths point at
+/// wherever cargo actually placed each crate: the monorepo
+/// `crates/whisker-driver*/…` for in-workspace development, or the
+/// registry extraction (`~/.cargo/registry/src/index.crates.io-*/
+/// whisker-driver-<v>/…`) for a `cargo install`-only user. Falls back
+/// to the legacy in-workspace layout if metadata can't be read (e.g.
+/// cargo missing from the Run Script env), preserving the old behaviour.
+fn resolve_bridge_header_dirs(workspace_root: &Path) -> (PathBuf, PathBuf) {
+    let legacy = || {
+        (
+            workspace_root.join("crates/whisker-driver/include"),
+            workspace_root.join("crates/whisker-driver-sys/bridge/include"),
+        )
+    };
+    let Ok(meta) = cargo_metadata::MetadataCommand::new()
+        .current_dir(workspace_root)
+        .exec()
+    else {
+        return legacy();
+    };
+    let crate_dir = |name: &str| -> Option<PathBuf> {
+        meta.packages
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| p.manifest_path.parent())
+            .map(|d| d.as_std_path().to_path_buf())
+    };
+    match (crate_dir("whisker-driver"), crate_dir("whisker-driver-sys")) {
+        (Some(driver), Some(driver_sys)) => {
+            (driver.join("include"), driver_sys.join("bridge/include"))
+        }
+        // Either crate absent from the graph (shouldn't happen — both
+        // are transitive deps of `whisker`) → legacy layout.
+        _ => legacy(),
+    }
+}
+
 pub fn build_framework_for_xcode_run_script(
     inputs: &XcodeRunScriptInputs<'_>,
     built_products_dir: &Path,
@@ -287,13 +340,13 @@ pub fn build_framework_for_xcode_run_script(
         return Err(anyhow!("--archs is empty; Xcode passed no ARCHS"));
     }
 
-    // Header trees the framework's `Headers/` dir copies from. Same
-    // search the xcframework path does — kept inline rather than
-    // factored out because the helper is only two paths.
-    let rust_headers_src = inputs.workspace_root.join("crates/whisker-driver/include");
-    let bridge_headers_src = inputs
-        .workspace_root
-        .join("crates/whisker-driver-sys/bridge/include");
+    // Header trees the framework's `Headers/` dir copies from. Resolve
+    // the owning crates' on-disk locations via `cargo metadata` so this
+    // works both in-workspace (monorepo `crates/…`) and for a crates.io
+    // user (the registry extraction, `~/.cargo/registry/src/…`). The
+    // headers ship in both `whisker-driver` and `whisker-driver-sys`
+    // (no `exclude`, so every git-tracked file is published).
+    let (rust_headers_src, bridge_headers_src) = resolve_bridge_header_dirs(inputs.workspace_root);
     for required in ["whisker.h", "module.modulemap"] {
         if !rust_headers_src.join(required).is_file() {
             return Err(anyhow!(
@@ -543,8 +596,11 @@ pub struct XcodebuildArgs<'a> {
 /// and `AppDelegate.swift` compiles.
 pub fn stage_module_swift_sources(
     gen_ios: &Path,
-    whisker_runtime_path: &Path,
-    whisker_ios_macros_path: &Path,
+    // Retained for call-site compatibility; the aggregator now
+    // references WhiskerRuntime + macros via the remote `whisker` SPM
+    // package instead of these local paths.
+    _whisker_runtime_path: &Path,
+    _whisker_ios_macros_path: &Path,
     modules: &[crate::modules::ResolvedModule],
 ) -> Result<()> {
     let root = gen_ios.join("whisker_modules");
@@ -572,7 +628,7 @@ pub fn stage_module_swift_sources(
     let package_path = root.join("Package.swift");
     std::fs::write(
         &package_path,
-        render_modules_package_swift(whisker_runtime_path, whisker_ios_macros_path, &ios_modules),
+        render_modules_package_swift(&ios_modules),
     )
     .with_context(|| format!("write {}", package_path.display()))?;
 
@@ -618,13 +674,7 @@ fn crate_to_spm_target(crate_name: &str) -> String {
 /// Render `Package.swift` for the generated `WhiskerModules`
 /// aggregator. Depends on `WhiskerRuntime` + each discovered
 /// module package via local-path SwiftPM dependency.
-fn render_modules_package_swift(
-    whisker_runtime_path: &Path,
-    whisker_ios_macros_path: &Path,
-    modules: &[&crate::modules::ResolvedModule],
-) -> String {
-    let runtime = whisker_runtime_path.display().to_string();
-    let macros = whisker_ios_macros_path.display().to_string();
+fn render_modules_package_swift(modules: &[&crate::modules::ResolvedModule]) -> String {
     let mut out = String::new();
     out.push_str(
         "// swift-tools-version:5.9\n\
@@ -651,11 +701,12 @@ fn render_modules_package_swift(
     out.push_str("        .library(name: \"WhiskerModules\", targets: [\"WhiskerModules\"]),\n");
     out.push_str("    ],\n");
     out.push_str("    dependencies: [\n");
+    // WhiskerRuntime + Lynx + the codegen plugin all come from the one
+    // remote `whisker` package (no monorepo `platforms/ios` path).
     out.push_str(&format!(
-        "        .package(name: \"WhiskerRuntime\", path: {runtime:?}),\n"
-    ));
-    out.push_str(&format!(
-        "        .package(name: \"whisker-ios-macros\", path: {macros:?}),\n"
+        "        .package(url: {url:?}, exact: {ver:?}),\n",
+        url = WHISKER_IOS_SPM_URL,
+        ver = WHISKER_IOS_SPM_VERSION,
     ));
     for m in modules {
         // The module's SwiftPM package is rooted at the package
@@ -673,10 +724,8 @@ fn render_modules_package_swift(
     out.push_str("        .target(\n");
     out.push_str("            name: \"WhiskerModules\",\n");
     out.push_str("            dependencies: [\n");
-    out.push_str(
-        "                .product(name: \"WhiskerRuntime\", package: \"WhiskerRuntime\"),\n",
-    );
-    out.push_str("                .product(name: \"Lynx\", package: \"WhiskerRuntime\"),\n");
+    out.push_str("                .product(name: \"WhiskerRuntime\", package: \"whisker\"),\n");
+    out.push_str("                .product(name: \"Lynx\", package: \"whisker\"),\n");
     for m in modules {
         let target = crate_to_spm_target(&m.package);
         out.push_str(&format!(
@@ -765,6 +814,11 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
         .args(["-destination", &destination])
         .arg("-derivedDataPath")
         .arg(args.derived_data)
+        // The WhiskerModuleCodegenPlugin is a SwiftPM build-tool plugin;
+        // Xcode gates plugins behind an interactive trust prompt that a
+        // headless build can't answer, so skip validation (the plugin
+        // ships from Whisker's own `whisker` SPM package).
+        .arg("-skipPackagePluginValidation")
         .args(["-quiet", "build"]);
     if let Some(p) = args.whisker_runtime_path {
         cmd.env("WHISKER_IOS_RUNTIME", p);

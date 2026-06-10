@@ -28,7 +28,7 @@ mod render;
 ///
 /// #[whisker::main]
 /// fn app() -> Element {
-///     rsx! { page { text { "Hello" } } }
+///     render! { page { text(value: "Hello") } }
 /// }
 /// ```
 ///
@@ -136,10 +136,11 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// use whisker::prelude::*;
 ///
 /// let handle = render! {
-///     view {
+///     view(
 ///         style: "padding: 16px;",
-///         on_tap: || println!("tapped"),
-///         text { value: "Hello, world" }
+///         on_tap: move |_| println!("tapped"),
+///     ) {
+///         text(value: "Hello, world")
 ///     }
 /// };
 /// ```

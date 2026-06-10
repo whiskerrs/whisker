@@ -42,9 +42,24 @@ pub struct Installer {
     /// never sends its `aslr_reference` and every change falls back to
     /// a Tier 2 cold rebuild.
     features: Vec<String>,
+    /// Host port the dev-server's WebSocket is bound to (= the port of
+    /// `Config::bind_addr`). The device must reach this exact port:
+    /// Android bridges it with `adb reverse tcp:9876 tcp:<dev_port>`
+    /// (the device keeps dialing its default 9876), and the iOS
+    /// Simulator dials `127.0.0.1:<dev_port>` directly via
+    /// `SIMCTL_CHILD_WHISKER_DEV_ADDR`. Without this the `--bind` flag
+    /// silently breaks hot reload (server on a custom port, device
+    /// still on 9876).
+    dev_port: u16,
+    /// Shared dev-session token to deliver to the device so its
+    /// `hello` is accepted by the server's auth gate. iOS gets it via
+    /// `SIMCTL_CHILD_WHISKER_DEV_TOKEN`; Android via
+    /// `adb shell setprop debug.whisker_dev_token`. `None` = token-less.
+    dev_token: Option<String>,
 }
 
 impl Installer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         target: Target,
         android: Option<AndroidParams>,
@@ -53,6 +68,8 @@ impl Installer {
         package: String,
         capture: Option<CaptureShims>,
         features: Vec<String>,
+        dev_port: u16,
+        dev_token: Option<String>,
     ) -> Self {
         Self {
             target,
@@ -62,6 +79,8 @@ impl Installer {
             package,
             capture,
             features,
+            dev_port,
+            dev_token,
         }
     }
 
@@ -71,7 +90,7 @@ impl Installer {
                 let p = self.android.as_ref().context(
                     "target=Android but no AndroidParams — cli must populate Config.android",
                 )?;
-                android_install_and_launch(p).await
+                android_install_and_launch(p, self.dev_port, self.dev_token.as_deref()).await
             }
             Target::IosSimulator => {
                 let p = self.ios.as_ref().context(
@@ -83,6 +102,8 @@ impl Installer {
                     &self.package,
                     self.capture.as_ref(),
                     &self.features,
+                    self.dev_port,
+                    self.dev_token.as_deref(),
                 )
                 .await
             }
@@ -101,6 +122,10 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let mut child = cmd.spawn().context("spawn child")?;
+    // Track the PID so `whisker run`'s hard-exit quit path can SIGTERM
+    // an in-flight xcodebuild / simctl instead of orphaning it. The
+    // guard unregisters when this fn returns.
+    let _child_guard = child.id().map(whisker_build::child_guard::track);
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
 
@@ -304,7 +329,11 @@ impl SimctlNoise {
     }
 }
 
-async fn android_install_and_launch(p: &AndroidParams) -> Result<()> {
+async fn android_install_and_launch(
+    p: &AndroidParams,
+    dev_port: u16,
+    dev_token: Option<&str>,
+) -> Result<()> {
     let apk = p
         .project_dir
         .join("app/build/outputs/apk/debug/app-debug.apk");
@@ -312,17 +341,31 @@ async fn android_install_and_launch(p: &AndroidParams) -> Result<()> {
         anyhow::bail!("APK missing at {}", apk.display());
     }
 
-    // adb reverse — bridge device `127.0.0.1:9876` → host port so the
-    // on-device dev-runtime can reach our WebSocket without knowing
-    // the emulator-gateway IP (10.0.2.2). Best-effort: it might
-    // already be set from a previous run, or the device might be a
-    // non-emulator that doesn't need it. Routed through
-    // `run_filtered` rather than `.status()` so its stdio doesn't
-    // bypass the TUI's stderr-capture pipe and overlay the live
-    // region — same reason every other adb call below now uses it.
+    // adb reverse — bridge device `127.0.0.1:9876` → host `dev_port` so
+    // the on-device dev-runtime can reach our WebSocket without knowing
+    // the emulator-gateway IP (10.0.2.2). The device keeps dialing its
+    // default 9876 (`WHISKER_DEV_ADDR` fallback); only the host side of
+    // the mapping follows `--bind`, so a custom `--bind` port keeps hot
+    // reload working. Best-effort: it might already be set from a
+    // previous run, or the device might be a non-emulator that doesn't
+    // need it. Routed through `run_filtered` rather than `.status()` so
+    // its stdio doesn't bypass the TUI's stderr-capture pipe and overlay
+    // the live region — same reason every other adb call below now uses
+    // it.
     let mut reverse_cmd = Command::new("adb");
-    reverse_cmd.args(["reverse", "tcp:9876", "tcp:9876"]);
+    reverse_cmd.args(["reverse", "tcp:9876", &format!("tcp:{dev_port}")]);
     let _ = run_filtered(reverse_cmd, SimctlNoise::Other).await;
+
+    // Deliver the dev-session token. The app process doesn't inherit
+    // adb-set env vars, so we stash it in a `debug.*` system property
+    // (settable over adb) that the device-side `whisker-dev-runtime`
+    // reads via `__system_property_get`. Without a matching token the
+    // dev-server refuses to ship patches to the app.
+    if let Some(token) = dev_token {
+        let mut setprop_cmd = Command::new("adb");
+        setprop_cmd.args(["shell", "setprop", "debug.whisker_dev_token", token]);
+        let _ = run_filtered(setprop_cmd, SimctlNoise::Other).await;
+    }
 
     let install_step = whisker_build::ui::step(
         "install",
@@ -370,6 +413,8 @@ async fn ios_install_and_launch(
     package: &str,
     capture: Option<&CaptureShims>,
     features: &[String],
+    dev_port: u16,
+    dev_token: Option<&str>,
 ) -> Result<()> {
     let xcode_project = p.project_dir.join(format!("{}.xcodeproj", p.scheme));
     if !xcode_project.is_dir() {
@@ -392,18 +437,17 @@ async fn ios_install_and_launch(
         .args(["-destination", "generic/platform=iOS Simulator"])
         .arg("-derivedDataPath")
         .arg(&derived)
-        .args(["-quiet", "build"])
-        // Inject the absolute location of Whisker's iOS runtime +
-        // macros packages so each module's Package.swift resolves
-        // them via `Context.environment` (with a relative fallback)
-        // instead of a fixed `../../platforms/ios`. Same values the
-        // generated aggregator Package.swift uses, so SwiftPM dedupes
-        // by identity. Mirrors the Android `projectDir` injection.
-        .env("WHISKER_IOS_RUNTIME", workspace_root.join("platforms/ios"))
-        .env(
-            "WHISKER_IOS_MACROS",
-            workspace_root.join("platforms/ios/macros"),
-        );
+        // The WhiskerModuleCodegenPlugin is a SwiftPM build-tool plugin;
+        // Xcode gates plugins behind an interactive trust prompt a
+        // headless build can't answer, so skip validation (it ships from
+        // Whisker's own `whisker` SPM package).
+        .arg("-skipPackagePluginValidation")
+        .args(["-quiet", "build"]);
+    // NB: WhiskerRuntime + the codegen plugin now resolve from the
+    // remote `whisker` SwiftPM package (see whisker_build::ios::
+    // WHISKER_IOS_SPM_URL), so the old `WHISKER_IOS_RUNTIME` /
+    // `WHISKER_IOS_MACROS` env injection that pointed module manifests at
+    // `platforms/ios` is gone — modules no longer read it.
     // Tier 1 capture wiring (hot-reload). Pre-Step-7 the dev-server
     // ran a separate `build_xcframework_with` call to prime the rustc
     // + linker capture caches before xcodebuild touched the framework.
@@ -501,7 +545,17 @@ async fn ios_install_and_launch(
             "booted",
             &p.bundle_id,
         ])
-        .env("SIMCTL_CHILD_WHISKER_DEV_ADDR", "127.0.0.1:9876");
+        // The Simulator shares the host loopback, so it dials the
+        // dev-server's bind port directly. Honors `--bind <port>`.
+        .env(
+            "SIMCTL_CHILD_WHISKER_DEV_ADDR",
+            format!("127.0.0.1:{dev_port}"),
+        );
+    // Deliver the dev-session token as an env var the launched app
+    // inherits (`SIMCTL_CHILD_<NAME>` → `<NAME>` in the child).
+    if let Some(token) = dev_token {
+        launch_cmd.env("SIMCTL_CHILD_WHISKER_DEV_TOKEN", token);
+    }
     let launch = run_filtered(launch_cmd, SimctlNoise::Other)
         .await
         .context("spawn simctl launch")?;
@@ -566,6 +620,8 @@ mod tests {
             "x".into(),
             None,
             Vec::new(),
+            9876,
+            None,
         );
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -586,6 +642,8 @@ mod tests {
             "x".into(),
             None,
             Vec::new(),
+            9876,
+            None,
         );
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -603,7 +661,7 @@ mod tests {
             .build()
             .unwrap();
         let err = rt
-            .block_on(async { android_install_and_launch(&p).await })
+            .block_on(async { android_install_and_launch(&p, 9876, None).await })
             .unwrap_err();
         assert!(err.to_string().contains("APK missing"), "got: {err:#}");
     }

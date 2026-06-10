@@ -16,6 +16,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Whisker Continuous Native Generation — declarative Android/iOS project generation from whisker.rs."
 
 [dependencies]
@@ -23,6 +26,12 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 whisker-config = { workspace = true }
+# For the iOS remote-SwiftPM coordinates (`WHISKER_IOS_SPM_URL` /
+# `WHISKER_IOS_SPM_VERSION`) the generated pbxproj's
+# `XCRemoteSwiftPackageReference` is rendered from. Single source of
+# truth shared with whisker-build's aggregator generator. No cycle:
+# whisker-build does not depend on whisker-cng.
+whisker-build = { workspace = true }
 # Walks the user crate's dep graph to find dependencies that declare
 # `[package.metadata.whisker.plugins.<name>]` in their `Cargo.toml`.
 # Same crate `whisker-build` uses for module discovery — pinned at

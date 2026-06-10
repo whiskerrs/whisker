@@ -54,7 +54,15 @@ edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/whiskerrs/whisker"
+homepage = "https://whisker.rs"
 authors = ["itome <dev@itome.team>"]
+# Shared crates.io discovery metadata. The whole workspace is one
+# framework, so a single keyword/category set applies; individual
+# publishable crates opt in via `keywords.workspace = true` /
+# `categories.workspace = true`. `gui` is the closest crates.io
+# category for a UI framework.
+keywords = ["mobile", "ui", "ios", "android", "reactive"]
+categories = ["gui"]
 
 [workspace.dependencies]
 whisker = { path = "crates/whisker", version = "0.1.0" }

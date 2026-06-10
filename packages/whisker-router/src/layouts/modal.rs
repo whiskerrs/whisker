@@ -93,12 +93,10 @@ pub fn modal_layout<R: Route>(route: R, render: ModalRenderFn<R>) -> Element {
                 ("0%", &[("transform", "translateY(100%)")]),
                 ("100%", &[("transform", "translateY(0%)")]),
             ],
-            &AnimateOptions {
-                duration_ms: DEFAULT_DURATION_MS,
-                easing: DEFAULT_EASING.into(),
-                fill: "forwards".into(),
-                ..Default::default()
-            },
+            &AnimateOptions::new()
+                .duration_ms(DEFAULT_DURATION_MS)
+                .easing(DEFAULT_EASING)
+                .fill("forwards"),
         );
     });
 

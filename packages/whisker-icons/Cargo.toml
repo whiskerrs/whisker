@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Lucide icons for Whisker — `Icon(svg: lucide::Heart, color: …, size: …)`. Each icon is a separate `pub const &str` synthesised at build time from `vendor/lucide/icons/*.svg`, so the linker drops every icon the user doesn't reference (tree-shaking). The Icon component is a thin wrapper around `whisker-svg`'s `Svg`."
 build = "build.rs"
 

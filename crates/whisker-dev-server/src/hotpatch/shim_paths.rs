@@ -1,21 +1,27 @@
 //! Resolve the on-disk paths of `whisker-rustc-shim` and
 //! `whisker-linker-shim` for the dev session.
 //!
-//! Both shims live in the workspace's `whisker-cli` package, so they're
-//! built into the cargo target dir alongside the main `whisker` binary.
-//! The dev-server needs absolute paths to set them as
-//! `RUSTC_WORKSPACE_WRAPPER` and `-C linker=…`.
+//! Both shims are `[[bin]]` targets of the `whisker-cli` package,
+//! shipped alongside the main `whisker` binary. The dev-server needs
+//! absolute paths to set them as `RUSTC_WORKSPACE_WRAPPER` and
+//! `-C linker=…`.
 //!
 //! Resolution order:
 //!
-//!   1. Compute the expected paths under `<target>/debug/`.
-//!      `target` defaults to `<workspace>/target` but `CARGO_TARGET_DIR`
-//!      env wins (production usage; CI commonly redirects).
-//!   2. If both exist, return them as-is.
-//!   3. Otherwise spawn `cargo build -p whisker-cli --bin whisker-rustc-shim
-//!      --bin whisker-linker-shim` from the workspace, then re-check.
-//!      A build failure surfaces as `Err(_)` — the dev session simply
-//!      cannot run Tier 1 without these binaries.
+//!   1. **Beside the running `whisker` binary** (`current_exe()`'s
+//!      dir). `cargo install whisker-cli` installs all three bins into
+//!      `~/.cargo/bin` together, so external (crates.io) users resolve
+//!      here and never need an in-workspace build. In-workspace dev also
+//!      matches once the shims are built (they sit next to
+//!      `target/debug/whisker`).
+//!   2. **`<target>/debug/`** — `CARGO_TARGET_DIR` env wins, else
+//!      `<workspace>/target`. Covers an in-workspace run whose
+//!      `current_exe` lives elsewhere (e.g. invoked via a wrapper).
+//!   3. **Build them** with `cargo build -p whisker-cli --bin … ` from
+//!      the workspace, then re-check. Only meaningful in-workspace
+//!      (where `whisker-cli` is a member); for external users step 1
+//!      already succeeded. A build failure surfaces as `Err(_)` and the
+//!      caller falls back to Tier 2.
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -51,6 +57,23 @@ pub fn exe_name(name: &str) -> String {
     }
 }
 
+/// The two shim paths as they'd sit inside `dir`. Pure — used both for
+/// the `current_exe()` neighbor lookup and in tests.
+pub fn shim_paths_in_dir(dir: &Path) -> ShimPaths {
+    ShimPaths {
+        rustc_shim: dir.join(exe_name("whisker-rustc-shim")),
+        linker_shim: dir.join(exe_name("whisker-linker-shim")),
+    }
+}
+
+/// The shim paths beside the currently-running executable, if
+/// `current_exe()` resolves. This is where `cargo install whisker-cli`
+/// drops them (all three bins co-located in `~/.cargo/bin`).
+fn shim_paths_beside_current_exe() -> Option<ShimPaths> {
+    let exe = std::env::current_exe().ok()?;
+    Some(shim_paths_in_dir(exe.parent()?))
+}
+
 /// Resolve both shim paths. Build them with `cargo build` if the
 /// binaries aren't on disk yet. Returns absolute paths suitable for
 /// passing to `RUSTC_WORKSPACE_WRAPPER` and `-C linker=…`.
@@ -59,10 +82,24 @@ pub fn exe_name(name: &str) -> String {
 /// finds the right `whisker-cli` package via the workspace `members`
 /// declaration.
 pub fn resolve_shim_paths(workspace_root: &Path) -> Result<ShimPaths> {
+    // 1. Beside the running `whisker` binary — the crates.io install
+    //    location, and the in-workspace `target/debug` location once
+    //    built. Resolving here is what keeps Tier 1 hot reload working
+    //    for `cargo install`-only users (no whisker-cli workspace member
+    //    to `cargo build`).
+    if let Some(paths) = shim_paths_beside_current_exe() {
+        if paths.rustc_shim.is_file() && paths.linker_shim.is_file() {
+            return Ok(paths);
+        }
+    }
+    // 2. The workspace's target/debug dir (CARGO_TARGET_DIR aware).
     let paths = expected_shim_paths(workspace_root);
     if paths.rustc_shim.is_file() && paths.linker_shim.is_file() {
         return Ok(paths);
     }
+    // 3. In-workspace fallback: build the shims from the whisker-cli
+    //    package. Fails for external users (no such member), who never
+    //    reach here because step 1 succeeded.
     build_shims(workspace_root).context("build whisker-cli shim binaries")?;
     let paths = expected_shim_paths(workspace_root);
     anyhow::ensure!(
@@ -142,6 +179,14 @@ mod tests {
             p.rustc_shim.display(),
         );
         assert!(p.linker_shim.parent().unwrap().ends_with("debug"));
+    }
+
+    #[test]
+    fn shim_paths_in_dir_uses_the_given_dir_and_correct_basenames() {
+        let dir = Path::new("/some/install/bin");
+        let p = shim_paths_in_dir(dir);
+        assert_eq!(p.rustc_shim, dir.join(exe_name("whisker-rustc-shim")));
+        assert_eq!(p.linker_shim, dir.join(exe_name("whisker-linker-shim")));
     }
 
     #[test]

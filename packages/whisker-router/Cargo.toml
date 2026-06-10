@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Type-safe signal-backed routing for Whisker — single-engine, custom animations, nested layouts (tabs/modal). RFC: https://github.com/whiskerrs/whisker/issues/95"
 
 include = [
