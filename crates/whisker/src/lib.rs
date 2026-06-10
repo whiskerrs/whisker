@@ -1748,7 +1748,6 @@ pub mod prelude {
         Length, NamedColor, ToCss,
     };
     pub use crate::Children;
-    pub use crate::{Element, ElementTag};
     pub use crate::{
         arc_signal, computed, effect, on_cleanup, on_mount, provide_context, resource,
         resource_sync, run_blocking, run_on_main_thread, signal, spawn_local, use_context,
@@ -1761,6 +1760,7 @@ pub mod prelude {
         TextBoundingRect, TextHandle,
     };
     pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
+    pub use crate::{Element, ElementTag};
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};
     // The `css!` macro coexists with the `crate::css` module
     // re-export above because the macro and module namespaces are

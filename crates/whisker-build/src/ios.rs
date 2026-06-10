@@ -626,11 +626,8 @@ pub fn stage_module_swift_sources(
         .collect();
 
     let package_path = root.join("Package.swift");
-    std::fs::write(
-        &package_path,
-        render_modules_package_swift(&ios_modules),
-    )
-    .with_context(|| format!("write {}", package_path.display()))?;
+    std::fs::write(&package_path, render_modules_package_swift(&ios_modules))
+        .with_context(|| format!("write {}", package_path.display()))?;
 
     let register_all_path = sources_root.join("RegisterAll.swift");
     std::fs::write(&register_all_path, render_register_all_swift(&ios_modules))

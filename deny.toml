@@ -11,6 +11,15 @@
 # yanked crate in the dependency tree.
 version = 2
 yanked = "deny"
+# Unmaintained (not vulnerable) transitive crates with no available
+# safe upgrade. Accepted as noise — revisit if a maintained
+# replacement reaches our tree or the upstream lib drops them:
+#   RUSTSEC-2024-0436  paste         ← ratatui   (dev-loop TUI)
+#   RUSTSEC-2025-0119  number_prefix ← indicatif (progress output)
+ignore = [
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2025-0119",
+]
 
 [bans]
 # The tree currently double-pins `tungstenite` / `tokio-tungstenite`
@@ -19,6 +28,11 @@ yanked = "deny"
 # versions are unified.
 multiple-versions = "warn"
 wildcards = "deny"
+# The in-repo example crates (examples/podcast/*) depend on each other
+# by `path` with no version field, which cargo treats as a wildcard
+# requirement. Exempt path deps from the wildcard ban — they're never
+# published, so the version requirement is irrelevant.
+allow-wildcard-paths = true
 
 [licenses]
 # Permissive licenses compatible with Whisker's own MIT OR Apache-2.0.

@@ -562,7 +562,10 @@ mod tests {
         })
         .await
         .expect("disconnect timed out");
-        assert!(ended, "unauthenticated client must be disconnected, not fed patches");
+        assert!(
+            ended,
+            "unauthenticated client must be disconnected, not fed patches"
+        );
 
         // A patch broadcast now reaches zero armed clients.
         for _ in 0..200 {

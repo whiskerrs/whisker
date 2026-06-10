@@ -91,8 +91,8 @@ mod tests {
         let g = track(999_999_002);
         std::mem::forget(g);
         kill_all(); // ESRCH ignored; no panic.
-        // Clean up the leaked registration so other tests see a clean
-        // registry.
+                    // Clean up the leaked registration so other tests see a clean
+                    // registry.
         if let Ok(mut t) = TRACKED.lock() {
             t.retain(|&p| p != 999_999_002);
         }
