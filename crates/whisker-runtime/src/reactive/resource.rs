@@ -65,9 +65,7 @@ impl<T> ResourceState<T> {
 
 /// Copy handle to a deferred value. Wraps an [`RwSignal`] whose slot
 /// the worker thread writes into once the fetch completes; consumer
-/// code reads through the accessors below or via [`Suspense`].
-///
-/// [`Suspense`]: crate::view::suspense
+/// code reads through the accessors below.
 pub struct Resource<T: Clone + 'static> {
     state: RwSignal<ResourceState<T>>,
 }
@@ -91,8 +89,8 @@ impl<T: Clone + 'static> Resource<T> {
     /// Hidden from rustdoc: regular users go through [`resource`] or
     /// [`resource_sync`]. This is here so tests + non-standard
     /// "synthetic resource" cases (e.g. a value derived from a
-    /// context signal, exposed as a Resource so it can plug into
-    /// `Suspense`) can build one without re-spawning a fetcher.
+    /// context signal, exposed as a Resource) can build one without
+    /// re-spawning a fetcher.
     #[doc(hidden)]
     pub fn from_state(state: RwSignal<ResourceState<T>>) -> Self {
         Self { state }

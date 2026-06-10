@@ -168,9 +168,9 @@ use whisker::runtime::view::Element;
 
 #[whisker::main]
 fn app() -> Element {{
-    // `signal` creates a reactive value. The closure below re-runs
-    // whenever the signal changes, repainting the text in place.
-    let count = signal(0);
+    // `RwSignal::new` creates a reactive value. The closure below
+    // re-runs whenever the signal changes, repainting the text in place.
+    let count = RwSignal::new(0);
 
     render! {{
         page(style: "flex-direction: column; padding: 24px; gap: 16px; background-color: #0f0f10;") {{
@@ -179,7 +179,7 @@ fn app() -> Element {{
                 style: "color: white; font-size: 24px; font-weight: 600;",
             )
             text(
-                value: move || format!("Taps: {{}}", count.get()),
+                value: computed(move || format!("Taps: {{}}", count.get())),
                 style: "color: #d4d4d8; font-size: 18px;",
             )
             view(
