@@ -5,13 +5,25 @@ How to choose the user-facing shape for a new Whisker module crate
 slots into the rest of the framework instead of becoming a new
 five-th paradigm.
 
-Companion to [`module-author-guide.md`](./module-author-guide.md) —
-that doc covers the **mechanics** (how to wire Kotlin / Swift to
-Rust through the bridge). This one covers the **shape**: which Rust
-surface to expose to the app author, and why.
+This doc covers the **shape**: which Rust surface to expose to the
+app author, and why. For the **mechanics** (how the crate is laid
+out, and how Kotlin / Swift wire to Rust through the bridge), scaffold
+a crate with `whisker new-module`, read the reference module
+[`whisker-local-store`](../packages/whisker-local-store/), and see the
+crate-graph / bridge overview in [`architecture.md`](./architecture.md).
 
 > **Audience.** Authors of new module crates, and reviewers of new
 > module PRs.
+
+> **Distribution is crates.io-only.** A module is one ordinary crate
+> published to crates.io. There is **no** SwiftPM Registry or Maven
+> Central entry per module — the native Swift / Kotlin sources ship
+> *inside the crate tarball* via the `include` list in `Cargo.toml`
+> (`ios/**/*.swift`, `android/**/*.kt`, `Package.swift`,
+> `build.gradle.kts`). The iOS / Android builds extract them from the
+> downloaded crate. So your module's whole public contract — Rust
+> surface *and* native code — lives behind a single `whisker = "0.1"`
+> + `whisker-yourmodule = "0.1"` in the app's `Cargo.toml`.
 
 ---
 
@@ -73,6 +85,45 @@ In words:
 2. **Lifetime detached from UI?** → Shape 3 if observable, Shape 5
    if stateless.
 3. **Process-wide singleton observable?** → Shape 4.
+
+---
+
+## The two macros, and the native side
+
+Every shape below uses one of two Rust-side macros:
+
+- `#[whisker::module_component("Name")]` — declares a **native view**
+  element for `render!`. The Lynx tag is `<crate-name>:Name` (the crate
+  name is auto-prepended). Shapes 1 and 2 use it.
+- `whisker::module!("Name")` — resolves a **function module** handle
+  (`PlatformModule`) you `.invoke(method, args)` / `.on_event(...)` on.
+  Shapes 3, 4 and 5 build their typed wrappers over it. The name is
+  likewise crate-namespaced to `<crate>:Name`.
+
+There is **no** `#[whisker::platform_module]` attribute — function
+modules are plain Rust wrappers over `module!`, not macro-generated.
+
+The matching **native** half (Swift / Kotlin) is written with the
+`definition()` ModuleDefinition DSL — *not* annotations. A module
+subclass overrides `definition()` and returns a `ModuleDefinition {
+Name(...); View(...); Prop(...); Function(...) }` block; the
+per-platform codegen plugin discovers the subclass and registers a
+dispatch shim under the crate-namespaced key that `module!` /
+`module_component` resolve to. (The older `@WhiskerModule` /
+`@WhiskerComponent` / `@WhiskerProp` annotation framing is gone.)
+
+```swift
+// iOS — packages/whisker-local-store/ios/.../LocalStoreModule.swift
+public final class LocalStoreModule: Module {
+    public override func definition() -> ModuleDefinition {
+        ModuleDefinition {
+            Name("WhiskerLocalStore")
+            Function("save") { (args: [WhiskerValue]) -> WhiskerValue in /* … */ }
+            // view modules add `View(WhiskerImageView.self)` + `Prop("src")` here
+        }
+    }
+}
+```
 
 ---
 
@@ -401,7 +452,11 @@ and prone to drift. Pick one.
 ## Forward references
 
 - Concrete how-to for wiring Kotlin / Swift / Rust together →
-  [`module-author-guide.md`](./module-author-guide.md)
+  scaffold with `whisker new-module`, then crib from the reference
+  module [`whisker-local-store`](../packages/whisker-local-store/)
+  (function module) or [`whisker-image`](../packages/whisker-image/)
+  (view module); crate-graph + bridge overview in
+  [`architecture.md`](./architecture.md).
 - `whisker-video` reactive surface decision →
   [issue #128](https://github.com/whiskerrs/whisker/issues/128)
 - Why `Owner` (Shape 3 mechanics) and what backs lifetime →

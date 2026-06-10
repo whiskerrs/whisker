@@ -1,70 +1,89 @@
-# Reactivity Design (Phase 6.5a)
+# Reactivity Design
 
 Whisker's reactive layer is modelled on **Solid.js / Leptos**: components
 run **once** at mount, and dynamic UI is driven by `effect` subscriptions
-to `Signal`s. Updates patch the Lynx element tree at exactly the affected
-properties — no virtual DOM, no diff.
+to signals. An update patches the Lynx element tree at exactly the
+affected property — there is no virtual DOM and no diff pass.
 
-This doc captures the architecture decisions for the Phase 6.5a rewrite.
-It is the source of truth that the implementation issues (#9–#14) and
-future contributors should read first.
+This doc is the *design* of the runtime — the "why" and "how it's built".
+For the user-facing "how to write components" side, see the guide on
+[whisker.rs/docs](https://whisker.rs/docs). The implementation lives in
+`crates/whisker-runtime/src/reactive/*` (primitives) and
+`crates/whisker-runtime/src/view/*` (the renderer that wires effects to
+Lynx handles).
 
 ## Why fine-grained
 
 1. **Lynx's `FiberElement::SetAttribute(name, value)` is already
    per-property granular.** A fine-grained reactive model maps directly
    onto it — there's no need to build a virtual DOM, diff it, and emit
-   patches that target individual attributes. The effect *is* the patch.
-2. **Mobile CPU sensitivity.** Whisker targets Android / iOS where
-   weaker per-core throughput makes the virtual-DOM cost more visible.
-3. **Smaller runtime.** Dropping `diff.rs` (~300 LOC) and the value-tree
-   `Element` representation simplifies the runtime and shrinks the
-   dylib.
+   patches that target individual attributes. The effect *is* the patch:
+   a dynamic `style` / `value` / text node is just an `effect` that calls
+   `SetAttribute` / `SetRawInlineStyles` when its dependency changes.
+2. **Mobile CPU sensitivity.** Whisker targets Android / iOS, where
+   weaker per-core throughput makes virtual-DOM diffing more visible.
+3. **Smaller runtime.** No value-tree `Element` representation and no
+   diff machinery shrinks the runtime and the shipped dylib.
 
 ## Primitives
 
+The reactive module is a single thread-local `ReactiveRuntime` (Whisker
+runs all reactive work on Lynx's TASM thread). Every primitive funnels
+through it. Public surface is re-exported from `whisker::prelude`.
+
 ### Signal
 
-Two forms — both legal, choose by ergonomics:
-
 ```rust
-// Solid-style tuple — read/write separation
+// Solid-style tuple — read/write capability split into two types
 let (count, set_count) = signal(0);
-count.get();           // 0
+count.get();            // 0  — registers a dependency if inside an effect
 set_count.set(1);
 
-// Unified handle — get/set on the same value
+// Unified handle — get + set on one value
 let count = RwSignal::new(0);
 count.get();
 count.set(1);
 count.update(|n| *n += 1);
-let (read, write) = count.split();   // any time
+let (read, write) = count.split();   // project to halves any time
 ```
 
-All three types (`ReadSignal<T>`, `WriteSignal<T>`, `RwSignal<T>`)
-are `Copy` arena handles — clone is free, `'static`, moves into
-closures without lifetime annotations. `computed()` also returns
-`ReadSignal<T>` (it's a compute-driven signal); there is no separate
-`Computed<T>` (gone — use `ReadSignal<T>`) type.
+`ReadSignal<T>`, `WriteSignal<T>`, and `RwSignal<T>` are all `Copy`
+newtypes over a `NodeId` — the value lives in the runtime arena, the
+handle is one machine word. Cloning is free; moving one into a `move ||`
+closure ties no lifetime. `computed()` also returns a `ReadSignal<T>`
+(it's a compute-driven signal); there is no separate `Computed<T>` /
+`Memo<T>` type.
 
 API surface:
 
 ```rust
 // ReadSignal<T> (also what computed() returns)
-fn get(&self) -> T where T: Clone;
-fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R;
-fn get_untracked(&self) -> T where T: Clone;        // no dep registration
-fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R;
+fn get(self) -> T where T: Clone;                    // tracked read
+fn with<R>(self, f: impl FnOnce(&T) -> R) -> R;      // tracked, no clone
+fn get_untracked(self) -> T where T: Clone;          // no dep registration
+fn with_untracked<R>(self, f: impl FnOnce(&T) -> R) -> R;
 
 // WriteSignal<T> (and RwSignal<T>)
-fn set(&self, value: T);
-fn update(&self, f: impl FnOnce(&mut T));
-fn update_untracked(&self, f: impl FnOnce(&mut T));  // no subscriber notify
+fn set(self, value: T);
+fn update(self, f: impl FnOnce(&mut T));
+fn update_untracked(self, f: impl FnOnce(&mut T));   // no subscriber notify
 ```
 
-`get` / `with` register the current effect as a subscriber.
-`get_untracked` / `with_untracked` read without subscribing — used inside
-effects when you want to *read* a value but not *react* to it.
+`get` / `with` register the currently-running effect (or computed) as a
+subscriber. The `_untracked` variants read without subscribing — used
+inside an effect when you want to *read* a value but not *react* to it.
+`RwSignal` additionally has `try_set` / `try_update` (no-op + `false`
+when the slot has been disposed).
+
+`update` is fully generic over the closure (`FnOnce(&mut T)`) — there is
+no numeric/`Add` constraint.
+
+There is also an **Arc-backed** family (`arc_signal()` →
+`ArcReadSignal` / `ArcWriteSignal` / `ArcRwSignal`) for values that must
+outlive the arena / cross owner boundaries by refcount rather than by
+`NodeId`. These don't live in the arena; nodes that read them record an
+`ArcSubscription` so the back-reference can be severed on re-run /
+disposal while the signal's value lives on as long as an Arc is held.
 
 ### Effect
 
@@ -74,78 +93,91 @@ effect(move || {
 });
 ```
 
-Runs once at registration. Whatever signals it reads become its
-dependencies. When any dependency changes, the effect re-runs (after the
-microtask flush — see [Batching](#batching)). Disposed when its owner
-is disposed.
+`effect(f)` registers `f` against the current owner and runs it **once
+synchronously** (so dependencies are recorded and the side effect has
+happened by the time `effect()` returns). Whatever signals it read become
+its dependencies; later runs are scheduled through the
+[scheduler](#batching--scheduling) and drained at flush time. The effect
+is disposed when its owner is disposed.
 
-The closure receives `Option<R>` of the previous return value if needed:
+The closure is `FnMut() + 'static` and takes **no arguments** — the
+Solid/Leptos `Option<prev>` previous-value variant is intentionally not
+part of this API. Derive-from-previous can be done with a captured local
+or a `StoredValue`.
 
-```rust
-effect(|prev: Option<i32>| {
-    let new = count.get();
-    log::info!("delta = {}", new - prev.unwrap_or(0));
-    new
-});
-```
-
-### Computed — a compute-driven `ReadSignal`
+### Computed
 
 ```rust
 let doubled: ReadSignal<i32> = computed(move || count.get() * 2);
-log::info!("{}", doubled.get());           // 0
+doubled.get();           // 0
 set_count.set(5);
-log::info!("{}", doubled.get());           // 10
+flush();
+doubled.get();           // 10
 ```
 
-Like an effect that caches its return value. The returned handle is a
-`ReadSignal<T>` — exactly the same type a primitive signal hands out —
-so component props that take a "readable reactive value" use
+An effect that caches its return value. The returned handle is a
+`ReadSignal<T>` — identical to what a primitive `signal()` hands out — so
+any component prop that takes "a readable reactive value" accepts
 `ReadSignal<T>` regardless of whether the source is `signal()` or
-`computed()`. **Lazy**: re-runs only when dependencies change *and* it has
-at least one subscriber.
+`computed()`.
 
-### Resource (Phase A4)
+Two design points:
 
-Async data fetched off the reactive graph:
+- **Seeded under `untrack`.** The construction-time run that initialises
+  the cache happens inside `untrack`, so its reads don't leak as
+  dependencies of whatever outer effect/computed the `computed()` call
+  sits inside. Real dependency edges are registered by the immediate
+  scheduler-driven run. Without this, `computed(move || sig.get())` from
+  inside a component-mount effect would subscribe that mount to `sig` and
+  leak a fresh node on every write.
+- **`PartialEq`-gated notification.** Subscribers are only notified when
+  the recomputed value *differs* from the cached one (`T: PartialEq`), so
+  a computed whose result is unchanged costs nothing downstream.
+
+### Resource
+
+Async data fetched off the reactive graph and exposed through a
+signal-shaped handle:
 
 ```rust
-let id = signal(1);
-let user = resource(
-    move || id.get(),                       // re-fetch when this changes
-    |id| async move { fetch_user(id).await },
-);
-
-render! {
-    Suspense {
-        fallback: || render! { text { "loading..." } },
-        text { "User: " {move || user.get().map(|u| u.name)} }
-    }
-}
+let stories = resource(|| async {
+    run_blocking(|| ureq::get(url).call()?.into_string())
+        .await
+        .and_then(parse)
+});
 ```
 
-Exposes `loading() -> bool`, `error() -> Option<Error>`, and
-`get() -> Option<T>` (`None` while loading, `Some` on success). Inside a
-`<Suspense>` boundary, reading `user.get()` suspends until ready.
+`resource(fetcher)` spawns the `async` fetcher on Whisker's
+single-threaded local pool (the TASM thread). Blocking IO inside the
+fetcher should be wrapped in `tasks::run_blocking`, which offloads to a
+worker thread and marshals the result back to the main thread.
+
+`Resource<T>` is `Copy` and exposes `state() -> ResourceState<T>`
+(`Loading | Ready(T) | Error(String)`), plus the conveniences
+`loading() -> bool`, `error() -> Option<String>`, and `get() ->
+Option<T>` (`None` while loading). Read these in an `effect` / `computed`
+/ `{expr}` to drive loading and ready UI; `resource_sync` is the
+non-async variant for a pre-computed value. (A `Suspense` boundary is not
+yet implemented — handle loading state explicitly via `loading()` /
+`get()`.)
 
 ### `StoredValue<T>`
 
-Non-reactive arena slot — handy for non-`Copy` types you need to share
-across closures without `Rc<RefCell<…>>`. Owned by the current owner,
-cleaned up with it.
+A `Copy`, owner-bound, **non-reactive** arena slot — the role
+`Rc<RefCell<…>>` plays in vanilla Rust, but tied to a scope so it's freed
+on dispose. Internally a signal-shaped node minus the subscribers/sources
+plumbing: reads and writes never tick the dependency graph.
 
 ```rust
 let history: StoredValue<Vec<String>> = StoredValue::new(Vec::new());
-effect(move || history.update(|h| h.push(format!("count={}", count.get()))));
 ```
 
-### `Signal<T>` — the prop-value type (Phase 7-Φ)
+### `Signal<T>` — the prop-value type
 
 A 2-variant sum used by built-in tag builders, `#[component]`, and
-`#[whisker::platform_component]` to receive prop values that may be
-either a static `T` or a reactive `ReadSignal<T>`. The unified
-type lets all three component surfaces share one calling
-convention.
+`#[whisker::module_component]` to receive prop values that may be either a
+static `T` or a reactive `ReadSignal<T>`. One unified type lets all three
+component surfaces share one calling convention.
 
 ```rust
 pub enum Signal<T: 'static> {
@@ -154,560 +186,274 @@ pub enum Signal<T: 'static> {
 }
 ```
 
-`From` impls:
+`From` impls drive the implicit call-site conversion (builders take
+`impl Into<Signal<T>>`):
 
-| Source                | Variant                              |
-|-----------------------|--------------------------------------|
-| `T`                   | `Static(value)`                      |
-| `ReadSignal<T>`       | `Dynamic(signal)`                    |
-| `RwSignal<T>`         | `Dynamic(rw.read_only())`            |
-| `&str` (when T=String)| `Static(s.to_string())` — ergonomic  |
+| Source                  | Variant                    |
+|-------------------------|----------------------------|
+| `T`                     | `Static(value)`            |
+| `ReadSignal<T>`         | `Dynamic(signal)`          |
+| `RwSignal<T>`           | `Dynamic(rw.read_only())`  |
+| `&str` (when T=String)  | `Static(s.to_string())`    |
+| `computed(…)` result    | `Dynamic(…)` (it's a `ReadSignal<T>`) |
 
-Builder methods accept `impl Into<Signal<T>>`, so the call-site
-conversion is implicit:
+So the **Static vs Dynamic decision is visible at the call site**:
 
 ```rust
-text(value: "static literal")         // → Signal::Static
-text(value: my_string)                // → Signal::Static
-text(value: my_signal)                // → Signal::Dynamic (tracked)
-text(value: my_rw_signal)             // → Signal::Dynamic (tracked)
-text(value: computed(move || …))      // → Signal::Dynamic (computed's
-                                      //   return is a ReadSignal<T>)
-text(value: my_signal.get())          // → Signal::Static (snapshot — read
-                                      //   happens at the call site, before
-                                      //   any effect is on the stack)
+text(value: "literal")            // → Static
+text(value: my_string)            // → Static
+text(value: my_signal)            // → Dynamic (reactive)
+text(value: my_rw_signal)         // → Dynamic (reactive)
+text(value: computed(move || …))  // → Dynamic (memoised derivation)
+text(value: my_signal.get())      // → Static (snapshot — read happens at
+                                  //   the call site, before any effect
+                                  //   is on the observer stack)
 ```
 
-The `Static` vs `Dynamic` decision is **visible at the call site**:
-pass the signal handle for reactive binding; pass `.get()` (or any
-already-resolved value) for a one-shot snapshot. Same rule for
-built-in tags, `#[component]`s, and `#[whisker::platform_component]`s.
-
-#### Inside the builder
-
-The Static / Dynamic dispatch happens once per `.style(v)` /
-`.class(v)` / `.value(v)` / etc. call. Static → set the attribute
-exactly once; Dynamic → wrap the read in an `effect` so the
-underlying signal becomes a dependency:
+Inside the builder, the dispatch happens once per setter call:
 
 ```rust
 match v.into() {
-    Signal::Static(t) => set_attribute(h, name, &t.to_string()),
-    Signal::Dynamic(sig) => {
-        effect(move || set_attribute(h, name, &sig.get().to_string()));
-    }
+    Signal::Static(t)   => set_attribute(h, name, &t.to_string()),
+    Signal::Dynamic(sig) => effect(move || set_attribute(h, name, &sig.get().to_string())),
 }
 ```
 
-#### Reading `Signal<T>` props inside a `#[component]` body
-
-For props declared as `Signal<T>`, the body reads via
-`Signal::<T>::get()`, which dispatches:
-
-- `Static`: returns a clone of the held value.
-- `Dynamic`: forwards to `ReadSignal::get`, which registers the
-  underlying signal as a dependency of whatever effect or
-  `computed` is currently on the observer stack.
-
-```rust
-#[component]
-fn dynamic_tile(color: Signal<String>) -> Element {
-    // `color.clone()` is cheap — Dynamic clones the NodeId,
-    // Static clones the value. Required because the component's
-    // `__hot::call(move || …)` wrap is FnMut-typed and we want
-    // to move `color` into a downstream `computed` closure
-    // without consuming the outer capture.
-    let style = {
-        let color = color.clone();
-        computed(move || format!("background: {};", color.get()))
-    };
-    render! { view(style: style) }
-}
-```
-
-Used externally:
-
-```rust
-let (color, set_color) = signal("red".to_string());
-render! {
-    DynamicTile(color: color)        // → Dynamic, reactive
-}
-set_color.set("blue".into());        // tile re-renders automatically
-flush();
-```
+`Signal::<T>::get()` reads a prop inside a component body: `Static`
+returns a clone; `Dynamic` forwards to `ReadSignal::get`, registering the
+underlying signal with whatever effect/computed is on the observer stack.
+`Signal<T>` is `Clone` when `T: Clone` — the `Dynamic` arm just copies the
+`ReadSignal` handle — which matters because `#[component]` re-clones every
+prop on each body invocation.
 
 #### Why not auto-wrap kwargs in `render!`?
 
-Pre-Phase 7-Φ, the `render!` macro silently wrapped each kwarg
-expression in `move || …to_string()` and the builder accepted
-a closure. That made `text(value: signal.get())` reactive
-without any user effort — the read happened *inside* the
-emitted closure, which the builder then placed inside an effect.
-
-Three things made that wrong:
-
-1. **Asymmetric across component types.** Built-in tags got the
-   auto-wrap; `#[component]` calls didn't. So
-   `text(value: signal.get())` was reactive but
-   `MyComponent(value: signal.get())` wasn't, with no surface
-   indication of the difference.
-2. **Hidden DX.** New users were surprised that
-   `text(value: format!("…{}", signal.get()))` reactively
-   updated — there was no syntactic marker telling them where
-   the reactive boundary was.
-3. **Closure-only API for the builders.** Static values couldn't
-   skip the effect overhead — every kwarg got wrapped, even the
-   pure-string-literal ones.
-
-Phase 7-Φ.B made the wrap explicit: kwargs flow verbatim into
-the builder, the builder dispatches on `Signal::Static` vs
-`Signal::Dynamic`, and the user controls reactivity by choosing
-to pass the signal handle vs `.get()`. Derived expressions go
-through `computed(move || …)` so the closure (and the resulting
-memo's `ReadSignal<T>`) are named, observable, and reusable.
-
-This is the same model Leptos uses (`MaybeSignal<T>`) and
-Solid's JSX (`<X prop={signal}>` vs `<X prop={signal()}>`).
+An earlier design had the macro silently wrap each kwarg in
+`move || …` so the builder always received a closure, making
+`text(value: signal.get())` reactive with no user effort. That was
+dropped because it was (1) asymmetric — built-in tags got the auto-wrap
+but `#[component]` calls didn't; (2) hidden DX — no syntactic marker for
+where the reactive boundary was; and (3) closure-only — static values
+couldn't skip the effect overhead. The explicit model puts the reactive
+boundary on the call site (`signal` vs `signal.get()`), exactly as Leptos
+(`MaybeSignal<T>`) and Solid's JSX (`prop={signal}` vs `prop={signal()}`)
+do.
 
 ## Arena + Owner
 
-All reactive state lives in a thread-local `ReactiveRuntime`. Whisker
-runs on a single Lynx TASM thread, so single-threaded is fine.
+All reactive state lives in the thread-local `ReactiveRuntime`. Whisker
+runs on a single Lynx TASM thread, so single-threaded (no `Arc`, no
+locks) is both correct and borrow-checker-clean.
 
 ```rust
 struct ReactiveRuntime {
-    owners: SlotMap<OwnerId, Owner>,
-    nodes:  SlotMap<NodeId, ReactiveNode>,    // signals + effects + memos
-    current_owner:   Option<OwnerId>,         // stack top
-    current_tracker: Option<NodeId>,          // effect being run
-    pending: Vec<NodeId>,                     // batched effect queue
-    component_owners: HashMap<FnPtr, Vec<OwnerId>>,   // for hot reload
+    owners: SlotMap<Owner, Scope>,
+    nodes:  SlotMap<NodeId, ReactiveNode>,  // signals + effects + computeds
+    owner_stack:     Vec<Owner>,            // top = current owner
+    current_tracker: Option<NodeId>,        // effect/computed being run
+    pending:         Vec<NodeId>,           // batched re-run queue
+    component_owners: HashMap<*const (), Vec<Owner>>,  // for hot reload
+    // … flushing flag, deferred queue (paused scopes), pending_mounts …
 }
 
-struct Owner {
-    parent:   Option<OwnerId>,
-    children: Vec<OwnerId>,
-    nodes:    Vec<NodeId>,
-    contexts: HashMap<TypeId, Box<dyn Any>>,
-    cleanups: Vec<Box<dyn FnOnce()>>,
-    mount_fn: Option<FnPtr>,                  // for components only
+struct Scope {                              // the owner record
+    parent:   Option<Owner>,
+    children: Vec<Owner>,
+    nodes:    Vec<NodeId>,                  // reactive nodes freed on dispose
+    contexts: HashMap<TypeId, Rc<dyn Any>>, // provide/use_context bag
+    cleanups: Vec<Box<dyn FnOnce()>>,       // on_cleanup, LIFO
+    mount_fn: Option<*const ()>,            // component fn-ptr, for hot reload
+    elements: Vec<Element>,                 // Lynx handles to release on dispose
+    paused:   bool,                         // pause/resume — see below
 }
 
 struct ReactiveNode {
-    owner:  OwnerId,
-    kind:   NodeKind,                          // Signal | Effect | Computed
-    value:  Option<Box<dyn Any>>,
-    sources:     HashSet<NodeId>,              // who I depend on
-    subscribers: HashSet<NodeId>,              // who depends on me
+    owner: Owner,
+    data:  NodeData,                        // Signal | Effect | Computed
+    sources:     HashSet<NodeId>,           // who I read last run
+    subscribers: HashSet<NodeId>,           // who reads me
+    arc_sources: Vec<Rc<dyn ArcSubscription>>,  // Arc-signal back-refs
 }
 ```
 
-**Disposal cascades.** Disposing an owner cleans up its children
-recursively, then its nodes, then runs its `cleanups` (LIFO). A disposed
-signal read returns its last value in `release` builds with a warning
-log; in `debug` builds it panics.
+`Owner` is a `Copy` slotmap key — the public handle. The `Scope` record
+it dereferences to is never named by user code. The owner stack's top is
+the "current" owner: new signals/effects/computeds and lifecycle hooks
+register against it. `#[component]` and `Owner::with` push/pop it.
+
+**Disposal cascades.** `Owner::dispose` recursively disposes children,
+runs `cleanups` LIFO, frees the scope's reactive nodes (severing
+subscriber links and Arc back-refs), and releases the scope's Lynx
+`Element` handles back to the renderer — preventing the bridge's element
+map from accumulating dangling pointers across `Show` flips, `ForEach`
+removals, and per-component remounts.
+
+**Pause / resume.** `Owner::pause` / `resume` set the `paused` flag and
+cascade it down the subtree; effects/computeds owned by a paused scope
+skip flush (deferred until resume). `whisker-router`'s `StackLayout` uses
+this to freeze mounted-but-off-screen back-stack entries.
 
 ## Component model
 
 ```rust
 #[component]
-fn counter(initial: i32, on_change: WriteSignal<i32>) -> impl IntoView {
-    let count = signal(initial);
+fn counter(initial: i32, on_change: WriteSignal<i32>) -> Element {
+    let (count, set_count) = signal(initial);
 
-    effect(move || on_change.set(count.0.get()));
+    effect(move || on_change.set(count.get()));
     on_cleanup(|| log::info!("counter unmounted"));
 
     render! {
-        view {
-            style: "padding: 16px;",
-            text { "Count: " {count.0} }
-            view {
-                on_tap: move |_| count.1.update(|n| *n += 1),
-                text { "+" }
+        view(style: "flex-direction: column; padding: 16px;") {
+            text(value: computed(move || format!("Count: {}", count.get())))
+            view(on_tap: move |_| set_count.update(|n| *n += 1)) {
+                text(value: "+")
             }
         }
     }
 }
 ```
 
-The `#[component]` macro:
+The `#[component]` macro generates, for `fn xxx(...)`:
 
-1. Wraps the body so a fresh `Owner` is created, pushed as
-   `current_owner`, popped on return.
-2. Records the fn pointer in `component_owners[fn_ptr]` so hot reload
-   can find owners that ran this function.
-3. Returns `impl IntoView` (see [Type erasure](#type-erasure-intoview)).
+1. A `XxxProps` struct mirroring the parameters + a hand-rolled
+   `XxxPropsBuilder` (one setter per field). Required fields take
+   `impl Into<Type>`, so call sites omit conversions; for `Signal<T>`
+   props that's the `Into<Signal<T>>` coercion above. `#[prop(default =
+   …)]` marks optional props. (Hand-rolled rather than `#[derive(
+   TypedBuilder)]` so only two types surface — the `Props` struct and one
+   builder — instead of typed-builder's per-field type-state markers.)
+2. A rewritten `fn xxx(__props: XxxProps) -> Element` that creates a
+   fresh owner, runs the user body inside it (under `untrack`, so ambient
+   `signal.get()` reads in the body don't contaminate an outer node), and
+   returns the view via `mount_component_remountable`.
+3. A PascalCase alias (`Xxx`) the `render!` macro calls as
+   `Xxx(XxxProps::builder().k(v).build())`.
 
-Lifecycle hooks register against `current_owner`:
-
-```rust
-on_mount(|| /* … */);          // after render, before first paint
-on_cleanup(|| /* … */);        // on owner disposal
-```
-
-Context (parent → descendant value passing):
-
-```rust
-#[component]
-fn app() -> impl IntoView {
-    provide_context(ThemeMode::Dark);
-    render! { my_inner_comp {} }
-}
-
-#[component]
-fn my_inner_comp() -> impl IntoView {
-    let theme = use_context::<ThemeMode>().unwrap();  // walks owner tree
-    /* … */
-}
-```
-
-### Props (Phase 7-Φ)
-
-The macro emits a `<Name>Props` struct + hand-rolled builder for
-every component. Required fields take `impl Into<Type>` so call
-sites can omit explicit conversions. For props declared as
-`Signal<T>`, that Into-conversion is the one documented in
-[`Signal<T>`](#signalt--the-prop-value-type-phase-7-φ): any of
-`T`, `ReadSignal<T>`, `RwSignal<T>`, `Memo<T>` (= `ReadSignal<T>`)
-all coerce in.
+Lifecycle hooks register against the current owner:
 
 ```rust
-#[component]
-fn art_tile(color: Signal<String>, size: u32) -> Element {
-    // color.get() in a tracking scope subscribes to the source
-    // signal; size is plain static data.
-    let style = {
-        let color = color.clone();
-        computed(move || format!("background: {}; width: {}px;", color.get(), size))
-    };
-    render! { view(style: style) }
-}
-
-// Call site:
-let (color, set_color) = signal("red".to_string());
-render! {
-    ArtTile(color: color, size: 48)
-}
-set_color.set("blue".into());   // tile re-paints
-flush();
+on_mount(|| /* after the view is appended to its parent */);
+on_cleanup(|| /* on owner disposal, LIFO */);
 ```
 
-## platform_component (Phase 7-Φ.D)
+Context walks the owner tree:
 
 ```rust
-#[whisker::platform_component("x-input")]
-pub fn x_input(value: Signal<String>, placeholder: Signal<String>) {}
-//                                                                ^^
-//                                          empty body — auto-generated
+provide_context(ThemeMode::Dark);             // store on current scope
+let theme = use_context::<ThemeMode>();       // walk parents for a TypeId
+with_context::<ThemeMode, _>(|t| /* … */);    // borrow without cloning out
 ```
 
-`#[whisker::platform_component(tag)]` is a sibling of `#[component]`:
-same `<Name>Props` + builder + PascalCase-alias surface, but
-the body is **auto-generated** rather than supplied by the user.
-The macro emits:
+### Control flow: `Show` and `ForEach`
 
-1. `XInput(props) -> Element` whose body calls
-   `view::create_element_by_name("x-input")` to allocate a Lynx
-   `FiberElement` of the given tag (which the host's behaviour
-   registry must know about — see below).
-2. Per-prop `apply_styles(h, props.style)` (if the prop is
-   literally named `style`) or `apply_attr(h, kebab-name, props.<prop>)`
-   for everything else — same helpers built-in tags use, so
-   `Signal::Dynamic` props transparently effect-wrap the underlying
-   `SetAttribute` / `SetRawInlineStyles` call.
+The control-flow primitives are `Show` (conditional) and `ForEach`
+(keyed list) — written as **ordinary `#[component]` functions** in
+`crates/whisker/src/control_flow.rs`. There's no `ControlFlow` trait, no
+special `View` variant, and no special path through the surrounding
+builder — `render!` treats `Show(…)` / `ForEach(…)` like any other
+component invocation.
 
-Call site mirrors built-in tags + user components:
-
-```rust
-render! {
-    XInput(value: my_string_signal, placeholder: "Type here")
-}
-```
-
-### Tag-name → host element class
-
-`create_element_by_name("x-input")` routes through
-`whisker_bridge_create_element_by_name` → Lynx CAPI
-`lynx_create_fiber_element_by_name(shell, tag_name)` →
-`ElementManager::CreateFiberNode(base::String(tag_name))`. Lynx's
-behaviour registry then looks up the registered class for the
-tag and instantiates it:
-
-- **iOS**: `LYNX_REGISTER_UI("x-input")` decorates a `LynxUI<UIView*>`
-  subclass that lives in the app's Mach-O image. The bridge's
-  `whisker_hello_element.mm` is the canonical sample.
-- **Android** (planned): `@WhiskerElement` Kotlin annotation
-  generates the same registration as Lynx's existing
-  `@LynxBehavior` machinery.
-
-If the host hasn't registered a class for the tag, `CreateFiberNode`
-returns nullptr; the Rust side surfaces that as a sentinel
-`Element` whose subsequent operations are silent no-ops (logged
-in debug). No null-pointer surprises propagate to user code.
-
-### Constraints
-
-v1 of `#[whisker::platform_component]` is intentionally narrow:
-
-- **Every prop must be `Signal<T>`** for the macro to wire up
-  reactivity automatically. Future extension: extract `T` from
-  `Signal<T>` and route static / numeric / boolean props through
-  the `ToString` path.
-- **No children**: nesting under a platform component isn't supported
-  yet. Bridge has `whisker_bridge_append_child`; macro needs a
-  `children: Children` prop story (mirrors `#[component]`).
-- **No event handlers**: `on_<event>: …` props need a separate
-  prop classifier (`on_` prefix → `set_event_listener` instead of
-  `apply_attr`). Trivial follow-up.
-
-## render! macro
-
-Replaces the current `rsx!`. Generates **effects**, not value trees.
-Renamed for clarity now that the macro's job is "render this view into
-the Lynx tree", not "build an expression of nested rsx values".
-
-### Input
-
-```rust
-render! {
-    view {
-        style: format!("color: {}", color.get()),     // dynamic
-        on_tap: move |_| count.update(|n| *n += 1),
-
-        text { "Count: " {count} }                    // dynamic interp
-
-        Show {
-            when: move || count.get() > 5,
-            fallback: || render! { text { "small" } },
-            text { "big!" }
-        }
-
-        For {
-            each: move || items.get(),
-            key: |i| i.id,
-            children: move |i| render! { text { {i.name} } },
-        }
-    }
-}
-```
-
-### Compilation (conceptual)
-
-```rust
-{
-    let view_el = create_view();
-    view_el.set_event_handler("tap", move |_| count.update(|n| *n += 1));
-    effect(move || view_el.set_inline_styles(&format!("color: {}", color.get())));
-
-    let text_el = create_text();
-    let static_part  = create_raw_text("Count: ");
-    let dynamic_part = create_raw_text("");
-    text_el.append_child(static_part);
-    text_el.append_child(dynamic_part);
-    effect(move || dynamic_part.set_text(&count.get().to_string()));
-    view_el.append_child(text_el);
-
-    let show = Show::mount(view_el, /* when */, /* fallback */, /* children */);
-    let for_ = For::mount(view_el, /* each */, /* key */, /* children */);
-
-    view_el
-}
-```
-
-Rules:
-
-- **Static attributes / styles**: set at element creation. No effect.
-- **Dynamic `{expr}` or `format!(...)` values**: wrapped in an `effect`
-  that updates the affected attribute / style / text node.
-- **Event handlers**: registered at creation. The handler closure body
-  itself can be hot-patched, but the registration is a one-shot.
-
-### Control flow
-
-`Show` and `For` are the **only** control flow primitives in v1.
-`Switch / Match / ErrorBoundary` come later.
-
-#### `Show`
+Each one allocates a **phantom element** (`create_phantom_element`, no
+on-screen footprint) and installs a reactive `effect` that mounts /
+disposes children under it. The phantom's hoisting machinery routes each
+child mount/detach to the nearest *real* (non-phantom) Lynx ancestor, so
+the on-screen tree is wrapper-less while user code keeps its hierarchical
+mental model.
 
 ```rust
 Show {
     when: move || cond.get(),
     fallback: || render! { /* optional */ },
-    /* main children */
+    /* children */
 }
-```
 
-Implementation: a small component with an `effect` watching `when`. On
-transition, it mounts / disposes the relevant branch's children.
-
-#### `For`
-
-```rust
-For {
+ForEach {
     each: move || items.get(),
-    key: |item| item.id,
-    children: move |item: Item| render! { /* per item */ }
+    key:  |item| item.id,
+    children: move |item| render! { /* per item */ },
 }
 ```
 
-Keyed list reconciliation:
+- **`Show`** watches `when` in an effect. On each flip it disposes the
+  previously-mounted branch's owner (cascading cleanup) before mounting
+  the other branch, so reactive state can't leak between branches.
+- **`ForEach`** re-keys against the previous frame: survivors (same key)
+  keep their per-item owner and any reactive state inside; new keys get a
+  fresh owner + `children(item)` run; missing keys are disposed.
+  Reordering detaches every surviving handle and re-attaches in the new
+  order. This is the closest thing to "vDOM diff" in the model, but it's
+  scoped to one list and keyed — efficient.
 
-- Diff prev vs new keys (LCS-ish or simpler "moved / added / removed").
-- Reused items: stay mounted, owner intact, signal state preserved.
-- Added items: new owner + mount.
-- Removed items: dispose owner.
+Custom control flow follows the same recipe (phantom + effect); the
+`#[component]` form in `control_flow.rs` is the reference.
 
-This is the closest thing to "vDOM diff" in a fine-grained model, but
-scoped to one list and keyed (= efficient).
+### `IntoView`
 
-## Type erasure: `IntoView`
-
-```rust
-pub trait IntoView {
-    fn into_element(self) -> Element;
-}
-```
-
-Implementations:
-- `Element` — identity
-- `()` — empty fragment
-- `(A, B, C, …)` tuples — fragment of children
-- `Option<T: IntoView>` — empty when `None`
-- Closures `Fn() -> impl IntoView` used as children of `Show` / `For`
-
-Components implicitly return `impl IntoView` via the `#[component]` macro.
+Components return `impl IntoView`; the renderer (or parent's `render!`
+expansion) calls `.into_view()` to get a `View` — either a single
+`Element`, a fragment of children, or a marker view used by control flow.
+`Element` itself, `()` (empty fragment), tuples, and `Option<T>` all
+implement it; the conventional `children: Children` prop is a cheap
+`Rc<dyn Fn() -> View>` so it survives hot-reload re-invocation.
 
 ## Batching / scheduling
 
-A signal `set` does **not** run subscribers immediately. It enqueues
-them in `pending`. The queue is flushed:
+A signal `set` does **not** run subscribers immediately. It appends them
+to the runtime's `pending` queue. The queue is drained by `flush`:
 
-1. At the **end of the current event handler / effect** (synchronous
-   microtask). This is the Solid/Leptos model.
-2. When the runtime is otherwise idle and `wake_runtime()` fires the
-   host's "request frame" callback.
+1. Explicitly, and at the end of the current event handler / effect — the
+   Solid/Leptos microtask-batching model.
+2. Implicitly: the first enqueue on an empty queue pings the host's
+   request-frame callback (`host_wake::wake_runtime`) so the runtime can
+   wake out of idle.
 
-Within a single batch:
-- Effects are run in topological order over their dependency graph
-  (cycles are detected and warn-logged).
-- A signal written multiple times within the same batch coalesces into
-  one notification to subscribers.
-
-This means inside an event handler:
+Within a batch, `flush` reentrantly drains until the queue is empty (an
+effect that writes a signal appends more work; a `FLUSH_ITERATION_CAP`
+guards against runaway feedback loops). A node already in the queue is
+not re-enqueued, so a signal written several times in one batch produces
+one re-run of each subscriber:
 
 ```rust
 on_tap: move |_| {
     set_a.set(1);
     set_b.set(2);
     set_c.set(3);
-}
+}   // → one flush at handler exit; an effect reading (a,b,c) runs once
 ```
 
-…produces **one** flush at the end, regardless of how many signals
-were touched, and effects depending on multiple of `(a, b, c)` run
-exactly once.
-
-## Hot reload — Strategy C (per-component remount)
+## Hot reload — per-component remount
 
 When subsecond patches functions, the runtime:
 
-1. Receives the list of patched fn pointers from
-   `subsecond::apply_patch`'s `Ok(Vec<*const ()>)` return.
-2. For each ptr, finds matching mount sites in
-   `runtime.fn_ptr_mounts`.
-3. For each site: **detach** the previous body root from the
-   permanent wrapper element, **dispose** the previous component
-   owner (cascading cleanup + reactive node freeing), **re-invoke**
-   the body closure under a fresh owner, **re-attach** the new
-   body root to the same wrapper.
+1. Receives the patched fn pointers from `subsecond::apply_patch`.
+2. For each ptr, finds matching live owners via `component_owners`
+   (populated by `mount_component`, which records `mount_fn`).
+3. For each match: **dispose** the previous component owner (cascading
+   cleanup + node freeing), **re-invoke** the body closure under a fresh
+   owner, and **re-attach** the new body root in place.
 
-The wrapper element is created at first mount and lives under the
-*parent*'s owner — it survives every remount, so the parent's
-child list is untouched and navigation / scroll position / sibling
-order are preserved.
+`#[component]` wraps the user body in a re-callable closure
+(`mount_component_remountable`), capturing props by move into a factory
+scope and re-cloning them on each invocation — so a `Copy` prop is a
+copy, a `Clone` prop is a real clone (paid only on remount), and a
+non-`Clone` prop is a compile error (wrap in `Rc`/`Arc`).
 
-### Macro-emitted body shape
-
-`#[component]` wraps the user body in a `Box<dyn Fn() -> Element>`,
-capturing props by move into a factory scope and re-cloning them on
-each body invocation:
-
-```rust
-// User writes:
-#[component]
-fn screen(name: String, count: ReadSignal<i32>) -> Element { … }
-
-// Macro emits (roughly):
-fn screen(name: String, count: ReadSignal<i32>) -> Element {
-    let __whisker_prop_name = name;
-    let __whisker_prop_count = count;
-    let __body: Box<dyn Fn() -> Element + 'static> = Box::new(move || {
-        let name  = Clone::clone(&__whisker_prop_name);
-        let count = Clone::clone(&__whisker_prop_count);
-        // user body
-    });
-    mount_component_remountable(screen as *const (), __body)
-}
-```
-
-For `Copy` types `Clone::clone` is a copy. For `Clone`-not-`Copy`
-types it's a real clone (paid only on remount). For non-`Clone`
-types it's a compile error — wrap in `Rc<T>` / `Arc<T>` if needed.
-
-### Coverage and limitations
+Because signals are **named, not positional**, this never suffers the
+slot-shift state corruption that a re-run-and-diff model has when you add
+a `signal()` at the top of a function. The trade-off is that structural
+edits (adding an element, adding a `signal`/`effect`, editing static
+styles) remount the component and lose its *local* state. State that
+should survive hot-reload belongs in a higher owner — typically an
+`AppState` held by the top-level component and shared via
+`provide_context`; leaf edits then wipe only leaf-local signals.
 
 | Edit | Outcome |
 |---|---|
 | Body of an existing `effect` / `computed` / event handler | New code runs next time; state preserved |
 | Body of an existing dynamic `{expr}` in `render!` | Updates next time deps change; state preserved |
-| Adding a new static element in `#[component]`'s `render!` | Component remounted; local state lost; parent attachment + sibling order preserved |
-| Adding a new `signal()` / `effect()` / `computed()` inside the component body | Component remounted; local state lost |
+| Adding an element / `signal` / `effect` in a `#[component]` body | Component remounted; local state lost; parent attachment + sibling order preserved |
 | Editing static styles / attributes | Component remounted; local state lost |
-| Edits to a non-`#[component]` helper invoked via `{helper()}` | Effect re-fires with patched helper body; state preserved |
-| Edits to the top-level `app()` (`#[whisker::main]`) | Not currently re-invoked; needs manual restart |
-
-**Best practice for users**: keep state that should survive
-hot-reload in higher owners — typically an `AppState` struct held
-by the top-level component and made available to descendants via
-`provide_context`. When you iterate on leaf component bodies,
-their local signals get wiped but the context-stored state is
-unaffected.
-
-### Comparison with current (Dioxus-style coarse)
-
-Current Whisker re-runs `app()` on any change and diffs the resulting
-tree. State preservation depends on `use_signal` slot stability —
-adding a signal at the start of the function shifts every later slot
-and corrupts unrelated state.
-
-Strategy C never has slot-shift corruption (signals are named, not
-positional), but loses state more often for structural edits. In
-practice, well-composed apps lose less *total* state under Strategy C
-because the blast radius is scoped to one component subtree.
-
-## Migration & deletion plan
-
-- `crates/whisker-runtime/src/diff.rs` — **delete** (replaced by
-  fine-grained effect updates).
-- `crates/whisker-runtime/src/render.rs` — **rewrite** as the renderer
-  that walks `IntoView` and wires effects to FiberElement handles.
-- `crates/whisker-runtime/src/element.rs` — `Element` value-tree type
-  becomes internal-only; `Element` (the FiberElement-wrapping
-  Copy handle) is the new public type returned from `into_element`.
-- `crates/whisker-macros/src/rsx.rs` — **rewrite** as `render.rs` (new
-  macro name).
-- `crates/whisker-runtime/src/signal.rs` — extend with effect / computed /
-  owner / scheduler. The current `Signal` API survives in spirit but
-  the closed `T: Add + From<i32>` constraint on `update` goes away.
-- `crates/whisker/src/prelude.rs` — re-export the new surface.
-
-## Implementation order
-
-Tracked in #8 with sub-issues:
-
-- **A1** (#9) Reactive primitives + arena + batching
-- **A2** (#10) Component model + lifecycle + context
-- **A3** (#11) `render!` macro rewrite + `Show` + `For` + `IntoView`
-- **A4** (#12) `Resource` + `Suspense`
-- **A5** (#13) Examples + docs
-- **A6** (#14) Hot reload Strategy C
+| Edit to a non-`#[component]` helper invoked via `{helper()}` | Effect re-fires with the patched body; state preserved |
+| Edit to top-level `app()` (`#[whisker::main]`) | Needs a manual restart |
+</content>
