@@ -10,7 +10,7 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import javax.inject.Inject
 
-// One-shot wrapper around the `whisker-build android` CLI for a
+// One-shot wrapper around the `whisker build-android` CLI for a
 // single (variant, abi) pair.
 //
 // The Rust binary handles the actual heavy lifting — cargo
@@ -22,8 +22,8 @@ import javax.inject.Inject
 //   * fail the build with the same exit code path as any other
 //     Gradle task when cargo fails.
 //
-// `whisker-build` is resolved off `PATH` — bootstrap with
-// `cargo install whisker-build`. A future improvement is to download
+// `whisker` is resolved off `PATH` — bootstrap with
+// `cargo install whisker-cli`. A future improvement is to download
 // a pinned pre-built binary in `WhiskerPlugin.apply` so contributors
 // don't need a Rust toolchain just to open the Android project.
 abstract class WhiskerBuildTask : DefaultTask() {
@@ -72,16 +72,16 @@ abstract class WhiskerBuildTask : DefaultTask() {
 
     @TaskAction
     fun run() {
-        // Fail fast with a clear message if `whisker-build` isn't on
+        // Fail fast with a clear message if `whisker` isn't on
         // PATH. Without this, Gradle reports the raw POSIX error
-        // (`Cannot run program 'whisker-build': error=2, No such file
+        // (`Cannot run program 'whisker': error=2, No such file
         // or directory`) which leaves the user guessing what to
         // install. Mirrors the `command -v` check the iOS Run Script
         // does up-front for the same reason.
-        if (!isOnPath("whisker-build")) {
+        if (!isOnPath("whisker")) {
             error(
-                "rs.whisker.gradle: 'whisker-build' is not on PATH. " +
-                    "Install with: cargo install whisker-build " +
+                "rs.whisker.gradle: 'whisker' is not on PATH. " +
+                    "Install with: cargo install whisker-cli " +
                     "(re-open Android Studio after install so it picks up the new PATH).",
             )
         }
@@ -91,7 +91,7 @@ abstract class WhiskerBuildTask : DefaultTask() {
         // jniLibs source root — and that contract demands an
         // `<abi>/<lib>.so` layout inside (the merge task throws
         // "not an ABI" if it sees raw .so files at the root). So
-        // whisker-build places files into a nested `<abi>/` subdir
+        // `whisker build-android` places files into a nested `<abi>/` subdir
         // even though our task is already (variant, abi)-scoped.
         val abiSubdir = jniLibsDir.get().asFile.resolve(abi.get())
         abiSubdir.mkdirs()
@@ -109,8 +109,8 @@ abstract class WhiskerBuildTask : DefaultTask() {
         execOperations.exec {
             commandLine(
                 listOf(
-                    "whisker-build",
-                    "android",
+                    "whisker",
+                    "build-android",
                     "--workspace=$ws",
                     "--package=${packageName.get()}",
                     "--profile=${profile.get()}",
@@ -124,7 +124,7 @@ abstract class WhiskerBuildTask : DefaultTask() {
             // but the daemon's env is captured at fork-time and may
             // predate the `whisker run` cli setting `WHISKER_TUI=1`
             // (especially with `--daemon` reuse across sessions).
-            // Without these explicit forwards, `whisker-build android`
+            // Without these explicit forwards, `whisker build-android`
             // calls `whisker_build::ui::step` in non-TUI mode and
             // emits the `⏵ …` row that the whisker-cli capture
             // thread treats as plain scrollback output, then

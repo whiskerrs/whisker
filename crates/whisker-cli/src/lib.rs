@@ -35,6 +35,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+pub mod build_dispatch;
 pub mod doctor;
 pub mod linker_shim;
 pub mod manifest;
@@ -84,6 +85,22 @@ enum Command {
     /// The result compiles standalone; run `whisker run android` or
     /// `whisker run ios` from inside the new directory.
     New(new_app::NewAppArgs),
+
+    /// (internal) Cross-compile the user crate into
+    /// `WhiskerDriver.framework`. Invoked by the generated Xcode
+    /// project's Run Script Phase, not by users.
+    #[command(name = "build-ios", hide = true)]
+    BuildIos(build_dispatch::IosArgs),
+
+    /// (internal) Cross-compile the user crate into `lib*.so`. Invoked
+    /// by the Whisker Gradle plugin's `cargoBuild*` task, not by users.
+    #[command(name = "build-android", hide = true)]
+    BuildAndroid(build_dispatch::AndroidArgs),
+
+    /// (internal) Emit a JSON manifest of the app's Whisker modules.
+    /// Invoked by the Gradle Settings plugin at init, not by users.
+    #[command(name = "modules", hide = true)]
+    Modules(build_dispatch::ModulesArgs),
 }
 
 pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
@@ -105,6 +122,9 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Command::Run(a) => run::run(a),
         Command::NewModule(a) => new_module::run(a),
         Command::New(a) => new_app::run(a),
+        Command::BuildIos(a) => build_dispatch::run_ios(a),
+        Command::BuildAndroid(a) => build_dispatch::run_android(a),
+        Command::Modules(a) => build_dispatch::run_modules(a),
     }
 }
 
@@ -224,6 +244,54 @@ mod tests {
     fn help_flag_short_circuits_to_displayhelp() {
         let e = parse(["whisker", "--help"]).unwrap_err();
         assert_eq!(e.kind(), clap::error::ErrorKind::DisplayHelp);
+    }
+
+    // The generated native projects (gen/ios pbxproj Run Script, the
+    // Gradle plugin) call these hidden subcommands by exact name +
+    // flags. If a rename/flag-change slips through, the templates break
+    // silently at build time — so pin the CLI contract here.
+    #[test]
+    fn internal_build_subcommands_parse() {
+        match parse([
+            "whisker",
+            "build-ios",
+            "--workspace=/ws",
+            "--package=app",
+            "--configuration=Debug",
+            "--platform=iphonesimulator",
+            "--archs=arm64",
+            "--built-products-dir=/out",
+        ])
+        .unwrap()
+        .command
+        {
+            Command::BuildIos(_) => {}
+            other => panic!("expected BuildIos, got {other:?}"),
+        }
+
+        match parse([
+            "whisker",
+            "build-android",
+            "--workspace=/ws",
+            "--package=app",
+            "--profile=debug",
+            "--abi=arm64-v8a",
+            "--jni-libs-dir=/jni",
+        ])
+        .unwrap()
+        .command
+        {
+            Command::BuildAndroid(_) => {}
+            other => panic!("expected BuildAndroid, got {other:?}"),
+        }
+
+        match parse(["whisker", "modules", "--workspace=/ws", "--package=app"])
+            .unwrap()
+            .command
+        {
+            Command::Modules(_) => {}
+            other => panic!("expected Modules, got {other:?}"),
+        }
     }
 
     #[test]

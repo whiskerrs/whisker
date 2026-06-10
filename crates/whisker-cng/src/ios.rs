@@ -73,10 +73,10 @@ pub struct IosInputs {
     /// user app crate's top-level `Cargo.toml` (the one with
     /// `[workspace]`). Embedded into the pbxproj's Run Script Build
     /// Phase as `--workspace=...` so Xcode-driven builds invoke
-    /// `whisker-build ios` without the user typing it. Step 7.
+    /// `whisker build-ios` without the user typing it. Step 7.
     pub workspace_root: PathBuf,
     /// Cargo package name (the user app crate) — the Rust side of
-    /// `whisker-build ios --package=...`. Step 7.
+    /// `whisker build-ios --package=...`. Step 7.
     pub user_package: String,
     /// Plugin-supplied `Info.plist` entries sourced from the
     /// engine's post-pipeline IR (`ctx.ios.info_plist`). Emitted

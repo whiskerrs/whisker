@@ -37,9 +37,9 @@ fn app() -> Element {
 Whisker apps are regular Rust crates driven by the `whisker` CLI.
 
 ```sh
-# 1. Install the CLI (and the Android build helper, if you target Android).
+# 1. Install the CLI. This is the only install needed — the `whisker`
+#    binary drives both iOS and Android builds (Xcode / Gradle invoke it).
 cargo install whisker-cli
-cargo install whisker-build   # only needed for `whisker run android`
 
 # 2. Check your local toolchain (Rust targets, Android NDK/SDK/JDK, Xcode).
 whisker doctor
@@ -101,7 +101,7 @@ whisker/
 │   ├── whisker                  Umbrella crate (re-exports for users)
 │   ├── whisker-config           Config types used in whisker.rs
 │   ├── whisker-cli              `whisker` / `cargo-whisker` CLI binary
-│   ├── whisker-build            Android build helper (cargo install whisker-build)
+│   ├── whisker-build            Build-orchestration library (cargo cross-compile, used by whisker-cli)
 │   ├── whisker-cng              CNG (Continuous Native Generation) codegen
 │   ├── whisker-dev-server       Host-side dev server (file watch, hot patch)
 │   ├── whisker-dev-runtime      Dev-only device runtime (WebSocket, hot reload)

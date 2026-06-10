@@ -453,7 +453,7 @@ async fn ios_install_and_launch(
     // + linker capture caches before xcodebuild touched the framework.
     // Step 7's Build Phase produces the framework during xcodebuild
     // itself, so the capture envs need to ride along here — they
-    // propagate xcodebuild → shell Build Phase → `whisker-build ios`
+    // propagate xcodebuild → shell Build Phase → `whisker build-ios`
     // subprocess → cargo, where the shims actually intercept rustc +
     // linker. Capture is opt-in (`HotPatchMode::Tier1Subsecond`); when
     // `None`, xcodebuild runs without the shims and the loop falls
@@ -465,7 +465,7 @@ async fn ios_install_and_launch(
         }
     }
     // Forward cargo features through to the Build Phase's
-    // `whisker-build ios` invocation as a space-separated list. The
+    // `whisker build-ios` invocation as a space-separated list. The
     // pbxproj's shell script expands each entry into `--features <feat>`
     // before invoking the binary. `whisker run` puts `whisker/hot-reload`
     // here so the user dylib carries the dev-runtime WebSocket client;

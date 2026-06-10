@@ -8,7 +8,7 @@ import org.gradle.api.provider.Property
 //
 //   * `workspace` — cargo workspace root containing the user app's
 //     top-level `Cargo.toml`. The Settings plugin spawns
-//     `whisker-build modules --workspace=<this>` to discover deps.
+//     `whisker modules --workspace=<this>` to discover deps.
 //
 //   * `userPackage` — the user app's cargo crate name. Walks the dep
 //     graph rooted here, picks every dep with

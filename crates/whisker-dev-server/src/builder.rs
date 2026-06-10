@@ -89,7 +89,7 @@ impl Builder {
     async fn build_android(&self) -> Result<()> {
         // Dev loop only stages module Kotlin sources, then drives
         // gradle. Gradle's own `whiskerBuildDebugArm64V8a` task runs
-        // `whisker-build android` (which runs cargo + stages the .so +
+        // `whisker build-android` (which runs cargo + stages the .so +
         // libc++_shared.so into the generated jniLibs source dir AGP
         // mergeJniLibFolders picks up), so a *second* pre-cargo build
         // here would just produce the same `.so` twice and leak its

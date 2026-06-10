@@ -30,7 +30,7 @@ import java.util.Properties
 //
 // On apply this plugin:
 //
-//   1. Spawns `whisker-build modules --workspace=... --package=...`
+//   1. Spawns `whisker modules --workspace=... --package=...`
 //      and writes the JSON output to
 //      `<workspace>/target/whisker/module-info.json`. Cached by
 //      Cargo.lock SHA-256 so a warm Sync skips cargo metadata
@@ -126,7 +126,7 @@ class WhiskerPlugin : Plugin<Settings> {
 
     private fun runWhiskerBuildModules(workspace: File, userPackage: String): String {
         val proc = ProcessBuilder(
-            "whisker-build",
+            "whisker",
             "modules",
             "--workspace=${workspace.absolutePath}",
             "--package=$userPackage",
@@ -136,9 +136,9 @@ class WhiskerPlugin : Plugin<Settings> {
         val rc = proc.waitFor()
         if (rc != 0) {
             error(
-                "whisker-build modules failed (exit $rc).\n" +
+                "whisker modules failed (exit $rc).\n" +
                     "stderr:\n$err\n" +
-                    "Hint: install with `cargo install whisker-build` " +
+                    "Hint: install with `cargo install whisker-cli` " +
                     "and make sure it's on the JVM's PATH.",
             )
         }

@@ -343,7 +343,7 @@ pub fn android_jni_sources_env_value(modules: &[ResolvedModule]) -> String {
 //
 // The Settings Plugin / SwiftPM Build Tool Plugin can't link against
 // this crate (they live in Kotlin / Swift), so they consume module
-// discovery through stdout JSON from the `whisker-build modules`
+// discovery through stdout JSON from the `whisker modules`
 // subcommand. The shape below is the wire schema — keep it stable
 // across releases (additive changes only; rename → version bump).
 
@@ -396,7 +396,7 @@ pub struct IosModuleReport {
     pub swift_sources: Vec<PathBuf>,
 }
 
-/// Top-level JSON payload — what `whisker-build modules` writes to
+/// Top-level JSON payload — what `whisker modules` writes to
 /// stdout.
 #[derive(Debug, Clone, Serialize)]
 pub struct ModulesReport {

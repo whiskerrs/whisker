@@ -10,7 +10,7 @@
 //
 // Cross-plugin data hand-off is via a state file on disk:
 //   * Settings plugin writes `<workspace>/target/whisker/module-info.json`
-//     (the `whisker-build modules` raw output)
+//     (the `whisker modules` raw output)
 //   * Settings plugin writes `<rootDir>/.whisker/config.properties`
 //     (workspace + userPackage echo so the Project plugin can find
 //     the workspace without a second `whisker { ... }` block)
@@ -32,7 +32,7 @@ gradlePlugin {
             implementationClass = "rs.whisker.gradle.WhiskerPlugin"
             displayName = "Whisker Settings plugin"
             description =
-                "Discovers Whisker module deps via `whisker-build modules`, includes each as a Gradle subproject, and stages a state file the Project plugin (`rs.whisker.gradle`) reads."
+                "Discovers Whisker module deps via `whisker modules`, includes each as a Gradle subproject, and stages a state file the Project plugin (`rs.whisker.gradle`) reads."
         }
     }
 }

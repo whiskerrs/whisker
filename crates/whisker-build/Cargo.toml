@@ -29,7 +29,7 @@ anyhow = { workspace = true }
 # (cargo / gradle / xcodebuild) when `whisker run` hard-exits on `q` /
 # Ctrl-C. Every target we spawn builds on is POSIX.
 libc = { workspace = true }
-# SHA-256 hashing for `whisker-build modules`' `cargo_lock_sha256`
+# SHA-256 hashing for `whisker modules`' `cargo_lock_sha256`
 # field — the Gradle plugin keys its disk cache off that value.
 sha2 = "0.10"
 # Curated terminal output for the dev loop. Used by the `ui` module to
@@ -46,16 +46,3 @@ serde_json = "1"
 # walk the consuming app's dep tree and find each dep that declares
 # a `[package.metadata.whisker]` table.
 cargo_metadata = "0.18"
-
-# CLI arg parsing for the `whisker-build` binary that Xcode Run
-# Script Phase / Gradle plugin invoke. The library half is unchanged
-# and stays import-only for whisker-cli + whisker-dev-server.
-clap = { version = "4", features = ["derive"] }
-
-[[bin]]
-# The Run Script / Gradle plugin entry point. Library consumers
-# (whisker-cli, whisker-dev-server) keep calling into `src/lib.rs`
-# directly; the binary is just an `arg-parse → existing lib calls`
-# shim, no logic duplication.
-name = "whisker-build"
-path = "src/main.rs"

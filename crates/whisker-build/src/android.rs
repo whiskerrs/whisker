@@ -263,7 +263,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
 /// Copy `so` plus the NDK-shipped `libc++_shared.so` into `abi_dir`.
 /// Lower-level than [`stage_jni_libs`] — the caller hands in the
 /// already-resolved abi leaf directory rather than the gen-android
-/// root. Used by the `whisker-build android` binary path, where the
+/// root. Used by the `whisker build-android` binary path, where the
 /// Gradle plugin computes the destination as
 /// `<buildDir>/intermediates/whisker_jni_libs/<variant>/<abi>/` and
 /// passes it in via `--jni-libs-dir`.
@@ -513,14 +513,14 @@ fn find_libcxx_shared(ndk: &Path, abi: &str) -> Result<PathBuf> {
 /// `features` is forwarded to the gradle plugin's `WhiskerBuildTask`
 /// via the `WHISKER_FEATURES` env var (space-separated). The Kotlin
 /// task splits it back into `--features <feat>` args on every
-/// `whisker-build android` invocation so the resulting `.so` carries
+/// `whisker build-android` invocation so the resulting `.so` carries
 /// the dev-runtime WebSocket client when `whisker run` asks for
 /// `whisker/hot-reload`. Empty list → env stays unset and the gradle
 /// plugin builds the release-shaped `.so` it always has.
 ///
 /// `capture` is forwarded to the gradle subprocess as the same env
 /// envelope `cargo_build_dylib` would apply directly. The env vars
-/// inherit naturally to the gradle plugin's `whisker-build android`
+/// inherit naturally to the gradle plugin's `whisker build-android`
 /// subprocess and then to cargo, so the gradle-built `.so` picks up
 /// the same `-Csave-temps` / `-Cdebug-assertions=on` / `--export-dynamic`
 /// flags. Without this the gradle-built `.so` lacks `--export-dynamic`

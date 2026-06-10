@@ -4,7 +4,7 @@ import groovy.json.JsonSlurper
 import java.io.File
 import java.io.Serializable
 
-// Mirror of the JSON schema `whisker-build modules` writes to stdout.
+// Mirror of the JSON schema `whisker modules` writes to stdout.
 // Kept as plain `data class`es with explicit `fromMap` constructors so
 // the BuildService can carry them through Gradle's configuration cache
 // (Serializable).

@@ -31,7 +31,7 @@
 //! `CARGO_TARGET_*_LINKER` / `CARGO_TARGET_*_RUSTFLAGS` env vars on
 //! the xcodebuild Command (see `whisker-dev-server::installer`); the
 //! variables propagate through to the Build Phase shell, the
-//! `whisker-build ios` subprocess, and finally cargo. Direct `xcodebuild`
+//! `whisker build-ios` subprocess, and finally cargo. Direct `xcodebuild`
 //! sets no env so the build runs without capture.
 
 use anyhow::{anyhow, Context, Result};

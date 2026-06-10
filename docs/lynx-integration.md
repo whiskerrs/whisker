@@ -35,7 +35,7 @@ local `target/lynx-*` pre-population is required for the binaries.
 `WhiskerDriver` is deliberately **not** a binary target — it wraps the
 user's `#[whisker::main]` crate and so must be compiled per-app. It's
 produced as `WhiskerDriver.framework` by an Xcode Run Script Build Phase
-(`whisker-build ios`) that whisker-cng injects into the generated
+(`whisker build-ios`) that whisker-cng injects into the generated
 pbxproj. The Swift sources `@_exported import WhiskerCBridge` (a
 header-only `systemLibrary` mirroring the C ABI); the undefined refs
 resolve against that framework at the host app's link step.
