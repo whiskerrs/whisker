@@ -372,11 +372,23 @@ fn run_navigation_effect<R: Route>(
         if let Some(inc) = incoming {
             // Incoming == the new top → `relative` so its children
             // hit-test.
-            apply_wrapper_style(inc.wrapper, transition.0.as_ref(), Side::Incoming, dir, true);
+            apply_wrapper_style(
+                inc.wrapper,
+                transition.0.as_ref(),
+                Side::Incoming,
+                dir,
+                true,
+            );
         }
         if let Some(out) = outgoing {
             // Outgoing == the old top → back to `absolute`.
-            apply_wrapper_style(out.wrapper, transition.0.as_ref(), Side::Outgoing, dir, false);
+            apply_wrapper_style(
+                out.wrapper,
+                transition.0.as_ref(),
+                Side::Outgoing,
+                dir,
+                false,
+            );
         }
 
         // Reorder for z-stacking from the transition's foreground

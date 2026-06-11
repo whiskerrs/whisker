@@ -38,10 +38,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use podcast_domain::{NowPlaying, Podcast};
-use podcast_feature_browse::{BrowseScreen, BrowseScreenProps};
-use podcast_feature_detail::{DetailScreen, DetailScreenProps};
+use podcast_feature_browse::BrowseScreen;
+use podcast_feature_detail::DetailScreen;
 use podcast_routing::{AppRoute, Navigator};
-use podcast_ui_kit::{MiniPlayer, MiniPlayerProps};
+use podcast_ui_kit::MiniPlayer;
 use whisker::css::{Display, FlexDirection, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
@@ -49,8 +49,7 @@ use whisker::ArcRwSignal;
 use whisker_audio::Player;
 use whisker_router::stack::{route_stack, RouteStack};
 use whisker_router::{
-    AndroidPredictiveBack, AndroidPredictiveBackProps, IosSwipeBack, IosSwipeBackProps,
-    RouteProvider, RouteProviderProps, RouteRenderFn, StackLayout, StackLayoutProps,
+    AndroidPredictiveBack, IosSwipeBack, RouteProvider, RouteRenderFn, StackLayout,
 };
 
 /// Process-wide table mapping a podcast `id` to its full [`Podcast`]

@@ -17,7 +17,7 @@
 
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_svg::{Svg, SvgProps};
+use whisker_svg::Svg;
 
 const BG: &str = "#101012";
 const CARD_BG: &str = "#1c1c1f";

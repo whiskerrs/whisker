@@ -75,14 +75,13 @@
 //! safe-area + computed pattern that triggers the bug; reducing
 //! that body to plain text makes both modes work.
 
-use router_example_feature_detail::{DetailScreen, DetailScreenProps};
-use router_example_feature_home::{HomeScreen, HomeScreenProps};
+use router_example_feature_detail::DetailScreen;
+use router_example_feature_home::HomeScreen;
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::{
-    route, route_stack, AndroidPredictiveBack, AndroidPredictiveBackProps, IosSwipeBack,
-    IosSwipeBackProps, RouteProvider, RouteProviderProps, RouteRenderFn, StackLayout,
-    StackLayoutProps,
+    route, route_stack, AndroidPredictiveBack, IosSwipeBack, RouteProvider, RouteRenderFn,
+    StackLayout,
 };
 
 /// Flip to `false` to mount `HomeScreen` directly under `page`

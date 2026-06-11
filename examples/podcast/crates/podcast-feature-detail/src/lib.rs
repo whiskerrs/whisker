@@ -58,8 +58,8 @@ use whisker::runtime::tasks::run_blocking;
 use whisker::runtime::view::Element;
 use whisker::ArcRwSignal;
 use whisker_audio::Player;
-use whisker_icons::{lucide, Icon, IconProps};
-use whisker_image::{Image, ImageMode, ImageProps};
+use whisker_icons::{lucide, Icon};
+use whisker_image::{Image, ImageMode};
 use whisker_safe_area::safe_area_insets;
 
 /// `Rc<RefCell<HashMap<u64, Podcast>>>` — same alias the top-level

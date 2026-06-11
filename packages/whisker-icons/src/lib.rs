@@ -51,7 +51,7 @@
 
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_svg::{Svg, SvgProps};
+use whisker_svg::Svg;
 
 /// One Lucide-style icon at a square `size × size` box.
 ///

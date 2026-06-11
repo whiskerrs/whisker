@@ -43,10 +43,7 @@ use podcast_data::fetch_browse_screen;
 use podcast_domain::{ChartSection, Podcast, SectionLayout};
 use podcast_routing::Navigator;
 use podcast_theme as theme;
-use podcast_ui_kit::{
-    FeaturedCard, FeaturedCardProps, HorizontalRow, HorizontalRowProps, RankedCard,
-    RankedCardProps, SectionHeader, SectionHeaderProps, TopNav, TopNavProps,
-};
+use podcast_ui_kit::{FeaturedCard, HorizontalRow, RankedCard, SectionHeader, TopNav};
 use whisker::css::{AlignItems, Display, FlexDirection, JustifyContent, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::tasks::run_blocking;
