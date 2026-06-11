@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.2.0...whisker-runtime-v0.2.1) - 2026-06-11
+
+### Fixed
+
+- router hit-test, render! alias ergonomics, safe-area owner crash ([#195](https://github.com/whiskerrs/whisker/pull/195))
+
 ## [0.2.0](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.1.0...whisker-runtime-v0.2.0) - 2026-06-10
 
 ### Added
