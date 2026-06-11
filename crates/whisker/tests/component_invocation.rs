@@ -114,7 +114,7 @@ fn captures() -> Vec<String> {
     PROP_CAPTURES.with(|c| c.borrow().clone())
 }
 
-fn push_capture(s: impl Into<String>) {
+pub(crate) fn push_capture(s: impl Into<String>) {
     PROP_CAPTURES.with(|c| c.borrow_mut().push(s.into()));
 }
 
@@ -500,4 +500,37 @@ fn view_module_exposes_children_alias() {
     fn _accepts(_: whisker::Children) {}
     let c: whisker::Children = ::std::rc::Rc::new(|| View::Empty);
     _accepts(c);
+}
+
+// A component defined in its own module exporting ONLY its
+// PascalCase alias (its `…Props` struct stays unimported). The
+// `#[component]` macro emits a same-named type alias in the type
+// namespace alongside the value-namespace fn, so `render!` can
+// lower `Card(...)` to `Card::builder()` without a separate
+// `CardProps` import. This is the ergonomics fix for issue #1.
+mod alias_only {
+    use whisker::prelude::*;
+    use whisker::runtime::view::Element;
+
+    use crate::push_capture;
+
+    #[component]
+    pub fn card(title: String) -> Element {
+        push_capture(format!("card:title={title}"));
+        render! { view() }
+    }
+}
+
+#[test]
+fn component_usable_in_render_with_only_pascal_alias_imported() {
+    // Import the component by its PascalCase name only — crucially
+    // NOT `alias_only::CardProps`. If the macro failed to emit the
+    // type-namespace alias, `Card::builder()` inside `render!` would
+    // not resolve and this file would not compile.
+    use alias_only::Card;
+
+    with_test_env(|_log| {
+        let _h = render! { Card(title: "boxed") };
+        assert_eq!(captures(), vec!["card:title=boxed"]);
+    });
 }

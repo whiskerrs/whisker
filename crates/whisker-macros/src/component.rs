@@ -324,16 +324,29 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
     // inside fn bodies) — both because `pub use` only works at
     // module level and because components benefit from being
     // visible to their crate's `render!` callers.
+    // Alongside the callable alias (value namespace), expose the same
+    // PascalCase name as a TYPE alias to the Props struct (type
+    // namespace). The two coexist because Rust keeps separate value and
+    // type namespaces, and a single `use crate::Icon` imports the name
+    // from *both* — so `render!` can lower a call to
+    // `Icon(Icon::builder()…build())` using only the component name, and
+    // users never have to import `IconProps` separately.
     let pascal_alias = if alias_str == fn_name_str {
         quote! {
             #[doc(hidden)]
             #vis use #inner_mod::#fn_name;
+            #[doc(hidden)]
+            #[allow(non_camel_case_types, type_alias_bounds)]
+            #vis type #fn_name #impl_generics = #props_name #ty_generics;
         }
     } else {
         let alias_ident = format_ident!("{}", alias_str);
         quote! {
             #[allow(non_snake_case)]
             #vis use #inner_mod::#fn_name as #alias_ident;
+            #[doc(hidden)]
+            #[allow(type_alias_bounds)]
+            #vis type #alias_ident #impl_generics = #props_name #ty_generics;
         }
     };
 

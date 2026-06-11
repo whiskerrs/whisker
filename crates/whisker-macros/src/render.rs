@@ -133,9 +133,6 @@ struct UserComponentNode {
     /// inside the inner module and isn't reachable from outer
     /// scope, so the emission MUST go through this alias.
     alias_ident: Ident,
-    /// PascalCase Props struct ident (`<name>Props`). Same span
-    /// as the render! token so RA's go-to-definition lands here.
-    props_ident: Ident,
     kwargs: Vec<Kwarg>,
     children: Vec<Node>,
 }
@@ -297,18 +294,14 @@ impl Parse for Node {
             // inner module and we never reference it directly
             // from the lowering.
             let span = tag.span();
-            let (alias_str, props_str) = if is_pascal_case(&name) {
-                (name.clone(), format!("{name}Props"))
+            let alias_str = if is_pascal_case(&name) {
+                name.clone()
             } else {
-                let pascal = snake_to_pascal(&name);
-                let props = format!("{pascal}Props");
-                (pascal, props)
+                snake_to_pascal(&name)
             };
             let alias_ident = Ident::new(&alias_str, span);
-            let props_ident = Ident::new(&props_str, span);
             Ok(Node::UserComponent(UserComponentNode {
                 alias_ident,
-                props_ident,
                 kwargs,
                 children,
             }))
@@ -713,7 +706,6 @@ fn is_known_event_method(name: &str) -> bool {
 impl UserComponentNode {
     fn to_tokens(&self) -> TokenStream2 {
         let fn_ident = &self.alias_ident;
-        let props_ident = &self.props_ident;
 
         let setter_calls: Vec<TokenStream2> = self
             .kwargs
@@ -768,9 +760,15 @@ impl UserComponentNode {
             }
         };
 
+        // `#fn_ident::builder()` (not `#props_ident::builder()`): the
+        // component name doubles as a TYPE alias to its Props struct (see
+        // `#[component]`), so a single `use crate::Icon` is enough — no
+        // separate `IconProps` import. The outer `#fn_ident(…)` resolves
+        // to the callable (value namespace), the inner `#fn_ident::` to
+        // the Props type (type namespace).
         quote! {
             #fn_ident(
-                #props_ident::builder()
+                #fn_ident::builder()
                     #(#setter_calls)*
                     #children_call
                     .build()
@@ -978,12 +976,16 @@ mod tests {
              output was: {output}"
         );
         // Emission goes through the PascalCase alias the `#[component]`
-        // macro emits — that's how we keep snake_case `my_card` hidden
-        // in the inner module from user-call-site completion.
+        // macro emits — both the value-namespace fn AND the
+        // type-namespace `type MyCard = MyCardProps` alias share that
+        // name, so `MyCard::builder()` resolves without a separate
+        // `MyCardProps` import (issue #1). The `…Props` name must NOT
+        // appear in the emission.
         assert!(
-            output.contains("MyCard") && output.contains("MyCardProps"),
-            "user component must lower to `MyCard(MyCardProps::builder()…)` \
-             — the PascalCase alias is the public call surface; \
+            output.contains("MyCard (MyCard :: builder ()") && !output.contains("MyCardProps"),
+            "user component must lower to `MyCard(MyCard::builder()…)` \
+             — the PascalCase alias is the public call surface and the \
+             `…Props` name should not leak into the call site; \
              output was: {output}",
         );
     }
@@ -996,7 +998,7 @@ mod tests {
         let input: TokenStream2 = quote::quote! { my_card(title: "x") };
         let output = super::expand_test(input).to_string();
         assert!(
-            output.contains("MyCard") && output.contains("MyCardProps"),
+            output.contains("MyCard (MyCard :: builder ()") && !output.contains("MyCardProps"),
             "snake_case input should lower to the PascalCase alias call site; \
              output was: {output}",
         );
@@ -1115,9 +1117,9 @@ mod tests {
         };
         let output = super::expand_test(input).to_string();
         assert!(
-            output.contains("ChildrenProps"),
+            output.contains("Children (Children :: builder ()"),
             "children(arg: x) should route through the user-component \
-             path → ChildrenProps::builder(); output was: {output}"
+             path → Children::builder(); output was: {output}"
         );
         assert!(
             !output.contains("mount_children"),
