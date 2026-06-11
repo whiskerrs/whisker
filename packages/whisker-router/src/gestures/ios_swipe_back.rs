@@ -279,7 +279,11 @@ fn apply_pose(
     progress: f32,
 ) {
     clear_natural_animations(element);
-    let mut style = slot_css().to_css_string();
+    // Incoming == the screen being revealed (the new top once the
+    // swipe commits) → `relative` so its children stay hit-testable;
+    // the outgoing screen sliding out stays `absolute`. Matches the
+    // top/non-top split in `StackLayout`'s `slot_css`.
+    let mut style = slot_css(matches!(side, Side::Incoming)).to_css_string();
     let decoration = match transition.slot_style(side, direction) {
         Style::Static(s) => s,
         Style::Dynamic(_) => String::new(),

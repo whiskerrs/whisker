@@ -333,6 +333,9 @@ fn run_navigation_effect<R: Route>(
             transition.0.as_ref(),
             Side::Outgoing,
             Direction::Forward,
+            // Suspended-pose mount — not the interactive top. The top
+            // transition step below re-styles the new top as `is_top`.
+            false,
         );
         // DOM order matches stack order — root at index 0, top at
         // the last index — so the top entry paints on top naturally.
@@ -367,10 +370,13 @@ fn run_navigation_effect<R: Route>(
         let outgoing = old_top.and_then(|id| state.mounted.borrow().get(&id).copied());
 
         if let Some(inc) = incoming {
-            apply_wrapper_style(inc.wrapper, transition.0.as_ref(), Side::Incoming, dir);
+            // Incoming == the new top → `relative` so its children
+            // hit-test.
+            apply_wrapper_style(inc.wrapper, transition.0.as_ref(), Side::Incoming, dir, true);
         }
         if let Some(out) = outgoing {
-            apply_wrapper_style(out.wrapper, transition.0.as_ref(), Side::Outgoing, dir);
+            // Outgoing == the old top → back to `absolute`.
+            apply_wrapper_style(out.wrapper, transition.0.as_ref(), Side::Outgoing, dir, false);
         }
 
         // Reorder for z-stacking from the transition's foreground
@@ -411,6 +417,8 @@ fn run_navigation_effect<R: Route>(
                 transition.0.as_ref(),
                 Side::Incoming,
                 Direction::None,
+                // First mount / replace_all top → the interactive slot.
+                true,
             );
         }
     }
@@ -538,8 +546,9 @@ pub(crate) fn apply_wrapper_style(
     transition: &dyn crate::transitions::StackTransition,
     side: Side,
     direction: Direction,
+    is_top: bool,
 ) {
-    let base = slot_css().to_css_string();
+    let base = slot_css(is_top).to_css_string();
     match transition.slot_style(side, direction) {
         Style::Static(extra) => {
             let combined = if extra.is_empty() {
@@ -563,11 +572,26 @@ pub(crate) fn apply_wrapper_style(
     }
 }
 
-pub(crate) fn slot_css() -> Css {
+pub(crate) fn slot_css(is_top: bool) -> Css {
+    // The interactive top slot must be `relative`. Lynx's hit-testing
+    // does *not* descend into the children of a `position: absolute`
+    // element — it stops at the absolute wrapper as the event target.
+    // Whisker then replays propagation from that target, so the
+    // wrapper's `on_tap` still bubbles but the children's `on_tap`s
+    // silently never fire. Making the front (interactive) slot
+    // `relative` (in flow, filling the container) lets the hit-test
+    // descend to its children. Covered / back-stack / mid-transition
+    // slots stay `absolute` so they overlay out of flow; exactly one
+    // slot — the current top — is `relative` at any time.
+    //
     // See container_css: `overflow: visible` keeps IosSlide's
     // leading-edge shadow visible.
     Css::new()
-        .position(PositionKind::Absolute)
+        .position(if is_top {
+            PositionKind::Relative
+        } else {
+            PositionKind::Absolute
+        })
         .top(0.px())
         .left(0.px())
         .width(100.percent())
