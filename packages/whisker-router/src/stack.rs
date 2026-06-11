@@ -20,7 +20,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use whisker::{computed, ReadSignal, RwSignal};
+use whisker::{computed, Owner, ReadSignal, RwSignal};
 
 use crate::route::Route;
 
@@ -103,6 +103,16 @@ impl<R: Route + PartialEq> PartialEq for RouteEntry<R> {
 pub struct RouteStack<R: Route> {
     entries: RwSignal<Vec<RouteEntry<R>>>,
     next_id: Rc<Cell<u64>>,
+    // Owns every signal the stack allocates (the `entries` master
+    // signal and each entry's `state`). A detached root so those
+    // signals are tied to the stack's own lifetime, not whatever owner
+    // happens to be current when `route_stack()` / `push()` runs. The
+    // first call is typically from `#[whisker::main]` (no owner on the
+    // stack yet) or an event handler (likewise) — minting under the
+    // current owner there either warns + leaks into a detached fallback
+    // owner, or worse pins app-lifetime state to a transient scope.
+    // See `whisker::Owner::detached_root`.
+    owner: Owner,
 }
 
 impl<R: Route> Clone for RouteStack<R> {
@@ -110,6 +120,7 @@ impl<R: Route> Clone for RouteStack<R> {
         Self {
             entries: self.entries,
             next_id: Rc::clone(&self.next_id),
+            owner: self.owner,
         }
     }
 }
@@ -122,14 +133,19 @@ impl<R: Route> RouteStack<R> {
     pub fn new(initial: R) -> Self {
         let next_id = Rc::new(Cell::new(0_u64));
         let id = mint_id(&next_id);
-        let entry = RouteEntry {
-            route: initial,
-            state: RwSignal::new(EntryState::Active),
-            id,
-        };
+        let owner = Owner::detached_root();
+        let entries = owner.with(|| {
+            let entry = RouteEntry {
+                route: initial,
+                state: RwSignal::new(EntryState::Active),
+                id,
+            };
+            RwSignal::new(vec![entry])
+        });
         Self {
-            entries: RwSignal::new(vec![entry]),
+            entries,
             next_id,
+            owner,
         }
     }
 
@@ -140,11 +156,11 @@ impl<R: Route> RouteStack<R> {
     /// layouts can run their slide-in.
     pub fn push(&self, route: R) {
         let id = mint_id(&self.next_id);
-        let new_entry = RouteEntry {
+        let new_entry = self.owner.with(|| RouteEntry {
             route,
             state: RwSignal::new(EntryState::Entering),
             id,
-        };
+        });
         self.entries.update(|v| {
             if let Some(last) = v.last() {
                 last.state.set(EntryState::Suspended);
@@ -202,13 +218,14 @@ impl<R: Route> RouteStack<R> {
     /// entry.
     pub fn replace(&self, route: R) {
         let id = mint_id(&self.next_id);
+        let entry = self.owner.with(|| RouteEntry {
+            route,
+            state: RwSignal::new(EntryState::Active),
+            id,
+        });
         self.entries.update(|v| {
             v.pop();
-            v.push(RouteEntry {
-                route,
-                state: RwSignal::new(EntryState::Active),
-                id,
-            });
+            v.push(entry);
         });
     }
 
@@ -218,11 +235,12 @@ impl<R: Route> RouteStack<R> {
     /// destination, end-of-onboarding handoff.
     pub fn replace_all(&self, route: R) {
         let id = mint_id(&self.next_id);
-        self.entries.set(vec![RouteEntry {
+        let entry = self.owner.with(|| RouteEntry {
             route,
             state: RwSignal::new(EntryState::Active),
             id,
-        }]);
+        });
+        self.entries.set(vec![entry]);
     }
 
     /// Reactive read of the topmost route.
@@ -326,6 +344,56 @@ mod tests {
             assert_eq!(nav.depth().get(), 1);
             assert!(!nav.can_back().get());
         });
+    }
+
+    #[test]
+    fn stack_signals_outlive_the_owner_current_at_construction() {
+        // `route_stack()` is typically first called from
+        // `#[whisker::main]` (no owner) or an event handler (transient
+        // owner). The stack's `entries`/`state` signals must NOT be
+        // pinned to that scope — they belong to the app-lifetime stack.
+        // Here we construct it under a transient owner, dispose that
+        // owner, then keep using the stack; minting under
+        // `Owner::detached_root` is what makes this safe.
+        whisker::runtime::reactive::__reset_for_tests();
+        let transient = whisker::runtime::reactive::Owner::new(None);
+        let nav = transient.with(|| route_stack(TestRoute::Home));
+        transient.dispose();
+
+        // Reads and mutations still work after the construction-time
+        // owner is gone (would panic "signal disposed" if pinned to it).
+        // Reads go through `computed()` readers that allocate in the
+        // current owner, so do them under a live one — exactly how a
+        // component would.
+        nav.push(TestRoute::Profile(7));
+        let reader = whisker::runtime::reactive::Owner::new(None);
+        reader.with(|| {
+            assert_eq!(nav.current().get(), TestRoute::Profile(7));
+            assert_eq!(nav.depth().get(), 2);
+            let entries = nav.entries().get();
+            assert_eq!(entries[1].state.get(), EntryState::Entering);
+        });
+        reader.dispose();
+    }
+
+    #[test]
+    fn route_stack_constructs_without_an_ambient_owner() {
+        // Mirrors the real first call from `#[whisker::main]` before any
+        // render owner is established: no owner on the stack at all.
+        // Construction + push (the `signal()` allocations) must not warn
+        // "signal() called outside any owner scope" — the stack supplies
+        // its own owner. (The `computed()` readers below are run under a
+        // live owner, as components do.)
+        whisker::runtime::reactive::__reset_for_tests();
+        let nav = route_stack(TestRoute::Home);
+        nav.push(TestRoute::Settings);
+
+        let reader = whisker::runtime::reactive::Owner::new(None);
+        reader.with(|| {
+            assert_eq!(nav.current().get(), TestRoute::Settings);
+            assert_eq!(nav.depth().get(), 2);
+        });
+        reader.dispose();
     }
 
     #[test]
