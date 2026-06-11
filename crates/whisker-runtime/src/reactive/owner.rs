@@ -59,6 +59,31 @@ impl Owner {
         })
     }
 
+    /// Create a parentless **root** owner, ignoring whatever owner is
+    /// currently on the stack.
+    ///
+    /// Unlike [`Owner::new(None)`](Owner::new) — which adopts the
+    /// current top-of-stack owner as parent — this always produces a
+    /// detached root. Use it for **process-global singletons** whose
+    /// lifetime must not be tied to the (possibly short-lived) owner
+    /// that happens to be active when the singleton is first touched.
+    ///
+    /// The canonical case is a module that lazily mints an
+    /// arena-backed handle on first access (e.g.
+    /// `whisker-safe-area`): if that first access lands inside a
+    /// per-route / per-component owner, minting under `new(None)` would
+    /// free the handle when that scope disposes, and a later read would
+    /// hit a disposed node. Minting under a `detached_root()` (then
+    /// never disposing it) keeps the handle alive for the whole
+    /// process — the intended semantics for a singleton.
+    ///
+    /// The returned owner is never auto-disposed; the caller is
+    /// expected to leak it (i.e. drop the handle without calling
+    /// [`dispose`](Owner::dispose)) for genuine process-lifetime data.
+    pub fn detached_root() -> Owner {
+        with_runtime(|rt| rt.owners.insert(Scope::new(None)))
+    }
+
     /// Push `self` as the current scope, run `f`, pop back.
     /// Reactive primitives (`signal()`, `effect()`, `computed()`,
     /// view elements created via `render!`) allocated inside `f`
