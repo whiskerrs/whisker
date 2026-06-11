@@ -36,28 +36,36 @@
 //! log) — we narrowed the trigger by bisection rather than by
 //! reading the panic text.
 //!
-//! ## Likely cause (hypothesis to verify)
+//! ## Root cause (confirmed June 2026) + fix
 //!
-//! `safe_area_insets()` allocates a process-global signal lazily on
-//! first call (`OnceLock::get_or_init`). When that first call lands
-//! inside `StackLayout`'s `Owner::new(None).with(|| …)`
-//! body, the signal becomes owned by the per-route owner. The
-//! Android side of the module fires `OnStartObserving` synchronously
-//! and `sendEvent("insetsChanged", …)` lands during the same tick
-//! — the resulting `WriteSignal::set` interacts badly with the
-//! still-mounting `computed` whose `f()` is about to register a
-//! subscription on the same signal under a different owner.
+//! Not the `computed` timing — the **handle ownership**.
+//! `safe_area_insets()` used to convert its process-global
+//! `ArcReadSignal` into an arena `ReadSignal` (`.into()`) **on every
+//! call**, minting a fresh arena entry in *whichever owner was current
+//! at call time*. Under `StackLayout` that owner is the per-route /
+//! per-component scope. When a later read of that handle outlives the
+//! scope — a surviving `computed`/effect, or a native `insetsChanged`
+//! event after the scope disposed — `ReadSignal`'s `fetch_value` hits
+//! `expect("signal disposed …")`, and the panic aborts as
+//! `panic_cannot_unwind` at the `tick_callback` FFI boundary. The
+//! `computed(insets.get())` row in the table is just the smallest body
+//! that retains a handle long enough to be read after disposal; plain
+//! `safe_area_insets()` with no read never trips it. The direct mount
+//! never disposes its owner, so it never trips it either.
 //!
-//! Two reasonable fixes to try (work for both):
+//! The mechanism is pinned by two whisker-runtime unit tests:
+//! `reading_arc_backed_arena_signal_after_owner_dispose_panics`
+//! (reproduces the abort) and
+//! `arc_backed_arena_signal_under_detached_root_survives_sibling_dispose`
+//! (proves the fix).
 //!
-//! 1. Allocate the safe-area signal at app startup (in the engine's
-//!    bootstrap before the first `tick_callback`), so the signal's
-//!    owner is the root and the per-route owner never gets a fresh
-//!    allocation tied to a soon-to-be-disposed scope.
-//! 2. Have `computed(...)` defer its first `f()` call to the
-//!    scheduler's next batch instead of running it inline at
-//!    construction time, so the initial read happens under
-//!    consistent owner / tracker state.
+//! **Fix (shipped).** `safe_area_insets()` now mints its arena handle
+//! **once**, under a never-disposed [`whisker::Owner::detached_root`],
+//! and caches it — every call returns the same `Copy` handle, pinned
+//! to a process-lifetime root instead of a transient scope. See
+//! `packages/whisker-safe-area/src/lib.rs`. This repro is kept as a
+//! living regression: with the fix, `MOUNT_VIA_STACK_LAYOUT = true`
+//! renders without aborting.
 //!
 //! ## Switching the repro
 //!
@@ -67,14 +75,13 @@
 //! safe-area + computed pattern that triggers the bug; reducing
 //! that body to plain text makes both modes work.
 
-use router_example_feature_detail::{DetailScreen, DetailScreenProps};
-use router_example_feature_home::{HomeScreen, HomeScreenProps};
+use router_example_feature_detail::DetailScreen;
+use router_example_feature_home::HomeScreen;
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::{
-    route, route_stack, AndroidPredictiveBack, AndroidPredictiveBackProps, IosSwipeBack,
-    IosSwipeBackProps, RouteProvider, RouteProviderProps, RouteRenderFn, StackLayout,
-    StackLayoutProps,
+    route, route_stack, AndroidPredictiveBack, IosSwipeBack, RouteProvider, RouteRenderFn,
+    StackLayout,
 };
 
 /// Flip to `false` to mount `HomeScreen` directly under `page`

@@ -23,7 +23,7 @@ mod icons;
 use whisker::css::{FontWeight, TextAlign, ToCss};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_icons::{Icon, IconProps};
+use whisker_icons::Icon;
 use whisker_safe_area::safe_area_insets;
 
 #[whisker::main]

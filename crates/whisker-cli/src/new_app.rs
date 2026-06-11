@@ -152,10 +152,23 @@ edition = "2021"
 crate-type = ["rlib"]
 
 [dependencies]
-whisker = "0.1"
+whisker = "{whisker_version}"
 "#,
         name = v.crate_name,
+        whisker_version = whisker_dep_version(),
     )
+}
+
+/// The `whisker` version a freshly-scaffolded app should depend on: the
+/// CLI's own `major.minor`. release-plz bumps every workspace crate in
+/// lockstep, so the CLI version always matches the published `whisker`
+/// crate — this keeps `whisker new` from pinning a stale version (e.g. a
+/// `0.1` scaffold while crates.io is already on `0.2`).
+fn whisker_dep_version() -> String {
+    let mut parts = env!("CARGO_PKG_VERSION").split('.');
+    let major = parts.next().unwrap_or("0");
+    let minor = parts.next().unwrap_or("1");
+    format!("{major}.{minor}")
 }
 
 fn lib_rs(v: &Vars) -> String {
@@ -453,7 +466,9 @@ mod tests {
         let cargo = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(cargo.contains("name = \"demo-app\""));
         assert!(cargo.contains("[workspace]"));
-        assert!(cargo.contains("whisker = \"0.1\""));
+        // Tracks the CLI's own major.minor (release-plz bumps in lockstep),
+        // so this stays correct across version bumps.
+        assert!(cargo.contains(&format!("whisker = \"{}\"", super::whisker_dep_version())));
 
         let whisker_rs = std::fs::read_to_string(root.join("whisker.rs")).unwrap();
         // Default display name + bundle id are derived.

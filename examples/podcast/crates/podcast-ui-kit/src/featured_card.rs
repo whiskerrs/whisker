@@ -11,7 +11,7 @@ use podcast_theme as theme;
 use whisker::css::{Display, FlexDirection, FontWeight, TextOverflow, ToCss};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_image::{Image, ImageMode, ImageProps};
+use whisker_image::{Image, ImageMode};
 
 #[component]
 pub fn featured_card(podcast: Podcast) -> Element {

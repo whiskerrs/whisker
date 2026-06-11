@@ -73,7 +73,7 @@
 use std::sync::OnceLock;
 
 use whisker::module;
-use whisker::{ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, WhiskerValue};
+use whisker::{ArcRwSignal, ArcWriteSignal, Owner, ReadSignal, WhiskerValue};
 
 /// Safe-area inset amounts in **points (iOS) / dp (Android)** — the
 /// same density-independent units that the rest of Whisker's CSS
@@ -101,33 +101,34 @@ pub struct SafeAreaInsets {
 /// `SafeAreaInsets::default()` and updates as soon as the native side
 /// can push the host view's current values.
 ///
-/// The returned handle is a `Copy` [`ReadSignal`] — the conversion
-/// from the underlying [`ArcReadSignal`] happens inside this function
-/// so callers get the same ergonomics as a component-local
-/// `signal()`. The arena entry minted by the conversion lives in
-/// whichever owner is current at call time; when that owner disposes,
-/// only the entry is freed, the underlying value stays alive because
-/// the `OnceLock` keeps the Arc strong count up.
+/// The returned handle is a `Copy` [`ReadSignal`]. Crucially it is
+/// minted **once**, under a process-lifetime
+/// [`Owner::detached_root`], and cached in [`SLOT`] — every call hands
+/// back the *same* arena entry. An earlier design converted the
+/// underlying `ArcReadSignal` on every call, minting a fresh arena
+/// entry in *whichever owner was current*; when that owner was a
+/// short-lived per-route / per-component scope (e.g. under
+/// `whisker_router::StackLayout`), disposing it freed the entry, and a
+/// surviving reader (a `computed`/effect, or a late native event)
+/// would then read a disposed node and panic — aborting at the FFI
+/// tick boundary. Pinning the entry to a never-disposed root removes
+/// that footgun entirely.
 ///
 /// **Must be called from the main thread.** The underlying reactive
 /// runtime is thread-local.
 pub fn safe_area_insets() -> ReadSignal<SafeAreaInsets> {
     install();
-    SLOT.get()
-        .expect("install() ran above")
-        .read
-        .inner
-        .clone()
-        .into()
+    SLOT.get().expect("install() ran above").read.inner
 }
 
 // ---- Internals -------------------------------------------------------------
 
-// Slot contents — both halves of the global Arc signal. The read
-// half is what `safe_area_insets()` hands out; the write half stays
-// here so the native event callback can `set()` through it.
+// Slot contents. `read` is the cached `Copy` arena handle minted
+// once under a detached root owner (see `install`) — what
+// `safe_area_insets()` hands out. The write half stays here so the
+// native event callback can `set()` through it.
 struct Slot {
-    read: MainThreadOnly<ArcReadSignal<SafeAreaInsets>>,
+    read: MainThreadOnly<ReadSignal<SafeAreaInsets>>,
     // Kept reachable from the on-event closure; never read here.
     #[allow(dead_code)]
     write: MainThreadOnly<ArcWriteSignal<SafeAreaInsets>>,
@@ -140,6 +141,14 @@ struct Slot {
 /// governed by [`SLOT`]'s Arc strong count rather than the caller's
 /// owner; the owner that triggered the first call can come and go
 /// without affecting subsequent reads.
+///
+/// The `Copy` arena handle that callers receive is also minted here,
+/// **once**, under an [`Owner::detached_root`] that we deliberately
+/// leak (never dispose). Pinning it to a process-lifetime root — not
+/// the owner that happens to be current on first call — is what keeps
+/// `safe_area_insets()` from handing out a handle that a transient
+/// scope can free out from under a surviving reader. See the
+/// `safe_area_insets` doc for the failure mode this avoids.
 fn install() {
     SLOT.get_or_init(|| {
         let (read, write) = ArcRwSignal::new(SafeAreaInsets::default()).split();
@@ -151,8 +160,12 @@ fn install() {
         subscribe_to_native(MainThreadOnly {
             inner: write.clone(),
         });
+        // Mint the shared arena handle under a never-disposed root so
+        // it outlives every per-route / per-component owner.
+        let root = Owner::detached_root();
+        let read_handle: ReadSignal<SafeAreaInsets> = root.with(|| read.into());
         Slot {
-            read: MainThreadOnly { inner: read },
+            read: MainThreadOnly { inner: read_handle },
             write: MainThreadOnly { inner: write },
         }
     });

@@ -34,8 +34,8 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker::ArcRwSignal;
 use whisker_audio::Player;
-use whisker_icons::{lucide, Icon, IconProps};
-use whisker_image::{Image, ImageMode, ImageProps};
+use whisker_icons::{lucide, Icon};
+use whisker_image::{Image, ImageMode};
 
 /// Mirror of the shell-side alias. Same TypeId across crates
 /// because the resolver matches on `Rc`/`ArcRwSignal` instantiation,

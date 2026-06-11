@@ -1383,6 +1383,54 @@ fn arc_signal_inside_oncelock_outlives_caller_owner() {
     assert_eq!(*observed.borrow(), Some(99));
 }
 
+#[test]
+#[should_panic(expected = "signal disposed")]
+fn reading_arc_backed_arena_signal_after_owner_dispose_panics() {
+    // The mechanism behind the StackLayout crash: `safe_area_insets()`
+    // mints a fresh arena ReadSignal in *whatever owner is current*
+    // (`.into()`), backed by a process-global arc. If that owner is a
+    // per-route owner that later disposes, the arena node is freed —
+    // but a captured `insets` handle still points at the freed NodeId.
+    // Reading it (e.g. a surviving computed/effect, or a late native
+    // event re-run) hits `fetch_value`'s `expect("…disposed…")` and,
+    // across the FFI tick boundary, aborts as `panic_cannot_unwind`.
+    fresh();
+    let global_arc = ArcRwSignal::new(0_i32);
+    let route_owner = Owner::new(None);
+    let insets: ReadSignal<i32> = route_owner.with(|| global_arc.read_only().into());
+    route_owner.dispose();
+    // The global arc still lives (process-global), but the arena
+    // handle minted under the route owner is gone.
+    let _ = insets.get();
+}
+
+#[test]
+fn arc_backed_arena_signal_under_detached_root_survives_sibling_dispose() {
+    // The fix: mint the shared arena handle under `Owner::detached_root`
+    // (a never-disposed root, ignoring the current owner stack). It
+    // then outlives any per-route / per-component owner that comes and
+    // goes — `safe_area_insets()` relies on exactly this.
+    fresh();
+    let global_arc = ArcRwSignal::new(1_i32);
+
+    // Mint under a detached root *while a per-route owner is current*,
+    // proving detached_root does NOT adopt it as parent.
+    let route_owner = Owner::new(None);
+    let insets: ReadSignal<i32> = route_owner.with(|| {
+        let root = Owner::detached_root();
+        root.with(|| global_arc.read_only().into())
+    });
+
+    // Disposing the per-route owner must not free the detached-root
+    // handle.
+    route_owner.dispose();
+    assert_eq!(insets.get(), 1, "handle survives sibling owner disposal");
+
+    // And it still tracks updates from the global arc.
+    global_arc.set(42);
+    assert_eq!(insets.get(), 42);
+}
+
 // ----- Owner pause / resume -------------------------------------------------
 
 #[test]

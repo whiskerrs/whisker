@@ -206,15 +206,26 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     // PascalCase alias — same scheme as `#[component]`.
     let pascal_alias_ident = format_ident!("{}", to_pascal_case(&fn_name.to_string()));
     let fn_name_str = fn_name.to_string();
+    // Alongside the value-namespace `pub use` we emit a type alias of
+    // the same name pointing at the Props struct. Rust keeps value and
+    // type namespaces separate, so `XZeroProps` resolves to the fn in
+    // call position and to `XZeroPropsProps` in type position — letting
+    // `render!` write `Alias::builder()` with only the alias imported,
+    // no separate `…Props` import. See `#[component]` for the twin.
     let alias_emission = if pascal_alias_ident == fn_name_str.as_str() {
         quote! {
             #[doc(hidden)]
             #vis use #inner_mod::#fn_name;
+            #[doc(hidden)]
+            #[allow(non_camel_case_types)]
+            #vis type #fn_name = #props_name;
         }
     } else {
         quote! {
             #[allow(non_snake_case)]
             #vis use #inner_mod::#fn_name as #pascal_alias_ident;
+            #[doc(hidden)]
+            #vis type #pascal_alias_ident = #props_name;
         }
     };
 
