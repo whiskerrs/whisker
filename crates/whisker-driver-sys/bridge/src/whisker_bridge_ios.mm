@@ -184,6 +184,19 @@ void InstallEventReporterIfNeeded(WhiskerEngine* engine, LynxView* view) {
         @try {
             NSMutableDictionary* body = [event generateEventBody];
             if (body != nil) {
+                // Custom events (`LynxCustomEvent` — input / change /
+                // focus / a module's `sendEvent`, …) carry their
+                // user-supplied payload under a `params` key, whereas
+                // every other event-body in Whisker (touch `detail`
+                // below, and the Android reporter which wraps custom
+                // params under `detail`) uses `detail`. Normalize
+                // `params` → `detail` here so the Rust typed event
+                // structs read ONE consistent key on both platforms.
+                // Only mirror when `detail` is absent so we never clobber
+                // a body that already carries it.
+                if (body[@"params"] != nil && body[@"detail"] == nil) {
+                    body[@"detail"] = body[@"params"];
+                }
                 // Step-6: avoid emitting an `_OBJC_CLASS_$_LynxTouchEvent`
                 // link-time reference. The class is registered with the
                 // Obj-C runtime by Lynx.framework at dyld load time, so a
