@@ -2370,6 +2370,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-input"
+version = "0.2.2"
+dependencies = [
+ "serde",
+ "whisker",
+]
+
+[[package]]
+name = "whisker-input-example"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-input",
+]
+
+[[package]]
 name = "whisker-local-store"
 version = "0.2.2"
 dependencies = [

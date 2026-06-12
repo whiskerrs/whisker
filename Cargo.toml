@@ -26,6 +26,8 @@ members = [
     "packages/whisker-icons",
     "packages/whisker-icons/example",
     "packages/whisker-image",
+    "packages/whisker-input",
+    "packages/whisker-input/example",
     "packages/whisker-local-store",
     "packages/whisker-router",
     "packages/whisker-router/example",

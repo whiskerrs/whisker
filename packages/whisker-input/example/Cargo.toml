@@ -1,0 +1,13 @@
+[package]
+name = "whisker-input-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Example app for `whisker-input`. Exercises a two-way bound field with a live preview, a controlled (upper-casing) field, a multiline notes field, and a secure password field so on-device verification of the UITextField / UITextView / EditText module wiring happens in one place."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-input = { path = ".." }
