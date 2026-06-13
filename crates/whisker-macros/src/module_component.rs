@@ -341,9 +341,11 @@ struct Prop {
 }
 
 enum PropKind {
-    /// `style: Signal<String>` (or any `Signal<T>` / `T` whose name is
-    /// `style`) — routed through `apply_styles`.
-    Style { inner: Type },
+    /// `style: …` — the style prop. Always lowered to a
+    /// `::whisker::Style` field (ignoring the authored type) and
+    /// routed through `::whisker::apply_style`, exactly like a
+    /// built-in element's `style:`.
+    Style,
     /// Plain attribute — `Signal<T>` or `T`, name not in the special
     /// list. Routed through `apply_attr` with the kebab-cased name.
     Attr { inner: Type },
@@ -400,12 +402,11 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
         });
     }
 
-    // Style → SetRawInlineStyles. Inner type extraction is the same
-    // as for any attribute — strip `Signal<…>` if present.
+    // Style prop → `::whisker::Style`. The authored type is ignored
+    // (the macro always emits a `::whisker::Style` field + an
+    // `apply_style` call), so no inner-type extraction is needed.
     if name == "style" {
-        return Ok(PropKind::Style {
-            inner: signal_inner(ty).unwrap_or_else(|| ty.clone()),
-        });
+        return Ok(PropKind::Style);
     }
 
     // Otherwise: an attribute prop. Strip the `Signal<…>` wrapper if
@@ -444,7 +445,14 @@ fn is_unit_type(ty: &Type) -> bool {
 fn prop_struct_field(p: &Prop) -> TokenStream2 {
     let i = &p.ident;
     match &p.kind {
-        PropKind::Style { .. } | PropKind::Attr { .. } => {
+        // The style prop is ALWAYS typed `::whisker::Style` (the same
+        // wrapper built-in elements accept), regardless of the
+        // authored param type — so callers can pass a `Css` builder,
+        // a raw string, or a reactive signal of either directly.
+        PropKind::Style => {
+            quote! { pub #i: ::whisker::Style }
+        }
+        PropKind::Attr { .. } => {
             let t = &p.ty;
             quote! { pub #i: #t }
         }
@@ -463,7 +471,10 @@ fn prop_struct_field(p: &Prop) -> TokenStream2 {
 fn prop_builder_field(p: &Prop) -> TokenStream2 {
     let i = &p.ident;
     match &p.kind {
-        PropKind::Style { .. } | PropKind::Attr { .. } => {
+        PropKind::Style => {
+            quote! { #i: ::std::option::Option<::whisker::Style> }
+        }
+        PropKind::Attr { .. } => {
             let t = &p.ty;
             quote! { #i: ::std::option::Option<#t> }
         }
@@ -482,7 +493,19 @@ fn prop_builder_field(p: &Prop) -> TokenStream2 {
 fn prop_setter(p: &Prop) -> TokenStream2 {
     let i = &p.ident;
     match &p.kind {
-        PropKind::Style { .. } | PropKind::Attr { .. } => {
+        // Style setter accepts anything `Into<::whisker::Style>` —
+        // `Css`, `&Css`, `String`, `&str`, and reactive signals of
+        // either, exactly like a built-in element's `style(...)`.
+        PropKind::Style => {
+            quote! {
+                #[allow(unused_mut)]
+                pub fn #i(mut self, value: impl ::std::convert::Into<::whisker::Style>) -> Self {
+                    self.#i = ::std::option::Option::Some(value.into());
+                    self
+                }
+            }
+        }
+        PropKind::Attr { .. } => {
             let t = &p.ty;
             quote! {
                 #[allow(unused_mut)]
@@ -545,7 +568,7 @@ fn prop_build_assignment(p: &Prop, tag_name: &str) -> TokenStream2 {
         // Event handler props stay required because their `dyn Fn`
         // types don't have a sensible default and a missing callback
         // is almost always an author bug.
-        PropKind::Style { .. } | PropKind::Attr { .. } => {
+        PropKind::Style | PropKind::Attr { .. } => {
             quote! { #i: self.#i.unwrap_or_default() }
         }
         PropKind::EventNoPayload { .. } | PropKind::EventTyped { .. } => {
@@ -558,9 +581,12 @@ fn prop_apply_call(p: &Prop) -> TokenStream2 {
     let i = &p.ident;
     let name = i.to_string();
     match &p.kind {
-        PropKind::Style { inner } => {
+        PropKind::Style => {
+            // The style prop is a `::whisker::Style` value; route it
+            // through the same `apply_style` sink built-in elements
+            // use (Static → set-once, Dynamic → effect-wrapped).
             quote! {
-                ::whisker::runtime::view::apply_styles::<_, #inner>(__handle, props.#i);
+                ::whisker::apply_style(__handle, props.#i);
             }
         }
         PropKind::Attr { inner } => {

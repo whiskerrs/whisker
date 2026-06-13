@@ -6,7 +6,7 @@
 //! shape). The menu glyph is `lucide::Menu` via `whisker-icons`.
 
 use podcast_theme as theme;
-use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyContent, ToCss};
+use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_icons::{lucide, Icon};
@@ -38,7 +38,6 @@ pub fn top_nav(title: String, action_label: String) -> Element {
             flex_shrink: 0.0,
             background_color: theme::BG,
         )
-        .to_css_string()
     });
 
     render! {

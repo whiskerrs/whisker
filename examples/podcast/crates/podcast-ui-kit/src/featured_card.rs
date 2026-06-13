@@ -8,7 +8,7 @@
 
 use podcast_domain::Podcast;
 use podcast_theme as theme;
-use whisker::css::{Display, FlexDirection, FontWeight, TextOverflow, ToCss};
+use whisker::css::{Display, FlexDirection, FontWeight, TextOverflow};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_image::{Image, ImageMode};
@@ -49,8 +49,6 @@ pub fn featured_card(podcast: Podcast) -> Element {
                 ).raw("text-maxline", "2"),
                 value: title_text,
             )
-            // `Image` is a `module_component` — its `style` prop is
-            // `Signal<String>`, no `From<Css>` impl. Serialise here.
             Image(
                 style: css!(
                     width: theme::FEATURED_CARD_WIDTH,
@@ -58,7 +56,7 @@ pub fn featured_card(podcast: Podcast) -> Element {
                     border_radius: theme::ARTWORK_RADIUS,
                     margin_top: px(12),
                     background_color: theme::SURFACE,
-                ).to_css_string(),
+                ),
                 src: artwork_src,
                 mode: ImageMode::AspectFill,
             )

@@ -157,7 +157,7 @@ fn detail_body(podcast: Podcast) -> Element {
                             height: px(220),
                             border_radius: theme::ARTWORK_RADIUS,
                             background_color: theme::SURFACE,
-                        ).raw("aspect-ratio", "1 / 1").to_css_string(),
+                        ).raw("aspect-ratio", "1 / 1"),
                         src: artwork_src,
                         mode: ImageMode::AspectFill,
                     )
@@ -275,7 +275,6 @@ fn top_bar(title: String) -> Element {
             flex_shrink: 0.0,
             background_color: theme::BG,
         )
-        .to_css_string()
     });
 
     render! {

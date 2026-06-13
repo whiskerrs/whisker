@@ -129,7 +129,7 @@ pub fn mini_player() -> Element {
                         height: px(40),
                         border_radius: px(6),
                         background_color: Color::rgba(255, 255, 255, 0.15),
-                    ).raw("aspect-ratio", "1 / 1").to_css_string(),
+                    ).raw("aspect-ratio", "1 / 1"),
                     src: artwork_src,
                     mode: ImageMode::AspectFill,
                 )

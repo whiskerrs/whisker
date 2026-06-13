@@ -18,6 +18,8 @@
 //! in `whisker-css`) so the `Css` crate stays `whisker-runtime`-free
 //! and reusable in standalone contexts.
 
+use std::rc::Rc;
+
 use whisker_css::{Css, ToCss};
 use whisker_runtime::reactive::{effect, ReadSignal, RwSignal};
 use whisker_runtime::view::set_inline_styles;
@@ -25,15 +27,30 @@ use whisker_runtime::view::Element;
 
 /// Value the `style:` builder method receives. One of the two
 /// variants below.
+///
+/// `Clone` is cheap: the `Dynamic` variant holds an [`Rc`], so a
+/// clone shares the same closure rather than re-boxing it. This lets
+/// the `#[component]` / `#[module_component]` macros store a `Style`
+/// prop and re-clone it on every re-invoke (hot-reload remount path).
+#[derive(Clone)]
 pub enum Style {
     /// CSS source the builder applies once, at element-construction
     /// time. Both [`Css`] builder values and raw strings collapse to
     /// this variant.
     Static(String),
-    /// CSS source produced by a reactive subscription. The boxed
+    /// CSS source produced by a reactive subscription. The shared
     /// closure is called inside an `effect` and re-fires whenever
     /// any signal it reads changes.
-    Dynamic(Box<dyn Fn() -> String + 'static>),
+    Dynamic(Rc<dyn Fn() -> String + 'static>),
+}
+
+impl Default for Style {
+    /// An empty static style — what an element would see if no
+    /// `style:` prop were declared. Lets the macros emit
+    /// `self.style.unwrap_or_default()` for an omitted style prop.
+    fn default() -> Self {
+        Style::Static(String::new())
+    }
 }
 
 // ---- Static sources --------------------------------------------------------
@@ -77,13 +94,13 @@ impl From<&String> for Style {
 
 impl From<ReadSignal<Css>> for Style {
     fn from(sig: ReadSignal<Css>) -> Self {
-        Style::Dynamic(Box::new(move || sig.get().to_css_string()))
+        Style::Dynamic(Rc::new(move || sig.get().to_css_string()))
     }
 }
 
 impl From<ReadSignal<String>> for Style {
     fn from(sig: ReadSignal<String>) -> Self {
-        Style::Dynamic(Box::new(move || sig.get()))
+        Style::Dynamic(Rc::new(move || sig.get()))
     }
 }
 

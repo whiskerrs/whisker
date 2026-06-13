@@ -81,6 +81,7 @@ pub use replay::{replay, ReplayError, TraceVisitor, Visitor};
 use base64::Engine;
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
+use whisker::Style;
 
 /// `<Svg>` widget. Render arbitrary inline SVG inside the host
 /// element. Tracks `content` reactively — a content swap recompiles
@@ -98,7 +99,7 @@ use whisker::runtime::view::Element;
 ///   replayer scales the SVG's viewBox to fill these bounds with
 ///   `preserveAspectRatio="xMidYMid meet"` semantics.
 #[component]
-pub fn svg(content: Signal<String>, color: Signal<String>, style: Signal<String>) -> Element {
+pub fn svg(content: Signal<String>, color: Signal<String>, style: Style) -> Element {
     // Clone `content` before the move closure: `Signal` isn't `Copy`
     // (the Static variant owns its T), and the `#[component]` body
     // re-fires as a FnMut.
@@ -130,7 +131,7 @@ pub fn svg(content: Signal<String>, color: Signal<String>, style: Signal<String>
 /// (Whisker doesn't enforce visibility on Prop names yet — this
 /// is documentation-level.)
 #[whisker::module_component("Svg")]
-pub fn svg_renderer(display_list: Signal<String>, color: Signal<String>, style: Signal<String>) {}
+pub fn svg_renderer(display_list: Signal<String>, color: Signal<String>, style: Style) {}
 
 /// Compile `svg_xml` to a base64-cased display list. Returns empty
 /// string on parse failure (the replayer treats that as
