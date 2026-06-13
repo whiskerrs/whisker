@@ -1,0 +1,13 @@
+[package]
+name = "whisker-webview-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Example app for `whisker-webview`. Exercises a URL-loading web view driven by a reactive signal with reload / back / forward buttons over a WebViewRef, a JS bridge round-trip (on_message + post_message + evaluate_javascript), and a second view rendering inline HTML that posts back to Rust — so on-device verification of the WKWebView / android.webkit.WebView module wiring happens in one place."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-webview = { path = ".." }
