@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/whiskerrs/whisker/compare/whisker-webview-v0.2.3...whisker-webview-v0.2.5) - 2026-06-13
+
+### Added
+
+- *(macros)* module-component `style:` accepts `Css` directly (no to_css_string) ([#203](https://github.com/whiskerrs/whisker/pull/203))
+
+### Other
+
+- release v0.2.4 ([#202](https://github.com/whiskerrs/whisker/pull/202))
+
 ## [0.2.4](https://github.com/whiskerrs/whisker/compare/whisker-webview-v0.2.3...whisker-webview-v0.2.4) - 2026-06-13
 
 ### Added
