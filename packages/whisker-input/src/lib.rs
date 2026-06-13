@@ -146,7 +146,7 @@ use std::rc::Rc;
 
 use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
-use whisker::{ElementRef, RefError, Signal};
+use whisker::{ElementRef, RefError, Signal, Style};
 
 // ---------------------------------------------------------------------------
 // Event payload
@@ -457,7 +457,7 @@ pub fn native_input(
     max_length: Signal<String>,
     keyboard_type: Signal<String>,
     return_key: Signal<String>,
-    style: Signal<String>,
+    style: Style,
     on_input: InputEvent,
     on_change: InputEvent,
     on_focus: InputEvent,
@@ -522,8 +522,10 @@ pub fn input(
     placeholder_color: Option<Signal<String>>,
     /// Selection-highlight color (CSS color string).
     selection_color: Option<Signal<String>>,
-    /// Standard Whisker CSS style string.
-    style: Option<Signal<String>>,
+    /// Standard Whisker style. Accepts a `Css` builder, a raw string,
+    /// or a reactive signal of either — same as a built-in element's
+    /// `style:`.
+    style: Option<Style>,
     /// Imperative handle ([`InputRef`]).
     input_ref: Option<InputRef>,
 ) -> Element {
@@ -613,7 +615,7 @@ pub fn input(
     let caret_color_prop: Signal<String> = caret_color.clone().unwrap_or_default();
     let placeholder_color_prop: Signal<String> = placeholder_color.clone().unwrap_or_default();
     let selection_color_prop: Signal<String> = selection_color.clone().unwrap_or_default();
-    let style_prop: Signal<String> = style.clone().unwrap_or_default();
+    let style_prop: Style = style.clone().unwrap_or_default();
 
     let multiline_attr = bool_attr(multiline);
     let secure_attr = bool_attr(secure);

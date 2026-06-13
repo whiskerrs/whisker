@@ -7,7 +7,7 @@
 
 use podcast_domain::Podcast;
 use podcast_theme as theme;
-use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, TextOverflow, ToCss};
+use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, TextOverflow};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_image::{Image, ImageMode};
@@ -26,15 +26,12 @@ pub fn ranked_card(podcast: Podcast, rank: u32) -> Element {
             flex_direction: FlexDirection::Column,
         )) {
             Image(
-                // `Image` is a `module_component` — its `style` prop
-                // is `Signal<String>` with no `From<Css>` impl, so
-                // serialise here before handing it across.
                 style: css!(
                     width: theme::RANKED_CARD_SIDE,
                     height: theme::RANKED_CARD_SIDE,
                     border_radius: theme::ARTWORK_RADIUS,
                     background_color: theme::SURFACE,
-                ).to_css_string(),
+                ),
                 src: artwork_src,
                 mode: ImageMode::AspectFill,
             )

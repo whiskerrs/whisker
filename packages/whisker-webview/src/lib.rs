@@ -155,7 +155,7 @@ use std::rc::Rc;
 
 use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
-use whisker::{ElementRef, RefError, Signal};
+use whisker::{ElementRef, RefError, Signal, Style};
 
 // ---------------------------------------------------------------------------
 // Event payloads
@@ -466,7 +466,7 @@ pub fn native_webview(
     javascript_enabled: Signal<String>,
     scroll_enabled: Signal<String>,
     origin_whitelist: Signal<String>,
-    style: Signal<String>,
+    style: Style,
     on_message: MessageEvent,
     on_load_start: NavEvent,
     on_load: NavEvent,
@@ -516,8 +516,10 @@ pub fn web_view(
     on_progress: Option<Callback<f32>>,
     /// Navigation failed (url / code / description).
     on_error: Option<Callback<WebViewError>>,
-    /// Standard Whisker CSS style string.
-    style: Option<Signal<String>>,
+    /// Standard Whisker style. Accepts a `Css` builder, a raw string,
+    /// or a reactive signal of either — same as a built-in element's
+    /// `style:`.
+    style: Option<Style>,
     /// Imperative handle ([`WebViewRef`]).
     webview_ref: Option<WebViewRef>,
 ) -> Element {
@@ -590,7 +592,7 @@ pub fn web_view(
     // ----- Pass-through attrs (None → sensible default) ----------------
     let html_prop: Signal<String> = html.clone().unwrap_or_default();
     let user_agent_prop: Signal<String> = user_agent.clone().unwrap_or_default();
-    let style_prop: Signal<String> = style.clone().unwrap_or_default();
+    let style_prop: Style = style.clone().unwrap_or_default();
 
     let javascript_enabled_attr = bool_attr(javascript_enabled);
     let scroll_enabled_attr = bool_attr(scroll_enabled);

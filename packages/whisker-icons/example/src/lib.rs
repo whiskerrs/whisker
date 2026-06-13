@@ -20,7 +20,7 @@
 
 mod icons;
 
-use whisker::css::{FontWeight, TextAlign, ToCss};
+use whisker::css::{FontWeight, TextAlign};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_icons::Icon;
@@ -44,7 +44,7 @@ pub fn app() -> Element {
             flex_direction: FlexDirection::Column,
             padding_top: px(insets.get().top as f32 + 16.0),
             padding_bottom: px(insets.get().bottom as f32 + 16.0),
-        ).to_css_string())) {
+        ))) {
             // Wrap the header `text` in a `view` — a known Lynx
             // Android quirk collapses the first direct child of a
             // `<page>` to zero height when edge-to-edge is enabled

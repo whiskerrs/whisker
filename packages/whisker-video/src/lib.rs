@@ -62,7 +62,7 @@ use whisker::{ElementRef, Signal};
 /// `Prop("src")` setter + `play` / `pause` / `seek` functions. `src`
 /// is the media URL; `style` is the standard layout-styling string.
 #[whisker::module_component("Video")]
-pub fn video(src: Signal<String>, style: Signal<String>) {}
+pub fn video(src: Signal<String>, style: whisker::Style) {}
 
 /// Typed imperative handle for a mounted `Video` element.
 ///
