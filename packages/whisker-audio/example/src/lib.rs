@@ -4,7 +4,7 @@
 //! the live playback position bound to a reactive signal, and
 //! renders Play / Pause / Stop / Seek tap targets.
 
-use whisker::css::{AlignItems, Color, Display, FlexDirection, FontWeight, JustifyContent, ToCss};
+use whisker::css::{AlignItems, Color, Display, FlexDirection, FontWeight, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_audio::Player;
@@ -37,7 +37,7 @@ pub fn app() -> Element {
             padding_bottom: px(insets.get().bottom as f32 + 24.0),
             padding_left: px(24),
             padding_right: px(24),
-        ).to_css_string())) {
+        ))) {
             // Header
             view(style: css!(
                 width: percent(100),
@@ -120,7 +120,7 @@ pub fn app() -> Element {
     }
 }
 
-fn button_style() -> String {
+fn button_style() -> Css {
     css!(
         width: percent(100),
         max_width: px(280),
@@ -133,16 +133,14 @@ fn button_style() -> String {
         align_items: AlignItems::Center,
         justify_content: JustifyContent::Center,
     )
-    .to_css_string()
 }
 
-fn button_text_style() -> String {
+fn button_text_style() -> Css {
     css!(
         color: Color::hex(0xF0F0F3),
         font_size: px(15),
         font_weight: FontWeight::Numeric(600),
     )
-    .to_css_string()
 }
 
 fn fmt_bool(b: bool) -> String {

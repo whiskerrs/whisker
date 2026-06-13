@@ -115,7 +115,7 @@ impl std::fmt::Display for ImageMode {
 /// `onBorderRadiusUpdated` callback and feeds it to Coil's
 /// `RoundedCornersTransformation`).
 #[whisker::module_component("Image")]
-pub fn image(src: Signal<String>, mode: Signal<ImageMode>, style: Signal<String>) {}
+pub fn image(src: Signal<String>, mode: Signal<ImageMode>, style: whisker::Style) {}
 
 #[cfg(test)]
 mod tests {
