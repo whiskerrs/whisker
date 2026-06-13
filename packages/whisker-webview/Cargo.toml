@@ -1,0 +1,39 @@
+[package]
+name = "whisker-webview"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "WebView component for Whisker — a native web view (WKWebView on iOS, android.webkit.WebView on Android) with reactive url / inline html, a single JS-bridge channel (window.whisker.postMessage ↔ on_message / post_message / evaluate_javascript), declarative origin-whitelist navigation control, load / error / progress events, and an imperative reload / back / forward / evaluate handle."
+
+# Explicit `include` list — mirrors `whisker-input`. A `cargo publish`
+# ships the Kotlin + Swift platform sources alongside `src/lib.rs`,
+# but never the local Gradle / Xcode build artifacts that would
+# accidentally bloat the published crate if a stale build dir lingers.
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
+    "src/lib.rs",
+    "android/**/*.kt",
+    "ios/**/*.swift",
+    "README.md",
+]
+
+[lib]
+crate-type = ["rlib"]
+
+# Module-system opt-in marker. The bare table identifies this cargo
+# crate as a Whisker module; `whisker-build` walks the consuming app's
+# dep tree, picks out every dep carrying it, and wires the Android
+# Gradle subproject + iOS SwiftPM package into the host build.
+[package.metadata.whisker]
+
+[dependencies]
+whisker = { workspace = true }
+serde = { workspace = true }

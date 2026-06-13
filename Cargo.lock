@@ -2500,6 +2500,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-webview"
+version = "0.2.2"
+dependencies = [
+ "serde",
+ "whisker",
+]
+
+[[package]]
+name = "whisker-webview-example"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-webview",
+]
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

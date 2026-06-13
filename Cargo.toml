@@ -40,6 +40,8 @@ members = [
     "packages/whisker-video",
     "packages/whisker-audio",
     "packages/whisker-audio/example",
+    "packages/whisker-webview",
+    "packages/whisker-webview/example",
 ]
 exclude = [
     # Throwaway cdylib the dev-server's `thin_rebuild` integration
