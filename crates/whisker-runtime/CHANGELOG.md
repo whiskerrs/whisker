@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.2.3...whisker-runtime-v0.2.4) - 2026-06-13
+
+### Fixed
+
+- *(reactive)* make `resource` fetcher reactive to the signals it reads ([#204](https://github.com/whiskerrs/whisker/pull/204))
+
 ## [0.2.1](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.2.0...whisker-runtime-v0.2.1) - 2026-06-11
 
 ### Fixed
