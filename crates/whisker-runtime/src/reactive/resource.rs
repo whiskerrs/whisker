@@ -29,10 +29,15 @@
 //! pre-computed value, etc.) you can just write `async move { ... }`
 //! and skip the `run_blocking` step.
 
+use std::cell::Cell;
 use std::future::Future;
+use std::pin::Pin;
+use std::rc::Rc;
+use std::task::{Context, Poll};
 
 use crate::tasks::spawn_local;
 
+use super::runtime::NodeId;
 use super::signal::RwSignal;
 
 /// Three-state machine the [`Resource`] cycles through. `Clone` so
@@ -124,14 +129,35 @@ impl<T: Clone + 'static> Resource<T> {
     }
 }
 
-/// Fire-and-forget async fetch. Drives `fetcher` (an `async fn` or
+/// Reactive async fetch. Drives `fetcher` (an `async fn` or
 /// `async move {…}` block) on Whisker's task pool and writes the
-/// resolved [`Result`] into the returned [`Resource`]'s signal.
+/// resolved [`Result`] into the returned [`Resource`]'s signal — then
+/// **re-runs the fetcher whenever any signal it read changes**.
 ///
-/// `fetcher` is called once on the TASM thread to obtain the
-/// `Future`, which is then spawned onto [`crate::tasks::spawn_local`]
-/// and polled by every tick. The future runs cooperatively — `await`
-/// points yield back to the runtime so the UI stays responsive.
+/// Reactivity: the fetcher is wrapped in a reactive [`effect`] and the
+/// spawned future re-installs that effect node as the current observer
+/// on every `poll`. As a result, signals read **anywhere** in the
+/// fetcher are tracked as dependencies of the resource — both in the
+/// synchronous prefix (before the first `.await`) and after any
+/// `.await` point. When any tracked signal changes, the fetcher runs
+/// again from scratch and the resource updates.
+///
+/// While a (re)fetch is in flight the resource returns to
+/// [`ResourceState::Loading`]. Only the latest run's result is
+/// committed: a monotonically-increasing generation counter guards the
+/// write, so if a newer run starts before an older in-flight fetch
+/// resolves, the stale result is discarded rather than clobbering the
+/// fresh state. In-flight stale fetches are abandoned *cooperatively*
+/// (the superseded future stops at its next `poll` boundary) — there is
+/// no hard cancellation, and any worker thread spawned via
+/// [`crate::tasks::run_blocking`] runs to completion with its result
+/// dropped.
+///
+/// Dynamic-dependency caveat: dependencies are rebuilt on every run, so
+/// a signal that is only read on *some* code path is only a dependency
+/// on the runs where that path actually executes. A signal read after
+/// an `.await` is only tracked once the future advances past that
+/// suspension point.
 ///
 /// For blocking sync work inside the fetcher (e.g. `ureq::get(...)`,
 /// `std::fs::read(...)`), wrap the call in
@@ -140,30 +166,118 @@ impl<T: Clone + 'static> Resource<T> {
 /// is back.
 ///
 /// Returns immediately with a `Resource<T>` in
-/// [`ResourceState::Loading`].
+/// [`ResourceState::Loading`]; the first fetch is spawned during the
+/// effect's synchronous initial run.
 ///
-/// Owner discipline: the underlying [`RwSignal`] is registered with
-/// whatever owner is current at call time. If that owner is disposed
-/// before the future completes, the eventual write is a no-op (the
-/// signal node is gone), so no stale write hits a re-mounted owner.
+/// Owner discipline: the underlying [`RwSignal`] and the driving effect
+/// are registered with whatever owner is current at call time. If that
+/// owner is disposed, the effect stops re-running and any eventual
+/// write is a no-op (the signal node is gone), so no stale write hits a
+/// re-mounted owner.
 ///
-/// For tests, prefer [`resource_sync`] — it runs the fetcher inline
-/// and doesn't depend on the executor having been ticked.
+/// For tests / already-in-memory values, prefer [`resource_sync`] — it
+/// runs the fetcher inline once, untracked, and doesn't depend on the
+/// executor having been ticked.
 pub fn resource<T, F, Fut>(fetcher: F) -> Resource<T>
 where
     T: Clone + 'static,
-    F: FnOnce() -> Fut + 'static,
+    F: Fn() -> Fut + 'static,
     Fut: Future<Output = Result<T, String>> + 'static,
 {
     let state = RwSignal::new(ResourceState::Loading);
-    spawn_local(async move {
-        let result = fetcher().await;
-        state.set(match result {
-            Ok(v) => ResourceState::Ready(v),
-            Err(e) => ResourceState::Error(e),
+    // Monotonic run counter. Each effect run bumps it and stamps its
+    // spawned future; the future only commits its result if the
+    // counter still matches at completion time (generation guard).
+    let generation = Rc::new(Cell::new(0u64));
+    let fetcher = Rc::new(fetcher);
+
+    super::effect::effect(move || {
+        // Inside an effect run the runtime's `current_tracker` IS this
+        // effect's node. Capture it so the spawned future can re-install
+        // it as the observer around each poll (so post-`.await` reads
+        // register as deps of this node too).
+        let node = super::current_tracker().expect("resource effect must run under a tracker");
+
+        let my_gen = generation.get().wrapping_add(1);
+        generation.set(my_gen);
+
+        // Build the future. The fetcher's SYNCHRONOUS prefix runs here,
+        // and because we're inside the effect run, its signal reads
+        // register as dependencies of `node`.
+        let fut = (fetcher)();
+
+        // Return to Loading on every (re)fetch. Write untracked so this
+        // never creates a dependency edge — the effect must not depend
+        // on `state` (the signal it writes) or it would re-trigger
+        // itself in an infinite loop.
+        state.update_untracked(|s| *s = ResourceState::Loading);
+
+        spawn_local(ScopedFetch {
+            node,
+            my_gen,
+            generation: generation.clone(),
+            state,
+            fut: Box::pin(fut),
         });
     });
+
     Resource { state }
+}
+
+/// A spawned fetch future that re-installs its resource's effect node
+/// as the current reactive observer on every `poll`, so signal reads
+/// after `.await` points are tracked as dependencies of the resource.
+/// A generation stamp lets a superseded run abandon itself
+/// cooperatively without clobbering a fresher result.
+struct ScopedFetch<T: Clone + 'static> {
+    /// The driving effect's node — re-installed as the observer per poll.
+    node: NodeId,
+    /// This run's generation stamp.
+    my_gen: u64,
+    /// Shared run counter; if it has moved past `my_gen` we're stale.
+    generation: Rc<Cell<u64>>,
+    /// Resource state slot to commit into.
+    state: RwSignal<ResourceState<T>>,
+    /// The fetcher's future (single-threaded / `!Send` is fine here).
+    fut: Pin<Box<dyn Future<Output = Result<T, String>>>>,
+}
+
+impl<T: Clone + 'static> Future for ScopedFetch<T> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        // Destructure through the pin so the borrow of `fut` inside the
+        // `with_observer` closure doesn't collide with reads of the
+        // other fields.
+        let this = self.get_mut();
+
+        // A newer run superseded us: abandon WITHOUT installing the
+        // observer (add no stale dependency edges) and WITHOUT writing
+        // state. The inner future is dropped with this `ScopedFetch`.
+        if this.generation.get() != this.my_gen {
+            return Poll::Ready(());
+        }
+
+        let node = this.node;
+        let fut = &mut this.fut;
+        // Re-install the resource's effect node as the current observer
+        // for THIS poll so reads after `.await` register as deps of it.
+        let poll = super::with_observer(node, || fut.as_mut().poll(cx));
+
+        match poll {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                // Commit only if we're still the latest run.
+                if this.generation.get() == this.my_gen {
+                    this.state.set(match result {
+                        Ok(v) => ResourceState::Ready(v),
+                        Err(e) => ResourceState::Error(e),
+                    });
+                }
+                Poll::Ready(())
+            }
+        }
+    }
 }
 
 /// Synchronous-fetch variant. Runs `fetcher` inline on the calling

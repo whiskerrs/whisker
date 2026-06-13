@@ -149,6 +149,46 @@ pub(crate) fn untrack<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// Return the runtime's current reactive observer (`current_tracker`),
+/// if any. This is the node that signal reads register against right
+/// now — typically the effect / computed whose compute body is on the
+/// stack. Crate-internal; used by [`resource`](resource::resource) to
+/// capture its driving effect node so async-time reads can be
+/// re-attributed to it.
+pub(crate) fn current_tracker() -> Option<runtime::NodeId> {
+    with_runtime(|rt| rt.current_tracker)
+}
+
+/// Run `f` with the runtime's `current_tracker` temporarily set to
+/// `node`, then restore the previous tracker.
+///
+/// This is the inverse of [`untrack`]: where `untrack` clears the
+/// observer so reads register no dependencies, `with_observer`
+/// *installs* a specific observer so reads register as dependencies of
+/// `node`. The canonical use is re-installing a resource's driving
+/// effect node around each `poll` of its fetcher future, so that signal
+/// reads happening **after** an `.await` (i.e. outside any scheduler
+/// run) are still attributed to the resource — mirroring Leptos's
+/// per-poll observer restoration.
+///
+/// Like `untrack`, the restore runs from a `Drop` guard so a panic in
+/// `f` leaves the runtime's tracker in its prior state rather than
+/// dangling at `node`.
+pub(crate) fn with_observer<R>(node: runtime::NodeId, f: impl FnOnce() -> R) -> R {
+    use runtime::NodeId;
+
+    struct Restore(Option<NodeId>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            with_runtime(|rt| rt.current_tracker = self.0);
+        }
+    }
+
+    let prev = with_runtime(|rt| rt.current_tracker.replace(node));
+    let _guard = Restore(prev);
+    f()
+}
+
 /// (Test only) reset the thread-local runtime to an empty state. Used
 /// between unit tests to keep the arena clean.
 #[doc(hidden)]
