@@ -7,14 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.3](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.2.2...whisker-driver-sys-v0.2.3) - 2026-06-13
+## [0.2.3](https://github.com/whiskerrs/whisker/compare/whisker-input-v0.2.2...whisker-input-v0.2.3) - 2026-06-13
 
 ### Added
 
 - *(whisker-input)* native text-input component ([#200](https://github.com/whiskerrs/whisker/pull/200))
-
-## [0.2.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.1.0...whisker-driver-sys-v0.2.0) - 2026-06-10
-
-### Added
-
-- *(ios)* standalone builds via remote SwiftPM (no platforms/ios local path)
