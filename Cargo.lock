@@ -2199,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "whisker"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "whisker-config",
  "whisker-css",
@@ -2211,7 +2211,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-audio"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -2230,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-build"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -2243,7 +2243,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-cli"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -2264,7 +2264,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-cng"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -2277,7 +2277,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-config"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -2287,14 +2287,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-css"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "whisker-macros",
 ]
 
 [[package]]
 name = "whisker-dev-runtime"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "futures-util",
  "libc",
@@ -2309,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-dev-server"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -2327,7 +2327,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-driver"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "futures-channel",
  "serde",
@@ -2339,7 +2339,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-driver-sys"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "cc",
@@ -2347,7 +2347,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-icons"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "whisker",
  "whisker-svg",
@@ -2364,14 +2364,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-image"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-input"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "serde",
  "whisker",
@@ -2387,14 +2387,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-local-store"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-macros"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2405,7 +2405,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-plugin"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -2414,7 +2414,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-router"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "whisker",
  "whisker-router-macros",
@@ -2432,7 +2432,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-router-macros"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-runtime"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "futures-channel",
  "futures-executor",
@@ -2453,7 +2453,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-safe-area"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "whisker",
 ]
@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-svg"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "base64",
  "roxmltree",
@@ -2494,14 +2494,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-video"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-webview"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "serde",
  "whisker",
