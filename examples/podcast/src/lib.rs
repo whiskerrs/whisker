@@ -40,6 +40,7 @@ use std::rc::Rc;
 use podcast_domain::{NowPlaying, Podcast};
 use podcast_feature_browse::BrowseScreen;
 use podcast_feature_detail::DetailScreen;
+use podcast_feature_search::SearchScreen;
 use podcast_routing::{AppRoute, Navigator};
 use podcast_ui_kit::MiniPlayer;
 use whisker::css::{Display, FlexDirection, PositionKind};
@@ -81,11 +82,15 @@ pub type NowPlayingSignal = ArcRwSignal<Option<NowPlaying>>;
 /// [`whisker_router::RouteStack`] — keeps the routing crate free
 /// of the `whisker-router::push` import too.
 fn navigator_from_stack(stack: RouteStack<AppRoute>) -> Navigator {
-    let stack_for_push = stack.clone();
+    let stack_for_detail = stack.clone();
+    let stack_for_search = stack.clone();
     let stack_for_back = stack;
     Navigator {
         show_detail: Rc::new(move |id| {
-            stack_for_push.push(AppRoute::Detail { id });
+            stack_for_detail.push(AppRoute::Detail { id });
+        }),
+        show_search: Rc::new(move || {
+            stack_for_search.push(AppRoute::Search);
         }),
         go_back: Rc::new(move || {
             stack_for_back.back();
@@ -119,6 +124,7 @@ fn app() -> Element {
     let render: RouteRenderFn<AppRoute> = (|r: AppRoute| match r {
         AppRoute::Browse => render! { BrowseScreen() },
         AppRoute::Detail { id } => render! { DetailScreen(id: id) },
+        AppRoute::Search => render! { SearchScreen() },
     })
     .into();
 

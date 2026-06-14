@@ -85,6 +85,73 @@ unsafe impl Sync for Dispatcher {}
 
 static DISPATCHER: Mutex<Option<Dispatcher>> = Mutex::new(None);
 
+/// Optional "drive the runtime now" callback, registered by
+/// `whisker-driver::bootstrap`. When set, the [`trampoline`] invokes
+/// it (on the main thread, right after the marshaled closure runs)
+/// instead of merely requesting a vsync frame. The callback runs the
+/// driver's `tick_frame` — flush + drain the task pool + flush +
+/// mounts + renderer flush — so an async completion that was just
+/// marshaled onto the main thread is drained and painted immediately,
+/// on this main-run-loop post, with the vsync render loop untouched.
+///
+/// This is the proper fix for the resource hang: the worker's result
+/// is delivered via the host's main-thread dispatch (CFRunLoop /
+/// Looper), which the OS services even while CADisplayLink /
+/// Choreographer is paused, and we DRIVE the consequence here rather
+/// than racing an unpause of the paused vsync loop.
+///
+/// A plain `extern "C" fn()` pointer — no `user_data` needed; the
+/// driver's `tick_frame` reads its own thread-locals.
+static DRIVE: Mutex<Option<extern "C" fn()>> = Mutex::new(None);
+
+std::thread_local! {
+    /// Re-entrancy depth for main-thread render/tick/drive work.
+    ///
+    /// The [`trampoline`] runs the driver's `tick_frame` directly on a
+    /// main-loop post. That is correct when the host dispatcher genuinely
+    /// *posts* the trampoline to a later run-loop turn. But some
+    /// dispatchers (Lynx's `run_on_tasm_thread`, iOS `Thread.isMainThread`
+    /// fast paths) invoke it **inline** when called from the TASM thread.
+    /// If `run_on_main_thread` is called from inside the initial render or
+    /// a `tick_frame` (e.g. a module's startup wiring), an inline trampoline
+    /// would re-enter `tick_frame` while the renderer/reactive runtime is
+    /// already active — a re-entrant borrow that aborts. This depth lets the
+    /// trampoline detect that nesting and DEFER (request a vsync frame)
+    /// instead of re-entering.
+    static MAIN_WORK_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII guard marking that main-thread render/tick/drive work is in
+/// progress. The driver wraps `init_callback`'s initial render and every
+/// `tick_frame` in one, so a re-entrant `run_on_main_thread` dispatch
+/// defers (via the trampoline) instead of nesting.
+pub struct MainWorkGuard(());
+
+impl MainWorkGuard {
+    pub fn new() -> Self {
+        MAIN_WORK_DEPTH.with(|d| d.set(d.get() + 1));
+        MainWorkGuard(())
+    }
+}
+
+impl Default for MainWorkGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for MainWorkGuard {
+    fn drop(&mut self) {
+        MAIN_WORK_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+/// True while a [`MainWorkGuard`] is alive on this thread — i.e. we are
+/// already inside whisker render/tick/drive work and must not re-enter it.
+fn main_work_in_progress() -> bool {
+    MAIN_WORK_DEPTH.with(|d| d.get()) > 0
+}
+
 /// Register the host's main-thread dispatcher. Called once from
 /// `whisker-driver::bootstrap` during init. Pass `None` for `func`
 /// to clear (used in tests).
@@ -93,6 +160,16 @@ pub fn set_main_thread_dispatcher(func: Option<DispatchFn>, engine: *mut c_void)
     let built = func.map(|func| Dispatcher { func, engine });
     if let Ok(mut guard) = DISPATCHER.lock() {
         *guard = built;
+    }
+}
+
+/// Register the "drive the runtime now" callback (see [`DRIVE`]).
+/// Called once from `whisker-driver::bootstrap` during init. Pass
+/// `None` to clear (used in tests).
+#[doc(hidden)]
+pub fn set_drive_callback(cb: Option<extern "C" fn()>) {
+    if let Ok(mut guard) = DRIVE.lock() {
+        *guard = cb;
     }
 }
 
@@ -110,6 +187,13 @@ pub fn set_main_thread_dispatcher(func: Option<DispatchFn>, engine: *mut c_void)
 /// were inside an event handler. Writes that mark new dependencies
 /// dirty will wake the host's render loop automatically (via
 /// `host_wake::wake_runtime` from the scheduler).
+///
+/// After `f` runs, the [`trampoline`] DRIVES the runtime directly (via
+/// the registered [`set_drive_callback`]) on this same main-thread
+/// post, so an async result marshaled here (the `run_blocking` /
+/// `resource()` path) is drained and painted immediately — see
+/// [`trampoline`]'s comment for why this beats requesting a vsync
+/// frame.
 pub fn run_on_main_thread<F>(f: F)
 where
     F: FnOnce() + Send + 'static,
@@ -152,25 +236,51 @@ extern "C" fn trampoline(user_data: *mut c_void) {
     let boxed: Box<Box<dyn FnOnce() + Send + 'static>> =
         unsafe { Box::from_raw(user_data as *mut Box<dyn FnOnce() + Send + 'static>) };
     boxed();
-    // Wake the runtime so the host schedules another tick. Without
-    // this, a worker thread that calls `run_on_main_thread(|| tx.send(v))`
-    // (the `run_blocking` path inside `resource()`) would wake the
-    // awaiting future's `Waker` via `tx.send`, which re-queues the
-    // future in `LocalPool` — but `LocalPool` only re-polls when
-    // `run_until_stalled` is invoked, which the driver only does
-    // from the tick callback, which only fires when CADisplayLink is
-    // unpaused, which only happens via `request_frame`. So unless we
-    // explicitly request a frame here, the awaiting future sleeps
-    // forever and `Resource::state` stays at `Loading` even though
-    // the worker thread finished. This was the hn-reader
-    // "Loading top stories never transitions" bug.
-    crate::host_wake::wake_runtime();
+    // We're now on the MAIN thread (this trampoline ran via the host's
+    // main-thread dispatch — a real CFRunLoop / Looper post, which the
+    // OS services even while the vsync render loop is paused). The
+    // closure we just ran is typically `tx.send(value)` from a
+    // `run_blocking` worker (the `resource()` path): it woke the
+    // awaiting future's `Waker`, re-queuing it in `LocalPool`. But
+    // `LocalPool` only re-polls when `run_until_stalled` runs, which
+    // happens inside the driver's `tick_frame`.
+    //
+    // If a drive callback is registered (production + the
+    // `cross_thread_wake` tests), invoke it: it runs `tick_frame` HERE,
+    // on this main-loop post — draining the pool, flushing, and
+    // painting the fetch's consequences immediately. The vsync loop is
+    // untouched, so there is NO race against an end-of-frame pause and
+    // NO need to busy-tick. This is the proper fix for the resource
+    // hang (was: request a vsync frame, which races the paused
+    // CADisplayLink/Choreographer and is silently clobbered).
+    //
+    // Fall back to `wake_runtime()` (request a vsync frame) when no
+    // drive callback is wired — e.g. tests that don't model the driver.
+    //
+    // RE-ENTRANCY: if this trampoline was invoked INLINE by the host
+    // dispatcher while we're already inside the initial render or a
+    // `tick_frame` (some dispatchers run same-thread posts synchronously),
+    // running `tick_frame` again would re-enter the renderer/reactive
+    // runtime and abort. In that case, defer via a vsync frame request
+    // instead — the deferred tick drains the pool on the next frame.
+    if main_work_in_progress() {
+        crate::host_wake::wake_runtime();
+        return;
+    }
+    let drive = DRIVE.lock().ok().and_then(|g| *g);
+    match drive {
+        Some(cb) => cb(),
+        None => crate::host_wake::wake_runtime(),
+    }
 }
 
-/// (Test only) clear the registered dispatcher.
+/// (Test only) clear the registered dispatcher and drive callback.
 #[doc(hidden)]
 pub fn __reset_for_tests() {
     if let Ok(mut guard) = DISPATCHER.lock() {
+        *guard = None;
+    }
+    if let Ok(mut guard) = DRIVE.lock() {
         *guard = None;
     }
 }

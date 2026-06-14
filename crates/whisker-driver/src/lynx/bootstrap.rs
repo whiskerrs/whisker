@@ -137,6 +137,18 @@ extern "C" fn init_callback(user_data: *mut c_void) {
         ctx.engine as *mut c_void,
     );
 
+    // Register the "drive the runtime now" callback. When a background
+    // worker marshals a result onto the main thread via
+    // `run_on_main_thread` (the `run_blocking` / `resource()` path),
+    // the trampoline runs ON the main thread and invokes this — running
+    // a full `tick_frame` (flush + drain task pool + flush + mounts +
+    // paint) right there on the main-run-loop post. The async
+    // completion is drained and rendered immediately, with the vsync
+    // render loop untouched. This is the proper fix for the resource
+    // hang (replaces the interim busy-tick workaround): no continuous
+    // ticking, and no race against a paused CADisplayLink/Choreographer.
+    whisker_runtime::main_thread::set_drive_callback(Some(drive));
+
     // Route the platform reporter's events through Whisker's Rust-side
     // propagation reconstruction (capture/bubble/catch over the
     // driver's own element tree). The bridge calls this dispatcher
@@ -147,6 +159,14 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // running user code. The `render!` macro's `view::*` calls
     // route through whatever is installed here.
     let _prev = install_renderer(Box::new(renderer) as Box<dyn DynRenderer>);
+
+    // Mark main-thread render work in progress for the duration of the
+    // initial render. If user code (e.g. a module's startup wiring like
+    // whisker-audio's `Player::new`) calls `run_on_main_thread` and the
+    // host dispatcher runs the trampoline INLINE on this thread, the
+    // trampoline must NOT re-enter `tick_frame` mid-render — the guard
+    // makes it defer to a vsync frame instead.
+    let _main_work = whisker_runtime::main_thread::MainWorkGuard::new();
 
     // Run the user's app fn (already-`subsecond::call`-wrapped by
     // the macro when the `hot-reload` feature is on).
@@ -232,20 +252,21 @@ fn apply_pending_hot_patch() -> Vec<*const ()> {
 }
 
 /// Process one frame on demand. Returns `true` when the runtime is
-/// fully idle after this tick so the host can pause its render loop
-/// until the next `request_frame` callback fires.
+/// idle after this tick so the host can pause its render loop until the
+/// next `request_frame` callback fires.
 ///
-/// "Idle" requires BOTH that the dispatched frame completed AND that
-/// the async task pool has drained. An outstanding task — e.g. a
-/// `resource()` fetch parked on a `run_blocking` worker — keeps the
-/// runtime non-idle so the host keeps ticking until the fetch resumes.
-/// Without this, the host would pause its render loop the instant the
-/// fetch polled to `Pending`, and the worker's cross-thread unpause
-/// (`host_wake::wake_runtime`) races the end-of-frame pause: if the
-/// unpause is processed first, the pause clobbers it and the fetch is
-/// never re-polled — the resource hangs in `Loading`. See
-/// [`whisker_runtime::tasks::has_pending_tasks`] and the
-/// `cross_thread_wake` resource tests.
+/// Idle is purely `!dispatch_pending` — whether the dispatched frame
+/// completed. An outstanding async task (e.g. a `resource()` fetch
+/// parked on a `run_blocking` worker) does NOT keep the host ticking:
+/// its completion is resumed off the **main run loop**, not vsync. When
+/// the worker marshals its result via `run_on_main_thread`, the
+/// trampoline runs on the main thread and invokes the registered drive
+/// callback ([`drive`]), which runs a full `tick_frame` right there —
+/// draining the pool and painting the result. So the host can safely
+/// sleep its vsync loop on idle; the parked fetch resumes via a
+/// race-free main-loop post, not a clobberable vsync unpause. (This
+/// replaces the interim busy-tick fix; see the `cross_thread_wake`
+/// resource tests.)
 pub fn tick(engine_raw: *mut c_void) -> bool {
     if engine_raw.is_null() {
         return true;
@@ -259,7 +280,7 @@ pub fn tick(engine_raw: *mut c_void) -> bool {
         )
     };
     let dispatch_pending = PENDING.with(|p| p.get());
-    !dispatch_pending && !whisker_runtime::tasks::has_pending_tasks()
+    !dispatch_pending
 }
 
 extern "C" fn tick_callback(_user_data: *mut c_void) {
@@ -281,9 +302,37 @@ extern "C" fn tick_callback(_user_data: *mut c_void) {
     PENDING.with(|p| p.set(false));
 }
 
+/// "Drive the runtime now" callback, registered with
+/// `whisker_runtime::main_thread::set_drive_callback`. Invoked by the
+/// `run_on_main_thread` trampoline — which already runs on the Lynx
+/// TASM (main) thread — right after a worker marshals its result back.
+///
+/// Runs the same panic-guarded `tick_frame` as [`tick_callback`]: a
+/// full frame (reactive flush + task-pool drain + flush + mounts +
+/// renderer paint), so the just-marshaled async completion is drained
+/// and rendered immediately on this main-run-loop post. The vsync
+/// render loop is untouched.
+///
+/// Unlike `tick_callback` this does NOT touch `PENDING`: that flag is
+/// the bridge-dispatch's idle/busy bookkeeping for the vsync `tick()`
+/// path, and this drive is a self-contained main-loop drain, not a
+/// host-requested vsync tick. (TASM thread == caller thread, so this
+/// runs synchronously here.)
+extern "C" fn drive() {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(tick_frame));
+    if result.is_err() {
+        log_tick_panic();
+    }
+}
+
 /// The body of one frame. Split out of `tick_callback` so the whole
 /// thing can run under `catch_unwind` without an `extern "C"` closure.
 fn tick_frame() {
+    // Mark render/tick work in progress so a re-entrant
+    // `run_on_main_thread` dispatch (some hosts run same-thread posts
+    // inline) defers to a vsync frame instead of re-entering this body.
+    let _main_work = whisker_runtime::main_thread::MainWorkGuard::new();
+
     // Drain any pending hot-reload patch before the reactive flush so
     // any patched closures run with their new bodies when the queue
     // fires. Returns the list of host-side fn pointers that were

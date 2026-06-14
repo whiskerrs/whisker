@@ -19,5 +19,7 @@
 mod itunes;
 mod repository;
 
-pub use itunes::{fetch_episodes_blocking as fetch_episodes, FetchError};
+pub use itunes::{
+    fetch_episodes_blocking as fetch_episodes, search_blocking as search, FetchError, SearchQuery,
+};
 pub use repository::fetch_browse_screen;

@@ -284,61 +284,116 @@ fn async_resource_returns_to_loading_during_refetch() {
 /// ## Why this reproduces the device hang (and earlier attempts didn't)
 ///
 /// On device the host render loop pauses whenever `whisker_tick`
-/// reports **idle**, and resumes only on a `request_frame` wake. A
-/// `run_blocking` fetch is resumed by a *cross-thread* wake fired from
-/// the worker (`host_wake::wake_runtime`). That wake races the host
-/// pausing its render loop at the end of the very frame that polled the
-/// fetch to `Pending`: on both iOS (`displayLink.isPaused`) and Android
-/// (`Choreographer` + `scheduled` `compareAndSet`) the end-of-frame
-/// pause can **clobber** the worker's concurrent unpause, and the wake
-/// is lost. The one-shot / single-write cases survive because their one
-/// async settle lands in a frame the host already had scheduled; the
-/// reactive **re-fetch** is a *second* settle that arrives after the
-/// host already idled once — the window where the clobber bites.
+/// reports **idle**, and resumes only on a `request_frame` wake. The
+/// interim "busy-tick" fix kept the host ticking while tasks were
+/// outstanding; the PROPER fix (modelled here) drives the parked fetch
+/// off the **main run loop** instead.
 ///
-/// To model this deterministically the harness makes the worker's
-/// cross-thread wake **ineffective** (the frame-request callback is a
-/// no-op — i.e. the clobbered/lost wake). The ONLY thing that can drive
-/// a parked fetch to completion is then the runtime reporting **busy**
-/// while tasks are outstanding (`tasks::has_pending_tasks`, the fix),
-/// which keeps the host's loop ticking until the pool drains. With the
-/// fix the re-fetch completes; revert it (let `tick` go idle with tasks
-/// outstanding) and the loop pauses → the fetch is never re-polled →
-/// these tests hit the deadline (the field hang).
+/// A `run_blocking` fetch's result is marshaled back via the host's
+/// main-thread dispatch (`run_on_main_thread` → CFRunLoop / Looper
+/// post). The OS services that post even while the vsync render loop is
+/// paused, and it is race-free (kernel-level wake). The `trampoline`
+/// runs ON the main thread and, instead of requesting a (paused,
+/// clobberable) vsync frame, invokes the registered DRIVE callback —
+/// which runs a `tick_frame` equivalent there: drain the pool + flush,
+/// completing and committing the fetch immediately.
+///
+/// ## How this harness faithfully models the worker→main-thread post
+///
+/// `run_blocking` calls `run_on_main_thread(|| tx.send(value))` from
+/// the WORKER thread. The real host dispatch POSTS that to the MAIN
+/// thread; the trampoline (and thus the drive) must run on the TEST
+/// thread where the `POOL`/runtime thread-locals live — NOT inline on
+/// the worker. So the test dispatcher ENQUEUES `(callback, user_data)`
+/// into a thread-safe queue ([`POSTS`]); the test's host loop drains
+/// that queue on the test thread each iteration, invoking the
+/// trampoline there, which fires the test DRIVE callback (a stand-in
+/// for the driver's `tick_frame`).
+///
+/// The frame-request callback is a NO-OP (the clobbered / lost vsync
+/// wake): the ONLY thing that can finish a parked fetch is the
+/// main-thread-posted trampoline → drive. The idle verdict is purely
+/// `!dispatch_pending` (NO busy-tick). With the fix (trampoline drives)
+/// the re-fetch COMPLETES; revert step 1 (trampoline back to
+/// `wake_runtime` / no-op) and the drive never runs → the fetch is
+/// never re-polled → these tests hit the deadline (the field hang).
 mod cross_thread_wake {
     use super::*;
-    use crate::main_thread::{set_main_thread_dispatcher, DispatchFn};
+    use crate::main_thread::{set_drive_callback, set_main_thread_dispatcher, DispatchFn};
     use crate::tasks::run_blocking;
     use std::ffi::c_void;
-    use std::sync::MutexGuard;
+    use std::sync::{Mutex, MutexGuard};
     use std::time::{Duration, Instant};
 
     // These tests reach into process-global state (the main-thread
-    // dispatcher + frame-request callback). Use the shared host-test
-    // lock so sibling modules can't clear our dispatcher mid-fetch.
+    // dispatcher + drive callback + frame-request callback). Use the
+    // shared host-test lock so sibling modules can't clear our wiring
+    // mid-fetch.
     fn lock<'a>() -> MutexGuard<'a, ()> {
         crate::main_thread::host_test_lock()
     }
 
+    /// A `(callback, user_data)` pair the dispatcher posted to the main
+    /// thread. `user_data` is a raw `*mut c_void`; the host loop drains
+    /// this on the test thread and invokes `callback(user_data)` — the
+    /// trampoline — there.
+    struct Post {
+        callback: extern "C" fn(*mut c_void),
+        user_data: *mut c_void,
+    }
+    // SAFETY: `user_data` is a `Box<Box<dyn FnOnce + Send>>` raw pointer
+    // minted by `run_on_main_thread`; its closure is `Send`, so moving
+    // the pointer to the test thread to invoke the trampoline is sound
+    // (this is exactly what the real Lynx dispatch does).
+    unsafe impl Send for Post {}
+
+    // The main-thread post queue. The (worker-thread) dispatcher pushes;
+    // the test's host loop drains on the test thread. Process-global but
+    // serialized by `host_test_lock`; cleared in `install_host`.
+    static POSTS: Mutex<Vec<Post>> = Mutex::new(Vec::new());
+
     // The host's frame-request callback, modelled as a NO-OP: this is
-    // the *clobbered / lost* cross-thread wake. A robust runtime must
-    // NOT depend on it to finish an in-flight fetch.
+    // the *clobbered / lost* cross-thread vsync wake. A robust runtime
+    // must NOT depend on it to finish an in-flight fetch.
     extern "C" fn request_frame_noop(_: *mut c_void) {}
 
-    // Synchronous main-thread dispatcher: runs the marshaled closure
-    // inline (on whatever thread called run_on_main_thread, i.e. the
-    // worker). Matches the harness in `tasks::tests`.
-    extern "C" fn sync_invoke(
+    // FAITHFUL main-thread dispatcher: ENQUEUES the marshaled
+    // (callback, user_data) for the MAIN (test) thread to run, rather
+    // than invoking it inline on the caller (worker) thread. This is
+    // what makes the trampoline — and the drive it triggers — run where
+    // the runtime thread-locals live, exactly as the real Lynx
+    // main-thread dispatch does.
+    extern "C" fn enqueue_post(
         _engine: *mut c_void,
         callback: extern "C" fn(*mut c_void),
         user_data: *mut c_void,
     ) -> bool {
-        callback(user_data);
+        if let Ok(mut q) = POSTS.lock() {
+            q.push(Post {
+                callback,
+                user_data,
+            });
+        }
         true
     }
 
+    // The TEST drive callback — stand-in for the driver's `tick_frame`
+    // (the runtime crate can't call the driver). Runs the same shape:
+    // reactive flush, drain the task pool, reactive flush (to surface
+    // signal writes the drained fetch made, e.g. `state.set(Ready)`).
+    // Invoked by the trampoline on the test thread.
+    extern "C" fn test_drive() {
+        flush();
+        tasks::run_until_stalled();
+        flush();
+    }
+
     fn install_host() {
-        set_main_thread_dispatcher(Some(sync_invoke as DispatchFn), std::ptr::null_mut());
+        if let Ok(mut q) = POSTS.lock() {
+            q.clear();
+        }
+        set_main_thread_dispatcher(Some(enqueue_post as DispatchFn), std::ptr::null_mut());
+        set_drive_callback(Some(test_drive));
         crate::host_wake::set_request_frame_callback(
             Some(request_frame_noop),
             std::ptr::null_mut(),
@@ -348,53 +403,92 @@ mod cross_thread_wake {
     fn reset_host() {
         crate::main_thread::__reset_for_tests();
         crate::host_wake::__reset_for_tests();
+        if let Ok(mut q) = POSTS.lock() {
+            q.clear();
+        }
+    }
+
+    /// Drain every queued main-thread post on the TEST thread, invoking
+    /// each trampoline (which fires the drive callback). Returns true if
+    /// any post was drained — i.e. the main run loop did work this
+    /// iteration. Models the OS servicing the main-loop queue even while
+    /// the vsync loop is paused.
+    fn drain_posts() -> bool {
+        // Take the current batch out so a drive callback re-posting (a
+        // chained fetch) lands in a fresh batch for the next iteration,
+        // not an infinite inner loop.
+        let batch: Vec<Post> = match POSTS.lock() {
+            Ok(mut q) => std::mem::take(&mut *q),
+            Err(_) => Vec::new(),
+        };
+        let drained = !batch.is_empty();
+        for post in batch {
+            (post.callback)(post.user_data);
+        }
+        drained
     }
 
     /// One "frame": exactly what the driver's `tick_frame` +
     /// `tick`-idle-reporting do. Runs reactive flush, drains the task
     /// pool, runs a SECOND reactive flush (to surface signal writes
-    /// made by tasks that resolved during the drain, e.g. a fetch
-    /// committing `state.set(Ready)`), and returns the runtime's
-    /// idle/busy verdict — `true` == idle == "host may pause".
+    /// made by tasks that resolved during the drain), and returns the
+    /// runtime's idle/busy verdict — `true` == idle == "host may pause".
     ///
-    /// The idle verdict mirrors `whisker-driver`'s fixed `tick`: idle
-    /// requires the pool to be drained (`!has_pending_tasks()`).
+    /// The idle verdict mirrors `whisker-driver`'s reverted `tick`:
+    /// purely `!dispatch_pending`. There is NO busy-tick — a parked
+    /// fetch does NOT keep this returning busy. Modeled here as: a frame
+    /// always completes its dispatched work synchronously, so it's
+    /// always idle afterward.
     fn tick() -> bool {
         flush();
         tasks::run_until_stalled();
         flush();
-        !tasks::has_pending_tasks()
+        true // dispatch completed; idle. NO `!has_pending_tasks()`.
     }
 
     /// Drive the host loop until `done()` or the deadline.
     ///
-    /// Models the real render loop: tick; if the runtime reports idle,
-    /// "pause" (stop ticking) — and because the worker's cross-thread
-    /// wake is the clobbered no-op above, the loop has NO way to resume
-    /// a parked fetch except the runtime continuing to report **busy**.
-    /// That busy signal is the fix (`has_pending_tasks`). Revert it and
-    /// `tick()` returns idle the instant the fetch parks → the loop
-    /// stops ticking → the re-poll never happens → deadline → hang.
+    /// Models the real render loop: tick once; on idle the vsync loop
+    /// "pauses" (stops ticking). Because the frame-request callback is
+    /// the clobbered no-op, vsync can NOT resume a parked fetch. The
+    /// ONLY resume path is the MAIN-THREAD POST queue: each loop
+    /// iteration we [`drain_posts`] (the OS servicing CFRunLoop / Looper
+    /// while vsync sleeps), which runs the trampoline → drive →
+    /// `tick_frame`, completing the fetch. With step 1's fix the
+    /// trampoline drives, so draining a post finishes the work; revert
+    /// it (trampoline → `wake_runtime`/no-op) and draining a post does
+    /// nothing useful → the fetch never re-polls → deadline → hang.
     fn drive_until(mut done: impl FnMut() -> bool) {
         // 2s is ample margin over the worker sleeps (15–40ms) on the
-        // happy path; on a reverted fix the loop pauses and burns the
-        // full deadline (the hang).
+        // happy path; on a reverted fix the main-loop drive is inert and
+        // the loop burns the full deadline (the hang).
         let deadline = Instant::now() + Duration::from_secs(2);
-        let mut idle = tick();
+
+        // The vsync side ticks ONLY while it's busy. The moment it
+        // reports idle it "pauses" and we NEVER tick it again from here
+        // — exactly as the host pauses CADisplayLink/Choreographer. From
+        // that point the ONLY thing that can advance the runtime is a
+        // MAIN-THREAD POST being drained (the trampoline → drive). This
+        // is what isolates the fix: with the proper fix the drained
+        // post's trampoline runs `tick_frame` (completing the fetch);
+        // reverted, the trampoline only fires the no-op vsync wake, the
+        // value is delivered to the channel but NOTHING re-polls the pool
+        // → deadline → hang.
+        let mut vsync_idle = false;
         while !done() && Instant::now() < deadline {
-            if idle {
-                // Paused. The clobbered/no-op worker wake cannot resume
-                // us; a truly-idle runtime stays paused until the
-                // deadline (surfacing the hang on a reverted fix). We
-                // still loop so `done()` / the deadline are re-checked,
-                // but we do NOT tick.
-                std::thread::sleep(Duration::from_millis(2));
-            } else {
-                // Busy: keep ticking. This is the path the fix enables —
-                // `has_pending_tasks()` keeps `tick()` reporting busy
-                // until the in-flight fetch resumes and the pool drains.
-                idle = tick();
+            if !vsync_idle {
+                // Vsync loop is running: tick frames until it idles. The
+                // worker's blocking sleep means the fetch is still
+                // Pending here, so this idles after kicking the fetch.
+                vsync_idle = tick();
                 std::thread::sleep(Duration::from_millis(1));
+            } else {
+                // Vsync paused. Service ONLY the main run loop (the OS
+                // does this while vsync sleeps). Draining a post invokes
+                // the trampoline → drive; that is the sole resume path.
+                // We do NOT tick the vsync side here.
+                drain_posts();
+                std::thread::sleep(Duration::from_millis(2));
             }
         }
     }

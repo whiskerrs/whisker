@@ -1193,6 +1193,7 @@ dependencies = [
  "podcast-domain",
  "podcast-feature-browse",
  "podcast-feature-detail",
+ "podcast-feature-search",
  "podcast-routing",
  "podcast-theme",
  "podcast-ui-kit",
@@ -1243,6 +1244,21 @@ dependencies = [
  "whisker-icons",
  "whisker-image",
  "whisker-router",
+ "whisker-safe-area",
+]
+
+[[package]]
+name = "podcast-feature-search"
+version = "0.1.0"
+dependencies = [
+ "podcast-data",
+ "podcast-domain",
+ "podcast-routing",
+ "podcast-theme",
+ "whisker",
+ "whisker-icons",
+ "whisker-image",
+ "whisker-input",
  "whisker-safe-area",
 ]
 
