@@ -173,19 +173,28 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     let Some(app_fn) = ctx.app_fn.take() else {
         return;
     };
-    let root = app_fn();
 
-    // Commit the initial tree: mark the page as root and ask Lynx
-    // to run the first layout+paint pass.
-    set_root(root);
-    renderer_flush();
-
-    // Fire on_mount callbacks for everything that just mounted. Has
-    // to happen after the renderer flush so user-side code that asks
-    // "is my view in the tree?" (e.g. measure-after-layout) sees
-    // it. A callback that writes a signal schedules its work via the
-    // normal wake-up path; the next tick picks it up.
-    reactive_flush_mounts();
+    // Run the app under a persistent ROOT OWNER. `#[whisker::main]`'s
+    // body runs here, and `provide_context(...)` calls at that bare
+    // `app()` level need a current owner to attach to — without one they
+    // silently no-op, and any descendant that does
+    // `use_context::<T>().expect(...)` then panics across this `extern
+    // "C"` boundary (aborting on Android, blank-screening on iOS). The
+    // owner is a *detached root*: it lives for the process lifetime and
+    // is never disposed, so the contexts / signals / effects the app
+    // creates persist for the whole session.
+    let root_owner = whisker_runtime::reactive::Owner::detached_root();
+    root_owner.with(|| {
+        let root = app_fn();
+        // Commit the initial tree: mark the page as root and ask Lynx
+        // to run the first layout+paint pass.
+        set_root(root);
+        renderer_flush();
+        // Fire on_mount callbacks for everything that just mounted. Has
+        // to happen after the renderer flush so user-side code that asks
+        // "is my view in the tree?" sees it.
+        reactive_flush_mounts();
+    });
 
     start_hot_reload_receiver();
 }
