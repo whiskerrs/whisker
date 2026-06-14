@@ -54,7 +54,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -70,20 +70,20 @@ keywords = ["mobile", "ui", "ios", "android", "reactive"]
 categories = ["gui"]
 
 [workspace.dependencies]
-whisker = { path = "crates/whisker", version = "0.2.4" }
-whisker-config = { path = "crates/whisker-config", version = "0.2.4" }
-whisker-build = { path = "crates/whisker-build", version = "0.2.4" }
-whisker-cng = { path = "crates/whisker-cng", version = "0.2.4" }
-whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.2.4" }
-whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.2.4" }
-whisker-driver = { path = "crates/whisker-driver", version = "0.2.4" }
-whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.2.4" }
-whisker-macros = { path = "crates/whisker-macros", version = "0.2.4" }
-whisker-css = { path = "crates/whisker-css", version = "0.2.4" }
-whisker-plugin = { path = "crates/whisker-plugin", version = "0.2.4" }
-whisker-runtime = { path = "crates/whisker-runtime", version = "0.2.4" }
-whisker-router = { path = "packages/whisker-router", version = "0.2.4" }
-whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.2.4" }
+whisker = { path = "crates/whisker", version = "0.2.5" }
+whisker-config = { path = "crates/whisker-config", version = "0.2.5" }
+whisker-build = { path = "crates/whisker-build", version = "0.2.5" }
+whisker-cng = { path = "crates/whisker-cng", version = "0.2.5" }
+whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.2.5" }
+whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.2.5" }
+whisker-driver = { path = "crates/whisker-driver", version = "0.2.5" }
+whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.2.5" }
+whisker-macros = { path = "crates/whisker-macros", version = "0.2.5" }
+whisker-css = { path = "crates/whisker-css", version = "0.2.5" }
+whisker-plugin = { path = "crates/whisker-plugin", version = "0.2.5" }
+whisker-runtime = { path = "crates/whisker-runtime", version = "0.2.5" }
+whisker-router = { path = "packages/whisker-router", version = "0.2.5" }
+whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.2.5" }
 
 anyhow = "1"
 thiserror = "2"
