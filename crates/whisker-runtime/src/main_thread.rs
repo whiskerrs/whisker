@@ -175,22 +175,33 @@ pub fn __reset_for_tests() {
     }
 }
 
+/// Shared serialisation lock for every test that touches the
+/// process-global host wiring (the main-thread dispatcher in this
+/// module and the frame-request callback in [`crate::host_wake`]).
+///
+/// These globals are reset/installed by tests across SEVERAL modules
+/// (`main_thread`, `tasks`, `reactive::tests_resource`). A per-module
+/// lock can't keep them from racing — module A could clear the
+/// dispatcher mid-fetch in module B, dropping the marshaled result.
+/// All such tests take THIS one lock instead.
+#[cfg(test)]
+pub(crate) fn host_test_lock<'a>() -> std::sync::MutexGuard<'a, ()> {
+    static HOST_TEST_LOCK: Mutex<()> = Mutex::new(());
+    HOST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::sync::{Arc, MutexGuard};
 
-    /// Tests poke a shared global (the registered dispatcher), so they
-    /// must run one at a time. `cargo test` defaults to parallel test
-    /// threads — this lock serialises just the tests in this module.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
+    /// Tests poke process-global host state (the registered
+    /// dispatcher), so they must run one at a time AND not race tests
+    /// in sibling modules that touch the same globals — hence the
+    /// shared [`super::host_test_lock`].
     fn lock<'a>() -> MutexGuard<'a, ()> {
-        // Unwrap on poison: a poisoned lock means a previous test panicked
-        // mid-dispatch — re-running on top of that is fine because we
-        // reset state at the start of every test anyway.
-        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        super::host_test_lock()
     }
 
     /// Pretend-host dispatcher: invokes the callback synchronously on
