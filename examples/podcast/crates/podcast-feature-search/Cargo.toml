@@ -1,0 +1,20 @@
+[package]
+name = "podcast-feature-search"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Search screen — reactive resource re-fetches iTunes on every query-signal change, demonstrating resource-reactivity with whisker-input."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-input = { path = "../../../../packages/whisker-input" }
+whisker-image = { path = "../../../../packages/whisker-image" }
+whisker-icons = { path = "../../../../packages/whisker-icons" }
+whisker-safe-area = { path = "../../../../packages/whisker-safe-area" }
+podcast-theme = { path = "../podcast-theme" }
+podcast-domain = { path = "../podcast-domain" }
+podcast-data = { path = "../podcast-data" }
+podcast-routing = { path = "../podcast-routing" }

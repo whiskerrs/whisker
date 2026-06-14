@@ -21,6 +21,8 @@ pub enum AppRoute {
     Browse,
     #[at("/podcast/:id")]
     Detail { id: u64 },
+    #[at("/search")]
+    Search,
 }
 
 /// Navigation surface the feature crates see. Both methods are
@@ -34,5 +36,6 @@ pub enum AppRoute {
 #[derive(Clone)]
 pub struct Navigator {
     pub show_detail: Rc<dyn Fn(u64)>,
+    pub show_search: Rc<dyn Fn()>,
     pub go_back: Rc<dyn Fn()>,
 }

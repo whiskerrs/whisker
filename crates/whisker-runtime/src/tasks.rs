@@ -178,6 +178,7 @@ impl<T> Future for BlockingResult<T> {
 /// doesn't bleed across.
 #[doc(hidden)]
 pub fn __reset_for_tests() {
+    // Replacing the pool drops every queued task.
     POOL.with(|p| *p.borrow_mut() = LocalPool::new());
     SPAWNER.with(|s| {
         POOL.with(|p| {
@@ -193,15 +194,14 @@ mod tests {
     use std::cell::Cell;
     use std::ffi::c_void;
     use std::rc::Rc;
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::MutexGuard;
 
     /// Tests in this module reach into thread-local state (executor)
-    /// AND process-global state (dispatcher). Serialise them — the
-    /// global dispatcher would otherwise see installs from another
-    /// test mid-call.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    /// AND process-global state (dispatcher / frame callback). Use the
+    /// shared [`crate::main_thread::host_test_lock`] so they don't race
+    /// the host-global tests in sibling modules.
     fn lock<'a>() -> MutexGuard<'a, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        crate::main_thread::host_test_lock()
     }
 
     fn reset_all() {

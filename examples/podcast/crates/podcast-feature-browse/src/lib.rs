@@ -83,6 +83,13 @@ pub fn browse_screen() -> Element {
         });
     }
 
+    // Pull the navigator once at the screen level so the `top_nav`
+    // trailing action can push the Search route. Falls back to a
+    // no-op when no Navigator is in context (standalone harness).
+    let on_search_tap = use_context::<Navigator>()
+        .map(|n| n.show_search)
+        .unwrap_or_else(|| Rc::new(|| {}));
+
     render! {
         view(style: css!(
             flex_grow: 1.0,
@@ -91,7 +98,11 @@ pub fn browse_screen() -> Element {
             flex_direction: FlexDirection::Column,
             position: PositionKind::Relative,
         )) {
-            top_nav(title: "Podcasts", action_label: "Sign In")
+            top_nav(
+                title: "Podcasts",
+                action_label: "Search",
+                on_action_tap: on_search_tap,
+            )
             Show(
                 when: move || sections.get().is_some(),
                 fallback: move || render! {

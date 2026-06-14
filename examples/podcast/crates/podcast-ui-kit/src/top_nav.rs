@@ -5,6 +5,8 @@
 //! (Pocket Casts, Spotify, Castbox all ship a near-identical
 //! shape). The menu glyph is `lucide::Menu` via `whisker-icons`.
 
+use std::rc::Rc;
+
 use podcast_theme as theme;
 use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyContent};
 use whisker::prelude::*;
@@ -14,9 +16,14 @@ use whisker_safe_area::safe_area_insets;
 
 /// Title shown centred in the bar. Action label shown trailing.
 /// Both are plain strings so the host screen can localise without
-/// touching the kit.
+/// touching the kit. `on_action_tap` is optional — when absent the
+/// trailing label is purely decorative.
 #[component]
-pub fn top_nav(title: String, action_label: String) -> Element {
+pub fn top_nav(
+    title: String,
+    action_label: String,
+    on_action_tap: Option<Rc<dyn Fn()>>,
+) -> Element {
     // Two-layer style: outer wrapper carries the safe-area inset
     // via `padding_top`, inner row keeps its content height. We
     // can't pile padding on top of a fixed-height row — the row's
@@ -39,6 +46,12 @@ pub fn top_nav(title: String, action_label: String) -> Element {
             background_color: theme::BG,
         )
     });
+
+    // Clone the `Rc` out before `render!` so the `move |_|` closure
+    // for `on_tap` can take `tap_cb` by move without trying to move
+    // `on_action_tap` out of the `#[component]` re-invokable `FnMut`
+    // body. `Option<Rc<dyn Fn()>>` is not `Copy`, so we must clone.
+    let tap_cb = on_action_tap.clone();
 
     render! {
         view(style: wrapper_style) {
@@ -95,15 +108,22 @@ pub fn top_nav(title: String, action_label: String) -> Element {
                         value: title.clone(),
                     )
                 }
-                view(style: css!(
-                    flex_grow: 1.0,
-                    flex_shrink: 1.0,
-                    flex_basis: percent(0),
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::FlexEnd,
-                )) {
+                view(
+                    style: css!(
+                        flex_grow: 1.0,
+                        flex_shrink: 1.0,
+                        flex_basis: percent(0),
+                        display: Display::Flex,
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::FlexEnd,
+                    ),
+                    on_tap: move |_| {
+                        if let Some(cb) = &tap_cb {
+                            cb();
+                        }
+                    },
+                ) {
                     text(
                         style: css!(
                             font_size: theme::T_NAV_TITLE,
