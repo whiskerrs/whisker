@@ -28,8 +28,10 @@
 //!
 //! [`resource`]: crate::reactive::resource
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use futures_executor::{LocalPool, LocalSpawner};
 use futures_util::task::LocalSpawnExt;
@@ -45,6 +47,69 @@ thread_local! {
     static SPAWNER: RefCell<LocalSpawner> = RefCell::new({
         POOL.with(|p| p.borrow().spawner())
     });
+
+    /// Count of spawned-but-not-yet-completed tasks. Incremented in
+    /// [`spawn_local`], decremented when a task's `TrackedTask` wrapper
+    /// is dropped (which happens exactly once: on completion OR on the
+    /// pool being torn down). Read by [`has_pending_tasks`] so the
+    /// driver's tick can report **not-idle** while async work is still
+    /// outstanding — see that function's docs for why this matters.
+    static OUTSTANDING: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Wrapper future that keeps the outstanding-task counter accurate.
+///
+/// `futures_executor::LocalPool` gives us no completion hook, so we
+/// can't decrement `OUTSTANDING` from inside the pool. Instead we wrap
+/// every spawned future: the wrapper's `Drop` runs once — when the task
+/// finishes and the pool drops it, or when the pool itself is reset —
+/// and decrements the counter then. Polling just forwards to the inner
+/// future.
+struct TrackedTask<F> {
+    inner: F,
+    counted: bool,
+}
+
+impl<F: Future<Output = ()>> Future for TrackedTask<F> {
+    type Output = ();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        // SAFETY: standard pin-projection of a `!Unpin`-agnostic field;
+        // we never move `inner` out of the pinned wrapper.
+        let inner = unsafe { self.map_unchecked_mut(|s| &mut s.inner) };
+        inner.poll(cx)
+    }
+}
+
+impl<F> Drop for TrackedTask<F> {
+    fn drop(&mut self) {
+        if self.counted {
+            self.counted = false;
+            OUTSTANDING.with(|c| c.set(c.get().saturating_sub(1)));
+        }
+    }
+}
+
+/// Whether the task pool still has work that hasn't run to completion.
+///
+/// The driver's tick reports "idle" (letting the host pause its render
+/// loop) only when there's no reactive work pending. But a `resource()`
+/// fetch parked on a [`run_blocking`] worker is *outstanding* — it will
+/// be resumed by a cross-thread wake (the worker calling
+/// `run_on_main_thread`, which fires `host_wake::wake_runtime`). That
+/// wake races against the host pausing its render loop at the end of
+/// the very frame that polled the fetch to `Pending`: if the host
+/// processes the unpause *before* it processes the end-of-frame pause,
+/// the pause clobbers the unpause and the fetch is never re-polled —
+/// the resource stays `Loading` forever. (This is the field hang:
+/// reactive resource + `run_blocking`, re-fetch after a tracked signal
+/// change — see `reactive::tests_resource::cross_thread_wake`.)
+///
+/// Reporting not-idle while tasks are outstanding closes that race: the
+/// host keeps ticking frame-to-frame (as it does during an animation)
+/// until the pool drains, so the fetch is always re-polled regardless
+/// of how the cross-thread unpause interleaves.
+pub fn has_pending_tasks() -> bool {
+    OUTSTANDING.with(|c| c.get()) > 0
 }
 
 /// Queue `future` for execution on Whisker's task pool.
@@ -71,9 +136,18 @@ pub fn spawn_local<F>(future: F)
 where
     F: Future<Output = ()> + 'static,
 {
+    // Count this task as outstanding and wrap it so the count is
+    // decremented exactly once when the task completes (or the pool is
+    // reset). `has_pending_tasks` reads this so the driver keeps the
+    // host's render loop alive until async work drains — see that fn.
+    OUTSTANDING.with(|c| c.set(c.get() + 1));
+    let tracked = TrackedTask {
+        inner: future,
+        counted: true,
+    };
     SPAWNER.with(|s| {
         s.borrow()
-            .spawn_local(future)
+            .spawn_local(tracked)
             .expect("whisker tasks: local pool is shut down");
     });
     // Nudge the host so the next frame's tick callback actually
@@ -178,12 +252,16 @@ impl<T> Future for BlockingResult<T> {
 /// doesn't bleed across.
 #[doc(hidden)]
 pub fn __reset_for_tests() {
+    // Replacing the pool drops every queued `TrackedTask`, whose `Drop`
+    // decrements `OUTSTANDING`. Force it to 0 afterwards so the counter
+    // is exact even if a future was mid-poll / leaked.
     POOL.with(|p| *p.borrow_mut() = LocalPool::new());
     SPAWNER.with(|s| {
         POOL.with(|p| {
             *s.borrow_mut() = p.borrow().spawner();
         });
     });
+    OUTSTANDING.with(|c| c.set(0));
 }
 
 #[cfg(test)]
@@ -193,15 +271,14 @@ mod tests {
     use std::cell::Cell;
     use std::ffi::c_void;
     use std::rc::Rc;
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::MutexGuard;
 
     /// Tests in this module reach into thread-local state (executor)
-    /// AND process-global state (dispatcher). Serialise them — the
-    /// global dispatcher would otherwise see installs from another
-    /// test mid-call.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    /// AND process-global state (dispatcher / frame callback). Use the
+    /// shared [`crate::main_thread::host_test_lock`] so they don't race
+    /// the host-global tests in sibling modules.
     fn lock<'a>() -> MutexGuard<'a, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        crate::main_thread::host_test_lock()
     }
 
     fn reset_all() {
@@ -425,6 +502,66 @@ mod tests {
         assert!(
             flag.get(),
             "spawner must be re-bound to the new pool after reset"
+        );
+    }
+
+    /// `has_pending_tasks` must track the pool's outstanding work so the
+    /// driver's tick can report not-idle while a fetch is parked
+    /// (closing the cross-thread-wake clobber race). Drives the full
+    /// life-cycle: empty → spawned-and-parked → completed → empty.
+    #[test]
+    fn has_pending_tasks_tracks_outstanding_work() {
+        let _g = lock();
+        reset_all();
+        assert!(!has_pending_tasks(), "empty pool: no pending tasks");
+
+        // A task that parks on first poll (self-woken) then completes on
+        // the second — modelling a fetch parked on a cross-thread wake.
+        let phase = Rc::new(Cell::new(0));
+        let phase_for_task = phase.clone();
+        spawn_local(async move {
+            Yielder {
+                phase: phase_for_task,
+                polled_once: false,
+            }
+            .await;
+        });
+        assert!(
+            has_pending_tasks(),
+            "spawned-but-unrun task counts as pending"
+        );
+
+        // Yielder self-wakes, so a single run_until_stalled drives both
+        // polls to completion → pool drains → no longer pending.
+        run_until_stalled();
+        assert_eq!(phase.get(), 2, "task ran to completion");
+        assert!(
+            !has_pending_tasks(),
+            "completed task must be removed from the pending count"
+        );
+    }
+
+    /// A task that stays `Pending` (never woken) keeps the pool
+    /// outstanding — so the driver keeps the host alive until it
+    /// eventually completes (or its owner is reset).
+    #[test]
+    fn has_pending_tasks_stays_true_for_parked_task() {
+        use std::future;
+        let _g = lock();
+        reset_all();
+        spawn_local(async move {
+            future::pending::<()>().await;
+        });
+        run_until_stalled();
+        assert!(
+            has_pending_tasks(),
+            "a parked (Pending) task remains outstanding after a stalled drain"
+        );
+        // Reset drops the parked task; the count must zero out.
+        __reset_for_tests();
+        assert!(
+            !has_pending_tasks(),
+            "reset must clear the outstanding-task count"
         );
     }
 }

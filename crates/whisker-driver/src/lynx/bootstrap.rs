@@ -232,9 +232,20 @@ fn apply_pending_hot_patch() -> Vec<*const ()> {
 }
 
 /// Process one frame on demand. Returns `true` when the runtime is
-/// fully idle after this tick (no pending effects) so the host can
-/// pause its render loop until the next `request_frame` callback
-/// fires.
+/// fully idle after this tick so the host can pause its render loop
+/// until the next `request_frame` callback fires.
+///
+/// "Idle" requires BOTH that the dispatched frame completed AND that
+/// the async task pool has drained. An outstanding task — e.g. a
+/// `resource()` fetch parked on a `run_blocking` worker — keeps the
+/// runtime non-idle so the host keeps ticking until the fetch resumes.
+/// Without this, the host would pause its render loop the instant the
+/// fetch polled to `Pending`, and the worker's cross-thread unpause
+/// (`host_wake::wake_runtime`) races the end-of-frame pause: if the
+/// unpause is processed first, the pause clobbers it and the fetch is
+/// never re-polled — the resource hangs in `Loading`. See
+/// [`whisker_runtime::tasks::has_pending_tasks`] and the
+/// `cross_thread_wake` resource tests.
 pub fn tick(engine_raw: *mut c_void) -> bool {
     if engine_raw.is_null() {
         return true;
@@ -247,7 +258,8 @@ pub fn tick(engine_raw: *mut c_void) -> bool {
             std::ptr::null_mut(),
         )
     };
-    !PENDING.with(|p| p.get())
+    let dispatch_pending = PENDING.with(|p| p.get());
+    !dispatch_pending && !whisker_runtime::tasks::has_pending_tasks()
 }
 
 extern "C" fn tick_callback(_user_data: *mut c_void) {
