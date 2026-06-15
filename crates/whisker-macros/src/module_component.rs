@@ -614,7 +614,7 @@ fn prop_build_assignment(p: &Prop, tag_name: &str) -> TokenStream2 {
             }
         }
         // Style/Attr props are optional by default. `Signal<String>`
-        // defaults to `Signal::Static("")` when omitted, matching
+        // defaults to `Signal::Stored("")` when omitted, matching
         // what Lynx would see if the attribute wasn't declared.
         // Event handler props stay required because their `dyn Fn`
         // types don't have a sensible default and a missing callback

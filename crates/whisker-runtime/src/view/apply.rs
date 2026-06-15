@@ -31,7 +31,7 @@ where
     T: ::std::string::ToString + ::std::clone::Clone + 'static,
 {
     match v.into() {
-        Signal::Static(t) => set_inline_styles(h, &t.to_string()),
+        Signal::Stored(sv) => sv.with(|t| set_inline_styles(h, &t.to_string())),
         Signal::Dynamic(sig) => {
             effect(move || set_inline_styles(h, &sig.get().to_string()));
         }
@@ -46,7 +46,7 @@ where
     T: ::std::string::ToString + ::std::clone::Clone + 'static,
 {
     match v.into() {
-        Signal::Static(t) => set_attribute(h, name, &t.to_string()),
+        Signal::Stored(sv) => sv.with(|t| set_attribute(h, name, &t.to_string())),
         Signal::Dynamic(sig) => {
             effect(move || set_attribute(h, name, &sig.get().to_string()));
         }
@@ -65,7 +65,7 @@ where
     V: ::std::convert::Into<Signal<i32>>,
 {
     match v.into() {
-        Signal::Static(t) => set_attribute_int(h, name, i64::from(t)),
+        Signal::Stored(sv) => sv.with(|t| set_attribute_int(h, name, i64::from(*t))),
         Signal::Dynamic(sig) => {
             effect(move || set_attribute_int(h, name, i64::from(sig.get())));
         }
@@ -77,7 +77,7 @@ where
     V: ::std::convert::Into<Signal<bool>>,
 {
     match v.into() {
-        Signal::Static(t) => set_attribute_bool(h, name, t),
+        Signal::Stored(sv) => sv.with(|t| set_attribute_bool(h, name, *t)),
         Signal::Dynamic(sig) => {
             effect(move || set_attribute_bool(h, name, sig.get()));
         }
@@ -89,7 +89,7 @@ where
     V: ::std::convert::Into<Signal<f64>>,
 {
     match v.into() {
-        Signal::Static(t) => set_attribute_double(h, name, t),
+        Signal::Stored(sv) => sv.with(|t| set_attribute_double(h, name, *t)),
         Signal::Dynamic(sig) => {
             effect(move || set_attribute_double(h, name, sig.get()));
         }
@@ -106,7 +106,7 @@ where
     T: ::std::string::ToString + ::std::clone::Clone + 'static,
 {
     match v.into() {
-        Signal::Static(t) => set_attribute(h, &name, &t.to_string()),
+        Signal::Stored(sv) => sv.with(|t| set_attribute(h, &name, &t.to_string())),
         Signal::Dynamic(sig) => {
             effect(move || set_attribute(h, &name, &sig.get().to_string()));
         }

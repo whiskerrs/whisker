@@ -15,8 +15,9 @@
 //!
 //! `Signal<T>` encodes this in two variants:
 //!
-//! - [`Signal::Static`] — a plain value the builder sets once and
-//!   forgets about.
+//! - [`Signal::Stored`] — a plain value the builder sets once and
+//!   forgets about, held in an owner-bound [`StoredValue<T>`] arena
+//!   slot so the whole enum stays `Copy`.
 //! - [`Signal::Dynamic`] — a [`ReadSignal<T>`] handle. The builder
 //!   wraps its read in an `effect`, so the underlying signal becomes
 //!   a dependency and changes propagate to the element automatically.
@@ -38,7 +39,7 @@
 //! // .value() does:
 //! fn value(self, v: impl Into<Signal<String>>) -> Self {
 //!     match v.into() {
-//!         Signal::Static(s) => set_attribute(h, "value", &s),
+//!         Signal::Stored(s) => set_attribute(h, "value", &s.get()),
 //!         Signal::Dynamic(sig) => {
 //!             effect(move || set_attribute(h, "value", &sig.get()));
 //!             //                                          ^^^^^^^
@@ -53,7 +54,7 @@
 //! ```
 //!
 //! Passing `my_signal.get()` instead — pre-reading the signal at the
-//! call site — produces a `Signal::Static`: the read happens once
+//! call site — produces a `Signal::Stored`: the read happens once
 //! before [`effect`] is even on the observer stack, so no
 //! subscription is registered, and the prop becomes a one-shot
 //! snapshot. This is the user-facing "static vs dynamic" distinction.
@@ -72,31 +73,41 @@
 //! [`Memo<T>`]: super::computed
 
 use super::signal::{ReadSignal, RwSignal};
+use super::stored::StoredValue;
 
 /// Prop value: either a static `T` or a reactive [`ReadSignal<T>`].
 ///
 /// Built-in tag builders / `#[component]` generated builders /
 /// `#[whisker::module_component]` generated builders all accept
 /// `impl Into<Signal<T>>`. The variant determines whether the
-/// builder sets the attribute once ([`Static`]) or wraps the read
+/// builder sets the attribute once ([`Stored`]) or wraps the read
 /// in an `effect` ([`Dynamic`]).
 ///
-/// [`Static`]: Signal::Static
+/// [`Stored`]: Signal::Stored
 /// [`Dynamic`]: Signal::Dynamic
 ///
-/// Cloneable when `T: Clone` — the `Static` arm clones the inner
-/// value, the `Dynamic` arm just `Copy`-clones the `ReadSignal`
-/// handle (which is internally a [`NodeId`]). Components routinely
-/// pass the same prop into multiple `computed` / `effect` closures,
-/// so cheap cloning is important.
+/// `Copy` (and `Clone`) regardless of whether `T: Clone` — the
+/// `Stored` arm holds an owner-bound [`StoredValue<T>`] (itself a
+/// `Copy` arena handle) rather than an inline `T`, and the `Dynamic`
+/// arm is a `Copy` [`ReadSignal`] handle (internally a [`NodeId`]).
+/// This is what lets `#[component]` bodies (`FnMut`) move a
+/// `Signal<T>` prop into several nested `move` closures without
+/// `.clone()` — see whisker issue #8.
 ///
 /// [`NodeId`]: super::NodeId
-#[derive(Clone)]
+//
+// NOTE: `Clone`/`Copy` are implemented by hand below rather than
+// `#[derive]`d. A derived impl would add a spurious `T: Copy` bound,
+// but both arms (`StoredValue<T>` / `ReadSignal<T>`) are `Copy` for
+// *any* `T: 'static` — they're arena handles, not inline values — so
+// `Signal<T>` must be `Copy` unconditionally (e.g. `Signal<String>`).
 pub enum Signal<T: 'static> {
-    /// Plain value. The builder method that consumes this calls
+    /// Plain value, held in an owner-bound [`StoredValue<T>`] arena
+    /// slot. The builder method that consumes this calls
     /// `set_attribute` / `set_inline_styles` / etc. exactly once
-    /// with the value. No reactive subscription is set up.
-    Static(T),
+    /// with the value. No reactive subscription is set up; reading
+    /// the `StoredValue` does not tick the dependency graph.
+    Stored(StoredValue<T>),
     /// Reactive handle. The builder wraps its read in
     /// [`super::effect`] — each read inside that effect registers
     /// the underlying signal as a dependency, so subsequent
@@ -108,10 +119,19 @@ pub enum Signal<T: 'static> {
     Dynamic(ReadSignal<T>),
 }
 
+// Hand-written so the bound is `T: 'static`, not `T: Copy` — see the
+// note on the enum. Both variants wrap `Copy` arena handles.
+impl<T: 'static> Clone for Signal<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T: 'static> Copy for Signal<T> {}
+
 impl<T: 'static + Clone> Signal<T> {
     /// Read the current value.
     ///
-    /// - For [`Signal::Static`]: returns a clone of the held value.
+    /// - For [`Signal::Stored`]: returns a clone of the held value.
     ///   No reactivity is involved.
     /// - For [`Signal::Dynamic`]: forwards to [`ReadSignal::get`],
     ///   which **registers the underlying signal as a dependency**
@@ -136,7 +156,7 @@ impl<T: 'static + Clone> Signal<T> {
     /// ```
     pub fn get(&self) -> T {
         match self {
-            Signal::Static(v) => v.clone(),
+            Signal::Stored(v) => v.get(),
             Signal::Dynamic(sig) => sig.get(),
         }
     }
@@ -152,18 +172,26 @@ impl<T: 'static + Clone> Signal<T> {
 
 impl<T: 'static> From<T> for Signal<T> {
     fn from(v: T) -> Self {
-        Signal::Static(v)
+        // NOTE: constructing a *static* `Signal` now allocates an
+        // owner-bound arena slot ([`StoredValue::new`]) rather than
+        // storing `v` inline — this is the cost of making `Signal<T>`
+        // `Copy`. Mirrors `StoredValue`'s detached-owner fallback: if
+        // there's no current reactive owner it logs a warning and
+        // parks the value in a detached scope (no panic). So a static
+        // `Signal` built entirely outside a reactive context still
+        // works, it just isn't tied to a disposable scope.
+        Signal::Stored(StoredValue::new(v))
     }
 }
 
-// `Signal<T: Default>::default() -> Signal::Static(T::default())`.
+// `Signal<T: Default>::default() -> Signal::Stored(T::default())`.
 // Used by `#[whisker::module_component]`'s builder: a prop the caller
 // omits falls back to `unwrap_or_default()`, which produces a
 // reasonable "attribute not set" value (`""` for `Signal<String>`,
 // `false` for `Signal<bool>`, etc.). Phase 7-Φ.H.2 follow-up.
 impl<T: 'static + Default> Default for Signal<T> {
     fn default() -> Self {
-        Signal::Static(T::default())
+        Signal::Stored(StoredValue::new(T::default()))
     }
 }
 
@@ -187,7 +215,7 @@ impl<T: 'static + Clone> From<RwSignal<T>> for Signal<T> {
 // `Into<Signal<&str>>` via the blanket `From<T> for Signal<T>`).
 impl From<&str> for Signal<String> {
     fn from(s: &str) -> Self {
-        Signal::Static(s.to_string())
+        Signal::Stored(StoredValue::new(s.to_string()))
     }
 }
 
@@ -202,8 +230,36 @@ mod tests {
     fn static_variant_returns_held_value() {
         __reset_for_tests();
         let s: Signal<&'static str> = "hello".into();
-        assert!(matches!(s, Signal::Static("hello")));
+        assert!(matches!(s, Signal::Stored(_)));
         assert_eq!(s.get(), "hello");
+    }
+
+    #[test]
+    fn signal_is_copy() {
+        // The whole point of issue #8: a non-Copy-`T` `Signal<T>` prop
+        // can be moved into multiple `move` closures without `.clone()`.
+        // This wouldn't even compile if `Signal<T>` weren't `Copy`.
+        __reset_for_tests();
+
+        fn assert_copy<C: Copy>(_: &C) {}
+
+        let s: Signal<String> = "abc".into();
+        assert_copy(&s);
+
+        // Move the *same* binding into two independent `move` closures.
+        let first = move || s.get();
+        let second = move || s.get();
+        assert_eq!(first(), "abc");
+        assert_eq!(second(), "abc");
+
+        // A dynamic Signal is Copy too.
+        let (count, _set) = signal(5_i32);
+        let d: Signal<i32> = count.into();
+        assert_copy(&d);
+        let a = move || d.get();
+        let b = move || d.get();
+        assert_eq!(a(), 5);
+        assert_eq!(b(), 5);
     }
 
     #[test]
