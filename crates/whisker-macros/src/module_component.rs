@@ -368,6 +368,44 @@ enum PropKind {
     EventTyped { event: String, payload: Type },
 }
 
+/// Event names Lynx's native gesture / animation pipeline claims for
+/// itself. A `#[whisker::module_component]` that dispatches a custom
+/// event under one of these names is **silently swallowed** — Lynx's
+/// built-in gesture recognition consumes the name before it reaches the
+/// custom-event path, so the `on_<event>` handler never fires (no
+/// error, no log). It cost an evaluation project hours to find, so the
+/// macro now rejects it at compile time.
+///
+/// The list mirrors Lynx's touch + animation event families (see
+/// `whisker_runtime::event` and <https://lynxjs.org/api/lynx-api/event/event.html>).
+/// Both the canonical spelling (`longpress`) and the snake_case form an
+/// `on_<event>` prop would naturally produce (`long_press`) are
+/// reserved, since authors hit the collision either way. Component-level
+/// custom events Lynx does NOT intercept (`scroll`, `change`, …) are
+/// fine — only the gesture/animation names below collide.
+const RESERVED_EVENT_NAMES: &[&str] = &[
+    // TouchEvent family (canonical + snake_case variants).
+    "tap",
+    "click",
+    "longpress",
+    "long_press",
+    "touchstart",
+    "touch_start",
+    "touchmove",
+    "touch_move",
+    "touchend",
+    "touch_end",
+    "touchcancel",
+    "touch_cancel",
+    // AnimationEvent family (canonical + snake_case variants).
+    "animationstart",
+    "animation_start",
+    "animationend",
+    "animation_end",
+    "transitionend",
+    "transition_end",
+];
+
 fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
     let name = ident.to_string();
 
@@ -385,10 +423,23 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
             return Err(syn::Error::new(
                 ident.span(),
                 "#[whisker::module_component]: event prop name `on_` is empty; \
-                 use e.g. `on_tap: ()` or `on_input: TouchEvent`",
+                 use e.g. `on_press: ()` or `on_input: TouchEvent`",
             ));
         }
         let event = event.to_string();
+        if RESERVED_EVENT_NAMES.contains(&event.as_str()) {
+            return Err(syn::Error::new(
+                ident.span(),
+                format!(
+                    "#[whisker::module_component]: event name `{event}` collides with a \
+                     Lynx built-in gesture/animation event and would be silently swallowed \
+                     (the native gesture pipeline consumes it before your custom event \
+                     fires, so `{ident}` would never be called). Rename it to a \
+                     non-reserved, module-specific name — e.g. `on_{event}_gesture`, \
+                     `on_press`, `on_page_changed`, or `on_activate`.",
+                ),
+            ));
+        }
         if is_unit_type(ty) {
             return Ok(PropKind::EventNoPayload { event });
         }
