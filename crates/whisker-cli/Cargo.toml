@@ -49,6 +49,8 @@ indicatif = "0.17"
 # DevServer::run(); the heavy deps (tokio / axum / notify / object)
 # all live in whisker-dev-server.
 whisker-dev-server = { workspace = true }
+# `whisker fmt` — rustfmt drop-in that also formats render!/css! bodies.
+whisker-fmt = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 # `whisker run` reads the user's `whisker.rs` via a tiny probe build
 # and parses the resulting Config JSON. The dev-server does NOT

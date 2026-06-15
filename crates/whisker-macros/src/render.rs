@@ -1,69 +1,30 @@
-//! `render!` macro — compose-style, kwarg-only DSL.
+//! `render!` macro codegen — compose-style, kwarg-only DSL.
 //!
-//! ```text
-//! root      := node
-//! node      := IDENT ( '(' kwargs ')' )? ( '{' children '}' )?
-//! kwargs    := IDENT ':' expr ( ',' IDENT ':' expr )* ','?
-//!            | IDENT                           # partial (mid-typing)
-//! children  := node*
-//! ```
+//! The PARSE side (AST + `syn::parse::Parse` impls + classification
+//! helpers) lives in the `whisker-macro-syntax` crate so both this
+//! codegen AND the `whisker-fmt` formatter can share it. This module
+//! holds only the lowering.
 //!
-//! Each `node` is classified by its leading ident:
+//! Because the AST types ([`Root`], [`Node`], …) are now defined in
+//! another crate, the orphan rule forbids adding *inherent* methods to
+//! them here. The lowering is therefore expressed as FREE FUNCTIONS
+//! over `&Root` / `&Node` / `&ElementNode` / `&UserComponentNode`
+//! (`root_to_tokens`, `node_to_tokens`, …). The emitted token streams
+//! are byte-for-byte identical to the previous inherent-method form, so
+//! all existing macro behavior and tests are preserved.
 //!
-//! - Built-in tag (`view`, `page`, `text`, `raw_text`,
-//!   `scroll_view`) → lowered to a builder chain
-//!   `::whisker::__tags::__<tag>_ctor().style(…).…__h()`.
-//! - `Show` / `For` → lowered to the matching `whisker::show` /
-//!   `whisker::for_each` helper.
-//! - `children()` (lowercase ident + empty parens, no block) → lowered
-//!   to `view::mount_children(&children)`. Mounts the surrounding
-//!   `#[component]`'s `children: Children` prop at this position.
-//!   Anywhere a regular node would go; can appear multiple times for
-//!   multi-projection. See `mount_children` in `whisker-runtime`.
-//! - Anything else → user `#[component]` invocation; lowered to
-//!   `name(<Name>Props::builder().k(v)…build())`.
-//!
-//! ## Children-block restriction
-//!
-//! Every item in a `{ … }` children block MUST be node-shaped
-//! (`IDENT(kwargs?) { … }?`). Bare string literals and bare
-//! `{expr}` blocks are rejected with a hard parser error.
-//!
-//! Why: RA experiments (kept as integration tests in
-//! `tests/ra_completion.rs`) showed that
-//! rust-analyzer's input fixup gives up on children blocks that
-//! contain anything other than `IDENT(name: value, …)` shapes at
-//! their top level. With a bare `"hi"` or `{count}` present, the
-//! sibling element's kwarg-position completion stops working — no
-//! emission-side workaround helped. The fix is to forbid those
-//! shapes at the DSL level so the block stays on RA's happy path.
-//!
-//! For text content, use a kwarg-styled element:
-//!
-//! ```ignore
-//! render! {
-//!     view(style: "...") {
-//!         text(value: "Hello")
-//!         text(value: format!("count: {}", c.get()))
-//!     }
-//! }
-//! ```
+//! See `whisker-macro-syntax/src/render.rs` for the grammar.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
-use syn::{
-    braced,
-    ext::IdentExt,
-    parenthesized,
-    parse::{Parse, ParseStream, Result},
-    token, Expr, Ident, LitStr, Token,
-};
+use syn::LitStr;
+use whisker_macro_syntax::render::{ElementNode, Kwarg, Node, Root, UserComponentNode};
 
 pub fn expand(input: TokenStream) -> TokenStream {
     let tokens: TokenStream2 = input.into();
     match syn::parse2::<Root>(tokens) {
-        Ok(root) => root.to_tokens().into(),
+        Ok(root) => root_to_tokens(&root).into(),
         Err(err) => {
             // Pair the compile_error with a same-typed placeholder
             // so the surrounding code (`let h: Element = render!
@@ -88,469 +49,197 @@ pub fn expand(input: TokenStream) -> TokenStream {
 #[cfg(test)]
 fn expand_test(input: TokenStream2) -> TokenStream2 {
     let root: Root = syn::parse2(input).expect("test input must parse");
-    root.to_tokens()
-}
-
-// ---- AST ----------------------------------------------------------------
-
-struct Root {
-    node: Node,
-}
-
-impl Parse for Root {
-    fn parse(input: ParseStream) -> Result<Self> {
-        Ok(Self {
-            node: input.parse()?,
-        })
-    }
-}
-
-enum Node {
-    Element(ElementNode),
-    UserComponent(UserComponentNode),
-    /// `children()` — the lone special-cased ident in the children
-    /// grammar. Lowers to
-    /// `::whisker::runtime::view::mount_children(&children)` so the
-    /// surrounding `#[component]`'s `children: Children` prop gets
-    /// realised at this position. See `mount_children` in
-    /// `crates/whisker-runtime/src/view/into_view.rs` for the
-    /// phantom-mount mechanics.
-    ChildrenSlot {
-        span: proc_macro2::Span,
-    },
-}
-
-struct ElementNode {
-    tag: Ident,
-    kwargs: Vec<Kwarg>,
-    children: Vec<Node>,
-}
-
-struct UserComponentNode {
-    /// PascalCase ident the call site resolves to. `#[component]`
-    /// emits a `pub use __<name>_inner::<fn> as <PascalCase>;`
-    /// alias under this name; the snake_case fn itself lives
-    /// inside the inner module and isn't reachable from outer
-    /// scope, so the emission MUST go through this alias.
-    alias_ident: Ident,
-    kwargs: Vec<Kwarg>,
-    children: Vec<Node>,
-}
-
-struct Kwarg {
-    name: Ident,
-    value: Expr,
-    /// `true` when the user hasn't typed `:` + an expression yet
-    /// (cursor sits at the end of the kwarg name). The builder-
-    /// chain emitter routes these through `.#name(())` so RA's
-    /// method completion can fire on the partial prefix.
-    partial: bool,
-}
-
-impl Parse for Node {
-    fn parse(input: ParseStream) -> Result<Self> {
-        // Every node starts with an ident. Reject anything else at
-        // this position with a targeted error message — that's the
-        // only way to give a useful hint when the user writes bare
-        // `"hi"` or `{ count }` as a child.
-        if input.peek(LitStr) {
-            let lit: LitStr = input.parse()?;
-            return Err(syn::Error::new(
-                lit.span(),
-                "bare string literals are not allowed in render!; \
-                 use `text(value: \"…\")` to render text content",
-            ));
-        }
-        if input.peek(token::Brace) {
-            // Take the span from the brace itself for a clean
-            // arrow in the diagnostic.
-            let body;
-            let _ = braced!(body in input);
-            let _ = body; // discard contents — we're erroring out
-            return Err(input.error(
-                "bare `{expr}` blocks are not allowed in render!; \
-                 use `text(value: <expr>)` to render dynamic text",
-            ));
-        }
-
-        let tag: Ident = input.parse()?;
-
-        // Special-case the `children()` slot before the regular
-        // kwarg path runs. Shape requirements:
-        //   - ident `children`
-        //   - immediately followed by an EMPTY paren group `()`
-        //   - no `{ … }` block after it
-        // Anything else (`children(arg)`, `children { … }`, bare
-        // `children`) falls through to the standard tag path, so a
-        // user `#[component] fn children(…)` would still resolve
-        // correctly via the snake_case → PascalCase route. The
-        // empty-paren requirement keeps RA's "you typed `children` —
-        // suggest completions" behaviour usable; the `()` is the
-        // explicit signal "this is the slot, not an arbitrary ident".
-        if tag == "children" && input.peek(token::Paren) {
-            // Speculative parse of the paren body — we only commit
-            // to the slot interpretation if the body is empty AND
-            // no `{}` block follows.
-            let fork = input.fork();
-            let body;
-            parenthesized!(body in fork);
-            if body.is_empty() && !fork.peek(token::Brace) {
-                // Consume the same tokens off the real input cursor
-                // now that we've decided.
-                let consume;
-                parenthesized!(consume in input);
-                debug_assert!(consume.is_empty());
-                return Ok(Node::ChildrenSlot { span: tag.span() });
-            }
-            // Not a slot — fall through to the regular tag path.
-            // The paren tokens are still on `input` for the
-            // `parenthesized!` call below to consume.
-        }
-
-        let mut kwargs = Vec::new();
-        if input.peek(token::Paren) {
-            let body;
-            parenthesized!(body in input);
-            while !body.is_empty() {
-                // `Ident::peek_any` / `Ident::parse_any` admits
-                // raw-style identifiers AND Rust keywords. Required
-                // for the `ref:` kwarg (the most natural call-site
-                // name; `ref` itself is a Rust keyword). Plain
-                // `body.peek(Ident)` would reject `ref` outright;
-                // `peek_any` lets it through as an `Ident` whose text
-                // is `"ref"`, and the `name_str == "ref"` branch below
-                // routes it to the `.with_ref(...)` setter.
-                if !body.peek(syn::Ident::peek_any) {
-                    return Err(body.error(
-                        "kwargs must be `name: expr` — positional arguments \
-                         not allowed",
-                    ));
-                }
-                let name: Ident = body.call(syn::Ident::parse_any)?;
-                let (value, partial) = if body.peek(Token![:]) {
-                    body.parse::<Token![:]>()?;
-                    (body.parse::<Expr>()?, false)
-                } else {
-                    // Partial — synthesize `()` as a placeholder so
-                    // the emitter can still place the method-name
-                    // token at the user's source span.
-                    let placeholder: Expr = syn::parse_quote_spanned!(name.span()=> ());
-                    (placeholder, true)
-                };
-                kwargs.push(Kwarg {
-                    name,
-                    value,
-                    partial,
-                });
-                if body.peek(Token![,]) {
-                    body.parse::<Token![,]>()?;
-                }
-            }
-        }
-
-        let mut children = Vec::new();
-        if input.peek(token::Brace) {
-            let body;
-            braced!(body in input);
-            while !body.is_empty() {
-                children.push(body.parse::<Node>()?);
-            }
-        }
-
-        let name = tag.to_string();
-        // Classification by casing + whitelist:
-        //
-        //   snake_case + in built-in whitelist  → Element (Lynx tag)
-        //   PascalCase (anything)                → UserComponent
-        //                                          (preferred: PascalCase
-        //                                          alias from #[component])
-        //   snake_case + not in whitelist        → UserComponent
-        //                                          (back-compat path:
-        //                                          fn name as-is, Props
-        //                                          derived from snake_case)
-        //
-        // The PascalCase form is the canonical convention now (matches
-        // React / Leptos / Solid). Snake_case stays parseable so:
-        //   (1) mid-typing partials (`vie|`) don't blow up the macro
-        //       — RA needs the expansion to succeed for completion,
-        //   (2) older code calling snake_case names keeps compiling.
-        //
-        // Built-in control flow (`ForEach` / `Show`) is no longer
-        // special-cased: those are `#[component]` functions in the
-        // `whisker` crate (see `crates/whisker/src/control_flow.rs`)
-        // and resolve through the UserComponent path just like a
-        // user-implemented control flow.
-        if is_builtin_tag(&name) {
-            Ok(Node::Element(ElementNode {
-                tag,
-                kwargs,
-                children,
-            }))
-        } else {
-            // User component. Derive `alias_ident` (PascalCase —
-            // the public re-exported name) and `props_ident`
-            // (PascalCase + "Props") from whichever form the user
-            // wrote. The snake_case fn itself stays inside the
-            // inner module and we never reference it directly
-            // from the lowering.
-            let span = tag.span();
-            let alias_str = if is_pascal_case(&name) {
-                name.clone()
-            } else {
-                snake_to_pascal(&name)
-            };
-            let alias_ident = Ident::new(&alias_str, span);
-            Ok(Node::UserComponent(UserComponentNode {
-                alias_ident,
-                kwargs,
-                children,
-            }))
-        }
-    }
-}
-
-/// `my_card` → `MyCard`. Snake-to-PascalCase for the back-compat
-/// snake_case path of user components in `render!`.
-fn snake_to_pascal(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut upper_next = true;
-    for c in name.chars() {
-        if c == '_' {
-            upper_next = true;
-            continue;
-        }
-        if upper_next {
-            for u in c.to_uppercase() {
-                out.push(u);
-            }
-            upper_next = false;
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// Lowercase identifiers that lower to `view::create_element` calls
-/// rather than user component invocations. Matches the `ElementTag`
-/// enum + the C bridge's `whisker_bridge_create_element` switch.
-fn is_builtin_tag(name: &str) -> bool {
-    matches!(
-        name,
-        "page" | "view" | "text" | "raw_text" | "scroll_view" | "list" | "fragment"
-    )
-    // `list_item` is intentionally NOT exposed as a user-writable
-    // tag. The `list` render-props builder auto-wraps every
-    // `children(item)` result in a `<list-item>` for the Lynx
-    // platform UI layer's UIComponent contract — there's no path
-    // for user code to reach a list-item, so surfacing it would
-    // only invite confusion. The `__list_item_ctor` builder is
-    // kept in `__tags` as a `pub(crate)` runtime helper the list
-    // builder calls directly.
-}
-
-/// `true` if `name`'s first character is ASCII uppercase. Used to
-/// route PascalCase idents (user components / control flow) away
-/// from the snake_case-only Element path.
-fn is_pascal_case(name: &str) -> bool {
-    name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+    root_to_tokens(&root)
 }
 
 // ---- Codegen ------------------------------------------------------------
 
-impl Root {
-    fn to_tokens(&self) -> TokenStream2 {
-        self.node.to_tokens_returning_handle()
+fn root_to_tokens(root: &Root) -> TokenStream2 {
+    node_to_tokens_returning_handle(&root.node)
+}
+
+fn node_to_tokens_returning_handle(node: &Node) -> TokenStream2 {
+    match node {
+        Node::Element(el) => element_to_tokens(el),
+        Node::UserComponent(u) => user_component_to_tokens(u),
+        // `children()` resolves the surrounding `#[component]`'s
+        // `children: Children` prop by name. The body of a
+        // `#[component]` fn always destructures `children` into
+        // scope when the prop is declared, so this is a plain
+        // local-ident reference — no closure capture, no `move`,
+        // and (crucially) no `Rc::clone` either: `mount_children`
+        // takes `&Children` so the outer `FnMut` body can re-run
+        // (e.g. hot-reload remount) without `cannot move out`.
+        Node::ChildrenSlot { span } => quote_spanned! {*span=>
+            ::whisker::runtime::view::mount_children(&children)
+        },
     }
 }
 
-impl Node {
-    fn to_tokens_returning_handle(&self) -> TokenStream2 {
-        match self {
-            Node::Element(el) => el.to_tokens(),
-            Node::UserComponent(u) => u.to_tokens(),
-            // `children()` resolves the surrounding `#[component]`'s
-            // `children: Children` prop by name. The body of a
-            // `#[component]` fn always destructures `children` into
-            // scope when the prop is declared, so this is a plain
-            // local-ident reference — no closure capture, no `move`,
-            // and (crucially) no `Rc::clone` either: `mount_children`
-            // takes `&Children` so the outer `FnMut` body can re-run
-            // (e.g. hot-reload remount) without `cannot move out`.
-            Node::ChildrenSlot { span } => quote_spanned! {*span=>
-                ::whisker::runtime::view::mount_children(&children)
-            },
-        }
+/// Emit a `View`-shaped expression. Used by `Show` and `For`'s
+/// children-callback case; each child needs to be wrapped via
+/// `IntoView::into_view(…)` for the helper's signature.
+fn node_to_tokens_as_view(node: &Node) -> TokenStream2 {
+    let h = node_to_tokens_returning_handle(node);
+    quote! {
+        ::whisker::runtime::view::IntoView::into_view(#h)
+    }
+}
+
+/// Lower a built-in element to a builder chain on
+/// `::whisker::__tags::<tag>`. The inline-chain form
+/// (`__tags::__view_ctor().style(…).…__h()` with no intermediate
+/// `let __h = …; __h` binding) is load-bearing: a let-binding breaks
+/// RA's receiver-type threading and kills kwarg completion. See
+/// `tests/ra_completion.rs`.
+fn element_to_tokens(el: &ElementNode) -> TokenStream2 {
+    let tag_ident = &el.tag;
+    let tag_name = tag_ident.to_string();
+    let tag_span = tag_ident.span();
+    let ctor_ident = format_ident!("__{}_ctor", tag_ident, span = tag_span);
+    // Inline the full `::whisker::__tags::__<tag>_ctor()` path
+    // into the outer `quote!`s below. Storing it into an
+    // intermediate TokenStream and interpolating captures span /
+    // grouping info differently and breaks RA's kwarg completion.
+
+    // One `.kwarg(value)` token group per attr, span-anchored
+    // at the user's kwarg-name source position so RA's
+    // method-name completion lands on the right token.
+    let setter_calls: Vec<TokenStream2> = el
+        .kwargs
+        .iter()
+        .filter_map(|kw| element_kwarg_to_setter(el, kw))
+        .collect();
+
+    // Every partial kwarg routes through the setter chain as a
+    // method call — see the long comment in `element_kwarg_to_setter`.
+    let ident_refs: Vec<TokenStream2> = Vec::new();
+    let _ = tag_name;
+
+    // Children: each child becomes a `.child({ inner_chain })`
+    // method call on the builder.
+    let child_calls: Vec<TokenStream2> = el
+        .children
+        .iter()
+        .map(|c| {
+            let inner = node_to_tokens_returning_handle(c);
+            quote! { .child(#inner) }
+        })
+        .collect();
+
+    // No children AND no ident-refs → bare expression form.
+    // Keeps the chain on RA's happy path for partial-kwarg
+    // completion.
+    if child_calls.is_empty() && ident_refs.is_empty() {
+        return quote! {
+            {
+                use ::whisker::__tags::ElementBuilder as _;
+                ::whisker::__tags::#ctor_ident() #(#setter_calls)* .__h()
+            }
+        };
     }
 
-    /// Emit a `View`-shaped expression. Used by `Show` and
-    /// `For`'s children-callback case; each child needs to be
-    /// wrapped via `IntoView::into_view(…)` for the helper's
-    /// signature.
-    fn to_tokens_as_view(&self) -> TokenStream2 {
-        let h = self.to_tokens_returning_handle();
+    // Has children or ident-refs → still keep chain inline (no
+    // `let __h = … ; __h` binding around it), but add the
+    // ident-refs in a side block. The chain itself stays
+    // a single expression so RA can thread its receiver type.
+    let ident_refs_block = if ident_refs.is_empty() {
+        quote! {}
+    } else {
         quote! {
-            ::whisker::runtime::view::IntoView::into_view(#h)
+            #[allow(dead_code, unused_variables, path_statements)]
+            {
+                #(#ident_refs)*
+            }
+        }
+    };
+
+    if ident_refs.is_empty() {
+        quote! {
+            {
+                use ::whisker::__tags::ElementBuilder as _;
+                ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
+            }
+        }
+    } else {
+        quote! {
+            {
+                use ::whisker::__tags::ElementBuilder as _;
+                #ident_refs_block
+                ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
+            }
         }
     }
 }
 
-impl ElementNode {
-    /// Lower a built-in element to a builder chain on
-    /// `::whisker::__tags::<tag>`. The inline-chain form
-    /// (`__tags::__view_ctor().style(…).…__h()` with no intermediate
-    /// `let __h = …; __h` binding) is load-bearing: a let-binding
-    /// breaks RA's receiver-type threading and kills kwarg
-    /// completion. See `tests/ra_completion.rs`.
-    fn to_tokens(&self) -> TokenStream2 {
-        let tag_ident = &self.tag;
-        let tag_name = tag_ident.to_string();
-        let tag_span = tag_ident.span();
-        let ctor_ident = format_ident!("__{}_ctor", tag_ident, span = tag_span);
-        // Inline the full `::whisker::__tags::__<tag>_ctor()` path
-        // into the outer `quote!`s below. Storing it into an
-        // intermediate TokenStream and interpolating captures span /
-        // grouping info differently and breaks RA's kwarg completion.
+/// Lower one kwarg to a `.method(value)` token group, or `None` if this
+/// kwarg is partial-with-no-method-match (the emitter handles those via
+/// ident-refs instead).
+fn element_kwarg_to_setter(el: &ElementNode, kw: &Kwarg) -> Option<TokenStream2> {
+    let name = &kw.name;
+    let value = &kw.value;
+    let name_str = name.to_string();
+    let span = name.span();
+    let tag_name = el.tag.to_string();
 
-        // One `.kwarg(value)` token group per attr, span-anchored
-        // at the user's kwarg-name source position so RA's
-        // method-name completion lands on the right token.
-        let setter_calls: Vec<TokenStream2> = self
-            .kwargs
-            .iter()
-            .filter_map(|kw| self.kwarg_to_setter(kw))
-            .collect();
-
-        // Every partial kwarg routes through the setter chain as a
-        // method call — see the long comment in `kwarg_to_setter`.
-        let ident_refs: Vec<TokenStream2> = Vec::new();
-        let _ = tag_name;
-
-        // Children: each child becomes a `.child({ inner_chain })`
-        // method call on the builder.
-        let child_calls: Vec<TokenStream2> = self
-            .children
-            .iter()
-            .map(|c| {
-                let inner = c.to_tokens_returning_handle();
-                quote! { .child(#inner) }
-            })
-            .collect();
-
-        // No children AND no ident-refs → bare expression form.
-        // Keeps the chain on RA's happy path for partial-kwarg
-        // completion.
-        if child_calls.is_empty() && ident_refs.is_empty() {
-            return quote! {
-                {
-                    use ::whisker::__tags::ElementBuilder as _;
-                    ::whisker::__tags::#ctor_ident() #(#setter_calls)* .__h()
-                }
-            };
-        }
-
-        // Has children or ident-refs → still keep chain inline (no
-        // `let __h = … ; __h` binding around it), but add the
-        // ident-refs in a side block. The chain itself stays
-        // a single expression so RA can thread its receiver type.
-        let ident_refs_block = if ident_refs.is_empty() {
-            quote! {}
-        } else {
-            quote! {
-                #[allow(dead_code, unused_variables, path_statements)]
-                {
-                    #(#ident_refs)*
-                }
-            }
-        };
-
-        if ident_refs.is_empty() {
-            quote! {
-                {
-                    use ::whisker::__tags::ElementBuilder as _;
-                    ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
-                }
-            }
-        } else {
-            quote! {
-                {
-                    use ::whisker::__tags::ElementBuilder as _;
-                    #ident_refs_block
-                    ::whisker::__tags::#ctor_ident() #(#setter_calls)* #(#child_calls)* .__h()
-                }
-            }
-        }
+    if name_str == "key" && tag_name != "list" {
+        // `key:` on a direct element is a no-op (reconciliation
+        // hint with no semantic effect outside keyed lists). The
+        // `list` builder has its own typed `key` setter for the
+        // keyed-list key extractor closure, so let it through.
+        return None;
     }
 
-    /// Lower one kwarg to a `.method(value)` token group, or
-    /// `None` if this kwarg is partial-with-no-method-match (the
-    /// emitter handles those via ident-refs instead).
-    fn kwarg_to_setter(&self, kw: &Kwarg) -> Option<TokenStream2> {
-        let name = &kw.name;
-        let value = &kw.value;
-        let name_str = name.to_string();
-        let span = name.span();
-        let tag_name = self.tag.to_string();
-
-        if name_str == "key" && tag_name != "list" {
-            // `key:` on a direct element is a no-op (reconciliation
-            // hint with no semantic effect outside keyed lists). The
-            // `list` builder has its own typed `key` setter for the
-            // keyed-list key extractor closure, so let it through.
-            return None;
-        }
-
-        if kw.partial {
-            // ALWAYS emit a method call for partial kwargs. RA
-            // injects a sentinel suffix at the cursor during its
-            // expansion-for-completion pass, so any prefix-match
-            // heuristic (e.g. "only emit `.sty(())` if some builder
-            // method starts with `sty`") sees the suffixed name and
-            // returns false, breaking method-name completion.
-            return Some(quote_spanned! {span=> .#name(()) });
-        }
-
-        let call = if is_known_attr_method(&tag_name, &name_str) {
-            // Named builder attribute method (`style`, `class`, the
-            // universal trait attrs, and per-tag ones like
-            // `scroll_view::bounces`, `text::text_maxline`). The method
-            // takes `impl Into<Signal<T>>` for its semantic `T` and
-            // handles Static / Dynamic dispatch internally; the value
-            // flows as-is and type inference picks the right `From`
-            // (`From<T>` static / `From<ReadSignal<T>>` reactive) — so
-            // `bounces: true` / `text_maxline: 3` /
-            // `mode: ImageMode::AspectFit` all just work.
-            quote_spanned! {span=> .#name(#value) }
-        } else if name_str == "ref" {
-            // `ref: <ElementRef>` on a built-in element → bind the ref
-            // to this element so its UI methods are invokable after
-            // mount. (`ref` is a keyword, so the builder method is
-            // `bind_ref`.)
-            quote_spanned! {span=> .bind_ref(#value) }
-        } else if is_known_event_method(&name_str) {
-            // Typed event helper on `ElementBuilder` — `.on_tap(f)`,
-            // `.on_longpress(f)`, … — where `f` receives a typed
-            // `TouchEvent` / `CustomEvent` / `AnimationEvent`. The
-            // closure flows through unchanged; the builder method
-            // fixes the event type.
-            quote_spanned! {span=> .#name(#value) }
-        } else if let Some(event) = strip_on_prefix(&name_str) {
-            // Unknown event name → raw `WhiskerValue` escape hatch
-            // (`.on("name", |e: WhiskerValue| …)`).
-            let event_lit = LitStr::new(&event, span);
-            quote_spanned! {span=> .on(#event_lit, #value) }
-        } else {
-            // Catch-all → `.attr("kebab-name", value)`. The builder's
-            // `.attr` accepts `impl Into<Signal<T>>` like the named
-            // attr methods; no closure wrapping here either.
-            let kebab = name_str.replace('_', "-");
-            let kebab_lit = LitStr::new(&kebab, span);
-            quote_spanned! {span=>
-                .attr(#kebab_lit, #value)
-            }
-        };
-        Some(call)
+    if kw.partial {
+        // ALWAYS emit a method call for partial kwargs. RA
+        // injects a sentinel suffix at the cursor during its
+        // expansion-for-completion pass, so any prefix-match
+        // heuristic (e.g. "only emit `.sty(())` if some builder
+        // method starts with `sty`") sees the suffixed name and
+        // returns false, breaking method-name completion.
+        return Some(quote_spanned! {span=> .#name(()) });
     }
+
+    let call = if is_known_attr_method(&tag_name, &name_str) {
+        // Named builder attribute method (`style`, `class`, the
+        // universal trait attrs, and per-tag ones like
+        // `scroll_view::bounces`, `text::text_maxline`). The method
+        // takes `impl Into<Signal<T>>` for its semantic `T` and
+        // handles Static / Dynamic dispatch internally; the value
+        // flows as-is and type inference picks the right `From`
+        // (`From<T>` static / `From<ReadSignal<T>>` reactive) — so
+        // `bounces: true` / `text_maxline: 3` /
+        // `mode: ImageMode::AspectFit` all just work.
+        quote_spanned! {span=> .#name(#value) }
+    } else if name_str == "ref" {
+        // `ref: <ElementRef>` on a built-in element → bind the ref
+        // to this element so its UI methods are invokable after
+        // mount. (`ref` is a keyword, so the builder method is
+        // `bind_ref`.)
+        quote_spanned! {span=> .bind_ref(#value) }
+    } else if is_known_event_method(&name_str) {
+        // Typed event helper on `ElementBuilder` — `.on_tap(f)`,
+        // `.on_longpress(f)`, … — where `f` receives a typed
+        // `TouchEvent` / `CustomEvent` / `AnimationEvent`. The
+        // closure flows through unchanged; the builder method
+        // fixes the event type.
+        quote_spanned! {span=> .#name(#value) }
+    } else if let Some(event) = strip_on_prefix(&name_str) {
+        // Unknown event name → raw `WhiskerValue` escape hatch
+        // (`.on("name", |e: WhiskerValue| …)`).
+        let event_lit = LitStr::new(&event, span);
+        quote_spanned! {span=> .on(#event_lit, #value) }
+    } else {
+        // Catch-all → `.attr("kebab-name", value)`. The builder's
+        // `.attr` accepts `impl Into<Signal<T>>` like the named
+        // attr methods; no closure wrapping here either.
+        let kebab = name_str.replace('_', "-");
+        let kebab_lit = LitStr::new(&kebab, span);
+        quote_spanned! {span=>
+            .attr(#kebab_lit, #value)
+        }
+    };
+    Some(call)
 }
 
 /// Kwargs that map to a **named** builder attribute method
@@ -703,77 +392,72 @@ fn is_known_event_method(name: &str) -> bool {
 
 // ---- User-component codegen ---------------------------------------------
 
-impl UserComponentNode {
-    fn to_tokens(&self) -> TokenStream2 {
-        let fn_ident = &self.alias_ident;
+fn user_component_to_tokens(uc: &UserComponentNode) -> TokenStream2 {
+    let fn_ident = &uc.alias_ident;
 
-        let setter_calls: Vec<TokenStream2> = self
-            .kwargs
-            .iter()
-            .map(|kw| {
-                let name = &kw.name;
-                let name_str = name.to_string();
-                let span = name.span();
-                if kw.partial {
-                    // Partial kwarg on a user component → emit
-                    // `.name(())` so typed-builder's per-field
-                    // setter shows up under RA's method completion.
-                    quote_spanned! {span=> .#name(()) }
-                } else if name_str == "ref" {
-                    // `ref:` is the canonical call-site name for the
-                    // implicit ElementRef prop. `ref` is a Rust
-                    // keyword so the setter is exposed as
-                    // `.with_ref(...)`; re-route here.
-                    let value = &kw.value;
-                    quote_spanned! {span=> .with_ref(#value) }
-                } else {
-                    let value = &kw.value;
-                    quote_spanned! {span=> .#name(#value) }
-                }
-            })
-            .collect();
-
-        // `key` flows as a regular Props field — control-flow
-        // components like `ForEach` are themselves `#[component]`s
-        // and read it directly off `XxxProps`.
-
-        let children_call = if self.children.is_empty() {
-            quote! {}
-        } else {
-            let child_views: Vec<TokenStream2> = self
-                .children
-                .iter()
-                .map(|c| c.to_tokens_as_view())
-                .collect();
-            let body = if child_views.len() == 1 {
-                let only = &child_views[0];
-                quote! { #only }
+    let setter_calls: Vec<TokenStream2> = uc
+        .kwargs
+        .iter()
+        .map(|kw| {
+            let name = &kw.name;
+            let name_str = name.to_string();
+            let span = name.span();
+            if kw.partial {
+                // Partial kwarg on a user component → emit
+                // `.name(())` so typed-builder's per-field
+                // setter shows up under RA's method completion.
+                quote_spanned! {span=> .#name(()) }
+            } else if name_str == "ref" {
+                // `ref:` is the canonical call-site name for the
+                // implicit ElementRef prop. `ref` is a Rust
+                // keyword so the setter is exposed as
+                // `.with_ref(...)`; re-route here.
+                let value = &kw.value;
+                quote_spanned! {span=> .with_ref(#value) }
             } else {
-                quote! {
-                    ::whisker::runtime::view::View::Fragment(
-                        ::std::vec![#(#child_views),*]
-                    )
-                }
-            };
+                let value = &kw.value;
+                quote_spanned! {span=> .#name(#value) }
+            }
+        })
+        .collect();
+
+    // `key` flows as a regular Props field — control-flow
+    // components like `ForEach` are themselves `#[component]`s
+    // and read it directly off `XxxProps`.
+
+    let children_call = if uc.children.is_empty() {
+        quote! {}
+    } else {
+        let child_views: Vec<TokenStream2> =
+            uc.children.iter().map(node_to_tokens_as_view).collect();
+        let body = if child_views.len() == 1 {
+            let only = &child_views[0];
+            quote! { #only }
+        } else {
             quote! {
-                .children(::std::rc::Rc::new(move || { #body }))
+                ::whisker::runtime::view::View::Fragment(
+                    ::std::vec![#(#child_views),*]
+                )
             }
         };
-
-        // `#fn_ident::builder()` (not `#props_ident::builder()`): the
-        // component name doubles as a TYPE alias to its Props struct (see
-        // `#[component]`), so a single `use crate::Icon` is enough — no
-        // separate `IconProps` import. The outer `#fn_ident(…)` resolves
-        // to the callable (value namespace), the inner `#fn_ident::` to
-        // the Props type (type namespace).
         quote! {
-            #fn_ident(
-                #fn_ident::builder()
-                    #(#setter_calls)*
-                    #children_call
-                    .build()
-            )
+            .children(::std::rc::Rc::new(move || { #body }))
         }
+    };
+
+    // `#fn_ident::builder()` (not `#props_ident::builder()`): the
+    // component name doubles as a TYPE alias to its Props struct (see
+    // `#[component]`), so a single `use crate::Icon` is enough — no
+    // separate `IconProps` import. The outer `#fn_ident(…)` resolves
+    // to the callable (value namespace), the inner `#fn_ident::` to
+    // the Props type (type namespace).
+    quote! {
+        #fn_ident(
+            #fn_ident::builder()
+                #(#setter_calls)*
+                #children_call
+                .build()
+        )
     }
 }
 
@@ -796,8 +480,9 @@ fn strip_on_prefix(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_builtin_tag, snake_to_pascal, strip_on_prefix};
+    use super::strip_on_prefix;
     use proc_macro2::TokenStream as TokenStream2;
+    use whisker_macro_syntax::render::{is_builtin_tag, snake_to_pascal, Root};
 
     #[test]
     fn strips_snake_case() {
@@ -921,7 +606,7 @@ mod tests {
     #[test]
     fn bare_string_literal_child_is_rejected() {
         let input: TokenStream2 = quote::quote! { view { "hi" } };
-        let result = syn::parse2::<super::Root>(input);
+        let result = syn::parse2::<Root>(input);
         match result {
             Err(e) => assert!(
                 e.to_string().contains("string literals are not allowed"),
@@ -934,7 +619,7 @@ mod tests {
     #[test]
     fn bare_brace_expr_child_is_rejected() {
         let input: TokenStream2 = quote::quote! { view { { count } } };
-        let result = syn::parse2::<super::Root>(input);
+        let result = syn::parse2::<Root>(input);
         match result {
             Err(e) => assert!(
                 e.to_string().contains("`{expr}` blocks are not allowed")
@@ -948,7 +633,7 @@ mod tests {
     #[test]
     fn positional_arg_is_rejected() {
         let input: TokenStream2 = quote::quote! { text("hi") };
-        let result = syn::parse2::<super::Root>(input);
+        let result = syn::parse2::<Root>(input);
         assert!(result.is_err(), "positional arg should be a parse error");
     }
 

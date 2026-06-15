@@ -18,6 +18,10 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
+# Shared parse AST for `render!` / `css!`. The codegen in
+# `render.rs` / `css.rs` consumes these types via free functions —
+# the orphan rule forbids inherent methods on the now-foreign types.
+whisker-macro-syntax = { workspace = true }
 
 # tests/ra_completion.rs drives rust-analyzer over LSP to verify
 # that `render! { view(sty|) }` and friends actually surface the

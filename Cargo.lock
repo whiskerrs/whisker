@@ -1679,6 +1679,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2276,6 +2282,7 @@ dependencies = [
  "whisker-cng",
  "whisker-config",
  "whisker-dev-server",
+ "whisker-fmt",
 ]
 
 [[package]]
@@ -2362,6 +2369,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-fmt"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "quote",
+ "similar",
+ "syn",
+ "whisker-macro-syntax",
+]
+
+[[package]]
 name = "whisker-icons"
 version = "0.3.0"
 dependencies = [
@@ -2409,6 +2428,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-macro-syntax"
+version = "0.3.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "whisker-macros"
 version = "0.3.0"
 dependencies = [
@@ -2417,6 +2445,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syn",
+ "whisker-macro-syntax",
 ]
 
 [[package]]

@@ -1,0 +1,22 @@
+[package]
+name = "whisker-macro-syntax"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Shared parse AST for Whisker's `render!` and `css!` macros — consumed by whisker-macros (codegen) and whisker-fmt (formatting)."
+
+# NOTE: this is a plain library crate, NOT a proc-macro crate. It holds
+# only the `syn::parse::Parse` side of the DSLs so a non-proc-macro
+# consumer (the formatter) can re-parse macro bodies and pretty-print
+# them. Codegen (`to_tokens`) stays in `whisker-macros`.
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

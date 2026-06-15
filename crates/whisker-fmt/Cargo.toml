@@ -1,0 +1,23 @@
+[package]
+name = "whisker-fmt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["development-tools"]
+description = "rustfmt drop-in that additionally formats Whisker's `render!` / `css!` macro bodies. Respects rustfmt.toml only — no whisker-specific config."
+
+[dependencies]
+anyhow = { workspace = true }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+whisker-macro-syntax = { workspace = true }
+# Unified diff for the `--check` path. No diff crate existed in the
+# workspace, so `similar` is added here (it's the de-facto standard,
+# pure-Rust, no transitive C deps).
+similar = "2"
