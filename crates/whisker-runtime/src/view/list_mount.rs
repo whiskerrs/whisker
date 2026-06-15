@@ -169,23 +169,29 @@ mod tests {
     /// list and exercise the callbacks.
     #[derive(Default)]
     struct CapturingRenderer {
-        next_id: u32,
+        // `Cell` for interior mutability — `DynRenderer` methods take
+        // `&self` (the re-entrancy fix).
+        next_id: std::cell::Cell<u32>,
         last_count: Rc<RefCell<Option<i32>>>,
         installed: Rc<RefCell<Option<NativeItemProvider>>>,
     }
 
+    impl CapturingRenderer {
+        fn alloc_id(&self) -> u32 {
+            let id = self.next_id.get();
+            self.next_id.set(id + 1);
+            id
+        }
+    }
+
     impl DynRenderer for CapturingRenderer {
-        fn create_element(&mut self, _tag: ElementTag) -> Element {
-            let id = self.next_id;
-            self.next_id += 1;
-            Element::from_raw(id)
+        fn create_element(&self, _tag: ElementTag) -> Element {
+            Element::from_raw(self.alloc_id())
         }
-        fn create_element_by_name(&mut self, _tag: &str) -> Element {
-            let id = self.next_id;
-            self.next_id += 1;
-            Element::from_raw(id)
+        fn create_element_by_name(&self, _tag: &str) -> Element {
+            Element::from_raw(self.alloc_id())
         }
-        fn release_element(&mut self, _h: Element) {}
+        fn release_element(&self, _h: Element) {}
         // Model the Lynx sign as the element's own id so signs are
         // distinct per element (a real renderer returns the bridge
         // `impl_id`). Without this the trait default returns 0 for
@@ -193,31 +199,31 @@ mod tests {
         fn element_sign(&self, handle: Element) -> i32 {
             handle.id() as i32
         }
-        fn set_attribute(&mut self, _h: Element, _k: &str, _v: &str) {}
-        fn set_inline_styles(&mut self, _h: Element, _css: &str) {}
-        fn set_update_list_info(&mut self, _h: Element, count: i32) {
+        fn set_attribute(&self, _h: Element, _k: &str, _v: &str) {}
+        fn set_inline_styles(&self, _h: Element, _css: &str) {}
+        fn set_update_list_info(&self, _h: Element, count: i32) {
             *self.last_count.borrow_mut() = Some(count);
         }
         fn install_list_native_item_provider(
-            &mut self,
+            &self,
             _h: Element,
             provider: NativeItemProvider,
         ) -> bool {
             *self.installed.borrow_mut() = Some(provider);
             true
         }
-        fn append_child(&mut self, _p: Element, _c: Element) {}
-        fn remove_child(&mut self, _p: Element, _c: Element) {}
+        fn append_child(&self, _p: Element, _c: Element) {}
+        fn remove_child(&self, _p: Element, _c: Element) {}
         fn set_event_listener(
-            &mut self,
+            &self,
             _h: Element,
             _n: &str,
             _bt: BindType,
             _cb: Box<dyn Fn(crate::value::WhiskerValue) + 'static>,
         ) {
         }
-        fn set_root(&mut self, _p: Element) {}
-        fn flush(&mut self) {}
+        fn set_root(&self, _p: Element) {}
+        fn flush(&self) {}
     }
 
     fn with_capturing<R>(

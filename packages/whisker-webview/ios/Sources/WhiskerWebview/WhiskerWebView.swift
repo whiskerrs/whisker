@@ -30,15 +30,16 @@
 //
 // ## Event dispatch
 //
-// Every `WhiskerCustomEvent.dispatch(...)` is deferred one main-runloop
-// tick via `DispatchQueue.main.async { [weak self] in guard let self else
-// { return } ... }`. Navigation-delegate / KVO / script-message callbacks
-// can fire during Lynx teardown while the renderer RefCell borrow is held
-// — dispatching synchronously from there reenters Rust's `dispatch_event`
-// which takes a second borrow → "RefCell already borrowed" abort. Deferring
-// one tick guarantees dispatch always lands at idle, never inside a render
-// borrow. The view is captured weakly so a deallocated view never fires a
-// dangling event.
+// Every `WhiskerCustomEvent.dispatch(...)` fires SYNCHRONOUSLY. These
+// callbacks (navigation-delegate / KVO / script-message) can fire during
+// Lynx teardown while a renderer op is on the Rust stack; that used to
+// re-enter `dispatch_event` → a second renderer borrow → "RefCell already
+// borrowed" abort, so dispatch was deferred a runloop tick — the one-tick
+// delay of whisker #3. The Rust renderer is now re-entrancy-safe (shared
+// `with_renderer` borrow + `&self` `DynRenderer` methods + FFI-scoped
+// per-field `RefCell`s in `BridgeRenderer`), so synchronous re-entrant
+// dispatch is safe and the deferral was removed. See the emission helpers
+// below.
 //
 // ## Event payload shape
 //
@@ -379,58 +380,50 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
 
     // MARK: - Event emission helpers
 
-    // NOTE: every dispatch below is deferred one main-runloop tick via
-    // `DispatchQueue.main.async` with `[weak self]`. Navigation-delegate /
-    // KVO / script-message callbacks fire synchronously during Lynx teardown
-    // while the renderer RefCell borrow is held. Dispatching synchronously
-    // reenters `dispatch_event` → second borrow → "RefCell already borrowed"
-    // panic. One-tick deferral guarantees dispatch lands at idle.
-    // `self` is captured weakly; a deallocated view silently drops the event.
+    // These dispatch SYNCHRONOUSLY. Navigation-delegate / KVO /
+    // script-message callbacks can fire during Lynx teardown while a
+    // renderer op (`remove_child`) is on the Rust stack. Previously that
+    // re-entered `dispatch_event` → a second `with_renderer` borrow →
+    // "RefCell already borrowed" abort, so we deferred one main-runloop
+    // tick (`DispatchQueue.main.async`) to dodge it — the one-tick-late
+    // delivery of whisker #3.
+    //
+    // The Rust renderer is now re-entrancy-safe: `DynRenderer` methods
+    // take `&self`, `BridgeRenderer` keeps its state behind per-field
+    // `RefCell`s with FFI-scoped borrows, and `with_renderer` takes a
+    // SHARED borrow, so a synchronous re-entrant dispatch during teardown
+    // is granted rather than aborting. See
+    // `crates/whisker-runtime/src/view/renderer.rs` and
+    // `crates/whisker-driver/src/lynx/renderer.rs`. The deferral is no
+    // longer needed; removing it collapses the one-tick delay so webview
+    // events (`load`, `navigation`, `message`, …) deliver on the same tick.
 
     private func emitLoadStart(_ urlString: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "load_start", params: ["url": urlString])
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "load_start", params: ["url": urlString])
     }
 
     private func emitLoad(_ urlString: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "load", params: ["url": urlString])
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "load", params: ["url": urlString])
     }
 
     private func emitError(urlString: String, code: Int, description: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "error", params: [
-                "url": urlString,
-                "code": code,
-                "description": description,
-            ])
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "error", params: [
+            "url": urlString,
+            "code": code,
+            "description": description,
+        ])
     }
 
     private func emitNavigation(_ urlString: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "navigation", params: ["url": urlString])
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "navigation", params: ["url": urlString])
     }
 
     private func emitProgress(_ progress: Double) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "progress", params: ["progress": progress])
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "progress", params: ["progress": progress])
     }
 
     private func emitMessage(_ data: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "message", params: ["data": data])
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "message", params: ["data": data])
     }
 
     // MARK: - Origin-whitelist matching
