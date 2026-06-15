@@ -548,7 +548,6 @@ pub fn input(
     // rather than moving them out of the `#[component]` re-invokable
     // body.
     let value_prop: Signal<String> = {
-        let value = value.clone();
         Signal::Dynamic(computed(move || {
             if let Some(t) = text {
                 t.get()
@@ -611,10 +610,10 @@ pub fn input(
     };
 
     // ----- Pass-through attrs (None → sensible default) ----------------
-    let placeholder_prop: Signal<String> = placeholder.clone().unwrap_or_default();
-    let caret_color_prop: Signal<String> = caret_color.clone().unwrap_or_default();
-    let placeholder_color_prop: Signal<String> = placeholder_color.clone().unwrap_or_default();
-    let selection_color_prop: Signal<String> = selection_color.clone().unwrap_or_default();
+    let placeholder_prop: Signal<String> = placeholder.unwrap_or_default();
+    let caret_color_prop: Signal<String> = caret_color.unwrap_or_default();
+    let placeholder_color_prop: Signal<String> = placeholder_color.unwrap_or_default();
+    let selection_color_prop: Signal<String> = selection_color.unwrap_or_default();
     let style_prop: Style = style.clone().unwrap_or_default();
 
     let multiline_attr = bool_attr(multiline);

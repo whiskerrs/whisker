@@ -69,28 +69,27 @@ use whisker_svg::Svg;
 ///   (`"1.5em"`, `"100%"`, `"24px"`) pass through unchanged.
 #[component]
 pub fn icon(svg: Signal<String>, color: Signal<String>, size: Signal<String>) -> Element {
-    let style = {
-        let size = size.clone();
-        computed(move || {
-            let raw = size.get();
-            let t = raw.trim();
-            // Common CSS length units pass through; bare numbers
-            // are treated as `px`.
-            let has_unit = ["px", "em", "rem", "%", "vw", "vh"]
-                .iter()
-                .any(|u| t.ends_with(u));
-            if has_unit {
-                format!("width: {t}; height: {t};")
-            } else {
-                format!("width: {t}px; height: {t}px;")
-            }
-        })
-    };
+    // `Signal<T>` is `Copy` (whisker #8), so `size`/`svg`/`color` move
+    // freely into the closure and builder below — no `.clone()`.
+    let style = computed(move || {
+        let raw = size.get();
+        let t = raw.trim();
+        // Common CSS length units pass through; bare numbers
+        // are treated as `px`.
+        let has_unit = ["px", "em", "rem", "%", "vw", "vh"]
+            .iter()
+            .any(|u| t.ends_with(u));
+        if has_unit {
+            format!("width: {t}; height: {t};")
+        } else {
+            format!("width: {t}px; height: {t}px;")
+        }
+    });
 
     render! {
         Svg(
-            content: svg.clone(),
-            color: color.clone(),
+            content: svg,
+            color: color,
             style: style,
         )
     }

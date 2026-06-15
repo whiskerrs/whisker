@@ -100,21 +100,15 @@ use whisker::Style;
 ///   `preserveAspectRatio="xMidYMid meet"` semantics.
 #[component]
 pub fn svg(content: Signal<String>, color: Signal<String>, style: Style) -> Element {
-    // Clone `content` before the move closure: `Signal` isn't `Copy`
-    // (the Static variant owns its T), and the `#[component]` body
-    // re-fires as a FnMut.
-    let display_list = {
-        let content = content.clone();
-        computed(move || encode(&content.get()))
-    };
+    // `Signal<T>` is `Copy`, so `content` is freely moved into the
+    // closure and `color` into the builder below even though the
+    // `#[component]` body re-fires as a `FnMut` (whisker #8).
+    let display_list = computed(move || encode(&content.get()));
 
-    // Same clone dance for pass-through props — `render!` internally
-    // re-applies via Fn closures, so a non-Copy `Signal` moved on
-    // first fire wouldn't be available on subsequent re-fires.
     render! {
         SvgRenderer(
             display_list: display_list,
-            color: color.clone(),
+            color: color,
             style: style.clone(),
         )
     }

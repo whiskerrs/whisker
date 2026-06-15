@@ -590,8 +590,8 @@ pub fn web_view(
     };
 
     // ----- Pass-through attrs (None → sensible default) ----------------
-    let html_prop: Signal<String> = html.clone().unwrap_or_default();
-    let user_agent_prop: Signal<String> = user_agent.clone().unwrap_or_default();
+    let html_prop: Signal<String> = html.unwrap_or_default();
+    let user_agent_prop: Signal<String> = user_agent.unwrap_or_default();
     let style_prop: Style = style.clone().unwrap_or_default();
 
     let javascript_enabled_attr = bool_attr(javascript_enabled);

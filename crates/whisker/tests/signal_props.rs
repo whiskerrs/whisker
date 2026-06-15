@@ -131,16 +131,10 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 /// inside a `computed` to drive a reactive `style` attribute.
 #[component]
 fn colored_tile(color: Signal<String>) -> Element {
-    // `color` is owned by the outer `__hot::call(move || …)` wrap
-    // the `#[component]` macro generates for hot-patch dispatch.
-    // Moving it into the `computed` closure would consume the
-    // outer FnMut's capture, hence the .clone() — cheap on a
-    // Dynamic Signal (Copy of the underlying ReadSignal NodeId)
-    // and a String clone on the Static arm.
-    let style = {
-        let color = color.clone();
-        computed(move || format!("background: {};", color.get()))
-    };
+    // `Signal<T>` is `Copy` (whisker #8), so `color` moves freely into
+    // the `computed` closure even though the `#[component]` body is the
+    // `FnMut` the macro wraps for hot-patch dispatch — no `.clone()`.
+    let style = computed(move || format!("background: {};", color.get()));
     render! {
         view(style: style)
     }
