@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/whiskerrs/whisker/compare/whisker-icons-v0.2.5...whisker-icons-v0.3.0) - 2026-06-15
+
+### Added
+
+- *(reactive)* make Signal<T> Copy ([#213](https://github.com/whiskerrs/whisker/pull/213))
+
 ## [0.2.1](https://github.com/whiskerrs/whisker/compare/whisker-icons-v0.2.0...whisker-icons-v0.2.1) - 2026-06-11
 
 ### Fixed
