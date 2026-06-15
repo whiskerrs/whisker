@@ -56,7 +56,7 @@ pub struct PlatformSync {
 ///
 /// 0.1.1 rolls forward the transitive Lynx pin baked into the SDK's
 /// POM from `v3.8.0-whisker.4` (initial SDK release) to
-/// `v3.8.0-whisker.6`. The newer Lynx exposes `lynx_capi_abi_version()`
+/// `v3.8.0-whisker.7`. The newer Lynx exposes `lynx_capi_abi_version()`
 /// which the Step-6 dlopen-based bridge requires; without this bump,
 /// downstream apps that pull `whisker-runtime-android:0.1.0`
 /// transitively get the older Lynx and the bridge loader aborts on
