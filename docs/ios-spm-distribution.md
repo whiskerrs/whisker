@@ -96,4 +96,4 @@ Keep these aligned per release:
 
 | crates.io | iOS SwiftPM tag | Android SDK (Maven) | Gradle plugin | Lynx fork |
 |---|---|---|---|---|
-| `0.1.0` | `v0.1.0` | `0.1.1` | `0.4.0` | `3.8.0-whisker.6` |
+| `0.1.0` | `v0.1.0` | `0.1.1` | `0.4.0` | `3.8.0-whisker.7` |

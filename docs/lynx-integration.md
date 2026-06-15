@@ -16,7 +16,7 @@ Audience: contributors bumping Lynx or debugging the C++ bridge build.
 ## How the dependency is wired
 
 The fork publishes pre-built Lynx artifacts per `v<ver>` tag (currently
-`v3.8.0-whisker.6`). Whisker consumes them per platform:
+`v3.8.0-whisker.7`). Whisker consumes them per platform:
 
 ### iOS — SwiftPM binary targets
 
