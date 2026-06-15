@@ -588,24 +588,19 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
      * ignores it (the event fires no value), but we keep the same
      * payload shape for consistency.
      *
-     * ## Deferred dispatch (reentrancy guard)
+     * ## Synchronous dispatch
      *
-     * The actual `WhiskerCustomEvent.dispatch` is deferred to the next
-     * main-loop tick via `View.post { ... }`. A synchronous dispatch
-     * inside a UI callback can reenter Rust while Rust holds the
-     * renderer borrow during a hot-reload remount / teardown — e.g.
-     * Lynx `remove_child` triggers a native focus-loss callback that
-     * fires `blur` / `change` synchronously, reentering
-     * `dispatch_event` and panicking with "RefCell already borrowed"
-     * (the event is dropped). Posting breaks the synchronous reentry.
-     *
-     * The suppression decision is made BEFORE we reach here: the
-     * caller (`afterTextChanged`) reads `programmaticWrite` and the
-     * text synchronously, so deferring only the dispatch doesn't
-     * weaken the `input`-echo guard. The two-way `input` round-trip
-     * arriving one tick late is absorbed by the cursor-diff guard in
-     * [applyTextIfChanged]. The `name` + `text` (hence `params`) are
-     * captured synchronously into the posted lambda.
+     * `WhiskerCustomEvent.dispatch` is called synchronously. The Rust
+     * renderer is re-entrancy-safe (whisker #3: `with_renderer` takes a
+     * shared borrow and every renderer field borrow is scoped so it
+     * never spans a re-entrant FFI call), so a UI callback that reenters
+     * Rust during a hot-reload remount / teardown — e.g. Lynx
+     * `remove_child` triggering a native focus-loss callback that fires
+     * `blur` / `change` — no longer panics with "RefCell already
+     * borrowed". This used to be deferred a main-loop tick via
+     * `View.post { ... }`; dispatching synchronously removes that
+     * one-tick lag (whisker #3). All callers (`afterTextChanged`, focus
+     * listeners) already run on the UI thread.
      */
     private fun emitEvent(name: String, text: String) {
         // Pass the payload directly as the params — do NOT wrap it in a
@@ -617,16 +612,11 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         // Wrapping here too would double-nest and the value would never
         // reach `on_input` (it would always deliver an empty string).
         val params = mapOf("value" to text)
-        // `post` runs on the next UI-loop iteration on the main thread.
-        // No-op if the view is detached (post returns false; there's
-        // nothing to dispatch into anyway).
-        view?.post {
-            WhiskerCustomEvent.dispatch(
-                ui = this,
-                name = name,
-                params = params,
-            )
-        }
+        WhiskerCustomEvent.dispatch(
+            ui = this,
+            name = name,
+            params = params,
+        )
     }
 
     /** Convenience for the TextWatcher `afterTextChanged` path. */
