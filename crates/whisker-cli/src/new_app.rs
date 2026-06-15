@@ -3,7 +3,8 @@
 //! Creates a directory matching the supplied crate name with the
 //! minimum-viable Whisker app skeleton: a single-crate workspace
 //! `Cargo.toml`, a tiny `src/lib.rs` with `#[whisker::main]`, the
-//! `whisker.rs` `Config` probe, a `.gitignore`, and a `README.md`.
+//! `whisker.rs` `Config` probe, a `.gitignore`, a `rust-analyzer.toml`
+//! (format-on-save via `whisker fmt`), and a `README.md`.
 //! The result compiles standalone — the user runs `whisker run
 //! --target host` (or `--target ios` / `android` if their machine
 //! passes `whisker doctor`) and sees an interactive counter.
@@ -91,6 +92,7 @@ pub fn run(args: NewAppArgs) -> Result<()> {
     write(&target_dir, "src/lib.rs", &lib_rs(&v))?;
     write(&target_dir, "whisker.rs", &whisker_rs(&v))?;
     write(&target_dir, ".gitignore", GITIGNORE)?;
+    write(&target_dir, "rust-analyzer.toml", RUST_ANALYZER_TOML)?;
     write(&target_dir, "README.md", &readme(&v))?;
 
     eprintln!(
@@ -282,6 +284,22 @@ Thumbs.db
 # build resolves to the same dependency tree. Commit it.
 ";
 
+/// Editor-agnostic rust-analyzer project config. Any rust-analyzer
+/// host (VS Code, Zed, neovim, Helix, …) reads `rust-analyzer.toml`, so
+/// format-on-save routes through `whisker fmt` for everyone — a rustfmt
+/// drop-in that also formats the `render!` / `css!` macro bodies rustfmt
+/// leaves untouched (and still honors your `rustfmt.toml`).
+const RUST_ANALYZER_TOML: &str = "\
+# rust-analyzer project configuration (committed: shared by the whole
+# team, editor-agnostic). Formats on save with `whisker fmt`, a rustfmt
+# drop-in that ALSO formats `render!` / `css!` macro bodies — which plain
+# rustfmt skips — while still honoring your `rustfmt.toml`.
+#
+# Requires the `whisker` CLI on PATH (`cargo install whisker-cli`).
+[rustfmt]
+overrideCommand = [\"whisker\", \"fmt\", \"--stdin\"]
+";
+
 fn readme(v: &Vars) -> String {
     format!(
         r##"# {display}
@@ -462,6 +480,13 @@ mod tests {
         assert!(root.join("whisker.rs").is_file());
         assert!(root.join(".gitignore").is_file());
         assert!(root.join("README.md").is_file());
+        assert!(root.join("rust-analyzer.toml").is_file());
+
+        // The scaffolded rust-analyzer config routes format-on-save
+        // through `whisker fmt` so render!/css! get formatted.
+        let ra = std::fs::read_to_string(root.join("rust-analyzer.toml")).unwrap();
+        assert!(ra.contains("[rustfmt]"));
+        assert!(ra.contains(r#"overrideCommand = ["whisker", "fmt", "--stdin"]"#));
 
         let cargo = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(cargo.contains("name = \"demo-app\""));
