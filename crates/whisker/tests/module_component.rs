@@ -123,7 +123,7 @@ pub fn x_input(value: Signal<String>, placeholder: Signal<String>) {}
 pub fn x_typed_checkbox(checked: Signal<bool>, count: Signal<i32>) {}
 
 #[whisker::module_component("x-button")]
-pub fn x_button(label: Signal<String>, on_tap: ()) {}
+pub fn x_button(label: Signal<String>, on_press: ()) {}
 
 #[whisker::module_component("x-input-payload")]
 pub fn x_input_payload(value: Signal<String>, on_input: ::whisker::WhiskerValue) {}
@@ -292,11 +292,12 @@ fn typed_signal_bool_serialises_via_to_string() {
 
 #[test]
 fn no_payload_event_handler_registers_listener() {
-    // `on_tap: ()` → builder takes `Fn() + 'static`, body wires through
-    // `set_event_listener`. The Recorder logs as `Op::Event`.
+    // `on_press: ()` → builder takes `Fn() + 'static`, body wires through
+    // `set_event_listener`. The Recorder logs as `Op::Event`. (`on_press`,
+    // not `on_tap`: `tap` is a reserved Lynx gesture name the macro rejects.)
     with_recorder_and_owner(|log| {
         let _h = render! {
-            XButton(label: "Click me", on_tap: || {})
+            XButton(label: "Click me", on_press: || {})
         };
         let events: Vec<_> = log
             .borrow()
@@ -306,7 +307,7 @@ fn no_payload_event_handler_registers_listener() {
                 _ => None,
             })
             .collect();
-        assert_eq!(events, vec!["tap".to_string()]);
+        assert_eq!(events, vec!["press".to_string()]);
     });
 }
 

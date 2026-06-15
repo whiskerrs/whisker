@@ -26,7 +26,7 @@
 //! templates and substitutes a handful of variables. For a richer
 //! template story (multiple module types, custom dirs, …) the
 //! `whisker new-module` subcommand can grow later without breaking
-//! the contract documented in `docs/module-author-guide.md`.
+//! the contract documented at <https://whisker.rs/docs/authoring-a-module>.
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Args;
@@ -160,7 +160,7 @@ pub fn run(args: NewModuleArgs) -> Result<()> {
          1. cd {}\n  \
          2. Implement the platform-side logic in ios/ and android/.\n  \
          3. From your Whisker app: `cargo add --path {}` (or publish to crates.io).\n  \
-         4. See docs/module-author-guide.md for the full reference.",
+         4. See https://whisker.rs/docs/authoring-a-module for the full reference.",
         target_dir.display(),
         target_dir.display(),
         target_dir.display(),
@@ -201,6 +201,20 @@ fn write(root: &Path, rel: &str, content: &str) -> Result<()> {
     Ok(())
 }
 
+/// The `MAJOR.MINOR` version requirement the scaffolded crate should
+/// pin `whisker` to. Derived from whisker-cli's own (workspace-shared)
+/// version so a freshly-scaffolded module unifies with the toolchain
+/// that generated it — e.g. cli `0.2.5` → `"0.2"`. An app on `0.2.x`
+/// can't unify a module that asks for `^0.1`, so a hardcoded `"0.1"`
+/// would break every scaffold after the 0.2 bump.
+fn whisker_dep_version() -> String {
+    let v = env!("CARGO_PKG_VERSION");
+    let mut parts = v.split('.');
+    let major = parts.next().unwrap_or("0");
+    let minor = parts.next().unwrap_or("0");
+    format!("{major}.{minor}")
+}
+
 fn cargo_toml(v: &Vars) -> String {
     format!(
         r#"[package]
@@ -232,9 +246,10 @@ crate-type = ["rlib"]
 # The umbrella `whisker` crate. The proc macros' emit paths
 # (::whisker::ElementRef, ::whisker::platform_module::WhiskerValue, ...)
 # resolve under the `whisker` name — the same dep app crates use.
-whisker = "0.1"
+whisker = "{dep_version}"
 "#,
         name = v.crate_name,
+        dep_version = whisker_dep_version(),
     )
 }
 
@@ -249,7 +264,7 @@ and exposes `{tag}` for use in Whisker app `render!` trees.
 
 ```toml
 [dependencies]
-{name} = "0.1"
+{name} = "{dep_version}"
 ```
 
 ```rust
@@ -264,12 +279,13 @@ fn app() -> Element {{
 }}
 ```
 
-See [the Whisker Module Author Guide](https://github.com/whiskerrs/whisker/blob/main/docs/module-author-guide.md)
+See [the Whisker Module Author Guide](https://whisker.rs/docs/authoring-a-module)
 for the full reference.
 "#,
         name = v.crate_name,
         tag = v.tag,
         ident = v.ident,
+        dep_version = whisker_dep_version(),
     )
 }
 
@@ -284,22 +300,15 @@ fn package_swift(v: &Vars) -> String {
 // Package.swift lives at the package root (SwiftPM requires it
 // there); the Swift sources live under the `ios/` subdir alongside
 // `android/` + `src/`.
+//
+// The module resolves Whisker's iOS runtime + macros via the published
+// `whisker` SwiftPM package (the same remote-git dependency every
+// first-party module uses) — `WhiskerModule` re-exports Lynx, and
+// `WhiskerRuntime` pulls in the `WhiskerView` / driver symbols. The
+// `WhiskerModuleCodegenPlugin` build-tool plugin walks `Module`
+// subclasses at build time and emits the Lynx registration.
 
 import PackageDescription
-
-// whisker-build injects the absolute location of Whisker's iOS
-// runtime + macros packages via these env vars, so this module
-// resolves them wherever it lives — in a whisker project, or unpacked
-// from the cargo registry. A Whisker module is only ever built through
-// `whisker run` (which set these), never standalone.
-guard let whiskerRuntimePath = Context.environment["WHISKER_IOS_RUNTIME"],
-      let whiskerMacrosPath = Context.environment["WHISKER_IOS_MACROS"]
-else {{
-    fatalError("""
-        WHISKER_IOS_RUNTIME / WHISKER_IOS_MACROS not set. Build this Whisker \
-        module through `whisker run`, which inject these paths.
-        """)
-}}
 
 let package = Package(
     name: "{name}",
@@ -308,18 +317,18 @@ let package = Package(
         .library(name: "{spm}", targets: ["{spm}"]),
     ],
     dependencies: [
-        .package(name: "macros", path: whiskerMacrosPath),
-        .package(name: "WhiskerRuntime", path: whiskerRuntimePath),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "{ios_tag}"),
     ],
     targets: [
         .target(
             name: "{spm}",
             dependencies: [
-                .product(name: "WhiskerModule", package: "WhiskerRuntime"),
+                .product(name: "WhiskerModule", package: "whisker"),
+                .product(name: "WhiskerRuntime", package: "whisker"),
             ],
             path: "ios/Sources/{spm}",
             plugins: [
-                .plugin(name: "WhiskerModuleCodegenPlugin", package: "macros"),
+                .plugin(name: "WhiskerModuleCodegenPlugin", package: "whisker"),
             ]
         ),
     ]
@@ -327,8 +336,16 @@ let package = Package(
 "#,
         name = v.crate_name,
         spm = v.spm,
+        ios_tag = WHISKER_IOS_SPM_TAG,
     )
 }
+
+/// The exact iOS SwiftPM tag the scaffolded `Package.swift` pins for
+/// the `whisker` git dependency. This is the iOS SPM release tag, which
+/// is versioned independently from the cargo crate version — it must
+/// match whatever the first-party modules pin (see
+/// `packages/whisker-webview/Package.swift`, currently `exact: "0.1.0"`).
+const WHISKER_IOS_SPM_TAG: &str = "0.1.0";
 
 fn build_gradle(v: &Vars) -> String {
     format!(
@@ -372,19 +389,30 @@ ksp {{
 }}
 
 dependencies {{
-    // Single Whisker runtime dep. ksp(rs.whisker:ksp) stays
-    // separate because it's a build-time processor, not on the
-    // runtime classpath. The KSP processor discovers Module
-    // subclasses by inheritance (no marker annotation needed).
-    implementation(project(":module"))
-    ksp("rs.whisker:ksp")
+    // Published Whisker runtime + KSP processor — the same Maven
+    // coordinates every first-party module uses. ksp(rs.whisker:ksp)
+    // stays separate because it's a build-time processor, not on the
+    // runtime classpath. The KSP processor discovers Module subclasses
+    // by inheritance (no marker annotation needed). The `{android_tag}`
+    // tag is the Android (Maven) release, versioned independently from
+    // the cargo crate.
+    implementation("rs.whisker:whisker-module-android:{android_tag}")
+    ksp("rs.whisker:ksp:{android_tag}")
 }}
 "#,
         name = v.crate_name,
         ns = v.ns,
         spm = v.spm,
+        android_tag = WHISKER_ANDROID_MAVEN_TAG,
     )
 }
+
+/// The Maven release tag the scaffolded `build.gradle.kts` pins for the
+/// Whisker Android runtime + KSP processor. Like the iOS SPM tag, the
+/// Android Maven release is versioned independently from the cargo
+/// crate — must match first-party (see
+/// `packages/whisker-webview/build.gradle.kts`, currently `0.1.0`).
+const WHISKER_ANDROID_MAVEN_TAG: &str = "0.1.0";
 
 fn lib_rs_view(v: &Vars) -> String {
     format!(
