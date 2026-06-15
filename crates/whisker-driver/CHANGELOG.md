@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-v0.2.5...whisker-driver-v0.3.0) - 2026-06-15
+
+### Fixed
+
+- *(view)* make renderer dispatch re-entrancy-safe ([#214](https://github.com/whiskerrs/whisker/pull/214))
+- *(driver)* run app() under a persistent root owner so app-level provide_context works ([#210](https://github.com/whiskerrs/whisker/pull/210))
+
 ## [0.2.5](https://github.com/whiskerrs/whisker/compare/whisker-driver-v0.2.4...whisker-driver-v0.2.5) - 2026-06-14
 
 ### Fixed
