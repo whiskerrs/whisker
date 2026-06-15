@@ -33,6 +33,7 @@
 //! documented limitation. Comments OUTSIDE macros are preserved by
 //! rustfmt as usual.
 
+mod expr_fmt;
 mod options;
 mod printer;
 mod source_map;
@@ -40,7 +41,8 @@ mod source_map;
 pub use options::FmtOptions;
 
 use anyhow::{anyhow, Context, Result};
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use expr_fmt::{ExprFormatter, ExprMap};
+use proc_macro2::{Delimiter, Span, TokenStream, TokenTree};
 use source_map::SourceMap;
 use std::path::Path;
 use std::process::Command;
@@ -53,7 +55,8 @@ use std::process::Command;
 /// `opts.edition` through so both passes agree on the edition.
 pub fn format_source(src: &str, opts: &FmtOptions) -> Result<String> {
     let base = run_rustfmt(src, opts, None)?;
-    reformat_macros(&base, opts)
+    let exprfmt = ExprFormatter::new(opts);
+    reformat_macros_inner(&base, opts, Some(&exprfmt))
 }
 
 /// Like [`format_source`] but tells rustfmt to resolve `rustfmt.toml`
@@ -61,7 +64,8 @@ pub fn format_source(src: &str, opts: &FmtOptions) -> Result<String> {
 /// file's nearest `rustfmt.toml` governs.
 pub fn format_source_in_dir(src: &str, opts: &FmtOptions, config_dir: &Path) -> Result<String> {
     let base = run_rustfmt(src, opts, Some(config_dir))?;
-    reformat_macros(&base, opts)
+    let exprfmt = ExprFormatter::new_in_dir(opts, config_dir);
+    reformat_macros_inner(&base, opts, Some(&exprfmt))
 }
 
 /// `--check` helper: returns `Ok(None)` if the source is already
@@ -210,6 +214,22 @@ fn find_rustfmt_toml(dir: &Path) -> Option<std::path::PathBuf> {
 /// verbatim) rather than silently losing the comments — see
 /// [`body_has_comments`]. This is the documented, tested limitation.
 pub fn reformat_macros(rust_src: &str, opts: &FmtOptions) -> Result<String> {
+    // Public entry point: the rustfmt-FREE core. No `ExprFormatter`, so
+    // every embedded expr is rendered verbatim (the printer's empty-map
+    // path). This is what keeps the 17 unit tests in this file passing
+    // without a rustfmt binary.
+    reformat_macros_inner(rust_src, opts, None)
+}
+
+/// The shared implementation behind [`reformat_macros`] and the full
+/// pipeline. When `exprfmt` is `Some`, embedded exprs are formatted by
+/// the real rustfmt (batched per macro body); when `None`, they are kept
+/// verbatim.
+fn reformat_macros_inner(
+    rust_src: &str,
+    opts: &FmtOptions,
+    exprfmt: Option<&ExprFormatter>,
+) -> Result<String> {
     // Parse the whole file just to confirm it is valid Rust; the actual
     // macro discovery walks the raw TokenStream (so we keep precise
     // span byte-offsets relative to `rust_src`).
@@ -226,7 +246,7 @@ pub fn reformat_macros(rust_src: &str, opts: &FmtOptions) -> Result<String> {
     // every macro, then splice from the end backwards so earlier
     // offsets stay valid.
     let mut edits: Vec<MacroEdit> = Vec::new();
-    collect_macro_edits(tokens, &file_map, rust_src, opts, &mut edits)?;
+    collect_macro_edits(tokens, &file_map, rust_src, opts, exprfmt, &mut edits)?;
 
     edits.sort_by_key(|e| e.open_byte);
     // Splice from the end so earlier byte offsets remain valid.
@@ -253,6 +273,7 @@ fn collect_macro_edits(
     file_map: &SourceMap,
     rust_src: &str,
     opts: &FmtOptions,
+    exprfmt: Option<&ExprFormatter>,
     edits: &mut Vec<MacroEdit>,
 ) -> Result<()> {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
@@ -266,7 +287,9 @@ fn collect_macro_edits(
                 && matches!(&trees[i + 1], TokenTree::Punct(p) if p.as_char() == '!')
             {
                 if let TokenTree::Group(group) = &trees[i + 2] {
-                    if let Some(edit) = macro_body_edit(&name, group, file_map, rust_src, opts)? {
+                    if let Some(edit) =
+                        macro_body_edit(&name, group, file_map, rust_src, opts, exprfmt)?
+                    {
                         edits.push(edit);
                     }
                     // Don't recurse into a macro body we've already
@@ -286,7 +309,7 @@ fn collect_macro_edits(
         }
         // Recurse into any group we didn't treat as a macro body.
         if let TokenTree::Group(group) = &trees[i] {
-            collect_macro_edits(group.stream(), file_map, rust_src, opts, edits)?;
+            collect_macro_edits(group.stream(), file_map, rust_src, opts, exprfmt, edits)?;
         }
         i += 1;
     }
@@ -302,6 +325,7 @@ fn macro_body_edit(
     file_map: &SourceMap,
     rust_src: &str,
     opts: &FmtOptions,
+    exprfmt: Option<&ExprFormatter>,
 ) -> Result<Option<MacroEdit>> {
     let span = group.span();
     // Byte offsets of the WHOLE group (including delimiters).
@@ -316,11 +340,6 @@ fn macro_body_edit(
         return Ok(None); // empty body
     }
     let body_src = &rust_src[open_byte..close_byte];
-
-    // Comment limitation: leave bodies with comments untouched.
-    if body_has_comments(body_src) {
-        return Ok(None);
-    }
 
     // Base indent = the indent level of the line the macro sits on.
     let line_start = rust_src[..group_start]
@@ -338,9 +357,28 @@ fn macro_body_edit(
         .map_err(|e| anyhow!("whisker-fmt: could not lex {macro_name}! body: {e}"))?;
     let body_map = SourceMap::new(body_src);
 
+    // Collect the embedded-expr spans up front: we need them both to
+    // batch-format the exprs AND to decide whether a comment in the body
+    // is inside an expr value (fine — preserved by slicing) or in the
+    // macro GRAMMAR (the documented limitation — bail).
     let formatted = match macro_name {
         "render" => match whisker_macro_syntax::render::parse_root(body_ts.clone()) {
-            Ok(root) => printer::print_render(&root, &body_map, opts, base_indent),
+            Ok(root) => {
+                let mut spans = Vec::new();
+                collect_render_expr_spans(&root.node, &mut spans);
+                // Comment limitation: a comment OUTSIDE every embedded
+                // expr (i.e. in the render! grammar) still leaves the
+                // body untouched. A comment INSIDE an expr value is kept
+                // by slicing that value verbatim / formatting its source.
+                if body_has_grammar_comment(body_src, &spans, &body_map) {
+                    return Ok(None);
+                }
+                // Batch-format every embedded expr with one rustfmt spawn.
+                // With no `exprfmt` (rustfmt-free core) the map stays
+                // empty and every expr renders verbatim.
+                let expr_map = build_expr_map(&spans, &body_map, exprfmt);
+                printer::print_render(&root, &body_map, opts, base_indent, &expr_map)
+            }
             // Not a well-formed render! body (e.g. mid-edit) — leave it.
             Err(_) => return Ok(None),
         },
@@ -349,7 +387,17 @@ fn macro_body_edit(
                 if input.kwargs.is_empty() {
                     return Ok(None);
                 }
-                printer::print_css(&input, &body_map, opts, base_indent)
+                let mut spans = Vec::new();
+                for kw in &input.kwargs {
+                    if let Some(expr) = &kw.value {
+                        spans.push(span_of_expr(expr));
+                    }
+                }
+                if body_has_grammar_comment(body_src, &spans, &body_map) {
+                    return Ok(None);
+                }
+                let expr_map = build_expr_map(&spans, &body_map, exprfmt);
+                printer::print_css(&input, &body_map, opts, base_indent, &expr_map)
             }
             Err(_) => return Ok(None),
         },
@@ -379,6 +427,103 @@ fn macro_body_edit(
         close_byte,
         replacement,
     }))
+}
+
+// ---- embedded-expr collection + batched formatting ----------------------
+
+/// The `Span` covering an `Expr` (start of first token to end of last).
+fn span_of_expr(expr: &syn::Expr) -> Span {
+    use syn::spanned::Spanned;
+    expr.span()
+}
+
+/// Walk a parsed `render!` node tree collecting the span of every
+/// embedded expr (kwarg values). `partial` kwargs hold a synthesized
+/// placeholder with no real source span, so they're skipped. `css!`
+/// kwargs are collected separately at the call site (different type).
+fn collect_render_expr_spans(node: &whisker_macro_syntax::Node, out: &mut Vec<Span>) {
+    use whisker_macro_syntax::Node;
+    match node {
+        Node::Element(el) => {
+            for kw in &el.kwargs {
+                if !kw.partial {
+                    out.push(span_of_expr(&kw.value));
+                }
+            }
+            for child in &el.children {
+                collect_render_expr_spans(child, out);
+            }
+        }
+        Node::UserComponent(uc) => {
+            for kw in &uc.kwargs {
+                if !kw.partial {
+                    out.push(span_of_expr(&kw.value));
+                }
+            }
+            for child in &uc.children {
+                collect_render_expr_spans(child, out);
+            }
+        }
+        Node::ChildrenSlot { .. } => {}
+    }
+}
+
+/// Slice each expr's verbatim source from `body_map` and batch-format
+/// the whole set with one rustfmt spawn (via `exprfmt`). Returns an
+/// [`ExprMap`] keyed by span. When `exprfmt` is `None` (rustfmt-free
+/// core) the returned map is empty, so the printer renders verbatim.
+///
+/// Spans whose source slice fails to resolve are skipped (they'll hit
+/// the printer's verbatim / token fallback anyway).
+fn build_expr_map(
+    spans: &[Span],
+    body_map: &SourceMap,
+    exprfmt: Option<&ExprFormatter>,
+) -> ExprMap {
+    let Some(exprfmt) = exprfmt else {
+        return ExprMap::default();
+    };
+    let mut exprs: Vec<(Span, String)> = Vec::with_capacity(spans.len());
+    for &span in spans {
+        if let Some(slice) = body_map.slice(span) {
+            exprs.push((span, slice.trim().to_string()));
+        }
+    }
+    exprfmt.format_body(&exprs)
+}
+
+/// Like [`body_has_comments`], but ignores comments that live INSIDE an
+/// embedded expr value. Those are preserved by slicing / rustfmt-ing the
+/// expr source. Only a comment in the macro GRAMMAR (between tags,
+/// kwargs, delimiters) triggers the documented "leave-untouched"
+/// limitation.
+///
+/// Implementation: blank out each expr span's bytes (replacing with
+/// spaces, keeping length so the scan's string-awareness stays valid)
+/// then run the ordinary comment scan over what's left.
+fn body_has_grammar_comment(body: &str, expr_spans: &[Span], body_map: &SourceMap) -> bool {
+    // Fast path: no comment anywhere → definitely no grammar comment.
+    if !body_has_comments(body) {
+        return false;
+    }
+    let mut masked: Vec<u8> = body.as_bytes().to_vec();
+    for &span in expr_spans {
+        if let Some((s, e)) = body_map.byte_range(span) {
+            for b in &mut masked[s..e] {
+                // Preserve newlines so line structure (and any `//`
+                // single-line comment that ends at a newline) is intact
+                // outside the masked region; blank everything else.
+                if *b != b'\n' {
+                    *b = b' ';
+                }
+            }
+        }
+    }
+    // `masked` is still valid UTF-8 (we only replaced whole bytes of
+    // ASCII space within char boundaries… actually a multi-byte char
+    // could be partially masked, so rebuild lossily for safety).
+    let masked_str = String::from_utf8_lossy(&masked);
+    body_has_comments(&masked_str)
 }
 
 /// Detect `//` or `/* */` comments in a macro body. Uses a tiny
