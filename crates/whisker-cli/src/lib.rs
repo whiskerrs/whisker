@@ -37,6 +37,7 @@ use clap::{Parser, Subcommand};
 
 pub mod build_dispatch;
 pub mod doctor;
+pub mod fmt;
 pub mod linker_shim;
 pub mod manifest;
 pub mod new_app;
@@ -86,6 +87,13 @@ enum Command {
     /// `whisker run ios` from inside the new directory.
     New(new_app::NewAppArgs),
 
+    /// Format Rust source — a rustfmt drop-in that ALSO formats
+    /// Whisker's `render!` / `css!` macro bodies (which rustfmt leaves
+    /// untouched). Respects `rustfmt.toml` only; no whisker-specific
+    /// config. Use `--stdin` for the rust-analyzer integration
+    /// (`rustfmt.overrideCommand = ["whisker", "fmt", "--stdin"]`).
+    Fmt(fmt::FmtArgs),
+
     /// (internal) Cross-compile the user crate into
     /// `WhiskerDriver.framework`. Invoked by the generated Xcode
     /// project's Run Script Phase, not by users.
@@ -122,6 +130,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Command::Run(a) => run::run(a),
         Command::NewModule(a) => new_module::run(a),
         Command::New(a) => new_app::run(a),
+        Command::Fmt(a) => fmt::run(a),
         Command::BuildIos(a) => build_dispatch::run_ios(a),
         Command::BuildAndroid(a) => build_dispatch::run_android(a),
         Command::Modules(a) => build_dispatch::run_modules(a),
@@ -207,6 +216,32 @@ mod tests {
                 assert!(a.no_hot_patch);
             }
             other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_fmt_stdin() {
+        let cli = parse(["whisker", "fmt", "--stdin"]).unwrap();
+        match cli.command {
+            Command::Fmt(a) => {
+                assert!(a.stdin);
+                assert!(!a.check);
+                assert!(a.files.is_empty());
+            }
+            other => panic!("expected Fmt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_fmt_files_and_check() {
+        let cli = parse(["whisker", "fmt", "--check", "a.rs", "b.rs"]).unwrap();
+        match cli.command {
+            Command::Fmt(a) => {
+                assert!(a.check);
+                assert!(!a.stdin);
+                assert_eq!(a.files.len(), 2);
+            }
+            other => panic!("expected Fmt, got {other:?}"),
         }
     }
 

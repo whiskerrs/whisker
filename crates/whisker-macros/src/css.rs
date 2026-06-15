@@ -1,81 +1,21 @@
-//! `css!` macro — builds a [`Css`] value from `name: value` kwargs.
+//! `css!` macro codegen — builds a [`Css`] value from `name: value`
+//! kwargs.
+//!
+//! The PARSE side (`CssInput` / `CssKwarg` + their `Parse` impl) lives
+//! in `whisker-macro-syntax`; this module holds only the lowering.
 //!
 //! Emitted as a proc macro (not `macro_rules!`) so partial input
 //! produced by rust-analyzer's completion engine still lowers to a
-//! well-formed method-call chain. The trick mirrors what `render!`
-//! does for partial element kwargs: every kwarg becomes
-//! `.<name>(<value>)` in the expansion, and when the value is
-//! missing (cursor sitting after `name` but before `:`), we emit
-//! `.<name>(())` so RA's method-name completion fires on the
-//! `.<name>` part. The unit value `()` is intentionally
-//! type-incorrect; the user is mid-typing, the program won't
-//! compile anyway, and RA discards expansions whose only error is
-//! at the cursor's sentinel.
+//! well-formed method-call chain. Every kwarg becomes `.<name>(<value>)`
+//! in the expansion, and when the value is missing (cursor sitting
+//! after `name` but before `:`), we emit `.<name>(())` so RA's
+//! method-name completion fires on the `.<name>` part.
 //!
 //! [`Css`]: whisker_css::Css
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
-use syn::parse::{Parse, ParseStream, Result as SynResult};
-use syn::{Expr, Ident, Token};
-
-/// One `name: value` (or just `name`) pair from the macro input.
-struct Kwarg {
-    name: Ident,
-    /// `None` when the user has typed an ident but not yet a `: value`.
-    /// Either the `:` was missing, or the value expression failed to
-    /// parse (e.g. cursor sentinel). The emitter substitutes `()`
-    /// so the expansion is still a method call.
-    value: Option<Expr>,
-}
-
-struct Input {
-    kwargs: Vec<Kwarg>,
-}
-
-impl Parse for Input {
-    fn parse(input: ParseStream) -> SynResult<Self> {
-        let mut kwargs = Vec::new();
-        while !input.is_empty() {
-            // Bail out if the next token isn't an ident — RA may
-            // inject other sentinels we don't want to chase. The
-            // already-collected kwargs still produce a useful
-            // expansion.
-            if !input.peek(Ident) {
-                break;
-            }
-            let name: Ident = input.parse()?;
-
-            let value = if input.peek(Token![:]) {
-                let _: Token![:] = input.parse()?;
-                // Try to parse the value expression. If the user is
-                // mid-typing and the parse fails, fall through with
-                // `None`; the emitter uses `()` so the method-call
-                // shape survives for RA's completion.
-                input.parse::<Expr>().ok()
-            } else {
-                // No `:` yet — cursor sits right after the ident.
-                None
-            };
-
-            kwargs.push(Kwarg { name, value });
-
-            if input.peek(Token![,]) {
-                let _: Token![,] = input.parse()?;
-            } else {
-                // No comma, but the stream might still have trailing
-                // tokens (e.g. an unfinished partial after the last
-                // kwarg). Drain them so the macro doesn't error out
-                // and RA still sees the completed-up-to-cursor part.
-                while !input.is_empty() {
-                    let _: proc_macro2::TokenTree = input.parse()?;
-                }
-                break;
-            }
-        }
-        Ok(Input { kwargs })
-    }
-}
+use whisker_macro_syntax::css::CssInput;
 
 /// Expand `css!(name: value, …)` into `Css::new().name(value).…`.
 ///
@@ -85,7 +25,7 @@ impl Parse for Input {
 /// from both `whisker` (umbrella) and `whisker-css` standalone
 /// without runtime-aware path detection.
 pub fn expand(input: TokenStream2) -> TokenStream2 {
-    let parsed: Input = match syn::parse2(input) {
+    let parsed: CssInput = match syn::parse2(input) {
         Ok(p) => p,
         // On total parse failure, still emit the root `Css::new()`
         // so the user sees a real type at the cursor instead of a
