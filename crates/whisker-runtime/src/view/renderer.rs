@@ -79,16 +79,27 @@ pub struct EventDispatchPlan {
 /// type-erased — the handle type is always [`Element`]. Existing
 /// `R: Renderer` implementations bridge into here via a small adapter
 /// that maintains its own `Element → R::Element` map.
+/// All mutating methods take `&self`, not `&mut self`. This is the
+/// core of the re-entrancy fix for whisker issue #3: a native event
+/// can fire *synchronously* during a renderer operation (e.g. Lynx
+/// teardown inside [`remove_child`](Self::remove_child) triggering a
+/// UIKit callback that dispatches a custom event), which re-enters the
+/// renderer through [`dispatch_event`]. With `&self` methods the
+/// thread-local [`CURRENT_RENDERER`] is held by a *shared* borrow in
+/// [`with_renderer`], so a re-entrant call (also shared) is permitted
+/// rather than panicking with "RefCell already borrowed". Renderers
+/// own their mutable state behind per-field `RefCell`s and must scope
+/// each field borrow so it does **not** span a re-entrant FFI call.
 pub trait DynRenderer {
-    fn create_element(&mut self, tag: ElementTag) -> Element;
+    fn create_element(&self, tag: ElementTag) -> Element;
     /// Phase 7: tag-by-name dispatch for custom / xelement-style
     /// tags ("x-input", etc.) not in the built-in [`ElementTag`]
     /// enum. Returns [`Element::INVALID`] when the tag is unknown
     /// to Lynx's behaviour registry.
-    fn create_element_by_name(&mut self, tag_name: &str) -> Element;
-    fn release_element(&mut self, handle: Element);
+    fn create_element_by_name(&self, tag_name: &str) -> Element;
+    fn release_element(&self, handle: Element);
 
-    fn set_attribute(&mut self, handle: Element, key: &str, value: &str);
+    fn set_attribute(&self, handle: Element, key: &str, value: &str);
     /// Typed-attr variants. Lynx's prop dispatch on many UIs
     /// (`<list>`, `<scroll-view>`, …) gates branches on
     /// `value.IsNumber()` / `value.IsBool()` against the underlying
@@ -98,16 +109,16 @@ pub trait DynRenderer {
     /// reads the value as anything other than a string. Default
     /// impls forward to the string path (good enough for test
     /// renderers that don't model the underlying type discrimination).
-    fn set_attribute_int(&mut self, handle: Element, key: &str, value: i64) {
+    fn set_attribute_int(&self, handle: Element, key: &str, value: i64) {
         self.set_attribute(handle, key, &value.to_string());
     }
-    fn set_attribute_bool(&mut self, handle: Element, key: &str, value: bool) {
+    fn set_attribute_bool(&self, handle: Element, key: &str, value: bool) {
         self.set_attribute(handle, key, if value { "true" } else { "false" });
     }
-    fn set_attribute_double(&mut self, handle: Element, key: &str, value: f64) {
+    fn set_attribute_double(&self, handle: Element, key: &str, value: f64) {
         self.set_attribute(handle, key, &value.to_string());
     }
-    fn set_inline_styles(&mut self, handle: Element, css: &str);
+    fn set_inline_styles(&self, handle: Element, css: &str);
 
     /// Underlying Lynx sign (`impl_id`) for `handle`, or 0 if the
     /// renderer doesn't model signs (test renderers) or the handle
@@ -124,7 +135,7 @@ pub trait DynRenderer {
     /// Lynx's decoupled native list reads its items from. The `list`
     /// builder calls this once at `__h()` finalize. Default no-op for
     /// test renderers that don't model list virtualisation.
-    fn set_update_list_info(&mut self, _handle: Element, _count: i32) {}
+    fn set_update_list_info(&self, _handle: Element, _count: i32) {}
 
     /// Install a native item provider on a `<list>` element. The
     /// `provider`'s callbacks are invoked by Lynx's list machinery to
@@ -135,7 +146,7 @@ pub trait DynRenderer {
     /// The default drops `provider` so test code doesn't leak boxed
     /// closures.
     fn install_list_native_item_provider(
-        &mut self,
+        &self,
         _handle: Element,
         provider: super::list_provider::NativeItemProvider,
     ) -> bool {
@@ -143,8 +154,8 @@ pub trait DynRenderer {
         false
     }
 
-    fn append_child(&mut self, parent: Element, child: Element);
-    fn remove_child(&mut self, parent: Element, child: Element);
+    fn append_child(&self, parent: Element, child: Element);
+    fn remove_child(&self, parent: Element, child: Element);
 
     /// Register `callback` for `event_name` on `handle`.
     ///
@@ -156,7 +167,7 @@ pub trait DynRenderer {
     /// shape, deserializing the payload as needed. An event with no
     /// body fires the callback with [`WhiskerValue::Null`].
     fn set_event_listener(
-        &mut self,
+        &self,
         handle: Element,
         event_name: &str,
         bind_type: BindType,
@@ -189,8 +200,8 @@ pub trait DynRenderer {
         EventDispatchPlan::default()
     }
 
-    fn set_root(&mut self, page: Element);
-    fn flush(&mut self);
+    fn set_root(&self, page: Element);
+    fn flush(&self);
 
     /// Opaque platform pointer the C bridge associates with this
     /// `Element` handle (cast from `*mut WhiskerElement` for the
@@ -309,9 +320,24 @@ pub fn current_renderer_id() -> Option<&'static str> {
     CURRENT_RENDERER.with_borrow(|slot| slot.as_ref().map(|_| "installed"))
 }
 
-fn with_renderer<R>(f: impl FnOnce(&mut dyn DynRenderer) -> R, default: R) -> R {
-    CURRENT_RENDERER.with_borrow_mut(|slot| match slot.as_mut() {
-        Some(r) => f(r.as_mut()),
+/// Run `f` against the installed renderer under a **shared** borrow of
+/// the [`CURRENT_RENDERER`] slot.
+///
+/// The shared borrow is the re-entrancy fix: `RefCell` permits any
+/// number of simultaneous shared borrows, so if `f` (e.g. a
+/// `remove_child` that synchronously tears down native views) causes a
+/// native callback to re-enter Whisker through [`dispatch_event`] →
+/// another `with_renderer`, that nested shared borrow is granted
+/// instead of aborting with "already borrowed". This works because
+/// every [`DynRenderer`] method now takes `&self` and owns its mutable
+/// state behind interior `RefCell`s.
+///
+/// Slot *swapping* ([`install_renderer`] / [`uninstall_renderer`])
+/// still uses `with_borrow_mut`; those are never called during
+/// dispatch, so they can't conflict with an outstanding shared borrow.
+fn with_renderer<R>(f: impl FnOnce(&dyn DynRenderer) -> R, default: R) -> R {
+    CURRENT_RENDERER.with_borrow(|slot| match slot.as_ref() {
+        Some(r) => f(r.as_ref()),
         None => {
             #[cfg(debug_assertions)]
             eprintln!("whisker-view: renderer call outside any installed renderer; ignored");

@@ -124,7 +124,7 @@ impl BridgeRenderer {
     /// the element (e.g. it was already released) — in that case the
     /// provider is dropped immediately.
     pub(crate) fn install_list_native_item_provider(
-        &mut self,
+        &self,
         list_element: Element,
         provider: NativeItemProvider,
     ) -> bool {

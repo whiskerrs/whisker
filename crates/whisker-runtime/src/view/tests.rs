@@ -22,7 +22,10 @@ enum Op {
 
 #[derive(Default)]
 struct RecordingRenderer {
-    next_id: u32,
+    // `Cell` because `DynRenderer` methods take `&self` now (the
+    // re-entrancy fix): the renderer owns its mutable state behind
+    // interior mutability instead of `&mut self`.
+    next_id: std::cell::Cell<u32>,
     ops: std::rc::Rc<std::cell::RefCell<Vec<Op>>>,
 }
 
@@ -32,54 +35,58 @@ impl RecordingRenderer {
         let log = renderer.ops.clone();
         (renderer, log)
     }
+
+    fn alloc_id(&self) -> u32 {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        id
+    }
 }
 
 impl DynRenderer for RecordingRenderer {
-    fn create_element(&mut self, tag: ElementTag) -> Element {
-        let id = self.next_id;
-        self.next_id += 1;
+    fn create_element(&self, tag: ElementTag) -> Element {
+        let id = self.alloc_id();
         self.ops.borrow_mut().push(Op::Create { id, tag });
         Element::from_raw(id)
     }
-    fn create_element_by_name(&mut self, _tag_name: &str) -> Element {
-        let id = self.next_id;
-        self.next_id += 1;
+    fn create_element_by_name(&self, _tag_name: &str) -> Element {
+        let id = self.alloc_id();
         self.ops.borrow_mut().push(Op::Create {
             id,
             tag: ElementTag::View,
         });
         Element::from_raw(id)
     }
-    fn release_element(&mut self, h: Element) {
+    fn release_element(&self, h: Element) {
         self.ops.borrow_mut().push(Op::Release { id: h.id() });
     }
-    fn set_attribute(&mut self, h: Element, key: &str, value: &str) {
+    fn set_attribute(&self, h: Element, key: &str, value: &str) {
         self.ops.borrow_mut().push(Op::SetAttr {
             id: h.id(),
             key: key.into(),
             value: value.into(),
         });
     }
-    fn set_inline_styles(&mut self, h: Element, css: &str) {
+    fn set_inline_styles(&self, h: Element, css: &str) {
         self.ops.borrow_mut().push(Op::SetStyles {
             id: h.id(),
             css: css.into(),
         });
     }
-    fn append_child(&mut self, parent: Element, child: Element) {
+    fn append_child(&self, parent: Element, child: Element) {
         self.ops.borrow_mut().push(Op::Append {
             parent: parent.id(),
             child: child.id(),
         });
     }
-    fn remove_child(&mut self, parent: Element, child: Element) {
+    fn remove_child(&self, parent: Element, child: Element) {
         self.ops.borrow_mut().push(Op::Remove {
             parent: parent.id(),
             child: child.id(),
         });
     }
     fn set_event_listener(
-        &mut self,
+        &self,
         h: Element,
         name: &str,
         _bind_type: super::BindType,
@@ -90,10 +97,10 @@ impl DynRenderer for RecordingRenderer {
             name: name.into(),
         });
     }
-    fn set_root(&mut self, page: Element) {
+    fn set_root(&self, page: Element) {
         self.ops.borrow_mut().push(Op::SetRoot { id: page.id() });
     }
-    fn flush(&mut self) {
+    fn flush(&self) {
         self.ops.borrow_mut().push(Op::Flush);
     }
 }
@@ -235,4 +242,354 @@ fn view_attach_appends_each_leaf() {
         .filter(|o| matches!(o, Op::Append { .. }))
         .collect();
     assert_eq!(appends.len(), 3, "Empty fragments must be skipped");
+}
+
+// ===========================================================================
+// Re-entrancy (whisker #3) — these tests pin the root-cause fix: a native
+// event that fires *synchronously during* a renderer operation must be able
+// to re-enter the dispatch path without aborting on "RefCell already
+// borrowed". The fix is: `DynRenderer` methods take `&self`, renderers own
+// their state behind interior `RefCell`s with FFI-scoped borrows, and
+// `with_renderer` takes a *shared* borrow of the renderer slot.
+// ===========================================================================
+mod reentrancy {
+    use super::*;
+    use crate::value::WhiskerValue;
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    /// A test renderer that mirrors the *shape* of the real
+    /// `BridgeRenderer`: it keeps `parent_sign` and `listeners` behind
+    /// per-field `RefCell`s and plans event dispatch from them. Its
+    /// `remove_child` runs a caller-supplied **re-entrancy hook**
+    /// *while simulating native teardown* — standing in for Lynx
+    /// synchronously dispatching a UIKit event during `remove_child`.
+    ///
+    /// Crucially `remove_child` holds **no field borrow** across the
+    /// hook (mirroring the FFI-scoping rule), so the hook is free to
+    /// re-enter any `view::*` op, including `dispatch_event`, which
+    /// reads `parent_sign` + `listeners`.
+    #[derive(Default)]
+    struct ReentrantRenderer {
+        next_id: Cell<u32>,
+        /// `element id` → its mirror parent id (used as the "sign" —
+        /// the test models sign == element id for simplicity).
+        parent_sign: RefCell<HashMap<i32, i32>>,
+        /// `(sign, event)` → listener closures.
+        #[allow(clippy::type_complexity)]
+        listeners: RefCell<HashMap<(i32, String), Vec<Rc<dyn Fn(WhiskerValue)>>>>,
+        /// Ordered side-effect log so tests can assert *sync* delivery
+        /// order (outer op effects interleaved with inner re-entrant
+        /// effects).
+        log: Rc<RefCell<Vec<String>>>,
+        /// Fired once, from inside `remove_child`, with no field borrow
+        /// held — the simulated synchronous native callback.
+        #[allow(clippy::type_complexity)]
+        on_remove_hook: RefCell<Option<Box<dyn Fn()>>>,
+    }
+
+    impl ReentrantRenderer {
+        fn new() -> (Self, Rc<RefCell<Vec<String>>>) {
+            let r = Self::default();
+            let log = r.log.clone();
+            (r, log)
+        }
+        fn alloc_id(&self) -> u32 {
+            let id = self.next_id.get();
+            self.next_id.set(id + 1);
+            id
+        }
+    }
+
+    impl DynRenderer for ReentrantRenderer {
+        fn create_element(&self, _tag: ElementTag) -> Element {
+            Element::from_raw(self.alloc_id())
+        }
+        fn create_element_by_name(&self, _tag: &str) -> Element {
+            Element::from_raw(self.alloc_id())
+        }
+        fn release_element(&self, _h: Element) {}
+        fn element_sign(&self, h: Element) -> i32 {
+            h.id() as i32
+        }
+        fn set_attribute(&self, h: Element, key: &str, value: &str) {
+            self.log
+                .borrow_mut()
+                .push(format!("set_attr {} {}={}", h.id(), key, value));
+        }
+        fn set_inline_styles(&self, _h: Element, _css: &str) {}
+        fn append_child(&self, parent: Element, child: Element) {
+            // Scope the `parent_sign` borrow — never spanning anything
+            // re-entrant (matches the renderer contract).
+            self.parent_sign
+                .borrow_mut()
+                .insert(child.id() as i32, parent.id() as i32);
+            self.log
+                .borrow_mut()
+                .push(format!("append {} -> {}", child.id(), parent.id()));
+        }
+        fn remove_child(&self, parent: Element, child: Element) {
+            // Simulate native teardown: FIRST mutate `parent_sign`
+            // under a short, scoped borrow that is fully released…
+            {
+                let mut ps = self.parent_sign.borrow_mut();
+                ps.remove(&(child.id() as i32));
+            }
+            // …THEN run the synchronous "native callback" with NO field
+            // borrow held. This is exactly the spot where Lynx would
+            // re-enter Whisker during teardown. If any field borrow
+            // leaked into here, the re-entrant op below would panic.
+            self.log
+                .borrow_mut()
+                .push(format!("remove {} from {}", child.id(), parent.id()));
+            let hook = self.on_remove_hook.borrow_mut().take();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
+        fn set_event_listener(
+            &self,
+            h: Element,
+            event_name: &str,
+            _bind_type: BindType,
+            callback: Box<dyn Fn(WhiskerValue) + 'static>,
+        ) {
+            self.listeners
+                .borrow_mut()
+                .entry((h.id() as i32, event_name.to_string()))
+                .or_default()
+                .push(Rc::from(callback));
+        }
+        fn plan_event_dispatch(
+            &self,
+            target_sign: i32,
+            event_name: &str,
+            body: &WhiskerValue,
+        ) -> EventDispatchPlan {
+            // Reconstruct the chain under a scoped `parent_sign` borrow,
+            // then drop it before touching `listeners` — mirroring the
+            // real renderer. Both borrows are read-only and span no
+            // re-entrant op.
+            let chain = {
+                let ps = self.parent_sign.borrow();
+                let mut chain = vec![target_sign];
+                let mut cur = target_sign;
+                while let Some(&p) = ps.get(&cur) {
+                    chain.push(p);
+                    cur = p;
+                }
+                chain
+            };
+            let listeners = self.listeners.borrow();
+            let mut firings: Vec<super::super::renderer::EventFiring> = Vec::new();
+            // Bubble: target → root.
+            for sign in &chain {
+                if let Some(ls) = listeners.get(&(*sign, event_name.to_string())) {
+                    for l in ls {
+                        firings.push((l.clone(), body.clone()));
+                    }
+                }
+            }
+            EventDispatchPlan {
+                consumed: !firings.is_empty(),
+                firings,
+            }
+        }
+        fn set_root(&self, _p: Element) {}
+        fn flush(&self) {}
+    }
+
+    /// Re-entrant *renderer op* during a renderer op does not panic.
+    /// `remove_child` synchronously calls back into `set_attribute`
+    /// (another `with_renderer` shared borrow). Pre-fix this aborted
+    /// with "already borrowed".
+    #[test]
+    fn reentrant_renderer_op_during_remove_does_not_panic() {
+        let (renderer, log) = ReentrantRenderer::new();
+        // Install a hook that re-enters the public dispatch path.
+        *renderer.on_remove_hook.borrow_mut() = Some(Box::new(|| {
+            // This goes through `with_renderer` again — a NESTED shared
+            // borrow of CURRENT_RENDERER. Must be granted, not aborted.
+            set_attribute(Element::from_raw(99), "reentrant", "1");
+        }));
+
+        with_installed_renderer(Box::new(renderer), || {
+            let parent = create_element(ElementTag::View); // 0
+            let child = create_element(ElementTag::View); // 1
+            append_child(parent, child);
+            // Triggers the hook mid-`remove_child`.
+            remove_child(parent, child);
+        });
+
+        let log = log.borrow();
+        assert!(
+            log.iter().any(|l| l == "remove 1 from 0"),
+            "outer remove ran: {log:?}"
+        );
+        assert!(
+            log.iter().any(|l| l == "set_attr 99 reentrant=1"),
+            "re-entrant set_attribute ran synchronously: {log:?}"
+        );
+        // The re-entrant op was observed AFTER the outer remove began —
+        // synchronous, in-order, no deferral.
+        let remove_pos = log.iter().position(|l| l == "remove 1 from 0").unwrap();
+        let reentrant_pos = log
+            .iter()
+            .position(|l| l == "set_attr 99 reentrant=1")
+            .unwrap();
+        assert!(
+            reentrant_pos > remove_pos,
+            "re-entrant effect must come after the op that triggered it: {log:?}"
+        );
+    }
+
+    /// Re-entrant *event dispatch* during a renderer op runs
+    /// synchronously and in order. `remove_child` synchronously
+    /// dispatches an event whose listener performs another renderer op
+    /// — both the outer op and the inner listener's effect are observed
+    /// in order. This proves there is no one-tick deferral (the #3
+    /// `DispatchQueue.main.async` workaround is no longer needed).
+    #[test]
+    fn reentrant_event_dispatch_runs_synchronously_in_order() {
+        let (renderer, log) = ReentrantRenderer::new();
+        *renderer.on_remove_hook.borrow_mut() = Some(Box::new(|| {
+            // Simulate the native reporter forwarding a custom event
+            // during teardown.
+            dispatch_event(7, "custominput", WhiskerValue::Null);
+        }));
+
+        with_installed_renderer(Box::new(renderer), || {
+            let parent = create_element(ElementTag::View); // 0
+            let child = create_element(ElementTag::View); // 1
+            append_child(parent, child);
+
+            // Register a listener on sign 7 that, WHEN FIRED, performs a
+            // renderer op (set_attribute). Sign 7 is modeled as element
+            // id 7.
+            set_event_listener(
+                Element::from_raw(7),
+                "custominput",
+                BindType::Bind,
+                Box::new(|_v| {
+                    set_attribute(Element::from_raw(42), "from-listener", "fired");
+                }),
+            );
+
+            remove_child(parent, child);
+        });
+
+        let log = log.borrow();
+        let remove_pos = log.iter().position(|l| l == "remove 1 from 0");
+        let listener_pos = log
+            .iter()
+            .position(|l| l == "set_attr 42 from-listener=fired");
+        assert!(remove_pos.is_some(), "outer remove ran: {log:?}");
+        assert!(
+            listener_pos.is_some(),
+            "re-entrant event listener fired synchronously: {log:?}"
+        );
+        assert!(
+            listener_pos.unwrap() > remove_pos.unwrap(),
+            "listener effect must follow the triggering op, in order: {log:?}"
+        );
+    }
+
+    /// Field-borrow scoping: the outer op is mid-mutation of the SAME
+    /// field (`parent_sign`) that the re-entrant op reads/writes.
+    /// `remove_child` mutates `parent_sign` (scoped + dropped) and then,
+    /// in the hook, the re-entrant `dispatch_event` walks `parent_sign`
+    /// AND a re-entrant `append_child` writes it. No panic; final state
+    /// is correct. This guards against re-introducing a spanning borrow.
+    #[test]
+    fn field_borrow_scoping_same_field_reentrant() {
+        let (renderer, log) = ReentrantRenderer::new();
+        *renderer.on_remove_hook.borrow_mut() = Some(Box::new(|| {
+            // READ parent_sign (chain walk) …
+            dispatch_event(5, "tap", WhiskerValue::Null);
+            // … and WRITE parent_sign (new edge), all re-entrantly while
+            // the outer remove_child is on the stack.
+            append_child(Element::from_raw(10), Element::from_raw(11));
+        }));
+
+        with_installed_renderer(Box::new(renderer), || {
+            let p = create_element(ElementTag::View); // 0
+            let a = create_element(ElementTag::View); // 1
+            let b = create_element(ElementTag::View); // 2
+            append_child(p, a);
+            append_child(a, b); // parent_sign: 1->0, 2->1
+            remove_child(a, b); // mutates parent_sign (removes 2->1), then hooks
+        });
+
+        let log = log.borrow();
+        // Re-entrant append must have landed in parent_sign without a
+        // borrow conflict.
+        assert!(
+            log.iter().any(|l| l == "append 11 -> 10"),
+            "re-entrant append while outer remove on stack: {log:?}"
+        );
+        assert!(log.iter().any(|l| l == "remove 2 from 1"));
+    }
+
+    /// Nested `with_renderer` (shared borrow) is allowed, but a mut
+    /// swap of the renderer slot *during* an outstanding shared borrow
+    /// is still rejected — sanity that we didn't accidentally make the
+    /// slot permissive to concurrent shared+exclusive access.
+    #[test]
+    fn mut_swap_during_dispatch_is_rejected() {
+        let (renderer, _log) = ReentrantRenderer::new();
+        // The hook attempts to swap the renderer slot (an exclusive
+        // borrow) while the outer op holds a shared borrow → must
+        // panic. We catch it so the test asserts on the rejection
+        // rather than aborting.
+        *renderer.on_remove_hook.borrow_mut() = Some(Box::new(|| {
+            let result = std::panic::catch_unwind(|| {
+                // `install_renderer` uses `with_borrow_mut`.
+                let _ = install_renderer(Box::new(RecordingRenderer::default()));
+            });
+            assert!(
+                result.is_err(),
+                "swapping the renderer slot during a shared borrow must be rejected"
+            );
+        }));
+
+        with_installed_renderer(Box::new(renderer), || {
+            let parent = create_element(ElementTag::View);
+            let child = create_element(ElementTag::View);
+            append_child(parent, child);
+            remove_child(parent, child);
+        });
+    }
+
+    /// Nested shared `with_renderer` borrows stack arbitrarily deep
+    /// without panicking — drives the re-entrant path two levels deep.
+    #[test]
+    fn deeply_nested_shared_borrows_do_not_panic() {
+        let (renderer, log) = ReentrantRenderer::new();
+        // Hook fires a renderer op which itself triggers another
+        // renderer op via a listener → 3 stacked shared borrows.
+        *renderer.on_remove_hook.borrow_mut() = Some(Box::new(|| {
+            set_attribute(Element::from_raw(100), "level", "2");
+            dispatch_event(8, "deep", WhiskerValue::Null);
+        }));
+
+        with_installed_renderer(Box::new(renderer), || {
+            set_event_listener(
+                Element::from_raw(8),
+                "deep",
+                BindType::Bind,
+                Box::new(|_v| {
+                    set_attribute(Element::from_raw(101), "level", "3");
+                }),
+            );
+            let parent = create_element(ElementTag::View);
+            let child = create_element(ElementTag::View);
+            append_child(parent, child);
+            remove_child(parent, child);
+        });
+
+        let log = log.borrow();
+        assert!(log.iter().any(|l| l == "set_attr 100 level=2"));
+        assert!(log.iter().any(|l| l == "set_attr 101 level=3"));
+    }
 }

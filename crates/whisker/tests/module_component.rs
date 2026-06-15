@@ -30,7 +30,7 @@ enum Op {
 
 #[derive(Default)]
 struct Recorder {
-    next: u32,
+    next: ::std::cell::Cell<u32>,
     log: Rc<RefCell<Vec<Op>>>,
 }
 
@@ -43,44 +43,44 @@ impl Recorder {
 }
 
 impl DynRenderer for Recorder {
-    fn create_element(&mut self, tag: ElementTag) -> Element {
-        let id = self.next;
-        self.next += 1;
+    fn create_element(&self, tag: ElementTag) -> Element {
+        let id = self.next.get();
+        self.next.set(id + 1);
         self.log.borrow_mut().push(Op::Create { id, tag });
         Element::from_raw(id)
     }
-    fn create_element_by_name(&mut self, tag_name: &str) -> Element {
-        let id = self.next;
-        self.next += 1;
+    fn create_element_by_name(&self, tag_name: &str) -> Element {
+        let id = self.next.get();
+        self.next.set(id + 1);
         self.log.borrow_mut().push(Op::CreateByName {
             id,
             tag_name: tag_name.into(),
         });
         Element::from_raw(id)
     }
-    fn release_element(&mut self, _h: Element) {}
-    fn set_attribute(&mut self, h: Element, k: &str, v: &str) {
+    fn release_element(&self, _h: Element) {}
+    fn set_attribute(&self, h: Element, k: &str, v: &str) {
         self.log.borrow_mut().push(Op::SetAttr {
             id: h.id(),
             key: k.into(),
             value: v.into(),
         });
     }
-    fn set_inline_styles(&mut self, h: Element, css: &str) {
+    fn set_inline_styles(&self, h: Element, css: &str) {
         self.log.borrow_mut().push(Op::SetStyles {
             id: h.id(),
             css: css.into(),
         });
     }
-    fn append_child(&mut self, p: Element, c: Element) {
+    fn append_child(&self, p: Element, c: Element) {
         self.log.borrow_mut().push(Op::Append {
             parent: p.id(),
             child: c.id(),
         });
     }
-    fn remove_child(&mut self, _p: Element, _c: Element) {}
+    fn remove_child(&self, _p: Element, _c: Element) {}
     fn set_event_listener(
-        &mut self,
+        &self,
         h: Element,
         name: &str,
         _bind_type: whisker::runtime::view::BindType,
@@ -91,8 +91,8 @@ impl DynRenderer for Recorder {
             name: name.into(),
         });
     }
-    fn set_root(&mut self, _p: Element) {}
-    fn flush(&mut self) {}
+    fn set_root(&self, _p: Element) {}
+    fn flush(&self) {}
 }
 
 fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {

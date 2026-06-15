@@ -29,7 +29,7 @@ use whisker::Owner;
 
 #[derive(Default)]
 struct Recorder {
-    next: u32,
+    next: ::std::cell::Cell<u32>,
     last_tag: Rc<RefCell<Option<String>>>,
 }
 
@@ -42,32 +42,32 @@ impl Recorder {
 }
 
 impl DynRenderer for Recorder {
-    fn create_element(&mut self, _tag: ElementTag) -> Element {
-        let id = self.next;
-        self.next += 1;
+    fn create_element(&self, _tag: ElementTag) -> Element {
+        let id = self.next.get();
+        self.next.set(id + 1);
         Element::from_raw(id)
     }
-    fn create_element_by_name(&mut self, tag_name: &str) -> Element {
-        let id = self.next;
-        self.next += 1;
+    fn create_element_by_name(&self, tag_name: &str) -> Element {
+        let id = self.next.get();
+        self.next.set(id + 1);
         *self.last_tag.borrow_mut() = Some(tag_name.to_string());
         Element::from_raw(id)
     }
-    fn release_element(&mut self, _h: Element) {}
-    fn set_attribute(&mut self, _h: Element, _k: &str, _v: &str) {}
-    fn set_inline_styles(&mut self, _h: Element, _css: &str) {}
-    fn append_child(&mut self, _p: Element, _c: Element) {}
-    fn remove_child(&mut self, _p: Element, _c: Element) {}
+    fn release_element(&self, _h: Element) {}
+    fn set_attribute(&self, _h: Element, _k: &str, _v: &str) {}
+    fn set_inline_styles(&self, _h: Element, _css: &str) {}
+    fn append_child(&self, _p: Element, _c: Element) {}
+    fn remove_child(&self, _p: Element, _c: Element) {}
     fn set_event_listener(
-        &mut self,
+        &self,
         _h: Element,
         _n: &str,
         _bind_type: whisker::runtime::view::BindType,
         _cb: Box<dyn Fn(whisker::WhiskerValue) + 'static>,
     ) {
     }
-    fn set_root(&mut self, _p: Element) {}
-    fn flush(&mut self) {}
+    fn set_root(&self, _p: Element) {}
+    fn flush(&self) {}
 }
 
 fn with_test_env<R>(f: impl FnOnce() -> R) -> R {

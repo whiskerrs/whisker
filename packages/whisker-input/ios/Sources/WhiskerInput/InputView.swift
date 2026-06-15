@@ -555,60 +555,47 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         return ["value": text]
     }
 
-    // NOTE: every `WhiskerCustomEvent.dispatch(...)` below is deferred to
-    // the next main-runloop tick via `DispatchQueue.main.async`. UIKit
-    // delegate callbacks (`textFieldDidEndEditing`, `textViewDidChange`,
-    // …) fire SYNCHRONOUSLY during Lynx's native teardown on a hot-reload
-    // remount, while `remove_child` still holds the `CURRENT_RENDERER`
-    // RefCell borrow. Dispatching synchronously reenters Rust's
-    // `dispatch_event` → a second `with_renderer` borrow → "RefCell
-    // already borrowed" panic (the event is dropped). Deferring one tick
-    // guarantees the dispatch lands at idle, never inside a render borrow.
+    // These dispatch SYNCHRONOUSLY. UIKit delegate callbacks
+    // (`textFieldDidEndEditing`, `textViewDidChange`, …) can fire during
+    // Lynx's native teardown on a hot-reload remount, *while*
+    // `remove_child` is on the stack inside Rust's renderer. Previously
+    // that re-entered `dispatch_event` → a second `with_renderer` borrow
+    // → "RefCell already borrowed" panic, so we deferred a runloop tick
+    // (`DispatchQueue.main.async`) to dodge it — which is exactly the
+    // one-tick-late delivery of whisker #3.
     //
-    // Safe for the two-way-binding `input` timing: the native field
-    // already shows the typed character immediately (native owns its
-    // text); the one-tick-later Rust `value` round-trip is absorbed by
-    // the cursor-preservation diff guard in `setValue(_:)`, so no jump.
-    // `self` is captured weakly and the text is snapshotted before the
-    // async block so a torn-down view never dispatches a dangling event.
+    // The Rust renderer is now re-entrancy-safe: `DynRenderer` methods
+    // take `&self`, `BridgeRenderer` holds its state behind per-field
+    // `RefCell`s with FFI-scoped borrows, and `with_renderer` takes a
+    // SHARED borrow — so a synchronous re-entrant `dispatch_event` during
+    // teardown is granted instead of aborting. See
+    // `crates/whisker-runtime/src/view/renderer.rs` (`with_renderer`) and
+    // `crates/whisker-driver/src/lynx/renderer.rs` (BridgeRenderer). With
+    // that fix the deferral is no longer needed, and removing it collapses
+    // the one-tick delay: `on_input` / `on_change` / `on_submit` now
+    // deliver on the same tick the user interacts.
 
     private func emitInput(_ text: String) {
-        // `cachedText` is owned state — keep it immediate (synchronous) so
-        // `getValue` / the cursor-preservation diff stay correct even if
-        // the deferred dispatch hasn't fired yet.
+        // `cachedText` is owned state — keep it correct before dispatch so
+        // `getValue` / the cursor-preservation diff stay consistent.
         cachedText = text
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "input", params: self.detailPayload(text))
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "input", params: detailPayload(text))
     }
 
     private func emitChange(_ text: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "change", params: self.detailPayload(text))
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "change", params: detailPayload(text))
     }
 
     private func emitFocus() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "focus", params: [:])
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "focus", params: [:])
     }
 
     private func emitBlur() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "blur", params: [:])
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "blur", params: [:])
     }
 
     private func emitSubmit(_ text: String) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            WhiskerCustomEvent.dispatch(from: self, name: "submit", params: self.detailPayload(text))
-        }
+        WhiskerCustomEvent.dispatch(from: self, name: "submit", params: detailPayload(text))
     }
 
     // MARK: - UITextField action targets
