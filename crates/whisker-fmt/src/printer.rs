@@ -3,13 +3,18 @@
 //! ## Embedded Rust expressions
 //!
 //! Kwarg values, event-handler closures and any other embedded Rust
-//! are NOT re-printed from tokens. They are sliced verbatim out of the
-//! original macro-body source via [`SourceMap`] (see `source_map.rs`),
-//! so the user's own expression formatting is preserved exactly. We
-//! only fall back to `proc_macro2` token printing when the slice fails
-//! (e.g. a synthesized span with no source position) — a rare,
-//! best-effort path. This choice keeps the formatter from fighting
-//! rustfmt over expression internals.
+//! are rendered through [`Printer::expr_src`], which resolves in this
+//! order:
+//!
+//! 1. A rustfmt-formatted entry in the [`ExprMap`] built by the full
+//!    pipeline (see `expr_fmt.rs`). The text is stored dedented to
+//!    column 0; the surrounding [`reindent`] calls push its continuation
+//!    lines under the kwarg column.
+//! 2. The verbatim source slice from [`SourceMap`] (see
+//!    `source_map.rs`). This is the rustfmt-free path the unit tests
+//!    use, and the fallback when rustfmt produced no entry for an expr.
+//! 3. `proc_macro2` token printing when the span has no source position
+//!    (a rare, best-effort path).
 //!
 //! ## Layout
 //!
@@ -19,6 +24,7 @@
 //! indented lines. This matches the shallow, regular `render!` grammar
 //! and is easy to keep idempotent.
 
+use crate::expr_fmt::ExprMap;
 use crate::options::FmtOptions;
 use crate::source_map::SourceMap;
 use proc_macro2::Span;
@@ -30,13 +36,23 @@ use whisker_macro_syntax::{CssInput, ElementNode, Kwarg, Node, Root, UserCompone
 /// `base_indent` is the indent level (in tab-units) at which the macro
 /// invocation sits in the rustfmt output; the body is indented one
 /// level deeper.
+///
+/// `expr_map` supplies rustfmt-formatted text for the embedded
+/// expressions, keyed by each expr's body-relative span. An EMPTY map
+/// means "render every expr verbatim" — that is the rustfmt-free path
+/// the [`crate::reformat_macros`] unit tests use.
 pub(crate) fn print_render(
     root: &Root,
     map: &SourceMap,
     opts: &FmtOptions,
     base_indent: usize,
+    expr_map: &ExprMap,
 ) -> String {
-    let p = Printer { map, opts };
+    let p = Printer {
+        map,
+        opts,
+        expr_map,
+    };
     let mut out = String::new();
     p.node(&root.node, base_indent + 1, &mut out);
     out
@@ -48,20 +64,36 @@ pub(crate) fn print_css(
     map: &SourceMap,
     opts: &FmtOptions,
     base_indent: usize,
+    expr_map: &ExprMap,
 ) -> String {
-    let p = Printer { map, opts };
+    let p = Printer {
+        map,
+        opts,
+        expr_map,
+    };
     p.css(input, base_indent + 1)
 }
 
 struct Printer<'a> {
     map: &'a SourceMap<'a>,
     opts: &'a FmtOptions,
+    expr_map: &'a ExprMap,
 }
 
 impl Printer<'_> {
-    /// Slice an embedded Rust expr verbatim from the source, falling
-    /// back to token printing if the span has no source position.
+    /// Render an embedded Rust expr. Resolution order:
+    ///
+    /// 1. A rustfmt-formatted entry in [`ExprMap`] (keyed by the expr's
+    ///    body-relative span), stored dedented to column 0. Continuation
+    ///    lines are re-indented to the kwarg column by the [`reindent`]
+    ///    calls at the call sites, so nothing extra is needed here.
+    /// 2. The verbatim source slice (rustfmt-free core / fallback).
+    /// 3. `proc_macro2` token printing when the span has no source
+    ///    position.
     fn expr_src(&self, span: Span, tokens: &dyn ToTokens) -> String {
+        if let Some(formatted) = self.expr_map.get(span) {
+            return formatted.to_string();
+        }
         if let Some(s) = self.map.slice(span) {
             // Trim surrounding whitespace; internal formatting is kept.
             s.trim().to_string()
