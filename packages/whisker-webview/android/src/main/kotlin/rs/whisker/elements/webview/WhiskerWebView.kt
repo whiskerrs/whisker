@@ -24,17 +24,20 @@
 //
 // ## Event dispatch
 //
-// ALL WhiskerCustomEvent.dispatch calls are wrapped in `view?.post { … }`
-// to hop onto the UI-thread's next message-loop tick. This is required
-// for two orthogonal reasons:
-//   1. WebViewClient / WebChromeClient callbacks fire on the UI thread
-//      but can arrive while Lynx holds the renderer borrow (during
-//      teardown / hot-reload remount). A synchronous dispatch re-enters
-//      Rust's RefCell and panics. Posting breaks the synchronous
-//      reentry.
-//   2. @JavascriptInterface methods fire on JavaBridge (a background
-//      thread). view.post() hops back to the UI thread before touching
-//      any Android View APIs or Lynx emitter state.
+// WebViewClient / WebChromeClient callbacks fire on the UI thread and
+// dispatch SYNCHRONOUSLY. They can arrive while Lynx is mid-teardown /
+// hot-reload remount, but the Rust renderer is now re-entrancy-safe
+// (whisker #3: `with_renderer` takes a shared borrow and every renderer
+// field borrow is scoped so it never spans a re-entrant FFI call), so a
+// re-entrant dispatch no longer panics with "RefCell already borrowed".
+// This used to be deferred a main-loop tick via `view?.post { … }`;
+// dispatching synchronously removes that one-tick lag (whisker #3).
+//
+// The ONE exception is `@JavascriptInterface` (window.whisker.postMessage
+// → emitMessage), which fires on JavaBridge (a background thread). That
+// path still hops to the UI thread via `view?.post { … }` before touching
+// any Android View / Lynx emitter state — a real thread transition, not a
+// reentrancy guard, so it is kept.
 //
 // ## Teardown
 //
@@ -186,24 +189,20 @@ open class WhiskerWebView(context: WhiskerContext) :
                     view.evaluateJavascript(JS_SHIM, null)
                 }
                 val safeUrl = url ?: ""
-                view.post {
-                    WhiskerCustomEvent.dispatch(
-                        ui = this@WhiskerWebView,
-                        name = "load_start",
-                        params = mapOf("url" to safeUrl),
-                    )
-                }
+                WhiskerCustomEvent.dispatch(
+                    ui = this@WhiskerWebView,
+                    name = "load_start",
+                    params = mapOf("url" to safeUrl),
+                )
             }
 
             override fun onPageFinished(view: android.webkit.WebView, url: String?) {
                 val safeUrl = url ?: ""
-                view.post {
-                    WhiskerCustomEvent.dispatch(
-                        ui = this@WhiskerWebView,
-                        name = "load",
-                        params = mapOf("url" to safeUrl),
-                    )
-                }
+                WhiskerCustomEvent.dispatch(
+                    ui = this@WhiskerWebView,
+                    name = "load",
+                    params = mapOf("url" to safeUrl),
+                )
             }
 
             override fun onReceivedError(
@@ -227,17 +226,15 @@ open class WhiskerWebView(context: WhiskerContext) :
                 } else {
                     ""
                 }
-                view.post {
-                    WhiskerCustomEvent.dispatch(
-                        ui = this@WhiskerWebView,
-                        name = "error",
-                        params = mapOf(
-                            "url" to url,
-                            "code" to code,
-                            "description" to description,
-                        ),
-                    )
-                }
+                WhiskerCustomEvent.dispatch(
+                    ui = this@WhiskerWebView,
+                    name = "error",
+                    params = mapOf(
+                        "url" to url,
+                        "code" to code,
+                        "description" to description,
+                    ),
+                )
             }
 
             override fun shouldOverrideUrlLoading(
@@ -274,13 +271,11 @@ open class WhiskerWebView(context: WhiskerContext) :
                     originWhitelist.any { pattern -> matchesGlob(pattern, url) }
                 if (!allowed) return true // block
                 // Allowed — let WebView load it and inform Rust.
-                view.post {
-                    WhiskerCustomEvent.dispatch(
-                        ui = this@WhiskerWebView,
-                        name = "navigation",
-                        params = mapOf("url" to url),
-                    )
-                }
+                WhiskerCustomEvent.dispatch(
+                    ui = this@WhiskerWebView,
+                    name = "navigation",
+                    params = mapOf("url" to url),
+                )
                 return false // proceed with load
             }
         }
@@ -288,13 +283,11 @@ open class WhiskerWebView(context: WhiskerContext) :
         wv.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: android.webkit.WebView, newProgress: Int) {
                 val fraction = newProgress / 100.0
-                view.post {
-                    WhiskerCustomEvent.dispatch(
-                        ui = this@WhiskerWebView,
-                        name = "progress",
-                        params = mapOf("progress" to fraction),
-                    )
-                }
+                WhiskerCustomEvent.dispatch(
+                    ui = this@WhiskerWebView,
+                    name = "progress",
+                    params = mapOf("progress" to fraction),
+                )
             }
         }
 
