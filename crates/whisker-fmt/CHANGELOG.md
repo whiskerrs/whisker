@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.3.1...whisker-fmt-v0.4.0) - 2026-06-16
+
+### Fixed
+
+- *(whisker-fmt)* resolve edition like cargo fmt + fix --config-path ([#222](https://github.com/whiskerrs/whisker/pull/222))
+
 ## [0.3.1](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.3.0...whisker-fmt-v0.3.1) - 2026-06-16
 
 ### Added

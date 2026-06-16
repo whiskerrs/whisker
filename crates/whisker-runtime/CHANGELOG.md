@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.3.1...whisker-runtime-v0.4.0) - 2026-06-16
+
+### Fixed
+
+- *(reactive)* close edge-triggered lost-wakeup that wedged the render loop ([#228](https://github.com/whiskerrs/whisker/pull/228))
+
 ## [0.3.0](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.2.5...whisker-runtime-v0.3.0) - 2026-06-15
 
 ### Added
