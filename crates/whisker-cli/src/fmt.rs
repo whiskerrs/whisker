@@ -141,32 +141,16 @@ fn format_one_file(path: &Path, check: bool) -> Result<bool> {
     Ok(true)
 }
 
-/// Build [`FmtOptions`] from the nearest `rustfmt.toml` (searching from
-/// `dir` upward). Missing keys keep rustfmt's defaults. The base Rust
-/// pass re-reads the same file via rustfmt itself; here we only extract
-/// the few layout keys the macro-body printer needs.
+/// Build [`FmtOptions`] for `dir`, delegating to the whisker-fmt library
+/// resolver so file-arg and `--stdin` paths both get the full edition
+/// resolution: nearest `rustfmt.toml` `edition` → nearest `Cargo.toml`
+/// edition (`[package]` / `[workspace.package]`) → `"2021"` default. The
+/// base Rust pass re-reads `rustfmt.toml` via rustfmt itself; here we
+/// supply the layout keys the macro-body printer needs plus the resolved
+/// `--edition` (so 2018+ syntax like `async move` doesn't hit rustfmt's
+/// 2015 default).
 fn resolve_options(dir: &Path) -> FmtOptions {
-    if let Some(toml_path) = find_rustfmt_toml(dir) {
-        if let Ok(text) = std::fs::read_to_string(&toml_path) {
-            return FmtOptions::from_rustfmt_config(&text);
-        }
-    }
-    FmtOptions::default()
-}
-
-/// Walk upward from `dir` looking for `rustfmt.toml` or `.rustfmt.toml`.
-fn find_rustfmt_toml(dir: &Path) -> Option<PathBuf> {
-    let mut cur = Some(dir);
-    while let Some(d) = cur {
-        for name in ["rustfmt.toml", ".rustfmt.toml"] {
-            let candidate = d.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-        cur = d.parent();
-    }
-    None
+    whisker_fmt::resolve_options(dir)
 }
 
 #[cfg(test)]

@@ -2377,6 +2377,7 @@ dependencies = [
  "quote",
  "similar",
  "syn",
+ "toml",
  "whisker-macro-syntax",
 ]
 
