@@ -28,4 +28,4 @@ crate-type = ["rlib"]
 
 [dependencies]
 whisker = { workspace = true }
-whisker-svg = { path = "../whisker-svg", version = "0.4.0" }
+whisker-svg = { path = "../whisker-svg", version = "0.4.1" }
