@@ -264,18 +264,29 @@ fn apply_pending_hot_patch() -> Vec<*const ()> {
 /// idle after this tick so the host can pause its render loop until the
 /// next `request_frame` callback fires.
 ///
-/// Idle is purely `!dispatch_pending` — whether the dispatched frame
-/// completed. An outstanding async task (e.g. a `resource()` fetch
-/// parked on a `run_blocking` worker) does NOT keep the host ticking:
-/// its completion is resumed off the **main run loop**, not vsync. When
-/// the worker marshals its result via `run_on_main_thread`, the
-/// trampoline runs on the main thread and invokes the registered drive
-/// callback ([`drive`]), which runs a full `tick_frame` right there —
-/// draining the pool and painting the result. So the host can safely
-/// sleep its vsync loop on idle; the parked fetch resumes via a
-/// race-free main-loop post, not a clobberable vsync unpause. (This
-/// replaces the interim busy-tick fix; see the `cross_thread_wake`
-/// resource tests.)
+/// Idle is `!dispatch_pending && !has_pending_work()` — the dispatched
+/// frame completed AND the reactive queue is genuinely drained. The
+/// second term is the **level-triggered** backstop: a native-view
+/// layout/measure callback can re-enter Rust during the final
+/// `renderer_flush` of `tick_frame` and `schedule()` a signal write.
+/// That node lands in `rt.pending` but is past the drain, so the frame
+/// finishes with work still queued. Were idle purely `!dispatch_pending`
+/// the host would pause its vsync loop here, and because `schedule()`
+/// only wakes on the empty→non-empty edge, the leftover (non-empty)
+/// queue means no further `set()` ever fires a wake — a permanent wedge.
+/// Reporting busy while `has_pending_work()` keeps the host ticking
+/// until the queue empties, so a frame always re-runs while work remains.
+///
+/// An outstanding async task (e.g. a `resource()` fetch parked on a
+/// `run_blocking` worker) does NOT keep the host ticking: its completion
+/// is resumed off the **main run loop**, not vsync. When the worker
+/// marshals its result via `run_on_main_thread`, the trampoline runs on
+/// the main thread and invokes the registered drive callback ([`drive`]),
+/// which runs a full `tick_frame` right there — draining the pool and
+/// painting the result. So the host can safely sleep its vsync loop on
+/// idle; the parked fetch resumes via a race-free main-loop post, not a
+/// clobberable vsync unpause. (`has_pending_work()` likewise excludes
+/// outstanding tasks; see the `cross_thread_wake` resource tests.)
 pub fn tick(engine_raw: *mut c_void) -> bool {
     if engine_raw.is_null() {
         return true;
@@ -289,7 +300,11 @@ pub fn tick(engine_raw: *mut c_void) -> bool {
         )
     };
     let dispatch_pending = PENDING.with(|p| p.get());
-    !dispatch_pending
+    // Evaluate `has_pending_work()` AFTER the dispatched `tick_callback`
+    // has run (the bridge dispatch above completes synchronously on the
+    // TASM==main thread), so it observes any node a commit-time re-entry
+    // left in the queue.
+    !dispatch_pending && !whisker_runtime::reactive::has_pending_work()
 }
 
 extern "C" fn tick_callback(_user_data: *mut c_void) {
@@ -371,6 +386,21 @@ fn tick_frame() {
     // frame.
     reactive_flush_mounts();
     renderer_flush();
+    // A native-view layout/measure callback can re-enter Rust during the
+    // commit above and schedule a signal write. Drain that settle in the
+    // SAME frame so it neither lags a frame nor (combined with the
+    // edge-triggered wake) wedges the loop. Bounded: the level-triggered
+    // idle in `tick()` is the backstop if a pathological commit-time
+    // feedback loop never settles (it degrades to a visible busy-tick, not
+    // a silent freeze).
+    const SETTLE_CAP: usize = 16;
+    let mut settle = 0;
+    while whisker_runtime::reactive::has_pending_work() && settle < SETTLE_CAP {
+        settle += 1;
+        reactive_flush();
+        reactive_flush_mounts();
+        renderer_flush();
+    }
 }
 
 #[cfg(feature = "hot-reload")]

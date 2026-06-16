@@ -46,6 +46,8 @@ pub mod stored;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_loop_wedge;
+#[cfg(test)]
 mod tests_resource;
 
 pub use arc_signal::{arc_signal, ArcReadSignal, ArcRwSignal, ArcWriteSignal};
@@ -67,7 +69,7 @@ pub use owner::on_cleanup;
 pub use prop::Signal;
 pub use resource::{resource, resource_sync, Resource, ResourceState};
 pub use runtime::{NodeId, Owner};
-pub use scheduler::flush;
+pub use scheduler::{flush, has_pending_work};
 pub use signal::{signal, ReadSignal, RwSignal, WriteSignal};
 pub use stored::StoredValue;
 

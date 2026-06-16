@@ -50,6 +50,19 @@ pub(crate) fn schedule(node: NodeId) {
     }
 }
 
+/// True if there is undrained reactive work (scheduled effects/computeds
+/// or pending on_mount callbacks) that a frame would make progress on.
+/// Used by the driver's `tick()` to report busy so the host keeps its
+/// render loop running until the queue genuinely drains — closing the
+/// edge-triggered lost-wakeup that wedged the loop when a node was
+/// scheduled during the final `renderer_flush` (native-view layout
+/// re-entry). NOTE: deliberately does NOT count `deferred` (paused-owner
+/// nodes are intentionally frozen) nor outstanding async tasks (those
+/// resume via the main-loop drive, not vsync).
+pub fn has_pending_work() -> bool {
+    with_runtime(|rt| !rt.pending.is_empty() || !rt.pending_mounts.is_empty())
+}
+
 /// Drain the pending queue, re-running effects and computeds in the order
 /// they were scheduled. Skips entries whose node has been disposed.
 ///
