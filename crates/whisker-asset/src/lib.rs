@@ -197,6 +197,61 @@ pub extern "C" fn whisker_asset_set_android() {
     set_base(AssetBase::AndroidAssets);
 }
 
+// ---------------------------------------------------------------------------
+// Android startup wiring (Phase 3).
+//
+// Unlike iOS — where the bundle path is only known at runtime, so the
+// base MUST be installed by native Swift after `Bundle.main.bundlePath`
+// resolves — the Android base is a compile-time constant
+// (`file:///android_asset/whisker/`). There is therefore no runtime
+// data to ferry across the Kotlin↔Rust boundary, and wiring a Kotlin
+// `external fun` would require a JNI C++ shim living in the driver
+// bridge crate (not here). Instead we install the Android base from
+// Rust, deterministically, the moment this crate's object code is
+// loaded into the app's `cdylib`.
+//
+// The user app links `whisker-asset` because `asset!(…)` expands to
+// `::whisker_asset::resolve(…)`, so this translation unit is always
+// present in the final `.so`. The `.init_array` entry below runs at
+// `dlopen`/`System.loadLibrary` time — long before `whisker_app_main`
+// and the first render — so `resolve` already returns the
+// `file:///android_asset/whisker/…` form on the very first call.
+//
+// `whisker_asset_set_android()` (the C-ABI entry above) remains
+// exported so native Kotlin/JNI can still flip the base explicitly if
+// a future host wants to; the constructor just means it doesn't have
+// to.
+/// Install the fixed Android base. Shared body for the `.init_array`
+/// constructor (Android) and the unit test (host) so the exact
+/// install path is exercised off-device.
+///
+/// On a non-Android host outside of tests this is never called (the
+/// `.init_array` registration is Android-only), so silence the
+/// dead-code lint there rather than dropping the shared seam.
+#[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+fn install_android_base() {
+    set_base(AssetBase::AndroidAssets);
+}
+
+#[cfg(target_os = "android")]
+mod android_init {
+    /// `extern "C"` trampoline the linker can call. Wraps the plain
+    /// Rust [`install_android_base`](super::install_android_base) so
+    /// the same logic is shared with the host unit test.
+    extern "C" fn ctor() {
+        super::install_android_base();
+    }
+
+    /// Register `ctor` in `.init_array` so the dynamic linker calls it
+    /// when the `.so` is loaded. `#[used]` keeps the static from being
+    /// dead-stripped (it is never referenced by Rust code); the
+    /// explicit `.init_array` section is what the linker scans for
+    /// constructor function pointers.
+    #[used]
+    #[link_section = ".init_array"]
+    static INIT_ANDROID_BASE: extern "C" fn() = ctor;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +339,18 @@ mod tests {
         // SAFETY: valid pointer/len; bytes are intentionally invalid UTF-8.
         unsafe { whisker_asset_set_ios_base(bad.as_ptr(), bad.len()) };
         assert!(!base_is_set(), "invalid UTF-8 must leave base unset");
+        reset();
+    }
+
+    #[test]
+    fn install_android_base_sets_android_form() {
+        let _g = GUARD.lock().unwrap();
+        reset();
+        // Exercises the exact body the Android `.init_array`
+        // constructor runs at `.so` load.
+        install_android_base();
+        assert!(base_is_set());
+        assert_eq!(resolve("a/b.png"), "file:///android_asset/whisker/a/b.png");
         reset();
     }
 

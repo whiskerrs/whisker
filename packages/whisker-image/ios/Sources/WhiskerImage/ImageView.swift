@@ -82,7 +82,23 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
             .cacheOriginalImage,
             .scaleFactor(UIScreen.main.scale),
         ]
-        imageView.kf.setImage(with: url, options: options)
+
+        // `whisker-asset` resolves bundled assets to a
+        // `file://<bundle>/whisker_assets/<rel>` URL (the iOS base is
+        // installed from native at launch — see `AssetModule.swift`).
+        // Kingfisher's default `URL` source treats every URL as a
+        // network resource (`URLSession`), which does technically load
+        // `file://` URLs but bypasses the local-file fast path and the
+        // dedicated provider. Route `file://` URLs through
+        // `LocalFileImageDataProvider` explicitly so on-disk bundle
+        // assets load via the documented local path; http(s) URLs
+        // keep the normal network source.
+        if url.isFileURL {
+            let provider = LocalFileImageDataProvider(fileURL: url)
+            imageView.kf.setImage(with: .provider(provider), options: options)
+        } else {
+            imageView.kf.setImage(with: url, options: options)
+        }
     }
 
     /// Backing of the `mode` prop. Maps the Lynx-convention mode
