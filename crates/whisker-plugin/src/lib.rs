@@ -254,6 +254,19 @@ pub struct GenerateContext {
     /// summaries; plugins don't read it directly.
     #[serde(default)]
     pub journal: MutationJournal,
+
+    /// Absolute path to the consuming app crate's root (the directory
+    /// holding its `Cargo.toml` / `whisker.rs`). Set by the engine
+    /// before the pipeline runs so plugins can resolve paths the user
+    /// spelled relative to their app — e.g. `whisker-asset`'s
+    /// `c.dir("assets")` resolves against this.
+    ///
+    /// `None` in unit tests / pipelines that don't run from a real
+    /// app crate. A plugin that needs it should error clearly when it
+    /// is absent rather than guessing the current working directory —
+    /// subprocess plugins don't inherit a reliable cwd.
+    #[serde(default)]
+    pub app_crate_dir: Option<PathBuf>,
 }
 
 /// Snapshot of the user-spelled `Config` values at pipeline
@@ -380,7 +393,22 @@ pub enum PlistValue {
 pub enum PbxprojOp {
     /// Add a file reference to the app target's "Resources" build
     /// phase. `path` is relative to `gen/ios/`.
+    ///
+    /// Emitted as a flat `PBXFileReference` — Xcode copies only the
+    /// file's basename into the `.app` bundle root. Use
+    /// [`Self::AddResourceFolder`] when subdirectories must be
+    /// preserved in the bundle.
     AddResource { path: PathBuf },
+    /// Add a **folder reference** (Xcode "blue folder") to the app
+    /// target's "Resources" build phase. `path` is relative to
+    /// `gen/ios/` and names a *directory*. Unlike [`Self::AddResource`],
+    /// Xcode copies the entire directory tree into the `.app` bundle
+    /// preserving its subdirectory structure (so
+    /// `whisker_assets/images/logo.png` lands at
+    /// `<bundle>/whisker_assets/images/logo.png`, not flattened to
+    /// `logo.png`). Backed by a `PBXFileReference` with
+    /// `lastKnownFileType = folder`.
+    AddResourceFolder { path: PathBuf },
     /// Add a file reference compiled into the app target. `path` is
     /// relative to `gen/ios/`.
     AddSource { path: PathBuf },
@@ -488,12 +516,121 @@ pub struct GradleDsl {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileEntry {
-    /// File contents. Always UTF-8 today; binary support will come
-    /// when a 1st-party plugin actually needs it.
+    /// File contents, for text files. UTF-8. Mutually exclusive with
+    /// [`Self::contents_base64`] — when the base64 field is set the
+    /// renderer writes those bytes and ignores this string.
     pub contents: String,
+    /// Base64-encoded raw bytes, for binary files (images, fonts,
+    /// audio). `None` for ordinary text files; when `Some`, the
+    /// renderer base64-decodes it and writes the resulting bytes
+    /// verbatim (so a PNG survives the JSON wire, which can't carry
+    /// arbitrary bytes in a string). Carried as base64 rather than a
+    /// `Vec<u8>` so the [`PluginRequest`] / [`PluginResponse`] JSON
+    /// envelope stays valid UTF-8 across the subprocess boundary.
+    ///
+    /// First consumer: `whisker-asset`, which bundles arbitrary
+    /// (often binary) app assets into the generated native projects.
+    #[serde(default)]
+    pub contents_base64: Option<String>,
     /// POSIX mode bits. `None` → engine default (`0o644`).
     #[serde(default)]
     pub mode: Option<u32>,
+}
+
+impl FileEntry {
+    /// A UTF-8 text file with default mode.
+    pub fn text(contents: impl Into<String>) -> Self {
+        Self {
+            contents: contents.into(),
+            contents_base64: None,
+            mode: None,
+        }
+    }
+
+    /// A binary file: `bytes` are base64-encoded into
+    /// [`Self::contents_base64`] so they survive the JSON envelope.
+    pub fn binary(bytes: &[u8]) -> Self {
+        Self {
+            contents: String::new(),
+            contents_base64: Some(base64_encode(bytes)),
+            mode: None,
+        }
+    }
+
+    /// Decode this entry to the raw bytes the renderer should write.
+    /// Returns the base64-decoded bytes when [`Self::contents_base64`]
+    /// is set, otherwise the UTF-8 [`Self::contents`] as bytes.
+    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        match &self.contents_base64 {
+            Some(b64) => base64_decode(b64),
+            None => Ok(self.contents.clone().into_bytes()),
+        }
+    }
+}
+
+/// Standard base64 (RFC 4648, `+/`, `=` padding). Hand-rolled to
+/// avoid pulling a base64 crate into the plugin surface, which every
+/// 3rd-party plugin transitively compiles.
+fn base64_encode(input: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(ALPHABET[(n & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+/// Inverse of [`base64_encode`]. Rejects invalid characters / length.
+fn base64_decode(input: &str) -> anyhow::Result<Vec<u8>> {
+    fn val(c: u8) -> anyhow::Result<u32> {
+        Ok(match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a' + 26) as u32,
+            b'0'..=b'9' => (c - b'0' + 52) as u32,
+            b'+' => 62,
+            b'/' => 63,
+            other => anyhow::bail!("invalid base64 character: {other:#x}"),
+        })
+    }
+    let bytes = input.as_bytes();
+    let trimmed = bytes.iter().take_while(|&&c| c != b'=').count();
+    let padded = &bytes[..trimmed];
+    if !bytes[trimmed..].iter().all(|&c| c == b'=') {
+        anyhow::bail!("base64 padding `=` must only appear at the end");
+    }
+    let mut out = Vec::with_capacity(padded.len() / 4 * 3);
+    for chunk in padded.chunks(4) {
+        if chunk.len() == 1 {
+            anyhow::bail!("invalid base64 length");
+        }
+        let mut n = 0u32;
+        for (i, &c) in chunk.iter().enumerate() {
+            n |= val(c)? << (18 - 6 * i);
+        }
+        out.push((n >> 16) as u8);
+        if chunk.len() > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push(n as u8);
+        }
+    }
+    Ok(out)
 }
 
 // ----------------------------------------------------------------------------
@@ -697,6 +834,7 @@ mod tests {
             ios: Some(IosProjectIr::default()),
             android: Some(AndroidProjectIr::default()),
             journal: MutationJournal::default(),
+            app_crate_dir: None,
         };
         ctx.ios.as_mut().unwrap().info_plist.insert(
             "CFBundleIdentifier".into(),
@@ -735,6 +873,64 @@ mod tests {
             back.android.unwrap().manifest.permissions,
             vec!["android.permission.CAMERA".to_string()],
         );
+    }
+
+    #[test]
+    fn base64_round_trips_arbitrary_bytes() {
+        for input in [
+            &b""[..],
+            &b"f"[..],
+            &b"fo"[..],
+            &b"foo"[..],
+            &b"foob"[..],
+            &b"fooba"[..],
+            &b"foobar"[..],
+            &[0u8, 1, 2, 253, 254, 255][..],
+        ] {
+            let encoded = base64_encode(input);
+            assert!(encoded.is_ascii(), "base64 must be ASCII: {encoded}");
+            let decoded = base64_decode(&encoded).expect("decode");
+            assert_eq!(decoded, input, "round trip for {input:?}");
+        }
+    }
+
+    #[test]
+    fn base64_matches_known_vectors() {
+        // RFC 4648 test vectors.
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_decode("Zm9vYmFy").unwrap(), b"foobar");
+        assert_eq!(base64_decode("Zm8=").unwrap(), b"fo");
+    }
+
+    #[test]
+    fn base64_decode_rejects_garbage() {
+        assert!(base64_decode("not valid!").is_err());
+    }
+
+    #[test]
+    fn file_entry_binary_round_trips_through_json() {
+        let raw = &[0x89u8, 0x50, 0x4e, 0x47, 0x00, 0xff];
+        let entry = FileEntry::binary(raw);
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: FileEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.to_bytes().unwrap(), raw);
+    }
+
+    #[test]
+    fn file_entry_text_to_bytes_is_utf8() {
+        let entry = FileEntry::text("hello");
+        assert_eq!(entry.to_bytes().unwrap(), b"hello");
+        assert!(entry.contents_base64.is_none());
+    }
+
+    #[test]
+    fn file_entry_text_default_decodes_without_base64_field() {
+        // A FileEntry serialized before `contents_base64` existed
+        // (only `contents` + `mode`) must still deserialize.
+        let json = r#"{"contents":"old text"}"#;
+        let entry: FileEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.to_bytes().unwrap(), b"old text");
     }
 
     #[test]

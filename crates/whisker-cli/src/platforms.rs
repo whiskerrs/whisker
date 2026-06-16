@@ -98,7 +98,7 @@ fn sync_android(
     // of looking less portable in diffs (acceptable — these files
     // are AUTO-GENERATED and not meant to be committed).
     let workspace_path = workspace_root.to_path_buf();
-    let engine = build_engine_with_discovered_plugins(workspace_root, package)?;
+    let engine = build_engine_with_discovered_plugins(crate_dir, workspace_root, package)?;
     let inputs = whisker_cng::android::inputs_from_with_engine(
         &engine,
         app_config,
@@ -133,7 +133,7 @@ fn sync_ios(
     // needs an *absolute* path to that directory at sync time, so we
     // pre-compute it here even though the contents will land later.
     let whisker_modules = gen_dir.join("whisker_modules");
-    let engine = build_engine_with_discovered_plugins(workspace_root, package)?;
+    let engine = build_engine_with_discovered_plugins(crate_dir, workspace_root, package)?;
     let inputs = whisker_cng::ios::inputs_from_with_engine(
         &engine,
         app_config,
@@ -159,6 +159,7 @@ fn sync_ios(
 /// and registered as a [`SubprocessPlugin`] pointing at the
 /// resulting binary.
 fn build_engine_with_discovered_plugins(
+    crate_dir: &Path,
     workspace_root: &Path,
     user_package: &str,
 ) -> Result<Engine> {
@@ -166,7 +167,10 @@ fn build_engine_with_discovered_plugins(
     let discovered = discover_plugins(&manifest_path, user_package)
         .with_context(|| format!("discover Whisker CNG plugins for `{user_package}`"))?;
 
-    let mut engine = Engine::with_builtins();
+    // Stamp the app crate dir onto the engine so subprocess plugins
+    // (e.g. `whisker-asset`) can resolve paths the user spelled
+    // relative to their crate — they don't inherit a reliable cwd.
+    let mut engine = Engine::with_builtins().with_app_crate_dir(crate_dir);
     if discovered.is_empty() {
         return Ok(engine);
     }

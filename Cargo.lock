@@ -2235,7 +2235,12 @@ dependencies = [
 name = "whisker-asset"
 version = "0.3.1"
 dependencies = [
+ "anyhow",
+ "serde",
  "whisker-asset-macros",
+ "whisker-cng",
+ "whisker-config",
+ "whisker-plugin",
 ]
 
 [[package]]

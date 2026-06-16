@@ -43,6 +43,14 @@ use std::sync::RwLock;
 
 pub use whisker_asset_macros::{asset, asset_bytes, asset_str};
 
+/// Whisker build plugin — bundles the app's declared assets into the
+/// generated native projects (`gen/ios` / `gen/android`) so the
+/// runtime resolver above finds them. Wired up by the consuming app via
+/// `app.plugin::<WhiskerAsset>(|c| c.dir("assets"))` in `whisker.rs`.
+/// See [`plugin`] for the full surface.
+mod plugin;
+pub use plugin::{WhiskerAsset, WhiskerAssetConfig};
+
 /// The Android `assets/` URL prefix. Lynx/WebView load `file://` URLs and
 /// Android exposes packaged assets under `/android_asset`. Whisker bundles
 /// under a `whisker/` subdir to avoid colliding with host-app assets.
