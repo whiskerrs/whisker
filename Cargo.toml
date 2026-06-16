@@ -19,6 +19,7 @@ members = [
     "crates/whisker-plugin",
     "crates/whisker-runtime",
     "crates/whisker-subsecond",
+    "examples/asset-demo",
     "examples/podcast",
     "examples/podcast/crates/podcast-theme",
     "examples/podcast/crates/podcast-domain",

@@ -12,17 +12,31 @@ categories.workspace = true
 description = "Bundle and reference app assets in Whisker: compile-time-validated asset!/asset_str!/asset_bytes! macros + a runtime path resolver"
 
 # Explicit `include` so a `cargo publish` ships the plugin entry point
-# alongside the runtime + macros.
+# + the native module sources alongside the runtime + macros.
 include = [
     "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
     "src/lib.rs",
     "src/plugin.rs",
     "bin/**/*.rs",
+    "android/**/*.kt",
+    "ios/**/*.swift",
     "README.md",
 ]
 
 [lib]
 crate-type = ["rlib"]
+
+# Module-system opt-in marker. The bare table identifies this cargo
+# crate as a Whisker module (in addition to the plugin registration
+# below); `whisker-build` walks the consuming app's dep tree, picks
+# out every dep carrying it, and wires the Android Gradle subproject +
+# iOS SwiftPM package into the host build. whisker-asset's native half
+# is startup-only: it installs the runtime resolver base (the iOS
+# `whisker_assets` bundle dir / the Android packaged-assets prefix) so
+# `asset!(…)` resolves to a loadable path/URL.
+[package.metadata.whisker]
 
 # Plugin registration — Whisker walks the consuming app's dep tree,
 # picks this entry up, builds the `whisker-asset-plugin` binary below,

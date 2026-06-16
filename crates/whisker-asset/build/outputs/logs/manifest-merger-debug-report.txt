@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/itome/Projects/github.com/whiskerrs/whisker/.claude/worktrees/agent-a566ee0f9f09df945/crates/whisker-asset/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest14877559154008695441.xml:2:13-83
+INJECTED from /Users/itome/Projects/github.com/whiskerrs/whisker/.claude/worktrees/agent-a566ee0f9f09df945/crates/whisker-asset/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest14877559154008695441.xml:2:13-83
+	package
+		INJECTED from /Users/itome/Projects/github.com/whiskerrs/whisker/.claude/worktrees/agent-a566ee0f9f09df945/crates/whisker-asset/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest14877559154008695441.xml
+	xmlns:android
+		ADDED from /Users/itome/Projects/github.com/whiskerrs/whisker/.claude/worktrees/agent-a566ee0f9f09df945/crates/whisker-asset/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest14877559154008695441.xml:2:23-81
+uses-sdk
+INJECTED from /Users/itome/Projects/github.com/whiskerrs/whisker/.claude/worktrees/agent-a566ee0f9f09df945/crates/whisker-asset/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest14877559154008695441.xml reason: use-sdk injection requested
+INJECTED from /Users/itome/Projects/github.com/whiskerrs/whisker/.claude/worktrees/agent-a566ee0f9f09df945/crates/whisker-asset/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest14877559154008695441.xml
+INJECTED from /Users/itome/Projects/github.com/whiskerrs/whisker/.claude/worktrees/agent-a566ee0f9f09df945/crates/whisker-asset/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest14877559154008695441.xml
+	android:targetSdkVersion
+		INJECTED from /Users/itome/Projects/github.com/whiskerrs/whisker/.claude/worktrees/agent-a566ee0f9f09df945/crates/whisker-asset/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest14877559154008695441.xml
+	android:minSdkVersion
+		INJECTED from /Users/itome/Projects/github.com/whiskerrs/whisker/.claude/worktrees/agent-a566ee0f9f09df945/crates/whisker-asset/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest14877559154008695441.xml
