@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/whiskerrs/whisker/compare/whisker-image-v0.3.1...whisker-image-v0.4.0) - 2026-06-16
+
+### Added
+
+- *(whisker-asset)* native base registration + image integration (Phase 3) ([#226](https://github.com/whiskerrs/whisker/pull/226))
+
 ## [0.2.4](https://github.com/whiskerrs/whisker/compare/whisker-image-v0.2.3...whisker-image-v0.2.4) - 2026-06-13
 
 ### Added

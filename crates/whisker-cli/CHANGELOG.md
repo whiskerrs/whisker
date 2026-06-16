@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.3.1...whisker-cli-v0.4.0) - 2026-06-16
+
+### Added
+
+- *(whisker-asset)* build plugin bundles declared assets (Phase 2) ([#225](https://github.com/whiskerrs/whisker/pull/225))
+
+### Fixed
+
+- *(whisker-fmt)* resolve edition like cargo fmt + fix --config-path ([#222](https://github.com/whiskerrs/whisker/pull/222))
+
 ## [0.3.1](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.3.0...whisker-cli-v0.3.1) - 2026-06-16
 
 ### Added

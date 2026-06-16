@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.3.1...whisker-plugin-v0.4.0) - 2026-06-16
+
+### Added
+
+- *(whisker-asset)* build plugin bundles declared assets (Phase 2) ([#225](https://github.com/whiskerrs/whisker/pull/225))
+
 ## [0.2.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.1.0...whisker-plugin-v0.2.0) - 2026-06-10
 
 ### Added
