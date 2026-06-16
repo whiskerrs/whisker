@@ -61,3 +61,6 @@ examples/**/target/
 examples/**/Cargo.lock
 
 .claude/
+
+# Playwright MCP debug output
+.playwright-mcp/
