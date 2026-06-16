@@ -245,6 +245,35 @@ fn render_pbxproj_op_placeholders(ops: &[PbxprojOp]) -> PbxprojRendered {
                 plugin_files_group_children
                     .push_str(&format!("\t\t\t\t{fileref_uuid} /* {path_str} */,\n",));
             }
+            PbxprojOp::AddResourceFolder { path } => {
+                // A *folder reference* (Xcode "blue folder"):
+                // `lastKnownFileType = folder` on a directory path.
+                // Xcode's resources phase then copies the entire tree
+                // into the `.app` bundle preserving subdirectories —
+                // exactly what `whisker_assets/<sub>` needs so the
+                // iOS resolver (`<bundle>/whisker_assets/<rel>`) finds
+                // each asset. Same four pbxproj sections as
+                // `AddResource`, but the fileref's `lastKnownFileType`
+                // is `folder` and the path names the directory.
+                let path_str = path.display().to_string();
+                let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:Folder:{path_str}"));
+                let buildfile_uuid =
+                    pbxproj_uuid(&format!("PBXBuildFile:ResourcesFolder:{path_str}"));
+                build_file_entries.push_str(&format!(
+                    "\t\t{buildfile_uuid} /* {path_str} in Resources */ = \
+                     {{isa = PBXBuildFile; fileRef = {fileref_uuid} /* {path_str} */; }};\n",
+                ));
+                file_reference_entries.push_str(&format!(
+                    "\t\t{fileref_uuid} /* {path_str} */ = \
+                     {{isa = PBXFileReference; lastKnownFileType = folder; \
+                     path = \"{path_str}\"; sourceTree = \"<group>\"; }};\n",
+                ));
+                resources_phase_files.push_str(&format!(
+                    "\t\t\t\t{buildfile_uuid} /* {path_str} in Resources */,\n",
+                ));
+                plugin_files_group_children
+                    .push_str(&format!("\t\t\t\t{fileref_uuid} /* {path_str} */,\n",));
+            }
             PbxprojOp::AddSource { path } => {
                 let path_str = path.display().to_string();
                 let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:{path_str}"));
@@ -498,7 +527,10 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
             )
         })?;
         let abs = out_dir.join(rel);
-        write_file(&abs, entry.contents.as_bytes())?;
+        let bytes = entry
+            .to_bytes()
+            .with_context(|| format!("decode extra_files entry `{}` contents", rel.display()))?;
+        write_file(&abs, &bytes)?;
         apply_mode(&abs, entry.mode)?;
     }
 
@@ -799,6 +831,68 @@ mod tests {
         // is re-rendered).
         assert!(out.join("NewScheme.xcodeproj/project.pbxproj").exists());
         assert!(!out.join("HelloWorld.xcodeproj").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn add_resource_folder_emits_folder_file_type() {
+        // The whisker-asset case: register `whisker_assets` as an Xcode
+        // folder reference so the bundle preserves subdirectories.
+        let rendered = render_pbxproj_op_placeholders(&[PbxprojOp::AddResourceFolder {
+            path: PathBuf::from("whisker_assets"),
+        }]);
+        assert!(
+            rendered
+                .file_reference_entries
+                .contains("lastKnownFileType = folder;"),
+            "folder ref must use lastKnownFileType = folder: {}",
+            rendered.file_reference_entries,
+        );
+        assert!(rendered
+            .file_reference_entries
+            .contains("path = \"whisker_assets\""));
+        // Lands in the Resources phase + navigator group, not Sources.
+        assert!(rendered
+            .resources_phase_files
+            .contains("whisker_assets in Resources"));
+        assert!(rendered.sources_phase_files.is_empty());
+        assert!(rendered
+            .plugin_files_group_children
+            .contains("whisker_assets"));
+    }
+
+    #[test]
+    fn add_resource_folder_renders_into_pbxproj_resources_phase() {
+        let mut inputs = sample_inputs();
+        inputs.pbxproj_ops = vec![PbxprojOp::AddResourceFolder {
+            path: PathBuf::from("whisker_assets"),
+        }];
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/ios");
+        sync(&out, &inputs).unwrap();
+        let pbxproj =
+            std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
+        assert!(pbxproj.contains("lastKnownFileType = folder;"));
+        assert!(pbxproj.contains("whisker_assets in Resources"));
+        assert!(!pbxproj.contains("{{"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn extra_files_writes_binary_contents_via_base64() {
+        // whisker-asset places PNGs etc. as base64 FileEntry::binary —
+        // the renderer must decode and write the raw bytes.
+        let mut inputs = sample_inputs();
+        let raw = vec![0x89u8, 0x50, 0x4e, 0x47, 0x00, 0xff];
+        inputs.extra_files.insert(
+            PathBuf::from("whisker_assets/images/logo.png"),
+            FileEntry::binary(&raw),
+        );
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/ios");
+        sync(&out, &inputs).unwrap();
+        let written = std::fs::read(out.join("whisker_assets/images/logo.png")).unwrap();
+        assert_eq!(written, raw);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

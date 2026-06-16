@@ -89,11 +89,25 @@ impl EnabledTargets {
 #[derive(Default)]
 pub struct Engine {
     plugins: Vec<Box<dyn DynPlugin>>,
+    /// Absolute path to the consuming app crate root, forwarded into
+    /// the [`GenerateContext`] every `compose` builds so plugins can
+    /// resolve user-relative paths (e.g. `whisker-asset`'s
+    /// `c.dir("assets")`). `None` for callers that don't run from a
+    /// real app crate (most unit tests).
+    app_crate_dir: Option<PathBuf>,
 }
 
 impl Engine {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the consuming app crate root the engine stamps onto each
+    /// composed [`GenerateContext`]. Builder-style so it chains off
+    /// [`Engine::with_builtins`] / [`Engine::new`].
+    pub fn with_app_crate_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.app_crate_dir = Some(dir.into());
+        self
     }
 
     /// Like [`Engine::new`] but pre-registers every built-in
@@ -151,6 +165,7 @@ impl Engine {
     ///    is the escape hatch.
     pub fn compose(&self, app_config: &Config, enabled: EnabledTargets) -> Result<GenerateContext> {
         let mut ctx = build_initial_context(app_config, enabled);
+        ctx.app_crate_dir = self.app_crate_dir.clone();
 
         check_no_unregistered_plugin_configs(app_config, &self.plugins)
             .context("validate Config.plugins against registered plugins")?;
@@ -276,6 +291,9 @@ fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> Genera
         ios,
         android,
         journal: MutationJournal::default(),
+        // Stamped by `Engine::compose` after this baseline is built;
+        // `build_initial_context` itself has no app-crate context.
+        app_crate_dir: None,
     }
 }
 

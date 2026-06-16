@@ -29,6 +29,7 @@ impl AndroidExtraFilesConfig {
             path.into(),
             FileEntry {
                 contents: contents.into(),
+                contents_base64: None,
                 mode: None,
             },
         );
@@ -44,6 +45,7 @@ impl AndroidExtraFilesConfig {
             path.into(),
             FileEntry {
                 contents: contents.into(),
+                contents_base64: None,
                 mode: Some(mode),
             },
         );

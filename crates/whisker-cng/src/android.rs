@@ -409,7 +409,10 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
         // executable flag (0o755 on Unix). Apply that for any
         // mode that has the user-execute bit set.
         let executable = entry.mode.map(|m| m & 0o100 != 0).unwrap_or(false);
-        write_file(&abs, entry.contents.as_bytes(), executable)?;
+        let bytes = entry
+            .to_bytes()
+            .with_context(|| format!("decode extra_files entry `{}` contents", rel.display()))?;
+        write_file(&abs, &bytes, executable)?;
     }
 
     Ok(())
@@ -676,6 +679,25 @@ mod tests {
             extra_files: BTreeMap::new(),
             template_version: 9,
         }
+    }
+
+    #[test]
+    fn extra_files_writes_binary_contents_via_base64() {
+        // whisker-asset drops assets under app/src/main/assets/whisker/
+        // as base64 FileEntry::binary — the renderer must decode them.
+        let mut inputs = sample_inputs();
+        let raw = vec![0x00u8, 0x01, 0xfe, 0xff];
+        inputs.extra_files.insert(
+            PathBuf::from("app/src/main/assets/whisker/images/logo.png"),
+            FileEntry::binary(&raw),
+        );
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/android");
+        sync(&out, &inputs).unwrap();
+        let written =
+            std::fs::read(out.join("app/src/main/assets/whisker/images/logo.png")).unwrap();
+        assert_eq!(written, raw);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
