@@ -2232,6 +2232,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-asset"
+version = "0.3.1"
+dependencies = [
+ "whisker-asset-macros",
+]
+
+[[package]]
+name = "whisker-asset-macros"
+version = "0.3.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "whisker-audio"
 version = "0.3.1"
 dependencies = [

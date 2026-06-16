@@ -13,6 +13,8 @@ members = [
     "crates/whisker-macros",
     "crates/whisker-macro-syntax",
     "crates/whisker-fmt",
+    "crates/whisker-asset",
+    "crates/whisker-asset-macros",
     "crates/whisker-css",
     "crates/whisker-plugin",
     "crates/whisker-runtime",
@@ -83,6 +85,8 @@ whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.3.1" }
 whisker-macros = { path = "crates/whisker-macros", version = "0.3.1" }
 whisker-macro-syntax = { path = "crates/whisker-macro-syntax", version = "0.3.1" }
 whisker-fmt = { path = "crates/whisker-fmt", version = "0.3.1" }
+whisker-asset = { path = "crates/whisker-asset", version = "0.3.1" }
+whisker-asset-macros = { path = "crates/whisker-asset-macros", version = "0.3.1" }
 whisker-css = { path = "crates/whisker-css", version = "0.3.1" }
 whisker-plugin = { path = "crates/whisker-plugin", version = "0.3.1" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.3.1" }
