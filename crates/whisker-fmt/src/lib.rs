@@ -149,12 +149,17 @@ fn run_rustfmt(src: &str, opts: &FmtOptions, config_dir: Option<&Path>) -> Resul
     if let Some(dir) = config_dir {
         // Run with cwd = the file's directory so rustfmt's own upward
         // search finds the nearest `rustfmt.toml`. Only pass an explicit
-        // `--config-path` when a config actually exists at/above `dir`
-        // — pointing `--config-path` at a directory with no config is a
-        // hard error in rustfmt.
+        // `--config-path` when a config actually exists at/above `dir`,
+        // and point it at the ACTUAL config file `find_rustfmt_toml`
+        // returned — NOT at `dir`. The config may live at a PARENT (e.g.
+        // the project root) while `dir` is a nested subdir with no
+        // rustfmt.toml of its own; `--config-path <dir>` would then make
+        // rustfmt error "unable to find a config file for the given
+        // path". Passing the found file path is deterministic and always
+        // resolves.
         cmd.current_dir(dir);
-        if find_rustfmt_toml(dir).is_some() {
-            cmd.arg("--config-path").arg(dir);
+        if let Some(toml_path) = find_rustfmt_toml(dir) {
+            cmd.arg("--config-path").arg(&toml_path);
         }
     }
     cmd.stdin(Stdio::piped())
@@ -183,7 +188,7 @@ fn run_rustfmt(src: &str, opts: &FmtOptions, config_dir: Option<&Path>) -> Resul
 }
 
 /// Walk upward from `dir` looking for `rustfmt.toml` / `.rustfmt.toml`.
-fn find_rustfmt_toml(dir: &Path) -> Option<std::path::PathBuf> {
+pub fn find_rustfmt_toml(dir: &Path) -> Option<std::path::PathBuf> {
     let mut cur = Some(dir);
     while let Some(d) = cur {
         for name in ["rustfmt.toml", ".rustfmt.toml"] {
@@ -195,6 +200,86 @@ fn find_rustfmt_toml(dir: &Path) -> Option<std::path::PathBuf> {
         cur = d.parent();
     }
     None
+}
+
+// ---- edition resolution (mirrors `cargo fmt`) ----------------------------
+
+/// The edition assumed when neither `rustfmt.toml` nor any `Cargo.toml`
+/// up the tree declares one. rustfmt's *own* default is 2015, which
+/// rejects 2018+ syntax (`async move`, etc.); we pick a modern default
+/// so `whisker fmt` never falls into the 2015 trap.
+const DEFAULT_EDITION: &str = "2021";
+
+/// Walk upward from `dir` looking for the nearest `Cargo.toml`.
+pub fn find_cargo_toml(dir: &Path) -> Option<std::path::PathBuf> {
+    let mut cur = Some(dir);
+    while let Some(d) = cur {
+        let candidate = d.join("Cargo.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        cur = d.parent();
+    }
+    None
+}
+
+/// Read the edition declared by the nearest `Cargo.toml` at or above
+/// `dir`. Honors `[package] edition` first, then
+/// `[workspace.package] edition` (the inherited-edition form used by
+/// `edition.workspace = true`). Returns `None` if no `Cargo.toml` is
+/// found, it can't be read/parsed, or it declares no edition.
+pub fn cargo_toml_edition(dir: &Path) -> Option<String> {
+    let path = find_cargo_toml(dir)?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let value: toml::Value = toml::from_str(&text).ok()?;
+    edition_from_cargo_value(&value)
+}
+
+/// Extract the edition string from a parsed `Cargo.toml` value, checking
+/// `[package] edition` then `[workspace.package] edition`.
+fn edition_from_cargo_value(value: &toml::Value) -> Option<String> {
+    let as_str = |v: &toml::Value| v.as_str().map(str::to_string);
+    value
+        .get("package")
+        .and_then(|p| p.get("edition"))
+        .and_then(as_str)
+        .or_else(|| {
+            value
+                .get("workspace")
+                .and_then(|w| w.get("package"))
+                .and_then(|p| p.get("edition"))
+                .and_then(as_str)
+        })
+}
+
+/// Resolve the full set of [`FmtOptions`] for a real directory, mirroring
+/// how `cargo fmt` injects each crate's edition into rustfmt.
+///
+/// Edition resolution order:
+/// 1. The nearest `rustfmt.toml`'s `edition` key, if present (wins).
+/// 2. else the nearest `Cargo.toml`'s edition (`[package]` or
+///    `[workspace.package]`), searching upward from `dir`.
+/// 3. else [`DEFAULT_EDITION`] (`"2021"`).
+///
+/// The non-edition layout keys (`max_width`, `tab_spaces`, `hard_tabs`)
+/// come from the same `rustfmt.toml`. The returned `edition` is ALWAYS
+/// `Some`, so both the base rustfmt pass and the embedded-expr pass pass
+/// `--edition` to rustfmt and never fall back to its 2015 default.
+pub fn resolve_options(dir: &Path) -> FmtOptions {
+    let mut opts = match find_rustfmt_toml(dir) {
+        Some(toml_path) => std::fs::read_to_string(&toml_path)
+            .map(|text| FmtOptions::from_rustfmt_config(&text))
+            .unwrap_or_default(),
+        None => FmtOptions::default(),
+    };
+
+    // rustfmt.toml edition wins; otherwise fall back to Cargo.toml, then
+    // the modern default. Never leave `edition` as `None` (2015).
+    if opts.edition.is_none() {
+        opts.edition = Some(cargo_toml_edition(dir).unwrap_or_else(|| DEFAULT_EDITION.to_string()));
+    }
+
+    opts
 }
 
 // ---- macro reformatting pass --------------------------------------------
@@ -689,5 +774,140 @@ mod tests {
         let input = "fn x() {\n    println!(\"hi {}\", v);\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
         assert_eq!(out, input);
+    }
+
+    // ---- edition resolution ----------------------------------------------
+
+    /// Create a unique temp dir for an edition-resolution test, isolated
+    /// from the repo's own `Cargo.toml` / `rustfmt.toml` (those live well
+    /// above `temp_dir()` so the upward walk never reaches them).
+    fn unique_tmp(tag: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "whisker-fmt-ed-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn rustfmt_toml_edition_wins_over_cargo_toml() {
+        let tmp = unique_tmp("rustfmt-wins");
+        std::fs::write(tmp.join("rustfmt.toml"), "edition = \"2018\"\n").unwrap();
+        std::fs::write(
+            tmp.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let o = resolve_options(&tmp);
+        assert_eq!(o.edition.as_deref(), Some("2018"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn cargo_toml_package_edition_used_without_rustfmt_edition() {
+        // No rustfmt.toml at all, but a Cargo.toml up the tree.
+        let tmp = unique_tmp("cargo-pkg");
+        let sub = tmp.join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            tmp.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nedition = \"2018\"\n",
+        )
+        .unwrap();
+        let o = resolve_options(&sub);
+        assert_eq!(o.edition.as_deref(), Some("2018"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn workspace_package_edition_detected() {
+        let tmp = unique_tmp("ws-pkg");
+        std::fs::write(
+            tmp.join("Cargo.toml"),
+            "[workspace]\nmembers = []\n[workspace.package]\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let o = resolve_options(&tmp);
+        assert_eq!(o.edition.as_deref(), Some("2021"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn defaults_to_2021_without_any_config() {
+        // Neither rustfmt.toml nor Cargo.toml anywhere in the (temp) tree.
+        let tmp = unique_tmp("none");
+        let o = resolve_options(&tmp);
+        assert_eq!(o.edition.as_deref(), Some("2021"));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn resolved_edition_is_always_some() {
+        let tmp = unique_tmp("always-some");
+        // rustfmt.toml present but WITHOUT an edition key → must still
+        // fall through to Cargo.toml / default, never None.
+        std::fs::write(tmp.join("rustfmt.toml"), "tab_spaces = 2\n").unwrap();
+        let o = resolve_options(&tmp);
+        assert_eq!(o.tab_spaces, 2);
+        assert!(o.edition.is_some(), "edition must never resolve to None");
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// Integration: an `async move { … }` snippet — which rustfmt rejects
+    /// under its 2015 default — formats SUCCESSFULLY when the resolved
+    /// edition comes from a temp `Cargo.toml` with `edition = "2021"` and
+    /// NO rustfmt.toml is present. Reproduces-then-verifies the reported
+    /// failure. Gated on a real rustfmt binary.
+    #[test]
+    fn async_move_formats_with_cargo_edition_no_rustfmt_toml() {
+        if !rustfmt_available() {
+            return;
+        }
+        let tmp = unique_tmp("async-move");
+        std::fs::write(
+            tmp.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let opts = resolve_options(&tmp);
+        assert_eq!(opts.edition.as_deref(), Some("2021"));
+        let src = "fn f() {\n    let x = async move { 1 };\n}\n";
+        let out = format_source_in_dir(src, &opts, &tmp)
+            .expect("async move must format under the resolved 2021 edition");
+        assert!(out.contains("async move"), "got:\n{out}");
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// Regression: a `rustfmt.toml` at the project ROOT must govern even
+    /// when formatting from a NESTED subdir that has no rustfmt.toml of
+    /// its own. Before the fix, `run_rustfmt` passed `--config-path
+    /// <subdir>` and rustfmt errored "unable to find a config file for
+    /// the given path"; now it passes the found config file path.
+    #[test]
+    fn root_rustfmt_toml_governs_nested_subdir() {
+        if !rustfmt_available() {
+            return;
+        }
+        let root = unique_tmp("nested-config");
+        // 2-space indent at the root, no rustfmt.toml in the subdir.
+        std::fs::write(root.join("rustfmt.toml"), "tab_spaces = 2\n").unwrap();
+        let nested = root.join("src").join("screens");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        let opts = resolve_options(&nested);
+        // Resolver picked up the root rustfmt.toml's tab_spaces.
+        assert_eq!(opts.tab_spaces, 2);
+
+        let src = "fn f() {\nlet x = 1;\n}\n";
+        let out = format_source_in_dir(src, &opts, &nested)
+            .expect("root rustfmt.toml must govern a nested subdir");
+        // rustfmt applied 2-space indent from the root config.
+        assert!(out.contains("\n  let x = 1;"), "got:\n{out}");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

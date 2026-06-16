@@ -21,3 +21,8 @@ whisker-macro-syntax = { workspace = true }
 # workspace, so `similar` is added here (it's the de-facto standard,
 # pure-Rust, no transitive C deps).
 similar = "2"
+# Read the nearest `Cargo.toml`'s `[package] edition` /
+# `[workspace.package] edition` when no `rustfmt.toml` edition is set,
+# mirroring how `cargo fmt` injects each crate's edition into rustfmt.
+# Same version as whisker-cli's existing `toml` dep.
+toml = "0.8"
