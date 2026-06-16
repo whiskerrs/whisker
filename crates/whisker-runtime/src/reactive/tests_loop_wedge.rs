@@ -192,7 +192,10 @@ fn fixed_loop_drains_settle_and_tap_renders() {
                 break;
             }
         }
-        assert!(vsync_idle, "fixed loop should reach idle after draining settle");
+        assert!(
+            vsync_idle,
+            "fixed loop should reach idle after draining settle"
+        );
         // The commit-time re-entry rendered in the same frame.
         assert!(
             render_count.get() > baseline,
