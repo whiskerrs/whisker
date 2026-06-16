@@ -56,7 +56,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -72,22 +72,22 @@ keywords = ["mobile", "ui", "ios", "android", "reactive"]
 categories = ["gui"]
 
 [workspace.dependencies]
-whisker = { path = "crates/whisker", version = "0.3.0" }
-whisker-config = { path = "crates/whisker-config", version = "0.3.0" }
-whisker-build = { path = "crates/whisker-build", version = "0.3.0" }
-whisker-cng = { path = "crates/whisker-cng", version = "0.3.0" }
-whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.3.0" }
-whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.3.0" }
-whisker-driver = { path = "crates/whisker-driver", version = "0.3.0" }
-whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.3.0" }
-whisker-macros = { path = "crates/whisker-macros", version = "0.3.0" }
-whisker-macro-syntax = { path = "crates/whisker-macro-syntax", version = "0.3.0" }
-whisker-fmt = { path = "crates/whisker-fmt", version = "0.3.0" }
-whisker-css = { path = "crates/whisker-css", version = "0.3.0" }
-whisker-plugin = { path = "crates/whisker-plugin", version = "0.3.0" }
-whisker-runtime = { path = "crates/whisker-runtime", version = "0.3.0" }
-whisker-router = { path = "packages/whisker-router", version = "0.3.0" }
-whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.3.0" }
+whisker = { path = "crates/whisker", version = "0.3.1" }
+whisker-config = { path = "crates/whisker-config", version = "0.3.1" }
+whisker-build = { path = "crates/whisker-build", version = "0.3.1" }
+whisker-cng = { path = "crates/whisker-cng", version = "0.3.1" }
+whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.3.1" }
+whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.3.1" }
+whisker-driver = { path = "crates/whisker-driver", version = "0.3.1" }
+whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.3.1" }
+whisker-macros = { path = "crates/whisker-macros", version = "0.3.1" }
+whisker-macro-syntax = { path = "crates/whisker-macro-syntax", version = "0.3.1" }
+whisker-fmt = { path = "crates/whisker-fmt", version = "0.3.1" }
+whisker-css = { path = "crates/whisker-css", version = "0.3.1" }
+whisker-plugin = { path = "crates/whisker-plugin", version = "0.3.1" }
+whisker-runtime = { path = "crates/whisker-runtime", version = "0.3.1" }
+whisker-router = { path = "packages/whisker-router", version = "0.3.1" }
+whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.3.1" }
 
 anyhow = "1"
 thiserror = "2"

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.3.0...whisker-cli-v0.3.1) - 2026-06-16
+
+### Added
+
+- *(cli)* scaffold a rust-analyzer.toml routing format-on-save to whisker fmt ([#220](https://github.com/whiskerrs/whisker/pull/220))
+- *(cli)* `whisker fmt` — rustfmt drop-in that formats render!/css! macros ([#218](https://github.com/whiskerrs/whisker/pull/218))
+
 ## [0.3.0](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.2.5...whisker-cli-v0.3.0) - 2026-06-15
 
 ### Fixed
