@@ -1,0 +1,15 @@
+[package]
+name = "whisker-asset"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Bundle and reference app assets in Whisker: compile-time-validated asset!/asset_str!/asset_bytes! macros + a runtime path resolver"
+
+[dependencies]
+whisker-asset-macros = { workspace = true }
