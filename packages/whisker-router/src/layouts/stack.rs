@@ -467,9 +467,7 @@ fn run_navigation_effect<R: Route>(
             mounted
                 .iter()
                 .filter(|(id, _)| {
-                    Some(**id) != new_top
-                        && Some(**id) != old_top
-                        && !removed.contains(id)
+                    Some(**id) != new_top && Some(**id) != old_top && !removed.contains(id)
                 })
                 .map(|(_, entry)| entry.wrapper)
                 .collect()
@@ -771,12 +769,12 @@ mod tests {
     use crate::outlet::RouteRenderFn;
     use crate::route::{Route, RouteError};
     use crate::stack::{EntryId, EntryState, RouteEntry};
+    use whisker::runtime::element::ElementTag;
     use whisker::runtime::reactive::Owner;
+    use whisker::runtime::value::WhiskerValue;
     use whisker::runtime::view::{
         create_element, install_renderer, uninstall_renderer, BindType, DynRenderer, Element,
     };
-    use whisker::runtime::value::WhiskerValue;
-    use whisker::runtime::element::ElementTag;
     use whisker::RwSignal;
 
     #[derive(Clone, Debug, PartialEq)]
@@ -939,7 +937,10 @@ mod tests {
             let wc = h.wrapper_id(3).expect("C mounted");
 
             // Top (C) is relative; back stack (A, B) absolute.
-            assert!(is_relative(&styles.borrow()[&wc]), "C should be top/relative");
+            assert!(
+                is_relative(&styles.borrow()[&wc]),
+                "C should be top/relative"
+            );
             assert!(is_absolute(&styles.borrow()[&wb]), "B should be absolute");
             assert!(is_absolute(&styles.borrow()[&wa]), "A should be absolute");
 
@@ -947,7 +948,10 @@ mod tests {
             // just-below-top back-stack wrapper (B) to `relative` and
             // left it latched there (residual after a finish anim).
             set_inline_styles(Element::from_raw(wb), "position: relative; top: 0px;");
-            assert!(is_relative(&styles.borrow()[&wb]), "precondition: B is relative");
+            assert!(
+                is_relative(&styles.borrow()[&wb]),
+                "precondition: B is relative"
+            );
 
             // `replace` the top: mint a fresh EntryId (4), pop C, push D.
             // The diff is Forward (new top D not in old set), so the
@@ -963,7 +967,11 @@ mod tests {
 
             let s = styles.borrow();
             // Exactly one relative slot — the new top (D).
-            assert!(is_relative(&s[&wd]), "new top D must be relative; got {:?}", s[&wd]);
+            assert!(
+                is_relative(&s[&wd]),
+                "new top D must be relative; got {:?}",
+                s[&wd]
+            );
             assert!(
                 is_absolute(&s[&wb]),
                 "back-stack B must be reset to absolute; got {:?}",
@@ -987,7 +995,10 @@ mod tests {
                 .iter()
                 .filter(|id| s.get(id).map(|c| is_relative(c)).unwrap_or(false))
                 .count();
-            assert_eq!(relatives, 1, "exactly one wrapper may be relative (the top)");
+            assert_eq!(
+                relatives, 1,
+                "exactly one wrapper may be relative (the top)"
+            );
         });
 
         owner.dispose();
