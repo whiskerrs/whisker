@@ -54,8 +54,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use whisker::animate_cancel;
 use whisker::css::ext::*;
-use whisker::css::{Css, Overflow, PositionKind, ToCss};
+use whisker::css::{Css, FlexDirection, Overflow, PositionKind, ToCss};
 use whisker::runtime::element::ElementTag;
 use whisker::runtime::reactive::{effect, on_mount, Owner};
 use whisker::runtime::view::apply::apply_styles;
@@ -435,6 +436,65 @@ fn run_navigation_effect<R: Route>(
         }
     }
 
+    // Re-establish the back-stack position invariant.
+    //
+    // Exactly one slot — the current top — may be `relative`
+    // (in-flow); every covered entry must be `absolute` (out of
+    // flow). An interactive gesture (IosSwipeBack) deliberately
+    // promotes the just-below-top wrapper to `relative` to expose it
+    // during a drag, and its finish animator latches that pose with
+    // `fill: forwards`. The transition block above only re-poses the
+    // incoming (new top) and outgoing (old top) wrappers — it trusts
+    // every *other* mounted entry to already be `absolute`. After a
+    // gesture that trust is violated: a back-stack wrapper can carry a
+    // residual `relative`, and with two in-flow children the container
+    // lays them out side by side (Lynx's flex default) and freezes the
+    // screens horizontally.
+    //
+    // So, on *every* navigation (any `dir`, including `None` for
+    // replace_all), force every mounted entry that is neither the new
+    // top, the old top, nor being removed back to the `absolute`
+    // suspended slot. The new/old top are owned by the transition
+    // block; removed entries are handled below; everything else is
+    // back-stack and must be `absolute`.
+    {
+        // Snapshot (id, wrapper) under a short borrow, then drop it
+        // before touching the renderer — `clear_stack_animations` and
+        // the inline-style write must not run while `mounted` is
+        // borrowed (a renderer op could re-enter the layout).
+        let to_reset: Vec<Element> = {
+            let mounted = state.mounted.borrow();
+            mounted
+                .iter()
+                .filter(|(id, _)| {
+                    Some(**id) != new_top
+                        && Some(**id) != old_top
+                        && !removed.contains(id)
+                })
+                .map(|(_, entry)| entry.wrapper)
+                .collect()
+        };
+        // `slot_css(false)` is `position: absolute` + full-bleed top/
+        // left/size — the suspended-pose base. We write it directly
+        // rather than going through `apply_wrapper_style` on purpose:
+        // a custom transition's `slot_style` may be `Style::Dynamic`,
+        // and `apply_wrapper_style` would register a *fresh effect on
+        // every navigation* for each back-stack wrapper, leaking
+        // effects without bound. The covered back stack needs no
+        // transition decoration (it's hidden behind the top), so a
+        // single deterministic inline write of the position base is
+        // both lighter and sufficient to restore the invariant.
+        let absolute_slot = slot_css(false).to_css_string();
+        for wrapper in to_reset {
+            // Cancel the gesture's latched `fill: forwards` pose first;
+            // otherwise it shadows the inline write below and the
+            // wrapper stays `relative` (see memory:
+            // lynx_android_transform_latched_after_fill_forwards).
+            clear_stack_animations(wrapper);
+            set_inline_styles(wrapper, &absolute_slot);
+        }
+    }
+
     // Process removed entries: the popped top of a Backward nav is
     // mid-animation, so defer its dispose. Other removals
     // (replace_all, multi-level back_to, replace) don't animate, so
@@ -544,10 +604,48 @@ fn container_css() -> Css {
     // shadow to show through.
     Css::new()
         .position(PositionKind::Relative)
+        // Defense-in-depth for the one-relative-slot invariant: Lynx
+        // defaults a `<view>` to `flex-direction: row`, so if two
+        // wrappers are ever `relative` (in-flow) at once — e.g. a
+        // gesture left a back-stack wrapper `relative` and a nav
+        // confirmed before it was reset — they'd lay out *side by
+        // side* and freeze the screens horizontally. Pinning the
+        // container to `column` degrades that failure into a vertical
+        // stack instead of a horizontal smear; the single-relative
+        // normal case (every other child `absolute`, out of flow) is
+        // unaffected.
+        .flex_direction(FlexDirection::Column)
         .width(100.percent())
         .height(100.percent())
         .flex_grow(1.0)
         .overflow(Overflow::Visible)
+}
+
+/// Cancel any latched stack / swipe-back animations on `element`.
+///
+/// Both the natural transition animator and the
+/// [`IosSwipeBack`](crate::IosSwipeBack) finish animator run with
+/// `fill: forwards`, which keeps the element pinned at its end pose
+/// and *shadows* subsequent inline-style writes (see memory:
+/// `lynx_android_transform_latched_after_fill_forwards`). Anything
+/// that wants to re-establish a wrapper's position by writing inline
+/// styles must cancel these first, or the write silently no-ops.
+///
+/// The animation-name list is the single source of truth shared by
+/// the layout (back-stack re-establishment) and the gesture
+/// (per-frame pose scrub). Lynx no-ops on cancel-of-nonexistent, so
+/// the shotgun-cancel is cheap.
+pub(crate) fn clear_stack_animations(element: Element) {
+    for name in [
+        "stack-ios-incoming-forward",
+        "stack-ios-incoming-backward",
+        "stack-ios-outgoing-forward",
+        "stack-ios-outgoing-backward",
+        "swipe-finish-incoming",
+        "swipe-finish-outgoing",
+    ] {
+        let _ = animate_cancel(element, name);
+    }
 }
 
 // Apply the layout's slot positioning plus the transition's per-role
@@ -647,5 +745,291 @@ mod tests {
     fn container_uses_relative_positioning() {
         let css = container_css().to_css_string();
         assert!(css.contains("position: relative"), "got {css}");
+    }
+
+    #[test]
+    fn container_declares_flex_direction_column() {
+        // Defense-in-depth: keep two-relative-slot smears vertical, not
+        // horizontal. See `container_css`.
+        let css = container_css().to_css_string();
+        assert!(
+            css.contains("flex-direction: column"),
+            "container must pin flex-direction to column; got {css}"
+        );
+    }
+
+    // --- Navigation-effect integration: back-stack position invariant ---
+    //
+    // These drive the real `run_navigation_effect` against a recording
+    // renderer so we can assert the *inline styles* it writes to each
+    // wrapper, which is where the one-relative-slot invariant lives.
+
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    use crate::outlet::RouteRenderFn;
+    use crate::route::{Route, RouteError};
+    use crate::stack::{EntryId, EntryState, RouteEntry};
+    use whisker::runtime::reactive::Owner;
+    use whisker::runtime::view::{
+        create_element, install_renderer, uninstall_renderer, BindType, DynRenderer, Element,
+    };
+    use whisker::runtime::value::WhiskerValue;
+    use whisker::runtime::element::ElementTag;
+    use whisker::RwSignal;
+
+    #[derive(Clone, Debug, PartialEq)]
+    enum TestRoute {
+        A,
+        B,
+        C,
+        D,
+    }
+
+    impl Route for TestRoute {
+        fn parse(_: &str) -> Result<Self, RouteError> {
+            unimplemented!()
+        }
+        fn to_path(&self) -> String {
+            String::new()
+        }
+    }
+
+    // Records the *last* inline-style string written to each element id,
+    // plus the full op log so a test can assert ordering / cancellation
+    // if it wants. Only the methods the layout actually calls do real
+    // work; the rest satisfy the object-safe trait with no-ops.
+    #[derive(Default)]
+    struct StyleRecorder {
+        next_id: Cell<u32>,
+        // element id -> last inline style string written.
+        last_style: Rc<RefCell<HashMap<u32, String>>>,
+    }
+
+    impl StyleRecorder {
+        fn new() -> (Self, Rc<RefCell<HashMap<u32, String>>>) {
+            let r = Self::default();
+            let styles = r.last_style.clone();
+            (r, styles)
+        }
+        fn alloc(&self) -> u32 {
+            let id = self.next_id.get();
+            self.next_id.set(id + 1);
+            id
+        }
+    }
+
+    impl DynRenderer for StyleRecorder {
+        fn create_element(&self, _tag: ElementTag) -> Element {
+            Element::from_raw(self.alloc())
+        }
+        fn create_element_by_name(&self, _tag_name: &str) -> Element {
+            Element::from_raw(self.alloc())
+        }
+        fn release_element(&self, _h: Element) {}
+        fn set_attribute(&self, _h: Element, _k: &str, _v: &str) {}
+        fn set_inline_styles(&self, h: Element, css: &str) {
+            self.last_style.borrow_mut().insert(h.id(), css.to_string());
+        }
+        fn append_child(&self, _p: Element, _c: Element) {}
+        fn remove_child(&self, _p: Element, _c: Element) {}
+        fn set_event_listener(
+            &self,
+            _h: Element,
+            _name: &str,
+            _bt: BindType,
+            _cb: Box<dyn Fn(WhiskerValue) + 'static>,
+        ) {
+        }
+        fn set_root(&self, _p: Element) {}
+        fn flush(&self) {}
+    }
+
+    fn render_fn() -> RouteRenderFn<TestRoute> {
+        // Each screen renders one child element so wrappers are
+        // non-trivial; the child id doesn't matter to the assertions.
+        (|_r: TestRoute| create_element(ElementTag::View)).into()
+    }
+
+    fn entry(route: TestRoute, id: u64) -> RouteEntry<TestRoute> {
+        RouteEntry {
+            route,
+            state: RwSignal::new(EntryState::Active),
+            id: EntryId(id),
+        }
+    }
+
+    fn is_relative(s: &str) -> bool {
+        s.contains("position: relative")
+    }
+    fn is_absolute(s: &str) -> bool {
+        s.contains("position: absolute")
+    }
+
+    // Build a fresh layout state + container, push entries to a given
+    // depth via the real effect, and hand back everything a test needs.
+    struct Harness {
+        state: LayoutState,
+        container: Element,
+        transition: StackTransitionBox,
+        render: RouteRenderFn<TestRoute>,
+        first: Rc<Cell<bool>>,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            let state = LayoutState {
+                mounted: Rc::new(RefCell::new(HashMap::new())),
+                order: Rc::new(RefCell::new(Vec::new())),
+                pending_dispose: Rc::new(RefCell::new(Vec::new())),
+                skip_animation: Rc::new(Cell::new(0)),
+            };
+            Harness {
+                state,
+                container: create_element(ElementTag::View),
+                transition: StackTransitionBox::new(IosSlide::default()),
+                render: render_fn(),
+                first: Rc::new(Cell::new(true)),
+            }
+        }
+
+        fn nav(&self, entries: Vec<RouteEntry<TestRoute>>) {
+            run_navigation_effect(
+                &self.state,
+                &self.first,
+                &self.transition,
+                self.container,
+                &self.render,
+                entries,
+            );
+        }
+
+        // Wrapper element id for a given EntryId, if still mounted.
+        fn wrapper_id(&self, id: u64) -> Option<u32> {
+            self.state
+                .mounted
+                .borrow()
+                .get(&EntryId(id))
+                .map(|e| e.wrapper.id())
+        }
+    }
+
+    #[test]
+    fn nav_reestablishes_back_stack_absolute_after_residual_relative() {
+        whisker::runtime::reactive::__reset_for_tests();
+        let owner = Owner::new(None);
+        let (recorder, styles) = StyleRecorder::new();
+        let prev = install_renderer(Box::new(recorder));
+
+        owner.with(|| {
+            let h = Harness::new();
+
+            // Depth-3 stack: A (root) -> B -> C via two pushes.
+            h.nav(vec![entry(TestRoute::A, 1)]);
+            h.nav(vec![entry(TestRoute::A, 1), entry(TestRoute::B, 2)]);
+            h.nav(vec![
+                entry(TestRoute::A, 1),
+                entry(TestRoute::B, 2),
+                entry(TestRoute::C, 3),
+            ]);
+
+            let wa = h.wrapper_id(1).expect("A mounted");
+            let wb = h.wrapper_id(2).expect("B mounted");
+            let wc = h.wrapper_id(3).expect("C mounted");
+
+            // Top (C) is relative; back stack (A, B) absolute.
+            assert!(is_relative(&styles.borrow()[&wc]), "C should be top/relative");
+            assert!(is_absolute(&styles.borrow()[&wb]), "B should be absolute");
+            assert!(is_absolute(&styles.borrow()[&wa]), "A should be absolute");
+
+            // Simulate an IosSwipeBack drag that promoted the
+            // just-below-top back-stack wrapper (B) to `relative` and
+            // left it latched there (residual after a finish anim).
+            set_inline_styles(Element::from_raw(wb), "position: relative; top: 0px;");
+            assert!(is_relative(&styles.borrow()[&wb]), "precondition: B is relative");
+
+            // `replace` the top: mint a fresh EntryId (4), pop C, push D.
+            // The diff is Forward (new top D not in old set), so the
+            // transition block re-poses D (incoming) and C (outgoing)
+            // only — it does NOT touch B. The new back-stack path must.
+            h.nav(vec![
+                entry(TestRoute::A, 1),
+                entry(TestRoute::B, 2),
+                entry(TestRoute::D, 4),
+            ]);
+
+            let wd = h.wrapper_id(4).expect("D mounted");
+
+            let s = styles.borrow();
+            // Exactly one relative slot — the new top (D).
+            assert!(is_relative(&s[&wd]), "new top D must be relative; got {:?}", s[&wd]);
+            assert!(
+                is_absolute(&s[&wb]),
+                "back-stack B must be reset to absolute; got {:?}",
+                s[&wb]
+            );
+            assert!(
+                is_absolute(&s[&wa]),
+                "back-stack A must stay absolute; got {:?}",
+                s[&wa]
+            );
+
+            // Count relatives across all live wrappers: exactly one.
+            let live: Vec<u32> = h
+                .state
+                .mounted
+                .borrow()
+                .values()
+                .map(|e| e.wrapper.id())
+                .collect();
+            let relatives = live
+                .iter()
+                .filter(|id| s.get(id).map(|c| is_relative(c)).unwrap_or(false))
+                .count();
+            assert_eq!(relatives, 1, "exactly one wrapper may be relative (the top)");
+        });
+
+        owner.dispose();
+        uninstall_renderer(prev);
+    }
+
+    #[test]
+    fn push_reestablishes_deeper_back_stack_absolute() {
+        // A residual `relative` on the *root* (not just the
+        // just-below-top) entry must also be scrubbed when a push
+        // confirms over it.
+        whisker::runtime::reactive::__reset_for_tests();
+        let owner = Owner::new(None);
+        let (recorder, styles) = StyleRecorder::new();
+        let prev = install_renderer(Box::new(recorder));
+
+        owner.with(|| {
+            let h = Harness::new();
+            h.nav(vec![entry(TestRoute::A, 1)]);
+            h.nav(vec![entry(TestRoute::A, 1), entry(TestRoute::B, 2)]);
+
+            let wa = h.wrapper_id(1).expect("A mounted");
+
+            // Residual relative on the back-stack root A.
+            set_inline_styles(Element::from_raw(wa), "position: relative;");
+            assert!(is_relative(&styles.borrow()[&wa]));
+
+            // Push a fresh top (id 9): new_top (9) != old_top (2) and 9
+            // is not in the old set => Forward. A (id 1) is neither the
+            // new top, the old top, nor removed -> the back-stack path
+            // must scrub its residual relative back to absolute.
+            h.nav(vec![entry(TestRoute::A, 1), entry(TestRoute::D, 9)]);
+
+            let s = styles.borrow();
+            assert!(
+                is_absolute(&s[&wa]),
+                "surviving back-stack A must be reset to absolute; got {:?}",
+                s[&wa]
+            );
+        });
+
+        owner.dispose();
+        uninstall_renderer(prev);
     }
 }

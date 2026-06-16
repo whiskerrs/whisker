@@ -28,11 +28,9 @@ use whisker::event::TouchEvent;
 use whisker::runtime::event::bind_typed;
 use whisker::runtime::reactive::on_mount;
 use whisker::runtime::view::{set_inline_styles, BindType, Element};
-use whisker::{
-    animate_cancel, animate_start, component, render, use_context, AnimateOptions, Style,
-};
+use whisker::{animate_start, component, render, use_context, AnimateOptions, Style};
 
-use crate::layouts::stack::{slot_css, StackLayoutHandle};
+use crate::layouts::stack::{clear_stack_animations, slot_css, StackLayoutHandle};
 use crate::transitions::ios_slide;
 use crate::transitions::{Direction, Side, StackTransitionBox};
 
@@ -249,28 +247,10 @@ fn install(layout: &StackLayoutHandle, transition: StackTransitionBox) {
     }
 }
 
-// Cancel any prior natural-transition animation. Without this, the
-// previous animation's `fill: forwards` keeps the element at its end
-// pose and shadows inline writes — the drag would appear frozen.
-// Lynx no-ops on cancel-of-nonexistent, so the shotgun-cancel is
-// cheap.
-fn clear_natural_animations(element: Element) {
-    for name in [
-        "stack-ios-incoming-forward",
-        "stack-ios-incoming-backward",
-        "stack-ios-outgoing-forward",
-        "stack-ios-outgoing-backward",
-        "swipe-finish-incoming",
-        "swipe-finish-outgoing",
-    ] {
-        let _ = animate_cancel(element, name);
-    }
-}
-
 // Write the iOS slide pose at `progress` inline, alongside the
 // transition's `slot_style` and the layout's base `slot_css`. Inline
 // styles only take effect after the active CSS animation is
-// cancelled (see `clear_natural_animations`).
+// cancelled (see `clear_stack_animations`).
 fn apply_pose(
     element: Element,
     transition: &dyn crate::transitions::StackTransition,
@@ -278,7 +258,7 @@ fn apply_pose(
     direction: Direction,
     progress: f32,
 ) {
-    clear_natural_animations(element);
+    clear_stack_animations(element);
     // Incoming == the screen being revealed (the new top once the
     // swipe commits) → `relative` so its children stay hit-testable;
     // the outgoing screen sliding out stays `absolute`. Matches the
