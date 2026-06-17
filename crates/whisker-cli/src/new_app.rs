@@ -178,34 +178,112 @@ fn lib_rs(v: &Vars) -> String {
     format!(
         r##"//! {display} — a Whisker app.
 
+use whisker::css::{{AlignItems, Color, Display, FlexDirection, FontWeight, JustifyContent}};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
+// `#[whisker::main]` is the app entry point. Keep it thin — it just
+// mounts the root component. Splitting your UI into `#[component]`s
+// (rather than writing everything here) is what lets `whisker run`
+// hot-reload your edits in well under a second: edit `Root` below, hit
+// save, and the running app updates live with its state preserved.
 #[whisker::main]
 fn app() -> Element {{
-    // `RwSignal::new` creates a reactive value. The closure below
-    // re-runs whenever the signal changes, repainting the text in place.
+    render! {{
+        Root
+    }}
+}}
+
+/// The root of your app — put your state and layout here.
+#[component]
+fn root() -> Element {{
+    // `RwSignal` holds reactive state. Anything that reads it (like the
+    // `computed` below) re-runs and repaints when it changes.
     let count = RwSignal::new(0);
 
     render! {{
-        page(style: "flex-direction: column; padding: 24px; gap: 16px; background-color: #0f0f10;") {{
-            text(
-                value: "{display}",
-                style: "color: white; font-size: 24px; font-weight: 600;",
+        // Styles use the typed `css!` macro: field names map to CSS
+        // properties and values are checked at compile time. Reach for
+        // `.raw("prop", "value")` for anything the typed builder doesn't
+        // cover yet (here: `gap` and the gradient `background`).
+        page(style: css!(
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            padding: px(24),
+            background_color: Color::hex(0x0b0b0f),
+        )) {{
+            // A card: column layout, padding, rounded corners, plus a
+            // `gap` and a linear-gradient background via `.raw(...)`.
+            view(style: css!(
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                padding: px(32),
+                border_radius: px(20),
             )
-            text(
-                value: computed(move || format!("Taps: {{}}", count.get())),
-                style: "color: #d4d4d8; font-size: 18px;",
-            )
-            view(
-                style: "background-color: #4f46e5; padding: 14px 24px; border-radius: 10px; align-self: flex-start;",
-                on_tap: move |_| count.set(count.get() + 1),
-            ) {{
+            .raw("gap", "6px")
+            .raw("background", "linear-gradient(135deg, #7c5cff 0%, #4e9bff 100%)")) {{
                 text(
-                    value: "Tap me",
-                    style: "color: white; font-size: 16px; font-weight: 500;",
+                    value: "{display}",
+                    style: css!(
+                        color: Color::hex(0xffffff),
+                        font_size: px(22),
+                        font_weight: FontWeight::Bold,
+                    )
+                    .raw("letter-spacing", "0.5px"),
                 )
+                text(
+                    value: "Edit `Root` and save — hot reload in under a second",
+                    style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(13)),
+                )
+                text(
+                    value: computed(move || format!("{{}}", count.get())),
+                    style: css!(
+                        color: Color::hex(0xffffff),
+                        font_size: px(56),
+                        font_weight: FontWeight::Numeric(800),
+                        margin_top: px(12),
+                    ),
+                )
+                // A horizontal row; `gap` separates the two buttons.
+                view(style: css!(
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    margin_top: px(16),
+                )
+                .raw("gap", "12px")) {{
+                    Button(label: "-1", delta: -1, count: count)
+                    Button(label: "+1", delta: 1, count: count)
+                }}
             }}
+        }}
+    }}
+}}
+
+/// A small reusable button. Passing the `count` signal in as a prop lets
+/// it update state owned by `Root`, and keeps `Root` readable. Each
+/// `#[component]` also hot-reloads on its own.
+#[component]
+fn button(label: &'static str, delta: i32, count: RwSignal<i32>) -> Element {{
+    render! {{
+        view(
+            style: css!(
+                border_radius: px(12),
+                background_color: Color::rgba(255, 255, 255, 0.18),
+            )
+            .raw("padding", "12px 22px"),
+            on_tap: move |_| count.set(count.get() + delta),
+        ) {{
+            text(
+                value: label,
+                style: css!(
+                    color: Color::hex(0xffffff),
+                    font_size: px(18),
+                    font_weight: FontWeight::Numeric(600),
+                ),
+            )
         }}
     }}
 }}
