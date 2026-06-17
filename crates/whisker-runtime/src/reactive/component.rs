@@ -214,6 +214,11 @@ pub(crate) struct MountSite {
     /// was the first child of parent. Stable across remounts unless
     /// the anchor itself is removed by some other code path.
     pub anchor: Option<Element>,
+    /// True when this component's body_root was installed as the page
+    /// root via `view::set_root` (a top-level `#[whisker::main]`
+    /// component) rather than attached under a parent. Remount re-installs
+    /// it with `view::set_root` instead of inserting into a parent.
+    pub is_root: bool,
 }
 
 /// Called by `view::append_child` after every successful attach.
@@ -241,6 +246,28 @@ pub fn on_component_root_attached(parent: Element, child: Element) {
         if let Some(site) = rt.mount_sites.get_mut(&mount_id) {
             site.parent = Some(parent);
             site.anchor = anchor;
+        }
+    });
+}
+
+/// Called by `view::set_root` after the page root is installed.
+/// If a pending component mount's body_root matches `page`, this is a
+/// top-level component (`#[whisker::main] fn app() { render!{ Root } }`):
+/// mark its MountSite `is_root` so `remount_components_for` re-installs it
+/// via `set_root` on hot patch. No-op (and restores the pending entry) if
+/// nothing pending or the body_root doesn't match.
+pub fn on_component_root_set(page: Element) {
+    let pending = PENDING_MOUNT.with(|cell| cell.take());
+    let Some((mount_id, root)) = pending else {
+        return;
+    };
+    if root != page {
+        PENDING_MOUNT.with(|cell| cell.set(Some((mount_id, root))));
+        return;
+    }
+    super::with_runtime(|rt| {
+        if let Some(site) = rt.mount_sites.get_mut(&mount_id) {
+            site.is_root = true;
         }
     });
 }
@@ -306,6 +333,7 @@ where
                 body_root: Some(body_root),
                 parent: None,
                 anchor: None,
+                is_root: false,
             },
         );
         rt.fn_ptr_mounts.entry(fn_ptr).or_default().push(id);
@@ -387,6 +415,53 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
             })
             .collect()
     });
+
+    // Root sites (top-level components installed via `set_root`) have no
+    // parent in the child mirror, so the batched insert path can't handle
+    // them. Re-install each via `set_root` with a fresh owner + new body.
+    let (root_ids, ids): (Vec<MountId>, Vec<MountId>) = ids.into_iter().partition(|mid| {
+        with_runtime(|rt| rt.mount_sites.get(mid).map(|s| s.is_root).unwrap_or(false))
+    });
+    for mid in root_ids {
+        let Some((body, fn_ptr)) = with_runtime(|rt| {
+            let site = rt.mount_sites.get(&mid)?;
+            Some((site.body.clone(), site.fn_ptr))
+        }) else {
+            continue;
+        };
+        // Dispose the old owner (cascading reactive cleanup) before re-running.
+        let old_owner = with_runtime(|rt| {
+            let site = rt.mount_sites.get_mut(&mid)?;
+            site.body_root.take();
+            site.owner.take()
+        });
+        if let Some(o) = old_owner {
+            o.dispose();
+        }
+        let new_owner = Owner::new(None);
+        with_runtime(|rt| {
+            if let Some(o) = rt.owners.get_mut(new_owner) {
+                o.mount_fn = Some(fn_ptr);
+            }
+            rt.component_owners
+                .entry(fn_ptr)
+                .or_default()
+                .push(new_owner);
+        });
+        let new_body_root = untrack(|| new_owner.with(|| (*body)()));
+        // The body's nested `mount_component_remountable` calls leave a
+        // PENDING_MOUNT behind; drain it — we re-install via `set_root`,
+        // not the caller's `append_child`.
+        PENDING_MOUNT.with(|cell| cell.set(None));
+        crate::view::set_root(new_body_root);
+        with_runtime(|rt| {
+            if let Some(site) = rt.mount_sites.get_mut(&mid) {
+                site.owner = Some(new_owner);
+                site.body_root = Some(new_body_root);
+                // is_root stays true.
+            }
+        });
+    }
 
     if ids.is_empty() {
         return;

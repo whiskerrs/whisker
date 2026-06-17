@@ -159,6 +159,88 @@ fn install_returns_previous_renderer() {
     assert!(current_renderer_id().is_none());
 }
 
+// ----- Top-level (set_root) component remount -------------------------------
+
+/// A top-level `#[whisker::main]` component is installed via
+/// `view::set_root` (not `append_child`), so its `MountSite` has no
+/// recorded parent. Before the fix `remount_components_for` filtered it
+/// out and edits never hot-reloaded. This pins the `is_root` path:
+/// mounting + `set_root` marks the site root, and a subsequent
+/// `remount_components_for` re-runs the body and re-installs the new
+/// body_root via `set_root`.
+#[test]
+fn top_level_set_root_component_remounts() {
+    use crate::reactive::{mount_component_remountable, remount_components_for};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    // Reset shared thread-local state so a reused worker thread starts clean.
+    crate::reactive::__reset_for_tests();
+    crate::reactive::__reset_pending_mount_for_tests();
+    crate::view::__reset_children_mirror_for_tests();
+
+    let (renderer, log) = RecordingRenderer::with_log();
+
+    let render_count = Rc::new(Cell::new(0_u32));
+    let render_count_body = render_count.clone();
+
+    let fn_ptr = 0x5151_0001 as *const ();
+
+    with_installed_renderer(Box::new(renderer), || {
+        let body = move || {
+            render_count_body.set(render_count_body.get() + 1);
+            create_element(ElementTag::View)
+        };
+        let body_root = mount_component_remountable(fn_ptr, body);
+        // Install it as the page root — this drains PENDING_MOUNT and
+        // marks the MountSite `is_root`.
+        set_root(body_root);
+
+        // Initial mount ran the body exactly once.
+        assert_eq!(render_count.get(), 1, "body ran once on initial mount");
+
+        let first_root_id = {
+            let ops = log.borrow();
+            let set_roots: Vec<u32> = ops
+                .iter()
+                .filter_map(|o| match o {
+                    Op::SetRoot { id } => Some(*id),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(set_roots.len(), 1, "one SetRoot from initial install");
+            assert_eq!(set_roots[0], body_root.id());
+            set_roots[0]
+        };
+
+        // Simulate a subsecond patch of the top-level component.
+        remount_components_for(&[fn_ptr]);
+
+        // Body re-ran.
+        assert_eq!(render_count.get(), 2, "body re-ran on remount");
+
+        // A second SetRoot landed with a *different* id (the new body_root
+        // installed as root).
+        let ops = log.borrow();
+        let set_roots: Vec<u32> = ops
+            .iter()
+            .filter_map(|o| match o {
+                Op::SetRoot { id } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            set_roots.len(),
+            2,
+            "second SetRoot from remount: {set_roots:?}"
+        );
+        assert_ne!(
+            set_roots[1], first_root_id,
+            "remount installs a fresh body_root as root: {set_roots:?}"
+        );
+    });
+}
+
 // ----- IntoView impls -------------------------------------------------------
 
 #[test]

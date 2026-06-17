@@ -838,7 +838,8 @@ pub fn dispatch_event(target_sign: i32, event_name: &str, body: WhiskerValue) ->
 }
 
 pub fn set_root(page: Element) {
-    with_renderer(|r| r.set_root(page), ())
+    with_renderer(|r| r.set_root(page), ());
+    crate::reactive::on_component_root_set(page);
 }
 
 pub fn flush() {
