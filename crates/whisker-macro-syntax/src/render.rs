@@ -246,7 +246,7 @@ pub fn snake_to_pascal(name: &str) -> String {
 pub fn is_builtin_tag(name: &str) -> bool {
     matches!(
         name,
-        "page" | "view" | "text" | "raw_text" | "scroll_view" | "list" | "fragment"
+        "view" | "text" | "raw_text" | "scroll_view" | "list" | "fragment"
     )
 }
 

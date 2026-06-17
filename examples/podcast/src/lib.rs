@@ -133,7 +133,8 @@ fn app() -> Element {
         // mini-player to the page itself, so the bar floats above
         // *every* route — browse and detail alike — instead of
         // being scoped to one screen's layout.
-        page(style: css!(
+        view(style: css!(
+            flex_grow: 1.0,
             width: vw(100),
             height: vh(100),
             background_color: podcast_theme::BG,

@@ -28,7 +28,7 @@ mod render;
 ///
 /// #[whisker::main]
 /// fn app() -> Element {
-///     render! { page { text(value: "Hello") } }
+///     render! { view(style: "flex-grow: 1;") { text(value: "Hello") } }
 /// }
 /// ```
 ///

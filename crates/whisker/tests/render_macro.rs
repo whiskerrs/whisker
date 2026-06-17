@@ -880,10 +880,10 @@ fn for_removes_items_on_update() {
 }
 
 #[test]
-fn page_view_scroll_view_tags_supported() {
+fn view_scroll_view_tags_supported() {
     with_recorder(|log| {
         let _ = render! {
-            page {
+            view {
                 scroll_view {
                     view()
                 }
@@ -899,7 +899,7 @@ fn page_view_scroll_view_tags_supported() {
             .collect();
         assert_eq!(
             creates,
-            vec![ElementTag::Page, ElementTag::ScrollView, ElementTag::View]
+            vec![ElementTag::View, ElementTag::ScrollView, ElementTag::View]
         );
     });
 }
