@@ -50,8 +50,10 @@ use whisker_driver_sys::{whisker_bridge_dispatch, WhiskerEngine};
 use whisker_runtime::reactive::{
     flush as reactive_flush, flush_mounts as reactive_flush_mounts, remount_components_for,
 };
+use whisker_runtime::element::ElementTag;
 use whisker_runtime::view::{
-    flush as renderer_flush, install_renderer, set_root, DynRenderer, Element,
+    append_child, create_element, flush as renderer_flush, install_renderer, set_inline_styles,
+    set_root, DynRenderer, Element,
 };
 
 thread_local! {
@@ -185,10 +187,27 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // creates persist for the whole session.
     let root_owner = whisker_runtime::reactive::Owner::detached_root();
     root_owner.with(|| {
-        let root = app_fn();
+        // Whisker owns the root `page`. Lynx requires the shell's root to
+        // be a `page`-tagged element and keeps that element FIXED for the
+        // app's lifetime (it can't be swapped — see
+        // `whisker_bridge_set_root`). So rather than make the user declare
+        // it, we create one stable page here with a minimal, layout-only
+        // base style (full-size flex column) and mount the app's content
+        // as its child. Because the content is attached via
+        // `append_child`, a top-level `#[component]` lands with a real
+        // parent and hot-reloads through the normal child-remount path;
+        // the page itself never moves. Visual styling (background, safe
+        // area, padding) belongs on the user's root view, not here.
+        let page = create_element(ElementTag::Page);
+        set_inline_styles(
+            page,
+            "display:flex;flex-direction:column;flex-grow:1;flex-shrink:1;",
+        );
+        let content = app_fn();
+        append_child(page, content);
         // Commit the initial tree: mark the page as root and ask Lynx
         // to run the first layout+paint pass.
-        set_root(root);
+        set_root(page);
         renderer_flush();
         // Fire on_mount callbacks for everything that just mounted. Has
         // to happen after the renderer flush so user-side code that asks
