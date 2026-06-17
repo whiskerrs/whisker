@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/whiskerrs/whisker/compare/whisker-v0.4.3...whisker-v0.5.0) - 2026-06-17
+
+### Other
+
+- [**breaking**] whisker owns the root page (remove user-facing `page`) ([#238](https://github.com/whiskerrs/whisker/pull/238))
+
 ## [0.3.0](https://github.com/whiskerrs/whisker/compare/whisker-v0.2.5...whisker-v0.3.0) - 2026-06-15
 
 ### Added
