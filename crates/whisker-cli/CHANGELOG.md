@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.4.2...whisker-cli-v0.4.3) - 2026-06-17
+
+### Other
+
+- *(cli)* scaffold a thin #[whisker::main] + Root component, styled with css! ([#234](https://github.com/whiskerrs/whisker/pull/234))
+
 ## [0.4.0](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.3.1...whisker-cli-v0.4.0) - 2026-06-16
 
 ### Added
