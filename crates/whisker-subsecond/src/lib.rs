@@ -960,6 +960,30 @@ macro_rules! impl_hot_function {
                             // No nibble on 32-bit platforms, but we still need to assume u64 since the host always writes 64-bit addresses
                             #[cfg(target_pointer_width = "32")] let real = real as u64;
 
+                            // Whisker fix for pointer-sized *capturing* closures.
+                            //
+                            // The `size_of::<F>() == size_of::<fn()>()` gate in
+                            // `try_call` routes any closure that is coincidentally
+                            // pointer-sized through this `call_as_ptr` path — which
+                            // assumes `F` is a bare function pointer and recovers its
+                            // address via `transmute_copy`. But a `#[component]` body
+                            // closure that captures exactly one 8-byte value (the
+                            // common case: a single signal / `NodeId`) is *also*
+                            // pointer-sized, and `transmute_copy` then yields the
+                            // captured VALUE (e.g. a slotmap key like `0x1_0000_0001`),
+                            // not a code address. The lookup misses and the stale
+                            // pre-patch body runs — "patch applied" but no visual
+                            // change.
+                            //
+                            // When the transmute-recovered key isn't in the table,
+                            // fall back to the closure's own `call_it`
+                            // monomorphisation address — a real code symbol that the
+                            // JumpTable carries (the same key the non-pointer-sized
+                            // `try_call` path uses). For a genuine fn pointer the
+                            // first lookup already hits, so this only adds a fallback.
+                            // Genuine bare fn pointer: `real` is its code
+                            // address and is in the table. Call it as
+                            // `Self::Real` (a plain `fn(args)`, no `self`).
                             if let Some(ptr) = jump_table.map.get(&real).cloned() {
                                 // Re-apply the nibble - though this might not be required (we aren't calling malloc for a new pointer)
                                 #[cfg(all(target_pointer_width = "64", target_os = "android"))] let ptr: u64 = ptr | nibble;
@@ -978,6 +1002,25 @@ macro_rules! impl_hot_function {
                                 type PtrWidth = u32;
 
                                 return std::mem::transmute::<PtrWidth, Self::Real>(ptr)($($arg),*);
+                            }
+
+                            // Whisker fix: `real` missed because this is a
+                            // pointer-sized *capturing* closure, not a bare fn
+                            // pointer — `transmute_copy` yielded the captured
+                            // value (e.g. a single signal's `NodeId`), not a code
+                            // address. Dispatch on the closure's own `call_it`
+                            // monomorphisation address instead — a real symbol the
+                            // JumpTable carries — calling it WITH `&mut self` since
+                            // `call_it` takes `self`.
+                            let call_it_key =
+                                <Self as HotFunction<($($arg,)*), $marker>>::call_it
+                                    as *const () as u64;
+                            if let Some(ptr) = jump_table.map.get(&call_it_key).cloned() {
+                                let patched = std::mem::transmute::<
+                                    *const (),
+                                    fn(&mut Self, ($($arg,)*)) -> Self::Return,
+                                >(ptr as *const ());
+                                return patched(self, args);
                             }
                         }
 

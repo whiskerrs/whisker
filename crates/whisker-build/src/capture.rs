@@ -123,8 +123,9 @@ pub fn capture_env_vars_for_triple(
     // without this, subsecond compiles to `self.inner.call_it(args)`
     // and skips the JumpTable entirely (apply_patch becomes a no-op
     // from the caller's perspective). Tier 1 dev builds want the
-    // JumpTable lookup but otherwise keep release-level optimization;
-    // this flag flips the cfg without dropping to the dev profile.
+    // JumpTable lookup; this flag flips the cfg without dropping to the
+    // dev profile. (We also force `-Copt-level=0` below so the host's
+    // per-component dispatch closures match the patch's — see there.)
     //
     // Pick the export-dynamic flag spelling for the *target* triple,
     // not the host — Apple linkers take `-export_dynamic`; GNU / lld
@@ -134,7 +135,18 @@ pub fn capture_env_vars_for_triple(
         Some(t) if t.contains("apple") => "-Clink-arg=-Wl,-export_dynamic",
         _ => "-Clink-arg=-Wl,--export-dynamic",
     };
-    let save_temps = format!("-Csave-temps=y -Cdebug-assertions=on {export_dynamic}");
+    // `-Copt-level=0` matches the thin patch's opt-level (the patch
+    // forces 0 via `hotpatch::thin_build::override_opt_level`). This is
+    // load-bearing for hot reload: at -O3 the host *inlines* each
+    // `#[component]`'s `__hot::call(move ||{…})` dispatch closure into
+    // its parent fn, so the standalone `HotFunction::call_it` /
+    // `call_as_ptr` symbol subsecond keys its JumpTable on either isn't
+    // emitted or gets a different mangling hash than the -O0 patch's.
+    // The lookup then misses and a remounted component body dispatches to
+    // the OLD (inlined) code — "patch applied" but the screen never
+    // updates. Forcing -O0 on the captured (host) build keeps both sides'
+    // dispatch closures symbol-identical so patches actually take effect.
+    let save_temps = format!("-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 {export_dynamic}");
     let save_temps = save_temps.as_str();
     match triple_override {
         Some(triple) => {
