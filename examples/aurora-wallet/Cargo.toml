@@ -1,0 +1,15 @@
+[package]
+name = "aurora-wallet"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A polished single-file Whisker demo: a finance / wallet dashboard (balance card, segmented control, spending chart, transactions) built entirely in one `src/lib.rs`. Designed to show off the hot-reload dev loop — tweak a colour, label, or number and watch the running app update in under a second with its state intact."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+# Lucide icon set (SVG, tree-shaken). Pulls in whisker-svg (its renderer)
+# as a transitive native module.
+whisker-icons = { path = "../../packages/whisker-icons" }
