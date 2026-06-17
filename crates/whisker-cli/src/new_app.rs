@@ -183,10 +183,13 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
 // `#[whisker::main]` is the app entry point. Keep it thin — it just
-// mounts the root component. Splitting your UI into `#[component]`s
-// (rather than writing everything here) is what lets `whisker run`
-// hot-reload your edits in well under a second: edit `Root` below, hit
-// save, and the running app updates live with its state preserved.
+// mounts the root component. Whisker provides the root `page` element
+// for you, so `app()` (and your components) just return a `view`.
+//
+// Splitting your UI into `#[component]`s (rather than writing everything
+// here) is what lets `whisker run` hot-reload your edits in well under a
+// second: edit `Root` below, hit save, and the running app updates live
+// with its state preserved.
 #[whisker::main]
 fn app() -> Element {{
     render! {{
@@ -194,7 +197,9 @@ fn app() -> Element {{
     }}
 }}
 
-/// The root of your app — put your state and layout here.
+/// The root of your app — put your state and layout here. Whisker wraps
+/// whatever `Root` returns in the full-screen root `page`, so this `view`
+/// just needs `flex_grow: 1.0` to fill it. Editing `Root` hot-reloads.
 #[component]
 fn root() -> Element {{
     // `RwSignal` holds reactive state. Anything that reads it (like the
@@ -206,7 +211,8 @@ fn root() -> Element {{
         // properties and values are checked at compile time. Reach for
         // `.raw("prop", "value")` for anything the typed builder doesn't
         // cover yet (here: `gap` and the gradient `background`).
-        page(style: css!(
+        view(style: css!(
+            flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             justify_content: JustifyContent::Center,

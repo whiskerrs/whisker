@@ -34,7 +34,8 @@ pub fn app() -> Element {
     let logo_src = asset!("images/logo.png");
 
     render! {
-        page(style: css!(
+        view(style: css!(
+            flex_grow: 1.0,
             background_color: Color::hex(0x101012),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,

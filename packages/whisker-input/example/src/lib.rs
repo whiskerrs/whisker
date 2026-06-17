@@ -32,7 +32,7 @@ pub fn app() -> Element {
         format!("color: {FG}; font-size: 22px; font-weight: 700; margin-bottom: 20px;",);
 
     render! {
-        page(style: page_style) {
+        view(style: page_style) {
             text(style: header_style, value: "whisker-input demo")
 
             two_way_demo()

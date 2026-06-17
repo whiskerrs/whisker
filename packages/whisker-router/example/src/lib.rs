@@ -114,8 +114,8 @@ fn render_stacked() -> Element {
     })
     .into();
     render! {
-        page(
-            style: "width: 100vw; height: 100vh; background-color: white; \
+        view(
+            style: "flex-grow: 1; width: 100vw; height: 100vh; background-color: white; \
                     display: flex; flex-direction: column;",
         ) {
             RouteProvider(stack: stack) {
@@ -130,8 +130,8 @@ fn render_stacked() -> Element {
 
 fn render_direct() -> Element {
     render! {
-        page(
-            style: "width: 100vw; height: 100vh; background-color: white; \
+        view(
+            style: "flex-grow: 1; width: 100vw; height: 100vh; background-color: white; \
                     display: flex; flex-direction: column;",
         ) {
             HomeScreen()

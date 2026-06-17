@@ -36,7 +36,7 @@ pub fn app() -> Element {
     let insets = safe_area_insets();
 
     render! {
-        page(style: computed(move || css!(
+        view(style: computed(move || css!(
             background_color: Color::hex(0x101012),
             flex_grow: 1.0,
             flex_shrink: 1.0,
@@ -46,8 +46,8 @@ pub fn app() -> Element {
             padding_bottom: px(insets.get().bottom as f32 + 16.0),
         ))) {
             // Wrap the header `text` in a `view` — a known Lynx
-            // Android quirk collapses the first direct child of a
-            // `<page>` to zero height when edge-to-edge is enabled
+            // Android quirk collapses the first direct child of the
+            // root `<page>` to zero height when edge-to-edge is enabled
             // (`WhiskerActivity` flips `setDecorFitsSystemWindows(false)`).
             // Putting an intermediate flex container in between gives
             // the text a frame to lay out against. The wrapper is

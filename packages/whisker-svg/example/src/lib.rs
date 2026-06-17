@@ -84,7 +84,7 @@ pub fn app() -> Element {
         .to_string();
 
     render! {
-        page(style: page_style) {
+        view(style: page_style) {
             text(style: header_style, value: "whisker-svg gallery")
             view(style: grid_style) {
                 tile(label: "Rect (solid)",        svg: SVG_RECT,     color: FG)

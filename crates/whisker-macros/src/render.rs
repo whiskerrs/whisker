@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn builtin_tags_recognised() {
-        for t in ["page", "view", "text", "raw_text", "scroll_view"] {
+        for t in ["view", "text", "raw_text", "scroll_view"] {
             assert!(is_builtin_tag(t));
         }
     }

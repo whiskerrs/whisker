@@ -47,10 +47,10 @@ use std::cell::Cell;
 use std::ffi::c_void;
 
 use whisker_driver_sys::{whisker_bridge_dispatch, WhiskerEngine};
+use whisker_runtime::element::ElementTag;
 use whisker_runtime::reactive::{
     flush as reactive_flush, flush_mounts as reactive_flush_mounts, remount_components_for,
 };
-use whisker_runtime::element::ElementTag;
 use whisker_runtime::view::{
     append_child, create_element, flush as renderer_flush, install_renderer, set_inline_styles,
     set_root, DynRenderer, Element,

@@ -10,12 +10,16 @@
 //! #[whisker::main]
 //! fn app() -> Element {
 //!     render! {
-//!         page(style: "background: white;") {
+//!         view(style: "flex-grow: 1; background: white;") {
 //!             text(value: "Hello, Whisker")
 //!         }
 //!     }
 //! }
 //! ```
+//!
+//! Whisker owns the root `page` element: it wraps whatever your app
+//! returns in a full-screen flex column, so app code just returns a
+//! `view` (give it `flex-grow: 1` to fill the screen).
 //!
 //! ## What's in this crate
 //!
@@ -36,7 +40,7 @@
 //!   Both are written as ordinary `#[component]` functions.
 //! - **CSS** — the [`css`] type-safe builder + the `css!` macro.
 //! - **Built-in elements** — `view`, `text`, `scroll_view`, `list`,
-//!   `page`, `raw_text`, `fragment`. The `render!` macro lowers each
+//!   `raw_text`, `fragment`. The `render!` macro lowers each
 //!   tag invocation into a builder chain on the corresponding struct in
 //!   [`__tags`]; the [`__tags::ElementBuilder`] trait provides the
 //!   shared `style` / `class` / `on_<event>` / … methods.
@@ -793,27 +797,15 @@ pub mod __tags {
     }
 
     /// `<page>` — top-level container Lynx mounts as the root of an
-    /// app. Holds the screen-level `style=` and a single content
-    /// subtree.
+    /// app. **Whisker-internal:** `page` is no longer a `render!`
+    /// built-in tag. The framework creates exactly one root `page`
+    /// during bootstrap (a full-screen flex column) and mounts whatever
+    /// your app returns as its child, so app code never writes `page` —
+    /// return a `view` (with `flex-grow: 1` to fill the screen) instead.
     ///
-    /// Use `page` as the outermost element returned from a
-    /// `#[whisker::main]` function. Lynx treats the page as the
-    /// viewport for layout, so screen-spanning styles
-    /// (`width: 100%`, `background`, …) belong here. There must be
-    /// exactly one `page` at the top of the tree.
-    ///
-    /// ```ignore
-    /// use whisker::prelude::*;
-    ///
-    /// #[whisker::main]
-    /// fn app() -> Element {
-    ///     render! {
-    ///         page(style: "background: white;") {
-    ///             text(value: "Hello")
-    ///         }
-    ///     }
-    /// }
-    /// ```
+    /// Lynx keeps this root `page` fixed for the app's lifetime; it
+    /// cannot be hot-reloaded, which is why whisker owns it rather than
+    /// the user.
     #[allow(non_camel_case_types)]
     pub struct page {
         handle: Element,

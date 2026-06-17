@@ -26,7 +26,7 @@ pub fn app() -> Element {
     let insets = safe_area_insets();
 
     render! {
-        page(style: computed(move || css!(
+        view(style: computed(move || css!(
             background_color: Color::hex(0x101012),
             flex_grow: 1.0,
             display: Display::Flex,
