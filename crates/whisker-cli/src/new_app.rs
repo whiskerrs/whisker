@@ -182,30 +182,15 @@ use whisker::css::{{AlignItems, Color, Display, FlexDirection, FontWeight, Justi
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
-// `#[whisker::main]` is the app entry point. Keep it thin — it just
-// mounts the root component. Splitting your UI into `#[component]`s
-// (rather than writing everything here) is what lets `whisker run`
-// hot-reload your edits in well under a second: edit `Root` below, hit
-// save, and the running app updates live with its state preserved.
+// `#[whisker::main]` is the app entry point. The root `page` is your
+// app's shell: Lynx keeps the *root* element fixed for the app's
+// lifetime, so the hot-reloadable parts of your UI live in child
+// `#[component]`s (like `Root` below). Editing a component re-renders
+// live in well under a second with its state preserved; editing this
+// shell needs a restart.
 #[whisker::main]
 fn app() -> Element {{
     render! {{
-        Root
-    }}
-}}
-
-/// The root of your app — put your state and layout here.
-#[component]
-fn root() -> Element {{
-    // `RwSignal` holds reactive state. Anything that reads it (like the
-    // `computed` below) re-runs and repaints when it changes.
-    let count = RwSignal::new(0);
-
-    render! {{
-        // Styles use the typed `css!` macro: field names map to CSS
-        // properties and values are checked at compile time. Reach for
-        // `.raw("prop", "value")` for anything the typed builder doesn't
-        // cover yet (here: `gap` and the gradient `background`).
         page(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
@@ -214,49 +199,66 @@ fn root() -> Element {{
             padding: px(24),
             background_color: Color::hex(0x0b0b0f),
         )) {{
-            // A card: column layout, padding, rounded corners, plus a
-            // `gap` and a linear-gradient background via `.raw(...)`.
+            Root
+        }}
+    }}
+}}
+
+/// The root of your app — edit this and save to watch it hot-reload.
+/// Because `Root` is a child component of the stable `page` shell above,
+/// `whisker run` re-mounts it live on every edit.
+#[component]
+fn root() -> Element {{
+    // `RwSignal` holds reactive state. Anything that reads it (like the
+    // `computed` below) re-runs and repaints when it changes.
+    let count = RwSignal::new(0);
+
+    render! {{
+        // A card: column layout, padding, rounded corners, plus a `gap`
+        // and a linear-gradient `background` via `.raw(...)`. Styles use
+        // the typed `css!` macro: field names map to CSS properties and
+        // are checked at compile time; `.raw("prop", "value")` covers
+        // anything the typed builder doesn't model yet.
+        view(style: css!(
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: px(32),
+            border_radius: px(20),
+        )
+        .raw("gap", "6px")
+        .raw("background", "linear-gradient(135deg, #7c5cff 0%, #4e9bff 100%)")) {{
+            text(
+                value: "{display}",
+                style: css!(
+                    color: Color::hex(0xffffff),
+                    font_size: px(22),
+                    font_weight: FontWeight::Bold,
+                )
+                .raw("letter-spacing", "0.5px"),
+            )
+            text(
+                value: "Edit `Root` and save — hot reload in under a second",
+                style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(13)),
+            )
+            text(
+                value: computed(move || format!("{{}}", count.get())),
+                style: css!(
+                    color: Color::hex(0xffffff),
+                    font_size: px(56),
+                    font_weight: FontWeight::Numeric(800),
+                    margin_top: px(12),
+                ),
+            )
+            // A horizontal row; `gap` separates the two buttons.
             view(style: css!(
                 display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                padding: px(32),
-                border_radius: px(20),
+                flex_direction: FlexDirection::Row,
+                margin_top: px(16),
             )
-            .raw("gap", "6px")
-            .raw("background", "linear-gradient(135deg, #7c5cff 0%, #4e9bff 100%)")) {{
-                text(
-                    value: "{display}",
-                    style: css!(
-                        color: Color::hex(0xffffff),
-                        font_size: px(22),
-                        font_weight: FontWeight::Bold,
-                    )
-                    .raw("letter-spacing", "0.5px"),
-                )
-                text(
-                    value: "Edit `Root` and save — hot reload in under a second",
-                    style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(13)),
-                )
-                text(
-                    value: computed(move || format!("{{}}", count.get())),
-                    style: css!(
-                        color: Color::hex(0xffffff),
-                        font_size: px(56),
-                        font_weight: FontWeight::Numeric(800),
-                        margin_top: px(12),
-                    ),
-                )
-                // A horizontal row; `gap` separates the two buttons.
-                view(style: css!(
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    margin_top: px(16),
-                )
-                .raw("gap", "12px")) {{
-                    Button(label: "-1", delta: -1, count: count)
-                    Button(label: "+1", delta: 1, count: count)
-                }}
+            .raw("gap", "12px")) {{
+                Button(label: "-1", delta: -1, count: count)
+                Button(label: "+1", delta: 1, count: count)
             }}
         }}
     }}
