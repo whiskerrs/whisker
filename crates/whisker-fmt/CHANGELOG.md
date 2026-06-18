@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.5.0...whisker-fmt-v0.5.1) - 2026-06-18
+
+### Added
+
+- *(whisker-fmt)* preserve comments when formatting render!/css! bodies ([#241](https://github.com/whiskerrs/whisker/pull/241))
+
 ## [0.4.0](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.3.1...whisker-fmt-v0.4.0) - 2026-06-16
 
 ### Fixed
