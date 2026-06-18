@@ -37,6 +37,18 @@ fn muted() -> Color {
 
 #[whisker::main]
 pub fn app() -> Element {
+    render! {
+        Root
+    }
+}
+
+/// The whole wallet UI. It lives in a `#[component]` (not inline in
+/// `app()`) so `whisker run` hot-reloads edits to it live: `app()` runs
+/// once at startup and isn't remountable, but `Root` re-mounts on every
+/// patch — that's what makes a tweak to a colour / label / number show up
+/// on screen in under a second with state intact.
+#[component]
+fn root() -> Element {
     // Selected segment (0 = Day, 1 = Week, 2 = Month) and whether the
     // balance figure is masked. Both survive a hot patch.
     let selected = RwSignal::new(1usize);
