@@ -28,7 +28,7 @@ fn mount_component_runs_body_inside_owner() {
     let sink = Rc::new(RefCell::new(0));
     let sink_clone = sink.clone();
     let (_owner, returned) = mount_component(dummy_outer as *const (), move || {
-        let (count, _set_count) = signal(7_i32);
+        let (count, _set_count) = signal(7_i32).split();
         let v = count.get();
         *sink_clone.borrow_mut() = v;
         v

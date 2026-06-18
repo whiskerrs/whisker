@@ -83,11 +83,11 @@
 //! Same as user components and built-in tags. Inside `render!`:
 //!
 //! ```ignore
-//! let (text, set_text) = signal(String::new());
+//! let text = signal(String::new());
 //! render! {
 //!     XInput(
 //!         value: text,
-//!         on_input: move |new_value| set_text.set(new_value),
+//!         on_input: move |new_value| text.set(new_value),
 //!     )
 //! }
 //! ```

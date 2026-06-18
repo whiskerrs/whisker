@@ -17,14 +17,14 @@ fn fresh() {
 #[test]
 fn signal_returns_initial_value() {
     fresh();
-    let (read, _write) = signal(42_i32);
+    let (read, _write) = signal(42_i32).split();
     assert_eq!(read.get(), 42);
 }
 
 #[test]
 fn write_signal_updates_value() {
     fresh();
-    let (read, write) = signal(0_i32);
+    let (read, write) = signal(0_i32).split();
     write.set(7);
     assert_eq!(read.get(), 7);
 }
@@ -43,7 +43,7 @@ fn rw_signal_split_round_trip() {
 #[test]
 fn with_borrows_without_clone() {
     fresh();
-    let (read, write) = signal(vec![1, 2, 3]);
+    let (read, write) = signal(vec![1, 2, 3]).split();
     let sum = read.with(|v| v.iter().sum::<i32>());
     assert_eq!(sum, 6);
     write.update(|v| v.push(4));
@@ -53,7 +53,7 @@ fn with_borrows_without_clone() {
 #[test]
 fn signal_handles_are_copy_and_aliasable() {
     fresh();
-    let (read, _write) = signal(String::from("hello"));
+    let (read, _write) = signal(String::from("hello")).split();
     let a = read;
     let b = read;
     assert_eq!(a.get(), "hello");
@@ -74,7 +74,7 @@ fn effect_runs_once_immediately() {
 #[test]
 fn effect_reruns_on_dep_change() {
     fresh();
-    let (count, set_count) = signal(0_i32);
+    let (count, set_count) = signal(0_i32).split();
     let log: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
     let log_clone = log.clone();
     effect(move || {
@@ -91,7 +91,7 @@ fn effect_reruns_on_dep_change() {
 fn panicking_effect_does_not_latch_flushing_flag() {
     fresh();
     // An effect that panics on its second run (when the dep flips to 1).
-    let (count, set_count) = signal(0_i32);
+    let (count, set_count) = signal(0_i32).split();
     effect(move || {
         if count.get() == 1 {
             panic!("boom");
@@ -110,7 +110,7 @@ fn panicking_effect_does_not_latch_flushing_flag() {
     // stack restored).
     let ran = Rc::new(RefCell::new(0));
     let r = ran.clone();
-    let (dep, set_dep) = signal(0_i32);
+    let (dep, set_dep) = signal(0_i32).split();
     effect(move || {
         dep.get();
         *r.borrow_mut() += 1;
@@ -123,8 +123,8 @@ fn panicking_effect_does_not_latch_flushing_flag() {
 #[test]
 fn effect_only_reruns_for_tracked_deps() {
     fresh();
-    let (tracked, set_tracked) = signal(0_i32);
-    let (untracked, set_untracked) = signal(100_i32);
+    let (tracked, set_tracked) = signal(0_i32).split();
+    let (untracked, set_untracked) = signal(100_i32).split();
     let runs = Rc::new(RefCell::new(0));
     let runs_clone = runs.clone();
     effect(move || {
@@ -146,9 +146,9 @@ fn effect_only_reruns_for_tracked_deps() {
 #[test]
 fn effect_dynamic_deps_change_between_runs() {
     fresh();
-    let (toggle, set_toggle) = signal(false);
-    let (a, set_a) = signal(0_i32);
-    let (b, set_b) = signal(0_i32);
+    let (toggle, set_toggle) = signal(false).split();
+    let (a, set_a) = signal(0_i32).split();
+    let (b, set_b) = signal(0_i32).split();
     let runs = Rc::new(RefCell::new(0));
     let runs_clone = runs.clone();
     effect(move || {
@@ -190,8 +190,8 @@ fn effect_dynamic_deps_change_between_runs() {
 #[test]
 fn multiple_writes_coalesce_into_one_rerun() {
     fresh();
-    let (a, set_a) = signal(0_i32);
-    let (b, set_b) = signal(0_i32);
+    let (a, set_a) = signal(0_i32).split();
+    let (b, set_b) = signal(0_i32).split();
     let runs = Rc::new(RefCell::new(0));
     let runs_clone = runs.clone();
     effect(move || {
@@ -215,8 +215,8 @@ fn multiple_writes_coalesce_into_one_rerun() {
 #[test]
 fn signals_written_during_flush_propagate_in_same_flush() {
     fresh();
-    let (a, set_a) = signal(0_i32);
-    let (b, set_b) = signal(0_i32);
+    let (a, set_a) = signal(0_i32).split();
+    let (b, set_b) = signal(0_i32).split();
     let cascade_runs = Rc::new(RefCell::new(0));
     let cascade_clone = cascade_runs.clone();
 
@@ -249,7 +249,7 @@ fn signals_written_during_flush_propagate_in_same_flush() {
 fn dispose_owner_frees_nested_signals() {
     fresh();
     let owner = Owner::new(None);
-    let (read, _write) = owner.with(|| signal(123_i32));
+    let (read, _write) = owner.with(|| signal(123_i32)).split();
     // Signal works while owner is alive.
     assert_eq!(read.get(), 123);
     owner.dispose();
@@ -267,7 +267,7 @@ fn dispose_cascades_to_children() {
     let child = parent.with(|| {
         let c = Owner::new(None);
         c.with(|| {
-            let (r, _w) = signal(0_u32);
+            let (r, _w) = signal(0_u32).split();
             leaf_signals.push(r);
         });
         c
@@ -309,7 +309,7 @@ fn on_cleanup_fires_lifo() {
 fn disposing_owner_removes_its_effects_from_pending() {
     fresh();
     let owner = Owner::new(None);
-    let (count, set_count) = signal(0_i32);
+    let (count, set_count) = signal(0_i32).split();
     let runs = Rc::new(RefCell::new(0));
     let runs_clone = runs.clone();
 
@@ -380,7 +380,7 @@ fn stored_value_disposed_with_owner() {
 #[test]
 fn computed_caches_initial_value() {
     fresh();
-    let (count, _set) = signal(3_i32);
+    let (count, _set) = signal(3_i32).split();
     let doubled = computed(move || count.get() * 2);
     assert_eq!(doubled.get(), 6);
 }
@@ -388,7 +388,7 @@ fn computed_caches_initial_value() {
 #[test]
 fn computed_recomputes_on_source_change() {
     fresh();
-    let (count, set_count) = signal(0_i32);
+    let (count, set_count) = signal(0_i32).split();
     let doubled = computed(move || count.get() * 2);
     assert_eq!(doubled.get(), 0);
     set_count.set(5);
@@ -399,7 +399,7 @@ fn computed_recomputes_on_source_change() {
 #[test]
 fn computed_notifies_downstream_subscribers() {
     fresh();
-    let (count, set_count) = signal(0_i32);
+    let (count, set_count) = signal(0_i32).split();
     let doubled = computed(move || count.get() * 2);
     let observed: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
     let obs_clone = observed.clone();
@@ -425,8 +425,8 @@ fn on_mount_callback_inside_effect_does_not_leak_subscription_to_outer() {
     // upward regardless of the call-stack context.
     use super::component::{flush_mounts, on_mount};
     fresh();
-    let (effect_dep, set_effect_dep) = signal(0_i32);
-    let (mount_src, set_mount_src) = signal(0_i32);
+    let (effect_dep, set_effect_dep) = signal(0_i32).split();
+    let (mount_src, set_mount_src) = signal(0_i32).split();
     let outer_runs = Rc::new(RefCell::new(0));
     let outer_runs_clone = outer_runs.clone();
     effect(move || {
@@ -472,8 +472,8 @@ fn mount_component_body_inside_effect_does_not_leak_subscription_to_outer() {
     // calls, which establish their own tracker scope.
     use super::component::mount_component;
     fresh();
-    let (effect_dep, set_effect_dep) = signal(0_i32);
-    let (body_src, set_body_src) = signal(0_i32);
+    let (effect_dep, set_effect_dep) = signal(0_i32).split();
+    let (body_src, set_body_src) = signal(0_i32).split();
     let outer_runs = Rc::new(RefCell::new(0));
     let outer_runs_clone = outer_runs.clone();
     effect(move || {
@@ -515,8 +515,8 @@ fn computed_constructed_inside_effect_does_not_leak_subscription_to_outer() {
     // initial one + one for the explicit `effect_dep` change), not
     // two.
     fresh();
-    let (effect_dep, set_effect_dep) = signal(0_i32);
-    let (computed_src, set_computed_src) = signal(0_i32);
+    let (effect_dep, set_effect_dep) = signal(0_i32).split();
+    let (computed_src, set_computed_src) = signal(0_i32).split();
     let outer_runs = Rc::new(RefCell::new(0));
     let outer_runs_clone = outer_runs.clone();
     effect(move || {
@@ -546,7 +546,7 @@ fn computed_constructed_inside_effect_does_not_leak_subscription_to_outer() {
 #[test]
 fn computed_does_not_notify_when_value_unchanged() {
     fresh();
-    let (count, set_count) = signal(5_i32);
+    let (count, set_count) = signal(5_i32).split();
     // floor-div by 10 — different `count` values yield the same computed value
     let bucket = computed(move || count.get() / 10);
     let runs = Rc::new(RefCell::new(0));
@@ -591,7 +591,7 @@ fn with_context_closure_can_reenter_runtime() {
     let owner = Owner::new(None);
     owner.with(|| {
         provide_context(Theme("ctx"));
-        let (count, _set) = signal(7_i32);
+        let (count, _set) = signal(7_i32).split();
         // Read a signal AND do a nested context lookup from inside the
         // with_context closure — both re-enter the runtime.
         let combined = with_context::<Theme, _>(|theme| {
@@ -691,11 +691,11 @@ fn unmount_component_removes_registration_and_disposes() {
 fn mount_component_isolates_owner_state() {
     fresh();
     let (owner_a, sig_a) = mount_component(dummy_component_a as *const (), || {
-        let (r, _w) = signal(1_i32);
+        let (r, _w) = signal(1_i32).split();
         r
     });
     let (owner_b, sig_b) = mount_component(dummy_component_b as *const (), || {
-        let (r, _w) = signal(2_i32);
+        let (r, _w) = signal(2_i32).split();
         r
     });
     // Each signal lives in its own component owner.
@@ -761,7 +761,7 @@ fn flush_mounts_is_idempotent() {
 #[test]
 fn flush_breaks_self_feedback_loop_with_warning() {
     fresh();
-    let (count, set_count) = signal(0_i32);
+    let (count, set_count) = signal(0_i32).split();
     // An effect that reads AND writes the same signal — guaranteed
     // feedback loop. flush's iteration cap must break it.
     let runs = Rc::new(RefCell::new(0));
@@ -785,8 +785,8 @@ fn flush_breaks_self_feedback_loop_with_warning() {
 #[test]
 fn effect_reading_and_writing_unrelated_signals_terminates() {
     fresh();
-    let (a, _) = signal(0_i32);
-    let (_b, set_b) = signal(0_i32);
+    let (a, _) = signal(0_i32).split();
+    let (_b, set_b) = signal(0_i32).split();
     let runs = Rc::new(RefCell::new(0));
     let runs_clone = runs.clone();
 
@@ -1037,7 +1037,7 @@ fn computed_constructed_inside_computed_does_not_leak_subscription_to_outer_comp
     // legal — e.g. a derived value that itself wraps a computed)
     // must not leak.
     fresh();
-    let (src, set_src) = signal(0_i32);
+    let (src, set_src) = signal(0_i32).split();
     let outer_runs = Rc::new(RefCell::new(0));
     let outer_runs_clone = outer_runs.clone();
     let outer = computed(move || {
@@ -1117,7 +1117,7 @@ fn arc_signal_survives_caller_owner_disposal() {
 
     let owner = Owner::new(None);
     owner.with(|| {
-        let (r, w) = arc_signal(99_i32);
+        let (r, w) = arc_signal(99_i32).split();
         // Pretend `w` is the write half kept by a native module's
         // event callback; we don't need to keep it for this test.
         drop(w);
@@ -1316,7 +1316,7 @@ fn arc_to_rw_conversion_survives_caller_owner_disposal_via_arc() {
 #[test]
 fn arc_read_signal_to_read_signal_conversion_reads_correctly() {
     fresh();
-    let (r, w) = arc_signal(5_i32);
+    let (r, w) = arc_signal(5_i32).split();
     let owner = Owner::new(None);
     let copy: ReadSignal<i32> = owner.with(|| r.into());
     assert_eq!(copy.get(), 5);
@@ -1328,7 +1328,7 @@ fn arc_read_signal_to_read_signal_conversion_reads_correctly() {
 #[test]
 fn arc_write_signal_to_write_signal_conversion_writes_correctly() {
     fresh();
-    let (r, w) = arc_signal(0_i32);
+    let (r, w) = arc_signal(0_i32).split();
     let owner = Owner::new(None);
     let copy: WriteSignal<i32> = owner.with(|| w.into());
     copy.set(123);
@@ -1437,7 +1437,7 @@ fn arc_backed_arena_signal_under_detached_root_survives_sibling_dispose() {
 fn paused_owner_defers_effect_runs_until_resumed() {
     fresh();
     let runs = Rc::new(RefCell::new(0_u32));
-    let (read, write) = signal(0_i32);
+    let (read, write) = signal(0_i32).split();
 
     let owner = Owner::new(None);
     let runs_clone = runs.clone();
@@ -1475,7 +1475,7 @@ fn pause_cascades_to_descendants() {
     fresh();
     let parent_runs = Rc::new(RefCell::new(0_u32));
     let child_runs = Rc::new(RefCell::new(0_u32));
-    let (read, write) = signal(0_i32);
+    let (read, write) = signal(0_i32).split();
 
     let parent = Owner::new(None);
     let child = Owner::new(Some(parent));
@@ -1574,7 +1574,7 @@ fn pause_is_idempotent() {
 fn dispose_while_paused_drops_deferred_entries() {
     fresh();
     let runs = Rc::new(RefCell::new(0_u32));
-    let (read, write) = signal(0_i32);
+    let (read, write) = signal(0_i32).split();
 
     let owner = Owner::new(None);
     let runs_clone = runs.clone();
@@ -1602,7 +1602,7 @@ fn dispose_while_paused_drops_deferred_entries() {
 fn multiple_paused_signal_writes_collapse_to_one_run_on_resume() {
     fresh();
     let runs = Rc::new(RefCell::new(0_u32));
-    let (read, write) = signal(0_i32);
+    let (read, write) = signal(0_i32).split();
 
     let owner = Owner::new(None);
     let runs_clone = runs.clone();

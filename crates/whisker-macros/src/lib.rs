@@ -222,7 +222,7 @@ pub fn css(input: TokenStream) -> TokenStream {
 ///
 /// #[component]
 /// fn counter(initial: i32) -> Element {
-///     let (count, set_count) = signal(initial);
+///     let count = signal(initial);
 ///     render! { /* ... */ }
 /// }
 ///

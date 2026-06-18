@@ -200,10 +200,7 @@ fn context_inner_screen() -> Element {
     let state = use_context::<PreservedState>().unwrap();
     let local = signal(99_i32);
     let counter_label = computed(move || state.counter.get().to_string());
-    let local_label = {
-        let r = local.0;
-        computed(move || r.get().to_string())
-    };
+    let local_label = computed(move || local.get().to_string());
     render! {
         view {
             text(value: counter_label)

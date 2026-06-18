@@ -71,14 +71,14 @@ fn two_way_demo() -> Element {
 /// writeback upper-cases each keystroke.
 #[component]
 fn controlled_demo() -> Element {
-    let (value, set_value) = signal(String::new());
+    let value = signal(String::new());
 
     render! {
         view(style: section_style()) {
             text(style: label_style(), value: "Controlled (UPPER-CASE)")
             Input(
                 value: value,
-                on_input: move |s: String| set_value.set(s.to_uppercase()),
+                on_input: move |s: String| value.set(s.to_uppercase()),
                 placeholder: "lowercase becomes UPPER",
                 placeholder_color: MUTED,
                 keyboard_type: KeyboardType::Email,

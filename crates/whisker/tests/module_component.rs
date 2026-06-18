@@ -182,7 +182,7 @@ fn style_prop_routes_through_set_inline_styles() {
 #[test]
 fn dynamic_style_re_runs_on_signal_change() {
     with_recorder_and_owner(|log| {
-        let (color, set_color) = signal("red".to_string());
+        let (color, set_color) = signal("red".to_string()).split();
         let css = computed(move || format!("background: {};", color.get()));
         let _h = render! {
             XStyled(style: css)
@@ -238,7 +238,7 @@ fn non_style_props_route_through_set_attribute_with_kebab_case() {
 #[test]
 fn read_signal_prop_tracks_underlying_signal() {
     with_recorder_and_owner(|log| {
-        let (value, set_value) = signal("alpha".to_string());
+        let (value, set_value) = signal("alpha".to_string()).split();
         let _h = render! {
             XInput(value: value, placeholder: "static")
         };
@@ -267,7 +267,7 @@ fn typed_signal_bool_serialises_via_to_string() {
     // `bool::to_string()` → "true" / "false". Verifies the macro's
     // turbofish picks the inner T correctly (not hardcoded String).
     with_recorder_and_owner(|log| {
-        let (checked, set_checked) = signal(false);
+        let (checked, set_checked) = signal(false).split();
         let _h = render! {
             XTypedCheckbox(checked: checked, count: 42_i32)
         };
