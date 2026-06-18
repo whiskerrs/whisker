@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/whiskerrs/whisker/compare/whisker-input-v0.5.1...whisker-input-v0.6.0) - 2026-06-18
+
+### Added
+
+- [**breaking**] signal() returns a single RwSignal instead of a (Read, Write) tuple ([#244](https://github.com/whiskerrs/whisker/pull/244))
+
 ## [0.3.0](https://github.com/whiskerrs/whisker/compare/whisker-input-v0.2.5...whisker-input-v0.3.0) - 2026-06-15
 
 ### Added
