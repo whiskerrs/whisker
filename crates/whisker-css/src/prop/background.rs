@@ -79,13 +79,13 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::data_type::{Color, CssString, Gradient, NamedColor};
     use crate::data_type::{ColorStop, Percentage};
     use crate::data_type_ext::{Position, PositionKeyword};
     use crate::ext::*;
     use crate::keyword::*;
     use crate::value::ImageRef;
-    use crate::Css;
 
     #[test]
     fn background_color() {

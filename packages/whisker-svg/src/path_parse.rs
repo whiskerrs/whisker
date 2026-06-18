@@ -227,11 +227,7 @@ pub fn parse(d: &str) -> Vec<PathCommand> {
 
 #[inline]
 fn resolve(x: f32, y: f32, abs: bool, cx: f32, cy: f32) -> (f32, f32) {
-    if abs {
-        (x, y)
-    } else {
-        (cx + x, cy + y)
-    }
+    if abs { (x, y) } else { (cx + x, cy + y) }
 }
 
 /// Convert an SVG arc endpoint to one or more cubic Béziers using

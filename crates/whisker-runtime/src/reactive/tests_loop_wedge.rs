@@ -34,7 +34,7 @@ use std::rc::Rc;
 use std::sync::MutexGuard;
 
 use crate::reactive::effect::effect;
-use crate::reactive::{__reset_for_tests, flush, has_pending_work, Owner, RwSignal};
+use crate::reactive::{__reset_for_tests, Owner, RwSignal, flush, has_pending_work};
 use crate::tasks;
 
 // These tests reach into process-global host state (the request-frame

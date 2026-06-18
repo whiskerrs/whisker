@@ -1,7 +1,7 @@
 [package]
 name = "whisker-router-example"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Minimal repro for the `StackLayout` crash that surfaces when its render closure mounts cross-crate components. Wires two feature crates (`-feature-home` and `-feature-detail`) through `StackLayout` exactly the way the podcast example does, so a fix can be validated here without dragging the whole podcast app along."
 

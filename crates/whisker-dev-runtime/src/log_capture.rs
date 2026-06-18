@@ -375,7 +375,7 @@ fn push_platform_log(_stream: Stream, _line: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     /// Construct a fresh LogBuffer for direct testing — the global
     /// `LOG_BUFFER` static can only be initialised once per process,

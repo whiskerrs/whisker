@@ -59,7 +59,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DeriveInput, Fields, LitStr, Variant};
+use syn::{Data, DeriveInput, Fields, LitStr, Variant, parse_macro_input};
 
 /// `#[route]` attribute on an enum — generates
 /// `impl whisker_router::route::Route for Enum`.

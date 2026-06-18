@@ -60,10 +60,10 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::data_type_ext::EasingFunction;
     use crate::ext::*;
     use crate::keyword::*;
-    use crate::Css;
 
     #[test]
     fn animation_full_set() {

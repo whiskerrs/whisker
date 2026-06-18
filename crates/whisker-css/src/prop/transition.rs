@@ -34,10 +34,10 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::data_type_ext::EasingFunction;
     use crate::ext::*;
     use crate::keyword::TransitionPropertyKind;
-    use crate::Css;
 
     #[test]
     fn transition_set() {

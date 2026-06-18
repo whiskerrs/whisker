@@ -25,8 +25,8 @@ use whisker::css::{AlignItems, Color, Css, PositionKind, ToCss};
 use whisker::runtime::element::ElementTag;
 use whisker::runtime::reactive::on_mount;
 use whisker::runtime::view::apply::apply_styles;
-use whisker::runtime::view::{append_child, create_element, Element};
-use whisker::{animate_start, component, AnimateOptions};
+use whisker::runtime::view::{Element, append_child, create_element};
+use whisker::{AnimateOptions, animate_start, component};
 
 use crate::route::Route;
 

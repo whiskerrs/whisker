@@ -1,7 +1,7 @@
 [package]
 name = "podcast-theme"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Design tokens for the podcast example: colors, type scale, spacing. Pure const `Color` / `Length` values from `whisker-css`'s data-type layer so consumers can drop them straight into `css!(color: theme::TEXT_PRIMARY, font_size: theme::T_HERO)`."
 

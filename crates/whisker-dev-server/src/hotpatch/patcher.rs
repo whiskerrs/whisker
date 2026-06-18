@@ -25,9 +25,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use super::{
+    CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, PatchPlan,
     build_jump_table, build_link_plan, load_captured_args, load_captured_linker_args,
     parse_symbol_table, run_link_plan, run_obj_plan, thin_build, validate_environment,
-    CapturedLinkerInvocation, CapturedRustcInvocation, HotpatchModuleCache, LinkerOs, PatchPlan,
 };
 
 /// Single-slot in-session cache of the stub `.o` we synthesize for the

@@ -10,7 +10,7 @@ use podcast_theme as theme;
 use whisker::css::{Display, FlexDirection, FontWeight};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_icons::{lucide, Icon};
+use whisker_icons::{Icon, lucide};
 
 #[component]
 pub fn section_header(title: String, #[prop(default = false)] show_chevron: bool) -> Element {

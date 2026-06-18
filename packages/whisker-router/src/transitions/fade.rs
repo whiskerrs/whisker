@@ -1,7 +1,7 @@
 //! [`Fade`] — opacity cross-fade between two stack entries.
 
 use whisker::runtime::view::Element;
-use whisker::{animate_start, AnimateOptions};
+use whisker::{AnimateOptions, animate_start};
 
 use super::{Direction, Side, StackTransition};
 

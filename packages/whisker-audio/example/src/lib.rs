@@ -144,11 +144,7 @@ fn button_text_style() -> Css {
 }
 
 fn fmt_bool(b: bool) -> String {
-    if b {
-        "true".into()
-    } else {
-        "false".into()
-    }
+    if b { "true".into() } else { "false".into() }
 }
 
 /// One labelled row in the status card. Two `<text>` siblings — the

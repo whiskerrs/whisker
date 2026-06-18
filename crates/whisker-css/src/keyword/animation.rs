@@ -10,7 +10,7 @@
 use core::fmt;
 
 use crate::data_type::CssString;
-use crate::to_css::{write_number, ToCss};
+use crate::to_css::{ToCss, write_number};
 
 /// The `animation-direction` keyword.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

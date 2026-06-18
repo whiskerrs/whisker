@@ -11,7 +11,7 @@ use podcast_theme as theme;
 use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_icons::{lucide, Icon};
+use whisker_icons::{Icon, lucide};
 use whisker_safe_area::safe_area_insets;
 
 /// Title shown centred in the bar. Action label shown trailing.

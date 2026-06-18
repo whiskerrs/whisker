@@ -72,10 +72,10 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::ext::*;
     use crate::keyword::*;
     use crate::value::FlexBasis;
-    use crate::Css;
 
     #[test]
     fn flex_direction_and_wrap() {

@@ -224,7 +224,7 @@ pub type WhiskerModuleDispatchFn = extern "C" fn(
     arg_count: usize,
 ) -> WhiskerValueRaw;
 
-extern "C" {
+unsafe extern "C" {
     pub fn whisker_bridge_engine_attach(lynx_view_ptr: *mut c_void) -> *mut WhiskerEngine;
     pub fn whisker_bridge_engine_release(engine: *mut WhiskerEngine);
 

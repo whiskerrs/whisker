@@ -109,7 +109,7 @@ pub mod transitions;
 /// ```
 pub use whisker_router_macros::route;
 
-pub use crate::back_handler::{on_back, BackHandlerGuard};
+pub use crate::back_handler::{BackHandlerGuard, on_back};
 pub use crate::gestures::{
     AndroidPredictiveBack, AndroidPredictiveBackProps, IosSwipeBack, IosSwipeBackProps,
 };
@@ -118,11 +118,11 @@ pub use crate::layouts::pane::{Pane, PaneProps};
 pub use crate::layouts::stack::{StackLayout, StackLayoutHandle, StackLayoutProps};
 pub use crate::layouts::tabs::{TabSpec, TabsLayout, TabsLayoutProps};
 pub use crate::outlet::{
-    router, Outlet, OutletProps, RouteProvider, RouteProviderProps, RouteRenderFn,
+    Outlet, OutletProps, RouteProvider, RouteProviderProps, RouteRenderFn, router,
 };
 pub use crate::route::{Route, RouteError};
-pub use crate::stack::{route_stack, EntryId, EntryState, RouteEntry, RouteStack};
+pub use crate::stack::{EntryId, EntryState, RouteEntry, RouteStack, route_stack};
 pub use crate::transitions::{
-    Direction, Fade, Instant, IosSlide, Side, StackTransition, StackTransitionBox, VerticalSlide,
-    IOS_PARALLAX_PCT,
+    Direction, Fade, IOS_PARALLAX_PCT, Instant, IosSlide, Side, StackTransition,
+    StackTransitionBox, VerticalSlide,
 };

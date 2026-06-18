@@ -16,12 +16,12 @@
 //!   check that Tier 1 hot-patch is even possible for ordinary
 //!   Rust functions.
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn answer() -> i32 {
     42
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn other_function() -> i32 {
     99
 }
@@ -37,13 +37,13 @@ pub fn calculate(x: i32) -> i32 {
 // Mach-O. The real Whisker `#[whisker::main]` macro generates these;
 // fixtures don't go through the macro, so we define them by hand to
 // keep the integration-test link happy.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn whisker_aslr_anchor() -> i32 {
     0
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn whisker_app_main() {}
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn whisker_tick() -> bool {
     false
 }

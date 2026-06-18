@@ -1,7 +1,7 @@
 [package]
 name = "podcast-feature-detail"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Podcast detail screen — shows artwork, title, artist, genre, episode-count, and an episode-list placeholder. Reads the podcast from a shared `RwSignal<HashMap<u64, Podcast>>` registry the browse feature populates on load — keeps the route URL-friendly (`/podcast/:id`) without forcing a re-fetch on every tap. Playback is a future PR; this crate is rendering-only."
 

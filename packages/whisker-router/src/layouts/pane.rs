@@ -28,7 +28,7 @@
 use whisker::css::ext::*;
 use whisker::css::{Css, Display, FlexDirection, ToCss};
 use whisker::runtime::view::Element;
-use whisker::{component, computed, Children, WhenFn};
+use whisker::{Children, WhenFn, component, computed};
 
 /// Container that toggles between `display: flex` (children visible)
 /// and `display: none` (children hidden but still mounted).

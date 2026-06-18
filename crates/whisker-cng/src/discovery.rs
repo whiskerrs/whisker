@@ -41,7 +41,7 @@
 //! avoid a circular dep — `whisker-build` already depends on
 //! `whisker-cng` via the transitive sync calls.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use cargo_metadata::MetadataCommand;
 use serde::Deserialize;
 use std::collections::BTreeMap;

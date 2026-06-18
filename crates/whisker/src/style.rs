@@ -21,9 +21,9 @@
 use std::rc::Rc;
 
 use whisker_css::{Css, ToCss};
-use whisker_runtime::reactive::{effect, ReadSignal, RwSignal};
-use whisker_runtime::view::set_inline_styles;
+use whisker_runtime::reactive::{ReadSignal, RwSignal, effect};
 use whisker_runtime::view::Element;
+use whisker_runtime::view::set_inline_styles;
 
 /// Value the `style:` builder method receives. One of the two
 /// variants below.

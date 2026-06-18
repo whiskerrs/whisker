@@ -223,11 +223,7 @@ fn xcrun_sdk_path(kind: &str) -> Option<String> {
         return None;
     }
     let path = String::from_utf8(out.stdout).ok()?.trim().to_string();
-    if path.is_empty() {
-        None
-    } else {
-        Some(path)
-    }
+    if path.is_empty() { None } else { Some(path) }
 }
 
 /// Pick the [`LinkerOs`] that matches the host we're building on.

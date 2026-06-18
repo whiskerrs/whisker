@@ -254,7 +254,7 @@ mod tests {
     use super::*;
 
     macro_rules! assert_keyword_set {
-        ($cases:expr) => {
+        ($cases:expr_2021) => {
             for (k, expected) in $cases {
                 assert_eq!(k.to_css_string(), expected);
             }

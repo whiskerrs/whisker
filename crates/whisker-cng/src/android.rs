@@ -27,7 +27,7 @@
 //! converted to slashes: `rs.whisker.examples.helloworld` →
 //! `rs/whisker/examples/helloworld/`.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_config::Config;

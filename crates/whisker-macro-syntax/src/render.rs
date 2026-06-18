@@ -27,11 +27,11 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use syn::{
-    braced,
+    Expr, Ident, LitStr, Token, braced,
     ext::IdentExt,
     parenthesized,
     parse::{Parse, ParseStream, Result},
-    token, Expr, Ident, LitStr, Token,
+    token,
 };
 
 // ---- AST ----------------------------------------------------------------

@@ -6,10 +6,10 @@
 //! their own intrinsic widths.
 
 use podcast_theme as theme;
+use whisker::Children;
 use whisker::css::{AlignItems, Display, FlexDirection};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker::Children;
 
 #[component]
 pub fn horizontal_row(children: Children) -> Element {

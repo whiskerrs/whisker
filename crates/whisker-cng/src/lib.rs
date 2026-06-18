@@ -36,8 +36,8 @@ pub mod ios;
 pub mod plugins;
 mod render;
 
-pub use android::{sync as sync_android, AndroidInputs};
+pub use android::{AndroidInputs, sync as sync_android};
 pub use compose::{EnabledTargets, Engine, SubprocessPlugin};
-pub use discovery::{discover_plugins, DiscoveredPlugin};
-pub use ios::{sync as sync_ios, IosInputs};
+pub use discovery::{DiscoveredPlugin, discover_plugins};
+pub use ios::{IosInputs, sync as sync_ios};
 pub use whisker_config::Config;

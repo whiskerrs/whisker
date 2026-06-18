@@ -108,10 +108,10 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::data_type::{Color, NamedColor};
     use crate::ext::*;
     use crate::keyword::*;
-    use crate::Css;
 
     #[test]
     fn text_align_keywords() {

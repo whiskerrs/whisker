@@ -33,7 +33,7 @@
 //!   +---------------------------+
 //! ```
 
-use podcast_data::{search, FetchError, SearchQuery};
+use podcast_data::{FetchError, SearchQuery, search};
 use podcast_domain::Podcast;
 use podcast_routing::Navigator;
 use podcast_theme as theme;
@@ -41,7 +41,7 @@ use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyConten
 use whisker::prelude::*;
 use whisker::runtime::tasks::run_blocking;
 use whisker::runtime::view::Element;
-use whisker_icons::{lucide, Icon};
+use whisker_icons::{Icon, lucide};
 use whisker_image::{Image, ImageMode};
 use whisker_input::{Input, ReturnKey};
 use whisker_safe_area::safe_area_insets;

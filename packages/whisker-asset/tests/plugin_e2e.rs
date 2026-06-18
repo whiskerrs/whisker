@@ -71,21 +71,21 @@ fn ios_generation_lands_assets_and_folder_reference() {
     )
     .unwrap();
 
-    let gen = unique_tempdir("ios-gen").join("gen/ios");
-    whisker_cng::ios::sync(&gen, &inputs).unwrap();
+    let r#gen = unique_tempdir("ios-gen").join("gen/ios");
+    whisker_cng::ios::sync(&r#gen, &inputs).unwrap();
 
     // Assets written under whisker_assets/<rel>, bytes intact.
-    let logo = gen.join("whisker_assets/images/logo.png");
+    let logo = r#gen.join("whisker_assets/images/logo.png");
     assert!(logo.exists(), "logo not written to {}", logo.display());
     assert_eq!(
         std::fs::read(&logo).unwrap(),
         vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a],
     );
-    assert!(gen.join("whisker_assets/data/config.json").exists());
+    assert!(r#gen.join("whisker_assets/data/config.json").exists());
 
     // pbxproj carries the folder reference so the bundle keeps subdirs.
     let pbxproj =
-        std::fs::read_to_string(gen.join(format!("{}.xcodeproj/project.pbxproj", inputs.scheme)))
+        std::fs::read_to_string(r#gen.join(format!("{}.xcodeproj/project.pbxproj", inputs.scheme)))
             .unwrap();
     assert!(
         pbxproj.contains("lastKnownFileType = folder;")
@@ -96,7 +96,7 @@ fn ios_generation_lands_assets_and_folder_reference() {
     assert!(!pbxproj.contains("{{"), "unsubstituted placeholder");
 
     let _ = std::fs::remove_dir_all(&crate_dir);
-    let _ = std::fs::remove_dir_all(gen.parent().unwrap());
+    let _ = std::fs::remove_dir_all(r#gen.parent().unwrap());
 }
 
 #[test]
@@ -119,17 +119,17 @@ fn android_generation_lands_assets_under_whisker_namespace() {
     )
     .unwrap();
 
-    let gen = unique_tempdir("android-gen").join("gen/android");
-    whisker_cng::android::sync(&gen, &inputs).unwrap();
+    let r#gen = unique_tempdir("android-gen").join("gen/android");
+    whisker_cng::android::sync(&r#gen, &inputs).unwrap();
 
     // AGP source set: app/src/main/assets/whisker/<rel>
-    let logo = gen.join("app/src/main/assets/whisker/images/logo.png");
+    let logo = r#gen.join("app/src/main/assets/whisker/images/logo.png");
     assert!(logo.exists(), "logo not written to {}", logo.display());
     assert_eq!(std::fs::read(&logo).unwrap(), vec![0x00, 0xff, 0x10]);
-    assert!(gen.join("app/src/main/assets/whisker/sound.bin").exists());
+    assert!(r#gen.join("app/src/main/assets/whisker/sound.bin").exists());
 
     let _ = std::fs::remove_dir_all(&crate_dir);
-    let _ = std::fs::remove_dir_all(gen.parent().unwrap());
+    let _ = std::fs::remove_dir_all(r#gen.parent().unwrap());
 }
 
 #[test]

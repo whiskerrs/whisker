@@ -20,7 +20,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use whisker::{computed, Owner, ReadSignal, RwSignal};
+use whisker::{Owner, ReadSignal, RwSignal, computed};
 
 use crate::route::Route;
 

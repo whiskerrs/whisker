@@ -1,7 +1,7 @@
 [package]
 name = "podcast-data"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "iTunes Search API client + repositories for the podcast example. Hides the iTunes Search wire shape behind a domain-typed `Repository` so the UI layer never sees DTOs or HTTP errors directly."
 

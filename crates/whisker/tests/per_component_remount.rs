@@ -18,12 +18,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use whisker::prelude::*;
 use whisker::runtime::reactive::__reset_pending_mount_for_tests;
-use whisker::runtime::reactive::{__reset_for_tests, owners_for_fn, remount_components_for, Owner};
+use whisker::runtime::reactive::{__reset_for_tests, Owner, owners_for_fn, remount_components_for};
 use whisker::runtime::view::{
-    __reset_children_mirror_for_tests, append_child, create_element, install_renderer,
-    uninstall_renderer, DynRenderer, Element,
+    __reset_children_mirror_for_tests, DynRenderer, Element, append_child, create_element,
+    install_renderer, uninstall_renderer,
 };
-use whisker::{flush, ElementTag};
+use whisker::{ElementTag, flush};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {

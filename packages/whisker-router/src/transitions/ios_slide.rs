@@ -12,7 +12,7 @@
 //! and gestures freely.
 
 use whisker::runtime::view::Element;
-use whisker::{animate_start, AnimateOptions, Style};
+use whisker::{AnimateOptions, Style, animate_start};
 
 use super::{Direction, Side, StackTransition};
 

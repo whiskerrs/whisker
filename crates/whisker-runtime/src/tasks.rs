@@ -35,7 +35,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures_executor::{LocalPool, LocalSpawner};
-use futures_util::task::{waker_ref, ArcWake, LocalSpawnExt};
+use futures_util::task::{ArcWake, LocalSpawnExt, waker_ref};
 
 thread_local! {
     /// The per-thread executor. Holds queued + ready tasks. Polled
@@ -318,7 +318,7 @@ pub fn __reset_for_tests() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::main_thread::{set_main_thread_dispatcher, DispatchFn};
+    use crate::main_thread::{DispatchFn, set_main_thread_dispatcher};
     use std::cell::Cell;
     use std::ffi::c_void;
     use std::rc::Rc;

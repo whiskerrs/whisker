@@ -19,7 +19,7 @@
 //! config source. Missing `whisker.rs` is an error: the dev-server
 //! needs bundle id, application id, etc. that the file supplies.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use whisker_config::Config;
 

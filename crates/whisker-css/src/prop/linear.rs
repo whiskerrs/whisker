@@ -51,8 +51,8 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
-    use crate::keyword::*;
     use crate::Css;
+    use crate::keyword::*;
 
     #[test]
     fn linear_orientation_and_direction() {

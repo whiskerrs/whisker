@@ -32,7 +32,7 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use std::path::{Component, Path, PathBuf};
-use syn::{parse_macro_input, LitStr};
+use syn::{LitStr, parse_macro_input};
 
 /// Validate the logical path and return the absolute on-disk path of the
 /// asset (`${CARGO_MANIFEST_DIR}/assets/<rel>`), or a `syn::Error` with a

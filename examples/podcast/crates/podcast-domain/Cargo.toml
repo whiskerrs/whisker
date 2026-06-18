@@ -1,7 +1,7 @@
 [package]
 name = "podcast-domain"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Pure value types for the podcast example. No I/O, no UI, no whisker dependency — consumed by both the data layer (deserialise) and the UI layer (render) without dragging either side into the other's transitive deps."
 

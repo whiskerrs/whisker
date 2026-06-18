@@ -27,10 +27,10 @@ use whisker::css::ToCss;
 use whisker::event::TouchEvent;
 use whisker::runtime::event::bind_typed;
 use whisker::runtime::reactive::on_mount;
-use whisker::runtime::view::{set_inline_styles, BindType, Element};
-use whisker::{animate_start, component, render, use_context, AnimateOptions, Style};
+use whisker::runtime::view::{BindType, Element, set_inline_styles};
+use whisker::{AnimateOptions, Style, animate_start, component, render, use_context};
 
-use crate::layouts::stack::{clear_stack_animations, slot_css, StackLayoutHandle};
+use crate::layouts::stack::{StackLayoutHandle, clear_stack_animations, slot_css};
 use crate::transitions::ios_slide;
 use crate::transitions::{Direction, Side, StackTransitionBox};
 

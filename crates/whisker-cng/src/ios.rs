@@ -27,7 +27,7 @@
 //! if Xcode N+1 demands a new objectVersion, regenerate the
 //! template via xcodegen once and re-templatize.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_config::Config;
@@ -848,17 +848,23 @@ mod tests {
             "folder ref must use lastKnownFileType = folder: {}",
             rendered.file_reference_entries,
         );
-        assert!(rendered
-            .file_reference_entries
-            .contains("path = \"whisker_assets\""));
+        assert!(
+            rendered
+                .file_reference_entries
+                .contains("path = \"whisker_assets\"")
+        );
         // Lands in the Resources phase + navigator group, not Sources.
-        assert!(rendered
-            .resources_phase_files
-            .contains("whisker_assets in Resources"));
+        assert!(
+            rendered
+                .resources_phase_files
+                .contains("whisker_assets in Resources")
+        );
         assert!(rendered.sources_phase_files.is_empty());
-        assert!(rendered
-            .plugin_files_group_children
-            .contains("whisker_assets"));
+        assert!(
+            rendered
+                .plugin_files_group_children
+                .contains("whisker_assets")
+        );
     }
 
     #[test]

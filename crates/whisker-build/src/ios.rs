@@ -34,7 +34,7 @@
 //! `whisker build-ios` subprocess, and finally cargo. Direct `xcodebuild`
 //! sets no env so the build runs without capture.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -51,7 +51,7 @@ use std::process::Command;
 pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
 pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.0";
 
-use crate::capture::{capture_env_vars_for_triple, CaptureShims};
+use crate::capture::{CaptureShims, capture_env_vars_for_triple};
 
 const FRAMEWORK_NAME: &str = "WhiskerDriver";
 

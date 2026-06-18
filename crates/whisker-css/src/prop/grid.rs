@@ -75,10 +75,10 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::ext::*;
     use crate::keyword::GridAutoFlow;
     use crate::value::{GridLine, GridTemplate};
-    use crate::Css;
 
     #[test]
     fn template_rows_and_columns() {

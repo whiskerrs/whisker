@@ -32,9 +32,9 @@
 //! code sees [`ElementHandle`], [`ScrollViewHandle`], [`TextHandle`],
 //! and similar typed handles — never `ElementRef` directly.
 
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use whisker_runtime::reactive::{computed, RwSignal, Signal};
+use serde::de::DeserializeOwned;
+use whisker_runtime::reactive::{RwSignal, Signal, computed};
 use whisker_runtime::view::Element;
 
 use crate::module::WhiskerValue;

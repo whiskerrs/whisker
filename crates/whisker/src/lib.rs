@@ -79,9 +79,9 @@ pub use whisker_runtime::view::Element;
 pub use whisker_macros::{component, main, module_component, render};
 
 pub use whisker_driver::{
-    animate_cancel, animate_start, invoke_element_animate, AnimateOp, AnimateOptions,
-    BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
-    TextBoundingRect, TextHandle, UiInfo,
+    AnimateOp, AnimateOptions, BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo,
+    ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo, animate_cancel, animate_start,
+    invoke_element_animate,
 };
 
 pub use whisker_driver::module::PlatformModule;
@@ -125,9 +125,9 @@ macro_rules! module {
 }
 
 pub use whisker_runtime::reactive::{
-    arc_signal, computed, effect, flush, on_cleanup, on_mount, provide_context, resource,
-    resource_sync, signal, use_context, with_context, ArcReadSignal, ArcRwSignal, ArcWriteSignal,
-    ReadSignal, Resource, ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
+    ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource, ResourceState, RwSignal,
+    Signal, StoredValue, WriteSignal, arc_signal, computed, effect, flush, on_cleanup, on_mount,
+    provide_context, resource, resource_sync, signal, use_context, with_context,
 };
 // Component mount/unmount + mount-queue machinery. Driven by the
 // `#[component]` expansion and the hot-reload remount path, not by app
@@ -140,8 +140,8 @@ pub use whisker_runtime::reactive::{flush_mounts, mount_component, unmount_compo
 // extension code (custom control-flow, custom routers, advanced
 // tests) reaches into this module to create and dispose reactive
 // scopes manually.
-pub use whisker_runtime::reactive::owner;
 pub use whisker_runtime::reactive::Owner;
+pub use whisker_runtime::reactive::owner;
 pub use whisker_runtime::tasks::{run_blocking, spawn_local};
 // Frame-driving internal used by the host tick loop, not app code.
 #[doc(hidden)]
@@ -151,7 +151,7 @@ mod style;
 
 pub mod attrs;
 
-pub use style::{apply_style, Style};
+pub use style::{Style, apply_style};
 
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
 pub use whisker_runtime::view::Children;
@@ -180,16 +180,15 @@ pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
 pub mod __tags {
     use crate::ElementTag;
     use whisker_runtime::event::{
-        bind_typed, AnimationEvent, CustomEvent, ScrollEvent, SelectionChangeEvent,
-        TextLayoutEvent, TouchEvent,
+        AnimationEvent, CustomEvent, ScrollEvent, SelectionChangeEvent, TextLayoutEvent,
+        TouchEvent, bind_typed,
     };
     use whisker_runtime::reactive::Signal;
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
-        append_child, apply_attr, apply_attr_bool, apply_attr_int, apply_attr_owned,
-        create_element, create_element_by_name, create_phantom_element,
-        install_list_native_item_provider, set_event_listener, set_update_list_info, BindType,
-        Element,
+        BindType, Element, append_child, apply_attr, apply_attr_bool, apply_attr_int,
+        apply_attr_owned, create_element, create_element_by_name, create_phantom_element,
+        install_list_native_item_provider, set_event_listener, set_update_list_info,
     };
 
     // Why a trait (and not `macro_rules!`): RA's method-completion
@@ -1609,7 +1608,7 @@ pub use whisker_runtime::main_thread::run_on_main_thread;
 /// module directly only when you need the raw [`WhiskerValue`] enum.
 pub mod platform_module {
     pub use whisker_driver::module::{
-        from_raw, invoke, invoke_async, WhiskerModuleError, WhiskerValue,
+        WhiskerModuleError, WhiskerValue, from_raw, invoke, invoke_async,
     };
 }
 
@@ -1734,19 +1733,18 @@ pub mod __hot {
 /// that bootstrap reactive scopes) reaches past the prelude into
 /// [`crate::runtime`] / [`crate::owner`] / [`crate::platform_module`].
 pub mod prelude {
+    pub use crate::Children;
     pub use crate::css::ext::*;
     pub use crate::css::{
         AlignItems, Border, Color, Css, Display, Flex, FlexDirection, FlexWrap, JustifyContent,
         Length, NamedColor, ToCss,
     };
-    pub use crate::Children;
     pub use crate::{
-        arc_signal, computed, effect, on_cleanup, on_mount, provide_context, resource,
-        resource_sync, run_blocking, run_on_main_thread, signal, spawn_local, use_context,
-        with_context, ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource,
-        ResourceState, RwSignal, Signal, StoredValue, WriteSignal,
+        ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource, ResourceState, RwSignal,
+        Signal, StoredValue, WriteSignal, arc_signal, computed, effect, on_cleanup, on_mount,
+        provide_context, resource, resource_sync, run_blocking, run_on_main_thread, signal,
+        spawn_local, use_context, with_context,
     };
-    pub use crate::{component, main, render};
     pub use crate::{
         BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
         TextBoundingRect, TextHandle,
@@ -1754,6 +1752,7 @@ pub mod prelude {
     pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
     pub use crate::{Element, ElementTag};
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};
+    pub use crate::{component, main, render};
     // The `css!` macro coexists with the `crate::css` module
     // re-export above because the macro and module namespaces are
     // disjoint.

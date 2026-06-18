@@ -248,8 +248,8 @@ impl<'a> SourceMap<'a> {
 mod tests {
     use super::*;
     use proc_macro2::TokenStream;
-    use syn::spanned::Spanned;
     use syn::Expr;
+    use syn::spanned::Spanned;
 
     #[test]
     fn slices_expr_from_its_own_token_stream() {

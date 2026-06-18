@@ -482,7 +482,7 @@ fn strip_on_prefix(name: &str) -> Option<String> {
 mod tests {
     use super::strip_on_prefix;
     use proc_macro2::TokenStream as TokenStream2;
-    use whisker_macro_syntax::render::{is_builtin_tag, snake_to_pascal, Root};
+    use whisker_macro_syntax::render::{Root, is_builtin_tag, snake_to_pascal};
 
     #[test]
     fn strips_snake_case() {

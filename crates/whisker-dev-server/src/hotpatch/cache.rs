@@ -33,7 +33,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use super::symbol_table::{parse_symbol_table_from_bytes, SymbolTable};
+use super::symbol_table::{SymbolTable, parse_symbol_table_from_bytes};
 
 /// Pre-parsed snapshot of the original (== "fat") binary. Built once
 /// per dev-server run; subsequent JumpTable construction reads from

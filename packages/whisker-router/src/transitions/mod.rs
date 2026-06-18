@@ -53,8 +53,8 @@
 
 use std::rc::Rc;
 
-use whisker::runtime::view::Element;
 use whisker::Style;
+use whisker::runtime::view::Element;
 
 pub mod fade;
 pub mod instant;
@@ -63,7 +63,7 @@ pub mod vertical_slide;
 
 pub use fade::Fade;
 pub use instant::Instant;
-pub use ios_slide::{IosSlide, IOS_PARALLAX_PCT};
+pub use ios_slide::{IOS_PARALLAX_PCT, IosSlide};
 pub use vertical_slide::VerticalSlide;
 
 /// Direction of the current navigation — derived by

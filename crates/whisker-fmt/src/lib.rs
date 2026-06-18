@@ -51,7 +51,7 @@ mod source_map;
 
 pub use options::FmtOptions;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use expr_fmt::{ExprFormatter, ExprMap};
 use proc_macro2::{Delimiter, Span, TokenStream, TokenTree};
 use source_map::SourceMap;
@@ -1045,16 +1045,14 @@ mod comment_tests {
     // 6. Trailing comment after a `css!` field.
     #[test]
     fn trailing_comment_after_css_field() {
-        let input =
-            "fn s() -> Css {\n    css! {\n        color: red, // c\n        padding: px(8),\n    }\n}\n";
+        let input = "fn s() -> Css {\n    css! {\n        color: red, // c\n        padding: px(8),\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
     // 7. Own-line comment between two `css!` fields.
     #[test]
     fn own_line_between_css_fields() {
-        let input =
-            "fn s() -> Css {\n    css! {\n        color: red,\n        // gap\n        padding: px(8),\n    }\n}\n";
+        let input = "fn s() -> Css {\n    css! {\n        color: red,\n        // gap\n        padding: px(8),\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 

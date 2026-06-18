@@ -34,11 +34,11 @@
 //! buffer, not replayed.
 
 use anyhow::Result;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::Router;
 use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::get;
-use axum::Router;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -83,8 +83,8 @@ enum PatchHeader<'a> {
 /// shared crate) because the type is tiny and the duplication
 /// burden is one ~30-line module.
 pub mod wire_jump_table {
-    use serde::ser::SerializeStruct;
     use serde::Serializer;
+    use serde::ser::SerializeStruct;
     use subsecond_types::JumpTable;
 
     pub fn serialize<S: Serializer>(t: &JumpTable, s: S) -> Result<S::Ok, S::Error> {

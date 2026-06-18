@@ -1,7 +1,7 @@
 [package]
 name = "router-example-feature-detail"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Detail screen for the `whisker-router` cross-crate StackLayout repro. Symmetric to `-feature-home`; the only point is to make the shell route between two screens that come from different crates."
 

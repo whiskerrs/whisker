@@ -46,7 +46,7 @@ use whisker::css::ext::*;
 use whisker::css::{Css, Display, FlexDirection, ToCss};
 use whisker::runtime::element::ElementTag;
 use whisker::runtime::view::apply::apply_styles;
-use whisker::runtime::view::{append_child, create_element, Element};
+use whisker::runtime::view::{Element, append_child, create_element};
 use whisker::{component, computed};
 
 use crate::outlet::router;

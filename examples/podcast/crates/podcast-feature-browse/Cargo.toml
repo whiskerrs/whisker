@@ -1,7 +1,7 @@
 [package]
 name = "podcast-feature-browse"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Browse-screen feature crate. Composes podcast-ui-kit widgets against podcast-data results, manages the load state, and exposes a single `browse_screen()` component the app's main entry mounts."
 

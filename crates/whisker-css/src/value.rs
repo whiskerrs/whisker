@@ -11,7 +11,7 @@
 use core::fmt;
 
 use crate::data_type::{CssString, FitContent, Length, LengthPercentage, MaxContent, Percentage};
-use crate::to_css::{write_number, ToCss};
+use crate::to_css::{ToCss, write_number};
 
 // ---------- Size (width / height / min-/max-) ----------
 

@@ -4,7 +4,7 @@ use core::fmt;
 
 use crate::css::Css;
 use crate::data_type::{Angle, Length, LengthPercentage};
-use crate::to_css::{write_number, ToCss};
+use crate::to_css::{ToCss, write_number};
 
 /// One CSS transform function. Lynx supports the 2-D and 3-D
 /// transform families except `rotate3d()` and `scale3d()`.
@@ -200,8 +200,8 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
-    use crate::ext::*;
     use crate::Css;
+    use crate::ext::*;
 
     use super::*;
 

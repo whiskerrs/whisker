@@ -14,7 +14,7 @@
 //! the read in `effect(...)` so the value re-applies whenever the
 //! signal source changes.
 
-use crate::reactive::{effect, Signal};
+use crate::reactive::{Signal, effect};
 use crate::view::handle::Element;
 use crate::view::renderer::{
     set_attribute, set_attribute_bool, set_attribute_double, set_attribute_int, set_inline_styles,

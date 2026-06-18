@@ -26,7 +26,7 @@
 //! whisker modules --workspace="$WS" --package="$PKG"
 //! ```
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Args;
 use std::path::PathBuf;
 use whisker_build::Profile;

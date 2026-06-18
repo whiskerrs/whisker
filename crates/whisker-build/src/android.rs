@@ -27,12 +27,12 @@
 //! the `capture` field on [`CargoBuild`] — dev-server's Tier 2
 //! cold rebuild passes `Some(&shims)`; gradle-plugin and direct gradle invocations pass `None`.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::capture::{capture_env_vars, CaptureShims};
 use crate::Profile;
+use crate::capture::{CaptureShims, capture_env_vars};
 
 // ----- NDK toolchain resolution --------------------------------------------
 

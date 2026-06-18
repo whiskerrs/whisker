@@ -500,18 +500,20 @@ mod tests {
         WhiskerAsset.apply(&mut ctx, &cfg).unwrap();
 
         // Bundles under basename, not the source subpath.
-        assert!(ctx
-            .ios
-            .as_ref()
-            .unwrap()
-            .extra_files
-            .contains_key(&PathBuf::from("whisker_assets/logo.png")));
-        assert!(ctx
-            .android
-            .as_ref()
-            .unwrap()
-            .extra_files
-            .contains_key(&PathBuf::from("app/src/main/assets/whisker/logo.png")));
+        assert!(
+            ctx.ios
+                .as_ref()
+                .unwrap()
+                .extra_files
+                .contains_key(&PathBuf::from("whisker_assets/logo.png"))
+        );
+        assert!(
+            ctx.android
+                .as_ref()
+                .unwrap()
+                .extra_files
+                .contains_key(&PathBuf::from("app/src/main/assets/whisker/logo.png"))
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -526,63 +526,73 @@ fn empty_raw(ty: ffi::WhiskerValueType) -> ffi::WhiskerValueRaw {
 /// `invoke_module*` invocation or another bridge-produced
 /// `WhiskerValueRaw`.
 pub unsafe fn from_raw(raw: &ffi::WhiskerValueRaw) -> WhiskerValue {
-    match raw.type_ {
-        x if x == ffi::WhiskerValueType::Null as u8 => WhiskerValue::Null,
-        x if x == ffi::WhiskerValueType::Bool as u8 => WhiskerValue::Bool(raw.v.b),
-        x if x == ffi::WhiskerValueType::Int as u8 => WhiskerValue::Int(raw.v.i),
-        x if x == ffi::WhiskerValueType::Float as u8 => WhiskerValue::Float(raw.v.f),
-        x if x == ffi::WhiskerValueType::String as u8 => WhiskerValue::String(read_string(raw.v.s)),
-        x if x == ffi::WhiskerValueType::Bytes as u8 => {
-            WhiskerValue::Bytes(read_bytes(raw.v.bytes))
-        }
-        x if x == ffi::WhiskerValueType::Array as u8 => {
-            let arr = raw.v.array;
-            let mut out = Vec::with_capacity(arr.count);
-            for i in 0..arr.count {
-                let item = &*arr.items.add(i);
-                out.push(from_raw(item));
+    unsafe {
+        match raw.type_ {
+            x if x == ffi::WhiskerValueType::Null as u8 => WhiskerValue::Null,
+            x if x == ffi::WhiskerValueType::Bool as u8 => WhiskerValue::Bool(raw.v.b),
+            x if x == ffi::WhiskerValueType::Int as u8 => WhiskerValue::Int(raw.v.i),
+            x if x == ffi::WhiskerValueType::Float as u8 => WhiskerValue::Float(raw.v.f),
+            x if x == ffi::WhiskerValueType::String as u8 => {
+                WhiskerValue::String(read_string(raw.v.s))
             }
-            WhiskerValue::Array(out)
-        }
-        x if x == ffi::WhiskerValueType::Map as u8 => {
-            let m = raw.v.map;
-            let mut out = BTreeMap::new();
-            for i in 0..m.count {
-                let entry = &*m.entries.add(i);
-                let key = read_string(entry.key);
-                let value = from_raw(&entry.value);
-                out.insert(key, value);
+            x if x == ffi::WhiskerValueType::Bytes as u8 => {
+                WhiskerValue::Bytes(read_bytes(raw.v.bytes))
             }
-            WhiskerValue::Map(out)
+            x if x == ffi::WhiskerValueType::Array as u8 => {
+                let arr = raw.v.array;
+                let mut out = Vec::with_capacity(arr.count);
+                for i in 0..arr.count {
+                    let item = &*arr.items.add(i);
+                    out.push(from_raw(item));
+                }
+                WhiskerValue::Array(out)
+            }
+            x if x == ffi::WhiskerValueType::Map as u8 => {
+                let m = raw.v.map;
+                let mut out = BTreeMap::new();
+                for i in 0..m.count {
+                    let entry = &*m.entries.add(i);
+                    let key = read_string(entry.key);
+                    let value = from_raw(&entry.value);
+                    out.insert(key, value);
+                }
+                WhiskerValue::Map(out)
+            }
+            x if x == ffi::WhiskerValueType::Error as u8 => {
+                WhiskerValue::Error(read_string(raw.v.s))
+            }
+            // Bridge produced an unknown discriminant — surface as
+            // an error rather than panicking. Indicates the bridge
+            // and the Rust mirror have drifted out of sync.
+            other => WhiskerValue::Error(format!(
+                "WhiskerValueRaw carries unknown type discriminant {other}"
+            )),
         }
-        x if x == ffi::WhiskerValueType::Error as u8 => WhiskerValue::Error(read_string(raw.v.s)),
-        // Bridge produced an unknown discriminant — surface as
-        // an error rather than panicking. Indicates the bridge
-        // and the Rust mirror have drifted out of sync.
-        other => WhiskerValue::Error(format!(
-            "WhiskerValueRaw carries unknown type discriminant {other}"
-        )),
     }
 }
 
 unsafe fn read_string(r: ffi::WhiskerStringRef) -> String {
-    if r.ptr.is_null() || r.len == 0 {
-        return String::new();
+    unsafe {
+        if r.ptr.is_null() || r.len == 0 {
+            return String::new();
+        }
+        // Don't assume NUL-termination — `len` is authoritative.
+        let bytes = std::slice::from_raw_parts(r.ptr as *const u8, r.len);
+        std::str::from_utf8(bytes)
+            .map(|s| s.to_string())
+            // If the bridge produced non-UTF8, fall through to a
+            // lossy conversion so we never panic at the FFI seam.
+            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
     }
-    // Don't assume NUL-termination — `len` is authoritative.
-    let bytes = std::slice::from_raw_parts(r.ptr as *const u8, r.len);
-    std::str::from_utf8(bytes)
-        .map(|s| s.to_string())
-        // If the bridge produced non-UTF8, fall through to a
-        // lossy conversion so we never panic at the FFI seam.
-        .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
 }
 
 unsafe fn read_bytes(r: ffi::WhiskerBytesRef) -> Vec<u8> {
-    if r.ptr.is_null() || r.len == 0 {
-        return Vec::new();
+    unsafe {
+        if r.ptr.is_null() || r.len == 0 {
+            return Vec::new();
+        }
+        std::slice::from_raw_parts(r.ptr, r.len).to_vec()
     }
-    std::slice::from_raw_parts(r.ptr, r.len).to_vec()
 }
 
 // ----- Tests --------------------------------------------------------------

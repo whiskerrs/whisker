@@ -44,8 +44,8 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
-    use crate::keyword::{Direction, Display};
     use crate::Css;
+    use crate::keyword::{Direction, Display};
 
     #[test]
     fn display_keyword() {

@@ -44,10 +44,10 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use whisker_runtime::reactive::{effect, Owner};
+use whisker_runtime::reactive::{Owner, effect};
 use whisker_runtime::view::{
-    append_child, create_phantom_element, remove_child, Children, EachFn, Element, Fallback,
-    ItemFn, KeyFn, WhenFn,
+    Children, EachFn, Element, Fallback, ItemFn, KeyFn, WhenFn, append_child,
+    create_phantom_element, remove_child,
 };
 
 use crate::component;

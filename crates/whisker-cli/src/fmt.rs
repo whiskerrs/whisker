@@ -16,7 +16,7 @@
 //! (resolved per file directory), and the base Rust pass shells out to
 //! the real rustfmt binary which reads `rustfmt.toml` itself.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Args;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};

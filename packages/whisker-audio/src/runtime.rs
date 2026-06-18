@@ -1,11 +1,11 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use whisker::platform_module::WhiskerValue;
-use whisker::{module, ArcReadSignal, ArcRwSignal, ReadSignal};
+use whisker::{ArcReadSignal, ArcRwSignal, ReadSignal, module};
 
 /// Current playback state. Updated by the native side and read
 /// through the reactive signal returned by [`Player::status`].

@@ -1,7 +1,7 @@
 [package]
 name = "router-example-feature-home"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Home screen for the `whisker-router` cross-crate StackLayout repro. Lives in its own crate so the shell mounts it across a crate boundary — that's the configuration that crashes."
 

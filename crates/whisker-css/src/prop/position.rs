@@ -59,9 +59,9 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::ext::*;
     use crate::keyword::PositionKind;
-    use crate::Css;
 
     #[test]
     fn position_absolute_with_offsets() {

@@ -50,12 +50,12 @@ mod tests_loop_wedge;
 #[cfg(test)]
 mod tests_resource;
 
-pub use arc_signal::{arc_signal, ArcReadSignal, ArcRwSignal, ArcWriteSignal};
+pub use arc_signal::{ArcReadSignal, ArcRwSignal, ArcWriteSignal, arc_signal};
 #[doc(hidden)]
 pub use component::__reset_pending_mount_for_tests;
 pub use component::{
-    flush_mounts, mount_component, mount_component_remountable, on_component_root_attached,
-    on_mount, owners_for_fn, remount_components_for, unmount_component, MountId,
+    MountId, flush_mounts, mount_component, mount_component_remountable,
+    on_component_root_attached, on_mount, owners_for_fn, remount_components_for, unmount_component,
 };
 pub use computed::computed;
 pub use context::{provide_context, use_context, with_context};
@@ -67,10 +67,10 @@ pub use effect::effect;
 // `whisker::owner::Owner::new(None)` / `owner.with(...)` / etc.
 pub use owner::on_cleanup;
 pub use prop::Signal;
-pub use resource::{resource, resource_sync, Resource, ResourceState};
+pub use resource::{Resource, ResourceState, resource, resource_sync};
 pub use runtime::{NodeId, Owner};
 pub use scheduler::{flush, has_pending_work};
-pub use signal::{signal, ReadSignal, RwSignal, WriteSignal};
+pub use signal::{ReadSignal, RwSignal, WriteSignal, signal};
 pub use stored::StoredValue;
 
 use std::cell::RefCell;

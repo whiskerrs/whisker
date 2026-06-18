@@ -1,7 +1,7 @@
 [package]
 name = "whisker-icons-example"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Example app for `whisker-icons`. Renders the entire Lucide-icon set in a virtualised list so on-device verification of the codegen + display-list pipeline happens against every icon at once."
 
