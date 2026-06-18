@@ -34,7 +34,7 @@ fn app() -> Element {
 
 #[component]
 fn counter() -> Element {
-    let count = RwSignal::new(0);
+    let count = signal(0);
     render! {
         view(style: css!(
             flex_grow: 1.0,
@@ -88,8 +88,8 @@ reference — lives at **[whisker.rs/docs](https://whisker.rs/docs)**.
 
 ## Status
 
-Pre-alpha (`0.5.x`). The core runtime, `render!`, routing, hot reload, and
-the iOS/Android build pipelines work end-to-end. APIs may still change
+Pre-alpha. The core runtime, `render!`, routing, hot reload, and the
+iOS/Android build pipelines work end-to-end. APIs may still change
 before `1.0`.
 
 ## License
