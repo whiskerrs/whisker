@@ -16,6 +16,15 @@
 //! 3. `proc_macro2` token printing when the span has no source position
 //!    (a rare, best-effort path).
 //!
+//! ## Comments
+//!
+//! `syn` drops comments, so they are recovered from the body source as
+//! [`GrammarComment`]s (see `comments.rs`) and reattached here. A cursor
+//! ([`Printer::next`]) tracks the next unconsumed comment; [`flush`] emits
+//! every pending comment whose `start` precedes a given byte bound, at the
+//! right indent. Own-line comments go on their own line; trailing comments
+//! are appended to the end of the preceding line.
+//!
 //! ## Layout
 //!
 //! A simple indent-and-wrap scheme (not full Wadler/Prettier): each
@@ -24,11 +33,13 @@
 //! indented lines. This matches the shallow, regular `render!` grammar
 //! and is easy to keep idempotent.
 
+use crate::comments::GrammarComment;
 use crate::expr_fmt::ExprMap;
 use crate::options::FmtOptions;
 use crate::source_map::SourceMap;
 use proc_macro2::Span;
 use quote::ToTokens;
+use std::cell::Cell;
 use whisker_macro_syntax::{CssInput, ElementNode, Kwarg, Node, Root, UserComponentNode};
 
 /// Pretty-print a parsed `render!` body.
@@ -41,20 +52,52 @@ use whisker_macro_syntax::{CssInput, ElementNode, Kwarg, Node, Root, UserCompone
 /// expressions, keyed by each expr's body-relative span. An EMPTY map
 /// means "render every expr verbatim" — that is the rustfmt-free path
 /// the [`crate::reformat_macros`] unit tests use.
+///
+/// `comments` are the grammar comments recovered from the body source,
+/// reattached during printing. `body_len` is the byte length of the body
+/// source (the top-level block's upper bound).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn print_render(
     root: &Root,
     map: &SourceMap,
     opts: &FmtOptions,
     base_indent: usize,
     expr_map: &ExprMap,
+    comments: &[GrammarComment],
+    body_len: usize,
 ) -> String {
     let p = Printer {
         map,
         opts,
         expr_map,
+        comments,
+        next: Cell::new(0),
     };
     let mut out = String::new();
+    // Leading comments before the root node.
+    if let Some(start) = p.node_start_byte(&root.node) {
+        p.flush(start, base_indent + 1, &mut out);
+    }
     p.node(&root.node, base_indent + 1, &mut out);
+    // A trailing comment on the root node's own last line attaches inline.
+    if let Some(start) = p.node_start_byte(&root.node) {
+        let (_, after) = p.map.node_extent(start);
+        if let Some(idx) = p.pending_trailing_on_line(after) {
+            let before = p.comments[idx].start + 1;
+            p.flush(before, base_indent + 1, &mut out);
+        }
+    }
+    // Any remaining (own-line) comments after the root node, on their own
+    // lines at the body indent.
+    let idx = p.next.get();
+    if idx < comments.len() {
+        let mut tail = String::new();
+        p.flush(body_len, base_indent + 1, &mut tail);
+        if !tail.is_empty() {
+            out.push('\n');
+            out.push_str(tail.trim_end_matches('\n'));
+        }
+    }
     out
 }
 
@@ -65,19 +108,26 @@ pub(crate) fn print_css(
     opts: &FmtOptions,
     base_indent: usize,
     expr_map: &ExprMap,
+    comments: &[GrammarComment],
+    body_len: usize,
 ) -> String {
     let p = Printer {
         map,
         opts,
         expr_map,
+        comments,
+        next: Cell::new(0),
     };
-    p.css(input, base_indent + 1)
+    p.css(input, base_indent + 1, body_len)
 }
 
 struct Printer<'a> {
     map: &'a SourceMap<'a>,
     opts: &'a FmtOptions,
     expr_map: &'a ExprMap,
+    comments: &'a [GrammarComment],
+    /// Index of the next unconsumed comment.
+    next: Cell<usize>,
 }
 
 impl Printer<'_> {
@@ -96,7 +146,13 @@ impl Printer<'_> {
         }
         if let Some(s) = self.map.slice(span) {
             // Trim surrounding whitespace; internal formatting is kept.
-            s.trim().to_string()
+            // For multi-line values, dedent continuation lines to column 0
+            // (matching the [`ExprMap`] contract) so the surrounding
+            // [`reindent`] call adds exactly the kwarg-column prefix and
+            // re-formatting is a fixed point. Without this, slicing an
+            // already-indented value and re-indenting it compounds the
+            // indentation on every pass (non-idempotent).
+            dedent_continuation(s.trim())
         } else {
             tokens.to_token_stream().to_string()
         }
@@ -104,6 +160,76 @@ impl Printer<'_> {
 
     fn indent(&self, level: usize) -> String {
         self.opts.indent_prefix(level)
+    }
+
+    // ---- comment reattachment ------------------------------------------
+
+    /// Emit every not-yet-consumed comment whose `start < before`, at the
+    /// given indent `level`.
+    ///
+    /// Own-line comments are written on their own line: `{indent}{text}\n`
+    /// (possibly multi-line text is re-indented under `indent`). A
+    /// non-own-line (trailing) comment is appended to the END of `out`
+    /// (before the next `\n` the caller adds): ` {text}`.
+    fn flush(&self, before: usize, level: usize, out: &mut String) {
+        let indent = self.indent(level);
+        let mut idx = self.next.get();
+        while idx < self.comments.len() && self.comments[idx].start < before {
+            let c = &self.comments[idx];
+            if c.own_line {
+                out.push_str(&indent);
+                out.push_str(&reindent(&c.text, &indent));
+                out.push('\n');
+            } else {
+                // Trailing: append to the end of the current output. Strip
+                // a single trailing newline the caller may have already
+                // pushed, append ` text`, then restore the newline.
+                let had_nl = out.ends_with('\n');
+                if had_nl {
+                    out.pop();
+                }
+                out.push(' ');
+                out.push_str(&c.text);
+                if had_nl {
+                    out.push('\n');
+                }
+            }
+            idx += 1;
+        }
+        self.next.set(idx);
+    }
+
+    /// `true` if there is a pending trailing comment whose `start` falls
+    /// on the same source line as byte `line_end` (the end of the just-
+    /// emitted node). Used to attach trailing comments to a child.
+    fn pending_trailing_on_line(&self, line_end: usize) -> Option<usize> {
+        let idx = self.next.get();
+        let c = self.comments.get(idx)?;
+        if c.own_line {
+            return None;
+        }
+        // Same source line as `line_end` if no '\n' lies between them.
+        let (lo, hi) = if c.start < line_end {
+            (c.start, line_end)
+        } else {
+            (line_end, c.start)
+        };
+        let between = self.map.between_has_newline(lo, hi);
+        if between {
+            None
+        } else {
+            Some(idx)
+        }
+    }
+
+    /// First source byte of a node (its tag / alias ident).
+    fn node_start_byte(&self, node: &Node) -> Option<usize> {
+        let span = match node {
+            Node::Element(el) => el.tag.span(),
+            Node::UserComponent(uc) => uc.alias_ident.span(),
+            Node::ChildrenSlot { span } => *span,
+        };
+        self.map.byte_range(span).map(|(s, _)| s)
     }
 
     // ---- render! -------------------------------------------------------
@@ -120,27 +246,41 @@ impl Printer<'_> {
     }
 
     fn element(&self, el: &ElementNode, level: usize, out: &mut String) {
-        self.tag_node(&el.tag.to_string(), &el.kwargs, &el.children, level, out);
+        let start = self.map.byte_range(el.tag.span()).map(|(s, _)| s);
+        self.tag_node(
+            &el.tag.to_string(),
+            &el.kwargs,
+            &el.children,
+            level,
+            start,
+            out,
+        );
     }
 
     fn user_component(&self, uc: &UserComponentNode, level: usize, out: &mut String) {
+        let start = self.map.byte_range(uc.alias_ident.span()).map(|(s, _)| s);
         self.tag_node(
             &uc.alias_ident.to_string(),
             &uc.kwargs,
             &uc.children,
             level,
+            start,
             out,
         );
     }
 
     /// The shared `tag(kwargs) { children }` rendering used by both
-    /// element and user-component nodes.
+    /// element and user-component nodes. `node_start` is the byte offset
+    /// of this node's tag in the body source (used to locate its block
+    /// via [`SourceMap::node_extent`] so comments land at the right
+    /// indent / side of the closing `}`).
     fn tag_node(
         &self,
         tag: &str,
         kwargs: &[Kwarg],
         children: &[Node],
         level: usize,
+        node_start: Option<usize>,
         out: &mut String,
     ) {
         let indent = self.indent(level);
@@ -179,11 +319,47 @@ impl Printer<'_> {
         }
 
         // ---- children ----
-        if !children.is_empty() {
+        // Resolve this node's block byte bounds so comments are placed
+        // relative to its `{ … }`.
+        let inner_close = node_start.and_then(|s| self.map.node_extent(s).0);
+
+        // If there are pending comments destined for this node's block
+        // (i.e. starting before its closing brace) we must render the
+        // multi-line block form even when `children` is empty, so those
+        // comments have somewhere to go.
+        let has_block_comments = inner_close
+            .map(|close| {
+                let idx = self.next.get();
+                self.comments
+                    .get(idx)
+                    .map(|c| c.start < close)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        if !children.is_empty() || has_block_comments {
             out.push_str(" {\n");
+            let child_level = level + 1;
             for child in children {
-                self.node(child, level + 1, out);
+                let child_start = self.node_start_byte(child);
+                // Leading own-line comments before this child.
+                if let Some(cs) = child_start {
+                    self.flush(cs, child_level, out);
+                }
+                self.node(child, child_level, out);
+                // Trailing same-line comment on the child.
+                if let Some((_, child_end)) = child_extent(self, child) {
+                    if let Some(idx) = self.pending_trailing_on_line(child_end) {
+                        // Append trailing comment to the end of this line.
+                        let before = self.comments[idx].start + 1;
+                        self.flush(before, child_level, out);
+                    }
+                }
                 out.push('\n');
+            }
+            // Comments sitting before the closing `}`.
+            if let Some(close) = inner_close {
+                self.flush(close, child_level, out);
             }
             out.push_str(&indent);
             out.push('}');
@@ -203,44 +379,93 @@ impl Printer<'_> {
 
     // ---- css! ----------------------------------------------------------
 
-    fn css(&self, input: &CssInput, level: usize) -> String {
+    fn css(&self, input: &CssInput, level: usize, body_len: usize) -> String {
         if input.kwargs.is_empty() {
             return String::new();
         }
-        let parts: Vec<String> = input
-            .kwargs
-            .iter()
-            .map(|kw| {
-                let name = kw.name.to_string();
-                match &kw.value {
-                    Some(expr) => {
-                        let v = self.expr_src(span_of(expr), expr);
-                        format!("{name}: {v}")
-                    }
-                    None => name,
-                }
-            })
-            .collect();
 
-        // Try a single inline line first.
-        let inline = parts.join(", ");
-        let inline_width = self.opts.indent_width(level) + inline.len();
-        if !inline.contains('\n') && inline_width <= self.opts.max_width {
+        let has_comments = !self.comments.is_empty();
+
+        // Inline form only when there are NO comments to place (comments
+        // imply line breaks).
+        if !has_comments {
+            let parts: Vec<String> = input.kwargs.iter().map(|kw| self.css_kwarg(kw)).collect();
+            let inline = parts.join(", ");
+            let inline_width = self.opts.indent_width(level) + inline.len();
+            if !inline.contains('\n') && inline_width <= self.opts.max_width {
+                let indent = self.indent(level);
+                return format!("{indent}{inline}");
+            }
+            // Otherwise one kwarg per line, trailing comma.
             let indent = self.indent(level);
-            return format!("{indent}{inline}");
+            let mut out = String::new();
+            for part in &parts {
+                out.push_str(&indent);
+                out.push_str(&reindent(part, &indent));
+                out.push_str(",\n");
+            }
+            out.pop();
+            return out;
         }
-        // Otherwise one kwarg per line, trailing comma.
+
+        // Comment-bearing css! body: one field per line, flushing
+        // comments before each field and after the last.
         let indent = self.indent(level);
         let mut out = String::new();
-        for part in &parts {
+        for kw in &input.kwargs {
+            let start = self.map.byte_range(kw.name.span()).map(|(s, _)| s);
+            if let Some(s) = start {
+                self.flush(s, level, &mut out);
+            }
             out.push_str(&indent);
-            out.push_str(&reindent(part, &indent));
-            out.push_str(",\n");
+            out.push_str(&reindent(&self.css_kwarg(kw), &indent));
+            out.push(',');
+            // Trailing same-line comment after this field.
+            let field_end = self
+                .map
+                .byte_range(kw.name.span())
+                .map(|(_, e)| e)
+                .unwrap_or(0);
+            // Use the value's end if present for a tighter line bound.
+            let line_end = kw
+                .value
+                .as_ref()
+                .and_then(|e| self.map.byte_range(span_of(e)))
+                .map(|(_, e)| e)
+                .unwrap_or(field_end);
+            if let Some(idx) = self.pending_trailing_on_line(line_end) {
+                let before = self.comments[idx].start + 1;
+                self.flush(before, level, &mut out);
+            }
+            out.push('\n');
         }
+        // Any comments after the last field, before the body end.
+        self.flush(body_len, level, &mut out);
         // strip trailing newline (caller adds delimiters)
-        out.pop();
+        while out.ends_with('\n') {
+            out.pop();
+        }
         out
     }
+
+    fn css_kwarg(&self, kw: &whisker_macro_syntax::CssKwarg) -> String {
+        let name = kw.name.to_string();
+        match &kw.value {
+            Some(expr) => {
+                let v = self.expr_src(span_of(expr), expr);
+                format!("{name}: {v}")
+            }
+            None => name,
+        }
+    }
+}
+
+/// Byte extent `(start, end)` of a child node via its tag span +
+/// [`SourceMap::node_extent`]. `end` is the byte just past the node.
+fn child_extent(p: &Printer, child: &Node) -> Option<(usize, usize)> {
+    let start = p.node_start_byte(child)?;
+    let (_, after) = p.map.node_extent(start);
+    Some((start, after))
 }
 
 /// Width contribution of a ` { … }` children block when deciding
@@ -254,6 +479,42 @@ fn brace_width(children: &[Node]) -> usize {
     } else {
         " {".len()
     }
+}
+
+/// Dedent the continuation (2nd..=Nth) lines of a multi-line fragment by
+/// their common leading-whitespace amount, so they sit at column 0
+/// relative to the first line. The first line is already at column 0 (the
+/// caller trimmed it). This makes the later [`reindent`] idempotent: a
+/// value re-sliced from already-formatted output has its kwarg-column
+/// indentation stripped back off before being re-indented.
+///
+/// Lines that are entirely whitespace are ignored when computing the
+/// common indent (and emitted empty) so they don't force the common
+/// dedent to zero.
+fn dedent_continuation(fragment: &str) -> String {
+    if !fragment.contains('\n') {
+        return fragment.to_string();
+    }
+    let mut lines = fragment.split('\n');
+    let first = lines.next().unwrap_or("");
+    let rest: Vec<&str> = lines.collect();
+    // Common leading-whitespace width across non-blank continuation lines.
+    let common = rest
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    let mut out = String::from(first);
+    for line in rest {
+        out.push('\n');
+        if line.trim().is_empty() {
+            // keep blank lines blank
+        } else {
+            out.push_str(&line[common..]);
+        }
+    }
+    out
 }
 
 /// Re-indent the 2nd..=Nth lines of a (possibly multi-line) fragment so
@@ -281,4 +542,38 @@ fn reindent(fragment: &str, prefix: &str) -> String {
 fn span_of(expr: &syn::Expr) -> Span {
     use syn::spanned::Spanned;
     expr.span()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedent_single_line_unchanged() {
+        assert_eq!(dedent_continuation("foo"), "foo");
+    }
+
+    #[test]
+    fn dedent_strips_common_continuation_indent() {
+        let v = "css!(\n            a: 1,\n            b: 2,\n        )";
+        // First line at col 0; continuation lines share 8-space common
+        // indent (the `        )` closing line) — all stripped by 8.
+        let out = dedent_continuation(v);
+        assert_eq!(out, "css!(\n    a: 1,\n    b: 2,\n)");
+    }
+
+    #[test]
+    fn dedent_is_idempotent() {
+        let v = "css!(\n            a: 1,\n        )";
+        let once = dedent_continuation(v);
+        let twice = dedent_continuation(&once);
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn dedent_keeps_blank_lines_blank() {
+        let v = "a\n        b\n\n        c";
+        let out = dedent_continuation(v);
+        assert_eq!(out, "a\nb\n\nc");
+    }
 }
