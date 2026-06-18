@@ -370,7 +370,7 @@ mod tests {
     fn changing_items_rebroadcasts_count() {
         with_capturing(|count, _installed| {
             let owner = Owner::new(None);
-            let (items_read, items_write) = crate::reactive::signal(vec![1_i32, 2, 3]);
+            let (items_read, items_write) = crate::reactive::signal(vec![1_i32, 2, 3]).split();
             owner.with(|| {
                 let handle = create_element_by_name("list");
                 list_mount(

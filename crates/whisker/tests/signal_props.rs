@@ -163,7 +163,7 @@ fn static_string_prop_sets_attribute_once() {
 #[test]
 fn read_signal_prop_tracks_underlying_signal() {
     with_recorder_and_owner(|log| {
-        let (color, set_color) = signal("red".to_string());
+        let (color, set_color) = signal("red".to_string()).split();
         let _h = render! {
             ColoredTile(color: color)
         };
@@ -227,7 +227,7 @@ fn show_flips_when_signal_holding_option_transitions() {
     // Show + signal-read chain that the simpler `text(value: …)`
     // tests don't exercise.
     with_recorder_and_owner(|log| {
-        let (state, set_state) = signal::<Option<&'static str>>(None);
+        let (state, set_state) = signal::<Option<&'static str>>(None).split();
         let _h = render! {
             Show(
                 when: move || state.get().is_some(),
@@ -274,7 +274,7 @@ fn show_flips_when_signal_holding_option_transitions() {
 #[test]
 fn computed_prop_tracks_chain_of_signals() {
     with_recorder_and_owner(|log| {
-        let (count, set_count) = signal(0_i32);
+        let (count, set_count) = signal(0_i32).split();
         // Caller-side computed → ReadSignal<String> → flows into
         // ColoredTile as Signal::Dynamic. Updates to `count`
         // propagate end-to-end.

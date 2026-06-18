@@ -202,9 +202,10 @@ fn app() -> Element {{
 /// just needs `flex_grow: 1.0` to fill it. Editing `Root` hot-reloads.
 #[component]
 fn root() -> Element {{
-    // `RwSignal` holds reactive state. Anything that reads it (like the
-    // `computed` below) re-runs and repaints when it changes.
-    let count = RwSignal::new(0);
+    // `signal` returns a reactive handle holding state. Anything that
+    // reads it (like the `computed` below) re-runs and repaints when it
+    // changes.
+    let count = signal(0);
 
     render! {{
         // Styles use the typed `css!` macro: field names map to CSS

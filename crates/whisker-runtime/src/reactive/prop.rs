@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(second(), "abc");
 
         // A dynamic Signal is Copy too.
-        let (count, _set) = signal(5_i32);
+        let (count, _set) = signal(5_i32).split();
         let d: Signal<i32> = count.into();
         assert_copy(&d);
         let a = move || d.get();
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn read_signal_variant_returns_current_value() {
         __reset_for_tests();
-        let (count, set_count) = signal(0_i32);
+        let (count, set_count) = signal(0_i32).split();
         let s: Signal<i32> = count.into();
         assert!(matches!(s, Signal::Dynamic(_)));
         assert_eq!(s.get(), 0);
@@ -289,7 +289,7 @@ mod tests {
         // `Signal::Dynamic(...).get()` call inside an effect
         // produces a subscription that fires on .set.
         __reset_for_tests();
-        let (count, set_count) = signal(0_i32);
+        let (count, set_count) = signal(0_i32).split();
         let s: Signal<i32> = count.into();
         let log: Rc<RefCell<Vec<i32>>> = Rc::new(RefCell::new(Vec::new()));
         let log_clone = log.clone();
@@ -328,7 +328,7 @@ mod tests {
         // for Signal<T>` picks up. End-to-end: derivations flow as
         // dynamic props.
         __reset_for_tests();
-        let (count, set_count) = signal(0_i32);
+        let (count, set_count) = signal(0_i32).split();
         let doubled = computed(move || count.get() * 2);
         let s: Signal<i32> = doubled.into();
         assert!(matches!(s, Signal::Dynamic(_)));

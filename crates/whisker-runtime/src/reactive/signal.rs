@@ -6,11 +6,14 @@
 //! `Rc<RefCell<dyn Any>>`. Cloning a handle is free; passing one into
 //! a `move ||` closure doesn't tie any lifetime.
 //!
-//! The Solid-style tuple form `let (count, set_count) = signal(0)`
-//! splits read and write capability into separate types, so a child
-//! component can be handed `count: ReadSignal<i32>` without the
-//! ability to write. The unified [`RwSignal`] is also provided for
-//! cases where the same code site needs both halves.
+//! `signal(0)` returns a combined [`RwSignal`] — the read+write handle
+//! you reach for most, and the one that threads cleanly through `move`
+//! closures and component props. When you want the Solid-style split
+//! capability, call [`RwSignal::split`] for the `(ReadSignal,
+//! WriteSignal)` pair, or [`RwSignal::read_only`] /
+//! [`RwSignal::write_only`] for a single narrowed capability — so a
+//! child component can be handed `count: ReadSignal<i32>` without the
+//! ability to write.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -21,26 +24,30 @@ use super::runtime::{NodeData, NodeId, ReactiveNode, Scope};
 use super::scheduler;
 use super::with_runtime;
 
-/// Allocate a fresh signal in the current owner. Returns a
-/// `(ReadSignal, WriteSignal)` pair — Solid-style separation.
+/// Allocate a fresh signal in the current owner. Returns a combined
+/// [`RwSignal`] — the read+write handle.
 ///
 /// ```ignore
-/// let (count, set_count) = signal(0);
+/// let count = signal(0);
+/// count.set(1);
+/// assert_eq!(count.get(), 1);
+/// ```
+///
+/// For the Solid-style split capability, call [`RwSignal::split`] for
+/// the `(ReadSignal, WriteSignal)` pair, or [`RwSignal::read_only`] /
+/// [`RwSignal::write_only`] for a single narrowed capability:
+///
+/// ```ignore
+/// let (count, set_count) = signal(0).split();
 /// set_count.set(1);
 /// assert_eq!(count.get(), 1);
 /// ```
-pub fn signal<T: 'static>(initial: T) -> (ReadSignal<T>, WriteSignal<T>) {
+pub fn signal<T: 'static>(initial: T) -> RwSignal<T> {
     let id = alloc_signal_node(initial);
-    (
-        ReadSignal {
-            id,
-            _ty: PhantomData,
-        },
-        WriteSignal {
-            id,
-            _ty: PhantomData,
-        },
-    )
+    RwSignal {
+        id,
+        _ty: PhantomData,
+    }
 }
 
 fn alloc_signal_node<T: 'static>(initial: T) -> NodeId {
@@ -184,8 +191,12 @@ impl<T: 'static> WriteSignal<T> {
     }
 }
 
-/// Combined read-write signal handle. Equivalent to holding both a
-/// `ReadSignal<T>` and `WriteSignal<T>` for the same underlying node.
+/// Combined read-write signal handle — what [`signal`] returns.
+/// Equivalent to holding both a `ReadSignal<T>` and `WriteSignal<T>`
+/// for the same underlying node. Use [`split`](RwSignal::split) for the
+/// `(read, write)` pair, or [`read_only`](RwSignal::read_only) /
+/// [`write_only`](RwSignal::write_only) to narrow to a single
+/// capability.
 pub struct RwSignal<T: 'static> {
     id: NodeId,
     _ty: PhantomData<fn(T) -> T>,
@@ -199,13 +210,10 @@ impl<T: 'static> Clone for RwSignal<T> {
 impl<T: 'static> Copy for RwSignal<T> {}
 
 impl<T: 'static> RwSignal<T> {
-    /// Allocate a new combined-handle signal.
+    /// Allocate a new combined-handle signal. Equivalent to
+    /// [`signal`].
     pub fn new(initial: T) -> Self {
-        let id = alloc_signal_node(initial);
-        Self {
-            id,
-            _ty: PhantomData,
-        }
+        signal(initial)
     }
 
     /// Project to a read-only handle pointing at the same underlying
@@ -215,6 +223,16 @@ impl<T: 'static> RwSignal<T> {
     /// `Signal::Dynamic` variant.
     pub fn read_only(self) -> ReadSignal<T> {
         ReadSignal {
+            id: self.id,
+            _ty: PhantomData,
+        }
+    }
+
+    /// Project to a write-only handle pointing at the same underlying
+    /// value. Mirror of [`read_only`](RwSignal::read_only); useful when
+    /// handing the signal to consumers that should only write.
+    pub fn write_only(self) -> WriteSignal<T> {
+        WriteSignal {
             id: self.id,
             _ty: PhantomData,
         }

@@ -41,11 +41,11 @@
 //! and drive writeback yourself from `on_input`:
 //!
 //! ```ignore
-//! let (value, set_value) = signal(String::new());
+//! let value = signal(String::new());
 //! render! {
 //!     Input(
 //!         value: value,
-//!         on_input: move |s: String| set_value.set(s.to_uppercase()),
+//!         on_input: move |s: String| value.set(s.to_uppercase()),
 //!     )
 //! }
 //! ```

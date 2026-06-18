@@ -463,7 +463,7 @@ fn multiple_children_append_in_order() {
 #[test]
 fn dynamic_value_renders_initial_via_effect() {
     with_recorder_and_owner(|log| {
-        let (count, _set_count) = signal(0_i32);
+        let (count, _set_count) = signal(0_i32).split();
         // Phase 7-Φ.B: macro no longer auto-wraps kwargs. For
         // reactive numeric → string interpolation, derive a
         // `ReadSignal<String>` via `computed`. Passes through as
@@ -487,7 +487,7 @@ fn dynamic_value_renders_initial_via_effect() {
 #[test]
 fn dynamic_value_updates_on_signal_write() {
     with_recorder_and_owner(|log| {
-        let (count, set_count) = signal(0_i32);
+        let (count, set_count) = signal(0_i32).split();
         let label = computed(move || count.get().to_string());
         let _h = render! {
             text(value: label)
@@ -512,7 +512,7 @@ fn dynamic_value_updates_on_signal_write() {
 #[test]
 fn dynamic_style_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
-        let (color, set_color) = signal("red".to_string());
+        let (color, set_color) = signal("red".to_string()).split();
         // `format!` expression captured inside `computed` so the
         // closure (and the underlying signal read) re-runs on
         // change.
@@ -538,7 +538,7 @@ fn dynamic_style_re_runs_on_dep_change() {
 #[test]
 fn dynamic_attribute_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
-        let (src, set_src) = signal("a.png".to_string());
+        let (src, set_src) = signal("a.png".to_string()).split();
         // Already a `ReadSignal<String>` — pass the handle directly,
         // it converts to `Signal::Dynamic`.
         let _h = render! {
@@ -583,7 +583,7 @@ fn mixed_static_and_dynamic_children_via_raw_text() {
     // reading the signal. Same op-stream shape the legacy
     // `<text>"count=" {count.get()}</text>` produced.
     with_recorder_and_owner(|log| {
-        let (count, _set) = signal(7_i32);
+        let (count, _set) = signal(7_i32).split();
         let count_label = computed(move || count.get().to_string());
         let _h = render! {
             text {
@@ -606,8 +606,8 @@ fn mixed_static_and_dynamic_children_via_raw_text() {
 #[test]
 fn signal_only_updates_elements_that_read_it() {
     with_recorder_and_owner(|log| {
-        let (a, set_a) = signal(0_i32);
-        let (b, _set_b) = signal(100_i32);
+        let (a, set_a) = signal(0_i32).split();
+        let (b, _set_b) = signal(100_i32).split();
         let a_label = computed(move || a.get().to_string());
         let b_label = computed(move || b.get().to_string());
         let _h = render! {
@@ -637,7 +637,7 @@ fn signal_only_updates_elements_that_read_it() {
 #[test]
 fn show_renders_children_when_true() {
     with_recorder_and_owner(|log| {
-        let (cond, _set) = signal(true);
+        let (cond, _set) = signal(true).split();
         let _h = render! {
             view {
                 Show(when: move || cond.get()) {
@@ -660,7 +660,7 @@ fn show_renders_children_when_true() {
 #[test]
 fn show_renders_fallback_when_false() {
     with_recorder_and_owner(|log| {
-        let (cond, _set) = signal(false);
+        let (cond, _set) = signal(false).split();
         let _h = render! {
             view {
                 Show(
@@ -686,7 +686,7 @@ fn show_renders_fallback_when_false() {
 #[test]
 fn show_swaps_on_condition_flip() {
     with_recorder_and_owner(|log| {
-        let (cond, set_cond) = signal(true);
+        let (cond, set_cond) = signal(true).split();
         let _h = render! {
             view {
                 Show(
@@ -717,7 +717,7 @@ fn show_swaps_on_condition_flip() {
 #[test]
 fn show_without_fallback_renders_nothing_when_false() {
     with_recorder_and_owner(|log| {
-        let (cond, _set) = signal(false);
+        let (cond, _set) = signal(false).split();
         let _h = render! {
             view {
                 Show(when: move || cond.get()) {
@@ -752,7 +752,8 @@ fn for_renders_initial_items() {
             Item { id: 1, name: "a" },
             Item { id: 2, name: "b" },
             Item { id: 3, name: "c" },
-        ]);
+        ])
+        .split();
         let _h = render! {
             view {
                 ForEach(
@@ -781,7 +782,7 @@ fn for_renders_initial_items() {
 #[test]
 fn for_adds_new_items_on_update() {
     with_recorder_and_owner(|log| {
-        let (items, set_items) = signal(vec![1_u32, 2]);
+        let (items, set_items) = signal(vec![1_u32, 2]).split();
         let _h = render! {
             view {
                 ForEach(
@@ -822,7 +823,7 @@ fn for_adds_new_items_on_update() {
 #[test]
 fn for_reorders_existing_items_visually() {
     with_recorder_and_owner(|log| {
-        let (items, set_items) = signal(vec![1_u32, 2, 3]);
+        let (items, set_items) = signal(vec![1_u32, 2, 3]).split();
         let _h = render! {
             view {
                 ForEach(
@@ -852,7 +853,7 @@ fn for_reorders_existing_items_visually() {
 #[test]
 fn for_removes_items_on_update() {
     with_recorder_and_owner(|log| {
-        let (items, set_items) = signal(vec![1_u32, 2, 3]);
+        let (items, set_items) = signal(vec![1_u32, 2, 3]).split();
         let _h = render! {
             view {
                 ForEach(

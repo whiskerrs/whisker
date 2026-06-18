@@ -333,20 +333,23 @@ impl<T: 'static> ArcWriteSignal<T> {
     }
 }
 
-/// Allocate a fresh Arc-backed signal and split into read/write
-/// halves. The Arc analog of [`signal`](super::signal::signal):
+/// Allocate a fresh Arc-backed signal as a combined [`ArcRwSignal`].
+/// The Arc analog of [`signal`](super::signal::signal):
 ///
 /// ```ignore
 /// use whisker_runtime::reactive::arc_signal;
 ///
-/// let (count, set_count) = arc_signal(0_i32);
-/// set_count.set(1);
+/// let count = arc_signal(0_i32);
+/// count.set(1);
 /// assert_eq!(count.get(), 1);
 /// ```
 ///
-/// The signal lives until both returned halves and any clone of
-/// them are dropped — process lifetime if either ends up in a
-/// `static` slot.
-pub fn arc_signal<T: 'static>(initial: T) -> (ArcReadSignal<T>, ArcWriteSignal<T>) {
-    ArcRwSignal::new(initial).split()
+/// For the split capability, call [`ArcRwSignal::split`] for the
+/// `(read, write)` pair, or [`ArcRwSignal::read_only`] /
+/// [`ArcRwSignal::write_only`] for one capability.
+///
+/// The signal lives until the returned handle and any clone of it
+/// are dropped — process lifetime if it ends up in a `static` slot.
+pub fn arc_signal<T: 'static>(initial: T) -> ArcRwSignal<T> {
+    ArcRwSignal::new(initial)
 }

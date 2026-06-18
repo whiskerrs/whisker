@@ -38,7 +38,7 @@ use super::{untrack, with_runtime};
 /// unchanged costs nothing downstream.
 ///
 /// ```ignore
-/// let (count, _set) = signal(0_i32);
+/// let count = signal(0_i32);
 /// let doubled: ReadSignal<i32> = computed(move || count.get() * 2);
 /// assert_eq!(doubled.get(), 0);
 /// ```
