@@ -146,7 +146,13 @@ impl Printer<'_> {
         }
         if let Some(s) = self.map.slice(span) {
             // Trim surrounding whitespace; internal formatting is kept.
-            s.trim().to_string()
+            // For multi-line values, dedent continuation lines to column 0
+            // (matching the [`ExprMap`] contract) so the surrounding
+            // [`reindent`] call adds exactly the kwarg-column prefix and
+            // re-formatting is a fixed point. Without this, slicing an
+            // already-indented value and re-indenting it compounds the
+            // indentation on every pass (non-idempotent).
+            dedent_continuation(s.trim())
         } else {
             tokens.to_token_stream().to_string()
         }
@@ -475,6 +481,42 @@ fn brace_width(children: &[Node]) -> usize {
     }
 }
 
+/// Dedent the continuation (2nd..=Nth) lines of a multi-line fragment by
+/// their common leading-whitespace amount, so they sit at column 0
+/// relative to the first line. The first line is already at column 0 (the
+/// caller trimmed it). This makes the later [`reindent`] idempotent: a
+/// value re-sliced from already-formatted output has its kwarg-column
+/// indentation stripped back off before being re-indented.
+///
+/// Lines that are entirely whitespace are ignored when computing the
+/// common indent (and emitted empty) so they don't force the common
+/// dedent to zero.
+fn dedent_continuation(fragment: &str) -> String {
+    if !fragment.contains('\n') {
+        return fragment.to_string();
+    }
+    let mut lines = fragment.split('\n');
+    let first = lines.next().unwrap_or("");
+    let rest: Vec<&str> = lines.collect();
+    // Common leading-whitespace width across non-blank continuation lines.
+    let common = rest
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    let mut out = String::from(first);
+    for line in rest {
+        out.push('\n');
+        if line.trim().is_empty() {
+            // keep blank lines blank
+        } else {
+            out.push_str(&line[common..]);
+        }
+    }
+    out
+}
+
 /// Re-indent the 2nd..=Nth lines of a (possibly multi-line) fragment so
 /// continuation lines sit under `prefix`. The first line is left as-is
 /// (the caller already emitted `prefix` before it).
@@ -500,4 +542,38 @@ fn reindent(fragment: &str, prefix: &str) -> String {
 fn span_of(expr: &syn::Expr) -> Span {
     use syn::spanned::Spanned;
     expr.span()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedent_single_line_unchanged() {
+        assert_eq!(dedent_continuation("foo"), "foo");
+    }
+
+    #[test]
+    fn dedent_strips_common_continuation_indent() {
+        let v = "css!(\n            a: 1,\n            b: 2,\n        )";
+        // First line at col 0; continuation lines share 8-space common
+        // indent (the `        )` closing line) — all stripped by 8.
+        let out = dedent_continuation(v);
+        assert_eq!(out, "css!(\n    a: 1,\n    b: 2,\n)");
+    }
+
+    #[test]
+    fn dedent_is_idempotent() {
+        let v = "css!(\n            a: 1,\n        )";
+        let once = dedent_continuation(v);
+        let twice = dedent_continuation(&once);
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn dedent_keeps_blank_lines_blank() {
+        let v = "a\n        b\n\n        c";
+        let out = dedent_continuation(v);
+        assert_eq!(out, "a\nb\n\nc");
+    }
 }

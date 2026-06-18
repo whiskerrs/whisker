@@ -325,6 +325,19 @@ fn reformat_macros_inner(
     opts: &FmtOptions,
     exprfmt: Option<&ExprFormatter>,
 ) -> Result<String> {
+    reformat_macros_pass(rust_src, opts, exprfmt, true)
+}
+
+/// One macro-reformatting pass. `verify` enables the comment-preservation
+/// fail-safe (present-check + idempotency). The idempotency check re-runs
+/// this pass with `verify = false` so the guard does NOT recurse into
+/// itself (which would be unbounded for nested / large bodies).
+fn reformat_macros_pass(
+    rust_src: &str,
+    opts: &FmtOptions,
+    exprfmt: Option<&ExprFormatter>,
+    verify: bool,
+) -> Result<String> {
     // Parse the whole file just to confirm it is valid Rust; the actual
     // macro discovery walks the raw TokenStream (so we keep precise
     // span byte-offsets relative to `rust_src`).
@@ -341,7 +354,9 @@ fn reformat_macros_inner(
     // every macro, then splice from the end backwards so earlier
     // offsets stay valid.
     let mut edits: Vec<MacroEdit> = Vec::new();
-    collect_macro_edits(tokens, &file_map, rust_src, opts, exprfmt, &mut edits)?;
+    collect_macro_edits(
+        tokens, &file_map, rust_src, opts, exprfmt, verify, &mut edits,
+    )?;
 
     edits.sort_by_key(|e| e.open_byte);
     // Splice from the end so earlier byte offsets remain valid.
@@ -363,12 +378,14 @@ struct MacroEdit {
 /// Recursively walk a token stream, finding `render! { … }` /
 /// `css! { … }` (or `(…)` / `[…]`) invocations and queueing an edit for
 /// each body.
+#[allow(clippy::too_many_arguments)]
 fn collect_macro_edits(
     tokens: TokenStream,
     file_map: &SourceMap,
     rust_src: &str,
     opts: &FmtOptions,
     exprfmt: Option<&ExprFormatter>,
+    verify: bool,
     edits: &mut Vec<MacroEdit>,
 ) -> Result<()> {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
@@ -383,7 +400,7 @@ fn collect_macro_edits(
             {
                 if let TokenTree::Group(group) = &trees[i + 2] {
                     if let Some(edit) =
-                        macro_body_edit(&name, group, file_map, rust_src, opts, exprfmt)?
+                        macro_body_edit(&name, group, file_map, rust_src, opts, exprfmt, verify)?
                     {
                         edits.push(edit);
                     }
@@ -404,7 +421,15 @@ fn collect_macro_edits(
         }
         // Recurse into any group we didn't treat as a macro body.
         if let TokenTree::Group(group) = &trees[i] {
-            collect_macro_edits(group.stream(), file_map, rust_src, opts, exprfmt, edits)?;
+            collect_macro_edits(
+                group.stream(),
+                file_map,
+                rust_src,
+                opts,
+                exprfmt,
+                verify,
+                edits,
+            )?;
         }
         i += 1;
     }
@@ -414,6 +439,7 @@ fn collect_macro_edits(
 /// Build the splice edit for a single macro body group, or `None` if
 /// the body should be left untouched (empty, comment-bearing, or
 /// re-parse failure).
+#[allow(clippy::too_many_arguments)]
 fn macro_body_edit(
     macro_name: &str,
     group: &proc_macro2::Group,
@@ -421,6 +447,7 @@ fn macro_body_edit(
     rust_src: &str,
     opts: &FmtOptions,
     exprfmt: Option<&ExprFormatter>,
+    verify: bool,
 ) -> Result<Option<MacroEdit>> {
     let span = group.span();
     // Byte offsets of the WHOLE group (including delimiters).
@@ -535,7 +562,7 @@ fn macro_body_edit(
     // If reattaching the comments could possibly have dropped one, or the
     // result isn't a fixed point, leave the body UNTOUCHED (today's old
     // behavior — no regression, no comment ever lost).
-    if !grammar_comments.is_empty() {
+    if verify && !grammar_comments.is_empty() {
         // (1) No comment lost: every recovered comment's text must appear
         // in the formatted output, counting duplicates.
         if !all_comments_present(&replacement, &grammar_comments) {
@@ -613,11 +640,14 @@ fn macro_replacement_is_fixed_point(
     // (base_indent) nested-block-free wrapper: a single fn plus manual
     // indent prefix on the macro line works because rustfmt isn't run.
     let src = format!("fn _w() {{\n{indent}{macro_name}! {{{replacement}}}\n}}\n");
-    let once = match reformat_macros_inner(&src, opts, None) {
+    // Re-run WITHOUT the verify guard (`verify = false`) so this check does
+    // not recurse into itself — otherwise each fixed-point check would
+    // spawn another, blowing the stack on large / nested bodies.
+    let once = match reformat_macros_pass(&src, opts, None, false) {
         Ok(s) => s,
         Err(_) => return false,
     };
-    let twice = match reformat_macros_inner(&once, opts, None) {
+    let twice = match reformat_macros_pass(&once, opts, None, false) {
         Ok(s) => s,
         Err(_) => return false,
     };
@@ -1131,5 +1161,43 @@ mod comment_tests {
     fn wallet_style_section_comments() {
         let input = "fn d() -> Element {\n    render! {\n        view {\n            // \u{2500}\u{2500} Header \u{2500}\u{2500}\n            text(value: \"hi\")\n            // \u{2500}\u{2500} Body \u{2500}\u{2500}\n            text(value: \"yo\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
+    }
+
+    // 17. Wallet-faithful reduction: a `render!` with section comments,
+    // irregular OVER-INDENTATION (page→view migration leftovers), and a
+    // user-component call whose closing `)` sits on its own line at a weird
+    // column. This is the exact shape that previously fell back (the body
+    // got NO formatting). It must now actually reflow — comments kept on
+    // their own lines at the corrected indent — AND be idempotent.
+    #[test]
+    fn wallet_faithful_reduction_formats_and_preserves_comments() {
+        let input = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n        view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false\n    )\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n        }\n        }\n    }\n}\n";
+        let expected = "fn d() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        ) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
+        let out = fmt(input);
+        // The body MUST be reformatted (not the fallback), with the section
+        // comment preserved at the right indent.
+        assert_ne!(out, input, "must not fall back:\n{out}");
+        assert_eq!(out, expected, "got:\n{out}");
+        // And it must be a fixed point.
+        assert_eq!(fmt(&out), out, "not idempotent");
+    }
+
+    // 18. Regression: a multi-line embedded-expr value (e.g. a wrapped
+    // `css!( … )` kwarg) must format idempotently via the rustfmt-free
+    // core — the verbatim slice is dedented before re-indenting so the
+    // continuation lines don't gain indentation on every pass. This is the
+    // bug that made the whole wallet body fail the idempotency fail-safe.
+    #[test]
+    fn multiline_expr_value_is_idempotent() {
+        let input = "fn s() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n            display: Display::Flex,\n        ))\n    }\n}\n";
+        let once = fmt(input);
+        let twice = fmt(&once);
+        assert_eq!(
+            once, twice,
+            "not idempotent:\nonce:\n{once}\ntwice:\n{twice}"
+        );
+        // The css! values survive verbatim.
+        assert!(once.contains("flex_grow: 1.0,"), "got:\n{once}");
+        assert!(once.contains("background_color: BG,"), "got:\n{once}");
     }
 }
