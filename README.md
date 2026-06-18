@@ -36,24 +36,25 @@ fn app() -> Element {
 fn counter() -> Element {
     let count = RwSignal::new(0);
     render! {
-        view(
-            style: css!(
-                flex_grow: 1.0,
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                background_color: Color::hex(0x0B0B0F),
-            )
-            .raw("gap", "12px"),
-        ) {
+        view(style: css!(
+            flex_grow: 1.0,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            gap: px(12),
+            background_color: Color::hex(0x0B0B0F),
+        )) {
             text(
                 value: computed(move || format!("Count: {}", count.get())),
                 style: css!(color: Color::hex(0xFFFFFF), font_size: px(28)),
             )
             view(
-                style: css!(background_color: Color::hex(0x7C5CFF), border_radius: px(10))
-                    .raw("padding", "10px 20px"),
+                style: css!(
+                    padding: (px(10), px(20)),
+                    border_radius: px(10),
+                    background_color: Color::hex(0x7C5CFF),
+                ),
                 on_tap: move |_| count.set(count.get() + 1),
             ) {
                 text(value: "+1", style: css!(color: Color::hex(0xFFFFFF)))
