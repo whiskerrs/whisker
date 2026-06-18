@@ -81,144 +81,189 @@ fn root() -> Element {
     render! {
         // Whisker provides the root `page`; this root `view` fills it
         // (`flex_grow: 1`) and carries the app background + layout.
-        view(style: css!(
-            flex_grow: 1.0,
-            background_color: BG,
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-        )) {
-        scroll_view(
+        view(
             style: css!(
                 flex_grow: 1.0,
-                width: percent(100),
-            ),
-            scroll_orientation: ScrollOrientation::Vertical,
-            scroll_bar_enable: false,
-            bounces: true,
-        ) {
-            view(style: css!(
+                background_color: BG,
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
-                padding: px(20),
-                padding_top: px(64),
-                padding_bottom: px(40),
-            )) {
-                // ── Header ───────────────────────────────────────────
-                view(style: css!(
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::SpaceBetween,
-                    margin_bottom: px(20),
-                )) {
-                    view(style: css!(display: Display::Flex, flex_direction: FlexDirection::Column)) {
-                        text(
-                            style: css!(color: muted(), font_size: px(13), margin_bottom: px(2)),
-                            value: "Good morning",
-                        )
-                        text(
-                            style: css!(color: TEXT, font_size: px(22), font_weight: FontWeight::Bold),
-                            value: USER,
-                        )
-                    }
-                    view(style: css!(
-                        width: px(40),
-                        height: px(40),
-                        border_radius: px(20),
-                        background_color: SURFACE,
+            ),
+        ) {
+            scroll_view(
+                style: css!(
+                    flex_grow: 1.0,
+                    width: percent(100),
+                ),
+                scroll_orientation: ScrollOrientation::Vertical,
+                scroll_bar_enable: false,
+                bounces: true,
+            ) {
+                view(
+                    style: css!(
                         display: Display::Flex,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                    )) {
-                        Icon(svg: lucide::Settings, color: "#9A9AA2", size: "20")
-                    }
-                }
-
-                // ── Balance card ─────────────────────────────────────
-                view(style: css!(
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Column,
-                    border_radius: px(CARD_RADIUS),
-                    padding: px(22),
-                    margin_bottom: px(22),
-                ).raw("background", CARD_GRADIENT)) {
-                    view(style: css!(
-                        display: Display::Flex,
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::SpaceBetween,
-                    )) {
-                        text(
-                            style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(14)),
-                            value: "Total balance",
-                        )
-                        view(on_tap: move |_| hidden.set(!hidden.get())) {
-                            Icon(svg: eye_icon, color: "#FFFFFF", size: "18")
+                        flex_direction: FlexDirection::Column,
+                        padding: px(20),
+                        padding_top: px(64),
+                        padding_bottom: px(40),
+                    ),
+                ) {
+                    // ── Header ───────────────────────────────────────────
+                    view(
+                        style: css!(
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::SpaceBetween,
+                            margin_bottom: px(20),
+                        ),
+                    ) {
+                        view(
+                            style: css!(display: Display::Flex, flex_direction: FlexDirection::Column),
+                        ) {
+                            text(
+                                style: css!(color: muted(), font_size: px(13), margin_bottom: px(2)),
+                                value: "Good morning",
+                            )
+                            text(
+                                style: css!(color: TEXT, font_size: px(22), font_weight: FontWeight::Bold),
+                                value: USER,
+                            )
+                        }
+                        view(
+                            style: css!(
+                                width: px(40),
+                                height: px(40),
+                                border_radius: px(20),
+                                background_color: SURFACE,
+                                display: Display::Flex,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                            ),
+                        ) {
+                            Icon(svg: lucide::Settings, color: "#9A9AA2", size: "20")
                         }
                     }
-                    text(
+                    // ── Balance card ─────────────────────────────────────
+                    view(
                         style: css!(
-                            color: Color::hex(0xFFFFFF),
-                            font_size: px(38),
-                            font_weight: FontWeight::Bold,
-                            margin_top: px(10),
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Column,
+                            border_radius: px(CARD_RADIUS),
+                            padding: px(22),
+                            margin_bottom: px(22),
+                        )
+                        .raw("background", CARD_GRADIENT),
+                    ) {
+                        view(
+                            style: css!(
+                                display: Display::Flex,
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::SpaceBetween,
+                            ),
+                        ) {
+                            text(
+                                style: css!(color: Color::rgba(255, 255, 255, 0.85), font_size: px(14)),
+                                value: "Total balance",
+                            )
+                            view(on_tap: move |_| hidden.set(!hidden.get())) {
+                                Icon(svg: eye_icon, color: "#FFFFFF", size: "18")
+                            }
+                        }
+                        text(
+                            style: css!(
+                                color: Color::hex(0xFFFFFF),
+                                font_size: px(38),
+                                font_weight: FontWeight::Bold,
+                                margin_top: px(10),
+                            ),
+                            value: balance_text,
+                        )
+                        text(
+                            style: css!(color: Color::rgba(255, 255, 255, 0.9), font_size: px(13), margin_top: px(6)),
+                            value: delta_text,
+                        )
+                    }
+                    // ── Segmented control ────────────────────────────────
+                    view(
+                        style: css!(
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Row,
+                            background_color: SURFACE,
+                            border_radius: px(14),
+                            padding: px(4),
+                            margin_bottom: px(24),
                         ),
-                        value: balance_text,
-                    )
+                    ) {
+                        Segment(label: "Day", index: 0usize, selected: selected)
+                        Segment(label: "Week", index: 1usize, selected: selected)
+                        Segment(label: "Month", index: 2usize, selected: selected)
+                    }
+                    // ── Spending bar chart ───────────────────────────────
                     text(
-                        style: css!(color: Color::rgba(255, 255, 255, 0.9), font_size: px(13), margin_top: px(6)),
-                        value: delta_text,
+                        style: css!(color: TEXT, font_size: px(17), font_weight: FontWeight::Bold, margin_bottom: px(14)),
+                        value: "Spending",
+                    )
+                    view(
+                        style: css!(
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::FlexEnd,
+                            justify_content: JustifyContent::SpaceBetween,
+                            height: px(76),
+                            margin_bottom: px(28),
+                        ),
+                    ) {
+                        Bar(height: 30, active: false)
+                        Bar(height: 18, active: false)
+                        Bar(height: 58, active: false)
+                        Bar(height: 24, active: false)
+                        Bar(height: 44, active: false)
+                        Bar(height: 70, active: true)
+                        Bar(height: 14, active: false)
+                    }
+                    // ── Recent transactions ──────────────────────────────
+                    text(
+                        style: css!(color: TEXT, font_size: px(17), font_weight: FontWeight::Bold, margin_bottom: px(10)),
+                        value: "Recent",
+                    )
+                    Tx(
+                        icon: lucide::ShoppingCart,
+                        name: "Groceries",
+                        sub: "Whole Foods",
+                        amount: "42.10",
+                        positive: false,
+                    )
+                    Tx(
+                        icon: lucide::Coffee,
+                        name: "Coffee",
+                        sub: "Blue Bottle",
+                        amount: "5.20",
+                        positive: false,
+                    )
+                    Tx(
+                        icon: lucide::Banknote,
+                        name: "Salary",
+                        sub: "Acme Inc",
+                        amount: "3,200.00",
+                        positive: true,
+                    )
+                    Tx(
+                        icon: lucide::Music,
+                        name: "Spotify",
+                        sub: "Subscription",
+                        amount: "10.99",
+                        positive: false,
+                    )
+                    Tx(
+                        icon: lucide::Car,
+                        name: "Ride",
+                        sub: "Uber",
+                        amount: "18.40",
+                        positive: false,
                     )
                 }
-
-                // ── Segmented control ────────────────────────────────
-                view(style: css!(
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    background_color: SURFACE,
-                    border_radius: px(14),
-                    padding: px(4),
-                    margin_bottom: px(24),
-                )) {
-                    Segment(label: "Day", index: 0usize, selected: selected)
-                    Segment(label: "Week", index: 1usize, selected: selected)
-                    Segment(label: "Month", index: 2usize, selected: selected)
-                }
-
-                // ── Spending bar chart ───────────────────────────────
-                text(
-                    style: css!(color: TEXT, font_size: px(17), font_weight: FontWeight::Bold, margin_bottom: px(14)),
-                    value: "Spending",
-                )
-                view(style: css!(
-                    display: Display::Flex,
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::FlexEnd,
-                    justify_content: JustifyContent::SpaceBetween,
-                    height: px(76),
-                    margin_bottom: px(28),
-                )) {
-                    Bar(height: 30, active: false)
-                    Bar(height: 18, active: false)
-                    Bar(height: 58, active: false)
-                    Bar(height: 24, active: false)
-                    Bar(height: 44, active: false)
-                    Bar(height: 70, active: true)
-                    Bar(height: 14, active: false)
-                }
-
-                // ── Recent transactions ──────────────────────────────
-                text(
-                    style: css!(color: TEXT, font_size: px(17), font_weight: FontWeight::Bold, margin_bottom: px(10)),
-                    value: "Recent",
-                )
-                Tx(icon: lucide::ShoppingCart, name: "Groceries", sub: "Whole Foods", amount: "42.10", positive: false)
-                Tx(icon: lucide::Coffee, name: "Coffee", sub: "Blue Bottle", amount: "5.20", positive: false)
-                Tx(icon: lucide::Banknote, name: "Salary", sub: "Acme Inc", amount: "3,200.00", positive: true)
-                Tx(icon: lucide::Music, name: "Spotify", sub: "Subscription", amount: "10.99", positive: false)
-                Tx(icon: lucide::Car, name: "Ride", sub: "Uber", amount: "18.40", positive: false)
             }
-        }
         }
     }
 }
@@ -239,7 +284,11 @@ fn segment(label: &'static str, index: usize, selected: RwSignal<usize>) -> Elem
             display: Display::Flex,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            background_color: if on { Color::hex(0xFF5CFF) } else { Color::rgba(0, 0, 0, 0.0) },
+            background_color: if on {
+                Color::hex(0xFF5CFF)
+            } else {
+                Color::rgba(0, 0, 0, 0.0)
+            },
         )
         .to_css_string()
     });
@@ -248,7 +297,11 @@ fn segment(label: &'static str, index: usize, selected: RwSignal<usize>) -> Elem
         css!(
             font_size: px(14),
             font_weight: FontWeight::Numeric(600),
-            color: if on { Color::hex(0xFFFFFF) } else { muted() },
+            color: if on {
+                Color::hex(0xFFFFFF)
+            } else {
+                muted()
+            },
         )
         .to_css_string()
     });
@@ -270,12 +323,14 @@ fn bar(height: i32, active: bool) -> Element {
         Color::rgba(124, 92, 255, 0.25)
     };
     render! {
-        view(style: css!(
-            width: px(26),
-            height: px(height),
-            border_radius: px(7),
-            background_color: color,
-        )) {}
+        view(
+            style: css!(
+                width: px(26),
+                height: px(height),
+                border_radius: px(7),
+                background_color: color,
+            ),
+        )
     }
 }
 
@@ -292,29 +347,38 @@ fn tx(
     let amount_color = if positive { POSITIVE } else { NEGATIVE };
     let amount_text = format!("{}{CURRENCY}{}", if positive { "+" } else { "-" }, amount);
     render! {
-        view(style: css!(
-            display: Display::Flex,
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            background_color: SURFACE,
-            border_radius: px(16),
-            padding: px(12),
-            margin_bottom: px(10),
-        )) {
-            view(style: css!(
-                width: px(40),
-                height: px(40),
-                border_radius: px(12),
-                background_color: Color::rgba(124, 92, 255, 0.18),
+        view(
+            style: css!(
                 display: Display::Flex,
+                flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                margin_right: px(12),
-            )) {
+                background_color: SURFACE,
+                border_radius: px(16),
+                padding: px(12),
+                margin_bottom: px(10),
+            ),
+        ) {
+            view(
+                style: css!(
+                    width: px(40),
+                    height: px(40),
+                    border_radius: px(12),
+                    background_color: Color::rgba(124, 92, 255, 0.18),
+                    display: Display::Flex,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    margin_right: px(12),
+                ),
+            ) {
                 Icon(svg: icon, color: "#B9A3FF", size: "20")
             }
-            view(style: css!(display: Display::Flex, flex_direction: FlexDirection::Column, flex_grow: 1.0)) {
-                text(style: css!(color: TEXT, font_size: px(15), font_weight: FontWeight::Numeric(600)), value: name)
+            view(
+                style: css!(display: Display::Flex, flex_direction: FlexDirection::Column, flex_grow: 1.0),
+            ) {
+                text(
+                    style: css!(color: TEXT, font_size: px(15), font_weight: FontWeight::Numeric(600)),
+                    value: name,
+                )
                 text(style: css!(color: muted(), font_size: px(12), margin_top: px(2)), value: sub)
             }
             text(
