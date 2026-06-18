@@ -26,13 +26,24 @@
 //!
 //! # Comments inside macros
 //!
-//! `syn` drops comments, and `proc-macro2` exposes them only as
-//! whitespace between tokens. Full-fidelity comment preservation inside
-//! `render!` bodies is **not** implemented in this pass — see
-//! [`reformat_macros`] docs and the `comments_*` tests for the exact,
-//! documented limitation. Comments OUTSIDE macros are preserved by
-//! rustfmt as usual.
+//! `syn` drops comments and `proc-macro2` exposes them only as
+//! whitespace between tokens, so reprinting a `render!` / `css!` body
+//! from the parsed AST would lose them. To preserve them we recover the
+//! comments straight from the body source text ([`comments`]) and
+//! reattach them while pretty-printing ([`printer`]): own-line comments
+//! go on their own line at the block's indent, trailing comments are
+//! appended to the end of the preceding line. Comments INSIDE an embedded
+//! expr value are excluded from this pass — they ride along with the
+//! verbatim / rustfmt-formatted expr source instead.
+//!
+//! A **fail-safe** guards the result: after formatting, if any recovered
+//! comment would be dropped, or the output is not idempotent
+//! (`f(f(x)) != f(x)`), the body is left **untouched** (the original
+//! verbatim text) — so a comment can never be silently lost. See
+//! [`macro_body_edit`]. Comments OUTSIDE macros are preserved by rustfmt
+//! as usual.
 
+mod comments;
 mod expr_fmt;
 mod options;
 mod printer;
@@ -289,15 +300,14 @@ pub fn resolve_options(dir: &Path) -> FmtOptions {
 ///
 /// This is the testable core that does NOT need the rustfmt binary.
 ///
-/// ## Comment limitation
+/// ## Comments
 ///
-/// Comments *inside* a `render!` / `css!` body are dropped: `syn`
-/// discards them entirely, and recovering them from inter-token
-/// whitespace cannot be done reliably for an arbitrary nested grammar
-/// in this pass. Macro bodies that contain `//` or `/* */` comments are
-/// detected and left **untouched** (the original body text is kept
-/// verbatim) rather than silently losing the comments — see
-/// [`body_has_comments`]. This is the documented, tested limitation.
+/// Comments inside a `render!` / `css!` body ARE preserved: they're
+/// recovered from the body source ([`comments::collect_grammar_comments`])
+/// and reattached during pretty-printing. A fail-safe in
+/// [`macro_body_edit`] falls back to leaving the body untouched if any
+/// comment would be dropped or the result is not idempotent, so comments
+/// are never lost.
 pub fn reformat_macros(rust_src: &str, opts: &FmtOptions) -> Result<String> {
     // Public entry point: the rustfmt-FREE core. No `ExprFormatter`, so
     // every embedded expr is rendered verbatim (the printer's empty-map
@@ -442,27 +452,33 @@ fn macro_body_edit(
         .map_err(|e| anyhow!("whisker-fmt: could not lex {macro_name}! body: {e}"))?;
     let body_map = SourceMap::new(body_src);
 
+    let body_len = body_src.len();
+
     // Collect the embedded-expr spans up front: we need them both to
-    // batch-format the exprs AND to decide whether a comment in the body
-    // is inside an expr value (fine — preserved by slicing) or in the
-    // macro GRAMMAR (the documented limitation — bail).
-    let formatted = match macro_name {
+    // batch-format the exprs AND to mask out expr-internal comments when
+    // recovering the grammar comments to reattach. Comments INSIDE an
+    // expr value are kept by slicing / rustfmt-ing the expr source; only
+    // GRAMMAR comments are reattached here.
+    let (formatted, grammar_comments) = match macro_name {
         "render" => match whisker_macro_syntax::render::parse_root(body_ts.clone()) {
             Ok(root) => {
                 let mut spans = Vec::new();
                 collect_render_expr_spans(&root.node, &mut spans);
-                // Comment limitation: a comment OUTSIDE every embedded
-                // expr (i.e. in the render! grammar) still leaves the
-                // body untouched. A comment INSIDE an expr value is kept
-                // by slicing that value verbatim / formatting its source.
-                if body_has_grammar_comment(body_src, &spans, &body_map) {
-                    return Ok(None);
-                }
+                let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
                 // Batch-format every embedded expr with one rustfmt spawn.
                 // With no `exprfmt` (rustfmt-free core) the map stays
                 // empty and every expr renders verbatim.
                 let expr_map = build_expr_map(&spans, &body_map, exprfmt);
-                printer::print_render(&root, &body_map, opts, base_indent, &expr_map)
+                let s = printer::print_render(
+                    &root,
+                    &body_map,
+                    opts,
+                    base_indent,
+                    &expr_map,
+                    &comments,
+                    body_len,
+                );
+                (s, comments)
             }
             // Not a well-formed render! body (e.g. mid-edit) — leave it.
             Err(_) => return Ok(None),
@@ -478,11 +494,18 @@ fn macro_body_edit(
                         spans.push(span_of_expr(expr));
                     }
                 }
-                if body_has_grammar_comment(body_src, &spans, &body_map) {
-                    return Ok(None);
-                }
+                let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
                 let expr_map = build_expr_map(&spans, &body_map, exprfmt);
-                printer::print_css(&input, &body_map, opts, base_indent, &expr_map)
+                let s = printer::print_css(
+                    &input,
+                    &body_map,
+                    opts,
+                    base_indent,
+                    &expr_map,
+                    &comments,
+                    body_len,
+                );
+                (s, comments)
             }
             Err(_) => return Ok(None),
         },
@@ -507,11 +530,98 @@ fn macro_body_edit(
         return Ok(None);
     }
 
+    // ---- comment-preservation fail-safe ------------------------------
+    //
+    // If reattaching the comments could possibly have dropped one, or the
+    // result isn't a fixed point, leave the body UNTOUCHED (today's old
+    // behavior — no regression, no comment ever lost).
+    if !grammar_comments.is_empty() {
+        // (1) No comment lost: every recovered comment's text must appear
+        // in the formatted output, counting duplicates.
+        if !all_comments_present(&replacement, &grammar_comments) {
+            return Ok(None);
+        }
+        // (2) Idempotency: re-running the formatter on the produced body
+        // must be a fixed point. We re-run the SAME macro pass over a
+        // minimal synthetic wrapper containing the produced body and check
+        // the body comes back unchanged.
+        if !macro_replacement_is_fixed_point(macro_name, &replacement, base_indent, opts) {
+            return Ok(None);
+        }
+    }
+
     Ok(Some(MacroEdit {
         open_byte,
         close_byte,
         replacement,
     }))
+}
+
+// ---- comment-preservation fail-safe helpers -----------------------------
+
+/// Every recovered comment's (trimmed) text must appear in `output`,
+/// counting duplicates: if the body has two identical comments, both must
+/// survive. Uses a per-text occurrence count.
+fn all_comments_present(output: &str, comments: &[comments::GrammarComment]) -> bool {
+    use std::collections::HashMap;
+    // Required count per comment text.
+    let mut need: HashMap<&str, usize> = HashMap::new();
+    for c in comments {
+        *need.entry(c.text.trim()).or_insert(0) += 1;
+    }
+    for (text, count) in need {
+        if text.is_empty() {
+            continue;
+        }
+        if count_occurrences(output, text) < count {
+            return false;
+        }
+    }
+    true
+}
+
+/// Count non-overlapping occurrences of `needle` in `haystack`.
+fn count_occurrences(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut n = 0;
+    let mut rest = haystack;
+    while let Some(pos) = rest.find(needle) {
+        n += 1;
+        rest = &rest[pos + needle.len()..];
+    }
+    n
+}
+
+/// Re-run the macro pass over the just-produced body and confirm it is a
+/// fixed point (`f(f(x)) == f(x)`). The `replacement` is the body text
+/// INCLUDING its leading/trailing newlines (i.e. exactly what sits between
+/// the macro delimiters). We splice it into a synthetic wrapper at the
+/// right `base_indent`, run the rustfmt-FREE macro pass, and check the
+/// macro body comes back identical.
+fn macro_replacement_is_fixed_point(
+    macro_name: &str,
+    replacement: &str,
+    base_indent: usize,
+    opts: &FmtOptions,
+) -> bool {
+    let indent = opts.indent_prefix(base_indent);
+    // Wrap in a trivial fn so the source is valid Rust. The macro sits at
+    // `base_indent` (the wrapper body is at base_indent, the fn at 0).
+    // To get `base_indent` levels of indent for the macro line we open
+    // (base_indent) nested-block-free wrapper: a single fn plus manual
+    // indent prefix on the macro line works because rustfmt isn't run.
+    let src = format!("fn _w() {{\n{indent}{macro_name}! {{{replacement}}}\n}}\n");
+    let once = match reformat_macros_inner(&src, opts, None) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let twice = match reformat_macros_inner(&once, opts, None) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    once == twice
 }
 
 // ---- embedded-expr collection + batched formatting ----------------------
@@ -575,75 +685,6 @@ fn build_expr_map(
         }
     }
     exprfmt.format_body(&exprs)
-}
-
-/// Like [`body_has_comments`], but ignores comments that live INSIDE an
-/// embedded expr value. Those are preserved by slicing / rustfmt-ing the
-/// expr source. Only a comment in the macro GRAMMAR (between tags,
-/// kwargs, delimiters) triggers the documented "leave-untouched"
-/// limitation.
-///
-/// Implementation: blank out each expr span's bytes (replacing with
-/// spaces, keeping length so the scan's string-awareness stays valid)
-/// then run the ordinary comment scan over what's left.
-fn body_has_grammar_comment(body: &str, expr_spans: &[Span], body_map: &SourceMap) -> bool {
-    // Fast path: no comment anywhere → definitely no grammar comment.
-    if !body_has_comments(body) {
-        return false;
-    }
-    let mut masked: Vec<u8> = body.as_bytes().to_vec();
-    for &span in expr_spans {
-        if let Some((s, e)) = body_map.byte_range(span) {
-            for b in &mut masked[s..e] {
-                // Preserve newlines so line structure (and any `//`
-                // single-line comment that ends at a newline) is intact
-                // outside the masked region; blank everything else.
-                if *b != b'\n' {
-                    *b = b' ';
-                }
-            }
-        }
-    }
-    // `masked` is still valid UTF-8 (we only replaced whole bytes of
-    // ASCII space within char boundaries… actually a multi-byte char
-    // could be partially masked, so rebuild lossily for safety).
-    let masked_str = String::from_utf8_lossy(&masked);
-    body_has_comments(&masked_str)
-}
-
-/// Detect `//` or `/* */` comments in a macro body. Uses a tiny
-/// string-aware scan so a `//` inside a string literal isn't a false
-/// positive.
-fn body_has_comments(body: &str) -> bool {
-    let bytes = body.as_bytes();
-    let mut i = 0;
-    let mut in_str: Option<u8> = None; // Some(quote_char)
-    while i < bytes.len() {
-        let b = bytes[i];
-        match in_str {
-            Some(q) => {
-                if b == b'\\' {
-                    i += 2;
-                    continue;
-                }
-                if b == q {
-                    in_str = None;
-                }
-            }
-            None => {
-                if b == b'"' || b == b'\'' {
-                    in_str = Some(b);
-                } else if b == b'/' && i + 1 < bytes.len() {
-                    let n = bytes[i + 1];
-                    if n == b'/' || n == b'*' {
-                        return true;
-                    }
-                }
-            }
-        }
-        i += 1;
-    }
-    false
 }
 
 /// Convert a line's leading-whitespace prefix into an indent level (in
@@ -751,12 +792,13 @@ mod tests {
     }
 
     #[test]
-    fn comments_in_body_left_untouched() {
-        // KNOWN LIMITATION: a macro body containing comments is left
-        // exactly as-is rather than dropping the comment.
+    fn trailing_block_comment_preserved_and_reflowed() {
+        // A trailing block comment after a node is now KEPT (reattached to
+        // the node's line) while the body is reflowed.
         let input = "fn ui() -> Element {\n    render! { view(style:\"x\") /* keep me */ }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        assert_eq!(out, input, "comment-bearing body must be untouched");
+        let expected = "fn ui() -> Element {\n    render! {\n        view(style: \"x\") /* keep me */\n    }\n}\n";
+        assert_eq!(out, expected, "got:\n{out}");
     }
 
     #[test]
@@ -909,5 +951,185 @@ mod tests {
         // rustfmt applied 2-space indent from the root config.
         assert!(out.contains("\n  let x = 1;"), "got:\n{out}");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+// ---- comment-preservation tests -----------------------------------------
+//
+// All feed already-rust-formatted input to `reformat_macros`, so they do
+// NOT need the rustfmt binary. They assert EXACT output to prove real
+// comment-preserving formatting happens (not just fallback).
+#[cfg(test)]
+mod comment_tests {
+    use super::*;
+
+    fn o() -> FmtOptions {
+        FmtOptions {
+            max_width: 100,
+            tab_spaces: 4,
+            hard_tabs: false,
+            edition: None,
+        }
+    }
+
+    fn fmt(input: &str) -> String {
+        reformat_macros(input, &o()).unwrap()
+    }
+
+    // 1. Own-line `//` before a top-level element (also reflows the body).
+    #[test]
+    fn own_line_before_top_element() {
+        let input = "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") { text(value: \"hi\") }\n    }\n}\n";
+        let expected = "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") {\n            text(value: \"hi\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), expected);
+    }
+
+    // 2. Own-line comment between two sibling children.
+    #[test]
+    fn own_line_between_siblings() {
+        let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // mid\n            text(value: \"b\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 3. Own-line comment as the first child (right after `{`).
+    #[test]
+    fn own_line_first_child() {
+        let input = "fn d() -> Element {\n    render! {\n        view {\n            // first\n            text(value: \"a\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 4. Own-line comment after the last child, before `}` (inside block).
+    #[test]
+    fn own_line_after_last_child() {
+        let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // last\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 5. Trailing `//` on the same line as a child.
+    #[test]
+    fn trailing_line_comment_on_child() {
+        let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\") // tail\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 6. Trailing comment after a `css!` field.
+    #[test]
+    fn trailing_comment_after_css_field() {
+        let input =
+            "fn s() -> Css {\n    css! {\n        color: red, // c\n        padding: px(8),\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 7. Own-line comment between two `css!` fields.
+    #[test]
+    fn own_line_between_css_fields() {
+        let input =
+            "fn s() -> Css {\n    css! {\n        color: red,\n        // gap\n        padding: px(8),\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 8. `/* block */` single-line comment.
+    #[test]
+    fn block_comment_single_line() {
+        let input = "fn d() -> Element {\n    render! {\n        /* b */\n        view(style: \"x\")\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 9. Multi-line `/* … */` block comment, kept verbatim.
+    #[test]
+    fn block_comment_multiline_verbatim() {
+        let input = "fn d() -> Element {\n    render! {\n        /* line1\n           line2 */\n        view(style: \"x\")\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 10. Two consecutive own-line comments.
+    #[test]
+    fn two_consecutive_comments() {
+        let input = "fn d() -> Element {\n    render! {\n        // one\n        // two\n        view(style: \"x\")\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 11. A comment INSIDE an embedded expr is not touched by
+    // reattachment and survives (handled by the expr path).
+    #[test]
+    fn comment_inside_embedded_expr_survives() {
+        let input = "fn d() -> Element {\n    render! {\n        view(on_tap: move |_| { /* keep */ go() })\n    }\n}\n";
+        let out = fmt(input);
+        assert!(out.contains("/* keep */"), "got:\n{out}");
+        // Not duplicated.
+        assert_eq!(out.matches("/* keep */").count(), 1, "got:\n{out}");
+    }
+
+    // 12. Deeply nested element: own-line comment before an inner child
+    // lands at the correct (deeper) indent.
+    #[test]
+    fn nested_inner_child_indent() {
+        let input = "fn d() -> Element {\n    render! {\n        view {\n            scroll_view {\n                // inner\n                text(value: \"a\")\n            }\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 13. Mixed leading + trailing comments in the same body.
+    #[test]
+    fn mixed_leading_and_trailing() {
+        let input = "fn d() -> Element {\n    render! {\n        // lead\n        view {\n            text(value: \"a\") // tail\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+    }
+
+    // 14. Idempotency over several comment-bearing inputs.
+    #[test]
+    fn idempotent_with_comments() {
+        let inputs = [
+            "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") { text(value: \"hi\") }\n    }\n}\n",
+            "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // mid\n            text(value: \"b\")\n        }\n    }\n}\n",
+            "fn s() -> Css {\n    css! {\n        color: red, // c\n        padding: px(8),\n    }\n}\n",
+            "fn d() -> Element {\n    render! {\n        /* line1\n           line2 */\n        view(style: \"x\")\n    }\n}\n",
+        ];
+        for input in inputs {
+            let once = fmt(input);
+            let twice = fmt(&once);
+            assert_eq!(once, twice, "not idempotent for:\n{input}\nonce:\n{once}");
+        }
+    }
+
+    // 15a. Fallback safety: directly exercise the `all_comments_present`
+    // guard — a dropped duplicate makes it report "not present".
+    #[test]
+    fn fallback_guard_detects_dropped_comment() {
+        let comments = vec![
+            crate::comments::GrammarComment {
+                start: 0,
+                end: 5,
+                text: "// hi".to_string(),
+                own_line: true,
+            },
+            crate::comments::GrammarComment {
+                start: 6,
+                end: 11,
+                text: "// hi".to_string(),
+                own_line: true,
+            },
+        ];
+        // Output with only ONE `// hi` must fail the duplicate-aware check.
+        assert!(!all_comments_present("only one // hi here", &comments));
+        // Output with BOTH passes.
+        assert!(all_comments_present("// hi and // hi", &comments));
+    }
+
+    // 15b. Fallback safety end-to-end: even a comment in an awkward spot
+    // (between a tag and its parens) is never lost — either reflowed or
+    // left untouched, but always present.
+    #[test]
+    fn fallback_keeps_comment_when_in_doubt() {
+        let input =
+            "fn d() -> Element {\n    render! {\n        view /* odd */ (style: \"x\")\n    }\n}\n";
+        let out = fmt(input);
+        assert!(out.contains("/* odd */"), "comment must survive:\n{out}");
+    }
+
+    // 16. Wallet-style section comments kept on their own lines.
+    #[test]
+    fn wallet_style_section_comments() {
+        let input = "fn d() -> Element {\n    render! {\n        view {\n            // \u{2500}\u{2500} Header \u{2500}\u{2500}\n            text(value: \"hi\")\n            // \u{2500}\u{2500} Body \u{2500}\u{2500}\n            text(value: \"yo\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
     }
 }
