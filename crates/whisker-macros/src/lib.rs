@@ -13,7 +13,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn};
+use syn::{ItemFn, parse_macro_input};
 
 mod component;
 mod css;
@@ -37,7 +37,7 @@ mod render;
 /// ```ignore
 /// fn app() -> Element { /* user body */ }
 ///
-/// #[no_mangle]
+/// #[unsafe(no_mangle)]
 /// pub extern "C" fn whisker_app_main(
 ///     engine: *mut std::ffi::c_void,
 ///     request_frame: Option<extern "C" fn(*mut std::ffi::c_void)>,
@@ -46,7 +46,7 @@ mod render;
 ///     ::whisker::__main_runtime::run(engine, request_frame, request_frame_data, app);
 /// }
 ///
-/// #[no_mangle]
+/// #[unsafe(no_mangle)]
 /// pub extern "C" fn whisker_tick(engine: *mut std::ffi::c_void) -> bool {
 ///     ::whisker::__main_runtime::tick(engine)
 /// }
@@ -80,7 +80,13 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ::whisker::__main_runtime::call_user_app(#fn_name)
         }
 
-        #[no_mangle]
+        // `#[unsafe(no_mangle)]` (not bare `#[no_mangle]`): in edition
+        // 2024 a bare `#[no_mangle]` is a hard error, and this macro
+        // expands in the USER crate's edition. The `#[unsafe(...)]`
+        // attribute spelling was stabilized in Rust 1.82 — below the
+        // workspace MSRV of 1.85 — so it compiles cleanly in both 2021
+        // and 2024 user crates.
+        #[unsafe(no_mangle)]
         pub extern "C" fn whisker_app_main(
             engine: *mut ::std::ffi::c_void,
             request_frame: ::std::option::Option<
@@ -96,7 +102,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             );
         }
 
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub extern "C" fn whisker_tick(engine: *mut ::std::ffi::c_void) -> bool {
             ::whisker::__main_runtime::tick(engine)
         }
@@ -121,7 +127,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // The stub never runs — Whisker is JNI-loaded, never executed
         // as a process entry point. It only needs to exist in the
         // export list at a known static address.
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub extern "C" fn whisker_aslr_anchor() -> ::std::ffi::c_int { 0 }
     };
 

@@ -29,13 +29,13 @@
 //! after the version bump.
 
 use std::os::raw::{c_int, c_void};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use whisker_driver_sys::{
     self as ffi, LynxListComponentAtIndexFn, LynxListEnqueueComponentFn, LynxUserDataFreeFn,
 };
-use whisker_runtime::view::list_provider::NativeItemProvider;
 use whisker_runtime::view::Element;
+use whisker_runtime::view::list_provider::NativeItemProvider;
 
 use crate::lynx::renderer::BridgeRenderer;
 

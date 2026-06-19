@@ -16,7 +16,7 @@
 use whisker::css::{AlignItems, Color, Display, FlexDirection, FontWeight, JustifyContent, ToCss};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_icons::{lucide, Icon};
+use whisker_icons::{Icon, lucide};
 
 // ── Tweak me (great hot-reload targets) ──────────────────────────────
 const ACCENT: Color = Color::hex(0x7C5CFF); // brand / interactive accent

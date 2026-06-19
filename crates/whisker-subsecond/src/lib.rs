@@ -235,7 +235,7 @@ use std::{
     backtrace,
     mem::transmute,
     panic::AssertUnwindSafe,
-    sync::{atomic::AtomicPtr, Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicPtr},
 };
 
 /// Call a given function with hot-reloading enabled. If the function's code changes, `call` will use
@@ -505,225 +505,228 @@ impl<A, M, F: HotFunction<A, M>> HotFn<A, M, F> {
 /// this list to find live component owners whose body is now stale and re-mount
 /// them.
 pub unsafe fn apply_patch(mut table: JumpTable) -> Result<Vec<*const ()>, PatchError> {
-    // On non-wasm platforms we can just use libloading and the known aslr offsets to load the library
-    #[cfg(any(unix, windows))]
-    {
-        // on android we try to circumvent permissions issues by copying the library to a memmap and then libloading that
-        #[cfg(target_os = "android")]
-        let lib = Box::leak(Box::new(android_memmap_dlopen(&table.lib)?));
+    unsafe {
+        // On non-wasm platforms we can just use libloading and the known aslr offsets to load the library
+        #[cfg(any(unix, windows))]
+        {
+            // on android we try to circumvent permissions issues by copying the library to a memmap and then libloading that
+            #[cfg(target_os = "android")]
+            let lib = Box::leak(Box::new(android_memmap_dlopen(&table.lib)?));
 
-        #[cfg(not(target_os = "android"))]
-        let lib = Box::leak(Box::new({
-            match libloading::Library::new(&table.lib) {
-                Ok(lib) => lib,
-                Err(err) => return Err(PatchError::Dlopen(err.to_string())),
-            }
-        }));
+            #[cfg(not(target_os = "android"))]
+            let lib = Box::leak(Box::new({
+                match libloading::Library::new(&table.lib) {
+                    Ok(lib) => lib,
+                    Err(err) => return Err(PatchError::Dlopen(err.to_string())),
+                }
+            }));
 
-        // Whisker fork: anchor on `whisker_aslr_anchor` rather than `main`.
-        //
-        // Upstream uses `main` as the cross-library ASLR anchor. That works
-        // for Dioxus, where `main` is the PIE process entry and unique in
-        // the linker namespace. Whisker ships the user crate as a `dylib`
-        // loaded via Android `System.loadLibrary`, where the namespace can
-        // contain several `main` symbols (`app_process64`'s, stale patch
-        // memfds', etc.) — `dlsym(RTLD_DEFAULT, "main")` then returns the
-        // wrong one and the computed ASLR slide is garbage.
-        //
-        // `whisker_aslr_anchor` is synthesised by `#[whisker::main]` and
-        // is unique to the user's `.so`, so the dlsym lookup is
-        // unambiguous regardless of namespace order.
-        let old_offset = aslr_reference() - table.aslr_reference as usize;
-
-        let new_offset = unsafe {
-            // Leak the library. dlopen is basically a no-op on many platforms and if we even try to drop it,
-            // some code might be called (ie drop) that results in really bad crashes (restart your computer...)
+            // Whisker fork: anchor on `whisker_aslr_anchor` rather than `main`.
             //
-            // The CLI (whisker-dev-server) coordinates by ensuring
-            // `whisker_aslr_anchor` is in the export list of every patch.
-            lib.get::<*const ()>(b"whisker_aslr_anchor")
-                .ok()
-                .unwrap()
-                .try_as_raw_ptr()
-                .unwrap()
-                .wrapping_byte_sub(table.new_base_address as usize) as usize
+            // Upstream uses `main` as the cross-library ASLR anchor. That works
+            // for Dioxus, where `main` is the PIE process entry and unique in
+            // the linker namespace. Whisker ships the user crate as a `dylib`
+            // loaded via Android `System.loadLibrary`, where the namespace can
+            // contain several `main` symbols (`app_process64`'s, stale patch
+            // memfds', etc.) — `dlsym(RTLD_DEFAULT, "main")` then returns the
+            // wrong one and the computed ASLR slide is garbage.
+            //
+            // `whisker_aslr_anchor` is synthesised by `#[whisker::main]` and
+            // is unique to the user's `.so`, so the dlsym lookup is
+            // unambiguous regardless of namespace order.
+            let old_offset = aslr_reference() - table.aslr_reference as usize;
+
+            let new_offset = {
+                // Leak the library. dlopen is basically a no-op on many platforms and if we even try to drop it,
+                // some code might be called (ie drop) that results in really bad crashes (restart your computer...)
+                //
+                // The CLI (whisker-dev-server) coordinates by ensuring
+                // `whisker_aslr_anchor` is in the export list of every patch.
+                lib.get::<*const ()>(b"whisker_aslr_anchor")
+                    .ok()
+                    .unwrap()
+                    .try_as_raw_ptr()
+                    .unwrap()
+                    .wrapping_byte_sub(table.new_base_address as usize) as usize
+            };
+
+            // Modify the jump table to be relative to the base address of the loaded library
+            table.map = table
+                .map
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        (*k as usize + old_offset) as u64,
+                        (*v as usize + new_offset) as u64,
+                    )
+                })
+                .collect();
+
+            // Snapshot the host-side (post-slide) function pointers BEFORE
+            // committing the patch — `commit_patch` consumes `table`. Whisker's
+            // remount logic compares these against `fn as *const ()` values
+            // stashed in its component-owner registry.
+            let patched: Vec<*const ()> = table.map.keys().map(|k| *k as *const ()).collect();
+
+            commit_patch(table);
+            return Ok(patched);
         };
 
-        // Modify the jump table to be relative to the base address of the loaded library
-        table.map = table
-            .map
-            .iter()
-            .map(|(k, v)| {
-                (
-                    (*k as usize + old_offset) as u64,
-                    (*v as usize + new_offset) as u64,
-                )
-            })
-            .collect();
-
-        // Snapshot the host-side (post-slide) function pointers BEFORE
-        // committing the patch — `commit_patch` consumes `table`. Whisker's
-        // remount logic compares these against `fn as *const ()` values
-        // stashed in its component-owner registry.
-        let patched: Vec<*const ()> = table.map.keys().map(|k| *k as *const ()).collect();
-
-        commit_patch(table);
-        return Ok(patched);
-    };
-
-    // The non-wasm path above returns inside the block; for wasm we drop
-    // through to the wasm-specific code below which never returns Ok with
-    // a list (patches are async-applied). Surface an empty list in that
-    // case rather than restructuring the existing wasm flow.
-    #[allow(unreachable_code)]
-    {
-        let _unused: Vec<*const ()> = Vec::new();
-    }
-
-    // On wasm, we need to download the module, compile it, and then run it.
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_futures::spawn_local(async move {
-        use js_sys::{
-            ArrayBuffer, Object, Reflect,
-            WebAssembly::{self, Instance, Memory, Module, Table},
-        };
-        use wasm_bindgen::prelude::*;
-        use wasm_bindgen::JsValue;
-        use wasm_bindgen::UnwrapThrowExt;
-        use wasm_bindgen_futures::JsFuture;
-
-        let funcs: Table = wasm_bindgen::function_table().unchecked_into();
-        let memory: Memory = wasm_bindgen::memory().unchecked_into();
-        let exports: Object = wasm_bindgen::exports().unchecked_into();
-
-        let path = table.lib.to_str().unwrap();
-        if !path.ends_with(".wasm") {
-            return;
+        // The non-wasm path above returns inside the block; for wasm we drop
+        // through to the wasm-specific code below which never returns Ok with
+        // a list (patches are async-applied). Surface an empty list in that
+        // case rather than restructuring the existing wasm flow.
+        #[allow(unreachable_code)]
+        {
+            let _unused: Vec<*const ()> = Vec::new();
         }
 
-        // Fetch + decode the patch wasm. Both awaits are pure I/O — they
-        // touch no shared state, so the future is safe to drop here.
-        let response: web_sys::Response =
-            JsFuture::from(web_sys::window().unwrap_throw().fetch_with_str(&path))
+        // On wasm, we need to download the module, compile it, and then run it.
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            use js_sys::{
+                ArrayBuffer, Object, Reflect,
+                WebAssembly::{self, Instance, Memory, Module, Table},
+            };
+            use wasm_bindgen::JsValue;
+            use wasm_bindgen::UnwrapThrowExt;
+            use wasm_bindgen::prelude::*;
+            use wasm_bindgen_futures::JsFuture;
+
+            let funcs: Table = wasm_bindgen::function_table().unchecked_into();
+            let memory: Memory = wasm_bindgen::memory().unchecked_into();
+            let exports: Object = wasm_bindgen::exports().unchecked_into();
+
+            let path = table.lib.to_str().unwrap();
+            if !path.ends_with(".wasm") {
+                return;
+            }
+
+            // Fetch + decode the patch wasm. Both awaits are pure I/O — they
+            // touch no shared state, so the future is safe to drop here.
+            let response: web_sys::Response =
+                JsFuture::from(web_sys::window().unwrap_throw().fetch_with_str(&path))
+                    .await
+                    .unwrap()
+                    .unchecked_into();
+            if !response.ok() {
+                panic!(
+                    "Failed to patch wasm module at {} - response failed with: {}",
+                    path,
+                    response.status_text()
+                );
+            }
+            let dl_bytes: ArrayBuffer = JsFuture::from(response.array_buffer().unwrap())
                 .await
                 .unwrap()
                 .unchecked_into();
-        if !response.ok() {
-            panic!(
-                "Failed to patch wasm module at {} - response failed with: {}",
-                path,
-                response.status_text()
-            );
-        }
-        let dl_bytes: ArrayBuffer = JsFuture::from(response.array_buffer().unwrap())
-            .await
-            .unwrap()
-            .unchecked_into();
 
-        // Pre-compile. This is the slow part — V8 hands it to a worker —
-        // and yields the longest. The result is a Module with no side
-        // effects on host JS state, so cancelling here is also safe.
-        let module: Module = JsFuture::from(WebAssembly::compile(dl_bytes.unchecked_ref()))
-            .await
-            .unwrap()
-            .unchecked_into();
+            // Pre-compile. This is the slow part — V8 hands it to a worker —
+            // and yields the longest. The result is a Module with no side
+            // effects on host JS state, so cancelling here is also safe.
+            let module: Module = JsFuture::from(WebAssembly::compile(dl_bytes.unchecked_ref()))
+                .await
+                .unwrap()
+                .unchecked_into();
 
-        // ── HOST-STATE-MUTATING SECTION ───────────────────────────────
-        //
-        // Below we grow shared linear memory and the indirect function
-        // table, then async-instantiate the patch into them and commit
-        // the new jump table. There IS one `.await` for the instantiate
-        // (we can't avoid it: Chrome disallows synchronous
-        // `new WebAssembly.Instance` on the main thread for modules
-        // larger than 8MB, and patches routinely cross that), but it's
-        // safe — the original race we fixed wasn't about yielding here:
-        //
-        //  * `memory.grow` and `funcs.grow` each return their PRIOR
-        //    length atomically. Concurrent `apply_patch` tasks therefore
-        //    each get a unique, non-overlapping `memory_base` /
-        //    `table_base`, so two patches can't land on the same region.
-        //  * Host code can't observe the half-instantiated patch: the
-        //    new memory pages are zero, the new table slots are null,
-        //    and the jump table isn't committed until the very end of
-        //    this block, so nothing redirects through the new slots.
-        //  * The original bug — using `memory.buffer().byteLength()`
-        //    captured before the awaits, which returned 0 if the buffer
-        //    had been detached by a concurrent grow — is gone because
-        //    we derive `memory_base` from `memory.grow()`'s return
-        //    value instead.
-        //  * Cancellation between grow and `commit_patch` leaks memory
-        //    pages and table slots, but doesn't corrupt anything.
-        const PAGE_SIZE: u32 = 64 * 1024;
-        let patch_pages = (dl_bytes.byte_length() as f64 / PAGE_SIZE as f64).ceil() as u32 + 1;
+            // ── HOST-STATE-MUTATING SECTION ───────────────────────────────
+            //
+            // Below we grow shared linear memory and the indirect function
+            // table, then async-instantiate the patch into them and commit
+            // the new jump table. There IS one `.await` for the instantiate
+            // (we can't avoid it: Chrome disallows synchronous
+            // `new WebAssembly.Instance` on the main thread for modules
+            // larger than 8MB, and patches routinely cross that), but it's
+            // safe — the original race we fixed wasn't about yielding here:
+            //
+            //  * `memory.grow` and `funcs.grow` each return their PRIOR
+            //    length atomically. Concurrent `apply_patch` tasks therefore
+            //    each get a unique, non-overlapping `memory_base` /
+            //    `table_base`, so two patches can't land on the same region.
+            //  * Host code can't observe the half-instantiated patch: the
+            //    new memory pages are zero, the new table slots are null,
+            //    and the jump table isn't committed until the very end of
+            //    this block, so nothing redirects through the new slots.
+            //  * The original bug — using `memory.buffer().byteLength()`
+            //    captured before the awaits, which returned 0 if the buffer
+            //    had been detached by a concurrent grow — is gone because
+            //    we derive `memory_base` from `memory.grow()`'s return
+            //    value instead.
+            //  * Cancellation between grow and `commit_patch` leaks memory
+            //    pages and table slots, but doesn't corrupt anything.
+            const PAGE_SIZE: u32 = 64 * 1024;
+            let patch_pages = (dl_bytes.byte_length() as f64 / PAGE_SIZE as f64).ceil() as u32 + 1;
 
-        // Use grow's return value (the prior page count) to derive
-        // memory_base. Atomic w.r.t. concurrent grows, unlike reading
-        // memory.buffer().byteLength().
-        let prev_pages = memory.grow(patch_pages);
-        let memory_base = (prev_pages + 1) * PAGE_SIZE;
+            // Use grow's return value (the prior page count) to derive
+            // memory_base. Atomic w.r.t. concurrent grows, unlike reading
+            // memory.buffer().byteLength().
+            let prev_pages = memory.grow(patch_pages);
+            let memory_base = (prev_pages + 1) * PAGE_SIZE;
 
-        // grow returns the prior table length, which is __table_base.
-        let table_base = funcs.grow(table.ifunc_count as u32).unwrap();
+            // grow returns the prior table length, which is __table_base.
+            let table_base = funcs.grow(table.ifunc_count as u32).unwrap();
 
-        // Rebase the jump table entries onto the patch's table slot range.
-        for v in table.map.values_mut() {
-            *v += table_base as u64;
-        }
+            // Rebase the jump table entries onto the patch's table slot range.
+            for v in table.map.values_mut() {
+                *v += table_base as u64;
+            }
 
-        // Build the env import object: copy every host export through and
-        // add __memory_base / __table_base globals so the patch's PIC
-        // code resolves correctly.
-        let env = Object::new();
-        for key in Object::keys(&exports) {
-            Reflect::set(&env, &key, &Reflect::get(&exports, &key).unwrap()).unwrap();
-        }
-        for (name, value) in [("__table_base", table_base), ("__memory_base", memory_base)] {
-            let descriptor = Object::new();
-            Reflect::set(&descriptor, &"value".into(), &"i32".into()).unwrap();
-            Reflect::set(&descriptor, &"mutable".into(), &false.into()).unwrap();
-            let global = WebAssembly::Global::new(&descriptor, &value.into()).unwrap();
-            Reflect::set(&env, &name.into(), &global.into()).unwrap();
-        }
-        let imports = Object::new();
-        Reflect::set(&imports, &"env".into(), &env).unwrap();
+            // Build the env import object: copy every host export through and
+            // add __memory_base / __table_base globals so the patch's PIC
+            // code resolves correctly.
+            let env = Object::new();
+            for key in Object::keys(&exports) {
+                Reflect::set(&env, &key, &Reflect::get(&exports, &key).unwrap()).unwrap();
+            }
+            for (name, value) in [("__table_base", table_base), ("__memory_base", memory_base)] {
+                let descriptor = Object::new();
+                Reflect::set(&descriptor, &"value".into(), &"i32".into()).unwrap();
+                Reflect::set(&descriptor, &"mutable".into(), &false.into()).unwrap();
+                let global = WebAssembly::Global::new(&descriptor, &value.into()).unwrap();
+                Reflect::set(&env, &name.into(), &global.into()).unwrap();
+            }
+            let imports = Object::new();
+            Reflect::set(&imports, &"env".into(), &env).unwrap();
 
-        // Async instantiation of the precompiled module. We use the
-        // (Module, imports) form of `WebAssembly.instantiate`, which
-        // resolves directly to an `Instance` (not `{module, instance}`).
-        // This is the no-size-limit path; the synchronous
-        // `new WebAssembly.Instance` constructor is capped at 8MB on
-        // Chrome's main thread.
-        let instance: Instance = JsFuture::from(WebAssembly::instantiate_module(&module, &imports))
-            .await
-            .unwrap()
-            .unchecked_into();
-        let inst_exports: Object = instance.exports();
+            // Async instantiation of the precompiled module. We use the
+            // (Module, imports) form of `WebAssembly.instantiate`, which
+            // resolves directly to an `Instance` (not `{module, instance}`).
+            // This is the no-size-limit path; the synchronous
+            // `new WebAssembly.Instance` constructor is capped at 8MB on
+            // Chrome's main thread.
+            let instance: Instance =
+                JsFuture::from(WebAssembly::instantiate_module(&module, &imports))
+                    .await
+                    .unwrap()
+                    .unchecked_into();
+            let inst_exports: Object = instance.exports();
 
-        // Run the patch's relocation thunks and constructors. Order
-        // matters: data relocs first (write memory_base- and table_base-
-        // relative pointers into the patch's data segment), then global
-        // relocs (adjust GOT.func.internal globals by __table_base —
-        // wasm-ld synthesizes those as element-segment-relative offsets),
-        // then ctors. `dyn_into` instead of `unchecked_into` so missing
-        // exports just no-op rather than throwing.
-        for func_name in [
-            "__wasm_apply_data_relocs",
-            "__wasm_apply_global_relocs",
-            "__wasm_call_ctors",
-        ] {
-            if let Ok(val) = Reflect::get(&inst_exports, &func_name.into()) {
-                if let Ok(func) = val.dyn_into::<js_sys::Function>() {
-                    _ = func.call0(&JsValue::undefined());
+            // Run the patch's relocation thunks and constructors. Order
+            // matters: data relocs first (write memory_base- and table_base-
+            // relative pointers into the patch's data segment), then global
+            // relocs (adjust GOT.func.internal globals by __table_base —
+            // wasm-ld synthesizes those as element-segment-relative offsets),
+            // then ctors. `dyn_into` instead of `unchecked_into` so missing
+            // exports just no-op rather than throwing.
+            for func_name in [
+                "__wasm_apply_data_relocs",
+                "__wasm_apply_global_relocs",
+                "__wasm_call_ctors",
+            ] {
+                if let Ok(val) = Reflect::get(&inst_exports, &func_name.into()) {
+                    if let Ok(func) = val.dyn_into::<js_sys::Function>() {
+                        _ = func.call0(&JsValue::undefined());
+                    }
                 }
             }
-        }
 
-        unsafe { commit_patch(table) };
-    });
+            unsafe { commit_patch(table) };
+        });
 
-    // wasm path applies the patch asynchronously inside the spawned
-    // future. We have no synchronous patched-pointer list to return.
-    Ok(Vec::new())
+        // wasm path applies the patch asynchronously inside the spawned
+        // future. We have no synchronous patched-pointer list to return.
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, PartialEq, thiserror::Error)]
@@ -756,11 +759,16 @@ pub fn aslr_reference() -> usize {
     #[cfg(not(target_family = "wasm"))]
     unsafe {
         use std::ffi::c_void;
+        use std::sync::atomic::{AtomicPtr, Ordering};
 
-        // The first call to this function should occur in the
-        static mut MAIN_PTR: *mut c_void = std::ptr::null_mut();
+        // Cache the resolved anchor address. Edition 2024 makes a
+        // reference to a `static mut` a hard error (`static_mut_refs`);
+        // an `AtomicPtr` is the clean equivalent and keeps the
+        // self-initializing-on-first-call behavior intact.
+        static MAIN_PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
-        if MAIN_PTR.is_null() {
+        let mut ptr = MAIN_PTR.load(Ordering::Relaxed);
+        if ptr.is_null() {
             // Whisker fork: anchor on `whisker_aslr_anchor` rather than
             // `main` so the dlsym/GetProcAddress lookup cannot collide
             // with system binaries' `main` (e.g. Android's
@@ -769,12 +777,12 @@ pub fn aslr_reference() -> usize {
             // `#[whisker::main]` and is unique to the user's `.so`.
             #[cfg(unix)]
             {
-                MAIN_PTR = libc::dlsym(libc::RTLD_DEFAULT, c"whisker_aslr_anchor".as_ptr() as _);
+                ptr = libc::dlsym(libc::RTLD_DEFAULT, c"whisker_aslr_anchor".as_ptr() as _);
             }
 
             #[cfg(windows)]
             {
-                extern "system" {
+                unsafe extern "system" {
                     fn GetModuleHandleA(lpModuleName: *const i8) -> *mut std::ffi::c_void;
                     fn GetProcAddress(
                         hModule: *mut std::ffi::c_void,
@@ -782,14 +790,16 @@ pub fn aslr_reference() -> usize {
                     ) -> *mut std::ffi::c_void;
                 }
 
-                MAIN_PTR = GetProcAddress(
+                ptr = GetProcAddress(
                     GetModuleHandleA(std::ptr::null()),
                     c"whisker_aslr_anchor".as_ptr() as _,
                 ) as _;
             }
+
+            MAIN_PTR.store(ptr, Ordering::Relaxed);
         }
 
-        MAIN_PTR as usize
+        ptr as usize
     }
 }
 
@@ -807,7 +817,7 @@ pub fn aslr_reference() -> usize {
 /// - https://developer.android.com/ndk/reference/structandroid/dlextinfo
 #[cfg(target_os = "android")]
 unsafe fn android_memmap_dlopen(file: &std::path::Path) -> Result<libloading::Library, PatchError> {
-    use std::ffi::{c_void, CStr, CString};
+    use std::ffi::{CStr, CString, c_void};
     use std::os::fd::{AsRawFd, BorrowedFd};
     use std::ptr;
 
@@ -822,7 +832,7 @@ unsafe fn android_memmap_dlopen(file: &std::path::Path) -> Result<libloading::Li
         library_namespace: *const c_void,
     }
 
-    extern "C" {
+    unsafe extern "C" {
         fn android_dlopen_ext(
             filename: *const libc::c_char,
             flags: libc::c_int,

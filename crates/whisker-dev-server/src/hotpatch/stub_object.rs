@@ -38,7 +38,7 @@
 //!   our hot-patches reference data symbols in the host so far; the
 //!   tests in B-4 confirm this).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use object::write::{Object, StandardSection, Symbol, SymbolSection};
 use object::{
     Architecture, BinaryFormat, Endianness, Object as _, ObjectSymbol, SymbolFlags, SymbolKind,
@@ -47,8 +47,8 @@ use object::{
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::hotpatch::cache::HotpatchModuleCache;
 use crate::hotpatch::LinkerOs;
+use crate::hotpatch::cache::HotpatchModuleCache;
 
 /// Build a stub `.o` (bytes ready to write to disk) that satisfies
 /// every undefined symbol in `patch_obj` whose name is also present

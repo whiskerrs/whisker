@@ -8,7 +8,7 @@
 //! the dispatcher and are exercised in `tasks::tests`).
 
 use crate::reactive::RwSignal;
-use crate::reactive::{__reset_for_tests, flush, resource, resource_sync, Owner, ResourceState};
+use crate::reactive::{__reset_for_tests, Owner, ResourceState, flush, resource, resource_sync};
 use crate::tasks;
 
 fn with_test_owner<R>(f: impl FnOnce() -> R) -> R {
@@ -319,7 +319,7 @@ fn async_resource_returns_to_loading_during_refetch() {
 /// never re-polled → these tests hit the deadline (the field hang).
 mod cross_thread_wake {
     use super::*;
-    use crate::main_thread::{set_drive_callback, set_main_thread_dispatcher, DispatchFn};
+    use crate::main_thread::{DispatchFn, set_drive_callback, set_main_thread_dispatcher};
     use crate::tasks::run_blocking;
     use std::ffi::c_void;
     use std::sync::{Mutex, MutexGuard};

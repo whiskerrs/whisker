@@ -61,10 +61,9 @@
 
 use anyhow::{Context, Result};
 use crossterm::{
-    cursor,
-    event::{poll, read, Event as CtEvent, KeyCode, KeyEventKind, KeyModifiers},
+    ExecutableCommand, cursor,
+    event::{Event as CtEvent, KeyCode, KeyEventKind, KeyModifiers, poll, read},
     terminal::{disable_raw_mode, enable_raw_mode},
-    ExecutableCommand,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
@@ -75,7 +74,7 @@ use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::Write;
 use std::os::raw::c_int;
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 

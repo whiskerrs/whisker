@@ -20,9 +20,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use whisker::runtime::reactive::{effect, Owner};
-use whisker::runtime::view::{append_child, create_phantom_element, remove_child, Element};
-use whisker::{component, provide_context, use_context, Children};
+use whisker::runtime::reactive::{Owner, effect};
+use whisker::runtime::view::{Element, append_child, create_phantom_element, remove_child};
+use whisker::{Children, component, provide_context, use_context};
 
 use crate::route::Route;
 use crate::stack::RouteStack;

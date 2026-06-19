@@ -30,13 +30,13 @@ pub use element_ref::{
 pub use lynx::bootstrap;
 pub use lynx::renderer::BridgeRenderer;
 
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 
 use whisker_driver_sys as ffi;
 use whisker_driver_sys::WhiskerElement;
-use whisker_runtime::view::{module_component_ptr, Element};
+use whisker_runtime::view::{Element, module_component_ptr};
 
-use crate::module::{async_trampoline, from_raw, RawBuilder, WhiskerValue};
+use crate::module::{RawBuilder, WhiskerValue, async_trampoline, from_raw};
 
 /// Synchronously invoke `method` on the platform component identified
 /// by `handle`, with `args` passed positionally through Lynx's

@@ -43,12 +43,12 @@ use podcast_feature_detail::DetailScreen;
 use podcast_feature_search::SearchScreen;
 use podcast_routing::{AppRoute, Navigator};
 use podcast_ui_kit::MiniPlayer;
+use whisker::ArcRwSignal;
 use whisker::css::{Display, FlexDirection, PositionKind};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker::ArcRwSignal;
 use whisker_audio::Player;
-use whisker_router::stack::{route_stack, RouteStack};
+use whisker_router::stack::{RouteStack, route_stack};
 use whisker_router::{
     AndroidPredictiveBack, IosSwipeBack, RouteProvider, RouteRenderFn, StackLayout,
 };

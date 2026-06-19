@@ -60,7 +60,7 @@ pub use installer::Installer;
 pub use server::{Patch, PatchSender};
 pub use watcher::{Change, ChangeKind};
 pub use whisker_build::CaptureShims;
-pub use workspace::{discover_path_deps, identify_crate_for_paths, PathDepCrate};
+pub use workspace::{PathDepCrate, discover_path_deps, identify_crate_for_paths};
 
 // ----- Config & enums --------------------------------------------------------
 

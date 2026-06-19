@@ -13,7 +13,7 @@ use whisker::flush;
 use whisker::prelude::*;
 use whisker::runtime::reactive::{__reset_for_tests, Owner};
 use whisker::runtime::view::{
-    install_renderer, uninstall_renderer, BindType, DynRenderer, Element,
+    BindType, DynRenderer, Element, install_renderer, uninstall_renderer,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -429,9 +429,10 @@ fn camel_case_event_handler_lowercased() {
             view(onTap: |_| {})
         };
         let ops = log.borrow();
-        assert!(ops
-            .iter()
-            .any(|op| matches!(op, Op::Event { name, .. } if name == "tap")));
+        assert!(
+            ops.iter()
+                .any(|op| matches!(op, Op::Event { name, .. } if name == "tap"))
+        );
     });
 }
 

@@ -16,7 +16,7 @@
 
 use core::fmt;
 
-use crate::to_css::{write_number, ToCss};
+use crate::to_css::{ToCss, write_number};
 
 use super::Angle;
 

@@ -132,10 +132,10 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::data_type::Color;
     use crate::ext::*;
     use crate::keyword::BorderStyle;
-    use crate::Css;
 
     #[test]
     fn border_width_per_side() {

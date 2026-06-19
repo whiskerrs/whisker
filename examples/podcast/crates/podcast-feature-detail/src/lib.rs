@@ -50,15 +50,15 @@ use podcast_data::fetch_episodes;
 use podcast_domain::{Episode, NowPlaying, Podcast};
 use podcast_routing::Navigator;
 use podcast_theme as theme;
+use whisker::ArcRwSignal;
 use whisker::css::{
     AlignItems, Display, FlexDirection, FontWeight, JustifyContent, TextAlign, TextOverflow,
 };
 use whisker::prelude::*;
 use whisker::runtime::tasks::run_blocking;
 use whisker::runtime::view::Element;
-use whisker::ArcRwSignal;
 use whisker_audio::Player;
-use whisker_icons::{lucide, Icon};
+use whisker_icons::{Icon, lucide};
 use whisker_image::{Image, ImageMode};
 use whisker_safe_area::safe_area_insets;
 

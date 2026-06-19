@@ -138,11 +138,11 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::data_type::{FitContent, MaxContent};
     use crate::ext::*;
     use crate::keyword::BoxSizing;
     use crate::value::Size;
-    use crate::Css;
 
     #[test]
     fn width_height_basic() {

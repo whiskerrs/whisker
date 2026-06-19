@@ -28,7 +28,7 @@
 //! `whisker new-module` subcommand can grow later without breaking
 //! the contract documented at <https://whisker.rs/docs/authoring-a-module>.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use std::path::{Path, PathBuf};
 
@@ -220,7 +220,7 @@ fn cargo_toml(v: &Vars) -> String {
         r#"[package]
 name = "{name}"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Whisker module — short tagline shown on crates.io."
 

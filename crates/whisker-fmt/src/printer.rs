@@ -215,11 +215,7 @@ impl Printer<'_> {
             (line_end, c.start)
         };
         let between = self.map.between_has_newline(lo, hi);
-        if between {
-            None
-        } else {
-            Some(idx)
-        }
+        if between { None } else { Some(idx) }
     }
 
     /// First source byte of a node (its tag / alias ident).
@@ -474,11 +470,7 @@ fn child_extent(p: &Printer, child: &Node) -> Option<(usize, usize)> {
 /// width to be honest about the first line; the closing brace and the
 /// children sit on later lines.
 fn brace_width(children: &[Node]) -> usize {
-    if children.is_empty() {
-        0
-    } else {
-        " {".len()
-    }
+    if children.is_empty() { 0 } else { " {".len() }
 }
 
 /// Dedent the continuation (2nd..=Nth) lines of a multi-line fragment by

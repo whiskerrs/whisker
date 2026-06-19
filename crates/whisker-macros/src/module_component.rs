@@ -96,8 +96,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 use syn::{
-    parse2, FnArg, GenericArgument, Ident, ItemFn, LitStr, Pat, PathArguments, Type, TypePath,
-    TypeTuple,
+    FnArg, GenericArgument, Ident, ItemFn, LitStr, Pat, PathArguments, Type, TypePath, TypeTuple,
+    parse2,
 };
 
 pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {

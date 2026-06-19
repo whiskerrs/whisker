@@ -16,10 +16,10 @@
 //! `build` subcommands call this before kicking off the rest of the
 //! build pipeline.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use whisker_cng::{discover_plugins, DiscoveredPlugin, Engine, SubprocessPlugin};
+use whisker_cng::{DiscoveredPlugin, Engine, SubprocessPlugin, discover_plugins};
 use whisker_config::Config;
 use whisker_dev_server::Target;
 

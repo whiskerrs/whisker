@@ -18,8 +18,8 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-use super::link_plan::{build_link_plan, LinkPlan, LinkerOs};
-use super::thin_build::{build_obj_plan, ObjBuildPlan};
+use super::link_plan::{LinkPlan, LinkerOs, build_link_plan};
+use super::thin_build::{ObjBuildPlan, build_obj_plan};
 use super::wrapper::CapturedRustcInvocation;
 
 /// Spawn rustc with `plan.args` from `cwd`. On success, returns

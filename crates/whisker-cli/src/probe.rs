@@ -33,7 +33,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use whisker_cng::{discover_plugins, DiscoveredPlugin};
+use whisker_cng::{DiscoveredPlugin, discover_plugins};
 use whisker_config::Config;
 
 /// Run the probe and return the parsed config. Caches via mtime so
@@ -114,7 +114,7 @@ fn write_probe_project(
 [package]
 name = "{probe_crate_name}"
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 [dependencies]

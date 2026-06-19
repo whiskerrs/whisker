@@ -2,7 +2,7 @@
 //! [`super::IosSlide`] for stack-driven modal-style presentations.
 
 use whisker::runtime::view::Element;
-use whisker::{animate_start, AnimateOptions};
+use whisker::{AnimateOptions, animate_start};
 
 use super::{Direction, Side, StackTransition};
 

@@ -10,7 +10,7 @@
 //! notebook front-end, …) can reuse the same loop without a
 //! whisker-config dependency.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use whisker_dev_server::{AndroidParams, Config, DevServer, HotPatchMode, IosParams, Target};
@@ -88,7 +88,8 @@ pub fn run(args: Args) -> Result<()> {
     // unstick a `Curated` cache.
     let tui_enabled = !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stderr());
     if tui_enabled {
-        std::env::set_var("WHISKER_TUI", "1");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("WHISKER_TUI", "1") };
     }
 
     // Resolve the user-facing manifest before doing anything UI-y so

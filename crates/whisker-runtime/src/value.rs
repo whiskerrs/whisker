@@ -33,8 +33,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use serde::de::{DeserializeOwned, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
+use serde::de::{DeserializeOwned, Deserializer, MapAccess, SeqAccess, Visitor};
 
 /// Tagged-union variant set passed between Rust and the platform
 /// side — module args/returns and event payloads alike.

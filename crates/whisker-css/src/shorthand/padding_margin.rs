@@ -200,9 +200,9 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::ext::*;
     use crate::shorthand::padding_margin::MarginValue;
-    use crate::Css;
 
     #[test]
     fn padding_single_value_expands_to_four() {

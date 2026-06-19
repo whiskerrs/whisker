@@ -24,20 +24,20 @@ pub mod validate;
 pub mod wrapper;
 
 pub use cache::HotpatchModuleCache;
-pub use jump_table::{build_jump_table, DiffReport, PatchPlan};
-pub use link_plan::{build_link_plan, linker_os_for_host, LinkPlan, LinkerOs};
+pub use jump_table::{DiffReport, PatchPlan, build_jump_table};
+pub use link_plan::{LinkPlan, LinkerOs, build_link_plan, linker_os_for_host};
 pub use patcher::Patcher;
 pub use runner::{run_link_plan, run_obj_plan, thin_rebuild_obj};
-pub use shim_paths::{expected_shim_paths, resolve_shim_paths, ShimPaths};
+pub use shim_paths::{ShimPaths, expected_shim_paths, resolve_shim_paths};
 pub use stub_object::{
     build_stub_for_needed, compute_needed_symbols, compute_needed_symbols_multi,
     create_undefined_symbol_stub,
 };
-pub use symbol_table::{parse_symbol_table, SymbolInfo, SymbolTable};
-pub use thin_build::{build_obj_plan, library_filename, object_filename, ObjBuildPlan};
+pub use symbol_table::{SymbolInfo, SymbolTable, parse_symbol_table};
+pub use thin_build::{ObjBuildPlan, build_obj_plan, library_filename, object_filename};
 pub use validate::{ensure_target_supported, extract_target_triple, validate_environment};
 pub use wrapper::{
-    default_cache_dir, default_linker_cache_dir, load_captured_args, load_captured_linker_args,
-    resolve_host_linker, run_fat_build, CapturedLinkerInvocation, CapturedRustcInvocation,
-    LinkerCaptureConfig,
+    CapturedLinkerInvocation, CapturedRustcInvocation, LinkerCaptureConfig, default_cache_dir,
+    default_linker_cache_dir, load_captured_args, load_captured_linker_args, resolve_host_linker,
+    run_fat_build,
 };

@@ -71,17 +71,17 @@ pub mod path_parse;
 #[doc(hidden)]
 pub mod replay;
 
-pub use compile::{compile, CompileError, Compiled};
+pub use compile::{CompileError, Compiled, compile};
 
 #[doc(hidden)]
 pub use builder::{Color, DisplayListBuilder, Transform};
 #[doc(hidden)]
-pub use replay::{replay, ReplayError, TraceVisitor, Visitor};
+pub use replay::{ReplayError, TraceVisitor, Visitor, replay};
 
 use base64::Engine;
+use whisker::Style;
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker::Style;
 
 /// `<Svg>` widget. Render arbitrary inline SVG inside the host
 /// element. Tracks `content` reactively — a content swap recompiles

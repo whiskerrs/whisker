@@ -45,10 +45,10 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::data_type_ext::{Position, PositionKeyword};
     use crate::ext::*;
     use crate::keyword::*;
-    use crate::Css;
 
     #[test]
     fn transform_origin_keywords() {

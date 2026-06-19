@@ -21,8 +21,8 @@
 use std::path::{Path, PathBuf};
 
 use whisker_dev_server::hotpatch::{
-    build_link_plan, build_obj_plan, library_filename, linker_os_for_host, parse_symbol_table,
-    run_link_plan, run_obj_plan, CapturedRustcInvocation,
+    CapturedRustcInvocation, build_link_plan, build_obj_plan, library_filename, linker_os_for_host,
+    parse_symbol_table, run_link_plan, run_obj_plan,
 };
 
 const FIXTURE_CRATE_NAME: &str = "thin_build_fixture";

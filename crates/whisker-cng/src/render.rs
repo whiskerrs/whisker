@@ -7,7 +7,7 @@
 //! placeholders so a typo'd `{{`-block fails loudly at sync time
 //! instead of writing a broken file the user has to debug.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::collections::HashMap;
 
 /// Escape the five XML special characters (`&`, `<`, `>`, `"`,

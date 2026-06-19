@@ -22,7 +22,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use slotmap::{new_key_type, SlotMap};
+use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {
     /// Identifier for an [`Owner`] slot in the runtime's owner map.

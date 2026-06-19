@@ -9,7 +9,7 @@
 //! as a black silhouette instead of an outline. See compile.rs's
 //! `update_paint(&root, …)` call.
 
-use whisker_svg::{compile, replay, TraceVisitor};
+use whisker_svg::{TraceVisitor, compile, replay};
 
 const LUCIDE_LIKE: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>"#;
 

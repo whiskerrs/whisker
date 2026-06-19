@@ -165,7 +165,7 @@ pub fn resolve(rel: &str) -> String {
 /// `ptr` must point to at least `len` valid, initialized bytes for the
 /// duration of the call (or `len` must be 0). The bytes must be valid
 /// UTF-8; invalid input is ignored (the base is left unchanged).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn whisker_asset_set_ios_base(ptr: *const u8, len: usize) {
     if ptr.is_null() && len != 0 {
         return;
@@ -192,7 +192,7 @@ pub unsafe extern "C" fn whisker_asset_set_ios_base(ptr: *const u8, len: usize) 
 ///
 /// Takes no arguments — the Android resolution prefix is fixed
 /// (`file:///android_asset/whisker/`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn whisker_asset_set_android() {
     set_base(AssetBase::AndroidAssets);
 }
@@ -248,7 +248,7 @@ mod android_init {
     /// explicit `.init_array` section is what the linker scans for
     /// constructor function pointers.
     #[used]
-    #[link_section = ".init_array"]
+    #[unsafe(link_section = ".init_array")]
     static INIT_ANDROID_BASE: extern "C" fn() = ctor;
 }
 

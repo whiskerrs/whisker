@@ -29,7 +29,7 @@
 //! invites trying to instantiate a plugin without registering it
 //! with the engine, which loses the topo-sort / conflict checks.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::Write;

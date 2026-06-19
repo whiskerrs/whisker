@@ -222,7 +222,7 @@ impl From<&str> for Signal<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reactive::{__reset_for_tests, computed, effect, flush, signal, RwSignal};
+    use crate::reactive::{__reset_for_tests, RwSignal, computed, effect, flush, signal};
     use std::cell::RefCell;
     use std::rc::Rc;
 

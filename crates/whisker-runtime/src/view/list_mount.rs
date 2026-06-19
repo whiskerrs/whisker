@@ -47,10 +47,10 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use crate::reactive::{effect, on_cleanup, Owner};
+use crate::reactive::{Owner, effect, on_cleanup};
 
 use super::handle::Element;
-use super::list_provider::{NativeItemProvider, INVALID_ITEM_INDEX};
+use super::list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 use super::renderer::{element_sign, install_list_native_item_provider, set_update_list_info};
 
 /// One live item — its FiberElement (`element`) and the reactive
@@ -159,8 +159,8 @@ mod tests {
     use super::*;
     use crate::element::ElementTag;
     use crate::reactive::flush;
-    use crate::view::renderer::{install_renderer, uninstall_renderer, DynRenderer};
-    use crate::view::{create_element_by_name, BindType};
+    use crate::view::renderer::{DynRenderer, install_renderer, uninstall_renderer};
+    use crate::view::{BindType, create_element_by_name};
 
     /// Minimal recording renderer that captures the calls
     /// `list_mount` makes — `set_update_list_info(count)` and

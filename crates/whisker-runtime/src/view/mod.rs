@@ -38,10 +38,10 @@ pub use apply::{
 };
 pub use handle::Element;
 pub use into_view::{
-    mount_children, Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, View, WhenFn,
+    Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, View, WhenFn, mount_children,
 };
 pub use list_mount::list_mount;
-pub use list_provider::{NativeItemProvider, INVALID_ITEM_INDEX};
+pub use list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 #[doc(hidden)]
 pub use renderer::__reset_children_mirror_for_tests;
 
@@ -49,10 +49,10 @@ pub use renderer::__reset_children_mirror_for_tests;
 // against and that framework-extension authors (custom control flow,
 // platform-component module crates) legitimately reach for.
 pub use renderer::{
-    append_child, child_index, children_of, create_element, create_element_by_name,
+    BindType, append_child, child_index, children_of, create_element, create_element_by_name,
     create_phantom_element, dispatch_event, flush, insert_child_at,
     install_list_native_item_provider, is_phantom, previous_sibling, release_element, remove_child,
-    set_attribute, set_event_listener, set_inline_styles, set_root, set_update_list_info, BindType,
+    set_attribute, set_event_listener, set_inline_styles, set_root, set_update_list_info,
 };
 
 // Renderer-wiring internals. Public because `whisker-driver` (and test
@@ -63,6 +63,6 @@ pub use renderer::{
 // cross-crate references.
 #[doc(hidden)]
 pub use renderer::{
-    current_renderer_id, element_sign, install_renderer, module_component_ptr, uninstall_renderer,
-    with_installed_renderer, DynRenderer, EventDispatchPlan, PHANTOM_BASE,
+    DynRenderer, EventDispatchPlan, PHANTOM_BASE, current_renderer_id, element_sign,
+    install_renderer, module_component_ptr, uninstall_renderer, with_installed_renderer,
 };

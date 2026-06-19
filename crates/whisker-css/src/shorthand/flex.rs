@@ -63,9 +63,9 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::ext::*;
     use crate::value::FlexBasis;
-    use crate::Css;
 
     use super::*;
 

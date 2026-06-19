@@ -4,7 +4,7 @@
 //! rather than as a subtle rendering glitch in the integration
 //! tests.
 
-use whisker_svg::path_parse::{parse, PathCommand};
+use whisker_svg::path_parse::{PathCommand, parse};
 
 #[test]
 fn absolute_move_line_close() {

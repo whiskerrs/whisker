@@ -1,7 +1,7 @@
 [package]
 name = "asset-demo"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Example app for `whisker-asset`. Bundles a PNG under `assets/` and displays it via `Image(src: asset!(\"images/logo.png\"))` so on-device verification of the Phase 3 native base wiring (iOS bundle dir / Android packaged assets) happens in one place."
 

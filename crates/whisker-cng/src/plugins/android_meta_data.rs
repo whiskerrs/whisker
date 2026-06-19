@@ -86,12 +86,13 @@ mod tests {
         AndroidMetaData
             .apply(&mut ctx, &AndroidMetaDataConfig::default())
             .unwrap();
-        assert!(ctx
-            .android
-            .unwrap()
-            .manifest
-            .application_meta_data
-            .is_empty());
+        assert!(
+            ctx.android
+                .unwrap()
+                .manifest
+                .application_meta_data
+                .is_empty()
+        );
         assert!(ctx.journal.records.is_empty());
     }
 

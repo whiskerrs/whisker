@@ -814,7 +814,8 @@ mod tests {
         // Force the non-TTY branch (plain output) so the assertion
         // doesn't depend on `is_tty()` returning false at test time
         // — which it does under cargo test, but explicit is better.
-        std::env::set_var("WHISKER_VERBOSE", "");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("WHISKER_VERBOSE", "") };
         let line = if is_tty() {
             // Test fixture: derive the non-color version even when
             // running interactively. We can't easily mock is_tty()

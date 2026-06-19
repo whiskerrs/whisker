@@ -881,7 +881,7 @@ fn untrack_is_nestable_without_breaking_outer_restore() {
 
 #[test]
 fn untrack_restores_tracker_when_f_panics() {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     fresh();
     let restored = Rc::new(RefCell::new(None));
     let restored_clone = restored.clone();

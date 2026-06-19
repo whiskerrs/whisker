@@ -1,7 +1,7 @@
 [package]
 name = "aurora-wallet"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "A polished single-file Whisker demo: a finance / wallet dashboard (balance card, segmented control, spending chart, transactions) built entirely in one `src/lib.rs`. Designed to show off the hot-reload dev loop — tweak a colour, label, or number and watch the running app update in under a second with its state intact."
 

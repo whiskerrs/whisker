@@ -3,7 +3,7 @@
 //! still passes in environments without it (the macro-only unit tests
 //! in `src/lib.rs` cover the formatter logic without rustfmt).
 
-use whisker_fmt::{check_source, format_source, rustfmt_available, FmtOptions};
+use whisker_fmt::{FmtOptions, check_source, format_source, rustfmt_available};
 
 fn opts(tab: usize, width: usize) -> FmtOptions {
     FmtOptions {

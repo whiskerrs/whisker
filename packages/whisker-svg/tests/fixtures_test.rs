@@ -17,7 +17,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use whisker_svg::{compile, replay, TraceVisitor};
+use whisker_svg::{TraceVisitor, compile, replay};
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

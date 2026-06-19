@@ -182,11 +182,11 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::data_type::{Color, ColorStop, CssString, Gradient, NamedColor};
     use crate::data_type_ext::{Position, PositionKeyword};
     use crate::keyword::*;
     use crate::value::ImageRef;
-    use crate::Css;
 
     use super::*;
 

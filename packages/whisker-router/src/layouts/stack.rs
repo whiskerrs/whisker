@@ -58,14 +58,14 @@ use whisker::animate_cancel;
 use whisker::css::ext::*;
 use whisker::css::{Css, FlexDirection, Overflow, PositionKind, ToCss};
 use whisker::runtime::element::ElementTag;
-use whisker::runtime::reactive::{effect, on_mount, Owner};
+use whisker::runtime::reactive::{Owner, effect, on_mount};
 use whisker::runtime::view::apply::apply_styles;
 use whisker::runtime::view::{
-    append_child, create_element, insert_child_at, remove_child, set_inline_styles, Element,
+    Element, append_child, create_element, insert_child_at, remove_child, set_inline_styles,
 };
-use whisker::{component, provide_context, Children, Style};
+use whisker::{Children, Style, component, provide_context};
 
-use crate::outlet::{router, RouteRenderFn};
+use crate::outlet::{RouteRenderFn, router};
 use crate::route::Route;
 use crate::stack::EntryId;
 use crate::transitions::{Direction, Side, StackTransitionBox};
@@ -769,13 +769,13 @@ mod tests {
     use crate::outlet::RouteRenderFn;
     use crate::route::{Route, RouteError};
     use crate::stack::{EntryId, EntryState, RouteEntry};
+    use whisker::RwSignal;
     use whisker::runtime::element::ElementTag;
     use whisker::runtime::reactive::Owner;
     use whisker::runtime::value::WhiskerValue;
     use whisker::runtime::view::{
-        create_element, install_renderer, uninstall_renderer, BindType, DynRenderer, Element,
+        BindType, DynRenderer, Element, create_element, install_renderer, uninstall_renderer,
     };
-    use whisker::RwSignal;
 
     #[derive(Clone, Debug, PartialEq)]
     enum TestRoute {

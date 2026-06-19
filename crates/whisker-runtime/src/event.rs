@@ -27,11 +27,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use serde::de::{self, DeserializeOwned, Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
+use serde::de::{self, DeserializeOwned, Deserializer, MapAccess, Visitor};
 
 use crate::value::WhiskerValue;
-use crate::view::{set_event_listener, Element};
+use crate::view::{Element, set_event_listener};
 
 /// Re-export so `event::BindType` sits next to `event::bind_typed` /
 /// `event::bind_unit` — the propagation type these take. Canonical

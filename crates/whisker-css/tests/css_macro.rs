@@ -2,8 +2,8 @@
 
 use whisker_css::ext::*;
 use whisker_css::{
-    css, AnimationDirection, Border, BorderStyle, Color, Css, FlexDirection, JustifyContent,
-    NamedColor, PositionKind, ToCss, TransformFn,
+    AnimationDirection, Border, BorderStyle, Color, Css, FlexDirection, JustifyContent, NamedColor,
+    PositionKind, ToCss, TransformFn, css,
 };
 
 #[test]

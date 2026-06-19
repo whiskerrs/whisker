@@ -26,15 +26,15 @@
 
 use podcast_domain::NowPlaying;
 use podcast_theme as theme;
+use whisker::ArcRwSignal;
 use whisker::css::{
     AlignItems, Color, Display, FlexDirection, FontWeight, JustifyContent, PositionKind,
     TextOverflow,
 };
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker::ArcRwSignal;
 use whisker_audio::Player;
-use whisker_icons::{lucide, Icon};
+use whisker_icons::{Icon, lucide};
 use whisker_image::{Image, ImageMode};
 
 /// Mirror of the shell-side alias. Same TypeId across crates

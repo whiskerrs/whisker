@@ -80,8 +80,8 @@ use router_example_feature_home::HomeScreen;
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::{
-    route, route_stack, AndroidPredictiveBack, IosSwipeBack, RouteProvider, RouteRenderFn,
-    StackLayout,
+    AndroidPredictiveBack, IosSwipeBack, RouteProvider, RouteRenderFn, StackLayout, route,
+    route_stack,
 };
 
 /// Flip to `false` to mount `HomeScreen` directly under `page`

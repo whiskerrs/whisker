@@ -29,7 +29,7 @@
 //!   where `<ns>` is `_`-joined snake_case. Override with
 //!   `--bundle-id`.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use std::path::{Path, PathBuf};
 
@@ -148,7 +148,7 @@ resolver = "2"
 [package]
 name = "{name}"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["rlib"]

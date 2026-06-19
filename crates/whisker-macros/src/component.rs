@@ -36,7 +36,7 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
-use syn::{parse2, Expr, FnArg, GenericParam, Ident, ItemFn, Pat, Type};
+use syn::{Expr, FnArg, GenericParam, Ident, ItemFn, Pat, Type, parse2};
 
 pub fn expand(item: TokenStream2) -> TokenStream2 {
     let input: ItemFn = match parse2(item) {

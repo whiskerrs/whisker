@@ -56,10 +56,10 @@ impl Css {
 
 #[cfg(test)]
 mod tests {
+    use crate::Css;
     use crate::ext::*;
     use crate::keyword::*;
     use crate::value::LineHeight;
-    use crate::Css;
 
     #[test]
     fn font_family_quotes_the_value() {

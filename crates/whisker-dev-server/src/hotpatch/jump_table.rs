@@ -220,10 +220,12 @@ mod tests {
     fn data_symbols_are_skipped() {
         let old = t(vec![("g", data(0x4000, 8))]);
         let new = t(vec![("g", data(0x4100, 8))]);
-        assert!(build_jump_table(&old, &new, lib(), 0, 0)
-            .table
-            .map
-            .is_empty());
+        assert!(
+            build_jump_table(&old, &new, lib(), 0, 0)
+                .table
+                .map
+                .is_empty()
+        );
     }
 
     #[test]
@@ -242,10 +244,12 @@ mod tests {
         // a size-0 entry is a PLT stub or compiler marker — skip.
         let old = t(vec![("plt_stub", text(0x1000, 0))]);
         let new = t(vec![("plt_stub", text(0x1100, 0))]);
-        assert!(build_jump_table(&old, &new, lib(), 0, 0)
-            .table
-            .map
-            .is_empty());
+        assert!(
+            build_jump_table(&old, &new, lib(), 0, 0)
+                .table
+                .map
+                .is_empty()
+        );
     }
 
     #[test]

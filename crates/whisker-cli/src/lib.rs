@@ -123,7 +123,8 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     // the env var means any subprocess we spawn (dev-server, shim
     // binaries) sees the same mode without further plumbing.
     if cli.verbose {
-        std::env::set_var("WHISKER_VERBOSE", "1");
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("WHISKER_VERBOSE", "1") };
     }
     match cli.command {
         Command::Doctor(a) => doctor::run(a),

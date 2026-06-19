@@ -209,11 +209,14 @@ mod tests {
         // Use CARGO_TARGET_DIR so we don't depend on the workspace
         // layout the tests run from.
         let prev = std::env::var_os("CARGO_TARGET_DIR");
-        std::env::set_var("CARGO_TARGET_DIR", &target);
+        // FIXME: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("CARGO_TARGET_DIR", &target) };
         let result = resolve_shim_paths(&dir);
         match prev {
-            Some(p) => std::env::set_var("CARGO_TARGET_DIR", p),
-            None => std::env::remove_var("CARGO_TARGET_DIR"),
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            Some(p) => unsafe { std::env::set_var("CARGO_TARGET_DIR", p) },
+            // FIXME: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var("CARGO_TARGET_DIR") },
         }
 
         let paths = result.expect("resolve");
