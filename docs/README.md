@@ -22,6 +22,14 @@ Whisker itself**.
 - [`module-api-design.md`](module-api-design.md) — how to choose the
   user-facing surface shape for a new `whisker-*` module crate. Read
   before writing a new module.
+- [`router-design.md`](router-design.md) — the router model: the static
+  `RouteTree` (`routes!`) and the dynamic `NavState`, URL derivation,
+  relative resolution, and the `navigate`/`back`/`replace`/`popTo`/`reset`
+  operations.
+- [`animation-design.md`](animation-design.md) — the continuous,
+  signal-based animation engine (`AnimationController` + `Tween`), how it
+  differs from Lynx's discrete CSS-keyframe animator, and how it backs the
+  router's transitions.
 - [`lynx-integration.md`](lynx-integration.md) — how Whisker integrates
   and distributes its Lynx fork (iOS SwiftPM binary targets, Android
   Maven AARs) and the fork's release process.
