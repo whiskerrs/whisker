@@ -26,6 +26,7 @@ hot-reload = ["whisker-driver/hot-reload", "dep:subsecond"]
 
 [dependencies]
 whisker-runtime = { workspace = true }
+whisker-animation = { workspace = true }
 whisker-macros = { workspace = true }
 whisker-driver = { workspace = true }
 whisker-config = { workspace = true }

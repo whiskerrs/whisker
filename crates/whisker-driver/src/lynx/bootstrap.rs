@@ -391,6 +391,15 @@ fn tick_frame() {
         // survives.
         remount_components_for(&patched);
     }
+    // Advance the continuous animation engine (whisker-animation) by
+    // one frame *before* the reactive flush, so any progress signal it
+    // writes is drained and painted in this same frame. `step` feeds a
+    // monotonic millisecond timestamp; the engine derives each
+    // controller's progress from elapsed time, sets its value signal,
+    // and reports (via `anim_hook::is_animating`, ORed into
+    // `has_pending_work`) whether the host should schedule another
+    // frame. No-op when no controller is active — idle costs nothing.
+    whisker_runtime::anim_hook::step(monotonic_millis());
     reactive_flush();
     // Drive any async tasks (resource() fetchers, user-spawned
     // futures) until they stall. Tasks that resolve here may write
@@ -420,6 +429,19 @@ fn tick_frame() {
         reactive_flush_mounts();
         renderer_flush();
     }
+}
+
+/// Monotonic wall-clock time in milliseconds, measured from a fixed
+/// process-start anchor. Feeds the animation engine's per-frame
+/// `step` so progress advances by real elapsed time. Uses `Instant`
+/// (monotonic, never goes backwards) rather than `SystemTime` so a
+/// clock adjustment can't jump or stall an animation.
+fn monotonic_millis() -> f64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static ANCHOR: OnceLock<Instant> = OnceLock::new();
+    let anchor = ANCHOR.get_or_init(Instant::now);
+    anchor.elapsed().as_secs_f64() * 1000.0
 }
 
 #[cfg(feature = "hot-reload")]
