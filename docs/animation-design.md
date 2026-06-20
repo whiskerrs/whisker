@@ -22,11 +22,13 @@ second one:
    forward/reverse control — is plain Rust. No Lynx-fork or C++ bridge
    change is required.
 
-This doc is the *design* — the model and the "why". Implementation will
-live in a `whisker-animation` crate; the router (`whisker-router`) is its
-first consumer (see `docs/router-design.md`).
+This doc is the *design* — the model and the "why". The engine lives in
+the `whisker-animation` crate (`AnimationController` + `Tween` + the
+frame-driving hook); the router (`whisker-router`) is its intended first
+consumer (see `docs/router-design.md`), not yet wired.
 
-> Status: **design**. Not yet implemented.
+> Status: **engine implemented** (`crates/whisker-animation`,
+> unit-tested); **not yet wired into the router or any device path**.
 
 ## Why a second system
 
@@ -183,9 +185,19 @@ Tween<T>::animate(&ctrl) -> ReadSignal<T>:
 - **Curves / springs**: `AnimConfig` carries duration + easing (`linear`,
   `ease_in/out`, cubic-bezier) or a spring (stiffness/damping). Springs
   step by physics rather than `elapsed/duration`.
-- **vsync**: reuses `host_wake::set_request_frame_callback` /
-  `request_frame` — already wired (iOS `CADisplayLink`, Android
-  `Choreographer`). No new native surface.
+- **vsync / frame driving** (as built): the runtime is level-triggered —
+  the host ticks while `scheduler::has_pending_work()` is true — so the
+  engine does **not** poke `request_frame` directly. Instead it uses an
+  inversion-of-control surface, `whisker_runtime::anim_hook`: the engine
+  registers a per-frame `step` callback and a latched `is_animating`
+  flag, `has_pending_work()` ORs in `anim_hook::is_animating()`, and the
+  driver's `tick_frame` calls `anim_hook::step(monotonic_ms)` once per
+  frame (before the reactive flush, so the progress write paints the same
+  frame). `forward()`/etc. set the flag and `wake_runtime()` for an
+  immediate wake; finishing clears it and the runtime goes idle (releases
+  vsync). This keeps `whisker-runtime`/`whisker-driver` free of a
+  dependency on the engine crate. Time is a monotonic millisecond
+  timestamp passed into `step`; tests inject it for determinism.
 - **Application**: the value is a signal; reading it in `css!` /
   `computed` re-runs that one effect, which calls the existing
   `set_inline_styles`. (Optimisation: where a numeric attribute path
@@ -225,8 +237,12 @@ that needs continuous, controllable, reactive motion.
 
 ## Open items
 
-- `Animatable` coverage: which value types ship first (`f32`, `Color`,
-  transform shorthand) and how transform composition is expressed.
+- `Animatable` coverage: shipped for `f32` and `Color`; transform
+  shorthand and how transform composition is expressed are still open.
+  **Caveat (as built):** `Color::Named` can't be lerped — the 147-entry
+  named-colour table lives in Lynx, not this crate — so named endpoints
+  **snap at the midpoint**; smooth colour tweens need explicit
+  `Color::rgb(..)` / `Color::hsl(..)` endpoints.
 - Spring parameterisation (stiffness/damping vs duration/bounce presets).
 - Numeric attribute fast-path vs `transform` string formatting per frame
   (perf for many simultaneous animations).
