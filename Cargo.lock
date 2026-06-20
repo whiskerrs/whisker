@@ -2240,12 +2240,21 @@ dependencies = [
 name = "whisker"
 version = "0.6.0"
 dependencies = [
+ "whisker-animation",
  "whisker-config",
  "whisker-css",
  "whisker-driver",
  "whisker-macros",
  "whisker-runtime",
  "whisker-subsecond",
+]
+
+[[package]]
+name = "whisker-animation"
+version = "0.6.0"
+dependencies = [
+ "whisker-css",
+ "whisker-runtime",
 ]
 
 [[package]]

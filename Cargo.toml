@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/whisker",
+    "crates/whisker-animation",
     "crates/whisker-config",
     "crates/whisker-build",
     "crates/whisker-cli",
@@ -77,6 +78,7 @@ categories = ["gui"]
 
 [workspace.dependencies]
 whisker = { path = "crates/whisker", version = "0.6.0" }
+whisker-animation = { path = "crates/whisker-animation", version = "0.6.0" }
 whisker-config = { path = "crates/whisker-config", version = "0.6.0" }
 whisker-build = { path = "crates/whisker-build", version = "0.6.0" }
 whisker-cng = { path = "crates/whisker-cng", version = "0.6.0" }

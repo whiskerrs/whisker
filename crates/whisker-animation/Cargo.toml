@@ -1,0 +1,16 @@
+[package]
+name = "whisker-animation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Continuous, signal-based animation engine for Whisker (Flutter-style AnimationController + Tween, no Lynx animator)."
+
+[dependencies]
+whisker-runtime = { workspace = true }
+whisker-css = { workspace = true }

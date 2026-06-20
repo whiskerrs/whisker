@@ -61,6 +61,7 @@ pub(crate) fn schedule(node: NodeId) {
 /// resume via the main-loop drive, not vsync).
 pub fn has_pending_work() -> bool {
     with_runtime(|rt| !rt.pending.is_empty() || !rt.pending_mounts.is_empty())
+        || crate::anim_hook::is_animating()
 }
 
 /// Drain the pending queue, re-running effects and computeds in the order

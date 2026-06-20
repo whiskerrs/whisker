@@ -20,6 +20,7 @@
 //! pipeline; that retired when the macro switched to emitting
 //! imperative `view::*` calls driven by reactive effects.
 
+pub mod anim_hook;
 pub mod element;
 pub mod event;
 pub mod host_wake;

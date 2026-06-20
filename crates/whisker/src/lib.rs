@@ -66,6 +66,14 @@ pub use whisker_runtime as runtime;
 
 pub use whisker_css as css;
 
+// Continuous, signal-based animation engine (Flutter-style
+// AnimationController + Tween). See `docs/animation-design.md`. The
+// public surface is also re-exported flat into the prelude below so
+// `whisker::{animated, AnimationController, Tween, AnimConfig,
+// Animatable, Curve}` work directly.
+pub use whisker_animation as animation;
+pub use whisker_animation::{AnimConfig, Animatable, AnimationController, Curve, Tween, animated};
+
 // The macro expansions reference this through `::whisker::ElementTag`;
 // the C bridge keys element creation off the same enum.
 pub use whisker_runtime::element::ElementTag;
