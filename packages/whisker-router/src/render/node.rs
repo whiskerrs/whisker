@@ -38,6 +38,20 @@ use crate::render::handle::RouterHandle;
 use crate::render::registry::Transition;
 use crate::render::transition::{self, Role};
 
+/// **Temporary diagnostic logging** for the Stack transition path.
+///
+/// Forwarded to the dev-server via `eprintln!` + whisker's log_capture so
+/// the iOS-sim trace of a push/pop can be inspected (the frame-1 vanish
+/// could only be pinned down on a device). Defaults **on** for this
+/// diagnostic build; set `WHISKER_ROUTER_DEBUG=0` to silence. Remove once
+/// the cause is confirmed.
+//
+// TODO(phase-2 cleanup): delete this gate + its call sites once the
+// transition is verified on device.
+fn router_debug() -> bool {
+    std::env::var("WHISKER_ROUTER_DEBUG").as_deref() != Ok("0")
+}
+
 /// Mount the node at `path` and return its phantom slot.
 ///
 /// The slot is a [`create_phantom_element`] the caller appends wherever
@@ -266,23 +280,18 @@ fn reconcile_stack(
             } else {
                 // Real push: drive the new top's controller 0 → 1 and
                 // point BOTH it and the entry below at that controller so
-                // they animate as a coordinated pair.
+                // they animate as a coordinated pair. The per-wrapper pose
+                // effect is the ONLY style writer — we set the controller
+                // value first (so the effect's next run reads the start
+                // pose) then repoint the bindings.
                 let drive = w.ctrl.clone();
                 w.ctrl.set_value(0.0);
                 set_pose(&w, &drive, Role::Top);
-                // Apply the incoming start pose immediately (off-screen
-                // right) so frame 1 doesn't flash it at 0%.
-                {
-                    let (t, o) = transition::pose(w.transition, Role::Top, 0.0);
-                    set_inline_styles(w.wrapper, &wrapper_style(t, o));
-                }
                 {
                     let l = live.borrow();
                     if let Some(under) = l.last() {
                         under.owner.resume(); // animate it while covered
                         set_pose(under, &drive, Role::Under);
-                        let (t, o) = transition::pose(under.transition, Role::Under, 0.0);
-                        set_inline_styles(under.wrapper, &wrapper_style(t, o));
                     }
                 }
                 if w.transition == Transition::None {
@@ -394,26 +403,22 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
     // device frame that left it short), `reverse()`'s target would already
     // be reached and `on_finish(true)` would fire on the first frame —
     // popping the screen with no visible slide-out. Anchoring at 1.0 first
-    // forces a real 1 → 0 animation.
+    // forces a real 1 → 0 animation. (A controller op, not a style write.)
     drive.set_value(1.0);
 
     // Point the popped top at the drive ctrl (Top) and the revealed
-    // survivor at the same ctrl (Under).
+    // survivor at the same ctrl (Under). The per-wrapper pose EFFECT is the
+    // single style writer — we never call `set_inline_styles` by hand here
+    // (a second writer racing the effect, plus a re-append disturbing the
+    // effect's element, was the suspected frame-1 vanish). The effect runs
+    // each frame off `drive.value()` and writes the coordinated pose.
     set_pose(&popped, &drive, Role::Top);
 
-    // Paint order: re-append the outgoing top so it is the front-most
-    // sibling and slides away *over* the revealed screen (a later sibling
-    // paints on top in Lynx). Without this the revealed full-screen
-    // survivor can cover the outgoing screen from frame 1.
-    remove_child(slot, popped.wrapper);
-    append_child(slot, popped.wrapper);
-
-    // Apply the start pose immediately (don't wait for the deferred style
-    // effect to flush) so frame 1 already shows the top fully present
-    // rather than a stale/blank pose.
-    {
-        let (t, o) = transition::pose(transition, Role::Top, 1.0);
-        set_inline_styles(popped.wrapper, &wrapper_style(t, o));
+    if router_debug() {
+        eprintln!(
+            "[router] run_pop: drive.value={} popped.role=Top transition={transition:?}",
+            drive.value().get_untracked()
+        );
     }
 
     let survivor_handle = {
@@ -421,9 +426,6 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
         l.last().map(|w| {
             w.owner.resume();
             set_pose(w, &drive, Role::Under);
-            // Apply the revealed survivor's start (fully-covered) pose now.
-            let (t, o) = transition::pose(transition, Role::Under, 1.0);
-            set_inline_styles(w.wrapper, &wrapper_style(t, o));
             // Capture what we need to re-settle the survivor on finish.
             (w.wrapper, w.ctrl.clone(), w.pose_ctrl, w.pose_role)
         })
@@ -444,11 +446,14 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
     let popped_owner = popped.owner;
     let done = Rc::new(RefCell::new(false));
     drive.on_finish(move |finished| {
+        if router_debug() {
+            eprintln!("[router] run_pop on_finish: finished={finished}");
+        }
         if !finished || *done.borrow() {
             return;
         }
         *done.borrow_mut() = true;
-        // Unmount the popped entry.
+        // Unmount the popped entry (ONLY here — never mid-animation).
         remove_child(slot, popped_wrapper);
         popped_owner.dispose();
         // Re-settle the revealed survivor onto its own controller at the
@@ -503,13 +508,28 @@ fn mount_wrapper(
         let pose_ctrl = whisker::RwSignal::new(ctrl.clone());
         let pose_role = whisker::RwSignal::new(Role::Top);
 
+        // The pose `computed` also carries the (role, transform, opacity)
+        // for logging — the single source of truth for what gets written.
         let style = computed(move || {
             let c = pose_ctrl.get();
             let role = pose_role.get();
             let (transform, opacity) = transition::pose(transition, role, c.value().get());
-            wrapper_style(transform, opacity)
+            (
+                wrapper_style(transform.clone(), opacity),
+                role,
+                transform,
+                opacity,
+            )
         });
-        effect(move || set_inline_styles(wrapper, &style.get()));
+        effect(move || {
+            let (css, role, transform, opacity) = style.get();
+            if router_debug() {
+                eprintln!(
+                    "[router] pose idx={idx} role={role:?} transform={transform} opacity={opacity}"
+                );
+            }
+            set_inline_styles(wrapper, &css);
+        });
 
         let child = mount_node(handle, child_path);
         append_child(wrapper, child);
