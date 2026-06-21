@@ -426,3 +426,43 @@ fn animate_to_already_at_target_finishes_without_registering() {
     assert_eq!(__active_count(), 0);
     assert!(approx(v.get_untracked(), 0.0));
 }
+
+// ----- 10. regression: idle gap must not teleport on the first frame -------
+
+#[test]
+fn forward_after_idle_gap_starts_from_zero_not_teleport() {
+    // The run's start time is anchored on its FIRST advance, not on the
+    // scheduler's last-seen timestamp. Otherwise, after a long idle gap
+    // (the scheduler's `last_ms` is stale), the first `forward()` frame
+    // would compute a huge elapsed and jump straight to the target — the
+    // "single tap teleports, mashing animates" bug. Here we let the clock
+    // advance to 5000ms while idle, then forward() and assert the very
+    // first frame is ~0, and the animation then progresses smoothly.
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::linear(100));
+    let v = ctrl.value();
+
+    // Simulate a long idle gap: the engine's clock has moved far ahead
+    // (e.g. earlier animations / app uptime) with this controller idle.
+    __step_for_tests(5000.0);
+    assert_eq!(__active_count(), 0, "nothing should be animating yet");
+
+    ctrl.forward();
+    // First real frame at t=5000: must read ~0, NOT jump to 1.0.
+    __step_for_tests(5000.0);
+    assert!(
+        approx(v.get_untracked(), 0.0),
+        "first frame after idle must be ~0, got {} (teleport bug)",
+        v.get_untracked()
+    );
+    // Then it advances normally over its 100ms duration.
+    __step_for_tests(5050.0);
+    assert!(
+        v.get_untracked() > 0.4 && v.get_untracked() < 0.6,
+        "mid {}",
+        v.get_untracked()
+    );
+    __step_for_tests(5100.0);
+    assert!(approx(v.get_untracked(), 1.0), "end {}", v.get_untracked());
+    assert_eq!(__active_count(), 0);
+}
