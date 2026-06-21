@@ -20,6 +20,7 @@ members = [
     "crates/whisker-plugin",
     "crates/whisker-runtime",
     "crates/whisker-subsecond",
+    "examples/anim-smoke",
     "examples/asset-demo",
     "examples/aurora-wallet",
     "examples/podcast",

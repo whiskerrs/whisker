@@ -1,0 +1,12 @@
+[package]
+name = "anim-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Throwaway example verifying the whisker-animation engine on-device: a curve box and a spring box slide via AnimationController forward/reverse."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }

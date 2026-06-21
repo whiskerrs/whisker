@@ -466,3 +466,171 @@ fn forward_after_idle_gap_starts_from_zero_not_teleport() {
     assert!(approx(v.get_untracked(), 1.0), "end {}", v.get_untracked());
     assert_eq!(__active_count(), 0);
 }
+
+// ----- 11. springs ---------------------------------------------------------
+
+/// Drive a spring controller through frames `frame_ms` apart, starting at
+/// `start_ms`, for up to `max_frames`. Returns the number of frames run
+/// (i.e. it stops early once the controller deregisters / settles).
+fn run_spring_frames(start_ms: f64, frame_ms: f64, max_frames: usize) -> usize {
+    let mut now = start_ms;
+    // Anchor the run (first frame is the start, integrates nothing).
+    __step_for_tests(now);
+    for i in 0..max_frames {
+        now += frame_ms;
+        __step_for_tests(now);
+        if __active_count() == 0 {
+            return i + 1;
+        }
+    }
+    max_frames
+}
+
+#[test]
+fn spring_forward_settles_to_one() {
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::spring());
+    let v = ctrl.value();
+    ctrl.forward();
+    assert_eq!(__active_count(), 1);
+
+    // ~16ms frames; a default spring settles well within a couple seconds.
+    let frames = run_spring_frames(0.0, 16.0, 240);
+    assert!(frames < 240, "spring never settled (ran all frames)");
+    assert!(
+        approx(v.get_untracked(), 1.0),
+        "spring forward end {}",
+        v.get_untracked()
+    );
+    assert_eq!(__active_count(), 0, "settled spring must deregister");
+    assert!(!ctrl.is_animating());
+}
+
+#[test]
+fn spring_reverse_settles_to_zero() {
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::spring());
+    let v = ctrl.value();
+    // Park it at 1.0 first (one-shot set, no self-drive).
+    ctrl.set_value(1.0);
+    assert!(approx(v.get_untracked(), 1.0));
+
+    ctrl.reverse();
+    let frames = run_spring_frames(0.0, 16.0, 240);
+    assert!(frames < 240, "spring reverse never settled");
+    assert!(
+        approx(v.get_untracked(), 0.0),
+        "spring reverse end {}",
+        v.get_untracked()
+    );
+    assert_eq!(__active_count(), 0);
+}
+
+#[test]
+fn spring_is_monotonic_or_overshoots_per_config() {
+    // A stiff (near-critically-damped) spring should not overshoot
+    // meaningfully above the target.
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::stiff());
+    let v = ctrl.value();
+    ctrl.forward();
+    let mut peak_stiff = 0.0_f32;
+    let mut now = 0.0;
+    __step_for_tests(now);
+    for _ in 0..240 {
+        now += 16.0;
+        __step_for_tests(now);
+        peak_stiff = peak_stiff.max(v.get_untracked());
+        if __active_count() == 0 {
+            break;
+        }
+    }
+    assert!(
+        peak_stiff <= 1.01,
+        "stiff() spring overshot too far: peak {peak_stiff}"
+    );
+    assert!(
+        approx(v.get_untracked(), 1.0),
+        "stiff end {}",
+        v.get_untracked()
+    );
+
+    // A bouncy (underdamped) spring SHOULD overshoot above 1.0 before
+    // settling.
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::bouncy());
+    let v = ctrl.value();
+    ctrl.forward();
+    let mut peak_bouncy = 0.0_f32;
+    let mut now = 0.0;
+    __step_for_tests(now);
+    for _ in 0..360 {
+        now += 16.0;
+        __step_for_tests(now);
+        peak_bouncy = peak_bouncy.max(v.get_untracked());
+        if __active_count() == 0 {
+            break;
+        }
+    }
+    assert!(
+        peak_bouncy > 1.05,
+        "bouncy() spring should visibly overshoot, peak {peak_bouncy}"
+    );
+    // …and still settle back to exactly 1.0.
+    assert!(
+        approx(v.get_untracked(), 1.0),
+        "bouncy end {}",
+        v.get_untracked()
+    );
+    assert_eq!(__active_count(), 0);
+}
+
+#[test]
+fn spring_idle_gap_does_not_explode() {
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::bouncy());
+    let v = ctrl.value();
+
+    // Long idle gap: the engine clock advances far while the spring is
+    // idle, so the previous-frame timestamp would be stale.
+    __step_for_tests(10_000.0);
+    assert_eq!(__active_count(), 0);
+
+    ctrl.forward();
+    // First real frame at t=10000: must be ~0 (the run's start), NOT a
+    // huge integration step from the stale clock.
+    __step_for_tests(10_000.0);
+    assert!(
+        approx(v.get_untracked(), 0.0),
+        "first spring frame after idle must be ~0, got {}",
+        v.get_untracked()
+    );
+
+    // The next frames must stay bounded and finite — the dt clamp keeps a
+    // residual gap from blowing up the integrator.
+    let mut now = 10_000.0;
+    for _ in 0..30 {
+        now += 16.0;
+        __step_for_tests(now);
+        let x = v.get_untracked();
+        assert!(x.is_finite(), "spring value went non-finite: {x}");
+        assert!(
+            (-0.2..=1.4).contains(&x),
+            "spring value left sane range after idle gap: {x}"
+        );
+    }
+}
+
+#[test]
+fn spring_finishes_and_goes_idle() {
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::spring());
+    ctrl.forward();
+    let frames = run_spring_frames(0.0, 16.0, 240);
+    assert!(frames < 240);
+    // Fully idle: deregistered, not animating, runtime has no pending work.
+    assert_eq!(__active_count(), 0);
+    assert!(!ctrl.is_animating());
+    assert!(!whisker_runtime::anim_hook::is_animating());
+    assert!(!whisker_runtime::reactive::has_pending_work());
+}
