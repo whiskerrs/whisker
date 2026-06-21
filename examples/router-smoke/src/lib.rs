@@ -31,8 +31,8 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::core::{CompiledTree, NodePath, RouteInstance, RouteTree, SwitchDef, Target};
 use whisker_router::render::{
-    AndroidPredictiveBack, RouteRegistry, Router, RouterHandle, SwipeBack, TabItem, Tabs,
-    Transition, use_navigator,
+    AndroidPredictiveBack, DiagMarker, RouteRegistry, Router, RouterHandle, SwipeBack, TabItem,
+    Tabs, Transition, use_navigator,
 };
 
 /// The Switch (tabs) is the tree root, so its path is the root path.
@@ -84,11 +84,12 @@ fn app() -> Element {
             // Interactive back gestures — both mounted; each waits on its
             // own platform input. iOS = leading-edge swipe; Android =
             // system predictive back (13+ shows the live preview).
-            // DIAG (temporary): AndroidPredictiveBack placed FIRST to test
-            // whether its body running is order-dependent (the logcat cut
-            // showed its body wasn't entering when it was last).
             AndroidPredictiveBack {}
             SwipeBack {}
+            // DIAG (temporary): a magenta banner top-of-screen showing
+            // pb_body / pb_mount / swipe_body Y/n — so Android body
+            // execution is confirmable by screenshot (logcat unreliable).
+            DiagMarker {}
         }
     }
 }

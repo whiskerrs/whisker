@@ -623,6 +623,18 @@ extern "C" int32_t whisker_bridge_module_add_event_listener(
             }
         }
         count += 1;
+#if defined(__ANDROID__)
+        // DIAG (temporary): the decisive check — at subscribe time, is the
+        // observer hook for this module already installed? If
+        // `became_first` is true but `hook=0`, OnStartObserving will never
+        // fire (and the count is now latched >=1, so no later install can
+        // retro-fire it).
+        __android_log_print(
+            6 /*ERROR*/, "WhiskerPB",
+            "add_event_listener module='%s' event='%s' became_first=%d hook=%d",
+            module_str.c_str(), event_str.c_str(), became_first ? 1 : 0,
+            start_hook != nullptr ? 1 : 0);
+#endif
     }
     if (became_first && start_hook != nullptr) {
         // Fire outside the lock — the hook may call back into the

@@ -46,12 +46,25 @@ public object WhiskerModuleEventCenter {
      */
     @JvmStatic
     public fun register(module: Module) {
-        val qname = module.qualifiedName ?: return
+        val qname = module.qualifiedName
+        // DIAG (temporary): confirm register() runs + the qname, since the
+        // C++ observer-hook table must be populated here BEFORE any Rust
+        // `on_event` arrives or OnStartObserving never fires.
+        android.util.Log.e("WhiskerPB", "EventCenter.register(qname=$qname)")
+        if (qname == null) {
+            android.util.Log.e("WhiskerPB", "EventCenter.register: qualifiedName is null — SKIPPED")
+            return
+        }
         modulesByName[qname] = module
         // Wire the C++ bridge's per-module observer hooks for this
         // module. The native side stores a `(module → started,
         // stopped)` table and fires the shared trampolines below.
-        nativeRegisterObserverHooks(qname)
+        try {
+            nativeRegisterObserverHooks(qname)
+            android.util.Log.e("WhiskerPB", "EventCenter.register: nativeRegisterObserverHooks($qname) returned OK")
+        } catch (t: Throwable) {
+            android.util.Log.e("WhiskerPB", "EventCenter.register: nativeRegisterObserverHooks($qname) THREW: $t")
+        }
     }
 
     /**

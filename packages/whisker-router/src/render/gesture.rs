@@ -32,6 +32,84 @@ use crate::render::components::RouterRoot;
 use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
 use crate::render::transition::{self, Role};
 
+/// DIAG (temporary): a visible UI marker that the gesture components flip,
+/// so their body / `on_mount` execution can be confirmed by screenshot on
+/// Android (where the Rust→logcat path is unreliable). router-smoke renders
+/// [`DiagMarker`] which reads [`diag::marker`].
+pub(crate) mod diag {
+    use std::cell::Cell;
+
+    use whisker::runtime::reactive::Owner;
+    use whisker::{ReadSignal, RwSignal, computed};
+
+    thread_local! {
+        // Three independent flags, minted lazily under a detached root so
+        // they outlive the transient gesture-component owners (the
+        // arc/arena footgun: a signal minted in a child owner panics once
+        // that owner disposes). `Cell<Option<…>>` defers the mint to first
+        // use so there's a live runtime.
+        static PB_BODY: Cell<Option<RwSignal<bool>>> = const { Cell::new(None) };
+        static PB_MOUNT: Cell<Option<RwSignal<bool>>> = const { Cell::new(None) };
+        static SWIPE_BODY: Cell<Option<RwSignal<bool>>> = const { Cell::new(None) };
+    }
+
+    fn flag(cell: &'static std::thread::LocalKey<Cell<Option<RwSignal<bool>>>>) -> RwSignal<bool> {
+        cell.with(|c| {
+            if let Some(s) = c.get() {
+                return s;
+            }
+            let s = Owner::detached_root().with(|| RwSignal::new(false));
+            c.set(Some(s));
+            s
+        })
+    }
+
+    /// Mark that `android_predictive_back()`'s body ran.
+    pub(crate) fn set_pb_body_ran() {
+        flag(&PB_BODY).set(true);
+    }
+    /// Mark that `android_predictive_back()`'s `on_mount` fired.
+    pub(crate) fn set_pb_mount_ran() {
+        flag(&PB_MOUNT).set(true);
+    }
+    /// Mark that `swipe_back()`'s body ran.
+    pub(crate) fn set_swipe_body_ran() {
+        flag(&SWIPE_BODY).set(true);
+    }
+
+    /// A reactive one-line status string for the on-screen marker.
+    pub fn marker() -> ReadSignal<String> {
+        let pb_body = flag(&PB_BODY);
+        let pb_mount = flag(&PB_MOUNT);
+        let swipe_body = flag(&SWIPE_BODY);
+        computed(move || {
+            let yn = |b: bool| if b { "Y" } else { "n" };
+            std::format!(
+                "DIAG pb_body={} pb_mount={} swipe_body={}",
+                yn(pb_body.get()),
+                yn(pb_mount.get()),
+                yn(swipe_body.get()),
+            )
+        })
+    }
+}
+
+/// DIAG (temporary): a small on-screen banner showing whether each gesture
+/// component's body / `on_mount` ran — so Android body execution can be
+/// confirmed by screenshot (the Rust→logcat path being unreliable there).
+/// Place it inside `Router` in router-smoke; remove with the rest of the
+/// diagnostics once the Android wiring is fixed.
+#[component]
+pub fn diag_marker() -> Element {
+    let label = diag::marker();
+    render! {
+        view(style: "position: absolute; top: 8px; left: 8px; right: 8px; \
+                     z-index: 999; background-color: #FF00FF; padding: 4px;") {
+            text(value: label, style: "color: #FFFFFF; font-size: 12px;")
+        }
+    }
+}
+
 /// Approximate viewport width (pt) the finger travels for a full swipe.
 /// A future revision can read the real container width.
 const SWIPE_FULL_DISTANCE_PX: f32 = 402.0;
@@ -57,6 +135,7 @@ pub fn swipe_back() -> Element {
     // DIAG (temporary): compare against AndroidPredictiveBack — does THIS
     // sibling component's body run on Android?
     pb_log("swipe_back() body ENTER");
+    diag::set_swipe_body_ran();
     let nav = use_navigator();
     // Bind to the router's screen-spanning root (a phantom slot has no
     // extent and would never be hit by a touch).
@@ -253,11 +332,15 @@ fn point(binding: &PoseBinding, c: &AnimationController, role: Role) {
 /// preview. Renders nothing.
 #[component]
 pub fn android_predictive_back() -> Element {
-    // DIAG (temporary): the FIRST statement, before any context lookup, so
-    // it proves the component body actually runs (i.e. it is mounted)
-    // independent of whether `use_navigator()` panics. Visible in logcat
-    // under `WhiskerPB` on Android (see `pb_log`).
+    // DIAG (temporary): the FIRST statement, before any context lookup.
     pb_log("android_predictive_back() body ENTER");
+
+    // DIAG (temporary, LOGGING-INDEPENDENT): flip a visible UI marker so
+    // the component's body execution can be confirmed by screenshot on
+    // Android, where the Rust→logcat path is unreliable. router-smoke
+    // renders `diag_pb_marker()` somewhere on screen.
+    diag::set_pb_body_ran();
+
     let nav = use_navigator();
     let module = module!("PredictiveBack");
     pb_log("android_predictive_back() got navigator + module — subscribing");
@@ -339,6 +422,12 @@ pub fn android_predictive_back() -> Element {
         })
     };
     log_sub("backInvoked", invoked.error());
+
+    // DIAG (temporary): confirm on_mount fires too (vs only the body).
+    on_mount(|| {
+        pb_log("android_predictive_back() on_mount fired");
+        diag::set_pb_mount_ran();
+    });
 
     // Hold the subscriptions for the component's lifetime; dropping them on
     // unmount fires the module's `OnStopObserving` → the Activity releases
