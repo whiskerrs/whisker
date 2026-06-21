@@ -54,6 +54,9 @@ struct Gesture {
 /// handlers in `on_mount`.
 #[component]
 pub fn swipe_back() -> Element {
+    // DIAG (temporary): compare against AndroidPredictiveBack — does THIS
+    // sibling component's body run on Android?
+    pb_log("swipe_back() body ENTER");
     let nav = use_navigator();
     // Bind to the router's screen-spanning root (a phantom slot has no
     // extent and would never be hit by a touch).
@@ -381,29 +384,29 @@ fn log_sub(event: &str, error: Option<&str>) {
 /// `eprintln!` is NOT reliably forwarded to logcat on Android (the
 /// dev-runtime's stdout/stderr → logcat pipe only runs under the
 /// `hot-reload` feature, and not in every build), which left the Rust side
-/// of this gesture a black box. This calls `__android_log_write` directly
-/// so the trace always lands. On non-Android it falls back to `eprintln!`.
+/// of this gesture a black box. On Android this routes through the bridge's
+/// `whisker_bridge_log_info` (a guaranteed-linked C symbol that calls
+/// `__android_log_print` — "the debug path that survives Android's
+/// stderr-is-dropped policy"), so the trace always lands. On non-Android it
+/// falls back to `eprintln!`.
 fn pb_log(msg: &str) {
     #[cfg(target_os = "android")]
     {
+        // Declared here (not imported) so whisker-router needs no new dep:
+        // the symbol is exported by `whisker-driver-sys`'s bridge and is
+        // present in the final linked binary.
         unsafe extern "C" {
-            fn __android_log_write(
-                prio: std::os::raw::c_int,
+            fn whisker_bridge_log_info(
                 tag: *const std::os::raw::c_char,
-                text: *const std::os::raw::c_char,
-            ) -> std::os::raw::c_int;
+                msg: *const std::os::raw::c_char,
+            );
         }
-        const ANDROID_LOG_ERROR: std::os::raw::c_int = 6;
         let tag = b"WhiskerPB\0";
         let mut buf = Vec::with_capacity(msg.len() + 1);
         buf.extend_from_slice(msg.as_bytes());
         buf.push(0);
         unsafe {
-            __android_log_write(
-                ANDROID_LOG_ERROR,
-                tag.as_ptr() as *const _,
-                buf.as_ptr() as *const _,
-            );
+            whisker_bridge_log_info(tag.as_ptr() as *const _, buf.as_ptr() as *const _);
         }
     }
     #[cfg(not(target_os = "android"))]

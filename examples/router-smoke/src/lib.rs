@@ -84,8 +84,11 @@ fn app() -> Element {
             // Interactive back gestures — both mounted; each waits on its
             // own platform input. iOS = leading-edge swipe; Android =
             // system predictive back (13+ shows the live preview).
-            SwipeBack {}
+            // DIAG (temporary): AndroidPredictiveBack placed FIRST to test
+            // whether its body running is order-dependent (the logcat cut
+            // showed its body wasn't entering when it was last).
             AndroidPredictiveBack {}
+            SwipeBack {}
         }
     }
 }
