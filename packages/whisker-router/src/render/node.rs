@@ -29,9 +29,9 @@ use std::rc::Rc;
 
 use whisker::runtime::reactive::{Owner, effect};
 use whisker::runtime::view::{
-    Element, append_child, create_phantom_element, remove_child, set_inline_styles,
+    Element, append_child, create_element, create_phantom_element, remove_child, set_inline_styles,
 };
-use whisker::{AnimationController, computed};
+use whisker::{AnimationController, ElementTag, computed};
 
 use crate::core::{NodePath, RouteState, RouteTree};
 use crate::render::handle::RouterHandle;
@@ -107,7 +107,13 @@ fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
 // =====================================================================
 
 fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
-    let slot = create_phantom_element();
+    // A real, positioned container holds the branch wrappers: it
+    // `position: relative; flex-grow: 1` so the `position: absolute`
+    // branches resolve against IT (filling the switch's slot in the
+    // surrounding flex layout, e.g. above a tab bar) rather than against
+    // some distant ancestor.
+    let container = create_element(ElementTag::View);
+    set_inline_styles(container, &switch_container_style());
     let handle = handle.clone();
 
     let branch_count = handle
@@ -117,14 +123,18 @@ fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
         .unwrap_or(0);
 
     // Mount every branch once into its own wrapper; keep them all alive.
+    // The wrapper MUST be a real `view` (not a phantom): it carries
+    // `display` / `position: absolute` styles, and a phantom is a
+    // style-less transparent bundler whose `set_inline_styles` never
+    // reaches Lynx (so non-selected branches would not hide).
     let mut wrappers: Vec<Element> = Vec::with_capacity(branch_count);
     for i in 0..branch_count {
-        let wrapper = create_phantom_element();
+        let wrapper = create_element(ElementTag::View);
         // Each branch fills the switch; visibility is toggled below.
         set_inline_styles(wrapper, &branch_base_style(false));
         let child = mount_node(&handle, path.child(i));
         append_child(wrapper, child);
-        append_child(slot, wrapper);
+        append_child(container, wrapper);
         wrappers.push(wrapper);
     }
 
@@ -137,7 +147,13 @@ fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
         }
     });
 
-    slot
+    container
+}
+
+/// The switch's positioned container: fills its flex slot and anchors the
+/// absolutely-positioned branch wrappers.
+fn switch_container_style() -> String {
+    "position: relative; flex-grow: 1; display: flex; flex-direction: column;".to_string()
 }
 
 /// A switch branch wrapper fills the container; only the selected one is
@@ -177,7 +193,11 @@ struct StackWrapper {
 }
 
 fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
-    let slot = create_phantom_element();
+    // A real, positioned container so the `position: absolute` entry
+    // wrappers stack against IT (rather than a distant ancestor) and the
+    // stack fills its flex slot.
+    let slot = create_element(ElementTag::View);
+    set_inline_styles(slot, &stack_container_style());
     let handle = handle.clone();
 
     let slice = handle.slice_at(path.clone());
@@ -309,22 +329,31 @@ fn mount_wrapper(
         .unwrap_or_default();
     let transition = handle.transition(&leaf_id);
 
-    let wrapper = create_phantom_element();
-    let ctrl = AnimationController::new(transition::config(transition));
-
-    // Compose the wrapper's pose from the controller progress.
-    let ctrl_for_style = ctrl.clone();
-    let style = computed(move || {
-        let (transform, opacity) =
-            transition::pose(transition, Role::Top, ctrl_for_style.value().get());
-        wrapper_style(transform, opacity)
-    });
-    effect(move || set_inline_styles(wrapper, &style.get()));
-
-    // Mount the child subtree under its own owner.
+    // Everything for this wrapper lives under one owner so dispose frees
+    // the wrapper element (a real `view`, registered with the current
+    // owner by `create_element`), the style effect, the child subtree,
+    // and deregisters the controller.
     let owner = Owner::new(None);
-    let child = owner.with(|| mount_node(handle, child_path));
-    append_child(wrapper, child);
+    let (wrapper, ctrl) = owner.with(|| {
+        // A real `view` (not a phantom): the wrapper carries the
+        // transition `transform` / `opacity` and `position: absolute`
+        // stacking — none of which a style-less phantom can apply.
+        let wrapper = create_element(ElementTag::View);
+        let ctrl = AnimationController::new(transition::config(transition));
+
+        // Compose the wrapper's pose from the controller progress.
+        let ctrl_for_style = ctrl.clone();
+        let style = computed(move || {
+            let (transform, opacity) =
+                transition::pose(transition, Role::Top, ctrl_for_style.value().get());
+            wrapper_style(transform, opacity)
+        });
+        effect(move || set_inline_styles(wrapper, &style.get()));
+
+        let child = mount_node(handle, child_path);
+        append_child(wrapper, child);
+        (wrapper, ctrl)
+    });
     append_child(slot, wrapper);
 
     if animate_in {
@@ -364,6 +393,12 @@ fn unmount_wrapper(slot: Element, w: StackWrapper, animate_out: bool) {
         remove_child(slot, wrapper);
         owner.dispose();
     }
+}
+
+/// The stack's positioned container: fills its flex slot and anchors the
+/// absolutely-positioned entry wrappers.
+fn stack_container_style() -> String {
+    "position: relative; flex-grow: 1; display: flex; flex-direction: column;".to_string()
 }
 
 /// Base style for a stack wrapper: absolutely-filled, column flow, with
