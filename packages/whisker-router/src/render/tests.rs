@@ -7,12 +7,17 @@
 //! the right active child. The visual transition + gesture + actual
 //! mount/swap behaviour is verified on-device.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use whisker::runtime::reactive::Owner;
 
 use crate::core::{
     CompiledTree, NodePath, RouteInstance, RouteState, RouteTree, SwitchDef, Target,
 };
 use crate::render::handle::{RouterHandle, state_at};
+use crate::render::node::mount_node;
 use crate::render::registry::{RouteRegistry, Transition};
 
 /// Run `f` under a fresh runtime + a live owner (so `computed` reads have
@@ -255,5 +260,79 @@ fn state_at_walks_to_active_child() {
             state_at(&root, &NodePath(vec![0, 0, 1])),
             Some(RouteState::Route(_))
         ));
+    });
+}
+
+// ----- single draw path (no double-mount) ----------------------------
+
+/// Per-id render-invocation counts. Render fns return a phantom (no
+/// renderer needed) and bump their id's counter, so a test can assert how
+/// many times each screen was mounted.
+type Counts = Rc<RefCell<HashMap<&'static str, usize>>>;
+
+fn counting_tabbed_handle(counts: Counts) -> RouterHandle {
+    let tree = CompiledTree::new(RouteTree::switch(
+        SwitchDef::new("tabs", 0),
+        vec![
+            RouteTree::stack(vec![
+                RouteTree::route("", "home"),
+                RouteTree::route("detail/:id", "detail"),
+            ]),
+            RouteTree::stack(vec![
+                RouteTree::route("list", "list"),
+                RouteTree::route("detail/:id", "detail"),
+            ]),
+        ],
+    ));
+    let mk = |id: &'static str, counts: Counts| {
+        move |_: &RouteInstance| {
+            *counts.borrow_mut().entry(id).or_insert(0) += 1;
+            whisker::runtime::view::create_phantom_element()
+        }
+    };
+    let registry = RouteRegistry::new()
+        .route("home", mk("home", counts.clone()))
+        .route("list", mk("list", counts.clone()))
+        .route_with("detail", Transition::None, mk("detail", counts.clone()));
+    RouterHandle::new(tree, registry)
+}
+
+#[test]
+fn tree_is_drawn_once_no_double_mount() {
+    with_runtime(|| {
+        let counts: Counts = Rc::new(RefCell::new(HashMap::new()));
+        let h = counting_tabbed_handle(counts.clone());
+
+        // Draw the whole tree once from the root (the single Outlet path).
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        // home (the selected tab's leaf) mounts exactly once; the List
+        // tab's `list` also mounts once (Switch keeps all branches alive),
+        // but neither mounts twice.
+        let c = counts.borrow();
+        assert_eq!(c.get("home").copied(), Some(1), "home mounted once");
+        assert_eq!(c.get("list").copied(), Some(1), "list mounted once");
+        // detail not navigated to yet.
+        assert_eq!(c.get("detail").copied(), None);
+    });
+}
+
+#[test]
+fn navigate_mounts_new_leaf_exactly_once() {
+    with_runtime(|| {
+        let counts: Counts = Rc::new(RefCell::new(HashMap::new()));
+        let h = counting_tabbed_handle(counts.clone());
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        // Push a detail into the Home tab.
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+
+        // detail mounted once; home was NOT re-mounted by the push.
+        let c = counts.borrow();
+        assert_eq!(c.get("detail").copied(), Some(1), "detail mounted once");
+        assert_eq!(c.get("home").copied(), Some(1), "home not re-mounted");
     });
 }

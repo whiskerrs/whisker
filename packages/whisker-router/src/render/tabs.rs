@@ -15,7 +15,7 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
 use crate::core::{NodePath, Target};
-use crate::render::components::{Outlet, use_active_tab};
+use crate::render::components::{Layout, Outlet, use_active_tab};
 use crate::render::handle::use_navigator;
 
 /// One entry in the [`Tabs`] bar: a label + the [`Target`] selecting its
@@ -65,13 +65,18 @@ pub fn tabs(path: NodePath, items: Vec<TabItem>) -> Element {
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
         )) {
-            // Content area: the selected branch renders here.
+            // Content area: the selected branch renders here. `Layout`
+            // sets the OutletAnchor to this Switch's path so the inner
+            // `Outlet` draws THIS container (not whatever the ambient
+            // anchor was) — the single draw path for the switch.
             view(style: css!(
                 flex_grow: 1.0,
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
             )) {
-                Outlet {}
+                Layout(path: path.clone()) {
+                    Outlet {}
+                }
             }
             // Bottom navigation bar.
             TabBar(items: items.clone(), active: active)

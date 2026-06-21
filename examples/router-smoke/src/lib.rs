@@ -1,13 +1,13 @@
 //! router-smoke — on-device check of the new whisker-router rendering
 //! layer (phase 2).
 //!
-//! A tabbed app, hand-wired (no `routes!` macro yet):
+//! A tabbed app, hand-wired (no `routes!` macro yet). The **Switch is the
+//! root** so the whole tree is drawn on a single path by one `Tabs`:
 //!
 //! ```text
-//! root Stack
-//!   └ [0] Switch (Tabs)
-//!          ├ branch 0  Stack { Route("", home)       Route("detail/:id", detail) }
-//!          └ branch 1  Stack { Route("list", list)   Route("detail/:id", detail) }
+//! Switch (root, drawn by Tabs)
+//!   ├ branch 0 [0]  Stack { Route("", home)       Route("detail/:id", detail) }
+//!   └ branch 1 [1]  Stack { Route("list", list)   Route("detail/:id", detail) }
 //! ```
 //!
 //! - **Home tab**: a button → `navigate(detail)` pushes a Detail onto the
@@ -20,6 +20,11 @@
 //!   `Switch`) — tapping a tab calls `navigator.select(..)`.
 //! - **Swipe-back**: an iOS edge swipe pops the active stack with a
 //!   velocity hand-off.
+//!
+//! `Router` only publishes context + renders its children; the tree is
+//! drawn **once** by the `Tabs` child (an outside route stacked above the
+//! tabs would need a wrapping root `Stack` + a Layout node, which the
+//! `routes!` macro will generate in phase 3).
 
 use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent};
 use whisker::prelude::*;
@@ -29,16 +34,15 @@ use whisker_router::render::{
     RouteRegistry, Router, RouterHandle, SwipeBack, TabItem, Tabs, Transition, use_navigator,
 };
 
-/// The Switch (tabs) sits at history[0]'s child 0 of the root stack.
+/// The Switch (tabs) is the tree root, so its path is the root path.
 fn tabs_switch_path() -> NodePath {
-    NodePath(vec![0])
+    NodePath::root()
 }
 
 fn build_handle() -> RouterHandle {
-    // Each tab is its own Stack; the Switch holds them; the root Stack
-    // holds the Switch (so an "outside" route could later push above the
-    // tabs — not exercised here but the shape supports it).
-    let tree = CompiledTree::new(RouteTree::stack(vec![RouteTree::switch(
+    // The Switch is the root; each branch is its own Stack. Drawing the
+    // root (via the single `Tabs` child) draws the whole tree once.
+    let tree = CompiledTree::new(RouteTree::switch(
         SwitchDef::new("tabs", 0),
         vec![
             RouteTree::stack(vec![
@@ -50,7 +54,7 @@ fn build_handle() -> RouterHandle {
                 RouteTree::route("detail/:id", "detail"),
             ]),
         ],
-    )]));
+    ));
 
     let registry = RouteRegistry::new()
         .route("home", |_: &RouteInstance| render! { Home {} })

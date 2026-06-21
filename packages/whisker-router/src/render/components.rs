@@ -37,8 +37,25 @@ pub struct OutletAnchor(pub NodePath);
 /// Root router component: publishes `handle` into context and renders the
 /// whole active route tree.
 ///
+/// # Responsibility split (one draw path)
+///
+/// `Router` deliberately **does not draw the route tree itself**. Its job
+/// is exactly: publish the context (handle, root [`OutletAnchor`],
+/// [`RouterRoot`]), create the positioned root `view`, and render its
+/// `children` into it. The tree is drawn **once** by an `Outlet`-family
+/// component you place as a child — a bare [`Outlet`] (anchored at root),
+/// a [`Stack`] / [`Switch`] at an explicit path, or a [`Tabs`] /
+/// [`Layout`] that draws a container with chrome. This keeps every node on
+/// a single mount path: putting both `Router`'s own draw *and* a `Tabs`
+/// child would mount the shared subtree twice.
+///
 /// ```ignore
-/// render! { Router(handle: handle.clone()) }
+/// render! {
+///     Router(handle: handle.clone()) {
+///         Tabs(path: switch_path, items: ...)   // draws the Switch + bar
+///         SwipeBack {}
+///     }
+/// }
 /// ```
 #[component]
 pub fn router(handle: RouterHandle, children: Children) -> Element {
@@ -57,11 +74,11 @@ pub fn router(handle: RouterHandle, children: Children) -> Element {
     };
     provide_context(RouterRoot(root));
 
-    let content = mount_node(&handle, NodePath::root());
+    // The tree is drawn by `children` (an Outlet / Tabs / Stack), NOT
+    // here — drawing root ourselves *and* letting a child draw the same
+    // subtree would double-mount it.
+    let content = render! { children() };
     append_child(root, content);
-    // Gesture components etc. passed as children mount alongside.
-    let extra = render! { children() };
-    append_child(root, extra);
     root
 }
 
