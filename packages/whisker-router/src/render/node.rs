@@ -174,9 +174,13 @@ fn switch_container_style() -> String {
 /// displayed.
 fn branch_base_style(visible: bool) -> String {
     let display = if visible { "flex" } else { "none" };
+    // `width/height: 100%` rather than `right/bottom: 0` for the same
+    // reason as `wrapper_style`: keep the absolute box a plain sized box
+    // so any future transform on it behaves, and the layout matches the
+    // stack wrappers.
     format!(
         "display: {display}; flex-direction: column; position: absolute; \
-         left: 0; top: 0; right: 0; bottom: 0;"
+         left: 0; top: 0; width: 100%; height: 100%;"
     )
 }
 
@@ -570,9 +574,16 @@ fn stack_container_style() -> String {
 
 /// Base style for a stack wrapper: absolutely-filled, column flow, with
 /// the transition's transform + opacity applied.
+///
+/// **Sizing uses `width/height: 100%`, NOT `right/bottom: 0`.** Lynx does
+/// not visually apply `transform: translateX(%)` to a both-ends-pinned
+/// absolute element (`left:0; right:0; top:0; bottom:0`) — the screen
+/// stays put (the device frame-1 vanish). A `left:0; top:0; width:100%;
+/// height:100%` box is the same shape anim-smoke animates correctly, so
+/// the percentage transform takes effect.
 fn wrapper_style(transform: String, opacity: f32) -> String {
     format!(
-        "position: absolute; left: 0; top: 0; right: 0; bottom: 0; \
+        "position: absolute; left: 0; top: 0; width: 100%; height: 100%; \
          display: flex; flex-direction: column; transform: {transform}; \
          opacity: {opacity};"
     )
