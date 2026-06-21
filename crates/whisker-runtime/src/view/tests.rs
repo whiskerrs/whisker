@@ -244,6 +244,53 @@ fn view_attach_appends_each_leaf() {
     assert_eq!(appends.len(), 3, "Empty fragments must be skipped");
 }
 
+/// Reproduces the `Router { childA childB childC }` shape: a `Children`
+/// closure builds a `View::Fragment` of several real children, attaches it
+/// to a PHANTOM slot (`mount_children`), then that phantom is appended to a
+/// REAL parent (`append_child(root, content)`). Every real child must reach
+/// the renderer attached to the real root — the mirror's phantom-hoist must
+/// not drop the 2nd..Nth child. (Pins the layer for the Android
+/// "only the first Router child mounts" symptom: if this passes, the mirror
+/// is correct and the divergence is renderer/bridge-side.)
+#[test]
+fn multi_child_fragment_through_phantom_slot_hoists_all_children() {
+    let (renderer, log) = RecordingRenderer::with_log();
+    let (root, c1, c2, c3) = with_installed_renderer(Box::new(renderer), || {
+        let root = create_element(ElementTag::View); // real parent
+        // The three real children a multi-child children block would build.
+        let c1 = create_element(ElementTag::View);
+        let c2 = create_element(ElementTag::View);
+        let c3 = create_element(ElementTag::View);
+
+        // `mount_children`: a phantom slot holding the Fragment.
+        let slot = create_phantom_element();
+        View::Fragment(vec![
+            View::Element(c1),
+            View::Element(c2),
+            View::Element(c3),
+        ])
+        .attach_to(slot);
+
+        // `append_child(root, content)` — content is the phantom slot.
+        append_child(root, slot);
+        (root, c1, c2, c3)
+    });
+
+    let ops = log.borrow();
+    // Every child must have been appended to the REAL root.
+    for (label, c) in [("c1", c1), ("c2", c2), ("c3", c3)] {
+        assert!(
+            ops.iter().any(|o| matches!(
+                o,
+                Op::Append { parent, child } if *parent == root.id() && *child == c.id()
+            )),
+            "{label} ({}) was never appended to the real root ({}); ops={ops:?}",
+            c.id(),
+            root.id()
+        );
+    }
+}
+
 // ===========================================================================
 // Re-entrancy (whisker #3) — these tests pin the root-cause fix: a native
 // event that fires *synchronously during* a renderer operation must be able
