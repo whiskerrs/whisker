@@ -2277,8 +2277,13 @@ dependencies = [
 name = "whisker-router"
 version = "0.6.0"
 dependencies = [
+ "anyhow",
+ "serde",
  "whisker",
  "whisker-animation",
+ "whisker-cng",
+ "whisker-config",
+ "whisker-plugin",
 ]
 
 [[package]]

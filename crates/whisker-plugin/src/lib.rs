@@ -485,11 +485,31 @@ pub struct AndroidManifest {
     /// inside the `<application>` block.
     #[serde(default)]
     pub application_meta_data: Vec<MetaDataEntry>,
+
+    /// **Attributes** on the `<application>` *tag itself* (NOT
+    /// `<meta-data>` child elements) — e.g.
+    /// `android:enableOnBackInvokedCallback="true"`. Dedup'd by
+    /// attribute name when the engine renders (last writer wins per
+    /// name). Distinct from [`Self::application_meta_data`], which adds
+    /// child elements.
+    #[serde(default)]
+    pub application_attributes: Vec<ApplicationAttribute>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MetaDataEntry {
     pub name: String,
+    pub value: String,
+}
+
+/// One attribute on the `<application>` tag, e.g.
+/// `("android:enableOnBackInvokedCallback", "true")`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApplicationAttribute {
+    /// The fully-qualified attribute name including the `android:`
+    /// namespace prefix, e.g. `"android:enableOnBackInvokedCallback"`.
+    pub name: String,
+    /// The attribute value (rendered XML-escaped, double-quoted).
     pub value: String,
 }
 
@@ -846,6 +866,15 @@ mod tests {
             .manifest
             .permissions
             .push("android.permission.CAMERA".into());
+        ctx.android
+            .as_mut()
+            .unwrap()
+            .manifest
+            .application_attributes
+            .push(ApplicationAttribute {
+                name: "android:enableOnBackInvokedCallback".into(),
+                value: "true".into(),
+            });
         ctx.journal.record(
             "whisker-info-plist",
             Target::Ios,
@@ -869,9 +898,17 @@ mod tests {
             back.ios.unwrap().info_plist.get("CFBundleIdentifier"),
             Some(&PlistValue::String("rs.whisker.demo".into())),
         );
+        let back_android = back.android.unwrap();
         assert_eq!(
-            back.android.unwrap().manifest.permissions,
+            back_android.manifest.permissions,
             vec!["android.permission.CAMERA".to_string()],
+        );
+        assert_eq!(
+            back_android.manifest.application_attributes,
+            vec![ApplicationAttribute {
+                name: "android:enableOnBackInvokedCallback".into(),
+                value: "true".into(),
+            }],
         );
     }
 

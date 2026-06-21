@@ -61,7 +61,10 @@
 #![warn(missing_docs)]
 
 pub mod core;
+pub mod plugin;
 pub mod render;
+
+pub use crate::plugin::{RouterPlugin, RouterPluginConfig};
 
 // The new API: the pure core graphs/ops + the reactive render layer.
 pub use crate::core::{

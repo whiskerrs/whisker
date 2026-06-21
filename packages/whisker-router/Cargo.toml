@@ -16,6 +16,7 @@ include = [
     "Package.swift",
     "build.gradle.kts",
     "src/**/*.rs",
+    "bin/**/*.rs",
     "android/**/*.kt",
     "ios/**/*.swift",
     "README.md",
@@ -32,8 +33,31 @@ crate-type = ["rlib"]
 # `ios/` + `android/` directories into the platform builds.
 [package.metadata.whisker]
 
+# Plugin registration — Whisker walks the consuming app's dep tree, picks
+# this up, builds the `whisker-router-plugin` binary below, and runs it on
+# every `whisker build` / `whisker run` gen sync. It is unconditional (no
+# user opt-in): the router needs `android:enableOnBackInvokedCallback`
+# on `<application>` for its Android predictive-back gesture, so it
+# declares that requirement itself.
+[package.metadata.whisker.plugins.whisker-router]
+bin = "whisker-router-plugin"
+
+# Subprocess binary entry point. Reads a `PluginRequest` JSON from stdin,
+# mutates the IR via `RouterPlugin::apply`, writes a `PluginResponse` JSON.
+[[bin]]
+name = "whisker-router-plugin"
+path = "bin/whisker_router_plugin.rs"
+test = false
+bench = false
+doc = false
+
 [dependencies]
 whisker = { workspace = true }
+# Plugin support (trait + IR types + JSON envelope + subprocess runner).
+# Light deps so the config-probe build path stays cheap.
+whisker-plugin = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
 # NOTE: the old `#[route]` enum macro lived in whisker-router-macros and
 # is no longer re-exported (the new core/render layers don't use it). The
 # macro crate is kept in the workspace; the `routes!` macro will be added
@@ -44,3 +68,9 @@ whisker = { workspace = true }
 # render-layer tests can advance a push/pop transition to completion and
 # assert the wrappers settle to their resting pose.
 whisker-animation = { workspace = true }
+# Test-only: drive `RouterPlugin` through the real CNG engine + Android
+# renderer (`tests/plugin_e2e.rs`) and assert the generated manifest gets
+# `enableOnBackInvokedCallback`. No cycle: whisker-cng depends on
+# whisker-plugin / whisker-config, never on whisker-router.
+whisker-cng = { workspace = true }
+whisker-config = { workspace = true }

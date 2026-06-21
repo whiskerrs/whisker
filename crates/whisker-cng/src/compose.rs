@@ -121,6 +121,7 @@ impl Engine {
         e.register(crate::plugins::info_plist_extra::InfoPlistExtra)
             .register(crate::plugins::android_permissions::AndroidPermissions)
             .register(crate::plugins::android_meta_data::AndroidMetaData)
+            .register(crate::plugins::android_application_attributes::AndroidApplicationAttributes)
             .register(crate::plugins::android_gradle_plugins::GradlePlugins)
             .register(crate::plugins::android_gradle_dependencies::GradleDependencies)
             .register(crate::plugins::ios_extra_files::IosExtraFiles)
