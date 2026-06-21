@@ -24,15 +24,6 @@ members = [
     "examples/asset-demo",
     "examples/aurora-wallet",
     "examples/router-smoke",
-    "examples/podcast",
-    "examples/podcast/crates/podcast-theme",
-    "examples/podcast/crates/podcast-domain",
-    "examples/podcast/crates/podcast-data",
-    "examples/podcast/crates/podcast-ui-kit",
-    "examples/podcast/crates/podcast-feature-browse",
-    "examples/podcast/crates/podcast-feature-detail",
-    "examples/podcast/crates/podcast-feature-search",
-    "examples/podcast/crates/podcast-routing",
     "packages/whisker-icons",
     "packages/whisker-icons/example",
     "packages/whisker-image",
@@ -40,9 +31,6 @@ members = [
     "packages/whisker-input/example",
     "packages/whisker-local-store",
     "packages/whisker-router",
-    "packages/whisker-router/example",
-    "packages/whisker-router/example/crates/router-example-feature-home",
-    "packages/whisker-router/example/crates/router-example-feature-detail",
     "packages/whisker-router-macros",
     "packages/whisker-safe-area",
     "packages/whisker-svg",
@@ -60,6 +48,13 @@ exclude = [
     # build (and we'd lose the "fresh-from-scratch crate" property
     # the test relies on).
     "crates/whisker-dev-server/tests/fixtures/thin-build-fixture",
+    # The podcast example depends broadly on the OLD whisker-router API
+    # (RouteStack / StackLayout / TabsLayout / #[route]), removed in
+    # phase 4. It is excluded from the workspace pending migration to the
+    # new core/render router + the `routes!` macro (phase 3). Its files
+    # are kept — see examples/podcast/MIGRATION.md. Excluding the parent
+    # drops its member sub-crates (podcast-*) too.
+    "examples/podcast",
 ]
 
 [workspace.package]

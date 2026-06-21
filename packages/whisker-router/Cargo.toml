@@ -34,7 +34,10 @@ crate-type = ["rlib"]
 
 [dependencies]
 whisker = { workspace = true }
-whisker-router-macros = { workspace = true }
+# NOTE: the old `#[route]` enum macro lived in whisker-router-macros and
+# is no longer re-exported (the new core/render layers don't use it). The
+# macro crate is kept in the workspace; the `routes!` macro will be added
+# there and this dependency restored in a later phase.
 
 [dev-dependencies]
 # Test-only: drive animation frames (`__step_for_tests`) so the
