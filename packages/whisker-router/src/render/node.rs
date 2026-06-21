@@ -183,13 +183,9 @@ fn switch_container_style() -> String {
 /// displayed.
 fn branch_base_style(visible: bool) -> String {
     let display = if visible { "flex" } else { "none" };
-    // `width/height: 100%` rather than `right/bottom: 0` for the same
-    // reason as `wrapper_style`: keep the absolute box a plain sized box
-    // so any future transform on it behaves, and the layout matches the
-    // stack wrappers.
     format!(
         "display: {display}; flex-direction: column; position: absolute; \
-         left: 0; top: 0; width: 100%; height: 100%;"
+         left: 0; top: 0; right: 0; bottom: 0;"
     )
 }
 
@@ -411,20 +407,12 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
     let drive = popped.ctrl.clone();
     let transition = popped.transition;
 
-    // Guarantee the reverse animates over the full range: if the top's
-    // progress is anything other than 1.0 (e.g. an interrupted run, or a
-    // device frame that left it short), `reverse()`'s target would already
-    // be reached and `on_finish(true)` would fire on the first frame —
-    // popping the screen with no visible slide-out. Anchoring at 1.0 first
-    // forces a real 1 → 0 animation. (A controller op, not a style write.)
-    drive.set_value(1.0);
-
     // Point the popped top at the drive ctrl (Top) and the revealed
     // survivor at the same ctrl (Under). The per-wrapper pose EFFECT is the
-    // single style writer — we never call `set_inline_styles` by hand here
-    // (a second writer racing the effect, plus a re-append disturbing the
-    // effect's element, was the suspected frame-1 vanish). The effect runs
-    // each frame off `drive.value()` and writes the coordinated pose.
+    // single style writer — the effect runs each frame off `drive.value()`
+    // and writes the coordinated pose. We `reverse()` from the controller's
+    // *current* value: after a push that is 1.0; on a swipe-back commit it
+    // is the scrubbed value, so the slide-out continues from the finger.
     set_pose(&popped, &drive, Role::Top);
 
     let survivor_handle = {
@@ -560,16 +548,9 @@ fn stack_container_style() -> String {
 
 /// Base style for a stack wrapper: absolutely-filled, column flow, with
 /// the transition's transform + opacity applied.
-///
-/// **Sizing uses `width/height: 100%`, NOT `right/bottom: 0`.** Lynx does
-/// not visually apply `transform: translateX(%)` to a both-ends-pinned
-/// absolute element (`left:0; right:0; top:0; bottom:0`) — the screen
-/// stays put (the device frame-1 vanish). A `left:0; top:0; width:100%;
-/// height:100%` box is the same shape anim-smoke animates correctly, so
-/// the percentage transform takes effect.
 fn wrapper_style(transform: String, opacity: f32) -> String {
     format!(
-        "position: absolute; left: 0; top: 0; width: 100%; height: 100%; \
+        "position: absolute; left: 0; top: 0; right: 0; bottom: 0; \
          display: flex; flex-direction: column; transform: {transform}; \
          opacity: {opacity};"
     )
