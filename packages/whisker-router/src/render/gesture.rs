@@ -3,18 +3,22 @@
 //!
 //! Mount it as a child of the [`Router`](crate::render::Router) (or any
 //! element that spans the screen). On a leading-edge horizontal drag it
-//! **scrubs the top stack's transition controller** with `set_value`
-//! (1.0 → 0.0 as the finger moves right), so the top screen tracks the
-//! finger and the screen beneath is revealed. On release it hands off to
-//! the controller with the finger's velocity
+//! points **both** the top and the revealed-under wrapper at the top
+//! stack's transition controller (as `Top` / `Under`) and **scrubs that
+//! one controller** with `set_value` (1.0 → 0.0 as the finger moves
+//! right) — so the exact same coordinated two-screen model the
+//! non-interactive pop uses drives the drag: the top tracks the finger
+//! while the screen beneath slides back from covered to rest. On release
+//! it hands off with the finger's velocity
 //! ([`reverse_with_velocity`](whisker::AnimationController::reverse_with_velocity)
 //! to commit, [`forward_with_velocity`](whisker::AnimationController::forward_with_velocity)
-//! to cancel) for a natural spring-to-rest, then calls
-//! `navigator.back()` once a commit animation finishes.
+//! to cancel); a commit calls `navigator.back()` on finish, which runs the
+//! same reconcile pop and unmounts the popped entry.
 //!
 //! This is the generalised form of the old `ios_swipe_back.rs`, but the
-//! intermediate 0..1 lives in a real signal (the controller's progress),
-//! not a hand-written per-frame inline transform.
+//! intermediate 0..1 lives in a real signal (the controller's progress)
+//! and both screens are posed by the runtime's pose effects — no
+//! hand-written per-frame inline transform.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,11 +26,11 @@ use std::rc::Rc;
 use whisker::event::TouchEvent;
 use whisker::runtime::event::bind_typed;
 use whisker::runtime::reactive::on_mount;
-use whisker::runtime::view::{BindType, Element, set_inline_styles};
+use whisker::runtime::view::{BindType, Element};
 use whisker::{component, render, use_context};
 
 use crate::render::components::RouterRoot;
-use crate::render::handle::{RouterHandle, StackBridge, use_navigator};
+use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
 use crate::render::transition::{self, Role};
 
 /// Approximate viewport width (pt) the finger travels for a full swipe.
@@ -94,6 +98,15 @@ fn install(container: Element, nav: RouterHandle) {
             if !bridge.can_back || !transition::supports_edge_swipe(bridge.transition) {
                 return;
             }
+            // Point BOTH wrappers at the top controller (Top / Under) so
+            // one scrubbed progress drives the coordinated pair — the
+            // same model the non-interactive pop uses.
+            if let (Some(ctrl), Some(top), Some(under)) =
+                (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)
+            {
+                point(top, ctrl, Role::Top);
+                point(under, ctrl, Role::Under);
+            }
             *gesture.borrow_mut() = Some(Gesture {
                 start_x,
                 last_x: start_x,
@@ -149,60 +162,43 @@ fn install(container: Element, nav: RouterHandle) {
             let Some(ctrl) = state.bridge.top_ctrl.clone() else {
                 return;
             };
-            let under = state.bridge.under_wrapper;
-            let transition = state.bridge.transition;
 
             if commit {
-                // Drive the top off-screen (progress → 0 in our pose
-                // convention) with momentum, then pop on finish.
+                // Drive the top off-screen (progress → 0) with momentum;
+                // both wrappers follow via their pose bindings. On finish
+                // call `back()`, which runs the same coordinated pop and
+                // unmounts the popped entry (its controller is already at
+                // 0, so the reconcile's reverse settles instantly).
                 let nav = nav.clone();
                 let done = Rc::new(RefCell::new(false));
                 ctrl.on_finish(move |finished| {
                     if finished && !*done.borrow() {
                         *done.borrow_mut() = true;
-                        // Reveal-side settles to rest before the pop.
-                        if let Some(u) = under {
-                            let (t, o) = transition::pose(transition, Role::Under, 0.0);
-                            set_inline_styles(u, &under_style(t, o));
-                        }
                         nav.back();
                     }
                 });
                 ctrl.reverse_with_velocity(velocity);
             } else {
-                // Cancel: spring the top back to fully present.
-                if let Some(u) = under {
-                    let (t, o) = transition::pose(transition, Role::Under, 1.0);
-                    set_inline_styles(u, &under_style(t, o));
-                }
+                // Cancel: spring the top back to fully present; the under
+                // wrapper, pointed at the same controller as `Under`,
+                // slides back to covered in lockstep.
                 ctrl.forward_with_velocity(velocity);
             }
         });
     }
 }
 
-/// Scrub both wrappers to `back_progress` (0 = present, 1 = swiped away).
-///
-/// The top controller's value is "presence of the top" (1 = present), so
-/// it is set to `1 - back_progress`; that re-poses the top wrapper via
-/// its own pose `computed`. The under wrapper is posed directly (it is
-/// not driven by the top controller).
+/// Scrub the pair to `back_progress` (0 = top present, 1 = swiped away) by
+/// setting the shared top controller's progress; both wrappers re-pose via
+/// their pose bindings (Top reads `1-back`, Under reads `1-back` too).
 fn scrub(bridge: &StackBridge, back_progress: f32) {
     if let Some(ctrl) = &bridge.top_ctrl {
         ctrl.set_value(1.0 - back_progress);
     }
-    if let Some(u) = bridge.under_wrapper {
-        let (t, o) = transition::pose(bridge.transition, Role::Under, 1.0 - back_progress);
-        set_inline_styles(u, &under_style(t, o));
-    }
 }
 
-/// Inline style for the revealed under wrapper during a swipe (matches
-/// the stack wrapper base, with the scrubbed pose).
-fn under_style(transform: String, opacity: f32) -> String {
-    format!(
-        "position: absolute; left: 0; top: 0; right: 0; bottom: 0; \
-         display: flex; flex-direction: column; transform: {transform}; \
-         opacity: {opacity};"
-    )
+/// Point a wrapper's pose binding at controller `c` playing `role`.
+fn point(binding: &PoseBinding, c: &whisker::AnimationController, role: Role) {
+    binding.ctrl.set(c.clone());
+    binding.role.set(role);
 }

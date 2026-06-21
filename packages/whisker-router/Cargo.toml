@@ -35,3 +35,9 @@ crate-type = ["rlib"]
 [dependencies]
 whisker = { workspace = true }
 whisker-router-macros = { workspace = true }
+
+[dev-dependencies]
+# Test-only: drive animation frames (`__step_for_tests`) so the
+# render-layer tests can advance a push/pop transition to completion and
+# assert the wrappers settle to their resting pose.
+whisker-animation = { workspace = true }

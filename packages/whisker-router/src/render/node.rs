@@ -171,6 +171,14 @@ fn branch_base_style(visible: bool) -> String {
 // =====================================================================
 
 /// One live history wrapper.
+///
+/// A wrapper's pose is computed by **one** persistent style effect that
+/// reads two repointable reactive inputs: `pose_ctrl` (the controller
+/// whose `0..1` progress currently drives this wrapper) and `pose_role`
+/// (`Top` or `Under`). A push/pop points **both** the moving top and the
+/// revealed/covered under wrapper at the **same** controller, so one
+/// progress drives the coordinated two-screen transition (the same model
+/// the swipe-back uses), instead of each wrapper animating in isolation.
 struct StackWrapper {
     /// Stable key: the history index this wrapper instantiated.
     key: usize,
@@ -186,8 +194,17 @@ struct StackWrapper {
     wrapper: Element,
     /// The child node's owner (so we can pause/resume/dispose it).
     owner: Owner,
-    /// The transition controller driving this wrapper's pose.
+    /// This wrapper's **own** controller — the one used to drive the
+    /// transition when *this* wrapper is the moving top (push-in /
+    /// pop-out). It is also what an under wrapper's pose is pointed at
+    /// during a transition involving it.
     ctrl: AnimationController,
+    /// The controller currently driving this wrapper's pose (repointable:
+    /// during a push/pop both the top and the under wrapper point at the
+    /// top's `ctrl`; at rest each points at its own).
+    pose_ctrl: whisker::RwSignal<AnimationController>,
+    /// The role this wrapper currently plays in its pose computation.
+    pose_role: whisker::RwSignal<Role>,
     /// The transition kind chosen for this entry's route.
     transition: Transition,
 }
@@ -217,9 +234,14 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
     slot
 }
 
-/// Reconcile the live wrappers against `stack`'s history: add wrappers
-/// for new entries (animate in), drop wrappers for popped entries
-/// (animate out, then unmount), and re-pose / freeze the rest.
+/// Reconcile the live wrappers against `stack`'s history.
+///
+/// A push and a pop are both driven as a **coordinated two-screen
+/// transition by one controller**: that controller's `0..1` progress
+/// poses the moving top (`Role::Top`) and the screen beneath
+/// (`Role::Under`) at once. A push runs it `0 → 1`; a pop runs it
+/// `1 → 0` and unmounts the popped entry on finish. At rest the top sits
+/// at `Role::Top` / `1.0` (translateX 0%) and lower entries are frozen.
 fn reconcile_stack(
     handle: &RouterHandle,
     path: &NodePath,
@@ -230,33 +252,61 @@ fn reconcile_stack(
     let new_len = stack.history.len();
     let old_len = live.borrow().len();
 
-    // ----- Grow: a push (or initial mount). Add the new top wrappers.
+    // ----- Grow: a push (or initial mount).
     if new_len > old_len {
         for idx in old_len..new_len {
             let entry = &stack.history[idx];
-            // The very first entry mounts already-present; a real push
-            // animates in from off-screen.
-            let animate_in = idx > 0;
-            let w = mount_wrapper(handle, slot, idx, entry, animate_in);
-            live.borrow_mut().push(w);
+            let w = mount_wrapper(handle, slot, idx, entry);
+
+            if idx == 0 {
+                // First entry: already present, no animation.
+                w.ctrl.set_value(1.0);
+                set_pose(&w, &w.ctrl.clone(), Role::Top);
+                live.borrow_mut().push(w);
+            } else {
+                // Real push: drive the new top's controller 0 → 1 and
+                // point BOTH it and the entry below at that controller so
+                // they animate as a coordinated pair.
+                let drive = w.ctrl.clone();
+                w.ctrl.set_value(0.0);
+                set_pose(&w, &drive, Role::Top);
+                {
+                    let l = live.borrow();
+                    if let Some(under) = l.last() {
+                        under.owner.resume(); // animate it while covered
+                        set_pose(under, &drive, Role::Under);
+                    }
+                }
+                if w.transition == Transition::None {
+                    drive.set_value(1.0);
+                } else {
+                    drive.forward();
+                }
+                live.borrow_mut().push(w);
+            }
         }
     }
 
-    // ----- Shrink: a pop / reset. Animate out + unmount the surplus.
+    // ----- Shrink: a pop / reset.
     if new_len < old_len {
         let popped: Vec<StackWrapper> = {
             let mut l = live.borrow_mut();
             l.split_off(new_len)
         };
-        // Animate the top-most popped wrapper out; the rest (a multi-pop /
-        // reset) just vanish.
-        for (i, w) in popped.into_iter().enumerate() {
-            unmount_wrapper(slot, w, /* animate_out = */ i == 0);
+        // The deepest-removed (the visible top) animates out coordinated
+        // with the newly-revealed survivor; any extra removed entries
+        // (multi-pop / reset) just vanish.
+        let mut popped = popped.into_iter();
+        if let Some(top_popped) = popped.next() {
+            run_pop(slot, live, top_popped);
+        }
+        for w in popped {
+            dispose_wrapper(slot, w);
         }
     }
 
-    // ----- Same length but the top changed = `replace`. Swap it in
-    // place with no animation (the new top is already "present").
+    // ----- Same length but the top changed = `replace`. Swap in place,
+    // no animation (the new top is already present).
     if new_len == old_len && new_len > 0 {
         let top_idx = new_len - 1;
         let entry = &stack.history[top_idx];
@@ -267,56 +317,126 @@ fn reconcile_stack(
         };
         if needs_swap {
             let old = live.borrow_mut().remove(top_idx);
-            unmount_wrapper(slot, old, /* animate_out = */ false);
-            let w = mount_wrapper(handle, slot, top_idx, entry, /* animate_in = */ false);
+            dispose_wrapper(slot, old);
+            let w = mount_wrapper(handle, slot, top_idx, entry);
+            w.ctrl.set_value(1.0);
+            set_pose(&w, &w.ctrl.clone(), Role::Top);
             live.borrow_mut().insert(top_idx, w);
         }
     }
 
-    // ----- Re-pose + freeze the survivors: the top is active, the rest
-    // are covered (parallaxed under the top) and paused.
-    let l = live.borrow();
-    let top = l.len().saturating_sub(1);
-    for (i, w) in l.iter().enumerate() {
-        if i == top {
-            w.owner.resume();
-            // Ensure the top is fully present (covers replace/reset where
-            // no enter animation ran).
-            if !w.ctrl.is_animating() {
+    // ----- Settle the steady state: the top is active (its own ctrl,
+    // Role::Top), lower entries are frozen fully-covered. We skip any
+    // wrapper whose currently-assigned pose controller is still animating
+    // so an in-flight push/pop (whose wrappers were pointed at the driving
+    // ctrl) is not clobbered mid-flight.
+    {
+        let l = live.borrow();
+        let top = l.len().saturating_sub(1);
+        for (i, w) in l.iter().enumerate() {
+            let pose_animating = w.pose_ctrl.get_untracked().is_animating();
+            if i == top {
+                w.owner.resume();
+                if !pose_animating {
+                    // Steady top: own controller, fully present (0%).
+                    w.ctrl.set_value(1.0);
+                    set_pose(w, &w.ctrl.clone(), Role::Top);
+                }
+            } else if !pose_animating {
+                // A buried entry not part of an in-flight transition:
+                // freeze it fully covered.
                 w.ctrl.set_value(1.0);
+                set_pose(w, &w.ctrl.clone(), Role::Under);
+                w.owner.pause();
             }
-        } else {
-            // Covered screen: pose "under" and freeze its effects.
-            let (transform, opacity) = transition::pose(w.transition, Role::Under, 1.0);
-            set_inline_styles(w.wrapper, &wrapper_style(transform, opacity));
-            w.owner.pause();
+            let _ = w.key;
         }
-        let _ = w.key;
     }
 
-    // ----- Publish the gesture bridge for this stack (top + under
-    // wrappers + the top controller) so swipe-back can scrub the pop.
+    // ----- Publish the gesture bridge for swipe-back.
+    let l = live.borrow();
+    let top = l.len().saturating_sub(1);
     let top_w = l.get(top);
     let under_w = if top >= 1 { l.get(top - 1) } else { None };
+    let pose_of = |w: &StackWrapper| crate::render::handle::PoseBinding {
+        ctrl: w.pose_ctrl,
+        role: w.pose_role,
+    };
     let bridge = crate::render::handle::StackBridge {
-        top_wrapper: top_w.map(|w| w.wrapper),
-        under_wrapper: under_w.map(|w| w.wrapper),
         top_ctrl: top_w.map(|w| w.ctrl.clone()),
+        top_pose: top_w.map(pose_of),
+        under_pose: under_w.map(pose_of),
         transition: top_w.map(|w| w.transition).unwrap_or_default(),
         can_back: l.len() > 1,
     };
     handle.set_stack_bridge(path.clone(), bridge);
 }
 
+/// Drive a pop: reverse the popped top's controller `1 → 0`, with the
+/// newly-revealed survivor pointed at the **same** controller as
+/// `Role::Under` so it slides back from covered to rest in lockstep. On
+/// finish, unmount the popped entry and settle the survivor to its own
+/// resting controller.
+fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWrapper) {
+    let drive = popped.ctrl.clone();
+    let transition = popped.transition;
+
+    // Point the popped top at the drive ctrl (Top) — it already is, but
+    // be explicit — and the revealed survivor at the same ctrl (Under).
+    set_pose(&popped, &drive, Role::Top);
+    let survivor_handle = {
+        let l = live.borrow();
+        l.last().map(|w| {
+            w.owner.resume();
+            set_pose(w, &drive, Role::Under);
+            // Capture what we need to re-settle the survivor on finish.
+            (w.wrapper, w.ctrl.clone(), w.pose_ctrl, w.pose_role)
+        })
+    };
+
+    if transition == Transition::None {
+        // No animation: drop immediately and settle the survivor.
+        dispose_wrapper(slot, popped);
+        if let Some((_w, ctrl, pose_ctrl, pose_role)) = survivor_handle {
+            ctrl.set_value(1.0);
+            pose_ctrl.set(ctrl);
+            pose_role.set(Role::Top);
+        }
+        return;
+    }
+
+    let popped_wrapper = popped.wrapper;
+    let popped_owner = popped.owner;
+    let done = Rc::new(RefCell::new(false));
+    drive.on_finish(move |finished| {
+        if !finished || *done.borrow() {
+            return;
+        }
+        *done.borrow_mut() = true;
+        // Unmount the popped entry.
+        remove_child(slot, popped_wrapper);
+        popped_owner.dispose();
+        // Re-settle the revealed survivor onto its own controller at the
+        // active (Role::Top / 1.0 = translateX 0%) pose so no parallax
+        // residue remains.
+        if let Some((_w, ctrl, pose_ctrl, pose_role)) = &survivor_handle {
+            ctrl.set_value(1.0);
+            pose_ctrl.set(ctrl.clone());
+            pose_role.set(Role::Top);
+        }
+    });
+    drive.reverse();
+}
+
 /// Build a wrapper for `entry` at history index `idx`: choose its
 /// transition, mount the child subtree under a fresh owner, wire the
-/// pose `computed`, append it, and (optionally) animate it in.
+/// repointable pose effect, and append it. The wrapper starts at rest
+/// (`Role::Top`, its own controller); the caller drives the transition.
 fn mount_wrapper(
     handle: &RouterHandle,
     slot: Element,
     idx: usize,
     entry: &crate::core::StackEntry,
-    animate_in: bool,
 ) -> StackWrapper {
     let child_path = entry.child.clone();
 
@@ -334,34 +454,33 @@ fn mount_wrapper(
     // owner by `create_element`), the style effect, the child subtree,
     // and deregisters the controller.
     let owner = Owner::new(None);
-    let (wrapper, ctrl) = owner.with(|| {
+    let (wrapper, ctrl, pose_ctrl, pose_role) = owner.with(|| {
         // A real `view` (not a phantom): the wrapper carries the
         // transition `transform` / `opacity` and `position: absolute`
         // stacking — none of which a style-less phantom can apply.
         let wrapper = create_element(ElementTag::View);
         let ctrl = AnimationController::new(transition::config(transition));
 
-        // Compose the wrapper's pose from the controller progress.
-        let ctrl_for_style = ctrl.clone();
+        // Repointable pose inputs. The single style effect reads the
+        // *currently assigned* controller's progress + role, so pointing
+        // both the top and the under wrapper at one controller makes one
+        // progress drive the coordinated pair.
+        let pose_ctrl = whisker::RwSignal::new(ctrl.clone());
+        let pose_role = whisker::RwSignal::new(Role::Top);
+
         let style = computed(move || {
-            let (transform, opacity) =
-                transition::pose(transition, Role::Top, ctrl_for_style.value().get());
+            let c = pose_ctrl.get();
+            let role = pose_role.get();
+            let (transform, opacity) = transition::pose(transition, role, c.value().get());
             wrapper_style(transform, opacity)
         });
         effect(move || set_inline_styles(wrapper, &style.get()));
 
         let child = mount_node(handle, child_path);
         append_child(wrapper, child);
-        (wrapper, ctrl)
+        (wrapper, ctrl, pose_ctrl, pose_role)
     });
     append_child(slot, wrapper);
-
-    if animate_in {
-        ctrl.set_value(0.0);
-        ctrl.forward();
-    } else {
-        ctrl.set_value(1.0);
-    }
 
     StackWrapper {
         key: idx,
@@ -370,29 +489,22 @@ fn mount_wrapper(
         wrapper,
         owner,
         ctrl,
+        pose_ctrl,
+        pose_role,
         transition,
     }
 }
 
-/// Remove `w` from the slot, optionally animating it out first (the
-/// popped top); otherwise tear it down immediately.
-fn unmount_wrapper(slot: Element, w: StackWrapper, animate_out: bool) {
-    let wrapper = w.wrapper;
-    let owner = w.owner;
-    if animate_out && w.transition != Transition::None {
-        let done = Rc::new(RefCell::new(false));
-        w.ctrl.on_finish(move |finished| {
-            if finished && !*done.borrow() {
-                *done.borrow_mut() = true;
-                remove_child(slot, wrapper);
-                owner.dispose();
-            }
-        });
-        w.ctrl.reverse();
-    } else {
-        remove_child(slot, wrapper);
-        owner.dispose();
-    }
+/// Point `w`'s pose at controller `c` playing `role`.
+fn set_pose(w: &StackWrapper, c: &AnimationController, role: Role) {
+    w.pose_ctrl.set(c.clone());
+    w.pose_role.set(role);
+}
+
+/// Tear down a popped wrapper immediately (no animation).
+fn dispose_wrapper(slot: Element, w: StackWrapper) {
+    remove_child(slot, w.wrapper);
+    w.owner.dispose();
 }
 
 /// The stack's positioned container: fills its flex slot and anchors the

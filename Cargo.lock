@@ -2525,6 +2525,7 @@ name = "whisker-router"
 version = "0.6.0"
 dependencies = [
  "whisker",
+ "whisker-animation",
  "whisker-router-macros",
 ]
 

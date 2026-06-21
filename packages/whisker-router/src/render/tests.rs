@@ -336,3 +336,75 @@ fn navigate_mounts_new_leaf_exactly_once() {
         assert_eq!(c.get("home").copied(), Some(1), "home not re-mounted");
     });
 }
+
+// ----- coordinated pop: survivor returns to the active (0%) pose -------
+
+/// A single-stack handle with Slide routes so a push/pop runs a real
+/// transition we can step to completion.
+fn slide_stack_handle() -> RouterHandle {
+    let tree = CompiledTree::new(RouteTree::stack(vec![
+        RouteTree::route("", "home"),
+        RouteTree::route("detail/:id", "detail"),
+    ]));
+    let registry = RouteRegistry::new()
+        .route_with("home", Transition::Slide, |_: &RouteInstance| {
+            whisker::runtime::view::create_phantom_element()
+        })
+        .route_with("detail", Transition::Slide, |_: &RouteInstance| {
+            whisker::runtime::view::create_phantom_element()
+        });
+    RouterHandle::new(tree, registry)
+}
+
+/// Advance animation frames + flush until nothing is animating (or a
+/// budget is hit), driving any in-flight push/pop/settle to completion.
+fn settle_animations() {
+    let mut t = 0.0_f64;
+    for _ in 0..2000 {
+        let still = whisker_animation::__step_for_tests(t);
+        flush();
+        if !still {
+            break;
+        }
+        t += 16.0;
+    }
+}
+
+#[test]
+fn pop_settles_survivor_to_active_pose() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        // Push detail, let the slide-in finish.
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+        settle_animations();
+
+        // Pop back to home; let the coordinated slide-out + reveal finish.
+        assert!(h.back());
+        flush();
+        settle_animations();
+
+        // The bridge's top is now the revealed Home. Its pose binding must
+        // resolve to the ACTIVE pose — Role::Top at progress 1.0, which is
+        // translateX(0%): no parallax residue left from the push.
+        let bridge = h
+            .active_stack_bridge_for_test(&NodePath::root())
+            .expect("a stack bridge is published");
+        let top = bridge.top_pose.expect("top has a pose binding");
+        let role = top.role.get();
+        let progress = top.ctrl.get().value().get();
+        let (transform, _opacity) =
+            crate::render::transition::pose(Transition::Slide, role, progress);
+        assert_eq!(
+            transform, "translateX(0%)",
+            "survivor settled to active 0% pose; role={role:?} progress={progress}"
+        );
+    });
+    owner.dispose();
+}

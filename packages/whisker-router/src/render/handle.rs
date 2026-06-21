@@ -36,7 +36,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use whisker::runtime::reactive::Owner;
-use whisker::runtime::view::Element;
 use whisker::{AnimationController, ReadSignal, RwSignal, computed, provide_context, use_context};
 
 use crate::core::{
@@ -44,19 +43,31 @@ use crate::core::{
 };
 use crate::render::registry::{RenderFn, RouteRegistry, Transition};
 
+/// A repointable pose binding for one stack wrapper: the controller whose
+/// progress drives it + the role it plays. The swipe-back gesture sets
+/// both wrappers' bindings to the **same** controller (Top / Under) so one
+/// scrubbed progress moves the pair — the identical coordinated model the
+/// non-interactive push/pop uses.
+#[derive(Copy, Clone)]
+pub struct PoseBinding {
+    /// The controller this wrapper's pose currently reads.
+    pub ctrl: RwSignal<AnimationController>,
+    /// The role (`Top` / `Under`) this wrapper plays.
+    pub role: RwSignal<crate::render::transition::Role>,
+}
+
 /// A live bridge a rendered [`Stack`](crate::render::Stack) registers so
-/// gestures (iOS swipe-back) can reach its **top wrapper** — the screen
-/// the finger drags — and its transition controller for the velocity
-/// hand-off. Re-published on every reconcile so it always points at the
-/// current top.
+/// the iOS swipe-back gesture can drive its top/under wrappers as a
+/// coordinated pair. Re-published on every reconcile so it always points
+/// at the current top.
 #[derive(Clone)]
 pub struct StackBridge {
-    /// The top wrapper element (the screen being dragged), if any.
-    pub top_wrapper: Option<Element>,
-    /// The wrapper directly beneath the top (revealed on back), if any.
-    pub under_wrapper: Option<Element>,
-    /// The top wrapper's transition controller.
+    /// The top wrapper's transition controller (what the gesture scrubs).
     pub top_ctrl: Option<AnimationController>,
+    /// The top wrapper's pose binding.
+    pub top_pose: Option<PoseBinding>,
+    /// The revealed-under wrapper's pose binding, if any.
+    pub under_pose: Option<PoseBinding>,
     /// The transition kind of the top entry.
     pub transition: Transition,
     /// Whether this stack currently has something to pop.
@@ -114,6 +125,14 @@ impl RouterHandle {
     /// top wrapper changes.
     pub fn set_stack_bridge(&self, path: NodePath, bridge: StackBridge) {
         self.inner.bridges.borrow_mut().insert(path, bridge);
+    }
+
+    /// (Test only) the bridge registered for the stack at `path`,
+    /// regardless of whether it can currently pop — used to assert a
+    /// survivor's resting pose after a coordinated pop.
+    #[doc(hidden)]
+    pub fn active_stack_bridge_for_test(&self, path: &NodePath) -> Option<StackBridge> {
+        self.inner.bridges.borrow().get(path).cloned()
     }
 
     /// The gesture bridge for the **deepest active stack** — the one a
