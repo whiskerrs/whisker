@@ -15,7 +15,25 @@ use std::rc::Rc;
 use whisker_runtime::anim_hook;
 use whisker_runtime::reactive::{ReadSignal, RwSignal, on_cleanup, signal};
 
-use crate::config::AnimConfig;
+use crate::config::{AnimConfig, SpringConfig, Timing};
+
+/// Maximum integration `dt` (seconds) honoured in one `advance`. A long
+/// idle gap leaves a stale previous-frame timestamp; without a clamp the
+/// resulting huge `dt` would explode the spring integration (mirrors the
+/// curved path's lazy-anchor fix). 1/30 s is generous for 60–120 fps.
+const MAX_DT: f64 = 1.0 / 30.0;
+
+/// Fixed sub-step (seconds) the spring integrator advances at. Splitting
+/// a frame's `dt` into ~1 ms steps keeps semi-implicit Euler stable at
+/// the stiffnesses we ship even when a frame runs long.
+const SPRING_SUBSTEP: f64 = 0.001;
+
+/// A spring run is *settled* once the position is within this distance
+/// of the target.
+const SPRING_POS_EPS: f32 = 1e-3;
+
+/// …and the velocity is below this magnitude (progress units / second).
+const SPRING_VEL_EPS: f32 = 1e-3;
 
 /// How a running controller continues once it reaches its target.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -58,6 +76,17 @@ struct ControllerState {
     /// teleports, mashing animates" bug). Lazy anchoring starts every run
     /// from progress 0 at its first real frame.
     start_ms: Option<f64>,
+    /// Timestamp (ms) of the previous `advance`, used to derive the
+    /// per-frame `dt` the spring integrator needs. `None` until the
+    /// first frame of a run (so that frame integrates nothing — it is
+    /// progress 0 / the start, mirroring the curved path's lazy anchor).
+    /// Reset to `None` alongside `start_ms` at the start of every run.
+    last_frame_ms: Option<f64>,
+    /// Spring velocity (progress units per second). Only meaningful for
+    /// the spring timing; stays `0.0` on the curved path. Reset to `0`
+    /// at the start of each run (see the velocity-handoff note on
+    /// `register`).
+    velocity: f32,
     /// Direction of the current run (for ping-pong bookkeeping).
     dir: Dir,
     repeat: Repeat,
@@ -66,13 +95,14 @@ struct ControllerState {
 }
 
 impl ControllerState {
-    /// Distance-proportional duration (ms) for the current run: a half
-    /// sweep takes half the configured time, so `set_value` then
+    /// Distance-proportional duration (ms) for the current *curved* run:
+    /// a half sweep takes half the configured time, so `set_value` then
     /// `forward` settles at a consistent rate. Guards a zero/positive
-    /// duration so a degenerate config finishes immediately.
-    fn run_duration_ms(&self) -> f64 {
+    /// duration so a degenerate config finishes immediately. Springs do
+    /// not use this (they have no fixed duration).
+    fn run_duration_ms(&self, duration_ms: f32) -> f64 {
         let span = (self.target - self.start_value).abs();
-        (self.cfg.duration_ms as f64) * span as f64
+        (duration_ms as f64) * span as f64
     }
 
     /// Advance to time `now_ms`. Returns `true` if still animating.
@@ -80,12 +110,23 @@ impl ControllerState {
         if !self.active {
             return false;
         }
+        match self.cfg.timing {
+            Timing::Curved { duration_ms, curve } => {
+                self.advance_curved(now_ms, duration_ms, curve)
+            }
+            Timing::Spring(spring) => self.advance_spring(now_ms, spring),
+        }
+    }
+
+    /// Curved (time-driven) advance — the original math, unchanged:
+    /// `progress = curve(elapsed / duration)`, finished at `elapsed ≥ dur`.
+    fn advance_curved(&mut self, now_ms: f64, duration_ms: f32, curve: crate::Curve) -> bool {
         // Lazy time anchor: the first frame of a run defines its start, so
         // an idle gap before the run can't inflate the elapsed time. This
         // frame is therefore progress 0 (raw_t == 0) — the run advances
         // from the *next* frame onward.
         let start_ms = *self.start_ms.get_or_insert(now_ms);
-        let dur = self.run_duration_ms();
+        let dur = self.run_duration_ms(duration_ms);
         // A tiny epsilon (in ms) absorbs the f32→f64 rounding in
         // `run_duration_ms` (e.g. a 0.6 span yields dur ≈ 60.0000023,
         // so a frame at exactly 60ms would otherwise read t = 0.99999996
@@ -97,14 +138,78 @@ impl ControllerState {
         } else {
             ((now_ms - start_ms) / dur).clamp(0.0, 1.0) as f32
         };
-        let eased = self.cfg.curve.ease(raw_t);
+        let eased = curve.ease(raw_t);
         let progress = self.start_value + (self.target - self.start_value) * eased;
         self.value.set(progress);
 
         if !finished {
             return true;
         }
+        self.reached_target(now_ms)
+    }
 
+    /// Spring (physics) advance — integrate position + velocity toward
+    /// `target` until both settle. Unlike the curved path, there is no
+    /// fixed duration and progress is not a pure function of elapsed
+    /// time (it carries hidden velocity across frames).
+    fn advance_spring(&mut self, now_ms: f64, spring: SpringConfig) -> bool {
+        // First frame of the run: no previous timestamp yet, so there is
+        // no `dt` to integrate. Anchor the clock and hold at the start
+        // value — same "first frame is the start" behaviour as the
+        // curved lazy anchor. (We seed both `start_ms` and the
+        // per-frame clock here.)
+        let Some(last_ms) = self.last_frame_ms else {
+            self.start_ms.get_or_insert(now_ms);
+            self.last_frame_ms = Some(now_ms);
+            // Emit the current position so the first frame paints the
+            // start, exactly like the curved path's raw_t == 0 frame.
+            let x = self.value.get_untracked();
+            self.value.set(x);
+            return true;
+        };
+
+        // Clamp dt so a stale gap (idle, backgrounded tab) can't explode
+        // the integration; substep it into small fixed steps for stable
+        // semi-implicit Euler at our stiffnesses.
+        let dt = ((now_ms - last_ms) / 1000.0).clamp(0.0, MAX_DT);
+        self.last_frame_ms = Some(now_ms);
+
+        let k = spring.stiffness;
+        let c = spring.damping;
+        let m = spring.mass.max(f32::EPSILON);
+        let target = self.target;
+
+        let mut x = self.value.get_untracked();
+        let mut v = self.velocity;
+
+        let mut remaining = dt;
+        while remaining > 0.0 {
+            let h = remaining.min(SPRING_SUBSTEP) as f32;
+            // Semi-implicit (symplectic) Euler: update velocity first,
+            // then position with the new velocity.
+            let f = -k * (x - target) - c * v;
+            let a = f / m;
+            v += a * h;
+            x += v * h;
+            remaining -= SPRING_SUBSTEP;
+        }
+
+        // Settled? Position close to target AND velocity near zero.
+        if (x - target).abs() < SPRING_POS_EPS && v.abs() < SPRING_VEL_EPS {
+            self.velocity = 0.0;
+            self.value.set(target);
+            return self.reached_target(now_ms);
+        }
+
+        self.velocity = v;
+        self.value.set(x);
+        true
+    }
+
+    /// Shared "reached the target" handling for both timings: snaps to
+    /// the target, then either finishes (firing `on_finish`) or restarts
+    /// per the repeat mode. Returns `true` if the run continues.
+    fn reached_target(&mut self, now_ms: f64) -> bool {
         // Reached the target.
         self.value.set(self.target);
         match self.repeat {
@@ -127,6 +232,9 @@ impl ControllerState {
                 self.start_value = from;
                 self.target = to;
                 self.start_ms = Some(now_ms);
+                // Restart the spring clock + velocity for the next leg.
+                self.last_frame_ms = Some(now_ms);
+                self.velocity = 0.0;
                 true
             }
             Repeat::Reverse => {
@@ -141,6 +249,8 @@ impl ControllerState {
                     Dir::Backward => 0.0,
                 };
                 self.start_ms = Some(now_ms);
+                self.last_frame_ms = Some(now_ms);
+                self.velocity = 0.0;
                 true
             }
         }
@@ -227,12 +337,24 @@ fn step(now_ms: f64) -> bool {
 /// runs. The run's start time is anchored lazily on its first `advance`
 /// (see `ControllerState::start_ms`), so `register` clears it rather than
 /// reading the scheduler's possibly-stale `last_ms`.
+///
+/// We also reset the spring `velocity` and per-frame `last_frame_ms` so a
+/// fresh `forward`/`reverse` starts from rest. **Future refinement (gesture
+/// hand-off):** to make an interrupted spring feel natural, a `forward()`
+/// issued while the box is mid-flight should *keep* the current velocity
+/// rather than zeroing it; resetting is simpler and correct for the
+/// common "drive from rest" case, so we start there.
 fn register(state: &Rc<RefCell<ControllerState>>) {
     let already = SCHEDULER.with(|s| {
         let s = s.borrow();
         s.active.iter().any(|a| Rc::ptr_eq(a, state))
     });
-    state.borrow_mut().start_ms = None;
+    {
+        let mut st = state.borrow_mut();
+        st.start_ms = None;
+        st.last_frame_ms = None;
+        st.velocity = 0.0;
+    }
     if !already {
         SCHEDULER.with(|s| s.borrow_mut().active.push(state.clone()));
     }
@@ -313,6 +435,8 @@ impl AnimationController {
             target: 0.0,
             start_value: 0.0,
             start_ms: None,
+            last_frame_ms: None,
+            velocity: 0.0,
             dir: Dir::Forward,
             repeat: Repeat::Once,
             on_finish: Vec::new(),
@@ -396,6 +520,7 @@ impl AnimationController {
         {
             let mut st = self.state.borrow_mut();
             st.active = false;
+            st.velocity = 0.0;
             st.value.set(v);
         }
         deregister(&self.state);
