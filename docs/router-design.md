@@ -1,7 +1,7 @@
 # Router Design
 
 Whisker's router is built on **two graphs**: a static **RouteTree** that
-the `routes!` macro produces at compile time, and a dynamic **NavState**
+the `routes!` macro produces at compile time, and a dynamic **RouteState**
 that the runtime mutates as the user navigates. Everything the router
 does — what URL a screen has, which screen is shown, where a `navigate`
 pushes, where `back` returns — is *derived* from these two graphs plus a
@@ -30,7 +30,7 @@ adopts this explicitly and pushes it to its minimal form:
 - **RouteTree** — *what screens exist and how they nest.* Immutable,
   compile-time, produced by `routes!`. Determines URLs, the set of legal
   targets, the resolution rule, and per-screen animations.
-- **NavState** — *what is live right now and how we got here.* Mutable,
+- **RouteState** — *what is live right now and how we got here.* Mutable,
   runtime, the RouteTree instantiated with state. Determines the current
   screen, where a push lands, and where a back returns.
 
@@ -38,6 +38,21 @@ The whole navigation domain closes over these two graphs and two ideas:
 a **relative resolution rule** (which instance of an ambiguous route to
 target) and a **derived `current`** (the shown screen is computed, never
 stored).
+
+### Naming: structure is *route*, the act of moving is *navigate*
+
+To keep "routing" and "navigation" from blurring, the names split by part
+of speech:
+
+- **Nouns (the structure / state) use *route*:** `RouteTree` (static
+  definition), `RouteState` (runtime state), and the node types `Route` /
+  `Stack` / `Switch`.
+- **Verbs (the act of moving) use *navigate* and friends:** the
+  operations `navigate` / `back` / `replace` / `popTo` / `reset`, and the
+  handle you call them on, the `Navigator`.
+
+So: the *route* graph is the thing; *navigating* is what you do to it. No
+type or field name mixes the two.
 
 ## RouteTree (static)
 
@@ -133,7 +148,7 @@ spread into several stacks can be given a different transition at each
 `pop_exit`/`present` are route parameters.
 
 Containers (`Stack`/`Switch`) own *no* animation — they are passive views
-that render whichever child the NavState selects. (See **Interactive
+that render whichever child the RouteState selects. (See **Interactive
 transitions** for the one nuance.)
 
 ### Chrome (tab bar) is a `Layout`, not the `Switch`
@@ -160,9 +175,9 @@ fn tabs_layout() -> Element {
             view(style: css!(display: Display::Flex, flex_direction: FlexDirection::Row,
                              height: px(56))) {                 // bottom navigation
                 TabBarItem(icon: Icon::Home,   active: active == HomeTab::Home,
-                           on_tap: move |_| nav.select_tab(HomeTab::Home))
+                           on_tap: move |_| navigator.select_tab(HomeTab::Home))
                 TabBarItem(icon: Icon::Search, active: active == HomeTab::Search,
-                           on_tap: move |_| nav.select_tab(HomeTab::Search))
+                           on_tap: move |_| navigator.select_tab(HomeTab::Search))
             }
         }
     }
@@ -198,9 +213,9 @@ bottom-nav UI + a `Switch`". Reach for an explicit `Layout(X)` only when
 you want custom chrome (top tabs, a segmented control, a styled bar); the
 `Switch` underneath is unchanged either way.
 
-## NavState (dynamic)
+## RouteState (dynamic)
 
-NavState is the RouteTree **instantiated with runtime state**. Only two
+RouteState is the RouteTree **instantiated with runtime state**. Only two
 pieces of state exist:
 
 | Node | State it carries | How "the active child" is chosen |
@@ -258,7 +273,7 @@ first branch in declaration order.
 
 ## Resolution: which instance does a target hit?
 
-When a target URL/route matches **multiple** NavState positions (e.g. the
+When a target URL/route matches **multiple** RouteState positions (e.g. the
 shared `/post/:id` exists in every tab), the instance is chosen by
 **relative resolution**:
 
@@ -294,7 +309,7 @@ The runtime exposes five operations. Each is just a mutation of
 whole graph — selecting `Switch` branches and pushing `Stack`s — so the
 stack-only terms would mislead.)
 
-| Op | Effect on NavState |
+| Op | Effect on RouteState |
 | --- | --- |
 | `navigate(R)` | Along the path root→R: `Switch` → select toward R; `Stack` → **always push a new instance** of the toward-R child (never unwind to an existing one); a buried intermediate container is revealed (entries above it popped). |
 | `back()` | Pop the top of the **deepest non-trivial `Stack`** on the active path. `Switch` selection is **not** on the back history. At a tab root with nothing to pop → no-op (deferred to a future `BackHandler`). |
@@ -318,7 +333,7 @@ Notes that pin down the corners:
 - **`back` only travels stack depth**, never `Switch` selection. "Back
   from a non-home tab returns to the home tab" is a product policy, not a
   graph primitive; it will be added later via a `BackHandler` that reads
-  NavState and decides — kept out of the core pop rule so the graph stays
+  RouteState and decides — kept out of the core pop rule so the graph stays
   clean.
 
 ## Modals
@@ -338,8 +353,8 @@ ordinary stack route. No separate dismissal API is needed.
 Interactive, gesture-driven transitions (iOS swipe-back, modal
 swipe-down, Android predictive back) have a **continuous intermediate
 state** (finger progress 0..1, cancellable). That continuous state is
-**out of NavState's scope** — NavState is discrete. The animation layer
-reads `current` and the would-be back target from NavState and
+**out of RouteState's scope** — RouteState is discrete. The animation layer
+reads `current` and the would-be back target from RouteState and
 interpolates between them.
 
 The subtlety: a `Route`'s transition parameters define one screen's
@@ -351,7 +366,7 @@ enter/exit, but a gesture spans **two** routes. Resolution:
   This is exactly how iOS interactive pop reuses the standard pop
   animation.
 - **The runtime composes the pair** from the two routes' own transitions
-  (read off NavState). The "spans two routes" problem is solved by
+  (read off RouteState). The "spans two routes" problem is solved by
   computation, not by a new place to write a combined animation.
 - **Gesture enablement** (which stacks allow swipe-back, edge, etc.) is a
   **`Stack`-level** option — "can you go back here" is a container
@@ -397,12 +412,12 @@ fn root_layout() -> Element {
     }
 }
 // routes!: Layout(RootLayout) { Stack { Switch { … } } }
-// nav.toggle_drawer();   // open/close — not on the back stack
+// navigator.toggle_drawer();   // open/close — not on the back stack
 ```
 
 So a Drawer/sheet lives **inside `routes!` as the body of a `Layout`**,
 not in a separate `AppShell` wrapper. The only thing that makes it "not
-navigation" is that it has no NavState (no history, no route identity) —
+navigation" is that it has no RouteState (no history, no route identity) —
 it is shell chrome `open`/`close`d imperatively.
 
 (Modals are the exception that *is* a route, because on iOS a modal is a
@@ -434,7 +449,7 @@ stack synthesis, and the full interactive/predictive-back polish.
 - `within(scope)` explicit cross-branch targeting — deferred; default
   relative resolution covers the common cases.
 - `BackHandler` for Android predictive back / "back to home tab" — reads
-  NavState to decide; intentionally outside the core `back` rule.
+  RouteState to decide; intentionally outside the core `back` rule.
 - Cold deep-link: synthesising a sensible back stack when entering deep
   into a nested structure (use `Switch(default:)` + declaration order as
   the seed).
