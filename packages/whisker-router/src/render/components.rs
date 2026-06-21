@@ -14,7 +14,7 @@
 
 use whisker::css::{Display, FlexDirection};
 use whisker::prelude::*;
-use whisker::runtime::view::{Element, append_child};
+use whisker::runtime::view::Element;
 use whisker::{Children, component, computed, provide_context, render, use_context};
 
 use crate::core::NodePath;
@@ -65,20 +65,29 @@ pub fn router(handle: RouterHandle, children: Children) -> Element {
     // A real, screen-spanning root so transitions have a positioned
     // container (wrappers are `position: absolute`) and the swipe-back
     // gesture has something to bind to.
+    //
+    // The `children()` slot is bundled behind a phantom; appending that
+    // phantom directly would hoist the children with NO column container,
+    // and Lynx defaults a style-less container to `flex-direction: row`
+    // (see memory `lynx_view_flex_direction_default`) — collapsing the
+    // children horizontally (the tab content eats the row, side-effect
+    // gesture/marker views shrink to 0). So `root` itself is the real
+    // `flex-direction: column` container the children mount into directly.
     let root = render! {
         view(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
-        ).raw("position", "relative"))
+        ).raw("position", "relative")) {
+            // The tree is drawn by `children` (an Outlet / Tabs / Stack),
+            // NOT here — drawing root ourselves *and* letting a child draw
+            // the same subtree would double-mount it. Mounting them as
+            // `root`'s render-children keeps them under the column root.
+            children()
+        }
     };
     provide_context(RouterRoot(root));
 
-    // The tree is drawn by `children` (an Outlet / Tabs / Stack), NOT
-    // here — drawing root ourselves *and* letting a child draw the same
-    // subtree would double-mount it.
-    let content = render! { children() };
-    append_child(root, content);
     root
 }
 
