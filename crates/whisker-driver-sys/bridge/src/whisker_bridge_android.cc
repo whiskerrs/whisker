@@ -955,19 +955,9 @@ void AndroidEventStopHook(const char* module_name, const char* event_name) {
 extern "C" JNIEXPORT void JNICALL
 Java_rs_whisker_runtime_WhiskerModuleEventCenter_nativeRegisterObserverHooks(
     JNIEnv* env, jclass /*self*/, jstring qname_jstr) {
-    // DIAG (temporary): trace observer-hook installation. If
-    // `init_wvjni` fails here the hook is never stored and
-    // OnStartObserving can never fire (the latch sits at >=1).
-    if (qname_jstr == nullptr) {
-        LOGE("[WhiskerPB] nativeRegisterObserverHooks: qname is null");
-        return;
-    }
-    if (!init_wvjni(env)) {
-        LOGE("[WhiskerPB] nativeRegisterObserverHooks: init_wvjni FAILED — hook NOT installed");
-        return;
-    }
+    if (qname_jstr == nullptr) return;
+    if (!init_wvjni(env)) return;
     std::string qname = jstr_to_str(env, qname_jstr);
-    LOGE("[WhiskerPB] nativeRegisterObserverHooks: installing hook for '%s'", qname.c_str());
     whisker_bridge_module_register_observer_hooks(
         qname.c_str(),
         AndroidEventStartHook,

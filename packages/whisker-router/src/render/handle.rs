@@ -54,12 +54,16 @@ pub struct PoseBinding {
     pub ctrl: RwSignal<AnimationController>,
     /// The role (`Top` / `Under`) this wrapper plays.
     pub role: RwSignal<crate::render::transition::Role>,
+    /// The pose mode (normal transition vs predictive-back preview). A
+    /// back gesture flips this to `Predictive(edge)` for the drag, then
+    /// the settle/cancel restores the route transition.
+    pub mode: RwSignal<crate::render::transition::PoseMode>,
 }
 
 /// A live bridge a rendered [`Stack`](crate::render::Stack) registers so
-/// the iOS swipe-back gesture can drive its top/under wrappers as a
-/// coordinated pair. Re-published on every reconcile so it always points
-/// at the current top.
+/// the iOS swipe-back / Android predictive-back gestures can drive its
+/// top/under wrappers as a coordinated pair. Re-published on every
+/// reconcile so it always points at the current top.
 #[derive(Clone)]
 pub struct StackBridge {
     /// The top wrapper's transition controller (what the gesture scrubs).
@@ -68,6 +72,10 @@ pub struct StackBridge {
     pub top_pose: Option<PoseBinding>,
     /// The revealed-under wrapper's pose binding, if any.
     pub under_pose: Option<PoseBinding>,
+    /// The stack's backdrop-dim opacity signal (0 = none). A back gesture
+    /// drives this with `back_progress * PB_MAX_DIM` so the area behind
+    /// the shrinking top card darkens; settle/cancel returns it to 0.
+    pub dim: Option<RwSignal<f32>>,
     /// The transition kind of the top entry.
     pub transition: Transition,
     /// Whether this stack currently has something to pop.

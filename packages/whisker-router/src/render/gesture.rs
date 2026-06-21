@@ -30,85 +30,7 @@ use whisker::{AnimationController, component, module, on_cleanup, render, use_co
 
 use crate::render::components::RouterRoot;
 use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
-use crate::render::transition::{self, Role};
-
-/// DIAG (temporary): a visible UI marker that the gesture components flip,
-/// so their body / `on_mount` execution can be confirmed by screenshot on
-/// Android (where the Rust→logcat path is unreliable). router-smoke renders
-/// [`DiagMarker`] which reads [`diag::marker`].
-pub(crate) mod diag {
-    use std::cell::Cell;
-
-    use whisker::runtime::reactive::Owner;
-    use whisker::{ReadSignal, RwSignal, computed};
-
-    thread_local! {
-        // Three independent flags, minted lazily under a detached root so
-        // they outlive the transient gesture-component owners (the
-        // arc/arena footgun: a signal minted in a child owner panics once
-        // that owner disposes). `Cell<Option<…>>` defers the mint to first
-        // use so there's a live runtime.
-        static PB_BODY: Cell<Option<RwSignal<bool>>> = const { Cell::new(None) };
-        static PB_MOUNT: Cell<Option<RwSignal<bool>>> = const { Cell::new(None) };
-        static SWIPE_BODY: Cell<Option<RwSignal<bool>>> = const { Cell::new(None) };
-    }
-
-    fn flag(cell: &'static std::thread::LocalKey<Cell<Option<RwSignal<bool>>>>) -> RwSignal<bool> {
-        cell.with(|c| {
-            if let Some(s) = c.get() {
-                return s;
-            }
-            let s = Owner::detached_root().with(|| RwSignal::new(false));
-            c.set(Some(s));
-            s
-        })
-    }
-
-    /// Mark that `android_predictive_back()`'s body ran.
-    pub(crate) fn set_pb_body_ran() {
-        flag(&PB_BODY).set(true);
-    }
-    /// Mark that `android_predictive_back()`'s `on_mount` fired.
-    pub(crate) fn set_pb_mount_ran() {
-        flag(&PB_MOUNT).set(true);
-    }
-    /// Mark that `swipe_back()`'s body ran.
-    pub(crate) fn set_swipe_body_ran() {
-        flag(&SWIPE_BODY).set(true);
-    }
-
-    /// A reactive one-line status string for the on-screen marker.
-    pub fn marker() -> ReadSignal<String> {
-        let pb_body = flag(&PB_BODY);
-        let pb_mount = flag(&PB_MOUNT);
-        let swipe_body = flag(&SWIPE_BODY);
-        computed(move || {
-            let yn = |b: bool| if b { "Y" } else { "n" };
-            std::format!(
-                "DIAG pb_body={} pb_mount={} swipe_body={}",
-                yn(pb_body.get()),
-                yn(pb_mount.get()),
-                yn(swipe_body.get()),
-            )
-        })
-    }
-}
-
-/// DIAG (temporary): a small on-screen banner showing whether each gesture
-/// component's body / `on_mount` ran — so Android body execution can be
-/// confirmed by screenshot (the Rust→logcat path being unreliable there).
-/// Place it inside `Router` in router-smoke; remove with the rest of the
-/// diagnostics once the Android wiring is fixed.
-#[component]
-pub fn diag_marker() -> Element {
-    let label = diag::marker();
-    render! {
-        view(style: "position: absolute; top: 8px; left: 8px; right: 8px; \
-                     z-index: 999; background-color: #FF00FF; padding: 4px;") {
-            text(value: label, style: "color: #FFFFFF; font-size: 12px;")
-        }
-    }
-}
+use crate::render::transition::{self, PoseMode, Role, SwipeEdge};
 
 /// Approximate viewport width (pt) the finger travels for a full swipe.
 /// A future revision can read the real container width.
@@ -132,10 +54,6 @@ struct Gesture {
 /// handlers in `on_mount`.
 #[component]
 pub fn swipe_back() -> Element {
-    // DIAG (temporary): compare against AndroidPredictiveBack — does THIS
-    // sibling component's body run on Android?
-    pb_log("swipe_back() body ENTER");
-    diag::set_swipe_body_ran();
     let nav = use_navigator();
     // Bind to the router's screen-spanning root (a phantom slot has no
     // extent and would never be hit by a touch).
@@ -172,8 +90,9 @@ fn install(container: Element, nav: RouterHandle) {
                 return;
             }
             // Grab the active stack's bridge and point both wrappers at the
-            // top controller (shared with Android predictive-back).
-            let Some(bridge) = begin(&nav) else {
+            // top controller (shared with Android predictive-back). The iOS
+            // edge swipe is always a left-edge gesture.
+            let Some(bridge) = begin(&nav, SwipeEdge::Left) else {
                 return;
             };
             *gesture.borrow_mut() = Some(Gesture {
@@ -236,38 +155,43 @@ fn install(container: Element, nav: RouterHandle) {
 // Shared coordinated-scrub helpers (iOS + Android)
 // =====================================================================
 
-/// Start a back gesture on the deepest active stack: validate it can pop
-/// and its transition supports an edge gesture, point **both** wrappers at
-/// the top controller (`Top` / `Under`), and return the bridge. `None`
-/// means no gesture should begin.
-pub(crate) fn begin(nav: &RouterHandle) -> Option<StackBridge> {
+/// Start a back gesture (from `edge`) on the deepest active stack:
+/// validate it can pop and supports an edge gesture, point **both**
+/// wrappers at the top controller (`Top` / `Under`) in the
+/// **predictive-back** pose mode, and return the bridge. `None` means no
+/// gesture should begin.
+pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> {
     let bridge = nav.active_stack_bridge()?;
     if !bridge.can_back || !transition::supports_edge_swipe(bridge.transition) {
         return None;
     }
+    let mode = PoseMode::Predictive(edge);
     if let (Some(ctrl), Some(top), Some(under)) =
         (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)
     {
-        point(top, ctrl, Role::Top);
-        point(under, ctrl, Role::Under);
+        point(top, ctrl, Role::Top, mode);
+        point(under, ctrl, Role::Under, mode);
     }
     Some(bridge)
 }
 
-/// Scrub the pair to `back_progress` (0 = top present, 1 = swiped away) by
-/// setting the shared top controller's progress; both wrappers re-pose via
-/// their pose bindings (Top reads `1-back`, Under reads `1-back` too).
+/// Scrub the pair to `back_progress` (0 = top present, 1 = swiped away):
+/// set the shared top controller's progress (both wrappers re-pose via
+/// their pose bindings) and darken the backdrop proportionally.
 pub(crate) fn scrub(bridge: &StackBridge, back_progress: f32) {
     if let Some(ctrl) = &bridge.top_ctrl {
         ctrl.set_value(1.0 - back_progress);
+    }
+    if let Some(dim) = &bridge.dim {
+        dim.set(back_progress.clamp(0.0, 1.0) * transition::PB_MAX_DIM);
     }
 }
 
 /// Settle a back gesture on release. `commit` drives the top off-screen
 /// (progress → 0) and calls `navigator.back()` on finish (the same
-/// reconcile pop); cancel springs it back to present. `velocity` (progress
-/// units/sec) is the release hand-off; `None` uses a plain run (Android's
-/// system back carries no velocity).
+/// reconcile pop); cancel springs it back to present and clears the dim.
+/// `velocity` (progress units/sec) is the release hand-off; `None` uses a
+/// plain run (Android's system back carries no velocity).
 pub(crate) fn settle(
     nav: &RouterHandle,
     bridge: &StackBridge,
@@ -277,6 +201,7 @@ pub(crate) fn settle(
     let Some(ctrl) = bridge.top_ctrl.clone() else {
         return;
     };
+    let dim = bridge.dim;
     if commit {
         // Drive the top off-screen; both wrappers follow via their pose
         // bindings. On finish call `back()`, which runs the same
@@ -287,6 +212,9 @@ pub(crate) fn settle(
         ctrl.on_finish(move |finished| {
             if finished && !*done.borrow() {
                 *done.borrow_mut() = true;
+                if let Some(d) = dim {
+                    d.set(0.0);
+                }
                 nav.back();
             }
         });
@@ -297,7 +225,16 @@ pub(crate) fn settle(
     } else {
         // Cancel: spring the top back to fully present; the under wrapper,
         // pointed at the same controller as `Under`, slides back to covered
-        // in lockstep.
+        // in lockstep. Clear the dim as it returns.
+        let done = Rc::new(RefCell::new(false));
+        ctrl.on_finish(move |finished| {
+            if finished && !*done.borrow() {
+                *done.borrow_mut() = true;
+                if let Some(d) = dim {
+                    d.set(0.0);
+                }
+            }
+        });
         match velocity {
             Some(v) => ctrl.forward_with_velocity(v),
             None => ctrl.forward(),
@@ -305,10 +242,12 @@ pub(crate) fn settle(
     }
 }
 
-/// Point a wrapper's pose binding at controller `c` playing `role`.
-fn point(binding: &PoseBinding, c: &AnimationController, role: Role) {
+/// Point a wrapper's pose binding at controller `c` playing `role` in
+/// pose `mode`.
+fn point(binding: &PoseBinding, c: &AnimationController, role: Role, mode: PoseMode) {
     binding.ctrl.set(c.clone());
     binding.role.set(role);
+    binding.mode.set(mode);
 }
 
 // =====================================================================
@@ -332,18 +271,8 @@ fn point(binding: &PoseBinding, c: &AnimationController, role: Role) {
 /// preview. Renders nothing.
 #[component]
 pub fn android_predictive_back() -> Element {
-    // DIAG (temporary): the FIRST statement, before any context lookup.
-    pb_log("android_predictive_back() body ENTER");
-
-    // DIAG (temporary, LOGGING-INDEPENDENT): flip a visible UI marker so
-    // the component's body execution can be confirmed by screenshot on
-    // Android, where the Rust→logcat path is unreliable. router-smoke
-    // renders `diag_pb_marker()` somewhere on screen.
-    diag::set_pb_body_ran();
-
     let nav = use_navigator();
     let module = module!("PredictiveBack");
-    pb_log("android_predictive_back() got navigator + module — subscribing");
 
     // The in-flight bridge for the current predictive-back gesture. Shared
     // across the four event listeners. The native `PredictiveBack` module
@@ -357,18 +286,14 @@ pub fn android_predictive_back() -> Element {
         let shared = MainThreadOnly {
             inner: (nav.clone(), state.clone()),
         };
-        module.on_event("backStarted", move |_payload| {
-            pb_log("event: backStarted");
+        module.on_event("backStarted", move |payload| {
             // Capture `shared` whole (not `shared.inner`) so Rust 2021
             // disjoint captures carry its `Send + Sync` impl.
             let shared = &shared;
             let (nav, state) = &shared.inner;
-            let bridge = begin(nav);
-            pb_log(&format!("backStarted -> begin() = {}", bridge.is_some()));
-            *state.borrow_mut() = bridge;
+            *state.borrow_mut() = begin(nav, back_edge(&payload));
         })
     };
-    log_sub("backStarted", started.error());
 
     let progressed = {
         let shared = MainThreadOnly {
@@ -377,21 +302,17 @@ pub fn android_predictive_back() -> Element {
         module.on_event("backProgressed", move |payload| {
             let shared = &shared;
             let state = &shared.inner;
-            let p = back_progress(&payload);
-            pb_log(&format!("event: backProgressed progress={p}"));
             if let Some(bridge) = state.borrow().as_ref() {
-                scrub(bridge, p);
+                scrub(bridge, back_progress(&payload));
             }
         })
     };
-    log_sub("backProgressed", progressed.error());
 
     let cancelled = {
         let shared = MainThreadOnly {
             inner: (nav.clone(), state.clone()),
         };
         module.on_event("backCancelled", move |_payload| {
-            pb_log("event: backCancelled");
             let shared = &shared;
             let (nav, state) = &shared.inner;
             if let Some(bridge) = state.borrow_mut().take() {
@@ -399,14 +320,12 @@ pub fn android_predictive_back() -> Element {
             }
         })
     };
-    log_sub("backCancelled", cancelled.error());
 
     let invoked = {
         let shared = MainThreadOnly {
             inner: (nav.clone(), state.clone()),
         };
         module.on_event("backInvoked", move |_payload| {
-            pb_log("event: backInvoked");
             let shared = &shared;
             let (nav, state) = &shared.inner;
             match state.borrow_mut().take() {
@@ -415,19 +334,11 @@ pub fn android_predictive_back() -> Element {
                 Some(bridge) => settle(nav, &bridge, /* commit = */ true, None),
                 // No preview (API < 34, or a discrete press): just pop.
                 None => {
-                    pb_log("backInvoked with no in-flight gesture -> nav.back()");
                     nav.back();
                 }
             }
         })
     };
-    log_sub("backInvoked", invoked.error());
-
-    // DIAG (temporary): confirm on_mount fires too (vs only the body).
-    on_mount(|| {
-        pb_log("android_predictive_back() on_mount fired");
-        diag::set_pb_mount_ran();
-    });
 
     // Hold the subscriptions for the component's lifetime; dropping them on
     // unmount fires the module's `OnStopObserving` → the Activity releases
@@ -442,7 +353,7 @@ pub fn android_predictive_back() -> Element {
     render! { fragment() }
 }
 
-/// Read `progress` (0..1, back-direction) from a `backProgressed` payload.
+/// Read `progress` (0..1, back-direction) from a back-event payload.
 pub(crate) fn back_progress(payload: &WhiskerValue) -> f32 {
     let WhiskerValue::Map(fields) = payload else {
         return 0.0;
@@ -455,52 +366,16 @@ pub(crate) fn back_progress(payload: &WhiskerValue) -> f32 {
     .clamp(0.0, 1.0)
 }
 
-/// DIAG (temporary): report whether a subscription registered. An `ok`
-/// log confirms the Rust side fired `on_event` (which is what triggers the
-/// module's `OnStartObserving` on the Kotlin side); a `FAILED` localises a
-/// registration failure.
-fn log_sub(event: &str, error: Option<&str>) {
-    match error {
-        Some(err) => pb_log(&format!("subscribe {event}: FAILED: {err}")),
-        None => pb_log(&format!("subscribe {event}: ok")),
-    }
-}
-
-/// DIAG (temporary): emit a predictive-back trace line that is visible in
-/// **logcat on Android** under the `WhiskerPB` tag — the same tag the
-/// Kotlin half uses, so one `adb logcat -s WhiskerPB` shows both sides.
-///
-/// `eprintln!` is NOT reliably forwarded to logcat on Android (the
-/// dev-runtime's stdout/stderr → logcat pipe only runs under the
-/// `hot-reload` feature, and not in every build), which left the Rust side
-/// of this gesture a black box. On Android this routes through the bridge's
-/// `whisker_bridge_log_info` (a guaranteed-linked C symbol that calls
-/// `__android_log_print` — "the debug path that survives Android's
-/// stderr-is-dropped policy"), so the trace always lands. On non-Android it
-/// falls back to `eprintln!`.
-fn pb_log(msg: &str) {
-    #[cfg(target_os = "android")]
-    {
-        // Declared here (not imported) so whisker-router needs no new dep:
-        // the symbol is exported by `whisker-driver-sys`'s bridge and is
-        // present in the final linked binary.
-        unsafe extern "C" {
-            fn whisker_bridge_log_info(
-                tag: *const std::os::raw::c_char,
-                msg: *const std::os::raw::c_char,
-            );
-        }
-        let tag = b"WhiskerPB\0";
-        let mut buf = Vec::with_capacity(msg.len() + 1);
-        buf.extend_from_slice(msg.as_bytes());
-        buf.push(0);
-        unsafe {
-            whisker_bridge_log_info(tag.as_ptr() as *const _, buf.as_ptr() as *const _);
-        }
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        eprintln!("[pb] {msg}");
+/// Read `swipeEdge` (0 = left, 1 = right) from a back-event payload,
+/// defaulting to left.
+fn back_edge(payload: &WhiskerValue) -> SwipeEdge {
+    let WhiskerValue::Map(fields) = payload else {
+        return SwipeEdge::Left;
+    };
+    match fields.get("swipeEdge") {
+        Some(WhiskerValue::Int(v)) => SwipeEdge::from_android(*v),
+        Some(WhiskerValue::Float(v)) => SwipeEdge::from_android(*v as i64),
+        _ => SwipeEdge::Left,
     }
 }
 

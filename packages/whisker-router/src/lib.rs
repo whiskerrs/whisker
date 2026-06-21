@@ -70,7 +70,7 @@ pub use crate::core::{
     resolve_within,
 };
 pub use crate::render::{
-    AndroidPredictiveBack, DiagMarker, Layout, Outlet, RenderFn, Role, RouteRegistry, Router,
-    RouterHandle, Stack, StackBridge, SwipeBack, Switch, TabBar, TabItem, Tabs, Transition,
-    provide_router, use_active_tab, use_navigator,
+    AndroidPredictiveBack, Layout, Outlet, RenderFn, Role, RouteRegistry, Router, RouterHandle,
+    Stack, StackBridge, SwipeBack, Switch, TabBar, TabItem, Tabs, Transition, provide_router,
+    use_active_tab, use_navigator,
 };

@@ -31,8 +31,8 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::core::{CompiledTree, NodePath, RouteInstance, RouteTree, SwitchDef, Target};
 use whisker_router::render::{
-    AndroidPredictiveBack, DiagMarker, RouteRegistry, Router, RouterHandle, SwipeBack, TabItem,
-    Tabs, Transition, use_navigator,
+    AndroidPredictiveBack, RouteRegistry, Router, RouterHandle, SwipeBack, TabItem, Tabs,
+    Transition, use_navigator,
 };
 
 /// The Switch (tabs) is the tree root, so its path is the root path.
@@ -73,15 +73,6 @@ fn app() -> Element {
     let handle = build_handle();
     render! {
         Router(handle: handle) {
-            // DIAG (temporary, MINIMAL REPRO #A): a RAW `view` as the FIRST
-            // Router child, in NORMAL flex flow (fixed height, no absolute
-            // positioning) so it is unambiguously visible IF mounted — it
-            // pushes the tabs down. If this green bar shows but the cyan
-            // (absolute) one below doesn't, the issue is absolute/z-index
-            // VISIBILITY, not child mount. If neither shows, it's MOUNT.
-            view(style: "height: 24px; background-color: #00C853;") {
-                text(value: "RAW #A (flow)", style: "color: #000000; font-size: 12px;")
-            }
             // Tab chrome is a Layout wrapping the Switch's Outlet.
             Tabs(
                 path: tabs_switch_path(),
@@ -90,21 +81,13 @@ fn app() -> Element {
                     TabItem::new("List", Target::id("list")),
                 ],
             )
-            // DIAG (temporary, MINIMAL REPRO #B): a RAW absolute `view`
-            // (same shape as DiagMarker) as a LATER Router child.
-            view(style: "position: absolute; top: 40px; left: 8px; right: 8px; \
-                         height: 28px; z-index: 1000; background-color: #00E5FF;") {
-                text(value: "RAW #B (absolute)", style: "color: #000000; font-size: 12px;")
-            }
             // Interactive back gestures — both mounted; each waits on its
             // own platform input. iOS = leading-edge swipe; Android =
-            // system predictive back (13+ shows the live preview).
+            // system predictive back (13+ shows the Material live preview:
+            // the current screen shrinks/rounds and slides, the previous
+            // screen peeks beside it, the backdrop dims).
             AndroidPredictiveBack {}
             SwipeBack {}
-            // DIAG (temporary): a magenta banner top-of-screen showing
-            // pb_body / pb_mount / swipe_body Y/n — so Android body
-            // execution is confirmable by screenshot (logcat unreliable).
-            DiagMarker {}
         }
     }
 }

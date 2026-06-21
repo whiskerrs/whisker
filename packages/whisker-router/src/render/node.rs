@@ -36,7 +36,7 @@ use whisker::{AnimationController, ElementTag, computed};
 use crate::core::{NodePath, RouteState, RouteTree};
 use crate::render::handle::RouterHandle;
 use crate::render::registry::Transition;
-use crate::render::transition::{self, Role};
+use crate::render::transition::{self, Pose, PoseMode, Role};
 
 /// Mount the node at `path` and return its phantom slot.
 ///
@@ -228,6 +228,9 @@ struct StackWrapper {
     pose_ctrl: whisker::RwSignal<AnimationController>,
     /// The role this wrapper currently plays in its pose computation.
     pose_role: whisker::RwSignal<Role>,
+    /// The pose mode — the route transition normally, flipped to
+    /// `Predictive(edge)` by a back gesture for the Material preview.
+    pose_mode: whisker::RwSignal<PoseMode>,
     /// The transition kind chosen for this entry's route.
     transition: Transition,
 }
@@ -240,6 +243,18 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
     set_inline_styles(slot, &stack_container_style());
     let handle = handle.clone();
 
+    // Backdrop-dim layer: a black absolute fill that darkens the area
+    // *behind* the top card during a predictive-back gesture. Its opacity
+    // follows `dim` (0 at rest). Kept positioned just below the top
+    // wrapper in DOM order by `reconcile_stack`.
+    let dim = create_element(ElementTag::View);
+    let dim_signal = whisker::RwSignal::new(0.0_f32);
+    {
+        let dim_eff = dim;
+        effect(move || set_inline_styles(dim_eff, &dim_style(dim_signal.get())));
+    }
+    append_child(slot, dim);
+
     let slice = handle.slice_at(path.clone());
     // The history length + the top entry's child path drive diffing.
     // We read the whole StackState slice (cheap clone) and reconcile.
@@ -251,10 +266,20 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
         let Some(RouteState::Stack(stack)) = slice.get() else {
             return;
         };
-        reconcile_stack(&handle_eff, &path_eff, slot, &live, &stack);
+        reconcile_stack(&handle_eff, &path_eff, slot, dim, dim_signal, &live, &stack);
     });
 
     slot
+}
+
+/// Style for the stack's backdrop-dim layer at `opacity` (0 = invisible).
+/// Always behind the top card; `pointer-events: none` so it never eats
+/// touches.
+fn dim_style(opacity: f32) -> String {
+    format!(
+        "position: absolute; left: 0; top: 0; right: 0; bottom: 0; \
+         background-color: #000000; opacity: {opacity}; pointer-events: none;"
+    )
 }
 
 /// Reconcile the live wrappers against `stack`'s history.
@@ -265,10 +290,13 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
 /// (`Role::Under`) at once. A push runs it `0 → 1`; a pop runs it
 /// `1 → 0` and unmounts the popped entry on finish. At rest the top sits
 /// at `Role::Top` / `1.0` (translateX 0%) and lower entries are frozen.
+#[allow(clippy::too_many_arguments)]
 fn reconcile_stack(
     handle: &RouterHandle,
     path: &NodePath,
     slot: Element,
+    dim: Element,
+    dim_signal: whisker::RwSignal<f32>,
     live: &Rc<RefCell<Vec<StackWrapper>>>,
     stack: &crate::core::StackState,
 ) {
@@ -379,7 +407,20 @@ fn reconcile_stack(
         }
     }
 
-    // ----- Publish the gesture bridge for swipe-back.
+    // ----- Keep the dim layer immediately below the top wrapper so it
+    // darkens the under card + backdrop but is itself covered by the top.
+    // Remove + re-append both so order is `[…lower, dim, top]`.
+    {
+        let l = live.borrow();
+        if let Some(top_w) = l.last() {
+            remove_child(slot, dim);
+            remove_child(slot, top_w.wrapper);
+            append_child(slot, dim);
+            append_child(slot, top_w.wrapper);
+        }
+    }
+
+    // ----- Publish the gesture bridge for swipe-back / predictive-back.
     let l = live.borrow();
     let top = l.len().saturating_sub(1);
     let top_w = l.get(top);
@@ -387,11 +428,13 @@ fn reconcile_stack(
     let pose_of = |w: &StackWrapper| crate::render::handle::PoseBinding {
         ctrl: w.pose_ctrl,
         role: w.pose_role,
+        mode: w.pose_mode,
     };
     let bridge = crate::render::handle::StackBridge {
         top_ctrl: top_w.map(|w| w.ctrl.clone()),
         top_pose: top_w.map(pose_of),
         under_pose: under_w.map(pose_of),
+        dim: Some(dim_signal),
         transition: top_w.map(|w| w.transition).unwrap_or_default(),
         can_back: l.len() > 1,
     };
@@ -485,7 +528,7 @@ fn mount_wrapper(
     // owner by `create_element`), the style effect, the child subtree,
     // and deregisters the controller.
     let owner = Owner::new(None);
-    let (wrapper, ctrl, pose_ctrl, pose_role) = owner.with(|| {
+    let (wrapper, ctrl, pose_ctrl, pose_role, pose_mode) = owner.with(|| {
         // A real `view` (not a phantom): the wrapper carries the
         // transition `transform` / `opacity` and `position: absolute`
         // stacking — none of which a style-less phantom can apply.
@@ -493,25 +536,28 @@ fn mount_wrapper(
         let ctrl = AnimationController::new(transition::config(transition));
 
         // Repointable pose inputs. The single style effect reads the
-        // *currently assigned* controller's progress + role, so pointing
-        // both the top and the under wrapper at one controller makes one
-        // progress drive the coordinated pair.
+        // *currently assigned* controller's progress + role + mode, so
+        // pointing both the top and the under wrapper at one controller
+        // makes one progress drive the coordinated pair, and flipping
+        // `mode` to `Predictive` swaps in the Material preview.
         let pose_ctrl = whisker::RwSignal::new(ctrl.clone());
         let pose_role = whisker::RwSignal::new(Role::Top);
+        let pose_mode = whisker::RwSignal::new(PoseMode::Transition(transition));
 
         // The single style writer for this wrapper: read the currently
-        // assigned controller's progress + role, compute the pose, write it.
+        // assigned controller's progress + role + mode, compute the pose,
+        // write it.
         let style = computed(move || {
             let c = pose_ctrl.get();
             let role = pose_role.get();
-            let (transform, opacity) = transition::pose(transition, role, c.value().get());
-            wrapper_style(transform, opacity)
+            let mode = pose_mode.get();
+            transition::pose_for(mode, role, c.value().get())
         });
-        effect(move || set_inline_styles(wrapper, &style.get()));
+        effect(move || set_inline_styles(wrapper, &wrapper_style(&style.get())));
 
         let child = mount_node(handle, child_path);
         append_child(wrapper, child);
-        (wrapper, ctrl, pose_ctrl, pose_role)
+        (wrapper, ctrl, pose_ctrl, pose_role, pose_mode)
     });
     append_child(slot, wrapper);
 
@@ -524,14 +570,17 @@ fn mount_wrapper(
         ctrl,
         pose_ctrl,
         pose_role,
+        pose_mode,
         transition,
     }
 }
 
-/// Point `w`'s pose at controller `c` playing `role`.
+/// Point `w`'s pose at controller `c` playing `role`, in the normal
+/// route-transition mode (resets any predictive-back preview).
 fn set_pose(w: &StackWrapper, c: &AnimationController, role: Role) {
     w.pose_ctrl.set(c.clone());
     w.pose_role.set(role);
+    w.pose_mode.set(PoseMode::Transition(w.transition));
 }
 
 /// Tear down a popped wrapper immediately (no animation).
@@ -547,11 +596,16 @@ fn stack_container_style() -> String {
 }
 
 /// Base style for a stack wrapper: absolutely-filled, column flow, with
-/// the transition's transform + opacity applied.
-fn wrapper_style(transform: String, opacity: f32) -> String {
+/// the [`Pose`]'s transform + opacity + (predictive) corner radius. The
+/// transform origin is centred so the predictive-back scale shrinks the
+/// card around its middle. `overflow: hidden` clips children to the
+/// rounded corners.
+fn wrapper_style(pose: &Pose) -> String {
     format!(
         "position: absolute; left: 0; top: 0; right: 0; bottom: 0; \
-         display: flex; flex-direction: column; transform: {transform}; \
-         opacity: {opacity};"
+         display: flex; flex-direction: column; overflow: hidden; \
+         transform-origin: 50% 50%; transform: {}; opacity: {}; \
+         border-radius: {}px;",
+        pose.transform, pose.opacity, pose.radius_px
     )
 }

@@ -399,10 +399,9 @@ fn pop_settles_survivor_to_active_pose() {
         let top = bridge.top_pose.expect("top has a pose binding");
         let role = top.role.get();
         let progress = top.ctrl.get().value().get();
-        let (transform, _opacity) =
-            crate::render::transition::pose(Transition::Slide, role, progress);
+        let pose = crate::render::transition::pose(Transition::Slide, role, progress);
         assert_eq!(
-            transform, "translateX(0%)",
+            pose.transform, "translateX(0%)",
             "survivor settled to active 0% pose; role={role:?} progress={progress}"
         );
     });
@@ -553,6 +552,7 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
 // the shared `begin`/`scrub`/`settle` logic, which IS testable.
 
 use crate::render::gesture::{back_progress, begin, scrub, settle};
+use crate::render::transition::SwipeEdge;
 use whisker::platform_module::WhiskerValue;
 
 #[test]
@@ -582,7 +582,7 @@ fn predictive_back_progress_scrubs_top_controller() {
         settle_animations();
 
         // backStarted → begin(): grabs the active stack's bridge.
-        let bridge = begin(&h).expect("a poppable Slide stack yields a bridge");
+        let bridge = begin(&h, SwipeEdge::Left).expect("a poppable Slide stack yields a bridge");
         let ctrl = bridge.top_ctrl.clone().expect("top ctrl");
 
         // backProgressed{progress} → scrub: controller = 1 - progress.
@@ -611,7 +611,7 @@ fn predictive_back_invoke_commits_pop() {
         assert_eq!(h.current().get().path, NodePath(vec![1]), "on detail");
 
         // backStarted + a partial drag, then backInvoked (commit).
-        let bridge = begin(&h).expect("bridge");
+        let bridge = begin(&h, SwipeEdge::Left).expect("bridge");
         scrub(&bridge, 0.6);
         settle(&h, &bridge, /* commit = */ true, None);
         // The commit's on_finish(true) fires `back()` once the reverse
@@ -636,7 +636,7 @@ fn predictive_back_cancel_restores_top() {
         flush();
         settle_animations();
 
-        let bridge = begin(&h).expect("bridge");
+        let bridge = begin(&h, SwipeEdge::Left).expect("bridge");
         let ctrl = bridge.top_ctrl.clone().expect("top ctrl");
         scrub(&bridge, 0.4);
         // Cancel: forward() back to present; no pop.
@@ -653,4 +653,65 @@ fn progress_payload(p: f64) -> WhiskerValue {
     let mut m = std::collections::BTreeMap::new();
     m.insert("progress".to_string(), WhiskerValue::Float(p));
     WhiskerValue::Map(m)
+}
+
+// ----- Material predictive-back pose ----------------------------------
+
+#[test]
+fn back_edge_decodes_payload() {
+    use crate::render::transition::SwipeEdge;
+    let mk = |edge: i64| {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("swipeEdge".to_string(), WhiskerValue::Int(edge));
+        WhiskerValue::Map(m)
+    };
+    assert_eq!(SwipeEdge::from_android(0), SwipeEdge::Left);
+    assert_eq!(SwipeEdge::from_android(1), SwipeEdge::Right);
+    // Unknown / missing → Left default.
+    assert_eq!(SwipeEdge::from_android(7), SwipeEdge::Left);
+    assert_eq!(crate::render::gesture::back_progress(&mk(1)), 0.0); // no progress key
+}
+
+#[test]
+fn predictive_pose_material_shape() {
+    use crate::render::transition::{Role, SwipeEdge, predictive_pose};
+
+    // At rest (progress 1.0 = top fully present): identity, no radius.
+    let rest = predictive_pose(Role::Top, 1.0, SwipeEdge::Left);
+    assert_eq!(rest.radius_px, 0.0, "no rounding at rest");
+    assert!(
+        rest.transform.contains("scale(1)"),
+        "scale 1 at rest: {rest:?}"
+    );
+
+    // Full back (progress 0.0): shrunk + rounded.
+    let full_left = predictive_pose(Role::Top, 0.0, SwipeEdge::Left);
+    assert!(full_left.radius_px > 0.0, "rounded at full back");
+    assert!(
+        full_left.transform.contains("scale(0.9)"),
+        "shrinks to 0.9: {full_left:?}"
+    );
+    // Left edge nudges the card to the RIGHT (positive translateX).
+    assert!(
+        full_left.transform.contains("translateX(6%)"),
+        "left-edge swipe shifts right: {full_left:?}"
+    );
+
+    // Right edge: same scale, but centred (no horizontal shift).
+    let full_right = predictive_pose(Role::Top, 0.0, SwipeEdge::Right);
+    assert!(
+        full_right.transform.contains("translateX(0%)"),
+        "right-edge swipe stays centred: {full_right:?}"
+    );
+
+    // Under card: same scale as Top, slid in from the left.
+    let under = predictive_pose(Role::Under, 0.0, SwipeEdge::Left);
+    assert!(
+        under.transform.contains("scale(0.9)"),
+        "under same scale: {under:?}"
+    );
+    assert!(
+        under.transform.contains("translateX(-60%)"),
+        "under peeks from the left: {under:?}"
+    );
 }
