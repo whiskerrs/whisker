@@ -480,3 +480,67 @@ fn pop_animates_outgoing_top_through_intermediate_frames() {
     });
     owner.dispose();
 }
+
+#[test]
+fn popped_leaf_content_survives_until_exit_animation_finishes() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        // Detail's render fn registers an `on_cleanup` bumping a counter,
+        // so we can observe exactly WHEN its content subtree is disposed.
+        let cleanups = Rc::new(RefCell::new(0usize));
+        let tree = CompiledTree::new(RouteTree::stack(vec![
+            RouteTree::route("", "home"),
+            RouteTree::route("detail/:id", "detail"),
+        ]));
+        let registry = {
+            let cleanups = cleanups.clone();
+            RouteRegistry::new()
+                .route_with("home", Transition::Slide, |_: &RouteInstance| {
+                    whisker::runtime::view::create_phantom_element()
+                })
+                .route_with("detail", Transition::Slide, move |_: &RouteInstance| {
+                    let cleanups = cleanups.clone();
+                    whisker::on_cleanup(move || *cleanups.borrow_mut() += 1);
+                    whisker::runtime::view::create_phantom_element()
+                })
+        };
+        let h = RouterHandle::new(tree, registry);
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+        settle_animations();
+        assert_eq!(*cleanups.borrow(), 0, "detail content alive after push");
+
+        // Pop. Immediately after `back()` + flush — BEFORE the exit
+        // animation finishes — the detail content must STILL be mounted
+        // (this is the bug: the leaf used to tear itself down the moment
+        // its RouteState entry vanished, blanking the sliding-out screen).
+        assert!(h.back());
+        flush();
+        // step a couple of mid-animation frames
+        whisker_animation::__step_for_tests(1000.0);
+        flush();
+        whisker_animation::__step_for_tests(1016.0);
+        flush();
+        assert_eq!(
+            *cleanups.borrow(),
+            0,
+            "detail content must survive the exit animation (not torn down on \
+             RouteState removal)"
+        );
+
+        // Once the exit animation finishes, run_pop disposes the popped
+        // wrapper's owner, cascading to the detail content.
+        settle_animations();
+        assert_eq!(
+            *cleanups.borrow(),
+            1,
+            "detail content disposed exactly once, on exit-animation finish"
+        );
+    });
+    owner.dispose();
+}

@@ -90,17 +90,48 @@ fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
         _ => None,
     });
 
-    type Mounted = Rc<RefCell<Option<(Owner, Element)>>>;
+    type Mounted = Rc<RefCell<Option<(Owner, Element, crate::core::RouteInstance)>>>;
     let mounted: Mounted = Rc::new(RefCell::new(None));
 
     effect(move || {
         let inst = instance.get();
-        // Tear down the previous mount.
-        if let Some((owner, el)) = mounted.borrow_mut().take() {
+
+        // CRITICAL: when the instance becomes `None` — i.e. this leaf's
+        // entry was just removed from `RouteState` by a `back()`/pop — DO
+        // NOT tear the content down. The leaf's content lifetime is owned
+        // by its enclosing `Stack` wrapper, which keeps the popped screen
+        // mounted through its exit animation and disposes the whole
+        // subtree (cascading to this leaf's owner) only when the animation
+        // finishes. Removing here on `None` is exactly what made the
+        // popped screen vanish on frame 1 while its wrapper was still
+        // sliding out. So `None` is a no-op; teardown is by owner dispose.
+        let Some(inst) = inst else {
+            if router_debug() {
+                eprintln!(
+                    "[router] leaf {route_id}: instance None — keeping content (pop in flight)"
+                );
+            }
+            return;
+        };
+
+        // A `Some` instance: (re)mount only when the instance actually
+        // changed (first mount, or a param change from a `replace`).
+        let changed = mounted
+            .borrow()
+            .as_ref()
+            .map(|(_, _, prev)| prev != &inst)
+            .unwrap_or(true);
+        if !changed {
+            return;
+        }
+
+        if let Some((owner, el, _)) = mounted.borrow_mut().take() {
+            if router_debug() {
+                eprintln!("[router] leaf {route_id}: re-mount (param change)");
+            }
             remove_child(slot, el);
             owner.dispose();
         }
-        let Some(inst) = inst else { return };
         let Some(render_fn) = render_fn.clone() else {
             return;
         };
@@ -110,7 +141,7 @@ fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
             append_child(slot, el);
             el
         });
-        *mounted.borrow_mut() = Some((owner, el));
+        *mounted.borrow_mut() = Some((owner, el, inst));
     });
 
     slot
