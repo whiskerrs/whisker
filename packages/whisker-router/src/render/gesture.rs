@@ -250,11 +250,14 @@ fn point(binding: &PoseBinding, c: &AnimationController, role: Role) {
 /// preview. Renders nothing.
 #[component]
 pub fn android_predictive_back() -> Element {
+    // DIAG (temporary): the FIRST statement, before any context lookup, so
+    // it proves the component body actually runs (i.e. it is mounted)
+    // independent of whether `use_navigator()` panics. Visible in logcat
+    // under `WhiskerPB` on Android (see `pb_log`).
+    pb_log("android_predictive_back() body ENTER");
     let nav = use_navigator();
     let module = module!("PredictiveBack");
-    // DIAG (temporary): confirm the component mounts + which qualified
-    // module name it subscribes. Forwarded to device:err / logcat.
-    eprintln!("[pb] android_predictive_back mounted; subscribing to PredictiveBack module");
+    pb_log("android_predictive_back() got navigator + module — subscribing");
 
     // The in-flight bridge for the current predictive-back gesture. Shared
     // across the four event listeners. The native `PredictiveBack` module
@@ -269,13 +272,13 @@ pub fn android_predictive_back() -> Element {
             inner: (nav.clone(), state.clone()),
         };
         module.on_event("backStarted", move |_payload| {
-            eprintln!("[pb] event: backStarted");
+            pb_log("event: backStarted");
             // Capture `shared` whole (not `shared.inner`) so Rust 2021
             // disjoint captures carry its `Send + Sync` impl.
             let shared = &shared;
             let (nav, state) = &shared.inner;
             let bridge = begin(nav);
-            eprintln!("[pb] backStarted -> begin() = {}", bridge.is_some());
+            pb_log(&format!("backStarted -> begin() = {}", bridge.is_some()));
             *state.borrow_mut() = bridge;
         })
     };
@@ -289,7 +292,7 @@ pub fn android_predictive_back() -> Element {
             let shared = &shared;
             let state = &shared.inner;
             let p = back_progress(&payload);
-            eprintln!("[pb] event: backProgressed progress={p}");
+            pb_log(&format!("event: backProgressed progress={p}"));
             if let Some(bridge) = state.borrow().as_ref() {
                 scrub(bridge, p);
             }
@@ -302,7 +305,7 @@ pub fn android_predictive_back() -> Element {
             inner: (nav.clone(), state.clone()),
         };
         module.on_event("backCancelled", move |_payload| {
-            eprintln!("[pb] event: backCancelled");
+            pb_log("event: backCancelled");
             let shared = &shared;
             let (nav, state) = &shared.inner;
             if let Some(bridge) = state.borrow_mut().take() {
@@ -317,7 +320,7 @@ pub fn android_predictive_back() -> Element {
             inner: (nav.clone(), state.clone()),
         };
         module.on_event("backInvoked", move |_payload| {
-            eprintln!("[pb] event: backInvoked");
+            pb_log("event: backInvoked");
             let shared = &shared;
             let (nav, state) = &shared.inner;
             match state.borrow_mut().take() {
@@ -326,7 +329,7 @@ pub fn android_predictive_back() -> Element {
                 Some(bridge) => settle(nav, &bridge, /* commit = */ true, None),
                 // No preview (API < 34, or a discrete press): just pop.
                 None => {
-                    eprintln!("[pb] backInvoked with no in-flight gesture -> nav.back()");
+                    pb_log("backInvoked with no in-flight gesture -> nav.back()");
                     nav.back();
                 }
             }
@@ -360,16 +363,52 @@ pub(crate) fn back_progress(payload: &WhiskerValue) -> f32 {
     .clamp(0.0, 1.0)
 }
 
-/// DIAG (temporary): report whether a subscription registered. An `Ok`
+/// DIAG (temporary): report whether a subscription registered. An `ok`
 /// log confirms the Rust side fired `on_event` (which is what triggers the
-/// module's `OnStartObserving` on the Kotlin side); an `Err` localises a
+/// module's `OnStartObserving` on the Kotlin side); a `FAILED` localises a
 /// registration failure.
 fn log_sub(event: &str, error: Option<&str>) {
     match error {
-        Some(err) => {
-            eprintln!("[pb] subscribe {event}: FAILED: {err}")
+        Some(err) => pb_log(&format!("subscribe {event}: FAILED: {err}")),
+        None => pb_log(&format!("subscribe {event}: ok")),
+    }
+}
+
+/// DIAG (temporary): emit a predictive-back trace line that is visible in
+/// **logcat on Android** under the `WhiskerPB` tag — the same tag the
+/// Kotlin half uses, so one `adb logcat -s WhiskerPB` shows both sides.
+///
+/// `eprintln!` is NOT reliably forwarded to logcat on Android (the
+/// dev-runtime's stdout/stderr → logcat pipe only runs under the
+/// `hot-reload` feature, and not in every build), which left the Rust side
+/// of this gesture a black box. This calls `__android_log_write` directly
+/// so the trace always lands. On non-Android it falls back to `eprintln!`.
+fn pb_log(msg: &str) {
+    #[cfg(target_os = "android")]
+    {
+        unsafe extern "C" {
+            fn __android_log_write(
+                prio: std::os::raw::c_int,
+                tag: *const std::os::raw::c_char,
+                text: *const std::os::raw::c_char,
+            ) -> std::os::raw::c_int;
         }
-        None => eprintln!("[pb] subscribe {event}: ok"),
+        const ANDROID_LOG_ERROR: std::os::raw::c_int = 6;
+        let tag = b"WhiskerPB\0";
+        let mut buf = Vec::with_capacity(msg.len() + 1);
+        buf.extend_from_slice(msg.as_bytes());
+        buf.push(0);
+        unsafe {
+            __android_log_write(
+                ANDROID_LOG_ERROR,
+                tag.as_ptr() as *const _,
+                buf.as_ptr() as *const _,
+            );
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        eprintln!("[pb] {msg}");
     }
 }
 
