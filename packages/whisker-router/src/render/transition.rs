@@ -76,26 +76,28 @@ const PB_EDGE_SHIFT: f32 = 0.06;
 /// Max dim of the backdrop behind the top card at full progress.
 pub const PB_MAX_DIM: f32 = 0.30;
 
-thread_local! {
-    /// The corner radius (dp) the predictive-back card rounds to at full
-    /// progress. Defaults to [`PB_DEFAULT_RADIUS`]; the Android gesture
-    /// overrides it once with the real display radius (queried from the
-    /// `PredictiveBack` module's `getDeviceCornerRadius`).
-    static DEVICE_CORNER_RADIUS: std::cell::Cell<f32> =
-        const { std::cell::Cell::new(PB_DEFAULT_RADIUS) };
-}
+/// The corner radius (dp) the predictive-back card rounds to at full
+/// progress, stored as `f32` bits. Defaults to [`PB_DEFAULT_RADIUS`]; the
+/// Android gesture overrides it once with the real display radius (queried
+/// from the `PredictiveBack` module's `getDeviceCornerRadius`).
+///
+/// **Global** (not thread-local) so a value installed from the gesture
+/// event handler is visible to the pose `computed` even if they run on
+/// different threads — a thread-local would silently fail to propagate.
+static DEVICE_CORNER_RADIUS_BITS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(PB_DEFAULT_RADIUS.to_bits());
 
 /// Set the device's display corner radius (dp) used for the predictive
 /// card. Called once by the Android gesture after querying the host.
 pub(crate) fn set_device_corner_radius(dp: f32) {
     if dp.is_finite() && dp >= 0.0 {
-        DEVICE_CORNER_RADIUS.with(|c| c.set(dp));
+        DEVICE_CORNER_RADIUS_BITS.store(dp.to_bits(), std::sync::atomic::Ordering::Relaxed);
     }
 }
 
 /// The current max predictive-back corner radius (dp).
-fn max_corner_radius() -> f32 {
-    DEVICE_CORNER_RADIUS.with(|c| c.get())
+pub(crate) fn max_corner_radius() -> f32 {
+    f32::from_bits(DEVICE_CORNER_RADIUS_BITS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// How far the covered screen parallax-slides while the top screen is

@@ -560,7 +560,21 @@ fn mount_wrapper(
             let mode = pose_mode.get();
             transition::pose_for(mode, role, c.value().get())
         });
-        effect(move || set_inline_styles(wrapper, &wrapper_style(&style.get())));
+        // DIAG (temporary): log the radius the FIRST time this wrapper
+        // poses with a non-zero corner radius (predictive preview), to
+        // confirm the device radius reaches the rendered CSS.
+        let radius_logged = std::cell::Cell::new(false);
+        effect(move || {
+            let pose = style.get();
+            if pose.radius_px > 0.0 && !radius_logged.get() {
+                radius_logged.set(true);
+                crate::render::gesture::pb_log(&format!(
+                    "wrapper idx={idx} predictive pose radius_px={} transform={}",
+                    pose.radius_px, pose.transform
+                ));
+            }
+            set_inline_styles(wrapper, &wrapper_style(&pose));
+        });
 
         let child = mount_node(handle, child_path);
         append_child(wrapper, child);

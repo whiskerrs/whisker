@@ -432,6 +432,10 @@ fn fetch_device_corner_radius() {
     };
     pb_log(&format!("fetch_device_corner_radius: installing {dp}dp"));
     transition::set_device_corner_radius(dp);
+    pb_log(&format!(
+        "fetch_device_corner_radius: max_corner_radius() now reads {}dp",
+        transition::max_corner_radius()
+    ));
 }
 
 /// Read `swipeEdge` (0 = left, 1 = right) from a back-event payload,

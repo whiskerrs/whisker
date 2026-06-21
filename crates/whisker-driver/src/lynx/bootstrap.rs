@@ -399,7 +399,28 @@ fn tick_frame() {
     // and reports (via `anim_hook::is_animating`, ORed into
     // `has_pending_work`) whether the host should schedule another
     // frame. No-op when no controller is active — idle costs nothing.
-    whisker_runtime::anim_hook::step(monotonic_millis());
+    let __anim_now = monotonic_millis();
+    whisker_runtime::anim_hook::step(__anim_now);
+    // DIAG (temporary): confirm the anim frame loop ticks while a
+    // controller is active (the predictive-back settle relies on it).
+    // Logs at most once per animating frame. Remove with the router
+    // settle diagnostics.
+    #[cfg(target_os = "android")]
+    if whisker_runtime::anim_hook::is_animating() {
+        unsafe extern "C" {
+            fn whisker_bridge_log_info(
+                tag: *const std::os::raw::c_char,
+                msg: *const std::os::raw::c_char,
+            );
+        }
+        let line = format!("[anim-tick] now_ms={__anim_now} animating=true\0");
+        unsafe {
+            whisker_bridge_log_info(
+                b"WhiskerPB\0".as_ptr() as *const _,
+                line.as_ptr() as *const _,
+            );
+        }
+    }
     reactive_flush();
     // Drive any async tasks (resource() fetchers, user-spawned
     // futures) until they stall. Tasks that resolve here may write
