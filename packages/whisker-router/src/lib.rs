@@ -83,6 +83,7 @@ pub mod gestures;
 pub mod layouts;
 pub mod linking;
 pub mod outlet;
+pub mod render;
 pub mod route;
 pub mod stack;
 pub mod transitions;

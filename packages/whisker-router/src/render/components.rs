@@ -1,0 +1,133 @@
+//! The user-facing rendering components: [`Router`], [`Outlet`],
+//! [`Stack`], [`Switch`], and the tab chrome ([`Tabs`] / [`TabBar`]).
+//!
+//! [`Router`] is the root: it publishes the [`RouterHandle`] into context
+//! and renders the route tree. [`Outlet`] renders "the active child of
+//! the container I'm in" — its anchor (which container) comes from a
+//! context value an enclosing [`Layout`](crate::render::Layout) /
+//! [`Tabs`] sets, defaulting to the tree root. [`Stack`] / [`Switch`]
+//! render an explicit subtree path for advanced compositions; most apps
+//! only need [`Router`] + [`Outlet`].
+//!
+//! All four stand on the recursive [`mount_node`](crate::render::node)
+//! engine; they differ only in *which* [`NodePath`] they hand it.
+
+use whisker::css::{Display, FlexDirection};
+use whisker::prelude::*;
+use whisker::runtime::view::{Element, append_child};
+use whisker::{Children, component, computed, provide_context, render, use_context};
+
+use crate::core::NodePath;
+use crate::render::handle::{RouterHandle, use_navigator};
+use crate::render::node::mount_node;
+
+/// The router's screen-spanning root element. [`Router`] publishes it so
+/// the [`SwipeBack`](crate::render::SwipeBack) gesture can bind its touch
+/// handlers to an element that actually covers the viewport (a phantom
+/// slot has no extent and would never be hit).
+#[derive(Clone)]
+pub struct RouterRoot(pub Element);
+
+/// The container path an [`Outlet`] renders. Published by [`Router`] (the
+/// root) and overridden by a [`Layout`] / [`Tabs`] so a nested `Outlet`
+/// renders that layout's container.
+#[derive(Clone)]
+pub struct OutletAnchor(pub NodePath);
+
+/// Root router component: publishes `handle` into context and renders the
+/// whole active route tree.
+///
+/// ```ignore
+/// render! { Router(handle: handle.clone()) }
+/// ```
+#[component]
+pub fn router(handle: RouterHandle, children: Children) -> Element {
+    provide_context(handle.clone());
+    provide_context(OutletAnchor(NodePath::root()));
+
+    // A real, screen-spanning root so transitions have a positioned
+    // container (wrappers are `position: absolute`) and the swipe-back
+    // gesture has something to bind to.
+    let root = render! {
+        view(style: css!(
+            flex_grow: 1.0,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+        ).raw("position", "relative"))
+    };
+    provide_context(RouterRoot(root));
+
+    let content = mount_node(&handle, NodePath::root());
+    append_child(root, content);
+    // Gesture components etc. passed as children mount alongside.
+    let extra = render! { children() };
+    append_child(root, extra);
+    root
+}
+
+/// Render the active child of the container at the current
+/// [`OutletAnchor`] (defaults to the tree root).
+///
+/// Place an `Outlet` inside a custom [`Layout`] to draw chrome around the
+/// router's content (the `_layout.tsx` equivalent).
+#[component]
+pub fn outlet() -> Element {
+    let handle = use_navigator();
+    let anchor = use_context::<OutletAnchor>()
+        .map(|a| a.0)
+        .unwrap_or_else(NodePath::root);
+    mount_node(&handle, anchor)
+}
+
+/// Render the [`Stack`](crate::core::RouteTree::Stack) subtree at an
+/// explicit `path`.
+///
+/// The lower-level primitive behind an `Outlet` that anchors on a stack;
+/// reach for it when you are composing the tree by hand. Reads the
+/// [`RouterHandle`] from context.
+#[component]
+pub fn stack(path: NodePath) -> Element {
+    let handle = use_navigator();
+    mount_node(&handle, path.clone())
+}
+
+/// Render the [`Switch`](crate::core::RouteTree::Switch) subtree at an
+/// explicit `path` (all branches kept alive, `selected` toggled).
+#[component]
+pub fn switch(path: NodePath) -> Element {
+    let handle = use_navigator();
+    mount_node(&handle, path.clone())
+}
+
+/// A custom chrome wrapper around a container's [`Outlet`].
+///
+/// Sets the [`OutletAnchor`] to `path` so the `Outlet` in `children`
+/// renders that container, then renders the children (your chrome + the
+/// `Outlet`). This is the explicit `Layout(X)` of the design doc.
+///
+/// ```ignore
+/// render! {
+///     Layout(path: switch_path) {
+///         view(..) {
+///             view(style: css!(flex_grow: 1.0)) { Outlet {} }
+///             MyCustomTabBar {}
+///         }
+///     }
+/// }
+/// ```
+#[component]
+pub fn layout(path: NodePath, children: Children) -> Element {
+    provide_context(OutletAnchor(path.clone()));
+    render! { children() }
+}
+
+/// Reactive read of the selected branch index of the `Switch` at `path`.
+///
+/// The `use_active_tab()` helper of the design doc, generalised to take
+/// the switch's path (the macro will later infer it). Returns `0` when
+/// the node is not a live switch (shouldn't happen for a correct path).
+pub fn use_active_tab(path: NodePath) -> ReadSignal<usize> {
+    let handle = use_navigator();
+    let sel = handle.selected_at(path);
+    computed(move || sel.get().unwrap_or(0))
+}

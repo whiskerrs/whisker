@@ -23,6 +23,7 @@ members = [
     "examples/anim-smoke",
     "examples/asset-demo",
     "examples/aurora-wallet",
+    "examples/router-smoke",
     "examples/podcast",
     "examples/podcast/crates/podcast-theme",
     "examples/podcast/crates/podcast-domain",

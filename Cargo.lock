@@ -1482,6 +1482,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "router-smoke"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-router",
+]
+
+[[package]]
 name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
