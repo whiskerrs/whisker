@@ -630,10 +630,10 @@ fn predictive_back_invoke_commits_pop() {
 }
 
 #[test]
-fn settle_animates_even_when_drag_pinned_to_extreme() {
-    // The OS can send a final `backProgressed(progress≈1)` right before
-    // commit, leaving the controller at ≈0 — settle must still animate a
-    // visible arc (re-anchor), not snap.
+fn settle_commit_animates_from_current_value_without_jumping_back() {
+    // A *partial* release commits by animating from the current value to 0
+    // — it must NOT jump backward (toward 1) first. (Regression for the
+    // bad re-anchor that pushed a deep-swipe value 0.05 back up to 0.18.)
     whisker::runtime::reactive::__reset_for_tests();
     whisker_animation::__reset_for_tests();
     let owner = Owner::new(None);
@@ -647,39 +647,56 @@ fn settle_animates_even_when_drag_pinned_to_extreme() {
 
         let bridge = begin(&h, SwipeEdge::Left).expect("bridge");
         let ctrl = bridge.top_ctrl.clone().expect("ctrl");
-        // Drag all the way (progress 1.0 → controller value 0.0).
-        scrub(&bridge, 1.0);
-        assert!(
-            ctrl.value().get_untracked() < 0.01,
-            "pinned to ~0 by full drag"
-        );
+        // Deep-but-not-complete swipe: back_progress 0.95 → value 0.05.
+        scrub(&bridge, 0.95);
+        let start = ctrl.value().get_untracked();
+        assert!((start - 0.05).abs() < 1e-3, "value tracks the drag");
 
-        // Right after settle, the re-anchor must have moved the value off
-        // the pinned extreme so the reverse run has a real arc to animate.
         settle(&h, &bridge, /* commit = */ true, None);
-        let reanchored = ctrl.value().get_untracked();
+        // The value must never exceed the release point — no backward jump.
+        // (The bad re-anchor set it to 0.18 here; the fix leaves it at 0.05.)
+        let after_settle = ctrl.value().get_untracked();
         assert!(
-            reanchored > 0.1,
-            "settle re-anchored the pinned value off 0 so it animates; got {reanchored}"
+            after_settle <= start + 1e-3,
+            "settle must not push back toward 1; start={start} after={after_settle}"
         );
-        assert!(ctrl.is_animating(), "and a real run is registered");
-        // First mid-animation frame shows an intermediate value (not 0).
-        whisker_animation::__step_for_tests(1000.0);
-        flush();
-        whisker_animation::__step_for_tests(1016.0);
+        // One mid-animation frame: still ≤ the start (heads toward 0, never
+        // above). Don't over-step — once the short run finishes, `back()`
+        // disposes the controller.
+        whisker_animation::__step_for_tests(1008.0);
         flush();
         let mid = ctrl.value().get_untracked();
         assert!(
-            mid > 0.02 && mid < reanchored,
-            "settle animates a visible arc from the re-anchored value; mid={mid}"
+            mid <= start + 1e-3,
+            "monotone toward 0, never above start; mid={mid}"
         );
-        // Drive to completion: the pop still commits.
+
         settle_animations();
-        assert_eq!(
-            h.current().get().path,
-            NodePath(vec![0]),
-            "still commits the pop"
-        );
+        assert_eq!(h.current().get().path, NodePath(vec![0]), "commits the pop");
+    });
+    owner.dispose();
+}
+
+#[test]
+fn settle_full_drag_commits_immediately() {
+    // A full drag (value already ≈ 0) commits with no extra animation —
+    // the dismiss is already visually complete; it just pops.
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+        settle_animations();
+
+        let bridge = begin(&h, SwipeEdge::Left).expect("bridge");
+        scrub(&bridge, 1.0); // value ≈ 0
+        settle(&h, &bridge, /* commit = */ true, None);
+        settle_animations();
+        assert_eq!(h.current().get().path, NodePath(vec![0]), "commits the pop");
     });
     owner.dispose();
 }

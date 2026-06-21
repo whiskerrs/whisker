@@ -210,27 +210,14 @@ pub(crate) fn settle(
         ctrl.is_animating()
     ));
 
-    // Guarantee a *visible* settle even when the OS pinned the final
-    // `backProgressed` to the extreme (which leaves the controller already
-    // ≈ the settle target, so `animate_to` would finish synchronously and
-    // the release would snap). If the start is within `MIN_SETTLE_SPAN` of
-    // the target, re-anchor it that far away so the run animates over a
-    // short-but-visible arc. `set_value` writes the progress once and
-    // leaves the controller idle, ready for the `reverse`/`forward` below.
-    const MIN_SETTLE_SPAN: f32 = 0.18;
-    let start = ctrl.value().get_untracked();
-    if commit {
-        // Target 0: if we're already near 0, back off to MIN_SETTLE_SPAN.
-        if start < MIN_SETTLE_SPAN {
-            ctrl.set_value(MIN_SETTLE_SPAN);
-        }
-    } else {
-        // Target 1: if we're already near 1, back off below it.
-        if start > 1.0 - MIN_SETTLE_SPAN {
-            ctrl.set_value(1.0 - MIN_SETTLE_SPAN);
-        }
-    }
-
+    // NB: do NOT re-anchor the controller before the run. `reverse()` /
+    // `forward()` animate from the controller's CURRENT value to the
+    // target, which is exactly the remaining gesture distance. A deep
+    // swipe (value ≈ 0.05) commits by animating 0.05 → 0 — a short, correct
+    // arc; forcing it back to 0.18 first would visibly jump *backward*
+    // before going to 0. When the user dragged all the way (value already
+    // at the target) the run finishes immediately — also correct, since
+    // the dismiss is already visually complete.
     if commit {
         // Drive the top off-screen; both wrappers follow via their pose
         // bindings. On finish call `back()`, which runs the same
@@ -337,21 +324,21 @@ pub fn android_predictive_back() -> Element {
             // disjoint captures carry its `Send + Sync` impl.
             let shared = &shared;
             let (nav, state, radius_fetched) = &shared.inner;
-            if !radius_fetched.get() {
-                radius_fetched.set(true);
-                fetch_device_corner_radius();
-            }
+            pb_log("event: backStarted");
+            fetch_corner_radius_once(radius_fetched);
             *state.borrow_mut() = begin(nav, back_edge(&payload));
         })
     };
 
     let progressed = {
         let shared = MainThreadOnly {
-            inner: state.clone(),
+            inner: (state.clone(), radius_fetched.clone()),
         };
         module.on_event("backProgressed", move |payload| {
             let shared = &shared;
-            let state = &shared.inner;
+            let (state, radius_fetched) = &shared.inner;
+            // Also fetch here in case the platform skips `backStarted`.
+            fetch_corner_radius_once(radius_fetched);
             if let Some(bridge) = state.borrow().as_ref() {
                 scrub(bridge, back_progress(&payload));
             }
@@ -416,16 +403,34 @@ pub(crate) fn back_progress(payload: &WhiskerValue) -> f32 {
     .clamp(0.0, 1.0)
 }
 
+/// Run [`fetch_device_corner_radius`] at most once, gated by `fetched`.
+/// Fires on the first back gesture (start or progress) — by then the host
+/// Activity is attached, so `getDeviceCornerRadius` can resolve it.
+fn fetch_corner_radius_once(fetched: &std::cell::Cell<bool>) {
+    if !fetched.get() {
+        fetched.set(true);
+        fetch_device_corner_radius();
+    }
+}
+
 /// Query the native `PredictiveBack` module for the display's corner
 /// radius (dp) and install it as the predictive-back card radius. A
 /// synchronous module `invoke` — cheap, and called at most once.
 fn fetch_device_corner_radius() {
+    pb_log("fetch_device_corner_radius: invoking getDeviceCornerRadius");
     let v = module!("PredictiveBack").invoke("getDeviceCornerRadius", std::vec![]);
+    pb_log(&format!(
+        "fetch_device_corner_radius: invoke returned {v:?}"
+    ));
     let dp = match v {
         WhiskerValue::Float(f) => f as f32,
         WhiskerValue::Int(i) => i as f32,
-        _ => return,
+        _ => {
+            pb_log("fetch_device_corner_radius: non-numeric result → keeping 24dp default");
+            return;
+        }
     };
+    pb_log(&format!("fetch_device_corner_radius: installing {dp}dp"));
     transition::set_device_corner_radius(dp);
 }
 

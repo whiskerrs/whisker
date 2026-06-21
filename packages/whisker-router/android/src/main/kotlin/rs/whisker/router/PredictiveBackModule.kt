@@ -36,6 +36,7 @@
 package rs.whisker.router
 
 import android.os.Build
+import android.util.Log
 import android.view.RoundedCorner
 import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
@@ -88,7 +89,11 @@ public class PredictiveBackModule : Module() {
         // Static device info: the display's top-left rounded-corner radius
         // in dp, so the predictive-back preview can round its card to match
         // the screen. Rust calls this once (not per frame) and caches it.
-        Function("getDeviceCornerRadius") { _ -> WhiskerValue.Float(deviceCornerRadiusDp()) }
+        Function("getDeviceCornerRadius") { _ ->
+            val dp = deviceCornerRadiusDp()
+            Log.e("WhiskerPB", "getDeviceCornerRadius() Function invoked → ${dp}dp")
+            WhiskerValue.Float(dp)
+        }
     }
 
     /**
