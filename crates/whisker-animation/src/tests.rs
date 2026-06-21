@@ -378,7 +378,10 @@ fn on_finish_fires_once_at_target() {
     let count = Rc::new(RefCell::new(0));
     let ctrl = AnimationController::new(AnimConfig::linear(100));
     let c = count.clone();
-    ctrl.on_finish(move || *c.borrow_mut() += 1);
+    ctrl.on_finish(move |finished| {
+        assert!(finished, "natural completion must report finished=true");
+        *c.borrow_mut() += 1;
+    });
     ctrl.forward();
     __step_for_tests(0.0);
     __step_for_tests(100.0);
@@ -633,4 +636,262 @@ fn spring_finishes_and_goes_idle() {
     assert!(!ctrl.is_animating());
     assert!(!whisker_runtime::anim_hook::is_animating());
     assert!(!whisker_runtime::reactive::has_pending_work());
+}
+
+// ----- 12. spring velocity: configured initial, hand-off, injection -------
+
+#[test]
+fn spring_initial_velocity_speeds_first_frames() {
+    // A spring seeded with a positive initial velocity covers more ground
+    // in the first few frames than the same spring from rest.
+    fresh();
+    let a = AnimationController::new(AnimConfig::spring());
+    let va = a.value();
+    a.forward();
+    let mut now = 0.0;
+    __step_for_tests(now); // anchor
+    for _ in 0..3 {
+        now += 16.0;
+        __step_for_tests(now);
+    }
+    let no_vel = va.get_untracked();
+
+    fresh();
+    let b = AnimationController::new(AnimConfig::spring().with_velocity(4.0));
+    let vb = b.value();
+    b.forward();
+    let mut now = 0.0;
+    __step_for_tests(now);
+    for _ in 0..3 {
+        now += 16.0;
+        __step_for_tests(now);
+    }
+    let with_vel = vb.get_untracked();
+
+    assert!(
+        with_vel > no_vel + 0.02,
+        "configured initial velocity should advance further early: \
+         with_vel {with_vel} vs no_vel {no_vel}"
+    );
+}
+
+#[test]
+fn spring_velocity_handoff_on_interrupt() {
+    // Start a spring forward and let it build momentum, then interrupt it
+    // with a new target. The hand-off policy KEEPS the in-flight velocity
+    // rather than zeroing it (so a swipe hand-off feels natural).
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::spring());
+    ctrl.forward();
+    let mut now = 0.0;
+    __step_for_tests(now);
+    for _ in 0..5 {
+        now += 16.0;
+        __step_for_tests(now);
+    }
+    let vel_before = ctrl.__velocity();
+    assert!(
+        vel_before > 0.1,
+        "spring should have built positive momentum, got {vel_before}"
+    );
+
+    // Interrupt with a new target. Velocity must NOT be reset to 0.
+    ctrl.animate_to(0.8);
+    let vel_after = ctrl.__velocity();
+    assert!(
+        (vel_after - vel_before).abs() < 1e-6,
+        "interrupt must carry momentum: before {vel_before}, after {vel_after}"
+    );
+}
+
+#[test]
+fn spring_handoff_resets_from_rest() {
+    // Starting from rest (not already animating) uses the configured
+    // initial velocity, not whatever stale velocity lingered.
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::spring().with_velocity(2.0));
+    ctrl.forward();
+    let mut now = 0.0;
+    __step_for_tests(now);
+    for _ in 0..200 {
+        now += 16.0;
+        __step_for_tests(now);
+        if __active_count() == 0 {
+            break;
+        }
+    }
+    assert_eq!(__active_count(), 0, "should have settled");
+    // Now a fresh run from rest: velocity seeds the configured 2.0.
+    ctrl.reverse();
+    assert!(
+        approx(ctrl.__velocity(), 2.0),
+        "fresh run from rest should seed configured velocity, got {}",
+        ctrl.__velocity()
+    );
+}
+
+#[test]
+fn forward_with_velocity_injects_release_velocity() {
+    // forward_with_velocity injects an explicit release velocity; the
+    // early frames move faster than a plain forward() from rest.
+    fresh();
+    let a = AnimationController::new(AnimConfig::spring());
+    let va = a.value();
+    a.forward();
+    let mut now = 0.0;
+    __step_for_tests(now);
+    for _ in 0..3 {
+        now += 16.0;
+        __step_for_tests(now);
+    }
+    let plain = va.get_untracked();
+
+    fresh();
+    let b = AnimationController::new(AnimConfig::spring());
+    let vb = b.value();
+    b.forward_with_velocity(5.0);
+    let mut now = 0.0;
+    __step_for_tests(now);
+    for _ in 0..3 {
+        now += 16.0;
+        __step_for_tests(now);
+    }
+    let injected = vb.get_untracked();
+
+    assert!(
+        injected > plain + 0.02,
+        "injected release velocity should move faster early: \
+         injected {injected} vs plain {plain}"
+    );
+}
+
+// ----- 13. overshoot clamping ---------------------------------------------
+
+#[test]
+fn overshoot_clamping_stops_at_target() {
+    // bouncy() WOULD overshoot above 1.0 (asserted elsewhere); with
+    // overshoot_clamping it must never exceed the target and settles at it.
+    fresh();
+    let ctrl = AnimationController::new(AnimConfig::bouncy().with_overshoot_clamping(true));
+    let v = ctrl.value();
+    ctrl.forward();
+    let mut peak = 0.0_f32;
+    let mut now = 0.0;
+    __step_for_tests(now);
+    for _ in 0..360 {
+        now += 16.0;
+        __step_for_tests(now);
+        peak = peak.max(v.get_untracked());
+        if __active_count() == 0 {
+            break;
+        }
+    }
+    assert!(
+        peak <= 1.0 + 1e-3,
+        "overshoot_clamping must not pass the target, peak {peak}"
+    );
+    assert!(
+        approx(v.get_untracked(), 1.0),
+        "clamped spring should settle at target, got {}",
+        v.get_untracked()
+    );
+    assert_eq!(__active_count(), 0, "clamped spring must settle/deregister");
+}
+
+// ----- 14. on_finish carries finished/cancelled bool ----------------------
+
+#[test]
+fn on_finish_true_on_natural_completion() {
+    fresh();
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let got: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(Vec::new()));
+    let ctrl = AnimationController::new(AnimConfig::linear(100));
+    let g = got.clone();
+    ctrl.on_finish(move |finished| g.borrow_mut().push(finished));
+    ctrl.forward();
+    __step_for_tests(0.0);
+    __step_for_tests(100.0);
+    assert_eq!(*got.borrow(), vec![true]);
+}
+
+#[test]
+fn on_finish_false_on_stop() {
+    fresh();
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let got: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(Vec::new()));
+    let ctrl = AnimationController::new(AnimConfig::linear(100));
+    let g = got.clone();
+    ctrl.on_finish(move |finished| g.borrow_mut().push(finished));
+    ctrl.forward();
+    __step_for_tests(0.0);
+    __step_for_tests(40.0);
+    ctrl.stop();
+    assert_eq!(
+        *got.borrow(),
+        vec![false],
+        "stop mid-flight must report false"
+    );
+    // A stop while idle fires nothing more.
+    ctrl.stop();
+    assert_eq!(*got.borrow(), vec![false]);
+}
+
+#[test]
+fn on_finish_false_on_interrupt() {
+    fresh();
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let got: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(Vec::new()));
+    let ctrl = AnimationController::new(AnimConfig::linear(100));
+    let g = got.clone();
+    ctrl.on_finish(move |finished| g.borrow_mut().push(finished));
+
+    ctrl.forward();
+    __step_for_tests(0.0);
+    __step_for_tests(40.0);
+    // Interrupt the in-flight run: the callback fires false for it.
+    ctrl.reverse();
+    assert_eq!(
+        *got.borrow(),
+        vec![false],
+        "interrupt must cancel the old run with false"
+    );
+    // The callback stays registered (FnMut): the new run completes true.
+    __step_for_tests(40.0);
+    // Reverse span from ~0.4 → 0.0 is ~40ms; run far enough to finish.
+    __step_for_tests(120.0);
+    assert_eq!(
+        *got.borrow(),
+        vec![false, true],
+        "new run completion must report true, callback persists"
+    );
+}
+
+#[test]
+fn owner_dispose_does_not_fire_on_finish() {
+    // Owner-dispose is teardown, not a logical cancel: callbacks must NOT
+    // fire (matches the documented semantics).
+    fresh();
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let got: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(Vec::new()));
+    let g = got.clone();
+    let owner = Owner::new(None);
+    let ctrl = owner.with(|| {
+        let c = AnimationController::new(AnimConfig::linear(100));
+        c.on_finish(move |finished| g.borrow_mut().push(finished));
+        c.forward();
+        c
+    });
+    __step_for_tests(0.0);
+    __step_for_tests(20.0);
+    owner.dispose();
+    assert!(
+        got.borrow().is_empty(),
+        "owner dispose must not fire on_finish, got {:?}",
+        got.borrow()
+    );
+    drop(ctrl);
 }
