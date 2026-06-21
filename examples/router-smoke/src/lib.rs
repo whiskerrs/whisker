@@ -154,7 +154,7 @@ fn detail(id: String) -> Element {
     let nav = use_navigator();
     let label = format!("Detail #{id}");
     render! {
-        view(style: screen_style(0xE8602C)) {
+        view(style: screen_style(0x1A1422)) {
             text(value: label, style: title_style())
             text(value: "Swipe from the left edge, or tap Back.", style: subtitle_style())
             view(

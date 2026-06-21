@@ -38,20 +38,6 @@ use crate::render::handle::RouterHandle;
 use crate::render::registry::Transition;
 use crate::render::transition::{self, Role};
 
-/// **Temporary diagnostic logging** for the Stack transition path.
-///
-/// Forwarded to the dev-server via `eprintln!` + whisker's log_capture so
-/// the iOS-sim trace of a push/pop can be inspected (the frame-1 vanish
-/// could only be pinned down on a device). Defaults **on** for this
-/// diagnostic build; set `WHISKER_ROUTER_DEBUG=0` to silence. Remove once
-/// the cause is confirmed.
-//
-// TODO(phase-2 cleanup): delete this gate + its call sites once the
-// transition is verified on device.
-fn router_debug() -> bool {
-    std::env::var("WHISKER_ROUTER_DEBUG").as_deref() != Ok("0")
-}
-
 /// Mount the node at `path` and return its phantom slot.
 ///
 /// The slot is a [`create_phantom_element`] the caller appends wherever
@@ -106,11 +92,6 @@ fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
         // popped screen vanish on frame 1 while its wrapper was still
         // sliding out. So `None` is a no-op; teardown is by owner dispose.
         let Some(inst) = inst else {
-            if router_debug() {
-                eprintln!(
-                    "[router] leaf {route_id}: instance None — keeping content (pop in flight)"
-                );
-            }
             return;
         };
 
@@ -126,9 +107,6 @@ fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
         }
 
         if let Some((owner, el, _)) = mounted.borrow_mut().take() {
-            if router_debug() {
-                eprintln!("[router] leaf {route_id}: re-mount (param change)");
-            }
             remove_child(slot, el);
             owner.dispose();
         }
@@ -449,13 +427,6 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
     // each frame off `drive.value()` and writes the coordinated pose.
     set_pose(&popped, &drive, Role::Top);
 
-    if router_debug() {
-        eprintln!(
-            "[router] run_pop: drive.value={} popped.role=Top transition={transition:?}",
-            drive.value().get_untracked()
-        );
-    }
-
     let survivor_handle = {
         let l = live.borrow();
         l.last().map(|w| {
@@ -481,9 +452,6 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
     let popped_owner = popped.owner;
     let done = Rc::new(RefCell::new(false));
     drive.on_finish(move |finished| {
-        if router_debug() {
-            eprintln!("[router] run_pop on_finish: finished={finished}");
-        }
         if !finished || *done.borrow() {
             return;
         }
@@ -543,28 +511,15 @@ fn mount_wrapper(
         let pose_ctrl = whisker::RwSignal::new(ctrl.clone());
         let pose_role = whisker::RwSignal::new(Role::Top);
 
-        // The pose `computed` also carries the (role, transform, opacity)
-        // for logging — the single source of truth for what gets written.
+        // The single style writer for this wrapper: read the currently
+        // assigned controller's progress + role, compute the pose, write it.
         let style = computed(move || {
             let c = pose_ctrl.get();
             let role = pose_role.get();
             let (transform, opacity) = transition::pose(transition, role, c.value().get());
-            (
-                wrapper_style(transform.clone(), opacity),
-                role,
-                transform,
-                opacity,
-            )
+            wrapper_style(transform, opacity)
         });
-        effect(move || {
-            let (css, role, transform, opacity) = style.get();
-            if router_debug() {
-                eprintln!(
-                    "[router] pose idx={idx} role={role:?} transform={transform} opacity={opacity}"
-                );
-            }
-            set_inline_styles(wrapper, &css);
-        });
+        effect(move || set_inline_styles(wrapper, &style.get()));
 
         let child = mount_node(handle, child_path);
         append_child(wrapper, child);
