@@ -5,7 +5,9 @@
 //! runtime: a signal-backed [`RouterHandle`] + [`use_navigator`], the
 //! [`Outlet`] / [`Stack`] / [`Switch`] renderers, the [`Tabs`] chrome,
 //! float-`Tween` transitions (via `whisker-animation`, **not** Lynx's
-//! animator), and the iOS [`SwipeBack`] gesture.
+//! animator), and the interactive back gestures ([`SwipeBack`] for iOS
+//! edge swipe, [`AndroidPredictiveBack`] for Android 13+ predictive back)
+//! — both driving the same coordinated two-screen scrub.
 //!
 //! The id → component map is a **hand-written** [`RouteRegistry`] in this
 //! phase; the `routes!` macro will generate it in phase 3.
@@ -69,7 +71,7 @@ pub use components::{
     SwitchProps, use_active_tab,
 };
 pub use components::{Outlet, OutletProps};
-pub use gesture::{SwipeBack, SwipeBackProps};
+pub use gesture::{AndroidPredictiveBack, AndroidPredictiveBackProps, SwipeBack, SwipeBackProps};
 pub use handle::{RouterHandle, StackBridge, provide_router, use_navigator};
 pub use registry::{RenderFn, RouteRegistry, Transition};
 pub use tabs::{TabBar, TabBarProps, TabItem, Tabs, TabsProps};

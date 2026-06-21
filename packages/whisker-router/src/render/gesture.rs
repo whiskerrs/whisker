@@ -1,33 +1,32 @@
-//! [`SwipeBack`] — the iOS edge swipe-back gesture, rebuilt against the
-//! new core + the continuous animation engine.
+//! Interactive back gestures — iOS edge [`SwipeBack`] and Android
+//! [`AndroidPredictiveBack`] — both driving the **same coordinated
+//! two-screen scrub** the non-interactive pop uses.
 //!
-//! Mount it as a child of the [`Router`](crate::render::Router) (or any
-//! element that spans the screen). On a leading-edge horizontal drag it
-//! points **both** the top and the revealed-under wrapper at the top
-//! stack's transition controller (as `Top` / `Under`) and **scrubs that
-//! one controller** with `set_value` (1.0 → 0.0 as the finger moves
-//! right) — so the exact same coordinated two-screen model the
-//! non-interactive pop uses drives the drag: the top tracks the finger
-//! while the screen beneath slides back from covered to rest. On release
-//! it hands off with the finger's velocity
-//! ([`reverse_with_velocity`](whisker::AnimationController::reverse_with_velocity)
-//! to commit, [`forward_with_velocity`](whisker::AnimationController::forward_with_velocity)
-//! to cancel); a commit calls `navigator.back()` on finish, which runs the
-//! same reconcile pop and unmounts the popped entry.
+//! A back gesture has a continuous `0..1` progress (finger drag on iOS, a
+//! `BackEventCompat` on Android). Both gestures map that progress onto one
+//! stack-transition controller via the shared helpers ([`begin`] /
+//! [`scrub`] / [`settle`]): they point **both** the top wrapper
+//! (`Role::Top`) and the revealed-under wrapper (`Role::Under`) at the top
+//! controller and scrub it (`set_value(1.0 - back_progress)`), so the top
+//! tracks the gesture while the screen beneath slides back from covered to
+//! rest. On release/commit they hand off to `reverse()` (commit → run the
+//! reconcile pop + `navigator.back()`) or `forward()` (cancel → restore).
+//! The *only* platform-specific part is the progress input path: an
+//! `Element` touch loop vs the `PredictiveBack` native module's events.
 //!
-//! This is the generalised form of the old `ios_swipe_back.rs`, but the
-//! intermediate 0..1 lives in a real signal (the controller's progress)
-//! and both screens are posed by the runtime's pose effects — no
+//! The intermediate `0..1` lives in a real signal (the controller's
+//! progress); both screens are posed by the runtime's pose effects — no
 //! hand-written per-frame inline transform.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use whisker::event::TouchEvent;
+use whisker::platform_module::WhiskerValue;
 use whisker::runtime::event::bind_typed;
 use whisker::runtime::reactive::on_mount;
 use whisker::runtime::view::{BindType, Element};
-use whisker::{component, render, use_context};
+use whisker::{AnimationController, component, module, on_cleanup, render, use_context};
 
 use crate::render::components::RouterRoot;
 use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
@@ -90,23 +89,11 @@ fn install(container: Element, nav: RouterHandle) {
             if start_x > SWIPE_EDGE_THRESHOLD_PX {
                 return;
             }
-            // Only swipe when the deepest active stack can pop and its
-            // transition supports an edge swipe (horizontal slide).
-            let Some(bridge) = nav.active_stack_bridge() else {
+            // Grab the active stack's bridge and point both wrappers at the
+            // top controller (shared with Android predictive-back).
+            let Some(bridge) = begin(&nav) else {
                 return;
             };
-            if !bridge.can_back || !transition::supports_edge_swipe(bridge.transition) {
-                return;
-            }
-            // Point BOTH wrappers at the top controller (Top / Under) so
-            // one scrubbed progress drives the coordinated pair — the
-            // same model the non-interactive pop uses.
-            if let (Some(ctrl), Some(top), Some(under)) =
-                (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)
-            {
-                point(top, ctrl, Role::Top);
-                point(under, ctrl, Role::Under);
-            }
             *gesture.borrow_mut() = Some(Gesture {
                 start_x,
                 last_x: start_x,
@@ -158,47 +145,223 @@ fn install(container: Element, nav: RouterHandle) {
             // precise timestamps we approximate from the gesture's reach;
             // the controller clamps and springs regardless.
             let velocity = (state.progress * 4.0).clamp(0.0, 6.0);
-
-            let Some(ctrl) = state.bridge.top_ctrl.clone() else {
-                return;
-            };
-
-            if commit {
-                // Drive the top off-screen (progress → 0) with momentum;
-                // both wrappers follow via their pose bindings. On finish
-                // call `back()`, which runs the same coordinated pop and
-                // unmounts the popped entry (its controller is already at
-                // 0, so the reconcile's reverse settles instantly).
-                let nav = nav.clone();
-                let done = Rc::new(RefCell::new(false));
-                ctrl.on_finish(move |finished| {
-                    if finished && !*done.borrow() {
-                        *done.borrow_mut() = true;
-                        nav.back();
-                    }
-                });
-                ctrl.reverse_with_velocity(velocity);
-            } else {
-                // Cancel: spring the top back to fully present; the under
-                // wrapper, pointed at the same controller as `Under`,
-                // slides back to covered in lockstep.
-                ctrl.forward_with_velocity(velocity);
-            }
+            settle(&nav, &state.bridge, commit, Some(velocity));
         });
     }
+}
+
+// =====================================================================
+// Shared coordinated-scrub helpers (iOS + Android)
+// =====================================================================
+
+/// Start a back gesture on the deepest active stack: validate it can pop
+/// and its transition supports an edge gesture, point **both** wrappers at
+/// the top controller (`Top` / `Under`), and return the bridge. `None`
+/// means no gesture should begin.
+pub(crate) fn begin(nav: &RouterHandle) -> Option<StackBridge> {
+    let bridge = nav.active_stack_bridge()?;
+    if !bridge.can_back || !transition::supports_edge_swipe(bridge.transition) {
+        return None;
+    }
+    if let (Some(ctrl), Some(top), Some(under)) =
+        (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)
+    {
+        point(top, ctrl, Role::Top);
+        point(under, ctrl, Role::Under);
+    }
+    Some(bridge)
 }
 
 /// Scrub the pair to `back_progress` (0 = top present, 1 = swiped away) by
 /// setting the shared top controller's progress; both wrappers re-pose via
 /// their pose bindings (Top reads `1-back`, Under reads `1-back` too).
-fn scrub(bridge: &StackBridge, back_progress: f32) {
+pub(crate) fn scrub(bridge: &StackBridge, back_progress: f32) {
     if let Some(ctrl) = &bridge.top_ctrl {
         ctrl.set_value(1.0 - back_progress);
     }
 }
 
+/// Settle a back gesture on release. `commit` drives the top off-screen
+/// (progress → 0) and calls `navigator.back()` on finish (the same
+/// reconcile pop); cancel springs it back to present. `velocity` (progress
+/// units/sec) is the release hand-off; `None` uses a plain run (Android's
+/// system back carries no velocity).
+pub(crate) fn settle(
+    nav: &RouterHandle,
+    bridge: &StackBridge,
+    commit: bool,
+    velocity: Option<f32>,
+) {
+    let Some(ctrl) = bridge.top_ctrl.clone() else {
+        return;
+    };
+    if commit {
+        // Drive the top off-screen; both wrappers follow via their pose
+        // bindings. On finish call `back()`, which runs the same
+        // coordinated pop and unmounts the popped entry (its controller is
+        // already at 0, so the reconcile's reverse settles instantly).
+        let nav = nav.clone();
+        let done = Rc::new(RefCell::new(false));
+        ctrl.on_finish(move |finished| {
+            if finished && !*done.borrow() {
+                *done.borrow_mut() = true;
+                nav.back();
+            }
+        });
+        match velocity {
+            Some(v) => ctrl.reverse_with_velocity(v),
+            None => ctrl.reverse(),
+        }
+    } else {
+        // Cancel: spring the top back to fully present; the under wrapper,
+        // pointed at the same controller as `Under`, slides back to covered
+        // in lockstep.
+        match velocity {
+            Some(v) => ctrl.forward_with_velocity(v),
+            None => ctrl.forward(),
+        }
+    }
+}
+
 /// Point a wrapper's pose binding at controller `c` playing `role`.
-fn point(binding: &PoseBinding, c: &whisker::AnimationController, role: Role) {
+fn point(binding: &PoseBinding, c: &AnimationController, role: Role) {
     binding.ctrl.set(c.clone());
     binding.role.set(role);
 }
+
+// =====================================================================
+// Android predictive-back
+// =====================================================================
+
+/// Android 13+ predictive-back gesture component — the platform-back twin
+/// of [`SwipeBack`], driving the identical coordinated scrub.
+///
+/// Mount it as a child of the [`Router`](crate::render::Router) (alongside
+/// `SwipeBack`; each simply waits on its own platform's input). It
+/// subscribes to the `whisker-router:PredictiveBack` native module:
+///
+/// - `backStarted` → [`begin`] the gesture on the active stack.
+/// - `backProgressed { progress }` → [`scrub`] the pair by `progress`.
+/// - `backCancelled` → [`settle`] as a cancel (spring back to present).
+/// - `backInvoked` (commit) → [`settle`] as a commit → `navigator.back()`.
+///
+/// On API < 34 the platform delivers only `backInvoked` (no preview); the
+/// component then just commits — back still works, without the drag
+/// preview. Renders nothing.
+#[component]
+pub fn android_predictive_back() -> Element {
+    let nav = use_navigator();
+    let module = module!("PredictiveBack");
+
+    // The in-flight bridge for the current predictive-back gesture. Shared
+    // across the four event listeners. The native `PredictiveBack` module
+    // fires on the Android UI thread — the same thread as Whisker's main
+    // loop — so the `MainThreadOnly` shim safely carries the `!Sync`
+    // `RouterHandle` + `RefCell` state across the `Send + Sync` bound the
+    // bridge's listener box requires.
+    let state: Rc<RefCell<Option<StackBridge>>> = Rc::new(RefCell::new(None));
+
+    let started = {
+        let shared = MainThreadOnly {
+            inner: (nav.clone(), state.clone()),
+        };
+        module.on_event("backStarted", move |_payload| {
+            // Capture `shared` whole (not `shared.inner`) so Rust 2021
+            // disjoint captures carry its `Send + Sync` impl.
+            let shared = &shared;
+            let (nav, state) = &shared.inner;
+            *state.borrow_mut() = begin(nav);
+        })
+    };
+    log_sub_error("backStarted", started.error());
+
+    let progressed = {
+        let shared = MainThreadOnly {
+            inner: state.clone(),
+        };
+        module.on_event("backProgressed", move |payload| {
+            let shared = &shared;
+            let state = &shared.inner;
+            if let Some(bridge) = state.borrow().as_ref() {
+                scrub(bridge, back_progress(&payload));
+            }
+        })
+    };
+    log_sub_error("backProgressed", progressed.error());
+
+    let cancelled = {
+        let shared = MainThreadOnly {
+            inner: (nav.clone(), state.clone()),
+        };
+        module.on_event("backCancelled", move |_payload| {
+            let shared = &shared;
+            let (nav, state) = &shared.inner;
+            if let Some(bridge) = state.borrow_mut().take() {
+                settle(nav, &bridge, /* commit = */ false, None);
+            }
+        })
+    };
+    log_sub_error("backCancelled", cancelled.error());
+
+    let invoked = {
+        let shared = MainThreadOnly {
+            inner: (nav.clone(), state.clone()),
+        };
+        module.on_event("backInvoked", move |_payload| {
+            let shared = &shared;
+            let (nav, state) = &shared.inner;
+            match state.borrow_mut().take() {
+                // Interactive path (API 34+): a gesture was in flight, so
+                // commit it (animate the top off, then `back()`).
+                Some(bridge) => settle(nav, &bridge, /* commit = */ true, None),
+                // No preview (API < 34, or a discrete press): just pop.
+                None => {
+                    nav.back();
+                }
+            }
+        })
+    };
+    log_sub_error("backInvoked", invoked.error());
+
+    // Hold the subscriptions for the component's lifetime; dropping them on
+    // unmount fires the module's `OnStopObserving` → the Activity releases
+    // its `OnBackPressedCallback`.
+    on_cleanup(move || {
+        drop(started);
+        drop(progressed);
+        drop(cancelled);
+        drop(invoked);
+    });
+
+    render! { fragment() }
+}
+
+/// Read `progress` (0..1, back-direction) from a `backProgressed` payload.
+pub(crate) fn back_progress(payload: &WhiskerValue) -> f32 {
+    let WhiskerValue::Map(fields) = payload else {
+        return 0.0;
+    };
+    match fields.get("progress") {
+        Some(WhiskerValue::Float(v)) => *v as f32,
+        Some(WhiskerValue::Int(v)) => *v as f32,
+        _ => 0.0,
+    }
+    .clamp(0.0, 1.0)
+}
+
+fn log_sub_error(event: &str, error: Option<&str>) {
+    if let Some(err) = error {
+        eprintln!("[whisker-router] AndroidPredictiveBack: {event} subscribe failed: {err}");
+    }
+}
+
+/// Asserts main-thread-only access to `inner`. The native `PredictiveBack`
+/// module fires on the Android UI thread, the same thread as the Whisker
+/// main loop, so the unsafe `Send + Sync` is sound for this single source.
+/// Never expose this beyond the gesture module.
+struct MainThreadOnly<T> {
+    inner: T,
+}
+// Safety: see the type-level comment.
+unsafe impl<T> Send for MainThreadOnly<T> {}
+unsafe impl<T> Sync for MainThreadOnly<T> {}

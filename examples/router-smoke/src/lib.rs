@@ -31,7 +31,8 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::core::{CompiledTree, NodePath, RouteInstance, RouteTree, SwitchDef, Target};
 use whisker_router::render::{
-    RouteRegistry, Router, RouterHandle, SwipeBack, TabItem, Tabs, Transition, use_navigator,
+    AndroidPredictiveBack, RouteRegistry, Router, RouterHandle, SwipeBack, TabItem, Tabs,
+    Transition, use_navigator,
 };
 
 /// The Switch (tabs) is the tree root, so its path is the root path.
@@ -80,8 +81,11 @@ fn app() -> Element {
                     TabItem::new("List", Target::id("list")),
                 ],
             )
-            // iOS edge swipe-back over the whole app.
+            // Interactive back gestures — both mounted; each waits on its
+            // own platform input. iOS = leading-edge swipe; Android =
+            // system predictive back (13+ shows the live preview).
             SwipeBack {}
+            AndroidPredictiveBack {}
         }
     }
 }

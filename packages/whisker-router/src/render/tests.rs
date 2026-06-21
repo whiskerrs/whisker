@@ -544,3 +544,113 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
     });
     owner.dispose();
 }
+
+// ----- Android predictive-back: event → coordinated-scrub mapping -----
+//
+// The native module delivery can't run headless, but the mapping the
+// `AndroidPredictiveBack` component performs — `backProgressed{progress}`
+// -> scrub the top controller, `backInvoked` -> commit -> `back()` — is
+// the shared `begin`/`scrub`/`settle` logic, which IS testable.
+
+use crate::render::gesture::{back_progress, begin, scrub, settle};
+use whisker::platform_module::WhiskerValue;
+
+#[test]
+fn back_progress_reads_payload() {
+    let mut m = std::collections::BTreeMap::new();
+    m.insert("progress".to_string(), WhiskerValue::Float(0.42));
+    m.insert("swipeEdge".to_string(), WhiskerValue::Int(0));
+    assert!((back_progress(&WhiskerValue::Map(m)) - 0.42).abs() < 1e-6);
+    // Int progress coerces; out-of-range clamps; wrong shape → 0.
+    let mut mi = std::collections::BTreeMap::new();
+    mi.insert("progress".to_string(), WhiskerValue::Int(1));
+    assert_eq!(back_progress(&WhiskerValue::Map(mi)), 1.0);
+    assert_eq!(back_progress(&WhiskerValue::Null), 0.0);
+}
+
+#[test]
+fn predictive_back_progress_scrubs_top_controller() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+        settle_animations();
+
+        // backStarted → begin(): grabs the active stack's bridge.
+        let bridge = begin(&h).expect("a poppable Slide stack yields a bridge");
+        let ctrl = bridge.top_ctrl.clone().expect("top ctrl");
+
+        // backProgressed{progress} → scrub: controller = 1 - progress.
+        scrub(&bridge, back_progress(&progress_payload(0.0)));
+        assert_eq!(ctrl.value().get_untracked(), 1.0, "progress 0 → present");
+        scrub(&bridge, back_progress(&progress_payload(0.5)));
+        assert_eq!(ctrl.value().get_untracked(), 0.5, "progress .5 → half away");
+        scrub(&bridge, back_progress(&progress_payload(1.0)));
+        assert_eq!(ctrl.value().get_untracked(), 0.0, "progress 1 → fully away");
+    });
+    owner.dispose();
+}
+
+#[test]
+fn predictive_back_invoke_commits_pop() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+        settle_animations();
+        assert_eq!(h.current().get().path, NodePath(vec![1]), "on detail");
+
+        // backStarted + a partial drag, then backInvoked (commit).
+        let bridge = begin(&h).expect("bridge");
+        scrub(&bridge, 0.6);
+        settle(&h, &bridge, /* commit = */ true, None);
+        // The commit's on_finish(true) fires `back()` once the reverse
+        // settles — drive the animation to completion.
+        settle_animations();
+
+        assert_eq!(h.current().get().path, NodePath(vec![0]), "popped to home");
+    });
+    owner.dispose();
+}
+
+#[test]
+fn predictive_back_cancel_restores_top() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+        settle_animations();
+
+        let bridge = begin(&h).expect("bridge");
+        let ctrl = bridge.top_ctrl.clone().expect("top ctrl");
+        scrub(&bridge, 0.4);
+        // Cancel: forward() back to present; no pop.
+        settle(&h, &bridge, /* commit = */ false, None);
+        settle_animations();
+
+        assert_eq!(ctrl.value().get_untracked(), 1.0, "top restored to present");
+        assert_eq!(h.current().get().path, NodePath(vec![1]), "still on detail");
+    });
+    owner.dispose();
+}
+
+fn progress_payload(p: f64) -> WhiskerValue {
+    let mut m = std::collections::BTreeMap::new();
+    m.insert("progress".to_string(), WhiskerValue::Float(p));
+    WhiskerValue::Map(m)
+}
