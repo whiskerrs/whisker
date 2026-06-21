@@ -78,6 +78,7 @@
 #![warn(missing_docs)]
 
 pub mod back_handler;
+pub mod core;
 pub mod gestures;
 pub mod layouts;
 pub mod linking;
