@@ -48,7 +48,16 @@ struct ControllerState {
     /// Progress at the moment the current run started.
     start_value: f32,
     /// Scheduler timestamp (ms) at which the current run started.
-    start_ms: f64,
+    ///
+    /// `None` until the first `advance` after a run begins: the start
+    /// time is anchored to that frame's `now_ms`, NOT to whatever the
+    /// scheduler's `last_ms` happened to be at `register` time. The
+    /// scheduler only updates `last_ms` while stepping, so after an idle
+    /// gap it is stale; anchoring there made the first frame compute a
+    /// huge elapsed and jump straight to the target (the "single tap
+    /// teleports, mashing animates" bug). Lazy anchoring starts every run
+    /// from progress 0 at its first real frame.
+    start_ms: Option<f64>,
     /// Direction of the current run (for ping-pong bookkeeping).
     dir: Dir,
     repeat: Repeat,
@@ -71,17 +80,22 @@ impl ControllerState {
         if !self.active {
             return false;
         }
+        // Lazy time anchor: the first frame of a run defines its start, so
+        // an idle gap before the run can't inflate the elapsed time. This
+        // frame is therefore progress 0 (raw_t == 0) — the run advances
+        // from the *next* frame onward.
+        let start_ms = *self.start_ms.get_or_insert(now_ms);
         let dur = self.run_duration_ms();
         // A tiny epsilon (in ms) absorbs the f32→f64 rounding in
         // `run_duration_ms` (e.g. a 0.6 span yields dur ≈ 60.0000023,
         // so a frame at exactly 60ms would otherwise read t = 0.99999996
         // and never finish). Treat "within a hundredth of a ms of done"
         // as done.
-        let finished = dur <= 0.0 || (now_ms - self.start_ms) >= dur - 1e-2;
+        let finished = dur <= 0.0 || (now_ms - start_ms) >= dur - 1e-2;
         let raw_t = if finished {
             1.0
         } else {
-            ((now_ms - self.start_ms) / dur).clamp(0.0, 1.0) as f32
+            ((now_ms - start_ms) / dur).clamp(0.0, 1.0) as f32
         };
         let eased = self.cfg.curve.ease(raw_t);
         let progress = self.start_value + (self.target - self.start_value) * eased;
@@ -112,7 +126,7 @@ impl ControllerState {
                 self.value.set(from);
                 self.start_value = from;
                 self.target = to;
-                self.start_ms = now_ms;
+                self.start_ms = Some(now_ms);
                 true
             }
             Repeat::Reverse => {
@@ -126,7 +140,7 @@ impl ControllerState {
                     Dir::Forward => 1.0,
                     Dir::Backward => 0.0,
                 };
-                self.start_ms = now_ms;
+                self.start_ms = Some(now_ms);
                 true
             }
         }
@@ -210,15 +224,15 @@ fn step(now_ms: f64) -> bool {
 }
 
 /// Register `state` as active (idempotent) and wake the host so a frame
-/// runs. Records the run's start time from the scheduler's last-seen
-/// timestamp.
+/// runs. The run's start time is anchored lazily on its first `advance`
+/// (see `ControllerState::start_ms`), so `register` clears it rather than
+/// reading the scheduler's possibly-stale `last_ms`.
 fn register(state: &Rc<RefCell<ControllerState>>) {
     let already = SCHEDULER.with(|s| {
         let s = s.borrow();
         s.active.iter().any(|a| Rc::ptr_eq(a, state))
     });
-    let last_ms = SCHEDULER.with(|s| s.borrow().last_ms);
-    state.borrow_mut().start_ms = last_ms;
+    state.borrow_mut().start_ms = None;
     if !already {
         SCHEDULER.with(|s| s.borrow_mut().active.push(state.clone()));
     }
@@ -298,7 +312,7 @@ impl AnimationController {
             active: false,
             target: 0.0,
             start_value: 0.0,
-            start_ms: 0.0,
+            start_ms: None,
             dir: Dir::Forward,
             repeat: Repeat::Once,
             on_finish: Vec::new(),
