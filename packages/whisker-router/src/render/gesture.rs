@@ -252,6 +252,9 @@ fn point(binding: &PoseBinding, c: &AnimationController, role: Role) {
 pub fn android_predictive_back() -> Element {
     let nav = use_navigator();
     let module = module!("PredictiveBack");
+    // DIAG (temporary): confirm the component mounts + which qualified
+    // module name it subscribes. Forwarded to device:err / logcat.
+    eprintln!("[pb] android_predictive_back mounted; subscribing to PredictiveBack module");
 
     // The in-flight bridge for the current predictive-back gesture. Shared
     // across the four event listeners. The native `PredictiveBack` module
@@ -266,14 +269,17 @@ pub fn android_predictive_back() -> Element {
             inner: (nav.clone(), state.clone()),
         };
         module.on_event("backStarted", move |_payload| {
+            eprintln!("[pb] event: backStarted");
             // Capture `shared` whole (not `shared.inner`) so Rust 2021
             // disjoint captures carry its `Send + Sync` impl.
             let shared = &shared;
             let (nav, state) = &shared.inner;
-            *state.borrow_mut() = begin(nav);
+            let bridge = begin(nav);
+            eprintln!("[pb] backStarted -> begin() = {}", bridge.is_some());
+            *state.borrow_mut() = bridge;
         })
     };
-    log_sub_error("backStarted", started.error());
+    log_sub("backStarted", started.error());
 
     let progressed = {
         let shared = MainThreadOnly {
@@ -282,18 +288,21 @@ pub fn android_predictive_back() -> Element {
         module.on_event("backProgressed", move |payload| {
             let shared = &shared;
             let state = &shared.inner;
+            let p = back_progress(&payload);
+            eprintln!("[pb] event: backProgressed progress={p}");
             if let Some(bridge) = state.borrow().as_ref() {
-                scrub(bridge, back_progress(&payload));
+                scrub(bridge, p);
             }
         })
     };
-    log_sub_error("backProgressed", progressed.error());
+    log_sub("backProgressed", progressed.error());
 
     let cancelled = {
         let shared = MainThreadOnly {
             inner: (nav.clone(), state.clone()),
         };
         module.on_event("backCancelled", move |_payload| {
+            eprintln!("[pb] event: backCancelled");
             let shared = &shared;
             let (nav, state) = &shared.inner;
             if let Some(bridge) = state.borrow_mut().take() {
@@ -301,13 +310,14 @@ pub fn android_predictive_back() -> Element {
             }
         })
     };
-    log_sub_error("backCancelled", cancelled.error());
+    log_sub("backCancelled", cancelled.error());
 
     let invoked = {
         let shared = MainThreadOnly {
             inner: (nav.clone(), state.clone()),
         };
         module.on_event("backInvoked", move |_payload| {
+            eprintln!("[pb] event: backInvoked");
             let shared = &shared;
             let (nav, state) = &shared.inner;
             match state.borrow_mut().take() {
@@ -316,12 +326,13 @@ pub fn android_predictive_back() -> Element {
                 Some(bridge) => settle(nav, &bridge, /* commit = */ true, None),
                 // No preview (API < 34, or a discrete press): just pop.
                 None => {
+                    eprintln!("[pb] backInvoked with no in-flight gesture -> nav.back()");
                     nav.back();
                 }
             }
         })
     };
-    log_sub_error("backInvoked", invoked.error());
+    log_sub("backInvoked", invoked.error());
 
     // Hold the subscriptions for the component's lifetime; dropping them on
     // unmount fires the module's `OnStopObserving` → the Activity releases
@@ -349,9 +360,16 @@ pub(crate) fn back_progress(payload: &WhiskerValue) -> f32 {
     .clamp(0.0, 1.0)
 }
 
-fn log_sub_error(event: &str, error: Option<&str>) {
-    if let Some(err) = error {
-        eprintln!("[whisker-router] AndroidPredictiveBack: {event} subscribe failed: {err}");
+/// DIAG (temporary): report whether a subscription registered. An `Ok`
+/// log confirms the Rust side fired `on_event` (which is what triggers the
+/// module's `OnStartObserving` on the Kotlin side); an `Err` localises a
+/// registration failure.
+fn log_sub(event: &str, error: Option<&str>) {
+    match error {
+        Some(err) => {
+            eprintln!("[pb] subscribe {event}: FAILED: {err}")
+        }
+        None => eprintln!("[pb] subscribe {event}: ok"),
     }
 }
 
