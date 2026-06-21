@@ -754,17 +754,17 @@ fn back_edge_decodes_payload() {
 fn predictive_pose_material_shape() {
     use crate::render::transition::{Role, SwipeEdge, predictive_pose};
 
-    // At rest (progress 1.0 = top fully present): identity, no radius.
+    // At rest (progress 1.0 = top fully present): identity. The corner
+    // radius is NOT part of the pose — it's a constant wrapper clip.
     let rest = predictive_pose(Role::Top, 1.0, SwipeEdge::Left);
-    assert_eq!(rest.radius_px, 0.0, "no rounding at rest");
     assert!(
         rest.transform.contains("scale(1)"),
         "scale 1 at rest: {rest:?}"
     );
 
-    // Full back (progress 0.0): shrunk + rounded.
+    // Full back (progress 0.0): shrunk (rounding is the wrapper's constant
+    // clip, not the pose).
     let full_left = predictive_pose(Role::Top, 0.0, SwipeEdge::Left);
-    assert!(full_left.radius_px > 0.0, "rounded at full back");
     assert!(
         full_left.transform.contains("scale(0.9)"),
         "shrinks to 0.9: {full_left:?}"
@@ -795,19 +795,31 @@ fn predictive_pose_material_shape() {
 }
 
 #[test]
-fn device_corner_radius_overrides_predictive_card_radius() {
-    use crate::render::transition::{Role, SwipeEdge, predictive_pose, set_device_corner_radius};
+fn screen_corner_radius_follows_device_then_user_override() {
+    use crate::render::transition::{
+        max_corner_radius, screen_corner_radius, set_device_corner_radius, set_screen_corner_radius,
+    };
 
-    // Default is 24dp at full back.
-    assert!((predictive_pose(Role::Top, 0.0, SwipeEdge::Left).radius_px - 24.0).abs() < 1e-3);
-
-    // Override with a real device radius; the card rounds to match.
-    set_device_corner_radius(40.0);
-    assert!((predictive_pose(Role::Top, 0.0, SwipeEdge::Left).radius_px - 40.0).abs() < 1e-3);
-    // Mid-progress scales proportionally (back = 0.5 → 20dp).
-    assert!((predictive_pose(Role::Top, 0.5, SwipeEdge::Left).radius_px - 20.0).abs() < 1e-3);
-
-    // Restore default so test ordering can't leak the override (the
-    // thread-local persists within a test thread).
+    // Default: the device radius (24dp until set), and the screen clip
+    // tracks it.
     set_device_corner_radius(24.0);
+    set_screen_corner_radius(None);
+    assert!((max_corner_radius() - 24.0).abs() < 1e-3);
+    assert!((screen_corner_radius() - 24.0).abs() < 1e-3);
+
+    // A real device radius flows through to the screen clip.
+    set_device_corner_radius(52.0);
+    assert!((screen_corner_radius() - 52.0).abs() < 1e-3);
+
+    // A user override pins the screen radius regardless of device.
+    set_screen_corner_radius(Some(16.0));
+    assert!((screen_corner_radius() - 16.0).abs() < 1e-3);
+
+    // Clearing the override reverts to the device radius.
+    set_screen_corner_radius(None);
+    assert!((screen_corner_radius() - 52.0).abs() < 1e-3);
+
+    // Restore defaults so test ordering can't leak globals.
+    set_device_corner_radius(24.0);
+    set_screen_corner_radius(None);
 }

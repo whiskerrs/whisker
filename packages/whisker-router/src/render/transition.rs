@@ -95,9 +95,41 @@ pub(crate) fn set_device_corner_radius(dp: f32) {
     }
 }
 
-/// The current max predictive-back corner radius (dp).
+/// The current device display corner radius (dp).
 pub(crate) fn max_corner_radius() -> f32 {
     f32::from_bits(DEVICE_CORNER_RADIUS_BITS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The corner radius (dp) every router screen is clipped to — the
+/// router's layout-level rounding. Defaults to the device display radius
+/// ([`max_corner_radius`]); a future router-layout config can override it
+/// per app (the `screen_corner_radius` extension point). Read by the
+/// stack wrapper's constant clip in [`crate::render::node`].
+pub(crate) fn screen_corner_radius() -> f32 {
+    if let Some(r) = SCREEN_CORNER_RADIUS_OVERRIDE_BITS
+        .load(std::sync::atomic::Ordering::Relaxed)
+        .checked_sub(1)
+    {
+        return f32::from_bits(r);
+    }
+    max_corner_radius()
+}
+
+/// User override for the screen corner radius (dp), stored as `f32` bits
+/// **+ 1** so `0` means "unset → fall back to the device radius". Lets an
+/// app pin a fixed router screen rounding regardless of device.
+static SCREEN_CORNER_RADIUS_OVERRIDE_BITS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
+/// Override the router's screen corner radius (dp); pass `None` to revert
+/// to the device display radius. The extensible hook behind
+/// [`screen_corner_radius`].
+pub fn set_screen_corner_radius(dp: Option<f32>) {
+    let stored = match dp {
+        Some(v) if v.is_finite() && v >= 0.0 => v.to_bits().wrapping_add(1),
+        _ => 0,
+    };
+    SCREEN_CORNER_RADIUS_OVERRIDE_BITS.store(stored, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// How far the covered screen parallax-slides while the top screen is
@@ -140,27 +172,24 @@ pub fn pose_for(mode: PoseMode, role: Role, progress: f32) -> Pose {
     }
 }
 
-/// A computed CSS pose for one wrapper: a `transform` value, an
-/// `opacity`, and a corner radius (px). Border-radius is `0.0` for every
-/// non-predictive transition.
+/// A computed CSS pose for one wrapper: a `transform` value + an `opacity`.
+///
+/// The screen's **corner radius is NOT part of the pose** — it is a
+/// constant clip on the wrapper (see [`screen_corner_radius`] /
+/// [`crate::render::node`]), matching iOS where every screen is always
+/// rounded to the device bezel. The pose only animates scale / translate /
+/// opacity.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pose {
     /// The `transform` CSS value.
     pub transform: String,
     /// The `opacity` (0..1).
     pub opacity: f32,
-    /// The `border-radius` in px (Material predictive back rounds the
-    /// shrinking card; everything else is `0`).
-    pub radius_px: f32,
 }
 
 impl Pose {
     fn new(transform: String, opacity: f32) -> Self {
-        Pose {
-            transform,
-            opacity,
-            radius_px: 0.0,
-        }
+        Pose { transform, opacity }
     }
 }
 
@@ -192,9 +221,10 @@ pub fn pose(transition: Transition, role: Role, progress: f32) -> Pose {
 /// The Material-style **predictive-back** pose for `role` at `progress`
 /// (the gesture's "presence of the top", 1.0 = at rest, →0.0 = dismissed).
 ///
-/// The shrink amount `back = 1 - progress` drives both cards:
-/// - **Top**: scales `1 → ~0.9`, rounds its corners `0 → 24px`, and (on a
-///   left-edge swipe) nudges right; a right-edge swipe stays centred.
+/// The shrink amount `back = 1 - progress` drives both cards (the corner
+/// radius is the wrapper's constant clip, not animated here):
+/// - **Top**: scales `1 → ~0.9` and (on a left-edge swipe) nudges right; a
+///   right-edge swipe stays centred.
 /// - **Under**: the same scale, sliding in from the left so it sits as an
 ///   equal-size card just to the left of the top (peeking the previous
 ///   screen), per the OS preview.
@@ -202,21 +232,15 @@ pub fn predictive_pose(role: Role, progress: f32, edge: SwipeEdge) -> Pose {
     let p = progress.clamp(0.0, 1.0);
     let back = 1.0 - p; // 0 at rest, 1 fully dismissed
     let scale = 1.0 - back * (1.0 - PB_MIN_SCALE);
-    let max_radius = max_corner_radius();
     match role {
         Role::Top => {
-            let radius = back * max_radius;
             let x = match edge {
                 // Left swipe: the card slides toward the right edge.
                 SwipeEdge::Left => back * PB_EDGE_SHIFT * 100.0,
                 // Right swipe: shrink in place, centred.
                 SwipeEdge::Right => 0.0,
             };
-            Pose {
-                transform: format!("translateX({x}%) scale({scale})"),
-                opacity: 1.0,
-                radius_px: radius,
-            }
+            Pose::new(format!("translateX({x}%) scale({scale})"), 1.0)
         }
         Role::Under => {
             // Same scale; enters from the left. At rest (p=1) it sits just
@@ -224,11 +248,7 @@ pub fn predictive_pose(role: Role, progress: f32, edge: SwipeEdge) -> Pose {
             // progresses it slides right to peek beside the shrinking top.
             // `-100%` at p=1 (fully off-left), easing toward `-~60%`.
             let x = -100.0 + back * 40.0;
-            Pose {
-                transform: format!("translateX({x}%) scale({scale})"),
-                opacity: 1.0,
-                radius_px: back * max_radius,
-            }
+            Pose::new(format!("translateX({x}%) scale({scale})"), 1.0)
         }
     }
 }

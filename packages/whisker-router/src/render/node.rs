@@ -560,19 +560,9 @@ fn mount_wrapper(
             let mode = pose_mode.get();
             transition::pose_for(mode, role, c.value().get())
         });
-        // DIAG (temporary): log the radius the FIRST time this wrapper
-        // poses with a non-zero corner radius (predictive preview), to
-        // confirm the device radius reaches the rendered CSS.
-        let radius_logged = std::cell::Cell::new(false);
+        let _ = idx;
         effect(move || {
             let pose = style.get();
-            if pose.radius_px > 0.0 && !radius_logged.get() {
-                radius_logged.set(true);
-                crate::render::gesture::pb_log(&format!(
-                    "wrapper idx={idx} predictive pose radius_px={} transform={}",
-                    pose.radius_px, pose.transform
-                ));
-            }
             set_inline_styles(wrapper, &wrapper_style(&pose));
         });
 
@@ -617,16 +607,21 @@ fn stack_container_style() -> String {
 }
 
 /// Base style for a stack wrapper: absolutely-filled, column flow, with
-/// the [`Pose`]'s transform + opacity + (predictive) corner radius. The
-/// transform origin is centred so the predictive-back scale shrinks the
-/// card around its middle. `overflow: hidden` clips children to the
-/// rounded corners.
+/// the [`Pose`]'s transform + opacity. The corner radius is a **constant**
+/// clip at the device's screen radius (not animated) — like iOS, every
+/// screen is always rounded to the bezel, so the rounding is invisible at
+/// rest (it coincides with the physical display corners) and only becomes
+/// visible once the predictive-back scale shrinks the card inward.
+/// `overflow: hidden` clips children to the rounded corners; the transform
+/// origin is centred so the scale shrinks around the middle.
 fn wrapper_style(pose: &Pose) -> String {
     format!(
         "position: absolute; left: 0; top: 0; right: 0; bottom: 0; \
          display: flex; flex-direction: column; overflow: hidden; \
          transform-origin: 50% 50%; transform: {}; opacity: {}; \
          border-radius: {}px;",
-        pose.transform, pose.opacity, pose.radius_px
+        pose.transform,
+        pose.opacity,
+        transition::screen_corner_radius()
     )
 }
