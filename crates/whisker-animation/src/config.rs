@@ -66,6 +66,18 @@ pub struct SpringConfig {
     pub damping: f32,
     /// Mass `m`: inertia of the animated "object".
     pub mass: f32,
+    /// Initial velocity (progress units per second) the spring is seeded
+    /// with at the **start of a run from rest** (Reanimated's `withSpring`
+    /// `velocity`). Defaults to `0.0`. Note this only applies when a run
+    /// starts from rest — an interrupting run keeps the in-flight velocity
+    /// instead (see the hand-off note on the controller's `register`).
+    pub velocity: f32,
+    /// When `true`, the spring **never passes the target**: the first
+    /// frame that would cross/overshoot it clamps to the target, zeroes
+    /// velocity, and settles immediately (Reanimated's
+    /// `overshootClamping`). Defaults to `false` for every preset,
+    /// including [`stiff`](AnimConfig::stiff).
+    pub overshoot_clamping: bool,
 }
 
 impl AnimConfig {
@@ -128,14 +140,53 @@ impl AnimConfig {
     }
 
     /// A spring with explicit `stiffness`, `damping`, and `mass`.
+    /// Initial `velocity` is `0.0` and `overshoot_clamping` is `false`;
+    /// set them via [`with_velocity`](Self::with_velocity) /
+    /// [`with_overshoot_clamping`](Self::with_overshoot_clamping).
     pub fn spring_full(stiffness: f32, damping: f32, mass: f32) -> Self {
         Self {
             timing: Timing::Spring(SpringConfig {
                 stiffness,
                 damping,
                 mass,
+                velocity: 0.0,
+                overshoot_clamping: false,
             }),
         }
+    }
+
+    // ---- spring builder setters -----------------------------------------
+
+    /// Set the spring's configured **initial velocity** (progress units
+    /// per second), seeding it at the start of a run from rest. This is
+    /// Reanimated's `withSpring` `velocity`.
+    ///
+    /// Builder-style: returns `self` so it chains onto a spring
+    /// constructor (`AnimConfig::spring().with_velocity(3.0)`).
+    ///
+    /// **No-op on curved timings** (a curve has no velocity); the config
+    /// is returned unchanged.
+    pub fn with_velocity(mut self, v: f32) -> Self {
+        if let Timing::Spring(ref mut s) = self.timing {
+            s.velocity = v;
+        }
+        self
+    }
+
+    /// Enable/disable **overshoot clamping**: when `true`, the spring is
+    /// not allowed to pass the target — the first frame that would cross
+    /// it clamps to the target and settles. This is Reanimated's
+    /// `overshootClamping`.
+    ///
+    /// Builder-style: returns `self`
+    /// (`AnimConfig::bouncy().with_overshoot_clamping(true)`).
+    ///
+    /// **No-op on curved timings**; the config is returned unchanged.
+    pub fn with_overshoot_clamping(mut self, clamp: bool) -> Self {
+        if let Timing::Spring(ref mut s) = self.timing {
+            s.overshoot_clamping = clamp;
+        }
+        self
     }
 
     /// A bouncy, underdamped spring with visible overshoot before it

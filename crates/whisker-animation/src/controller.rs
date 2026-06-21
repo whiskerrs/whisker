@@ -83,15 +83,21 @@ struct ControllerState {
     /// Reset to `None` alongside `start_ms` at the start of every run.
     last_frame_ms: Option<f64>,
     /// Spring velocity (progress units per second). Only meaningful for
-    /// the spring timing; stays `0.0` on the curved path. Reset to `0`
-    /// at the start of each run (see the velocity-handoff note on
-    /// `register`).
+    /// the spring timing; stays `0.0` on the curved path. At the start of
+    /// a run it is seeded from the configured initial velocity (when
+    /// starting from rest) or carried over from the in-flight run (when
+    /// interrupting a moving spring) — see the velocity-handoff note on
+    /// `register`.
     velocity: f32,
     /// Direction of the current run (for ping-pong bookkeeping).
     dir: Dir,
     repeat: Repeat,
-    /// Callbacks fired when a (non-repeating) run reaches its target.
-    on_finish: Vec<Box<dyn FnMut()>>,
+    /// Callbacks fired when a run finishes. Each receives `finished:
+    /// bool` — `true` when the run reached its target naturally, `false`
+    /// when it was stopped or interrupted by a new run (Reanimated's
+    /// completion callback). Callbacks are `FnMut` and stay registered
+    /// across runs.
+    on_finish: Vec<Box<dyn FnMut(bool)>>,
 }
 
 impl ControllerState {
@@ -194,6 +200,25 @@ impl ControllerState {
             remaining -= SPRING_SUBSTEP;
         }
 
+        // Overshoot clamping: if enabled and the position has crossed the
+        // target (it now sits on the opposite side from where the run
+        // started), snap to the target and settle with no bounce. The
+        // "side it started on" is the sign of `start_value - target`; once
+        // `x - target` flips to the other sign, we've passed it.
+        if spring.overshoot_clamping {
+            let started_below = self.start_value <= target;
+            let crossed = if started_below {
+                x > target
+            } else {
+                x < target
+            };
+            if crossed {
+                self.velocity = 0.0;
+                self.value.set(target);
+                return self.reached_target(now_ms);
+            }
+        }
+
         // Settled? Position close to target AND velocity near zero.
         if (x - target).abs() < SPRING_POS_EPS && v.abs() < SPRING_VEL_EPS {
             self.velocity = 0.0;
@@ -206,6 +231,23 @@ impl ControllerState {
         true
     }
 
+    /// Fire every registered `on_finish` callback with `finished`. The
+    /// Vec is taken out for the duration of the calls (so a callback that
+    /// drives this same controller can't alias the borrow) and restored
+    /// after — callbacks are `FnMut` and persist across runs.
+    fn fire_on_finish(&mut self, finished: bool) {
+        let mut cbs = std::mem::take(&mut self.on_finish);
+        for cb in cbs.iter_mut() {
+            cb(finished);
+        }
+        // Preserve any callbacks a re-entrant run may have registered.
+        if self.on_finish.is_empty() {
+            self.on_finish = cbs;
+        } else {
+            self.on_finish.splice(0..0, cbs);
+        }
+    }
+
     /// Shared "reached the target" handling for both timings: snaps to
     /// the target, then either finishes (firing `on_finish`) or restarts
     /// per the repeat mode. Returns `true` if the run continues.
@@ -215,11 +257,7 @@ impl ControllerState {
         match self.repeat {
             Repeat::Once => {
                 self.active = false;
-                let mut cbs = std::mem::take(&mut self.on_finish);
-                for cb in cbs.iter_mut() {
-                    cb();
-                }
-                self.on_finish = cbs;
+                self.fire_on_finish(true);
                 false
             }
             Repeat::Loop => {
@@ -338,12 +376,10 @@ fn step(now_ms: f64) -> bool {
 /// (see `ControllerState::start_ms`), so `register` clears it rather than
 /// reading the scheduler's possibly-stale `last_ms`.
 ///
-/// We also reset the spring `velocity` and per-frame `last_frame_ms` so a
-/// fresh `forward`/`reverse` starts from rest. **Future refinement (gesture
-/// hand-off):** to make an interrupted spring feel natural, a `forward()`
-/// issued while the box is mid-flight should *keep* the current velocity
-/// rather than zeroing it; resetting is simpler and correct for the
-/// common "drive from rest" case, so we start there.
+/// We reset the per-frame `last_frame_ms` so the integrator re-anchors its
+/// clock. We deliberately **do not** touch `velocity` here: the run's
+/// initial velocity is decided by the caller before registering (see the
+/// hand-off note on `AnimationController::start_run`).
 fn register(state: &Rc<RefCell<ControllerState>>) {
     let already = SCHEDULER.with(|s| {
         let s = s.borrow();
@@ -353,7 +389,6 @@ fn register(state: &Rc<RefCell<ControllerState>>) {
         let mut st = state.borrow_mut();
         st.start_ms = None;
         st.last_frame_ms = None;
-        st.velocity = 0.0;
     }
     if !already {
         SCHEDULER.with(|s| s.borrow_mut().active.push(state.clone()));
@@ -471,15 +506,97 @@ impl AnimationController {
 
     /// Drive from the current value toward an arbitrary `target`
     /// (clamped to `0.0..=1.0`). If already at the target, finishes
-    /// immediately (fires `on_finish`) without registering a frame.
+    /// immediately (fires `on_finish(true)`) without registering a frame.
+    ///
+    /// Initial spring velocity follows the **hand-off policy**: if this
+    /// interrupts a spring that is still moving, the in-flight velocity is
+    /// carried into the new target (so a swipe hand-off keeps momentum);
+    /// otherwise the run starts from the spring's configured initial
+    /// velocity (default `0`). See [`start_run`](Self::start_run).
     pub fn animate_to(&self, target: f32) {
+        self.start_run(target, None);
+    }
+
+    /// Like [`forward`](Self::forward) but inject an explicit initial
+    /// velocity `v` (progress units per second), overriding both the
+    /// configured initial velocity and the hand-off carry-over. A
+    /// gesture's `onEnd` calls this with the finger's release velocity so
+    /// the spring continues at the speed the user let go.
+    pub fn forward_with_velocity(&self, v: f32) {
+        self.start_run(1.0, Some(v));
+    }
+
+    /// Like [`reverse`](Self::reverse) but inject an explicit initial
+    /// velocity `v`. See [`forward_with_velocity`](Self::forward_with_velocity).
+    pub fn reverse_with_velocity(&self, v: f32) {
+        self.start_run(0.0, Some(v));
+    }
+
+    /// Like [`animate_to`](Self::animate_to) but inject an explicit
+    /// initial velocity `v` toward `target`. The general gesture-release
+    /// entry point.
+    pub fn animate_to_with_velocity(&self, target: f32, v: f32) {
+        self.start_run(target, Some(v));
+    }
+
+    /// Core run-start: target the (clamped) `target`, decide the run's
+    /// initial velocity, and register (or settle synchronously if already
+    /// there). Shared by every drive method.
+    ///
+    /// **Cancel semantics:** if a run is already in flight, it is being
+    /// interrupted — fire its `on_finish` callbacks with `false` before
+    /// the new run begins.
+    ///
+    /// **Velocity hand-off (springs):**
+    /// - `velocity_override = Some(v)` → use `v` (gesture release).
+    /// - else if a spring run is already active/moving → **keep** the
+    ///   current velocity (carry momentum across the interrupt; this is
+    ///   what makes a swipe-back hand-off feel natural).
+    /// - else (starting from rest, or first run) → seed from the spring's
+    ///   configured initial velocity (default `0`).
+    /// - Curved timing: velocity stays `0` (unused), as before.
+    fn start_run(&self, target: f32, velocity_override: Option<f32>) {
         let target = target.clamp(0.0, 1.0);
-        let start_value = self.state.borrow().value.get_untracked();
+
+        let (start_value, was_active, current_v, configured_v, is_spring) = {
+            let st = self.state.borrow();
+            let (configured_v, is_spring) = match st.cfg.timing {
+                Timing::Spring(s) => (s.velocity, true),
+                Timing::Curved { .. } => (0.0, false),
+            };
+            (
+                st.value.get_untracked(),
+                st.active,
+                st.velocity,
+                configured_v,
+                is_spring,
+            )
+        };
+
+        // Interrupting an in-flight run cancels it: its callbacks fire
+        // `false`. They remain registered for the run we're about to start.
+        if was_active {
+            self.state.borrow_mut().fire_on_finish(false);
+        }
+
+        let velocity = if let Some(v) = velocity_override {
+            v
+        } else if is_spring && was_active {
+            // Hand-off: keep the momentum of the spring we just interrupted.
+            current_v
+        } else if is_spring {
+            // Fresh run from rest: seed the configured initial velocity.
+            configured_v
+        } else {
+            0.0
+        };
+
         {
             let mut st = self.state.borrow_mut();
             st.repeat = Repeat::Once;
             st.target = target;
             st.start_value = start_value;
+            st.velocity = velocity;
             st.dir = if target >= start_value {
                 Dir::Forward
             } else {
@@ -487,27 +604,33 @@ impl AnimationController {
             };
             st.active = true;
         }
+
         if (target - start_value).abs() <= f32::EPSILON {
-            // Already there: settle synchronously, fire on_finish, and
-            // don't register (nothing to animate).
+            // Already there: settle synchronously, fire on_finish(true),
+            // and don't register (nothing to animate).
             let mut st = self.state.borrow_mut();
             st.value.set(target);
             st.active = false;
-            let mut cbs = std::mem::take(&mut st.on_finish);
-            drop(st);
-            for cb in cbs.iter_mut() {
-                cb();
-            }
-            self.state.borrow_mut().on_finish = cbs;
+            st.velocity = 0.0;
+            st.fire_on_finish(true);
             return;
         }
         register(&self.state);
     }
 
     /// Halt at the current value. Deregisters from the scheduler; the
-    /// value signal holds its last progress. Does not fire `on_finish`.
+    /// value signal holds its last progress. If a run was in flight, its
+    /// `on_finish` callbacks fire with `false` (the run was cancelled).
     pub fn stop(&self) {
-        self.state.borrow_mut().active = false;
+        let was_active = {
+            let mut st = self.state.borrow_mut();
+            let was = st.active;
+            st.active = false;
+            was
+        };
+        if was_active {
+            self.state.borrow_mut().fire_on_finish(false);
+        }
         deregister(&self.state);
     }
 
@@ -526,10 +649,14 @@ impl AnimationController {
         deregister(&self.state);
     }
 
-    /// Register a callback fired each time a non-repeating run reaches
-    /// its target (via `forward` / `reverse` / `animate_to`). Multiple
-    /// callbacks accumulate.
-    pub fn on_finish(&self, cb: impl FnMut() + 'static) {
+    /// Register a callback fired each time a non-repeating run finishes.
+    /// The callback receives `finished: bool` — `true` when the run
+    /// reached its target naturally, `false` when it was cancelled by
+    /// [`stop`](Self::stop) or interrupted by a new run (Reanimated's
+    /// completion callback). Callbacks are `FnMut`, accumulate, and stay
+    /// registered across runs. Owner-dispose does **not** fire them (it is
+    /// teardown, not a logical cancel).
+    pub fn on_finish(&self, cb: impl FnMut(bool) + 'static) {
         self.state.borrow_mut().on_finish.push(Box::new(cb));
     }
 
@@ -566,5 +693,11 @@ impl AnimationController {
     /// Whether this controller is currently self-driving.
     pub fn is_animating(&self) -> bool {
         self.state.borrow().active
+    }
+
+    /// (Test only) the current spring velocity (progress units / second).
+    #[doc(hidden)]
+    pub fn __velocity(&self) -> f32 {
+        self.state.borrow().velocity
     }
 }
