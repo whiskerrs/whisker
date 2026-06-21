@@ -171,19 +171,21 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
     {
         point(top, ctrl, Role::Top, mode);
         point(under, ctrl, Role::Under, mode);
+        // Drive the backdrop dim off the same controller so it darkens
+        // during the drag AND animates in lockstep with the settle run.
+        if let Some(dim_drive) = &bridge.dim_drive {
+            dim_drive.set(Some(ctrl.clone()));
+        }
     }
     Some(bridge)
 }
 
 /// Scrub the pair to `back_progress` (0 = top present, 1 = swiped away):
-/// set the shared top controller's progress (both wrappers re-pose via
-/// their pose bindings) and darken the backdrop proportionally.
+/// set the shared top controller's progress. Both wrappers re-pose and the
+/// backdrop dim follows automatically via their reactive bindings.
 pub(crate) fn scrub(bridge: &StackBridge, back_progress: f32) {
     if let Some(ctrl) = &bridge.top_ctrl {
         ctrl.set_value(1.0 - back_progress);
-    }
-    if let Some(dim) = &bridge.dim {
-        dim.set(back_progress.clamp(0.0, 1.0) * transition::PB_MAX_DIM);
     }
 }
 
@@ -201,7 +203,34 @@ pub(crate) fn settle(
     let Some(ctrl) = bridge.top_ctrl.clone() else {
         return;
     };
-    let dim = bridge.dim;
+    let dim_drive = bridge.dim_drive;
+    pb_log(&format!(
+        "settle commit={commit} value_before={} animating_before={}",
+        ctrl.value().get_untracked(),
+        ctrl.is_animating()
+    ));
+
+    // Guarantee a *visible* settle even when the OS pinned the final
+    // `backProgressed` to the extreme (which leaves the controller already
+    // ≈ the settle target, so `animate_to` would finish synchronously and
+    // the release would snap). If the start is within `MIN_SETTLE_SPAN` of
+    // the target, re-anchor it that far away so the run animates over a
+    // short-but-visible arc. `set_value` writes the progress once and
+    // leaves the controller idle, ready for the `reverse`/`forward` below.
+    const MIN_SETTLE_SPAN: f32 = 0.18;
+    let start = ctrl.value().get_untracked();
+    if commit {
+        // Target 0: if we're already near 0, back off to MIN_SETTLE_SPAN.
+        if start < MIN_SETTLE_SPAN {
+            ctrl.set_value(MIN_SETTLE_SPAN);
+        }
+    } else {
+        // Target 1: if we're already near 1, back off below it.
+        if start > 1.0 - MIN_SETTLE_SPAN {
+            ctrl.set_value(1.0 - MIN_SETTLE_SPAN);
+        }
+    }
+
     if commit {
         // Drive the top off-screen; both wrappers follow via their pose
         // bindings. On finish call `back()`, which runs the same
@@ -212,8 +241,9 @@ pub(crate) fn settle(
         ctrl.on_finish(move |finished| {
             if finished && !*done.borrow() {
                 *done.borrow_mut() = true;
-                if let Some(d) = dim {
-                    d.set(0.0);
+                // Release the dim drive (→ opacity 0) as the pop commits.
+                if let Some(d) = dim_drive {
+                    d.set(None);
                 }
                 nav.back();
             }
@@ -222,16 +252,22 @@ pub(crate) fn settle(
             Some(v) => ctrl.reverse_with_velocity(v),
             None => ctrl.reverse(),
         }
+        pb_log(&format!(
+            "settle commit: after reverse value={} animating={} (animating=false ⇒ instant-finished)",
+            ctrl.value().get_untracked(),
+            ctrl.is_animating()
+        ));
     } else {
         // Cancel: spring the top back to fully present; the under wrapper,
         // pointed at the same controller as `Under`, slides back to covered
-        // in lockstep. Clear the dim as it returns.
+        // in lockstep. The dim fades to 0 reactively as the controller
+        // returns to 1.0, then the drive is released on finish.
         let done = Rc::new(RefCell::new(false));
         ctrl.on_finish(move |finished| {
             if finished && !*done.borrow() {
                 *done.borrow_mut() = true;
-                if let Some(d) = dim {
-                    d.set(0.0);
+                if let Some(d) = dim_drive {
+                    d.set(None);
                 }
             }
         });
@@ -239,6 +275,11 @@ pub(crate) fn settle(
             Some(v) => ctrl.forward_with_velocity(v),
             None => ctrl.forward(),
         }
+        pb_log(&format!(
+            "settle cancel: after forward value={} animating={} (animating=false ⇒ instant-finished)",
+            ctrl.value().get_untracked(),
+            ctrl.is_animating()
+        ));
     }
 }
 
@@ -282,15 +323,24 @@ pub fn android_predictive_back() -> Element {
     // bridge's listener box requires.
     let state: Rc<RefCell<Option<StackBridge>>> = Rc::new(RefCell::new(None));
 
+    // Query the device display corner radius once on the first gesture
+    // (the host Activity is guaranteed attached by then) and feed it to
+    // the predictive pose so the card rounds to match the real screen.
+    let radius_fetched = Rc::new(std::cell::Cell::new(false));
+
     let started = {
         let shared = MainThreadOnly {
-            inner: (nav.clone(), state.clone()),
+            inner: (nav.clone(), state.clone(), radius_fetched.clone()),
         };
         module.on_event("backStarted", move |payload| {
             // Capture `shared` whole (not `shared.inner`) so Rust 2021
             // disjoint captures carry its `Send + Sync` impl.
             let shared = &shared;
-            let (nav, state) = &shared.inner;
+            let (nav, state, radius_fetched) = &shared.inner;
+            if !radius_fetched.get() {
+                radius_fetched.set(true);
+                fetch_device_corner_radius();
+            }
             *state.borrow_mut() = begin(nav, back_edge(&payload));
         })
     };
@@ -366,6 +416,19 @@ pub(crate) fn back_progress(payload: &WhiskerValue) -> f32 {
     .clamp(0.0, 1.0)
 }
 
+/// Query the native `PredictiveBack` module for the display's corner
+/// radius (dp) and install it as the predictive-back card radius. A
+/// synchronous module `invoke` — cheap, and called at most once.
+fn fetch_device_corner_radius() {
+    let v = module!("PredictiveBack").invoke("getDeviceCornerRadius", std::vec![]);
+    let dp = match v {
+        WhiskerValue::Float(f) => f as f32,
+        WhiskerValue::Int(i) => i as f32,
+        _ => return,
+    };
+    transition::set_device_corner_radius(dp);
+}
+
 /// Read `swipeEdge` (0 = left, 1 = right) from a back-event payload,
 /// defaulting to left.
 fn back_edge(payload: &WhiskerValue) -> SwipeEdge {
@@ -376,6 +439,33 @@ fn back_edge(payload: &WhiskerValue) -> SwipeEdge {
         Some(WhiskerValue::Int(v)) => SwipeEdge::from_android(*v),
         Some(WhiskerValue::Float(v)) => SwipeEdge::from_android(*v as i64),
         _ => SwipeEdge::Left,
+    }
+}
+
+/// DIAG (temporary): trace line visible in `adb logcat -s WhiskerPB`
+/// via the bridge's guaranteed-linked `__android_log_print` path. Used to
+/// confirm the controller value / animating state at settle time on
+/// device. Remove once the settle smoothness is verified.
+pub(crate) fn pb_log(msg: &str) {
+    #[cfg(target_os = "android")]
+    {
+        unsafe extern "C" {
+            fn whisker_bridge_log_info(
+                tag: *const std::os::raw::c_char,
+                msg: *const std::os::raw::c_char,
+            );
+        }
+        let tag = b"WhiskerPB\0";
+        let mut buf = Vec::with_capacity(msg.len() + 1);
+        buf.extend_from_slice(msg.as_bytes());
+        buf.push(0);
+        unsafe {
+            whisker_bridge_log_info(tag.as_ptr() as *const _, buf.as_ptr() as *const _);
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        eprintln!("[pb] {msg}");
     }
 }
 

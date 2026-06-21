@@ -72,10 +72,12 @@ pub struct StackBridge {
     pub top_pose: Option<PoseBinding>,
     /// The revealed-under wrapper's pose binding, if any.
     pub under_pose: Option<PoseBinding>,
-    /// The stack's backdrop-dim opacity signal (0 = none). A back gesture
-    /// drives this with `back_progress * PB_MAX_DIM` so the area behind
-    /// the shrinking top card darkens; settle/cancel returns it to 0.
-    pub dim: Option<RwSignal<f32>>,
+    /// The stack's backdrop-dim **drive**: when `Some(ctrl)`, the dim
+    /// opacity reactively follows `(1 - ctrl.value()) * PB_MAX_DIM`, so it
+    /// darkens during the drag AND animates in lockstep with the settle
+    /// run. A back gesture sets this to the top controller on `begin` and
+    /// clears it (`None` → dim 0) when the settle finishes.
+    pub dim_drive: Option<RwSignal<Option<AnimationController>>>,
     /// The transition kind of the top entry.
     pub transition: Transition,
     /// Whether this stack currently has something to pop.

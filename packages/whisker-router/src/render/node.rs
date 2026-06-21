@@ -244,14 +244,21 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
     let handle = handle.clone();
 
     // Backdrop-dim layer: a black absolute fill that darkens the area
-    // *behind* the top card during a predictive-back gesture. Its opacity
-    // follows `dim` (0 at rest). Kept positioned just below the top
-    // wrapper in DOM order by `reconcile_stack`.
+    // *behind* the top card during a predictive-back gesture. Kept
+    // positioned just below the top wrapper in DOM order by
+    // `reconcile_stack`. Its opacity REACTIVELY follows the gesture's
+    // controller (`dim_drive`): `(1 - value) * PB_MAX_DIM` while a gesture
+    // is active, 0 otherwise — so it tracks both the drag and the settle
+    // animation, not just a one-shot per-frame write.
     let dim = create_element(ElementTag::View);
-    let dim_signal = whisker::RwSignal::new(0.0_f32);
+    let dim_drive: whisker::RwSignal<Option<AnimationController>> = whisker::RwSignal::new(None);
     {
         let dim_eff = dim;
-        effect(move || set_inline_styles(dim_eff, &dim_style(dim_signal.get())));
+        let opacity = computed(move || match dim_drive.get() {
+            Some(ctrl) => (1.0 - ctrl.value().get()) * transition::PB_MAX_DIM,
+            None => 0.0,
+        });
+        effect(move || set_inline_styles(dim_eff, &dim_style(opacity.get())));
     }
     append_child(slot, dim);
 
@@ -266,7 +273,7 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
         let Some(RouteState::Stack(stack)) = slice.get() else {
             return;
         };
-        reconcile_stack(&handle_eff, &path_eff, slot, dim, dim_signal, &live, &stack);
+        reconcile_stack(&handle_eff, &path_eff, slot, dim, dim_drive, &live, &stack);
     });
 
     slot
@@ -296,7 +303,7 @@ fn reconcile_stack(
     path: &NodePath,
     slot: Element,
     dim: Element,
-    dim_signal: whisker::RwSignal<f32>,
+    dim_drive: whisker::RwSignal<Option<AnimationController>>,
     live: &Rc<RefCell<Vec<StackWrapper>>>,
     stack: &crate::core::StackState,
 ) {
@@ -434,7 +441,7 @@ fn reconcile_stack(
         top_ctrl: top_w.map(|w| w.ctrl.clone()),
         top_pose: top_w.map(pose_of),
         under_pose: under_w.map(pose_of),
-        dim: Some(dim_signal),
+        dim_drive: Some(dim_drive),
         transition: top_w.map(|w| w.transition).unwrap_or_default(),
         can_back: l.len() > 1,
     };

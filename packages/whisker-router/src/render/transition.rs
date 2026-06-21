@@ -66,13 +66,37 @@ impl SwipeEdge {
 /// Minimum scale the cards shrink to at full back progress (Android's
 /// system preview shrinks to ~0.9).
 const PB_MIN_SCALE: f32 = 0.9;
-/// Corner radius (px) the top card reaches at full progress.
-const PB_MAX_RADIUS: f32 = 24.0;
+/// Default corner radius (dp) the top card reaches at full progress, used
+/// until [`set_device_corner_radius`] overrides it with the real device
+/// display radius. iOS keeps this default.
+const PB_DEFAULT_RADIUS: f32 = 24.0;
 /// How far (fraction of width) a left-edge swipe nudges the top card to
 /// the right at full progress.
 const PB_EDGE_SHIFT: f32 = 0.06;
 /// Max dim of the backdrop behind the top card at full progress.
 pub const PB_MAX_DIM: f32 = 0.30;
+
+thread_local! {
+    /// The corner radius (dp) the predictive-back card rounds to at full
+    /// progress. Defaults to [`PB_DEFAULT_RADIUS`]; the Android gesture
+    /// overrides it once with the real display radius (queried from the
+    /// `PredictiveBack` module's `getDeviceCornerRadius`).
+    static DEVICE_CORNER_RADIUS: std::cell::Cell<f32> =
+        const { std::cell::Cell::new(PB_DEFAULT_RADIUS) };
+}
+
+/// Set the device's display corner radius (dp) used for the predictive
+/// card. Called once by the Android gesture after querying the host.
+pub(crate) fn set_device_corner_radius(dp: f32) {
+    if dp.is_finite() && dp >= 0.0 {
+        DEVICE_CORNER_RADIUS.with(|c| c.set(dp));
+    }
+}
+
+/// The current max predictive-back corner radius (dp).
+fn max_corner_radius() -> f32 {
+    DEVICE_CORNER_RADIUS.with(|c| c.get())
+}
 
 /// How far the covered screen parallax-slides while the top screen is
 /// fully present (fraction of width). Mirrors `IosSlide`'s 30% feel.
@@ -176,9 +200,10 @@ pub fn predictive_pose(role: Role, progress: f32, edge: SwipeEdge) -> Pose {
     let p = progress.clamp(0.0, 1.0);
     let back = 1.0 - p; // 0 at rest, 1 fully dismissed
     let scale = 1.0 - back * (1.0 - PB_MIN_SCALE);
+    let max_radius = max_corner_radius();
     match role {
         Role::Top => {
-            let radius = back * PB_MAX_RADIUS;
+            let radius = back * max_radius;
             let x = match edge {
                 // Left swipe: the card slides toward the right edge.
                 SwipeEdge::Left => back * PB_EDGE_SHIFT * 100.0,
@@ -200,7 +225,7 @@ pub fn predictive_pose(role: Role, progress: f32, edge: SwipeEdge) -> Pose {
             Pose {
                 transform: format!("translateX({x}%) scale({scale})"),
                 opacity: 1.0,
-                radius_px: back * PB_MAX_RADIUS,
+                radius_px: back * max_radius,
             }
         }
     }

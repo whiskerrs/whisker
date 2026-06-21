@@ -35,6 +35,8 @@
 
 package rs.whisker.router
 
+import android.os.Build
+import android.view.RoundedCorner
 import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -42,6 +44,11 @@ import rs.whisker.runtime.HostAttachedListener
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
+
+/** Fallback corner radius (dp) for devices that don't expose the
+ *  `RoundedCorner` API (< API 31) or report a square display. Matches
+ *  the Material predictive-back default. */
+private const val DEFAULT_CORNER_RADIUS_DP = 24.0
 
 /**
  * `whisker-router:PredictiveBack` module. View-less — registers itself
@@ -77,6 +84,28 @@ public class PredictiveBackModule : Module() {
         OnStopObserving("backStarted") { teardown() }
         OnStopObserving("backCancelled") { teardown() }
         OnStopObserving("backInvoked") { teardown() }
+
+        // Static device info: the display's top-left rounded-corner radius
+        // in dp, so the predictive-back preview can round its card to match
+        // the screen. Rust calls this once (not per frame) and caches it.
+        Function("getDeviceCornerRadius") { _ -> WhiskerValue.Float(deviceCornerRadiusDp()) }
+    }
+
+    /**
+     * The display's top-left rounded-corner radius in **dp** (px / density),
+     * via the API 31+ `RoundedCorner` API. Falls back to
+     * [DEFAULT_CORNER_RADIUS_DP] on older platforms, square displays, or
+     * when the host Activity isn't resolvable.
+     */
+    private fun deviceCornerRadiusDp(): Double {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return DEFAULT_CORNER_RADIUS_DP
+        val activity = appContext.currentActivity as? ComponentActivity ?: return DEFAULT_CORNER_RADIUS_DP
+        val decor = activity.window?.decorView ?: return DEFAULT_CORNER_RADIUS_DP
+        val insets = decor.rootWindowInsets ?: return DEFAULT_CORNER_RADIUS_DP
+        val radiusPx = insets.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)?.radius ?: 0
+        if (radiusPx <= 0) return DEFAULT_CORNER_RADIUS_DP
+        val density = activity.resources.displayMetrics.density.takeIf { it > 0f } ?: 1f
+        return (radiusPx / density).toDouble()
     }
 
     private fun ensureRegistered() {

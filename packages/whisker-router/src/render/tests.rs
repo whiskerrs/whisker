@@ -581,9 +581,15 @@ fn predictive_back_progress_scrubs_top_controller() {
         flush();
         settle_animations();
 
-        // backStarted → begin(): grabs the active stack's bridge.
+        // backStarted → begin(): grabs the active stack's bridge and
+        // points the backdrop dim at the top controller.
         let bridge = begin(&h, SwipeEdge::Left).expect("a poppable Slide stack yields a bridge");
         let ctrl = bridge.top_ctrl.clone().expect("top ctrl");
+        let dim_drive = bridge.dim_drive.expect("dim drive published");
+        assert!(
+            dim_drive.get_untracked().is_some(),
+            "begin() drives the dim off the gesture controller"
+        );
 
         // backProgressed{progress} → scrub: controller = 1 - progress.
         scrub(&bridge, back_progress(&progress_payload(0.0)));
@@ -619,6 +625,61 @@ fn predictive_back_invoke_commits_pop() {
         settle_animations();
 
         assert_eq!(h.current().get().path, NodePath(vec![0]), "popped to home");
+    });
+    owner.dispose();
+}
+
+#[test]
+fn settle_animates_even_when_drag_pinned_to_extreme() {
+    // The OS can send a final `backProgressed(progress≈1)` right before
+    // commit, leaving the controller at ≈0 — settle must still animate a
+    // visible arc (re-anchor), not snap.
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+        settle_animations();
+
+        let bridge = begin(&h, SwipeEdge::Left).expect("bridge");
+        let ctrl = bridge.top_ctrl.clone().expect("ctrl");
+        // Drag all the way (progress 1.0 → controller value 0.0).
+        scrub(&bridge, 1.0);
+        assert!(
+            ctrl.value().get_untracked() < 0.01,
+            "pinned to ~0 by full drag"
+        );
+
+        // Right after settle, the re-anchor must have moved the value off
+        // the pinned extreme so the reverse run has a real arc to animate.
+        settle(&h, &bridge, /* commit = */ true, None);
+        let reanchored = ctrl.value().get_untracked();
+        assert!(
+            reanchored > 0.1,
+            "settle re-anchored the pinned value off 0 so it animates; got {reanchored}"
+        );
+        assert!(ctrl.is_animating(), "and a real run is registered");
+        // First mid-animation frame shows an intermediate value (not 0).
+        whisker_animation::__step_for_tests(1000.0);
+        flush();
+        whisker_animation::__step_for_tests(1016.0);
+        flush();
+        let mid = ctrl.value().get_untracked();
+        assert!(
+            mid > 0.02 && mid < reanchored,
+            "settle animates a visible arc from the re-anchored value; mid={mid}"
+        );
+        // Drive to completion: the pop still commits.
+        settle_animations();
+        assert_eq!(
+            h.current().get().path,
+            NodePath(vec![0]),
+            "still commits the pop"
+        );
     });
     owner.dispose();
 }
@@ -714,4 +775,22 @@ fn predictive_pose_material_shape() {
         under.transform.contains("translateX(-60%)"),
         "under peeks from the left: {under:?}"
     );
+}
+
+#[test]
+fn device_corner_radius_overrides_predictive_card_radius() {
+    use crate::render::transition::{Role, SwipeEdge, predictive_pose, set_device_corner_radius};
+
+    // Default is 24dp at full back.
+    assert!((predictive_pose(Role::Top, 0.0, SwipeEdge::Left).radius_px - 24.0).abs() < 1e-3);
+
+    // Override with a real device radius; the card rounds to match.
+    set_device_corner_radius(40.0);
+    assert!((predictive_pose(Role::Top, 0.0, SwipeEdge::Left).radius_px - 40.0).abs() < 1e-3);
+    // Mid-progress scales proportionally (back = 0.5 → 20dp).
+    assert!((predictive_pose(Role::Top, 0.5, SwipeEdge::Left).radius_px - 20.0).abs() < 1e-3);
+
+    // Restore default so test ordering can't leak the override (the
+    // thread-local persists within a test thread).
+    set_device_corner_radius(24.0);
 }
