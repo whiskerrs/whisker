@@ -408,3 +408,75 @@ fn pop_settles_survivor_to_active_pose() {
     });
     owner.dispose();
 }
+
+#[test]
+fn push_settles_top_to_full_progress() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+        settle_animations();
+
+        // After the push settles, the top (Detail) must be at progress 1.0
+        // — the precondition that makes a later `back()` reverse animate a
+        // full 1 → 0 slide-out instead of instant-finishing.
+        let bridge = h
+            .active_stack_bridge_for_test(&NodePath::root())
+            .expect("bridge");
+        let detail_ctrl = bridge.top_ctrl.clone().expect("detail ctrl");
+        assert_eq!(
+            detail_ctrl.value().get_untracked(),
+            1.0,
+            "top settles at progress 1.0 after push"
+        );
+    });
+    owner.dispose();
+}
+
+#[test]
+fn pop_animates_outgoing_top_through_intermediate_frames() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        h.navigate(&Target::id("detail")).unwrap();
+        flush();
+        settle_animations();
+
+        let detail_ctrl = h
+            .active_stack_bridge_for_test(&NodePath::root())
+            .and_then(|b| b.top_ctrl)
+            .expect("detail ctrl");
+
+        // Pop, then step a few frames WITHOUT fully settling and record the
+        // outgoing top's progress trajectory: it must descend through
+        // intermediate values (a visible slide-out), not instant-finish at
+        // 0 on the first frame (the "Detail vanishes from frame 1" bug).
+        assert!(h.back());
+        flush();
+        let mut t = 1000.0;
+        let mut traj = Vec::new();
+        for _ in 0..6 {
+            whisker_animation::__step_for_tests(t);
+            flush();
+            traj.push(detail_ctrl.value().get_untracked());
+            t += 16.0;
+        }
+        assert!(
+            traj.iter().any(|&p| p > 0.05 && p < 0.95),
+            "outgoing top should traverse intermediate reverse frames (visible \
+             slide-out), not pop instantly; traj={traj:?}"
+        );
+    });
+    owner.dispose();
+}

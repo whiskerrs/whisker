@@ -270,11 +270,19 @@ fn reconcile_stack(
                 let drive = w.ctrl.clone();
                 w.ctrl.set_value(0.0);
                 set_pose(&w, &drive, Role::Top);
+                // Apply the incoming start pose immediately (off-screen
+                // right) so frame 1 doesn't flash it at 0%.
+                {
+                    let (t, o) = transition::pose(w.transition, Role::Top, 0.0);
+                    set_inline_styles(w.wrapper, &wrapper_style(t, o));
+                }
                 {
                     let l = live.borrow();
                     if let Some(under) = l.last() {
                         under.owner.resume(); // animate it while covered
                         set_pose(under, &drive, Role::Under);
+                        let (t, o) = transition::pose(under.transition, Role::Under, 0.0);
+                        set_inline_styles(under.wrapper, &wrapper_style(t, o));
                     }
                 }
                 if w.transition == Transition::None {
@@ -381,14 +389,41 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
     let drive = popped.ctrl.clone();
     let transition = popped.transition;
 
-    // Point the popped top at the drive ctrl (Top) — it already is, but
-    // be explicit — and the revealed survivor at the same ctrl (Under).
+    // Guarantee the reverse animates over the full range: if the top's
+    // progress is anything other than 1.0 (e.g. an interrupted run, or a
+    // device frame that left it short), `reverse()`'s target would already
+    // be reached and `on_finish(true)` would fire on the first frame —
+    // popping the screen with no visible slide-out. Anchoring at 1.0 first
+    // forces a real 1 → 0 animation.
+    drive.set_value(1.0);
+
+    // Point the popped top at the drive ctrl (Top) and the revealed
+    // survivor at the same ctrl (Under).
     set_pose(&popped, &drive, Role::Top);
+
+    // Paint order: re-append the outgoing top so it is the front-most
+    // sibling and slides away *over* the revealed screen (a later sibling
+    // paints on top in Lynx). Without this the revealed full-screen
+    // survivor can cover the outgoing screen from frame 1.
+    remove_child(slot, popped.wrapper);
+    append_child(slot, popped.wrapper);
+
+    // Apply the start pose immediately (don't wait for the deferred style
+    // effect to flush) so frame 1 already shows the top fully present
+    // rather than a stale/blank pose.
+    {
+        let (t, o) = transition::pose(transition, Role::Top, 1.0);
+        set_inline_styles(popped.wrapper, &wrapper_style(t, o));
+    }
+
     let survivor_handle = {
         let l = live.borrow();
         l.last().map(|w| {
             w.owner.resume();
             set_pose(w, &drive, Role::Under);
+            // Apply the revealed survivor's start (fully-covered) pose now.
+            let (t, o) = transition::pose(transition, Role::Under, 1.0);
+            set_inline_styles(w.wrapper, &wrapper_style(t, o));
             // Capture what we need to re-settle the survivor on finish.
             (w.wrapper, w.ctrl.clone(), w.pose_ctrl, w.pose_role)
         })
