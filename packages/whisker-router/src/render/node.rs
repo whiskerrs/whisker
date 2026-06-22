@@ -566,8 +566,19 @@ fn mount_wrapper(
             set_inline_styles(wrapper, &wrapper_style(&pose));
         });
 
+        // Clip layer: `overflow: hidden; border-radius` on the *wrapper*
+        // did NOT clip the user's screen view on Lynx — the opaque child
+        // covers the wrapper and isn't rounded (a Lynx draw quirk, like the
+        // row-default one). The proven structure is a dedicated clip view
+        // BETWEEN the transform wrapper and the child: wrapper (transform /
+        // opacity only) → clip_view (border-radius + overflow:hidden, sized
+        // 100%) → child. The clip view is the *direct* parent of the screen
+        // content, so Lynx rounds it.
+        let clip = create_element(ElementTag::View);
+        set_inline_styles(clip, &clip_view_style());
         let child = mount_node(handle, child_path);
-        append_child(wrapper, child);
+        append_child(clip, child);
+        append_child(wrapper, clip);
         (wrapper, ctrl, pose_ctrl, pose_role, pose_mode)
     });
     append_child(slot, wrapper);
@@ -607,21 +618,35 @@ fn stack_container_style() -> String {
 }
 
 /// Base style for a stack wrapper: absolutely-filled, column flow, with
-/// the [`Pose`]'s transform + opacity. The corner radius is a **constant**
-/// clip at the device's screen radius (not animated) — like iOS, every
-/// screen is always rounded to the bezel, so the rounding is invisible at
-/// rest (it coincides with the physical display corners) and only becomes
-/// visible once the predictive-back scale shrinks the card inward.
-/// `overflow: hidden` clips children to the rounded corners; the transform
-/// origin is centred so the scale shrinks around the middle.
+/// the [`Pose`]'s transform + opacity. The corner radius / clipping live on
+/// the inner [`clip_view_style`], NOT here — see `mount_wrapper`. The
+/// transform origin is centred so the predictive-back scale shrinks the
+/// card around its middle.
 fn wrapper_style(pose: &Pose) -> String {
     format!(
         "position: absolute; left: 0; top: 0; right: 0; bottom: 0; \
-         display: flex; flex-direction: column; overflow: hidden; \
-         transform-origin: 50% 50%; transform: {}; opacity: {}; \
-         border-radius: {}px;",
-        pose.transform,
-        pose.opacity,
-        transition::screen_corner_radius()
+         display: flex; flex-direction: column; \
+         transform-origin: 50% 50%; transform: {}; opacity: {};",
+        pose.transform, pose.opacity,
     )
+}
+
+/// Style for the per-screen **clip view** — the direct parent of the
+/// user's screen content. Carries the constant device-radius rounding +
+/// `overflow: hidden`, sized to fill the transform wrapper. Like iOS,
+/// every screen is always rounded to the bezel, so the rounding is
+/// invisible at rest (it coincides with the physical display corners) and
+/// only becomes visible once the predictive-back scale shrinks the card.
+///
+/// DIAG (temporary): a magenta background + an exaggerated 80px radius so
+/// the device check can confirm Lynx actually rounds + clips the *direct*
+/// child here (where it failed on the wrapper). Replace `80` with
+/// `transition::screen_corner_radius()` and drop the background once the
+/// clip-view structure is confirmed on device.
+fn clip_view_style() -> String {
+    let _ = transition::screen_corner_radius();
+    "position: absolute; left: 0; top: 0; width: 100%; height: 100%; \
+     display: flex; flex-direction: column; overflow: hidden; \
+     border-radius: 80px; background-color: #FF0000;"
+        .to_string()
 }

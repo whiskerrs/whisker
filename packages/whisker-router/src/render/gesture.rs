@@ -310,35 +310,32 @@ pub fn android_predictive_back() -> Element {
     // bridge's listener box requires.
     let state: Rc<RefCell<Option<StackBridge>>> = Rc::new(RefCell::new(None));
 
-    // Query the device display corner radius once on the first gesture
-    // (the host Activity is guaranteed attached by then) and feed it to
-    // the predictive pose so the card rounds to match the real screen.
-    let radius_fetched = Rc::new(std::cell::Cell::new(false));
-
     let started = {
         let shared = MainThreadOnly {
-            inner: (nav.clone(), state.clone(), radius_fetched.clone()),
+            inner: (nav.clone(), state.clone()),
         };
         module.on_event("backStarted", move |payload| {
             // Capture `shared` whole (not `shared.inner`) so Rust 2021
             // disjoint captures carry its `Send + Sync` impl.
             let shared = &shared;
-            let (nav, state, radius_fetched) = &shared.inner;
+            let (nav, state) = &shared.inner;
             pb_log("event: backStarted");
-            fetch_corner_radius_once(radius_fetched);
+            // Fallback in case the router-init fetch ran before the host
+            // Activity attached (idempotent once installed).
+            try_fetch_device_corner_radius();
             *state.borrow_mut() = begin(nav, back_edge(&payload));
         })
     };
 
     let progressed = {
         let shared = MainThreadOnly {
-            inner: (state.clone(), radius_fetched.clone()),
+            inner: state.clone(),
         };
         module.on_event("backProgressed", move |payload| {
             let shared = &shared;
-            let (state, radius_fetched) = &shared.inner;
-            // Also fetch here in case the platform skips `backStarted`.
-            fetch_corner_radius_once(radius_fetched);
+            let state = &shared.inner;
+            // Also retry here in case the platform skips `backStarted`.
+            try_fetch_device_corner_radius();
             if let Some(bridge) = state.borrow().as_ref() {
                 scrub(bridge, back_progress(&payload));
             }
@@ -403,37 +400,39 @@ pub(crate) fn back_progress(payload: &WhiskerValue) -> f32 {
     .clamp(0.0, 1.0)
 }
 
-/// Run [`fetch_device_corner_radius`] at most once, gated by `fetched`.
-/// Fires on the first back gesture (start or progress) — by then the host
-/// Activity is attached, so `getDeviceCornerRadius` can resolve it.
-fn fetch_corner_radius_once(fetched: &std::cell::Cell<bool>) {
-    if !fetched.get() {
-        fetched.set(true);
-        fetch_device_corner_radius();
-    }
-}
+/// Global "device corner radius successfully installed" latch. Set true
+/// only on a *successful* fetch (a numeric result), so an early attempt
+/// (e.g. at router init, before the host Activity attaches) that falls
+/// back to the default can be retried on the first real gesture.
+static CORNER_RADIUS_INSTALLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
-/// Query the native `PredictiveBack` module for the display's corner
-/// radius (dp) and install it as the predictive-back card radius. A
-/// synchronous module `invoke` — cheap, and called at most once.
-fn fetch_device_corner_radius() {
-    pb_log("fetch_device_corner_radius: invoking getDeviceCornerRadius");
+/// Query the device display corner radius and install it, at most once
+/// (idempotent across the router-init call and the per-gesture fallback).
+/// No-op once a value has been installed. `pub(crate)` so `Router` can
+/// prime it at init.
+pub(crate) fn try_fetch_device_corner_radius() {
+    use std::sync::atomic::Ordering;
+    if CORNER_RADIUS_INSTALLED.load(Ordering::Relaxed) {
+        return;
+    }
+    pb_log("try_fetch_device_corner_radius: invoking getDeviceCornerRadius");
     let v = module!("PredictiveBack").invoke("getDeviceCornerRadius", std::vec![]);
     pb_log(&format!(
-        "fetch_device_corner_radius: invoke returned {v:?}"
+        "try_fetch_device_corner_radius: invoke returned {v:?}"
     ));
     let dp = match v {
         WhiskerValue::Float(f) => f as f32,
         WhiskerValue::Int(i) => i as f32,
         _ => {
-            pb_log("fetch_device_corner_radius: non-numeric result → keeping 24dp default");
+            pb_log("try_fetch_device_corner_radius: non-numeric → keep default, will retry");
             return;
         }
     };
-    pb_log(&format!("fetch_device_corner_radius: installing {dp}dp"));
     transition::set_device_corner_radius(dp);
+    CORNER_RADIUS_INSTALLED.store(true, Ordering::Relaxed);
     pb_log(&format!(
-        "fetch_device_corner_radius: max_corner_radius() now reads {}dp",
+        "try_fetch_device_corner_radius: installed {dp}dp; max_corner_radius()={}dp",
         transition::max_corner_radius()
     ));
 }

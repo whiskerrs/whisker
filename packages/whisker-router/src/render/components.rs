@@ -88,6 +88,13 @@ pub fn router(handle: RouterHandle, children: Children) -> Element {
     };
     provide_context(RouterRoot(root));
 
+    // Prime the device screen corner radius at router init (it feeds the
+    // constant per-screen clip). Run in `on_mount` so the host Activity has
+    // a chance to attach; if it isn't resolvable yet the call falls back to
+    // the default and the first back gesture retries (idempotent once a
+    // value is installed).
+    whisker::on_mount(crate::render::gesture::try_fetch_device_corner_radius);
+
     root
 }
 
