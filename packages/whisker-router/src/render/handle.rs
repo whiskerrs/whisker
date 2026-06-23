@@ -41,7 +41,8 @@ use whisker::{AnimationController, ReadSignal, RwSignal, computed, provide_conte
 use crate::core::{
     CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState, Scope, Target,
 };
-use crate::render::registry::{RenderFn, RouteRegistry, Transition};
+use crate::render::registry::{RenderFn, RouteRegistry};
+use crate::render::transition::Transition;
 
 /// A repointable pose binding for one stack wrapper: the controller whose
 /// progress drives it + the role it plays. The swipe-back gesture sets
@@ -78,8 +79,6 @@ pub struct StackBridge {
     /// run. A back gesture sets this to the top controller on `begin` and
     /// clears it (`None` → dim 0) when the settle finishes.
     pub dim_drive: Option<RwSignal<Option<AnimationController>>>,
-    /// The transition kind of the top entry.
-    pub transition: Transition,
     /// Whether this stack currently has something to pop.
     pub can_back: bool,
 }

@@ -36,8 +36,7 @@ use whisker::{AnimationController, ElementTag, computed};
 
 use crate::core::{NodePath, RouteState, RouteTree};
 use crate::render::handle::RouterHandle;
-use crate::render::registry::Transition;
-use crate::render::transition::{self, Pose, PoseMode, Role};
+use crate::render::transition::{self, Pose, PoseMode, Role, Transition};
 
 /// Mount the node at `path` and return its phantom slot.
 ///
@@ -339,7 +338,7 @@ fn reconcile_stack(
                         set_pose(under, &drive, Role::Under);
                     }
                 }
-                if w.transition == Transition::None {
+                if w.transition.is_instant() {
                     drive.set_value(1.0);
                 } else {
                     drive.forward();
@@ -443,7 +442,6 @@ fn reconcile_stack(
         top_pose: top_w.map(pose_of),
         under_pose: under_w.map(pose_of),
         dim_drive: Some(dim_drive),
-        transition: top_w.map(|w| w.transition).unwrap_or_default(),
         can_back: l.len() > 1,
     };
     handle.set_stack_bridge(path.clone(), bridge);
@@ -456,7 +454,7 @@ fn reconcile_stack(
 /// resting controller.
 fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWrapper) {
     let drive = popped.ctrl.clone();
-    let transition = popped.transition;
+    let transition = popped.transition.clone();
 
     // Point the popped top at the drive ctrl (Top) and the revealed
     // survivor at the same ctrl (Under). The per-wrapper pose EFFECT is the
@@ -476,7 +474,7 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
         })
     };
 
-    if transition == Transition::None {
+    if transition.is_instant() {
         // No animation: drop immediately and settle the survivor.
         dispose_wrapper(slot, popped);
         if let Some((_w, ctrl, pose_ctrl, pose_role)) = survivor_handle {
@@ -541,7 +539,7 @@ fn mount_wrapper(
         // transition `transform` / `opacity` and `position: absolute`
         // stacking — none of which a style-less phantom can apply.
         let wrapper = create_element(ElementTag::View);
-        let ctrl = AnimationController::new(transition::config(transition));
+        let ctrl = AnimationController::new(transition.config());
 
         // Repointable pose inputs. The single style effect reads the
         // *currently assigned* controller's progress + role + mode, so
@@ -550,7 +548,7 @@ fn mount_wrapper(
         // `mode` to `Predictive` swaps in the Material preview.
         let pose_ctrl = whisker::RwSignal::new(ctrl.clone());
         let pose_role = whisker::RwSignal::new(Role::Top);
-        let pose_mode = whisker::RwSignal::new(PoseMode::Transition(transition));
+        let pose_mode = whisker::RwSignal::new(PoseMode::Transition(transition.clone()));
 
         // The single style writer for this wrapper: read the currently
         // assigned controller's progress + role + mode, compute the pose,
@@ -559,13 +557,9 @@ fn mount_wrapper(
             let c = pose_ctrl.get();
             let role = pose_role.get();
             let mode = pose_mode.get();
-            transition::pose_for(mode, role, c.value().get())
+            transition::pose_for(&mode, role, c.value().get())
         });
         let _ = idx;
-        effect(move || {
-            let pose = style.get();
-            set_inline_styles(wrapper, &wrapper_style(&pose));
-        });
 
         // Clip layer: `overflow: hidden; border-radius` on the *wrapper*
         // did NOT clip the user's screen view on Lynx — the opaque child
@@ -576,13 +570,22 @@ fn mount_wrapper(
         // 100%) → child. The clip view is the *direct* parent of the screen
         // content, so Lynx rounds it.
         let clip = create_element(ElementTag::View);
-        set_inline_styles(clip, &clip_view_style());
         // `clip-radius` is a Lynx **prop** (`@LynxProp`), NOT a CSS style —
         // it must be set as an attribute, not in the inline style string.
         // It forces the view to clip its children to `border-radius` (the
         // auto overflow:hidden path is disabled in the fork:
-        // `UIGroup.enableAutoClipRadius() == false`).
+        // `UIGroup.enableAutoClipRadius() == false`). The radius itself is
+        // written reactively below so it animates with the gesture.
         set_attribute(clip, "clip-radius", "true");
+
+        // One style writer drives both elements from the pose: the wrapper's
+        // transform/opacity AND the clip view's animated corner radius.
+        effect(move || {
+            let pose = style.get();
+            set_inline_styles(wrapper, &wrapper_style(&pose));
+            set_inline_styles(clip, &clip_view_style(pose.radius_px));
+        });
+
         let child = mount_node(handle, child_path);
         append_child(clip, child);
         append_child(wrapper, clip);
@@ -609,7 +612,7 @@ fn mount_wrapper(
 fn set_pose(w: &StackWrapper, c: &AnimationController, role: Role) {
     w.pose_ctrl.set(c.clone());
     w.pose_role.set(role);
-    w.pose_mode.set(PoseMode::Transition(w.transition));
+    w.pose_mode.set(PoseMode::Transition(w.transition.clone()));
 }
 
 /// Tear down a popped wrapper immediately (no animation).
@@ -639,22 +642,16 @@ fn wrapper_style(pose: &Pose) -> String {
 }
 
 /// Style for the per-screen **clip view** — the direct parent of the
-/// user's screen content. Carries the constant device-radius rounding +
-/// `overflow: hidden`, sized to fill the transform wrapper. Like iOS,
-/// every screen is always rounded to the bezel, so the rounding is
-/// invisible at rest (it coincides with the physical display corners) and
-/// only becomes visible once the predictive-back scale shrinks the card.
-///
-/// DIAG (temporary): a magenta background + an exaggerated 80px radius so
-/// the device check can confirm Lynx actually rounds + clips the *direct*
-/// child here (where it failed on the wrapper). Replace `80` with
-/// `transition::screen_corner_radius()` and drop the background once the
-/// clip-view structure is confirmed on device.
-fn clip_view_style() -> String {
-    let radius = transition::screen_corner_radius();
+/// user's screen content. Carries `overflow: hidden` and the **animated**
+/// corner `radius_px`, sized to fill the transform wrapper. The radius is
+/// `0` at rest (square screen) and grows to the device radius as the
+/// predictive-back gesture shrinks the card — Material style. The
+/// `clip-radius` Lynx attribute (set in `mount_wrapper`) is what makes the
+/// rounding actually clip the child.
+fn clip_view_style(radius_px: f32) -> String {
     format!(
         "position: absolute; left: 0; top: 0; width: 100%; height: 100%; \
          display: flex; flex-direction: column; overflow: hidden; \
-         border-radius: {radius}px;"
+         border-radius: {radius_px}px;"
     )
 }

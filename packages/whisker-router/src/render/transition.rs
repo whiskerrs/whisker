@@ -22,9 +22,129 @@
 //! the same progress. One controller, two posers — the
 //! "a gesture spans two routes" problem solved by composition.
 
+use std::rc::Rc;
+
 use whisker::AnimConfig;
 
-use crate::render::registry::Transition;
+/// A user-extensible screen transition: how a route enters and leaves when
+/// it becomes / stops being the top of its stack.
+///
+/// A transition is defined by a [`TransitionImpl`] — its timing
+/// ([`config`](TransitionImpl::config), duration + easing) and its
+/// `progress → CSS` posers ([`pose`](TransitionImpl::pose)). The built-ins
+/// ([`slide`](Transition::slide), [`fade`](Transition::fade),
+/// [`modal`](Transition::modal), [`none`](Transition::none)) are just
+/// in-crate impls; apps add their own with [`Transition::custom`].
+///
+/// `Rc`-backed so it is cheap to [`Clone`] and store per-route. Edge-swipe
+/// back is **not** part of a transition — it is enabled by mounting a
+/// gesture component (`SwipeBack` / `AndroidPredictiveBack`).
+#[derive(Clone)]
+pub struct Transition(Rc<dyn TransitionImpl>);
+
+/// Defines a [`Transition`]'s timing and per-progress poses. Implement this
+/// on your own type and wrap it with [`Transition::custom`] to add a custom
+/// screen transition (cf. Flutter's `PageTransitionsBuilder`).
+pub trait TransitionImpl {
+    /// The animation config (duration + easing) for the non-interactive
+    /// push/pop run. Duration is owned by the transition here (unlike
+    /// Flutter, which keeps it on the route).
+    fn config(&self) -> AnimConfig;
+
+    /// The CSS [`Pose`] for `role` at `progress` (the "presence of the top
+    /// screen": `1.0` = top fully present, `0.0` = top fully off). `Top` is
+    /// the entering/leaving screen, `Under` the one beneath it.
+    fn pose(&self, role: Role, progress: f32) -> Pose;
+
+    /// Whether the swap is instant (no animation) — the screen is exchanged
+    /// in one frame and the controller is settled synchronously. Default
+    /// `false`.
+    fn is_instant(&self) -> bool {
+        false
+    }
+
+    /// A short identifier for debugging / tests (e.g. `"slide"`).
+    fn name(&self) -> &'static str {
+        "custom"
+    }
+}
+
+impl Transition {
+    /// Wrap a custom [`TransitionImpl`] as a [`Transition`].
+    pub fn custom(imp: impl TransitionImpl + 'static) -> Self {
+        Transition(Rc::new(imp))
+    }
+
+    /// Horizontal iOS slide (the iOS default): the incoming screen slides
+    /// in from the right, the covered screen parallax-slides left + dims.
+    pub fn slide() -> Self {
+        Transition::custom(Slide)
+    }
+
+    /// Cross-fade opacity, no translation.
+    pub fn fade() -> Self {
+        Transition::custom(Fade)
+    }
+
+    /// No animation — the screen swaps in one frame.
+    pub fn none() -> Self {
+        Transition::custom(NoneTransition)
+    }
+
+    /// Slide up from the bottom (modal presentation).
+    pub fn modal() -> Self {
+        Transition::custom(Modal)
+    }
+
+    /// The Android default: a small horizontal slide combined with a fade
+    /// (Material shared-axis feel) — subtler than the full iOS slide.
+    pub fn android_default() -> Self {
+        Transition::custom(SmallSlideFade)
+    }
+
+    /// The animation config (duration + easing) for this transition.
+    pub fn config(&self) -> AnimConfig {
+        self.0.config()
+    }
+
+    /// The pose for `role` at `progress`.
+    pub fn pose(&self, role: Role, progress: f32) -> Pose {
+        self.0.pose(role, progress)
+    }
+
+    /// Whether the swap is instant (no animation).
+    pub fn is_instant(&self) -> bool {
+        self.0.is_instant()
+    }
+
+    /// The transition's short identifier (debugging / tests).
+    pub fn name(&self) -> &'static str {
+        self.0.name()
+    }
+}
+
+impl std::fmt::Debug for Transition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Transition({})", self.name())
+    }
+}
+
+/// The platform default: iOS gets the full [`slide`](Transition::slide);
+/// Android gets the subtler [`android_default`](Transition::android_default)
+/// (small slide + fade). This is whisker's analogue of Flutter's
+/// `PageTransitionsTheme` per-`TargetPlatform` default.
+impl Default for Transition {
+    fn default() -> Self {
+        #[cfg(target_os = "android")]
+        {
+            Transition::android_default()
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            Transition::slide()
+        }
+    }
+}
 
 /// The visual role of a wrapper within a transition pair.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -139,24 +259,12 @@ const PARALLAX: f32 = 0.30;
 /// How much the covered screen dims at full cover (0 = none, 1 = black).
 const DIM: f32 = 0.12;
 
-/// The animation config a [`Transition`] uses for its non-interactive
-/// push/pop run.
-pub fn config(transition: Transition) -> AnimConfig {
-    match transition {
-        // A snappy iOS-ish ease for slides; modal a touch longer.
-        Transition::Slide => AnimConfig::ease_out(300),
-        Transition::Fade => AnimConfig::ease_out(220),
-        Transition::Modal => AnimConfig::ease_out(340),
-        // `None` still uses a (instant) controller so the wiring is
-        // uniform; a 1ms duration settles next frame.
-        Transition::None => AnimConfig::ease_out(1),
-    }
-}
-
 /// How a wrapper poses itself for a given progress: either the normal
 /// route [`Transition`] (push/pop/button-back), or the Material
 /// **predictive-back** preview (driven live by a back gesture).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+///
+/// `Clone` (not `Copy`) since [`Transition`] is `Rc`-backed.
+#[derive(Clone, Debug)]
 pub enum PoseMode {
     /// Normal push/pop/replace transition for this route.
     Transition(Transition),
@@ -165,57 +273,51 @@ pub enum PoseMode {
 }
 
 /// Resolve a wrapper's [`Pose`] for `role` at `progress` under `mode`.
-pub fn pose_for(mode: PoseMode, role: Role, progress: f32) -> Pose {
+pub fn pose_for(mode: &PoseMode, role: Role, progress: f32) -> Pose {
     match mode {
-        PoseMode::Transition(t) => pose(t, role, progress),
-        PoseMode::Predictive(edge) => predictive_pose(role, progress, edge),
+        PoseMode::Transition(t) => t.pose(role, progress),
+        PoseMode::Predictive(edge) => predictive_pose(role, progress, *edge),
     }
 }
 
-/// A computed CSS pose for one wrapper: a `transform` value + an `opacity`.
+/// A computed CSS pose for one wrapper: a `transform`, an `opacity`, and
+/// the `border-radius` (px) the wrapper's clip view rounds to.
 ///
-/// The screen's **corner radius is NOT part of the pose** — it is a
-/// constant clip on the wrapper (see [`screen_corner_radius`] /
-/// [`crate::render::node`]), matching iOS where every screen is always
-/// rounded to the device bezel. The pose only animates scale / translate /
-/// opacity.
+/// The corner radius **animates with the gesture** (Material predictive
+/// back): `0` at rest (square screen), growing to the device radius as the
+/// card shrinks. Normal route transitions keep it `0`. The actual clipping
+/// is applied on the inner clip view (see [`crate::render::node`]), which
+/// needs the `clip-radius` Lynx attribute for the rounding to clip children.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pose {
     /// The `transform` CSS value.
     pub transform: String,
     /// The `opacity` (0..1).
     pub opacity: f32,
+    /// The `border-radius` in px the clip view rounds to (0 = square).
+    pub radius_px: f32,
 }
 
 impl Pose {
-    fn new(transform: String, opacity: f32) -> Self {
-        Pose { transform, opacity }
-    }
-}
-
-/// The CSS [`Pose`] for `role` at `progress` under `transition`.
-///
-/// `progress` is the "presence of the top screen" described in the
-/// module docs.
-pub fn pose(transition: Transition, role: Role, progress: f32) -> Pose {
-    let p = progress.clamp(0.0, 1.0);
-    let (transform, opacity) = match transition {
-        Transition::Slide => slide_pose(role, p),
-        Transition::Modal => modal_pose(role, p),
-        Transition::Fade => fade_pose(role, p),
-        Transition::None => {
-            // No motion; just hide the top until it is at least half in
-            // so a swap doesn't flash an off-screen frame.
-            match role {
-                Role::Top => (
-                    "translateX(0px)".to_string(),
-                    if p > 0.0 { 1.0 } else { 0.0 },
-                ),
-                Role::Under => ("translateX(0px)".to_string(), 1.0),
-            }
+    /// A pose with no corner rounding (`radius_px = 0`). The common
+    /// constructor for custom [`TransitionImpl::pose`] implementations.
+    pub fn new(transform: String, opacity: f32) -> Self {
+        Pose {
+            transform,
+            opacity,
+            radius_px: 0.0,
         }
-    };
-    Pose::new(transform, opacity)
+    }
+
+    /// A pose that also rounds the clip view to `radius_px` (used by the
+    /// predictive-back card).
+    pub fn with_radius(transform: String, opacity: f32, radius_px: f32) -> Self {
+        Pose {
+            transform,
+            opacity,
+            radius_px,
+        }
+    }
 }
 
 /// The Material-style **predictive-back** pose for `role` at `progress`
@@ -232,6 +334,9 @@ pub fn predictive_pose(role: Role, progress: f32, edge: SwipeEdge) -> Pose {
     let p = progress.clamp(0.0, 1.0);
     let back = 1.0 - p; // 0 at rest, 1 fully dismissed
     let scale = 1.0 - back * (1.0 - PB_MIN_SCALE);
+    // Corner radius animates with the gesture: square at rest (back=0),
+    // rounding to the device radius as the card shrinks (back=1).
+    let radius = back * screen_corner_radius();
     match role {
         Role::Top => {
             let x = match edge {
@@ -240,7 +345,7 @@ pub fn predictive_pose(role: Role, progress: f32, edge: SwipeEdge) -> Pose {
                 // Right swipe: shrink in place, centred.
                 SwipeEdge::Right => 0.0,
             };
-            Pose::new(format!("translateX({x}%) scale({scale})"), 1.0)
+            Pose::with_radius(format!("translateX({x}%) scale({scale})"), 1.0, radius)
         }
         Role::Under => {
             // Same scale; enters from the left. At rest (p=1) it sits just
@@ -248,54 +353,134 @@ pub fn predictive_pose(role: Role, progress: f32, edge: SwipeEdge) -> Pose {
             // progresses it slides right to peek beside the shrinking top.
             // `-100%` at p=1 (fully off-left), easing toward `-~60%`.
             let x = -100.0 + back * 40.0;
-            Pose::new(format!("translateX({x}%) scale({scale})"), 1.0)
+            Pose::with_radius(format!("translateX({x}%) scale({scale})"), 1.0, radius)
         }
     }
 }
 
+// ----- Built-in transitions -------------------------------------------
+
 /// Horizontal iOS slide: top enters from the right (100% → 0%), under
 /// parallaxes left (0% → -30%) and dims slightly.
-fn slide_pose(role: Role, p: f32) -> (String, f32) {
-    match role {
-        Role::Top => {
-            // p=0 → fully right (off), p=1 → centred.
-            let x = (1.0 - p) * 100.0;
-            (format!("translateX({x}%)"), 1.0)
+struct Slide;
+impl TransitionImpl for Slide {
+    fn config(&self) -> AnimConfig {
+        AnimConfig::ease_out(300)
+    }
+    fn name(&self) -> &'static str {
+        "slide"
+    }
+    fn pose(&self, role: Role, progress: f32) -> Pose {
+        let p = progress.clamp(0.0, 1.0);
+        match role {
+            Role::Top => {
+                // p=0 → fully right (off), p=1 → centred.
+                let x = (1.0 - p) * 100.0;
+                Pose::new(format!("translateX({x}%)"), 1.0)
+            }
+            Role::Under => {
+                // p=0 → at rest, p=1 → parallaxed left + dimmed.
+                let x = -(p * PARALLAX * 100.0);
+                Pose::new(format!("translateX({x}%)"), 1.0 - p * DIM)
+            }
         }
-        Role::Under => {
-            // p=0 → at rest, p=1 → parallaxed left + dimmed.
-            let x = -(p * PARALLAX * 100.0);
-            let opacity = 1.0 - p * DIM;
-            (format!("translateX({x}%)"), opacity)
+    }
+}
+
+/// The Android default: a small horizontal slide + a fade (Material
+/// shared-axis feel). The top slides only a short distance from the right
+/// while fading in; the under fades out a touch without a big parallax.
+struct SmallSlideFade;
+impl TransitionImpl for SmallSlideFade {
+    fn config(&self) -> AnimConfig {
+        AnimConfig::ease_out(280)
+    }
+    fn name(&self) -> &'static str {
+        "android-default"
+    }
+    fn pose(&self, role: Role, progress: f32) -> Pose {
+        let p = progress.clamp(0.0, 1.0);
+        match role {
+            Role::Top => {
+                // Small slide: ~8% of width from the right, plus a fade in.
+                let x = (1.0 - p) * 8.0;
+                Pose::new(format!("translateX({x}%)"), p)
+            }
+            Role::Under => {
+                // A slight reverse slide + fade out so the swap reads.
+                let x = -((1.0 - (1.0 - p)) * 4.0); // = -(p * 4.0)
+                Pose::new(format!("translateX({x}%)"), 1.0 - p * 0.3)
+            }
         }
     }
 }
 
 /// Modal: top slides up from the bottom (100% → 0% on Y); the under
 /// screen stays put (a modal covers without parallax).
-fn modal_pose(role: Role, p: f32) -> (String, f32) {
-    match role {
-        Role::Top => {
-            let y = (1.0 - p) * 100.0;
-            (format!("translateY({y}%)"), 1.0)
+struct Modal;
+impl TransitionImpl for Modal {
+    fn config(&self) -> AnimConfig {
+        AnimConfig::ease_out(340)
+    }
+    fn name(&self) -> &'static str {
+        "modal"
+    }
+    fn pose(&self, role: Role, progress: f32) -> Pose {
+        let p = progress.clamp(0.0, 1.0);
+        match role {
+            Role::Top => {
+                let y = (1.0 - p) * 100.0;
+                Pose::new(format!("translateY({y}%)"), 1.0)
+            }
+            Role::Under => Pose::new("translateX(0px)".to_string(), 1.0),
         }
-        Role::Under => ("translateX(0px)".to_string(), 1.0),
     }
 }
 
 /// Cross-fade: top fades in (opacity 0 → 1), no translation; under
 /// fades out a touch so the swap reads as a dissolve.
-fn fade_pose(role: Role, p: f32) -> (String, f32) {
-    match role {
-        Role::Top => ("translateX(0px)".to_string(), p),
-        Role::Under => ("translateX(0px)".to_string(), 1.0 - p * 0.5),
+struct Fade;
+impl TransitionImpl for Fade {
+    fn config(&self) -> AnimConfig {
+        AnimConfig::ease_out(220)
+    }
+    fn name(&self) -> &'static str {
+        "fade"
+    }
+    fn pose(&self, role: Role, progress: f32) -> Pose {
+        let p = progress.clamp(0.0, 1.0);
+        match role {
+            Role::Top => Pose::new("translateX(0px)".to_string(), p),
+            Role::Under => Pose::new("translateX(0px)".to_string(), 1.0 - p * 0.5),
+        }
     }
 }
 
-/// Whether this transition can be driven by an edge swipe-back gesture.
-/// Modal dismissal is a *downward* swipe (not wired this phase); fade /
-/// none have no spatial back affordance. Only the horizontal slide gets
-/// the iOS edge swipe.
-pub fn supports_edge_swipe(transition: Transition) -> bool {
-    matches!(transition, Transition::Slide)
+/// No animation — the screen swaps in one frame. Marked
+/// [`is_instant`](TransitionImpl::is_instant) so the reconcile skips the
+/// animated run entirely.
+struct NoneTransition;
+impl TransitionImpl for NoneTransition {
+    fn config(&self) -> AnimConfig {
+        // A (near-)instant controller so the wiring stays uniform.
+        AnimConfig::ease_out(1)
+    }
+    fn name(&self) -> &'static str {
+        "none"
+    }
+    fn is_instant(&self) -> bool {
+        true
+    }
+    fn pose(&self, role: Role, progress: f32) -> Pose {
+        let p = progress.clamp(0.0, 1.0);
+        match role {
+            // Hide the top until it is at least half in so a swap doesn't
+            // flash an off-screen frame.
+            Role::Top => Pose::new(
+                "translateX(0px)".to_string(),
+                if p > 0.0 { 1.0 } else { 0.0 },
+            ),
+            Role::Under => Pose::new("translateX(0px)".to_string(), 1.0),
+        }
+    }
 }

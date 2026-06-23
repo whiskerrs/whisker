@@ -11,7 +11,7 @@
 //! ```ignore
 //! let registry = RouteRegistry::new()
 //!     .route("home", |_| render! { Home {} })
-//!     .route_with("detail", Transition::Slide, |inst| {
+//!     .route_with("detail", Transition::slide(), |inst| {
 //!         let id = inst.params.get("id").cloned().unwrap_or_default();
 //!         render! { Detail(id: id) }
 //!     });
@@ -23,6 +23,7 @@ use std::rc::Rc;
 use whisker::runtime::view::Element;
 
 use crate::core::RouteInstance;
+use crate::render::transition::Transition;
 
 /// A screen-render closure: maps the concrete [`RouteInstance`] (its
 /// param values) to a freshly-rendered [`Element`].
@@ -51,30 +52,6 @@ where
     fn from(f: F) -> Self {
         RenderFn::new(f)
     }
-}
-
-/// How a [`Route`](crate::core::RouteTree::Route) enters and leaves when
-/// it becomes / stops being the top of its stack.
-///
-/// Because there is no `routes!` macro yet, the transition is carried
-/// per-route by the [`RouteRegistry`] rather than by the route
-/// declaration. The presets map to float-`Tween` posers in
-/// [`transition`](crate::render::transition); see that module for the
-/// actual `translateX` / opacity composition.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-pub enum Transition {
-    /// Horizontal slide (iOS `UINavigationController` style): the
-    /// incoming screen slides in from the right, the covered screen
-    /// parallax-slides a little to the left. **The default.**
-    #[default]
-    Slide,
-    /// Cross-fade opacity, no translation.
-    Fade,
-    /// No animation — the screen swaps in one frame.
-    None,
-    /// Slide up from the bottom (modal presentation); dismiss slides
-    /// back down.
-    Modal,
 }
 
 /// One registered route: its render closure + transition.
@@ -128,13 +105,13 @@ impl RouteRegistry {
         self.entries.get(id).map(|e| e.render.clone())
     }
 
-    /// The transition registered for `id` (defaults to
-    /// [`Transition::Slide`] when the id is unknown — the safe fallback
-    /// for a missing registration).
+    /// The transition registered for `id` (defaults to the
+    /// platform [`Transition::default`] when the id is unknown — the safe
+    /// fallback for a missing registration).
     pub fn transition(&self, id: &str) -> Transition {
         self.entries
             .get(id)
-            .map(|e| e.transition)
+            .map(|e| e.transition.clone())
             .unwrap_or_default()
     }
 

@@ -162,14 +162,17 @@ fn install(container: Element, nav: RouterHandle) {
 /// gesture should begin.
 pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> {
     let bridge = nav.active_stack_bridge()?;
-    if !bridge.can_back || !transition::supports_edge_swipe(bridge.transition) {
+    // Edge-swipe back is opt-in by *mounting* a gesture component
+    // (`SwipeBack` / `AndroidPredictiveBack`); it is NOT gated on the
+    // route's transition. The only requirement is that the stack can pop.
+    if !bridge.can_back {
         return None;
     }
     let mode = PoseMode::Predictive(edge);
     if let (Some(ctrl), Some(top), Some(under)) =
         (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)
     {
-        point(top, ctrl, Role::Top, mode);
+        point(top, ctrl, Role::Top, mode.clone());
         point(under, ctrl, Role::Under, mode);
         // Drive the backdrop dim off the same controller so it darkens
         // during the drag AND animates in lockstep with the settle run.

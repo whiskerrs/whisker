@@ -60,7 +60,7 @@ fn build_handle() -> RouterHandle {
     let registry = RouteRegistry::new()
         .route("home", |_: &RouteInstance| render! { Home {} })
         .route("list", |_: &RouteInstance| render! { ListScreen {} })
-        .route_with("detail", Transition::Slide, |inst: &RouteInstance| {
+        .route_with("detail", Transition::slide(), |inst: &RouteInstance| {
             let id = inst.params.get("id").cloned().unwrap_or_default();
             render! { Detail(id: id) }
         });
