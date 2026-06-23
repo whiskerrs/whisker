@@ -44,6 +44,17 @@
 //!   one entry per id; resolution picks the instance relative to the current
 //!   position).
 //!
+//! ## Structure checks
+//!
+//! The macro enforces the tree's parent/child rules at compile time, with a
+//! span on the offending node:
+//!
+//! - a `Switch` branch must be its own container (`Stack` / `Switch` /
+//!   `Layout`) — a bare `Route` (no history) or a `..spread` (yields routes)
+//!   is rejected;
+//! - `Layout(X) { … }` must wrap exactly one `Stack` or `Switch`;
+//! - `Stack { }` / `Switch { }` must be non-empty.
+//!
 //! Later phases add per-route **directional** (4-slot) transitions, typed
 //! nav targets, and branch enums.
 
@@ -89,12 +100,26 @@ impl Parse for Node {
             "Switch" => {
                 let content;
                 braced!(content in input);
-                Ok(Node::Switch(parse_nodes(&content)?))
+                let children = parse_nodes(&content)?;
+                if children.is_empty() {
+                    return Err(syn::Error::new(
+                        kw.span(),
+                        "`Switch { }` needs at least one branch",
+                    ));
+                }
+                Ok(Node::Switch(children))
             }
             "Stack" => {
                 let content;
                 braced!(content in input);
-                Ok(Node::Stack(parse_nodes(&content)?))
+                let children = parse_nodes(&content)?;
+                if children.is_empty() {
+                    return Err(syn::Error::new(
+                        kw.span(),
+                        "`Stack { }` needs at least one route or container",
+                    ));
+                }
+                Ok(Node::Stack(children))
             }
             "Route" => {
                 let content;
@@ -140,6 +165,16 @@ impl Parse for Node {
                     return Err(syn::Error::new(
                         kw.span(),
                         "Layout(X) { … } must wrap exactly one container (a Stack or Switch)",
+                    ));
+                }
+                // The wrapped child must be a container — a `Layout` adds chrome
+                // *around* a `Stack`/`Switch`; it can't wrap a bare `Route`,
+                // a `..spread`, or another `Layout`.
+                if !matches!(children[0], Node::Stack(_) | Node::Switch(_)) {
+                    return Err(syn::Error::new(
+                        kw.span(),
+                        "Layout(X) { … } must wrap a `Stack` or `Switch` (not a bare `Route`, \
+                         a `..spread`, or another `Layout`)",
                     ));
                 }
                 Ok(Node::Layout {
@@ -211,12 +246,14 @@ pub fn expand(routes: Routes) -> TokenStream {
             Node::Stack(_) | Node::Switch(_) | Node::Layout { .. }
         );
 
-    // Collect (id → component, transition) registry entries (deduping shared
-    // routes / erroring on conflicts) and the `..spread` expressions whose
-    // registries must be merged in.
+    // Structure checks (parent/child constraints) + collect (id → component,
+    // transition) registry entries (deduping shared routes / erroring on
+    // conflicts) and the `..spread` expressions whose registries must be merged
+    // in. Both accumulate into one `err` so every problem surfaces at once.
+    let mut err: Option<syn::Error> = None;
+    validate(&routes.roots, &mut err);
     let mut reg: Vec<RegEntry> = Vec::new();
     let mut spreads: Vec<Expr> = Vec::new();
-    let mut err: Option<syn::Error> = None;
     collect(&routes.roots, &mut reg, &mut spreads, &mut err);
     if let Some(e) = err {
         return e.to_compile_error();
@@ -326,6 +363,54 @@ fn dedup_exprs(exprs: &[Expr]) -> Vec<Expr> {
     out
 }
 
+/// Accumulate `e` into `err`, combining with any error already collected so
+/// every problem surfaces in one compile pass (not just the first).
+fn push_err(err: &mut Option<syn::Error>, e: syn::Error) {
+    match err {
+        Some(p) => p.combine(e),
+        None => *err = Some(e),
+    }
+}
+
+/// Enforce the route-tree's parent/child structure rules. Empty containers and
+/// `Layout`'s child kind are checked at parse time (where the keyword span is
+/// in hand); this pass covers the rules that need a node's *parent* context —
+/// a `Switch` branch must be its own container, never a bare `Route` (it would
+/// have no history) or a `..spread` (which yields routes).
+fn validate(nodes: &[Node], err: &mut Option<syn::Error>) {
+    for node in nodes {
+        match node {
+            Node::Switch(children) => {
+                for c in children {
+                    match c {
+                        Node::Stack(_) | Node::Switch(_) | Node::Layout { .. } => {}
+                        Node::Route { component, .. } => push_err(
+                            err,
+                            syn::Error::new(
+                                component.span(),
+                                "a `Switch` branch must be its own container; wrap this in \
+                                 `Stack { … }` (a bare `Route` can't be a tab — it has no history)",
+                            ),
+                        ),
+                        Node::Spread(expr) => push_err(
+                            err,
+                            syn::Error::new(
+                                expr.span(),
+                                "a `Switch` branch must be a `Stack` / `Switch`; `..spread` yields \
+                                 routes — put the spread inside a branch's `Stack { … }`",
+                            ),
+                        ),
+                    }
+                }
+                validate(children, err);
+            }
+            Node::Stack(children) => validate(children, err),
+            Node::Layout { child, .. } => validate(std::slice::from_ref(child.as_ref()), err),
+            Node::Route { .. } | Node::Spread(_) => {}
+        }
+    }
+}
+
 /// One collected registry entry: a route id, its component, and its
 /// optional `transition` expression.
 struct RegEntry {
@@ -340,12 +425,6 @@ fn collect(
     spreads: &mut Vec<Expr>,
     err: &mut Option<syn::Error>,
 ) {
-    fn push_err(err: &mut Option<syn::Error>, e: syn::Error) {
-        match err {
-            Some(p) => p.combine(e),
-            None => *err = Some(e),
-        }
-    }
     for node in nodes {
         match node {
             Node::Switch(children) | Node::Stack(children) => collect(children, reg, spreads, err),
