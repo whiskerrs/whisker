@@ -36,7 +36,6 @@
 package rs.whisker.router
 
 import android.os.Build
-import android.util.Log
 import android.view.RoundedCorner
 import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
@@ -50,6 +49,12 @@ import rs.whisker.runtime.WhiskerValue
  *  `RoundedCorner` API (< API 31) or report a square display. Matches
  *  the Material predictive-back default. */
 private const val DEFAULT_CORNER_RADIUS_DP = 24.0
+
+/** Sentinel for "the host Activity/insets aren't attached yet" — a
+ *  transient condition the caller should retry, distinct from the
+ *  permanent [DEFAULT_CORNER_RADIUS_DP] fallback. Negative so Rust can
+ *  treat any `<= 0` reading as "not ready, don't latch". */
+private const val NOT_READY = -1.0
 
 /**
  * `whisker-router:PredictiveBack` module. View-less — registers itself
@@ -89,24 +94,30 @@ public class PredictiveBackModule : Module() {
         // Static device info: the display's top-left rounded-corner radius
         // in dp, so the predictive-back preview can round its card to match
         // the screen. Rust calls this once (not per frame) and caches it.
+        // Returns [NOT_READY] (negative) when the host Activity/insets
+        // aren't attached yet, so Rust keeps the default and retries on the
+        // first gesture instead of latching the early fallback.
         Function("getDeviceCornerRadius") { _ ->
-            val dp = deviceCornerRadiusDp()
-            Log.e("WhiskerPB", "getDeviceCornerRadius() Function invoked → ${dp}dp")
-            WhiskerValue.Float(dp)
+            WhiskerValue.Float(deviceCornerRadiusDp())
         }
     }
 
     /**
      * The display's top-left rounded-corner radius in **dp** (px / density),
-     * via the API 31+ `RoundedCorner` API. Falls back to
-     * [DEFAULT_CORNER_RADIUS_DP] on older platforms, square displays, or
-     * when the host Activity isn't resolvable.
+     * via the API 31+ `RoundedCorner` API.
+     *
+     * Distinguishes two kinds of "no real reading":
+     *  - **Transient** (host Activity / decor / insets not attached yet):
+     *    returns [NOT_READY] (negative) so the caller doesn't latch and
+     *    retries once the Activity is up.
+     *  - **Permanent** (API < 31, or a genuinely square display): returns
+     *    [DEFAULT_CORNER_RADIUS_DP] so the caller latches a sane default.
      */
     private fun deviceCornerRadiusDp(): Double {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return DEFAULT_CORNER_RADIUS_DP
-        val activity = appContext.currentActivity as? ComponentActivity ?: return DEFAULT_CORNER_RADIUS_DP
-        val decor = activity.window?.decorView ?: return DEFAULT_CORNER_RADIUS_DP
-        val insets = decor.rootWindowInsets ?: return DEFAULT_CORNER_RADIUS_DP
+        val activity = appContext.currentActivity as? ComponentActivity ?: return NOT_READY
+        val decor = activity.window?.decorView ?: return NOT_READY
+        val insets = decor.rootWindowInsets ?: return NOT_READY
         val radiusPx = insets.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT)?.radius ?: 0
         if (radiusPx <= 0) return DEFAULT_CORNER_RADIUS_DP
         val density = activity.resources.displayMetrics.density.takeIf { it > 0f } ?: 1f

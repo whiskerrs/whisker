@@ -204,11 +204,6 @@ pub(crate) fn settle(
         return;
     };
     let dim_drive = bridge.dim_drive;
-    pb_log(&format!(
-        "settle commit={commit} value_before={} animating_before={}",
-        ctrl.value().get_untracked(),
-        ctrl.is_animating()
-    ));
 
     // NB: do NOT re-anchor the controller before the run. `reverse()` /
     // `forward()` animate from the controller's CURRENT value to the
@@ -239,11 +234,6 @@ pub(crate) fn settle(
             Some(v) => ctrl.reverse_with_velocity(v),
             None => ctrl.reverse(),
         }
-        pb_log(&format!(
-            "settle commit: after reverse value={} animating={} (animating=false ⇒ instant-finished)",
-            ctrl.value().get_untracked(),
-            ctrl.is_animating()
-        ));
     } else {
         // Cancel: spring the top back to fully present; the under wrapper,
         // pointed at the same controller as `Under`, slides back to covered
@@ -262,11 +252,6 @@ pub(crate) fn settle(
             Some(v) => ctrl.forward_with_velocity(v),
             None => ctrl.forward(),
         }
-        pb_log(&format!(
-            "settle cancel: after forward value={} animating={} (animating=false ⇒ instant-finished)",
-            ctrl.value().get_untracked(),
-            ctrl.is_animating()
-        ));
     }
 }
 
@@ -319,7 +304,6 @@ pub fn android_predictive_back() -> Element {
             // disjoint captures carry its `Send + Sync` impl.
             let shared = &shared;
             let (nav, state) = &shared.inner;
-            pb_log("event: backStarted");
             // Fallback in case the router-init fetch ran before the host
             // Activity attached (idempotent once installed).
             try_fetch_device_corner_radius();
@@ -416,25 +400,20 @@ pub(crate) fn try_fetch_device_corner_radius() {
     if CORNER_RADIUS_INSTALLED.load(Ordering::Relaxed) {
         return;
     }
-    pb_log("try_fetch_device_corner_radius: invoking getDeviceCornerRadius");
-    let v = module!("PredictiveBack").invoke("getDeviceCornerRadius", std::vec![]);
-    pb_log(&format!(
-        "try_fetch_device_corner_radius: invoke returned {v:?}"
-    ));
-    let dp = match v {
+    let dp = match module!("PredictiveBack").invoke("getDeviceCornerRadius", std::vec![]) {
         WhiskerValue::Float(f) => f as f32,
         WhiskerValue::Int(i) => i as f32,
-        _ => {
-            pb_log("try_fetch_device_corner_radius: non-numeric → keep default, will retry");
-            return;
-        }
+        // Non-numeric: module not ready / wrong platform — retry later.
+        _ => return,
     };
+    // A non-positive reading is the "host not attached yet" sentinel (the
+    // Activity/insets weren't resolvable at router init). Keep the default
+    // and retry on the first real gesture rather than latching it.
+    if dp <= 0.0 {
+        return;
+    }
     transition::set_device_corner_radius(dp);
     CORNER_RADIUS_INSTALLED.store(true, Ordering::Relaxed);
-    pb_log(&format!(
-        "try_fetch_device_corner_radius: installed {dp}dp; max_corner_radius()={}dp",
-        transition::max_corner_radius()
-    ));
 }
 
 /// Read `swipeEdge` (0 = left, 1 = right) from a back-event payload,
@@ -447,33 +426,6 @@ fn back_edge(payload: &WhiskerValue) -> SwipeEdge {
         Some(WhiskerValue::Int(v)) => SwipeEdge::from_android(*v),
         Some(WhiskerValue::Float(v)) => SwipeEdge::from_android(*v as i64),
         _ => SwipeEdge::Left,
-    }
-}
-
-/// DIAG (temporary): trace line visible in `adb logcat -s WhiskerPB`
-/// via the bridge's guaranteed-linked `__android_log_print` path. Used to
-/// confirm the controller value / animating state at settle time on
-/// device. Remove once the settle smoothness is verified.
-pub(crate) fn pb_log(msg: &str) {
-    #[cfg(target_os = "android")]
-    {
-        unsafe extern "C" {
-            fn whisker_bridge_log_info(
-                tag: *const std::os::raw::c_char,
-                msg: *const std::os::raw::c_char,
-            );
-        }
-        let tag = b"WhiskerPB\0";
-        let mut buf = Vec::with_capacity(msg.len() + 1);
-        buf.extend_from_slice(msg.as_bytes());
-        buf.push(0);
-        unsafe {
-            whisker_bridge_log_info(tag.as_ptr() as *const _, buf.as_ptr() as *const _);
-        }
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        eprintln!("[pb] {msg}");
     }
 }
 

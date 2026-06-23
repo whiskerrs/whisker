@@ -29,7 +29,8 @@ use std::rc::Rc;
 
 use whisker::runtime::reactive::{Owner, effect};
 use whisker::runtime::view::{
-    Element, append_child, create_element, create_phantom_element, remove_child, set_inline_styles,
+    Element, append_child, create_element, create_phantom_element, remove_child, set_attribute,
+    set_inline_styles,
 };
 use whisker::{AnimationController, ElementTag, computed};
 
@@ -576,6 +577,12 @@ fn mount_wrapper(
         // content, so Lynx rounds it.
         let clip = create_element(ElementTag::View);
         set_inline_styles(clip, &clip_view_style());
+        // `clip-radius` is a Lynx **prop** (`@LynxProp`), NOT a CSS style —
+        // it must be set as an attribute, not in the inline style string.
+        // It forces the view to clip its children to `border-radius` (the
+        // auto overflow:hidden path is disabled in the fork:
+        // `UIGroup.enableAutoClipRadius() == false`).
+        set_attribute(clip, "clip-radius", "true");
         let child = mount_node(handle, child_path);
         append_child(clip, child);
         append_child(wrapper, clip);
@@ -644,9 +651,10 @@ fn wrapper_style(pose: &Pose) -> String {
 /// `transition::screen_corner_radius()` and drop the background once the
 /// clip-view structure is confirmed on device.
 fn clip_view_style() -> String {
-    let _ = transition::screen_corner_radius();
-    "position: absolute; left: 0; top: 0; width: 100%; height: 100%; \
-     display: flex; flex-direction: column; overflow: hidden; \
-     border-radius: 80px; background-color: #FF0000;"
-        .to_string()
+    let radius = transition::screen_corner_radius();
+    format!(
+        "position: absolute; left: 0; top: 0; width: 100%; height: 100%; \
+         display: flex; flex-direction: column; overflow: hidden; \
+         border-radius: {radius}px;"
+    )
 }
