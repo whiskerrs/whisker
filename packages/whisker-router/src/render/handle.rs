@@ -44,6 +44,29 @@ use crate::core::{
 use crate::render::registry::{RenderFn, RouteRegistry, RouteSet};
 use crate::render::transition::RouteTransition;
 
+/// What [`RouterHandle::navigate`] accepts: a **URL** string (matched
+/// against the route patterns, binding its `:param`s) or an explicit
+/// [`Target`]. Both lower to a `(Target, RouteInstance)` the navigator runs.
+pub trait IntoNav {
+    /// Resolve `self` against `tree` into a target + its bound params.
+    fn into_nav(self, tree: &CompiledTree) -> Result<(Target, RouteInstance), NavError>;
+}
+
+impl IntoNav for &str {
+    fn into_nav(self, tree: &CompiledTree) -> Result<(Target, RouteInstance), NavError> {
+        let (route_id, params) = tree.match_url(self).ok_or(NavError::NoSuchTarget)?;
+        let mut instance = RouteInstance::new(NodePath::root());
+        instance.params = params;
+        Ok((Target::id(route_id), instance))
+    }
+}
+
+impl IntoNav for &Target {
+    fn into_nav(self, _tree: &CompiledTree) -> Result<(Target, RouteInstance), NavError> {
+        Ok((self.clone(), RouteInstance::new(NodePath::root())))
+    }
+}
+
 /// A repointable pose binding for one stack wrapper: the controller whose
 /// progress drives it + the role it plays. The swipe-back gesture sets
 /// both wrappers' bindings to the **same** controller (Top / Under) so one
@@ -237,9 +260,15 @@ impl RouterHandle {
         out
     }
 
-    /// Navigate to `target` (relative resolution, no params).
-    pub fn navigate(&self, target: &Target) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.navigate(target))
+    /// Navigate forward. Accepts either a **URL** string —
+    /// `navigate("/detail/123")`, matched against the route patterns
+    /// (`/detail/:id`) with its `:param`s bound — or a [`Target`] —
+    /// `navigate(&Target::id("detail"))`. A shared route resolves to the
+    /// right branch via the usual relative resolution. Returns
+    /// [`NavError::NoSuchTarget`] when nothing matches.
+    pub fn navigate(&self, to: impl IntoNav) -> Result<(), NavError> {
+        let (target, instance) = to.into_nav(&self.inner.tree)?;
+        self.with_navigator(|nav| nav.navigate_with(&target, instance))
     }
 
     /// Navigate to `target`, attaching `instance`'s params.

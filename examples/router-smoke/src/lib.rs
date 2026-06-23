@@ -29,7 +29,7 @@
 use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_router::core::{NodePath, RouteInstance, Target};
+use whisker_router::core::{NodePath, Target};
 use whisker_router::render::{
     AndroidPredictiveBack, Router, RouterHandle, SwipeBack, TabItem, Tabs, use_navigator, use_param,
 };
@@ -81,13 +81,6 @@ fn app() -> Element {
 // Screens
 // ---------------------------------------------------------------------
 
-fn detail_target(id: &str) -> (Target, RouteInstance) {
-    (
-        Target::id("detail"),
-        RouteInstance::with_param(NodePath::root(), "id", id),
-    )
-}
-
 #[component]
 fn home() -> Element {
     let nav = use_navigator();
@@ -98,8 +91,7 @@ fn home() -> Element {
             view(
                 style: button_style(),
                 on_tap: move |_| {
-                    let (t, inst) = detail_target("1");
-                    let _ = nav.navigate_with(&t, inst);
+                    let _ = nav.navigate("/detail/1");
                 },
             ) {
                 text(value: "Open Detail 1", style: button_label_style())
@@ -120,8 +112,7 @@ fn list_screen() -> Element {
                 on_tap: {
                     let nav = nav.clone();
                     move |_| {
-                        let (t, inst) = detail_target("42");
-                        let _ = nav.navigate_with(&t, inst);
+                        let _ = nav.navigate("/detail/42");
                     }
                 },
             ) {
@@ -130,8 +121,7 @@ fn list_screen() -> Element {
             view(
                 style: button_style(),
                 on_tap: move |_| {
-                    let (t, inst) = detail_target("99");
-                    let _ = nav.navigate_with(&t, inst);
+                    let _ = nav.navigate("/detail/99");
                 },
             ) {
                 text(value: "Open Detail 99", style: button_label_style())
