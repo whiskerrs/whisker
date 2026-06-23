@@ -279,15 +279,16 @@ fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {
     // *behind* the top card during a predictive-back gesture. Kept
     // positioned just below the top wrapper in DOM order by
     // `reconcile_stack`. Its opacity REACTIVELY follows the gesture's
-    // controller (`dim_drive`): `(1 - value) * PB_MAX_DIM` while a gesture
-    // is active, 0 otherwise — so it tracks both the drag and the settle
-    // animation, not just a one-shot per-frame write.
+    // controller (`dim_drive`) via `predictive_dim`: it rises as the finger
+    // drags (up to `PB_MAX_DIM`) and fades back out on commit, 0 otherwise —
+    // so it tracks both the drag and the settle animation, not a one-shot
+    // per-frame write.
     let dim = create_element(ElementTag::View);
     let dim_drive: whisker::RwSignal<Option<AnimationController>> = whisker::RwSignal::new(None);
     {
         let dim_eff = dim;
         let opacity = computed(move || match dim_drive.get() {
-            Some(ctrl) => (1.0 - ctrl.value().get()) * transition::PB_MAX_DIM,
+            Some(ctrl) => transition::predictive_dim(ctrl.value().get()),
             None => 0.0,
         });
         effect(move || set_inline_styles(dim_eff, &dim_style(opacity.get())));

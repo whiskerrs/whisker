@@ -833,6 +833,13 @@ fn predictive_pose_material_shape() {
         under_preview.transform.contains("translateX(-60%)"),
         "under peeks from the left: {under_preview:?}"
     );
+    // Mid-drag (value 0.75) the under screen is held at the SAME -60% peek —
+    // it only scales while the finger is down, it does not slide.
+    let under_mid = predictive_pose(Role::Under, 0.75, SwipeEdge::Left);
+    assert!(
+        under_mid.transform.contains("translateX(-60%)"),
+        "under is fixed at the peek mid-drag (scale only, no slide): {under_mid:?}"
+    );
     let under_committed = predictive_pose(Role::Under, 0.0, SwipeEdge::Left);
     assert!(
         under_committed.transform.contains("translateX(0%)"),
@@ -920,4 +927,28 @@ fn registry_merge_keeps_first_and_folds_new_ids() {
     assert!(merged.contains("home"));
     // The fragment exposes its roots for splicing at each `..` site.
     assert_eq!(frag.roots().len(), 2);
+}
+
+#[test]
+fn predictive_dim_constant_during_drag_then_fades_on_commit() {
+    use crate::render::transition::{PB_MAX_DIM, predictive_dim};
+
+    // Across the whole drag (value 1.0 → 0.5) the scrim is held CONSTANT at
+    // PB_MAX_DIM — it does not deepen as the finger drags further.
+    for v in [1.0_f32, 0.9, 0.75, 0.6, 0.5] {
+        assert!(
+            (predictive_dim(v) - PB_MAX_DIM).abs() < 1e-3,
+            "dim is constant at PB_MAX_DIM during the drag (value {v})"
+        );
+    }
+    // Then it fades back out over the commit (value 0.5 → 0): the revealed
+    // previous screen ends at full brightness, not darkened.
+    assert!(
+        predictive_dim(0.25) < predictive_dim(0.5),
+        "dim starts fading once the finger releases (commit settle)"
+    );
+    assert!(
+        predictive_dim(0.0) < 1e-3,
+        "dim is gone once the back has committed (previous screen present)"
+    );
 }

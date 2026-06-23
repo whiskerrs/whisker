@@ -196,8 +196,10 @@ const PB_EDGE_SHIFT: f32 = 0.06;
 /// How far (fraction of height) the card's centre drifts toward the finger
 /// at the preview max (Material shared-element y-shift / finger follow).
 const PB_Y_FOLLOW: f32 = 0.08;
-/// Max dim of the backdrop behind the top card at full progress.
-pub const PB_MAX_DIM: f32 = 0.30;
+/// Opacity of the black backdrop scrim behind the top card while a
+/// predictive-back drag is in progress (held constant during the drag, then
+/// faded out on commit — see [`predictive_dim`]).
+pub const PB_MAX_DIM: f32 = 0.5;
 
 /// The corner radius (dp) the predictive-back card rounds to at full
 /// progress, stored as `f32` bits. Defaults to [`PB_DEFAULT_RADIUS`]; the
@@ -406,16 +408,38 @@ pub fn predictive_pose(role: Role, value: f32, edge: SwipeEdge) -> Pose {
         Role::Under => {
             // The entering (previous) screen scales together with the top
             // card during the drag (down to 0.9, in lockstep via the same
-            // decelerated `preview`), peeking from the left. On commit it
-            // slides in from the left to fully present while growing back to
-            // full screen.
+            // decelerated `preview`), held at a fixed left peek — **scale
+            // only, no slide** while the finger is down. On commit it slides
+            // in from the peek to fully present while growing back to full
+            // screen.
             let scale = 1.0 - preview * shrink + dismiss * shrink; // 1 → 0.9 → 1
-            // -100% (off-left) → -60% (peek) → 0% (present).
-            let x = -100.0 + preview * 40.0 + dismiss * 60.0;
+            // Fixed at -60% (peek) during the drag; -60% → 0% (present) on
+            // commit. No `preview` term ⇒ the drag scales without sliding.
+            let x = -60.0 + dismiss * 60.0;
             let radius = max_radius * preview * (1.0 - dismiss);
             Pose::with_radius(format!("translateX({x}%) scale({scale})"), 1.0, radius)
         }
     }
+}
+
+/// The Material predictive-back **backdrop dim** for the controller `value`
+/// (1.0 = rest → 0.0 = committed). A black scrim sits behind the top card and
+/// darkens the previous (under) screen *while the finger drags*, then fades
+/// back out as the back commits and that screen slides forward to present — so
+/// the revealed screen ends at full brightness, matching the official Android
+/// behaviour (not darkened at the end).
+///
+/// Shares [`predictive_pose`]'s two-phase timeline but is **constant over the
+/// drag, fading only on commit**: it holds at [`PB_MAX_DIM`] across the whole
+/// preview half (value 1.0 → 0.5 — the scrim does not deepen as you drag
+/// further), then **falls** back to 0 over the dismiss half (value 0.5 → 0,
+/// the commit settle). Returns an `opacity` in `0..=PB_MAX_DIM`. (The scrim
+/// only ever drives when a gesture is active — at rest its controller is
+/// detached, so the layer is fully transparent regardless of this value.)
+pub fn predictive_dim(value: f32) -> f32 {
+    let v = value.clamp(0.0, 1.0);
+    let dismiss = ((0.5 - v) / 0.5).clamp(0.0, 1.0);
+    (1.0 - dismiss) * PB_MAX_DIM
 }
 
 // ----- Built-in transitions -------------------------------------------
