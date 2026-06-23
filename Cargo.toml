@@ -23,6 +23,7 @@ members = [
     "examples/anim-smoke",
     "examples/asset-demo",
     "examples/aurora-wallet",
+    "examples/podcast",
     "examples/router-smoke",
     "packages/whisker-icons",
     "packages/whisker-icons/example",
@@ -48,13 +49,6 @@ exclude = [
     # build (and we'd lose the "fresh-from-scratch crate" property
     # the test relies on).
     "crates/whisker-dev-server/tests/fixtures/thin-build-fixture",
-    # The podcast example depends broadly on the OLD whisker-router API
-    # (RouteStack / StackLayout / TabsLayout / #[route]), removed in
-    # phase 4. It is excluded from the workspace pending migration to the
-    # new core/render router + the `routes!` macro (phase 3). Its files
-    # are kept — see examples/podcast/MIGRATION.md. Excluding the parent
-    # drops its member sub-crates (podcast-*) too.
-    "examples/podcast",
 ]
 
 [workspace.package]

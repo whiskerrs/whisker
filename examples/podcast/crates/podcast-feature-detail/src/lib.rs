@@ -60,6 +60,7 @@ use whisker::runtime::view::Element;
 use whisker_audio::Player;
 use whisker_icons::{Icon, lucide};
 use whisker_image::{Image, ImageMode};
+use whisker_router::use_param;
 use whisker_safe_area::safe_area_insets;
 
 /// `Rc<RefCell<HashMap<u64, Podcast>>>` — same alias the top-level
@@ -75,13 +76,16 @@ pub type NowPlayingSignal = ArcRwSignal<Option<NowPlaying>>;
 
 /// Show detail screen.
 ///
-/// `id` is the iTunes `collectionId` of the podcast to display.
-/// The back chevron pulls [`Navigator::go_back`] from context — the
-/// shell wires it to `router::back()`.
+/// The podcast's iTunes `collectionId` is read from the route's `:id`
+/// param via [`use_param`] (the route is `Route("podcast/:id", DetailScreen)`
+/// in the shell's `routes!`). The back chevron pulls [`Navigator::go_back`]
+/// from context — the shell wires it to `router::back()`.
 #[component]
-pub fn detail_screen(id: u64) -> Element {
-    let podcast: Option<Podcast> =
-        use_context::<PodcastIndex>().and_then(|index| index.borrow().get(&id).cloned());
+pub fn detail_screen() -> Element {
+    let id: Option<u64> = use_param("id").get().and_then(|s| s.parse().ok());
+    let podcast: Option<Podcast> = id.and_then(|id| {
+        use_context::<PodcastIndex>().and_then(|index| index.borrow().get(&id).cloned())
+    });
 
     match podcast {
         Some(podcast) => detail_body(podcast),
