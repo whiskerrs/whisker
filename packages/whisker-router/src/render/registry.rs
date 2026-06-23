@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use whisker::runtime::view::Element;
 
-use crate::core::{CompiledTree, RouteInstance};
+use crate::core::{CompiledTree, NodePath, RouteInstance};
 use crate::render::transition::RouteTransition;
 
 /// A screen-render closure: maps the concrete [`RouteInstance`] (its
@@ -136,17 +136,81 @@ impl RouteRegistry {
 pub struct RouteSet {
     pub(crate) tree: CompiledTree,
     pub(crate) registry: RouteRegistry,
+    pub(crate) layouts: LayoutRegistry,
 }
 
 impl RouteSet {
-    /// Bundle a hand-built tree + registry — the pre-macro construction path.
+    /// Bundle a hand-built tree + registry (no layouts) — the manual path.
     pub fn from_parts(tree: CompiledTree, registry: RouteRegistry) -> Self {
-        RouteSet { tree, registry }
+        RouteSet {
+            tree,
+            registry,
+            layouts: LayoutRegistry::new(),
+        }
+    }
+
+    /// Bundle a tree + registry + the `Layout(X)` chrome map — what the
+    /// `routes!` macro emits.
+    pub fn from_parts_with_layouts(
+        tree: CompiledTree,
+        registry: RouteRegistry,
+        layouts: LayoutRegistry,
+    ) -> Self {
+        RouteSet {
+            tree,
+            registry,
+            layouts,
+        }
     }
 }
 
 impl From<(CompiledTree, RouteRegistry)> for RouteSet {
     fn from((tree, registry): (CompiledTree, RouteRegistry)) -> Self {
-        RouteSet { tree, registry }
+        RouteSet::from_parts(tree, registry)
+    }
+}
+
+/// A `Layout(X)` chrome renderer: renders the user's layout component
+/// (which draws chrome around an [`Outlet`](crate::render::Outlet)).
+#[derive(Clone)]
+pub struct LayoutFn(Rc<dyn Fn() -> Element + 'static>);
+
+impl LayoutFn {
+    /// Build a [`LayoutFn`] from a closure that renders the layout component.
+    pub fn new(f: impl Fn() -> Element + 'static) -> Self {
+        LayoutFn(Rc::new(f))
+    }
+
+    /// Render the layout component.
+    pub fn call(&self) -> Element {
+        (self.0)()
+    }
+}
+
+/// The `routes!`-generated map from a container's [`NodePath`] to the
+/// `Layout(X)` component that wraps it. Looked up by `mount_node` when it
+/// renders that container, so the chrome (tab bar, drawer, …) is applied
+/// from the route tree rather than hand-wired.
+#[derive(Clone, Default)]
+pub struct LayoutRegistry {
+    entries: Vec<(NodePath, LayoutFn)>,
+}
+
+impl LayoutRegistry {
+    /// An empty registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register `layout` as the chrome wrapping the container at `path`.
+    /// Chainable.
+    pub fn with(mut self, path: NodePath, layout: LayoutFn) -> Self {
+        self.entries.push((path, layout));
+        self
+    }
+
+    /// The layout registered for the container at `path`, if any.
+    pub fn get(&self, path: &NodePath) -> Option<&LayoutFn> {
+        self.entries.iter().find(|(p, _)| p == path).map(|(_, l)| l)
     }
 }

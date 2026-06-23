@@ -32,24 +32,52 @@ use whisker::runtime::view::{
     Element, append_child, create_element, create_phantom_element, remove_child, set_attribute,
     set_inline_styles,
 };
-use whisker::{AnimationController, ElementTag, computed};
+use whisker::{AnimationController, ElementTag, computed, provide_context, use_context};
 
 use crate::core::{NodePath, RouteState, RouteTree};
+use crate::render::components::OutletAnchor;
 use crate::render::handle::RouterHandle;
+use crate::render::registry::LayoutFn;
 use crate::render::transition::{self, Pose, PoseMode, Role, RouteTransition};
+
+/// Context marker: the `Layout(X)` chrome for this path is already being
+/// applied. The layout's own `Outlet` re-enters [`mount_node`] at the same
+/// path, and must mount the **raw** container rather than re-wrap it.
+#[derive(Clone)]
+struct LayoutApplied(NodePath);
 
 /// Mount the node at `path` and return its phantom slot.
 ///
 /// The slot is a [`create_phantom_element`] the caller appends wherever
 /// the node should render; its content is managed reactively for the
 /// life of the current owner.
+///
+/// If the node has `Layout(X)` chrome (from `routes!`), it is wrapped in the
+/// layout component — unless we are already inside that layout (its `Outlet`
+/// re-enters here), in which case the raw container is mounted.
 pub fn mount_node(handle: &RouterHandle, path: NodePath) -> Element {
+    if let Some(layout) = handle.layout_at(&path) {
+        let inside = use_context::<LayoutApplied>().map(|a| a.0);
+        if inside.as_ref() != Some(&path) {
+            return mount_with_layout(handle, path, layout);
+        }
+    }
     match handle.tree().node_at(&path) {
         Some(RouteTree::Route(_)) => mount_route(handle, path),
         Some(RouteTree::Switch(_, _)) => mount_switch(handle, path),
         Some(RouteTree::Stack(_)) => mount_stack(handle, path),
         None => create_phantom_element(),
     }
+}
+
+/// Render the `Layout(X)` component for `path`. Its inner `Outlet` anchors
+/// at `path` (so it draws this container) and sees [`LayoutApplied`] (so it
+/// mounts the raw container instead of re-wrapping).
+fn mount_with_layout(handle: &RouterHandle, path: NodePath, layout: LayoutFn) -> Element {
+    let _ = handle;
+    provide_context(OutletAnchor(path.clone()));
+    provide_context(LayoutApplied(path));
+    layout.call()
 }
 
 // =====================================================================

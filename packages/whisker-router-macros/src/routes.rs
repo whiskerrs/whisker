@@ -30,7 +30,17 @@ use syn::{Ident, LitStr, Token, braced, parenthesized};
 enum Node {
     Switch(Vec<Node>),
     Stack(Vec<Node>),
-    Route { path: LitStr, component: Ident },
+    Route {
+        path: LitStr,
+        component: Ident,
+    },
+    /// `Layout(Comp) { <container> }` — chrome wrapping a container. NOT a
+    /// nav node: the wrapped child takes the position, and `Comp` is recorded
+    /// as that path's layout.
+    Layout {
+        component: Ident,
+        child: Box<Node>,
+    },
 }
 
 impl Parse for Node {
@@ -55,9 +65,27 @@ impl Parse for Node {
                 let component: Ident = content.parse()?;
                 Ok(Node::Route { path, component })
             }
+            "Layout" => {
+                let args;
+                parenthesized!(args in input);
+                let component: Ident = args.parse()?;
+                let content;
+                braced!(content in input);
+                let mut children = parse_nodes(&content)?;
+                if children.len() != 1 {
+                    return Err(syn::Error::new(
+                        kw.span(),
+                        "Layout(X) { … } must wrap exactly one container (a Stack or Switch)",
+                    ));
+                }
+                Ok(Node::Layout {
+                    component,
+                    child: Box::new(children.remove(0)),
+                })
+            }
             other => Err(syn::Error::new(
                 kw.span(),
-                format!("expected `Switch`, `Stack`, or `Route`, found `{other}`"),
+                format!("expected `Switch`, `Stack`, `Route`, or `Layout`, found `{other}`"),
             )),
         }
     }
@@ -131,12 +159,24 @@ pub fn expand(routes: Routes) -> TokenStream {
     });
 
     let mut switch_n = 0usize;
-    let root_tree = node_to_tree(&routes.roots[0], &mut switch_n);
+    let mut layouts: Vec<(Vec<usize>, Ident)> = Vec::new();
+    let root_tree = node_to_tree(&routes.roots[0], &[], &mut switch_n, &mut layouts);
+
+    let layout_inserts = layouts.iter().map(|(path, comp)| {
+        let idxs = path.iter();
+        quote! {
+            .with(
+                ::whisker_router::core::NodePath(::std::vec![ #(#idxs),* ]),
+                ::whisker_router::render::LayoutFn::new(|| ::whisker::render! { #comp {} }),
+            )
+        }
+    });
 
     quote! {{
         let __registry = ::whisker_router::render::RouteRegistry::new() #(#reg_inserts)*;
+        let __layouts = ::whisker_router::render::LayoutRegistry::new() #(#layout_inserts)*;
         let __tree = ::whisker_router::core::CompiledTree::new(#root_tree);
-        ::whisker_router::render::RouteSet::from_parts(__tree, __registry)
+        ::whisker_router::render::RouteSet::from_parts_with_layouts(__tree, __registry, __layouts)
     }}
 }
 
@@ -144,6 +184,7 @@ fn collect(nodes: &[Node], reg: &mut Vec<(String, Ident)>, err: &mut Option<syn:
     for node in nodes {
         match node {
             Node::Switch(children) | Node::Stack(children) => collect(children, reg, err),
+            Node::Layout { child, .. } => collect(std::slice::from_ref(child.as_ref()), reg, err),
             Node::Route { component, .. } => {
                 let id = snake_case(component);
                 // Clone the existing ident so the immutable borrow ends
@@ -171,26 +212,52 @@ fn collect(nodes: &[Node], reg: &mut Vec<(String, Ident)>, err: &mut Option<syn:
     }
 }
 
-fn node_to_tree(node: &Node, switch_n: &mut usize) -> TokenStream {
+/// Emit the `RouteTree` for `node`, threading its compile-time `path` so
+/// `Layout(X)` wrappers can register their chrome against the wrapped
+/// container's path. `layouts` accumulates `(path, layout component)`.
+fn node_to_tree(
+    node: &Node,
+    path: &[usize],
+    switch_n: &mut usize,
+    layouts: &mut Vec<(Vec<usize>, Ident)>,
+) -> TokenStream {
     match node {
-        Node::Route { path, component } => {
+        Node::Route {
+            path: seg,
+            component,
+        } => {
             let id = snake_case(component);
-            quote! { ::whisker_router::core::RouteTree::route(#path, #id) }
+            quote! { ::whisker_router::core::RouteTree::route(#seg, #id) }
         }
         Node::Stack(children) => {
-            let kids = children.iter().map(|c| node_to_tree(c, switch_n));
+            let kids = children.iter().enumerate().map(|(i, c)| {
+                let mut child = path.to_vec();
+                child.push(i);
+                node_to_tree(c, &child, switch_n, layouts)
+            });
             quote! { ::whisker_router::core::RouteTree::stack(::std::vec![ #(#kids),* ]) }
         }
         Node::Switch(children) => {
             let id = format!("switch_{}", *switch_n);
             *switch_n += 1;
-            let kids = children.iter().map(|c| node_to_tree(c, switch_n));
+            let kids = children.iter().enumerate().map(|(i, c)| {
+                let mut child = path.to_vec();
+                child.push(i);
+                node_to_tree(c, &child, switch_n, layouts)
+            });
             quote! {
                 ::whisker_router::core::RouteTree::switch(
                     ::whisker_router::core::SwitchDef::new(#id, 0usize),
                     ::std::vec![ #(#kids),* ],
                 )
             }
+        }
+        Node::Layout { component, child } => {
+            // Layout is transparent in the nav tree: the wrapped child takes
+            // this position. Record the chrome at this path, then emit the
+            // child here.
+            layouts.push((path.to_vec(), component.clone()));
+            node_to_tree(child, path, switch_n, layouts)
         }
     }
 }

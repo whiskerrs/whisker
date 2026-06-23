@@ -78,5 +78,6 @@ pub use crate::core::{
 pub use crate::render::{
     AndroidPredictiveBack, AnimConfig, IntoNav, Layout, Outlet, Pose, RenderFn, Role,
     RouteRegistry, RouteTransition, Router, RouterHandle, Stack, StackBridge, SwipeBack, Switch,
-    TabBar, TabItem, Tabs, Transition, provide_router, use_active_tab, use_navigator, use_param,
+    TabBar, TabItem, Tabs, Transition, provide_router, use_active_tab, use_active_tab_at,
+    use_navigator, use_param,
 };

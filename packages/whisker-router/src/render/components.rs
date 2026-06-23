@@ -161,12 +161,22 @@ pub fn layout(path: NodePath, children: Children) -> Element {
     render! { children() }
 }
 
-/// Reactive read of the selected branch index of the `Switch` at `path`.
-///
-/// The `use_active_tab()` helper of the design doc, generalised to take
-/// the switch's path (the macro will later infer it). Returns `0` when
-/// the node is not a live switch (shouldn't happen for a correct path).
-pub fn use_active_tab(path: NodePath) -> ReadSignal<usize> {
+/// Reactive read of the selected branch index of the **enclosing** `Switch`
+/// — the design doc's `use_active_tab()`. Call it from a `Layout(X)` chrome
+/// component (a tab bar); it reads the switch path from the
+/// [`OutletAnchor`] the router set when applying the layout. Returns `0`
+/// when there is no enclosing switch.
+pub fn use_active_tab() -> ReadSignal<usize> {
+    let path = use_context::<OutletAnchor>()
+        .map(|a| a.0)
+        .unwrap_or_else(NodePath::root);
+    use_active_tab_at(path)
+}
+
+/// Reactive read of the selected branch index of the `Switch` at an
+/// explicit `path`. The lower-level form behind [`use_active_tab`]; used by
+/// the built-in [`Tabs`] sugar which knows its switch path.
+pub fn use_active_tab_at(path: NodePath) -> ReadSignal<usize> {
     let handle = use_navigator();
     let sel = handle.selected_at(path);
     computed(move || sel.get().unwrap_or(0))

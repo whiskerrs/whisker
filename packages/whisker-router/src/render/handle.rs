@@ -41,7 +41,7 @@ use whisker::{AnimationController, ReadSignal, RwSignal, computed, provide_conte
 use crate::core::{
     CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState, Scope, Target,
 };
-use crate::render::registry::{RenderFn, RouteRegistry, RouteSet};
+use crate::render::registry::{LayoutFn, LayoutRegistry, RenderFn, RouteRegistry, RouteSet};
 use crate::render::transition::RouteTransition;
 
 /// What [`RouterHandle::navigate`] accepts: a **URL** string (matched
@@ -121,6 +121,9 @@ pub struct RouterHandle {
 struct Inner {
     tree: CompiledTree,
     registry: RouteRegistry,
+    /// `Layout(X)` chrome per container path (from `routes!`); applied by
+    /// `mount_node`.
+    layouts: LayoutRegistry,
     state: RwSignal<RouteState>,
     /// Per-stack gesture bridges, keyed by the stack's [`NodePath`].
     /// Registered by [`Stack`](crate::render::Stack) reconcile; read by
@@ -138,7 +141,11 @@ impl RouterHandle {
     /// Build a handle from a [`CompiledTree`] and its [`RouteRegistry`],
     /// seeding the state with [`RouteState::initial`].
     pub fn new(routes: impl Into<RouteSet>) -> Self {
-        let RouteSet { tree, registry } = routes.into();
+        let RouteSet {
+            tree,
+            registry,
+            layouts,
+        } = routes.into();
         let owner = Owner::detached_root();
         let initial = RouteState::initial(&tree);
         let state = owner.with(|| RwSignal::new(initial));
@@ -146,11 +153,17 @@ impl RouterHandle {
             inner: Rc::new(Inner {
                 tree,
                 registry,
+                layouts,
                 state,
                 bridges: RefCell::new(HashMap::new()),
                 _owner: owner,
             }),
         }
+    }
+
+    /// The `Layout(X)` chrome registered for the container at `path`, if any.
+    pub fn layout_at(&self, path: &NodePath) -> Option<LayoutFn> {
+        self.inner.layouts.get(path).cloned()
     }
 
     /// Register / refresh the gesture bridge for the stack at `path`.

@@ -15,7 +15,7 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
 use crate::core::{NodePath, Target};
-use crate::render::components::{Layout, Outlet, use_active_tab};
+use crate::render::components::{Layout, Outlet, use_active_tab_at};
 use crate::render::handle::use_navigator;
 
 /// One entry in the [`Tabs`] bar: a label + the [`Target`] selecting its
@@ -57,7 +57,7 @@ impl TabItem {
 /// ```
 #[component]
 pub fn tabs(path: NodePath, items: Vec<TabItem>) -> Element {
-    let active = use_active_tab(path.clone());
+    let active = use_active_tab_at(path.clone());
 
     render! {
         view(style: css!(
