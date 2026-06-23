@@ -32,7 +32,7 @@ use whisker::runtime::view::Element;
 use whisker_router::core::{CompiledTree, NodePath, RouteInstance, RouteTree, SwitchDef, Target};
 use whisker_router::render::{
     AndroidPredictiveBack, RouteRegistry, Router, RouterHandle, SwipeBack, TabItem, Tabs,
-    use_navigator,
+    use_navigator, use_param,
 };
 
 /// The Switch (tabs) is the tree root, so its path is the root path.
@@ -61,11 +61,9 @@ fn build_handle() -> RouterHandle {
         .route("home", |_: &RouteInstance| render! { Home {} })
         .route("list", |_: &RouteInstance| render! { ListScreen {} })
         // Default transition: the platform default — full iOS slide on
-        // iOS, the subtler small-slide + fade on Android.
-        .route("detail", |inst: &RouteInstance| {
-            let id = inst.params.get("id").cloned().unwrap_or_default();
-            render! { Detail(id: id) }
-        });
+        // iOS, the subtler small-slide + fade on Android. The closure no
+        // longer extracts `:id`; `Detail` reads it itself via `use_param`.
+        .route("detail", |_: &RouteInstance| render! { Detail {} });
 
     RouterHandle::new(tree, registry)
 }
@@ -158,9 +156,12 @@ fn list_screen() -> Element {
 }
 
 #[component]
-fn detail(id: String) -> Element {
+fn detail() -> Element {
     let nav = use_navigator();
-    let label = format!("Detail #{id}");
+    // Read this route's `:id` param from context — the macro-free analogue
+    // of `routes! { Route("detail/:id", Detail) }` + `use_param`.
+    let id = use_param("id");
+    let label = format!("Detail #{}", id.get().unwrap_or_default());
     render! {
         view(style: screen_style(0x1A1422)) {
             text(value: label, style: title_style())

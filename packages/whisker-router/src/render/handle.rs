@@ -324,3 +324,34 @@ pub fn use_navigator() -> RouterHandle {
     use_context::<RouterHandle>()
         .expect("use_navigator() called outside a Router / provide_router ancestor")
 }
+
+/// Context marking the route leaf a routed component is mounted under, so
+/// the `use_param` / `use_params` hooks can find **its** params. Published
+/// by `mount_route` just before it renders the route's component.
+#[derive(Clone)]
+pub(crate) struct RouteScope(pub NodePath);
+
+/// Reactively read a named path parameter of the route the calling
+/// component is mounted under (`Route("detail/:id", …)` →
+/// `use_param("id")`). Returns `None` while the param is absent.
+///
+/// A signal-framework "hook": it reads the router context and returns a
+/// derived signal — the whisker analogue of leptos's `use_params` /
+/// SolidJS's `useParams`. Call it from a routed `#[component]`'s body and
+/// `.get()` the result wherever the value is needed; it re-derives when the
+/// route's params change.
+///
+/// # Panics
+///
+/// Panics if called outside a routed screen (no [`RouteScope`] in context).
+pub fn use_param(name: &str) -> ReadSignal<Option<String>> {
+    let handle = use_navigator();
+    let scope = use_context::<RouteScope>()
+        .expect("use_param() called outside a routed screen (no Route ancestor)");
+    let slice = handle.slice_at(scope.0);
+    let name = name.to_string();
+    computed(move || match slice.get() {
+        Some(RouteState::Route(inst)) => inst.params.get(&name).cloned(),
+        _ => None,
+    })
+}

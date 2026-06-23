@@ -72,7 +72,7 @@ pub use components::{
 };
 pub use components::{Outlet, OutletProps};
 pub use gesture::{AndroidPredictiveBack, AndroidPredictiveBackProps, SwipeBack, SwipeBackProps};
-pub use handle::{RouterHandle, StackBridge, provide_router, use_navigator};
+pub use handle::{RouterHandle, StackBridge, provide_router, use_navigator, use_param};
 pub use registry::{RenderFn, RouteRegistry};
 pub use tabs::{TabBar, TabBarProps, TabItem, Tabs, TabsProps};
 pub use transition::{Pose, Role, RouteTransition, Transition};

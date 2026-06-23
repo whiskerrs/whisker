@@ -114,7 +114,11 @@ fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
             return;
         };
         let owner = Owner::new(None);
+        let scope_path = path.clone();
         let el = owner.with(|| {
+            // Publish this leaf's path so the component's `use_param` /
+            // `use_params` hooks can read ITS route params from context.
+            whisker::provide_context(crate::render::handle::RouteScope(scope_path));
             let el = render_fn.call(&inst);
             append_child(slot, el);
             el
