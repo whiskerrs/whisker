@@ -16,15 +16,22 @@
 //!   in snake_case** (`Detail` → `"detail"`); the same component routed in
 //!   several stacks shares that id (a shared route → one registry entry).
 //!   The component reads its own `:param`s via `use_param`.
+//! - `Route("path", Component, transition = <expr>)` — a screen with an
+//!   explicit [`RouteTransition`]. `<expr>` is any expression yielding a
+//!   `RouteTransition` (e.g. `RouteTransition::modal()`); omitted, the route
+//!   uses the platform default. The transition is keyed by route id, so a
+//!   shared route must declare the **same** transition (or only one site
+//!   declares it) — conflicting transitions for one id are a compile error.
 //! - `Stack { … }` / `Switch { … }` — the two containers.
 //!
-//! Later phases add `Layout(…)`, per-route transitions, `..spread`, typed
-//! nav targets, and branch enums.
+//! Later phases add per-route **directional** (4-slot) transitions,
+//! `..spread`, typed nav targets, and branch enums.
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
-use syn::{Ident, LitStr, Token, braced, parenthesized};
+use syn::spanned::Spanned;
+use syn::{Expr, Ident, LitStr, Token, braced, parenthesized};
 
 /// One node in the route-tree DSL.
 enum Node {
@@ -33,6 +40,9 @@ enum Node {
     Route {
         path: LitStr,
         component: Ident,
+        /// Optional `transition = <expr>` — an expression yielding a
+        /// `RouteTransition`. `None` → the platform default.
+        transition: Option<Expr>,
     },
     /// `Layout(Comp) { <container> }` — chrome wrapping a container. NOT a
     /// nav node: the wrapped child takes the position, and `Comp` is recorded
@@ -63,7 +73,32 @@ impl Parse for Node {
                 let path: LitStr = content.parse()?;
                 content.parse::<Token![,]>()?;
                 let component: Ident = content.parse()?;
-                Ok(Node::Route { path, component })
+                // Optional trailing `, key = value` options (currently only
+                // `transition`). Tolerates a trailing comma.
+                let mut transition: Option<Expr> = None;
+                while !content.is_empty() {
+                    content.parse::<Token![,]>()?;
+                    if content.is_empty() {
+                        break; // trailing comma after the last arg
+                    }
+                    let key: Ident = content.parse()?;
+                    content.parse::<Token![=]>()?;
+                    let val: Expr = content.parse()?;
+                    match key.to_string().as_str() {
+                        "transition" => transition = Some(val),
+                        other => {
+                            return Err(syn::Error::new(
+                                key.span(),
+                                format!("unknown Route option `{other}`; expected `transition`"),
+                            ));
+                        }
+                    }
+                }
+                Ok(Node::Route {
+                    path,
+                    component,
+                    transition,
+                })
             }
             "Layout" => {
                 let args;
@@ -140,21 +175,38 @@ pub fn expand(routes: Routes) -> TokenStream {
         .to_compile_error();
     }
 
-    // Collect (id → component) registry entries, deduping shared routes and
-    // erroring if one id maps to two different components.
-    let mut reg: Vec<(String, Ident)> = Vec::new();
+    // Collect (id → component, transition) registry entries, deduping shared
+    // routes and erroring if one id maps to two different components or two
+    // different transitions.
+    let mut reg: Vec<RegEntry> = Vec::new();
     let mut err: Option<syn::Error> = None;
     collect(&routes.roots, &mut reg, &mut err);
     if let Some(e) = err {
         return e.to_compile_error();
     }
 
-    let reg_inserts = reg.iter().map(|(id, comp)| {
-        quote! {
-            .route(
-                #id,
-                |_: &::whisker_router::core::RouteInstance| ::whisker::render! { #comp {} },
-            )
+    let reg_inserts = reg.iter().map(|entry| {
+        let RegEntry {
+            id,
+            component: comp,
+            transition,
+        } = entry;
+        match transition {
+            // `transition = <expr>` → register with the explicit transition.
+            Some(t) => quote! {
+                .route_with(
+                    #id,
+                    #t,
+                    |_: &::whisker_router::core::RouteInstance| ::whisker::render! { #comp {} },
+                )
+            },
+            // No transition → platform default.
+            None => quote! {
+                .route(
+                    #id,
+                    |_: &::whisker_router::core::RouteInstance| ::whisker::render! { #comp {} },
+                )
+            },
         }
     });
 
@@ -180,32 +232,78 @@ pub fn expand(routes: Routes) -> TokenStream {
     }}
 }
 
-fn collect(nodes: &[Node], reg: &mut Vec<(String, Ident)>, err: &mut Option<syn::Error>) {
+/// One collected registry entry: a route id, its component, and its
+/// optional `transition` expression.
+struct RegEntry {
+    id: String,
+    component: Ident,
+    transition: Option<Expr>,
+}
+
+fn collect(nodes: &[Node], reg: &mut Vec<RegEntry>, err: &mut Option<syn::Error>) {
+    fn push_err(err: &mut Option<syn::Error>, e: syn::Error) {
+        match err {
+            Some(p) => p.combine(e),
+            None => *err = Some(e),
+        }
+    }
     for node in nodes {
         match node {
             Node::Switch(children) | Node::Stack(children) => collect(children, reg, err),
             Node::Layout { child, .. } => collect(std::slice::from_ref(child.as_ref()), reg, err),
-            Node::Route { component, .. } => {
+            Node::Route {
+                component,
+                transition,
+                ..
+            } => {
                 let id = snake_case(component);
-                // Clone the existing ident so the immutable borrow ends
-                // before the `reg.push` below.
-                let existing = reg.iter().find(|(i, _)| *i == id).map(|(_, c)| c.clone());
-                match existing {
-                    Some(prev) if &prev != component => {
-                        let e = syn::Error::new(
-                            component.span(),
-                            format!(
-                                "route id `{id}` maps to both `{prev}` and `{component}`; \
-                                 routes sharing an id must use the same component (a shared route)"
-                            ),
-                        );
-                        match err {
-                            Some(p) => p.combine(e),
-                            None => *err = Some(e),
+                match reg.iter_mut().find(|e| e.id == id) {
+                    Some(existing) => {
+                        // Shared route: must agree on the component…
+                        if &existing.component != component {
+                            push_err(
+                                err,
+                                syn::Error::new(
+                                    component.span(),
+                                    format!(
+                                        "route id `{id}` maps to both `{}` and `{component}`; \
+                                         routes sharing an id must use the same component \
+                                         (a shared route)",
+                                        existing.component
+                                    ),
+                                ),
+                            );
+                        }
+                        // …and on the transition. The transition is keyed by
+                        // id, so two sites can't give it different ones. If
+                        // only one site declares it, that wins; if both do,
+                        // they must be token-identical.
+                        match (&existing.transition, transition) {
+                            (Some(a), Some(b))
+                                if quote!(#a).to_string() != quote!(#b).to_string() =>
+                            {
+                                push_err(
+                                    err,
+                                    syn::Error::new(
+                                        b.span(),
+                                        format!(
+                                            "route id `{id}` declares two different transitions; \
+                                             a shared route's transition must match at every site \
+                                             (per-site transitions need the 4-slot form, not yet \
+                                             implemented)"
+                                        ),
+                                    ),
+                                );
+                            }
+                            (None, Some(b)) => existing.transition = Some(b.clone()),
+                            _ => { /* same transition, or none new — keep existing */ }
                         }
                     }
-                    Some(_) => { /* shared route — already registered once */ }
-                    None => reg.push((id, component.clone())),
+                    None => reg.push(RegEntry {
+                        id,
+                        component: component.clone(),
+                        transition: transition.clone(),
+                    }),
                 }
             }
         }
@@ -225,6 +323,7 @@ fn node_to_tree(
         Node::Route {
             path: seg,
             component,
+            ..
         } => {
             let id = snake_case(component);
             quote! { ::whisker_router::core::RouteTree::route(#seg, #id) }
