@@ -40,7 +40,7 @@
 //! ]));
 //! let registry = RouteRegistry::new()
 //!     .route("home",   |_| render! { Home {} })
-//!     .route_with("detail", Transition::Slide, |inst| {
+//!     .route_with("detail", RouteTransition::slide(), |inst| {
 //!         render! { Detail(id: inst.params.get("id").cloned().unwrap_or_default()) }
 //!     });
 //! let handle = RouterHandle::new(tree, registry);
@@ -73,7 +73,7 @@ pub use crate::core::{
     resolve_within,
 };
 pub use crate::render::{
-    AndroidPredictiveBack, Layout, Outlet, RenderFn, Role, RouteRegistry, Router, RouterHandle,
-    Stack, StackBridge, SwipeBack, Switch, TabBar, TabItem, Tabs, Transition, provide_router,
-    use_active_tab, use_navigator,
+    AndroidPredictiveBack, AnimConfig, Layout, Outlet, Pose, RenderFn, Role, RouteRegistry,
+    RouteTransition, Router, RouterHandle, Stack, StackBridge, SwipeBack, Switch, TabBar, TabItem,
+    Tabs, Transition, provide_router, use_active_tab, use_navigator,
 };

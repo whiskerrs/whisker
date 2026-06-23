@@ -19,7 +19,7 @@ use crate::core::{
 use crate::render::handle::{RouterHandle, state_at};
 use crate::render::node::mount_node;
 use crate::render::registry::RouteRegistry;
-use crate::render::transition::Transition;
+use crate::render::transition::RouteTransition;
 
 /// Run `f` under a fresh runtime + a live owner (so `computed` reads have
 /// somewhere to allocate), then tear it down.
@@ -46,7 +46,7 @@ fn registry() -> RouteRegistry {
         .route("home", |_: &RouteInstance| {
             whisker::runtime::view::create_phantom_element()
         })
-        .route_with("detail", Transition::slide(), |_: &RouteInstance| {
+        .route_with("detail", RouteTransition::slide(), |_: &RouteInstance| {
             whisker::runtime::view::create_phantom_element()
         })
 }
@@ -92,7 +92,10 @@ fn registry_resolves_ids_and_transitions() {
         // detail is registered Slide; home defaults to the platform
         // default; unknown falls back to the platform default.
         assert_eq!(h.transition("detail").name(), "slide");
-        assert_eq!(h.transition("home").name(), Transition::default().name());
+        assert_eq!(
+            h.transition("home").name(),
+            RouteTransition::default().name()
+        );
     });
 }
 
@@ -294,7 +297,11 @@ fn counting_tabbed_handle(counts: Counts) -> RouterHandle {
     let registry = RouteRegistry::new()
         .route("home", mk("home", counts.clone()))
         .route("list", mk("list", counts.clone()))
-        .route_with("detail", Transition::none(), mk("detail", counts.clone()));
+        .route_with(
+            "detail",
+            RouteTransition::none(),
+            mk("detail", counts.clone()),
+        );
     RouterHandle::new(tree, registry)
 }
 
@@ -348,10 +355,10 @@ fn slide_stack_handle() -> RouterHandle {
         RouteTree::route("detail/:id", "detail"),
     ]));
     let registry = RouteRegistry::new()
-        .route_with("home", Transition::slide(), |_: &RouteInstance| {
+        .route_with("home", RouteTransition::slide(), |_: &RouteInstance| {
             whisker::runtime::view::create_phantom_element()
         })
-        .route_with("detail", Transition::slide(), |_: &RouteInstance| {
+        .route_with("detail", RouteTransition::slide(), |_: &RouteInstance| {
             whisker::runtime::view::create_phantom_element()
         });
     RouterHandle::new(tree, registry)
@@ -400,7 +407,7 @@ fn pop_settles_survivor_to_active_pose() {
         let top = bridge.top_pose.expect("top has a pose binding");
         let role = top.role.get();
         let progress = top.ctrl.get().value().get();
-        let pose = Transition::slide().pose(role, progress);
+        let pose = RouteTransition::slide().pose(role, progress);
         assert_eq!(
             pose.transform, "translateX(0%)",
             "survivor settled to active 0% pose; role={role:?} progress={progress}"
@@ -497,14 +504,18 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
         let registry = {
             let cleanups = cleanups.clone();
             RouteRegistry::new()
-                .route_with("home", Transition::slide(), |_: &RouteInstance| {
+                .route_with("home", RouteTransition::slide(), |_: &RouteInstance| {
                     whisker::runtime::view::create_phantom_element()
                 })
-                .route_with("detail", Transition::slide(), move |_: &RouteInstance| {
-                    let cleanups = cleanups.clone();
-                    whisker::on_cleanup(move || *cleanups.borrow_mut() += 1);
-                    whisker::runtime::view::create_phantom_element()
-                })
+                .route_with(
+                    "detail",
+                    RouteTransition::slide(),
+                    move |_: &RouteInstance| {
+                        let cleanups = cleanups.clone();
+                        whisker::on_cleanup(move || *cleanups.borrow_mut() += 1);
+                        whisker::runtime::view::create_phantom_element()
+                    },
+                )
         };
         let h = RouterHandle::new(tree, registry);
         let _slot = mount_node(&h, NodePath::root());

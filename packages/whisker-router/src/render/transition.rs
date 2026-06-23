@@ -29,23 +29,23 @@ use whisker::AnimConfig;
 /// A user-extensible screen transition: how a route enters and leaves when
 /// it becomes / stops being the top of its stack.
 ///
-/// A transition is defined by a [`TransitionImpl`] — its timing
-/// ([`config`](TransitionImpl::config), duration + easing) and its
-/// `progress → CSS` posers ([`pose`](TransitionImpl::pose)). The built-ins
-/// ([`slide`](Transition::slide), [`fade`](Transition::fade),
-/// [`modal`](Transition::modal), [`none`](Transition::none)) are just
-/// in-crate impls; apps add their own with [`Transition::custom`].
+/// A transition is defined by a [`Transition`] — its timing
+/// ([`config`](Transition::config), duration + easing) and its
+/// `progress → CSS` posers ([`pose`](Transition::pose)). The built-ins
+/// ([`slide`](RouteTransition::slide), [`fade`](RouteTransition::fade),
+/// [`modal`](RouteTransition::modal), [`none`](RouteTransition::none)) are just
+/// in-crate impls; apps add their own with [`RouteTransition::custom`].
 ///
 /// `Rc`-backed so it is cheap to [`Clone`] and store per-route. Edge-swipe
 /// back is **not** part of a transition — it is enabled by mounting a
 /// gesture component (`SwipeBack` / `AndroidPredictiveBack`).
 #[derive(Clone)]
-pub struct Transition(Rc<dyn TransitionImpl>);
+pub struct RouteTransition(Rc<dyn Transition>);
 
-/// Defines a [`Transition`]'s timing and per-progress poses. Implement this
-/// on your own type and wrap it with [`Transition::custom`] to add a custom
+/// Defines a [`RouteTransition`]'s timing and per-progress poses. Implement this
+/// on your own type and wrap it with [`RouteTransition::custom`] to add a custom
 /// screen transition (cf. Flutter's `PageTransitionsBuilder`).
-pub trait TransitionImpl {
+pub trait Transition {
     /// The animation config (duration + easing) for the non-interactive
     /// push/pop run. Duration is owned by the transition here (unlike
     /// Flutter, which keeps it on the route).
@@ -69,37 +69,37 @@ pub trait TransitionImpl {
     }
 }
 
-impl Transition {
-    /// Wrap a custom [`TransitionImpl`] as a [`Transition`].
-    pub fn custom(imp: impl TransitionImpl + 'static) -> Self {
-        Transition(Rc::new(imp))
+impl RouteTransition {
+    /// Wrap a custom [`Transition`] as a [`RouteTransition`].
+    pub fn custom(imp: impl Transition + 'static) -> Self {
+        RouteTransition(Rc::new(imp))
     }
 
     /// Horizontal iOS slide (the iOS default): the incoming screen slides
     /// in from the right, the covered screen parallax-slides left + dims.
     pub fn slide() -> Self {
-        Transition::custom(Slide)
+        RouteTransition::custom(Slide)
     }
 
     /// Cross-fade opacity, no translation.
     pub fn fade() -> Self {
-        Transition::custom(Fade)
+        RouteTransition::custom(Fade)
     }
 
     /// No animation — the screen swaps in one frame.
     pub fn none() -> Self {
-        Transition::custom(NoneTransition)
+        RouteTransition::custom(NoneTransition)
     }
 
     /// Slide up from the bottom (modal presentation).
     pub fn modal() -> Self {
-        Transition::custom(Modal)
+        RouteTransition::custom(Modal)
     }
 
     /// The Android default: a small horizontal slide combined with a fade
     /// (Material shared-axis feel) — subtler than the full iOS slide.
     pub fn android_default() -> Self {
-        Transition::custom(SmallSlideFade)
+        RouteTransition::custom(SmallSlideFade)
     }
 
     /// The animation config (duration + easing) for this transition.
@@ -123,25 +123,25 @@ impl Transition {
     }
 }
 
-impl std::fmt::Debug for Transition {
+impl std::fmt::Debug for RouteTransition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Transition({})", self.name())
+        write!(f, "RouteTransition({})", self.name())
     }
 }
 
-/// The platform default: iOS gets the full [`slide`](Transition::slide);
-/// Android gets the subtler [`android_default`](Transition::android_default)
+/// The platform default: iOS gets the full [`slide`](RouteTransition::slide);
+/// Android gets the subtler [`android_default`](RouteTransition::android_default)
 /// (small slide + fade). This is whisker's analogue of Flutter's
 /// `PageTransitionsTheme` per-`TargetPlatform` default.
-impl Default for Transition {
+impl Default for RouteTransition {
     fn default() -> Self {
         #[cfg(target_os = "android")]
         {
-            Transition::android_default()
+            RouteTransition::android_default()
         }
         #[cfg(not(target_os = "android"))]
         {
-            Transition::slide()
+            RouteTransition::slide()
         }
     }
 }
@@ -294,14 +294,14 @@ const PARALLAX: f32 = 0.30;
 const DIM: f32 = 0.12;
 
 /// How a wrapper poses itself for a given progress: either the normal
-/// route [`Transition`] (push/pop/button-back), or the Material
+/// route [`RouteTransition`] (push/pop/button-back), or the Material
 /// **predictive-back** preview (driven live by a back gesture).
 ///
-/// `Clone` (not `Copy`) since [`Transition`] is `Rc`-backed.
+/// `Clone` (not `Copy`) since [`RouteTransition`] is `Rc`-backed.
 #[derive(Clone, Debug)]
 pub enum PoseMode {
     /// Normal push/pop/replace transition for this route.
-    Transition(Transition),
+    Transition(RouteTransition),
     /// Interactive predictive-back preview from `edge`.
     Predictive(SwipeEdge),
 }
@@ -334,7 +334,7 @@ pub struct Pose {
 
 impl Pose {
     /// A pose with no corner rounding (`radius_px = 0`). The common
-    /// constructor for custom [`TransitionImpl::pose`] implementations.
+    /// constructor for custom [`Transition::pose`] implementations.
     pub fn new(transform: String, opacity: f32) -> Self {
         Pose {
             transform,
@@ -423,7 +423,7 @@ pub fn predictive_pose(role: Role, value: f32, edge: SwipeEdge) -> Pose {
 /// Horizontal iOS slide: top enters from the right (100% → 0%), under
 /// parallaxes left (0% → -30%) and dims slightly.
 struct Slide;
-impl TransitionImpl for Slide {
+impl Transition for Slide {
     fn config(&self) -> AnimConfig {
         AnimConfig::ease_out(300)
     }
@@ -451,7 +451,7 @@ impl TransitionImpl for Slide {
 /// shared-axis feel). The top slides only a short distance from the right
 /// while fading in; the under fades out a touch without a big parallax.
 struct SmallSlideFade;
-impl TransitionImpl for SmallSlideFade {
+impl Transition for SmallSlideFade {
     fn config(&self) -> AnimConfig {
         AnimConfig::ease_out(280)
     }
@@ -478,7 +478,7 @@ impl TransitionImpl for SmallSlideFade {
 /// Modal: top slides up from the bottom (100% → 0% on Y); the under
 /// screen stays put (a modal covers without parallax).
 struct Modal;
-impl TransitionImpl for Modal {
+impl Transition for Modal {
     fn config(&self) -> AnimConfig {
         AnimConfig::ease_out(340)
     }
@@ -500,7 +500,7 @@ impl TransitionImpl for Modal {
 /// Cross-fade: top fades in (opacity 0 → 1), no translation; under
 /// fades out a touch so the swap reads as a dissolve.
 struct Fade;
-impl TransitionImpl for Fade {
+impl Transition for Fade {
     fn config(&self) -> AnimConfig {
         AnimConfig::ease_out(220)
     }
@@ -517,10 +517,10 @@ impl TransitionImpl for Fade {
 }
 
 /// No animation — the screen swaps in one frame. Marked
-/// [`is_instant`](TransitionImpl::is_instant) so the reconcile skips the
+/// [`is_instant`](Transition::is_instant) so the reconcile skips the
 /// animated run entirely.
 struct NoneTransition;
-impl TransitionImpl for NoneTransition {
+impl Transition for NoneTransition {
     fn config(&self) -> AnimConfig {
         // A (near-)instant controller so the wiring stays uniform.
         AnimConfig::ease_out(1)

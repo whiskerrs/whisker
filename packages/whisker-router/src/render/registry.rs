@@ -1,5 +1,5 @@
 //! The hand-written **route id → render fn** registry, plus the
-//! per-route [`Transition`] choice.
+//! per-route [`RouteTransition`] choice.
 //!
 //! In a later phase the `routes!` macro will *generate* this map from
 //! the declared screens. For now it is built by hand: the app registers
@@ -11,7 +11,7 @@
 //! ```ignore
 //! let registry = RouteRegistry::new()
 //!     .route("home", |_| render! { Home {} })
-//!     .route_with("detail", Transition::slide(), |inst| {
+//!     .route_with("detail", RouteTransition::slide(), |inst| {
 //!         let id = inst.params.get("id").cloned().unwrap_or_default();
 //!         render! { Detail(id: id) }
 //!     });
@@ -23,7 +23,7 @@ use std::rc::Rc;
 use whisker::runtime::view::Element;
 
 use crate::core::RouteInstance;
-use crate::render::transition::Transition;
+use crate::render::transition::RouteTransition;
 
 /// A screen-render closure: maps the concrete [`RouteInstance`] (its
 /// param values) to a freshly-rendered [`Element`].
@@ -58,11 +58,11 @@ where
 #[derive(Clone)]
 struct Entry {
     render: RenderFn,
-    transition: Transition,
+    transition: RouteTransition,
 }
 
 /// The hand-written map from a route id to its [`RenderFn`] +
-/// [`Transition`].
+/// [`RouteTransition`].
 ///
 /// Cloneable (cheap — the closures are `Rc`-backed) so it can be moved
 /// into a [`RouterHandle`](crate::render::RouterHandle) and shared.
@@ -77,10 +77,10 @@ impl RouteRegistry {
         Self::default()
     }
 
-    /// Register `id`'s render closure with the default ([`Transition::Slide`])
-    /// transition. Chainable.
+    /// Register `id`'s render closure with the platform-default
+    /// ([`RouteTransition::default`]) transition. Chainable.
     pub fn route(mut self, id: impl Into<String>, render: impl Into<RenderFn>) -> Self {
-        self.insert(id.into(), render.into(), Transition::default());
+        self.insert(id.into(), render.into(), RouteTransition::default());
         self
     }
 
@@ -89,14 +89,14 @@ impl RouteRegistry {
     pub fn route_with(
         mut self,
         id: impl Into<String>,
-        transition: Transition,
+        transition: RouteTransition,
         render: impl Into<RenderFn>,
     ) -> Self {
         self.insert(id.into(), render.into(), transition);
         self
     }
 
-    fn insert(&mut self, id: String, render: RenderFn, transition: Transition) {
+    fn insert(&mut self, id: String, render: RenderFn, transition: RouteTransition) {
         self.entries.insert(id, Entry { render, transition });
     }
 
@@ -106,9 +106,9 @@ impl RouteRegistry {
     }
 
     /// The transition registered for `id` (defaults to the
-    /// platform [`Transition::default`] when the id is unknown — the safe
+    /// platform [`RouteTransition::default`] when the id is unknown — the safe
     /// fallback for a missing registration).
-    pub fn transition(&self, id: &str) -> Transition {
+    pub fn transition(&self, id: &str) -> RouteTransition {
         self.entries
             .get(id)
             .map(|e| e.transition.clone())

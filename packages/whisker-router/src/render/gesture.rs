@@ -30,7 +30,7 @@ use whisker::{AnimationController, component, module, on_cleanup, render, use_co
 
 use crate::render::components::RouterRoot;
 use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
-use crate::render::transition::{self, PoseMode, Role, SwipeEdge, Transition};
+use crate::render::transition::{self, PoseMode, Role, RouteTransition, SwipeEdge};
 
 /// Approximate viewport width (pt) the finger travels for a full swipe.
 /// A future revision can read the real container width.
@@ -179,7 +179,7 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
     let mode = if android {
         PoseMode::Predictive(edge)
     } else {
-        PoseMode::Transition(Transition::slide())
+        PoseMode::Transition(RouteTransition::slide())
     };
     if let (Some(ctrl), Some(top), Some(under)) =
         (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)

@@ -36,7 +36,7 @@ use whisker::{AnimationController, ElementTag, computed};
 
 use crate::core::{NodePath, RouteState, RouteTree};
 use crate::render::handle::RouterHandle;
-use crate::render::transition::{self, Pose, PoseMode, Role, Transition};
+use crate::render::transition::{self, Pose, PoseMode, Role, RouteTransition};
 
 /// Mount the node at `path` and return its phantom slot.
 ///
@@ -232,7 +232,7 @@ struct StackWrapper {
     /// `Predictive(edge)` by a back gesture for the Material preview.
     pose_mode: whisker::RwSignal<PoseMode>,
     /// The transition kind chosen for this entry's route.
-    transition: Transition,
+    transition: RouteTransition,
 }
 
 fn mount_stack(handle: &RouterHandle, path: NodePath) -> Element {

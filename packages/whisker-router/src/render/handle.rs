@@ -42,7 +42,7 @@ use crate::core::{
     CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState, Scope, Target,
 };
 use crate::render::registry::{RenderFn, RouteRegistry};
-use crate::render::transition::Transition;
+use crate::render::transition::RouteTransition;
 
 /// A repointable pose binding for one stack wrapper: the controller whose
 /// progress drives it + the role it plays. The swipe-back gesture sets
@@ -179,7 +179,7 @@ impl RouterHandle {
     }
 
     /// The transition configured for a route id.
-    pub fn transition(&self, id: &str) -> Transition {
+    pub fn transition(&self, id: &str) -> RouteTransition {
         self.inner.registry.transition(id)
     }
 

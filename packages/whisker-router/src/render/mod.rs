@@ -75,7 +75,7 @@ pub use gesture::{AndroidPredictiveBack, AndroidPredictiveBackProps, SwipeBack, 
 pub use handle::{RouterHandle, StackBridge, provide_router, use_navigator};
 pub use registry::{RenderFn, RouteRegistry};
 pub use tabs::{TabBar, TabBarProps, TabItem, Tabs, TabsProps};
-pub use transition::{Pose, Role, Transition, TransitionImpl};
-// Re-exported for custom `TransitionImpl` authors (the return type of
+pub use transition::{Pose, Role, RouteTransition, Transition};
+// Re-exported for custom `Transition` authors (the return type of
 // `config()`), so everything needed for a custom transition is in one place.
 pub use whisker::AnimConfig;
