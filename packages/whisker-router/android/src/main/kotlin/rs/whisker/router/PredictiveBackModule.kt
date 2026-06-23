@@ -188,12 +188,24 @@ public class PredictiveBackModule : Module() {
     private fun edgePayload(e: BackEventCompat): WhiskerValue =
         WhiskerValue.Map(mapOf("swipeEdge" to WhiskerValue.Int(e.swipeEdge.toLong())))
 
-    /** `{ progress, swipeEdge }` — sent each `backProgressed` frame. */
-    private fun progressPayload(e: BackEventCompat): WhiskerValue =
-        WhiskerValue.Map(
+    /** `{ progress, swipeEdge, touchY }` — sent each `backProgressed` frame.
+     *  `touchY` is the finger's vertical position as a **fraction of the
+     *  screen height** (0 = top, 1 = bottom), so the Material shared-element
+     *  card can follow the finger vertically. */
+    private fun progressPayload(e: BackEventCompat): WhiskerValue {
+        val height = appContext.currentActivity
+            ?.window
+            ?.decorView
+            ?.height
+            ?.takeIf { it > 0 }
+            ?.toFloat()
+        val touchYFrac = height?.let { (e.touchY / it).coerceIn(0f, 1f).toDouble() } ?: 0.5
+        return WhiskerValue.Map(
             mapOf(
                 "progress" to WhiskerValue.Float(e.progress.toDouble()),
                 "swipeEdge" to WhiskerValue.Int(e.swipeEdge.toLong()),
+                "touchY" to WhiskerValue.Float(touchYFrac),
             ),
         )
+    }
 }

@@ -190,9 +190,12 @@ const PB_MIN_SCALE: f32 = 0.9;
 /// until [`set_device_corner_radius`] overrides it with the real device
 /// display radius. iOS keeps this default.
 const PB_DEFAULT_RADIUS: f32 = 24.0;
-/// How far (fraction of width) a left-edge swipe nudges the top card to
-/// the right at full progress.
+/// How far (fraction of width) the card shifts toward the swipe edge at
+/// the preview max (Material shared-element x-shift).
 const PB_EDGE_SHIFT: f32 = 0.06;
+/// How far (fraction of height) the card's centre drifts toward the finger
+/// at the preview max (Material shared-element y-shift / finger follow).
+const PB_Y_FOLLOW: f32 = 0.08;
 /// Max dim of the backdrop behind the top card at full progress.
 pub const PB_MAX_DIM: f32 = 0.30;
 
@@ -250,6 +253,37 @@ pub fn set_screen_corner_radius(dp: Option<f32>) {
         _ => 0,
     };
     SCREEN_CORNER_RADIUS_OVERRIDE_BITS.store(stored, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The finger's vertical position during a predictive-back gesture, as a
+/// fraction of screen height (0 = top, 1 = bottom), stored as `f32` bits.
+/// Defaults to centre (0.5). The Android gesture updates it each frame so
+/// the Material shared-element card can follow the finger vertically.
+static GESTURE_PIVOT_Y_BITS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new((0.5f32).to_bits());
+
+/// Set the predictive-back gesture's vertical pivot (0..1 screen fraction).
+pub(crate) fn set_gesture_pivot_y(frac: f32) {
+    if frac.is_finite() {
+        GESTURE_PIVOT_Y_BITS.store(
+            frac.clamp(0.0, 1.0).to_bits(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
+/// The current predictive-back gesture vertical pivot (0..1).
+fn gesture_pivot_y() -> f32 {
+    f32::from_bits(GESTURE_PIVOT_Y_BITS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Material's `STANDARD_DECELERATE` easing = `PathInterpolator(0, 0, 0, 1)`
+/// (cubic-bezier with both control points pulling the curve up front), so
+/// the gesture feedback is "more apparent in the beginning". For this exact
+/// bezier the closed form is `y = 3·t^(2/3) − 2·t`.
+fn decelerate(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    (3.0 * t.powf(2.0 / 3.0) - 2.0 * t).clamp(0.0, 1.0)
 }
 
 /// How far the covered screen parallax-slides while the top screen is
@@ -320,39 +354,65 @@ impl Pose {
     }
 }
 
-/// The Material-style **predictive-back** pose for `role` at `progress`
-/// (the gesture's "presence of the top", 1.0 = at rest, →0.0 = dismissed).
+/// The Material-style **predictive-back** pose for `role` at controller
+/// `value` (1.0 = top present, → 0.0 = committed/dismissed).
 ///
-/// The shrink amount `back = 1 - progress` drives both cards (the corner
-/// radius is the wrapper's constant clip, not animated here):
-/// - **Top**: scales `1 → ~0.9` and (on a left-edge swipe) nudges right; a
-///   right-edge swipe stays centred.
-/// - **Under**: the same scale, sliding in from the left so it sits as an
-///   equal-size card just to the left of the top (peeking the previous
-///   screen), per the OS preview.
-pub fn predictive_pose(role: Role, progress: f32, edge: SwipeEdge) -> Pose {
-    let p = progress.clamp(0.0, 1.0);
-    let back = 1.0 - p; // 0 at rest, 1 fully dismissed
-    let scale = 1.0 - back * (1.0 - PB_MIN_SCALE);
-    // Corner radius animates with the gesture: square at rest (back=0),
-    // rounding to the device radius as the card shrinks (back=1).
-    let radius = back * screen_corner_radius();
+/// The controller value spans **two phases** that share one timeline (the
+/// gesture scrubs only the upper half, the commit/cancel settle drives the
+/// rest — see [`crate::render::gesture::scrub`]):
+///
+/// - **Preview** (`value` 1.0 → 0.5): present → the Material card preview.
+///   Both cards shrink to `PB_MIN_SCALE`, corners round to the device
+///   radius, the top nudges per swipe edge, the under peeks from the left.
+/// - **Dismiss** (`value` 0.5 → 0.0): preview → committed. The under slides
+///   to fully present (and un-rounds), the top fades + shrinks away. This is
+///   what makes the *commit* animate smoothly into the previous screen
+///   instead of snapping (the iOS slide gets this for free because its
+///   `value = 0` already *is* the dismissed state; the Material preview's
+///   `value = 0` is only the shrunk card, so it needs this second phase).
+pub fn predictive_pose(role: Role, value: f32, edge: SwipeEdge) -> Pose {
+    let v = value.clamp(0.0, 1.0);
+    // Two phases share the timeline (the drag scrubs only the preview half):
+    //  `preview` 0 at present → 1 at preview max (value 0.5), DECELERATED so
+    //  the shrink is "more apparent in the beginning" (the official spec).
+    //  `dismiss` 0 until value < 0.5 → 1 at value 0 (committed).
+    let preview = decelerate(((1.0 - v) / 0.5).clamp(0.0, 1.0));
+    let dismiss = ((0.5 - v) / 0.5).clamp(0.0, 1.0);
+    let max_radius = screen_corner_radius();
+    let shrink = 1.0 - PB_MIN_SCALE; // 0.1 → scales to 90%
     match role {
         Role::Top => {
-            let x = match edge {
-                // Left swipe: the card slides toward the right edge.
-                SwipeEdge::Left => back * PB_EDGE_SHIFT * 100.0,
-                // Right swipe: shrink in place, centred.
-                SwipeEdge::Right => 0.0,
+            // Material **shared-element** preview: the leaving screen becomes
+            // a card that shrinks to 90% and FOLLOWS THE FINGER — shifting
+            // toward the swipe edge horizontally and toward the finger's Y
+            // vertically. On commit it fades + drifts away.
+            let scale = 1.0 - preview * shrink - dismiss * 0.04;
+            let dir = match edge {
+                SwipeEdge::Left => 1.0,   // left-edge swipe → card moves right
+                SwipeEdge::Right => -1.0, // right-edge swipe → card moves left
             };
-            Pose::with_radius(format!("translateX({x}%) scale({scale})"), 1.0, radius)
+            let x = dir * preview * PB_EDGE_SHIFT * 100.0;
+            // Follow the finger vertically: the card's centre drifts toward
+            // the touch Y, up to ±PB_Y_FOLLOW, capped by the 8dp margin feel.
+            let y = (gesture_pivot_y() - 0.5) * preview * PB_Y_FOLLOW * 100.0;
+            let opacity = 1.0 - dismiss;
+            let radius = max_radius * preview;
+            Pose::with_radius(
+                format!("translateX({x}%) translateY({y}%) scale({scale})"),
+                opacity,
+                radius,
+            )
         }
         Role::Under => {
-            // Same scale; enters from the left. At rest (p=1) it sits just
-            // off the left edge (hidden behind the top); as the gesture
-            // progresses it slides right to peek beside the shrinking top.
-            // `-100%` at p=1 (fully off-left), easing toward `-~60%`.
-            let x = -100.0 + back * 40.0;
+            // The entering (previous) screen scales together with the top
+            // card during the drag (down to 0.9, in lockstep via the same
+            // decelerated `preview`), peeking from the left. On commit it
+            // slides in from the left to fully present while growing back to
+            // full screen.
+            let scale = 1.0 - preview * shrink + dismiss * shrink; // 1 → 0.9 → 1
+            // -100% (off-left) → -60% (peek) → 0% (present).
+            let x = -100.0 + preview * 40.0 + dismiss * 60.0;
+            let radius = max_radius * preview * (1.0 - dismiss);
             Pose::with_radius(format!("translateX({x}%) scale({scale})"), 1.0, radius)
         }
     }

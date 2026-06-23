@@ -30,7 +30,7 @@ use whisker::{AnimationController, component, module, on_cleanup, render, use_co
 
 use crate::render::components::RouterRoot;
 use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
-use crate::render::transition::{self, PoseMode, Role, SwipeEdge};
+use crate::render::transition::{self, PoseMode, Role, SwipeEdge, Transition};
 
 /// Approximate viewport width (pt) the finger travels for a full swipe.
 /// A future revision can read the real container width.
@@ -56,7 +56,8 @@ struct Gesture {
 pub fn swipe_back() -> Element {
     let nav = use_navigator();
     // Bind to the router's screen-spanning root (a phantom slot has no
-    // extent and would never be hit by a touch).
+    // extent and would never be hit by a touch). The `RouterRoot` context is
+    // published by `router()` BEFORE the children mount, so it is visible here.
     let container = use_context::<RouterRoot>().map(|r| r.0);
     on_mount(move || {
         if let Some(container) = container {
@@ -168,16 +169,29 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
     if !bridge.can_back {
         return None;
     }
-    let mode = PoseMode::Predictive(edge);
+    // The interactive preview is platform-native:
+    //  - Android: the Material **predictive-back** card (shrink + rounded
+    //    corners + backdrop dim).
+    //  - iOS / others: the interactive **iOS slide-back** (the top slides
+    //    off to the right, the under parallaxes back) — the route's slide
+    //    pose driven by the finger, NOT the Material card.
+    let android = cfg!(target_os = "android");
+    let mode = if android {
+        PoseMode::Predictive(edge)
+    } else {
+        PoseMode::Transition(Transition::slide())
+    };
     if let (Some(ctrl), Some(top), Some(under)) =
         (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)
     {
         point(top, ctrl, Role::Top, mode.clone());
         point(under, ctrl, Role::Under, mode);
-        // Drive the backdrop dim off the same controller so it darkens
-        // during the drag AND animates in lockstep with the settle run.
-        if let Some(dim_drive) = &bridge.dim_drive {
-            dim_drive.set(Some(ctrl.clone()));
+        // The Material backdrop dim is Android-only; the iOS slide carries
+        // its own subtle under-screen dim in `slide_pose`.
+        if android {
+            if let Some(dim_drive) = &bridge.dim_drive {
+                dim_drive.set(Some(ctrl.clone()));
+            }
         }
     }
     Some(bridge)
@@ -324,7 +338,13 @@ pub fn android_predictive_back() -> Element {
             // Also retry here in case the platform skips `backStarted`.
             try_fetch_device_corner_radius();
             if let Some(bridge) = state.borrow().as_ref() {
-                scrub(bridge, back_progress(&payload));
+                // Update the finger's vertical pivot so the shared-element
+                // card follows it, then scrub. The drag scrubs only the
+                // PREVIEW half of the predictive timeline (value 1.0 → 0.5);
+                // the commit/cancel settle drives the rest. See
+                // `predictive_pose`'s two-phase doc.
+                transition::set_gesture_pivot_y(payload_touch_y(&payload));
+                scrub(bridge, back_progress(&payload) * 0.5);
             }
         })
     };
@@ -372,6 +392,19 @@ pub fn android_predictive_back() -> Element {
     });
 
     render! { fragment() }
+}
+
+/// Read `touchY` (0..1, finger Y as a fraction of screen height) from a
+/// back-event payload, defaulting to centre (0.5).
+fn payload_touch_y(payload: &WhiskerValue) -> f32 {
+    let WhiskerValue::Map(fields) = payload else {
+        return 0.5;
+    };
+    match fields.get("touchY") {
+        Some(WhiskerValue::Float(v)) => *v as f32,
+        Some(WhiskerValue::Int(v)) => *v as f32,
+        _ => 0.5,
+    }
 }
 
 /// Read `progress` (0..1, back-direction) from a back-event payload.

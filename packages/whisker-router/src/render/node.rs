@@ -417,7 +417,15 @@ fn reconcile_stack(
     // ----- Keep the dim layer immediately below the top wrapper so it
     // darkens the under card + backdrop but is itself covered by the top.
     // Remove + re-append both so order is `[…lower, dim, top]`.
-    {
+    //
+    // ONLY for a push / steady state. During a **pop** the live top is the
+    // revealed survivor, but the wrapper that must paint on top is the
+    // *leaving* one (it slides off ABOVE the survivor) — `run_pop` keeps it
+    // last. Re-appending the survivor here would put it over the leaving
+    // card (Lynx ignores z-index during transform animations, so paint
+    // order = DOM order), which is exactly the "previous screen on top
+    // during the back slide" bug.
+    if new_len >= old_len {
         let l = live.borrow();
         if let Some(top_w) = l.last() {
             remove_child(slot, dim);
@@ -484,6 +492,13 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
         }
         return;
     }
+
+    // The leaving card slides off ON TOP of the revealed survivor, so it
+    // must paint above it. Lynx ignores z-index during transform
+    // animations (paint order = DOM order), so move the popped wrapper to
+    // the end (topmost) for the duration of the slide-out.
+    remove_child(slot, popped.wrapper);
+    append_child(slot, popped.wrapper);
 
     let popped_wrapper = popped.wrapper;
     let popped_owner = popped.owner;

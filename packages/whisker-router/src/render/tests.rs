@@ -582,14 +582,16 @@ fn predictive_back_progress_scrubs_top_controller() {
         flush();
         settle_animations();
 
-        // backStarted → begin(): grabs the active stack's bridge and
-        // points the backdrop dim at the top controller.
+        // backStarted → begin(): grabs the active stack's bridge. On the
+        // host build (the iOS/desktop slide-back path) it uses the route's
+        // slide pose and does NOT drive the Material backdrop dim (that is
+        // Android predictive-back only).
         let bridge = begin(&h, SwipeEdge::Left).expect("a poppable Slide stack yields a bridge");
         let ctrl = bridge.top_ctrl.clone().expect("top ctrl");
         let dim_drive = bridge.dim_drive.expect("dim drive published");
         assert!(
-            dim_drive.get_untracked().is_some(),
-            "begin() drives the dim off the gesture controller"
+            dim_drive.get_untracked().is_none(),
+            "host (slide-back) does not drive the Material dim"
         );
 
         // backProgressed{progress} → scrub: controller = 1 - progress.
@@ -761,8 +763,10 @@ fn predictive_pose_material_shape() {
     set_screen_corner_radius(None);
     set_device_corner_radius(40.0);
 
-    // At rest (progress 1.0 = top fully present): identity, and square —
-    // the corner radius animates IN with the gesture (0 at rest).
+    // Two phases share the controller timeline:
+    //  value 1.0 = present, 0.5 = preview max, 0.0 = committed/dismissed.
+
+    // At rest (value 1.0): identity, square.
     let rest = predictive_pose(Role::Top, 1.0, SwipeEdge::Left);
     assert!(
         rest.transform.contains("scale(1)"),
@@ -770,49 +774,66 @@ fn predictive_pose_material_shape() {
     );
     assert_eq!(rest.radius_px, 0.0, "square at rest");
 
-    // Full back (progress 0.0): shrunk, and rounded to the full device
-    // radius (the rounding grows with the gesture).
-    let full_left = predictive_pose(Role::Top, 0.0, SwipeEdge::Left);
+    // Preview max (value 0.5): top shrunk to 0.9 (shared-element card),
+    // rounded to the device radius, shifted toward the swipe edge.
+    let preview = predictive_pose(Role::Top, 0.5, SwipeEdge::Left);
     assert!(
-        full_left.transform.contains("scale(0.9)"),
-        "shrinks to 0.9: {full_left:?}"
+        preview.transform.contains("scale(0.9)"),
+        "shrinks to 0.9 at preview max: {preview:?}"
     );
     assert!(
-        (full_left.radius_px - 40.0).abs() < 1e-3,
-        "rounds to the device radius at full back: {full_left:?}"
+        (preview.radius_px - 40.0).abs() < 1e-3,
+        "rounds to the device radius at preview max: {preview:?}"
     );
-    // Mid-gesture rounds proportionally (back = 0.5 → 20px).
-    let mid = predictive_pose(Role::Top, 0.5, SwipeEdge::Left);
     assert!(
-        (mid.radius_px - 20.0).abs() < 1e-3,
-        "radius grows with progress: {mid:?}"
+        preview.transform.contains("translateX(6%)"),
+        "left-edge swipe shifts the card right: {preview:?}"
     );
-    // Left edge nudges the card to the RIGHT (positive translateX).
+    // Right-edge swipe shifts the card the other way (negative translateX).
+    let preview_right = predictive_pose(Role::Top, 0.5, SwipeEdge::Right);
     assert!(
-        full_left.transform.contains("translateX(6%)"),
-        "left-edge swipe shifts right: {full_left:?}"
+        preview_right.transform.contains("translateX(-6%)"),
+        "right-edge swipe shifts the card left: {preview_right:?}"
+    );
+    // The shrink is DECELERATED (more apparent early): at value 0.75 the
+    // preview is already well past linear (radius > the linear 20px).
+    let mid = predictive_pose(Role::Top, 0.75, SwipeEdge::Left);
+    assert!(
+        mid.radius_px > 20.0 && mid.radius_px < 40.0,
+        "decelerated radius is front-loaded (>linear 20, <max 40): {mid:?}"
     );
 
-    // Right edge: same scale, but centred (no horizontal shift).
-    let full_right = predictive_pose(Role::Top, 0.0, SwipeEdge::Right);
-    assert!(
-        full_right.transform.contains("translateX(0%)"),
-        "right-edge swipe stays centred: {full_right:?}"
+    // Committed (value 0.0): the top fades out as it leaves.
+    let committed = predictive_pose(Role::Top, 0.0, SwipeEdge::Left);
+    assert_eq!(
+        committed.opacity, 0.0,
+        "top fades out on commit: {committed:?}"
     );
 
-    // Under card: same scale as Top, slid in from the left.
-    let under = predictive_pose(Role::Under, 0.0, SwipeEdge::Left);
+    // Under (entering) scales together with the top card (down to 0.9) and
+    // peeks from the left during the drag, then slides in to fully present
+    // and grows back to full size on commit.
+    let under_preview = predictive_pose(Role::Under, 0.5, SwipeEdge::Left);
     assert!(
-        under.transform.contains("scale(0.9)"),
-        "under same scale: {under:?}"
+        under_preview.transform.contains("scale(0.9)"),
+        "under scales with the card to 0.9 at preview: {under_preview:?}"
     );
     assert!(
-        under.transform.contains("translateX(-60%)"),
-        "under peeks from the left: {under:?}"
+        under_preview.transform.contains("translateX(-60%)"),
+        "under peeks from the left: {under_preview:?}"
+    );
+    let under_committed = predictive_pose(Role::Under, 0.0, SwipeEdge::Left);
+    assert!(
+        under_committed.transform.contains("translateX(0%)"),
+        "under slides to present on commit: {under_committed:?}"
     );
     assert!(
-        (under.radius_px - 40.0).abs() < 1e-3,
-        "under card rounds too: {under:?}"
+        under_committed.transform.contains("scale(1)"),
+        "under grows back to full size on commit: {under_committed:?}"
+    );
+    assert!(
+        under_committed.radius_px < 1e-3,
+        "under un-rounds when present: {under_committed:?}"
     );
 
     // Restore the default so test ordering can't leak the global.

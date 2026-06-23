@@ -73,20 +73,27 @@ pub fn router(handle: RouterHandle, children: Children) -> Element {
     // children horizontally (the tab content eats the row, side-effect
     // gesture/marker views shrink to 0). So `root` itself is the real
     // `flex-direction: column` container the children mount into directly.
+    // Build the root view EMPTY first, then publish the `RouterRoot`
+    // context, and only THEN mount the children into it. Ordering matters:
+    // `children()` (e.g. a `SwipeBack` that reads `RouterRoot` to bind its
+    // gesture) mounts at the point it is rendered, so it must run *after*
+    // `provide_context(RouterRoot(root))` — otherwise it sees `None` and the
+    // gesture is silently never installed (the iOS swipe-back bug).
     let root = render! {
         view(style: css!(
             flex_grow: 1.0,
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
-        ).raw("position", "relative")) {
-            // The tree is drawn by `children` (an Outlet / Tabs / Stack),
-            // NOT here — drawing root ourselves *and* letting a child draw
-            // the same subtree would double-mount it. Mounting them as
-            // `root`'s render-children keeps them under the column root.
-            children()
-        }
+        ).raw("position", "relative")) {}
     };
     provide_context(RouterRoot(root));
+    // Mount the children now that `RouterRoot` is in context. The tree is
+    // drawn by `children` (an Outlet / Tabs / Stack), NOT here — drawing
+    // root ourselves *and* letting a child draw the same subtree would
+    // double-mount it. Appending them under the column `root` keeps the
+    // `flex-direction: column` container (a style-less phantom would hoist
+    // them into Lynx's default `row`).
+    whisker::runtime::view::append_child(root, whisker::runtime::view::mount_children(&children));
 
     // Prime the device screen corner radius at router init (it feeds the
     // constant per-screen clip). Run in `on_mount` so the host Activity has
