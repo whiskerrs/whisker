@@ -32,7 +32,7 @@ use whisker::runtime::view::Element;
 use whisker_router::core::{CompiledTree, NodePath, RouteInstance, RouteTree, SwitchDef, Target};
 use whisker_router::render::{
     AndroidPredictiveBack, RouteRegistry, Router, RouterHandle, SwipeBack, TabItem, Tabs,
-    Transition, use_navigator,
+    use_navigator,
 };
 
 /// The Switch (tabs) is the tree root, so its path is the root path.
@@ -60,7 +60,9 @@ fn build_handle() -> RouterHandle {
     let registry = RouteRegistry::new()
         .route("home", |_: &RouteInstance| render! { Home {} })
         .route("list", |_: &RouteInstance| render! { ListScreen {} })
-        .route_with("detail", Transition::slide(), |inst: &RouteInstance| {
+        // Default transition: the platform default — full iOS slide on
+        // iOS, the subtler small-slide + fade on Android.
+        .route("detail", |inst: &RouteInstance| {
             let id = inst.params.get("id").cloned().unwrap_or_default();
             render! { Detail(id: id) }
         });
