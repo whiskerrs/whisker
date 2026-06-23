@@ -43,7 +43,7 @@
 //!     .route_with("detail", RouteTransition::slide(), |inst| {
 //!         render! { Detail(id: inst.params.get("id").cloned().unwrap_or_default()) }
 //!     });
-//! let handle = RouterHandle::new(tree, registry);
+//! let handle = RouterHandle::new((tree, registry));
 //!
 //! render! {
 //!     Router(handle: handle.clone()) {
@@ -65,6 +65,9 @@ pub mod plugin;
 pub mod render;
 
 pub use crate::plugin::{RouterPlugin, RouterPluginConfig};
+
+/// The declarative route-tree macro — see [`routes`](macro@routes).
+pub use whisker_router_macros::routes;
 
 // The new API: the pure core graphs/ops + the reactive render layer.
 pub use crate::core::{

@@ -41,7 +41,7 @@ use whisker::{AnimationController, ReadSignal, RwSignal, computed, provide_conte
 use crate::core::{
     CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState, Scope, Target,
 };
-use crate::render::registry::{RenderFn, RouteRegistry};
+use crate::render::registry::{RenderFn, RouteRegistry, RouteSet};
 use crate::render::transition::RouteTransition;
 
 /// A repointable pose binding for one stack wrapper: the controller whose
@@ -114,7 +114,8 @@ struct Inner {
 impl RouterHandle {
     /// Build a handle from a [`CompiledTree`] and its [`RouteRegistry`],
     /// seeding the state with [`RouteState::initial`].
-    pub fn new(tree: CompiledTree, registry: RouteRegistry) -> Self {
+    pub fn new(routes: impl Into<RouteSet>) -> Self {
+        let RouteSet { tree, registry } = routes.into();
         let owner = Owner::detached_root();
         let initial = RouteState::initial(&tree);
         let state = owner.with(|| RwSignal::new(initial));

@@ -61,6 +61,31 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, LitStr, Variant, parse_macro_input};
 
+mod routes;
+
+/// Lower a declarative route tree into a
+/// [`RouteSet`](https://docs.rs/whisker-router/latest/whisker_router/render/struct.RouteSet.html)
+/// (a compiled tree + its id → component registry), the value a
+/// `RouterHandle::new(routes! { … })` consumes.
+///
+/// ```ignore
+/// let handle = RouterHandle::new(routes! {
+///     Switch {
+///         Stack { Route("", Home)       Route("detail/:id", Detail) }
+///         Stack { Route("list", List)   Route("detail/:id", Detail) }
+///     }
+/// });
+/// ```
+///
+/// A `Route`'s id is its component name in snake_case (`Detail` → `detail`);
+/// the same component routed in several stacks is one shared registry entry.
+/// Components read their own `:param`s via `use_param`.
+#[proc_macro]
+pub fn routes(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as routes::Routes);
+    routes::expand(parsed).into()
+}
+
 /// `#[route]` attribute on an enum — generates
 /// `impl whisker_router::route::Route for Enum`.
 ///

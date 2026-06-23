@@ -45,7 +45,7 @@
 //! let registry = RouteRegistry::new()
 //!     .route("home",   |_| render! { Home {} })
 //!     .route("detail", |inst| render! { Detail(id: inst.params.get("id").cloned().unwrap_or_default()) });
-//! let handle = RouterHandle::new(tree, registry);
+//! let handle = RouterHandle::new((tree, registry));
 //!
 //! render! {
 //!     Router(handle: handle.clone()) {
@@ -73,7 +73,7 @@ pub use components::{
 pub use components::{Outlet, OutletProps};
 pub use gesture::{AndroidPredictiveBack, AndroidPredictiveBackProps, SwipeBack, SwipeBackProps};
 pub use handle::{RouterHandle, StackBridge, provide_router, use_navigator, use_param};
-pub use registry::{RenderFn, RouteRegistry};
+pub use registry::{RenderFn, RouteRegistry, RouteSet};
 pub use tabs::{TabBar, TabBarProps, TabItem, Tabs, TabsProps};
 pub use transition::{Pose, Role, RouteTransition, Transition};
 // Re-exported for custom `Transition` authors (the return type of

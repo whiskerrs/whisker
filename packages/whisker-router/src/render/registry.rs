@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use whisker::runtime::view::Element;
 
-use crate::core::RouteInstance;
+use crate::core::{CompiledTree, RouteInstance};
 use crate::render::transition::RouteTransition;
 
 /// A screen-render closure: maps the concrete [`RouteInstance`] (its
@@ -118,5 +118,35 @@ impl RouteRegistry {
     /// Whether `id` has a registered render closure.
     pub fn contains(&self, id: &str) -> bool {
         self.entries.contains_key(id)
+    }
+}
+
+/// The output of the `routes!` macro: a compiled [`CompiledTree`] paired
+/// with its id → component [`RouteRegistry`].
+///
+/// A `RouteSet` is what a `routes! { … }` declaration evaluates to. The
+/// top-level set becomes a [`RouterHandle`](crate::render::RouterHandle)
+/// via `RouterHandle::new(routes! { … })`. Hand-built trees + registries
+/// convert in with `.into()` (or the tuple form
+/// `RouterHandle::new((tree, registry))`), so the macro and the manual path
+/// share one constructor.
+///
+/// (Composable sub-sets — the design's `..content` spread — land with the
+/// macro in a later phase; today a `RouteSet` is a single rooted tree.)
+pub struct RouteSet {
+    pub(crate) tree: CompiledTree,
+    pub(crate) registry: RouteRegistry,
+}
+
+impl RouteSet {
+    /// Bundle a hand-built tree + registry — the pre-macro construction path.
+    pub fn from_parts(tree: CompiledTree, registry: RouteRegistry) -> Self {
+        RouteSet { tree, registry }
+    }
+}
+
+impl From<(CompiledTree, RouteRegistry)> for RouteSet {
+    fn from((tree, registry): (CompiledTree, RouteRegistry)) -> Self {
+        RouteSet { tree, registry }
     }
 }

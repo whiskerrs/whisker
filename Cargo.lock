@@ -2284,6 +2284,7 @@ dependencies = [
  "whisker-cng",
  "whisker-config",
  "whisker-plugin",
+ "whisker-router-macros",
 ]
 
 [[package]]

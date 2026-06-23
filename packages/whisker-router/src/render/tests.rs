@@ -57,7 +57,7 @@ fn simple_handle() -> RouterHandle {
         RouteTree::route("", "home"),
         RouteTree::route("detail/:id", "detail"),
     ]));
-    RouterHandle::new(tree, registry())
+    RouterHandle::new((tree, registry()))
 }
 
 /// root Stack { Switch(tabs) { Stack{home, detail} Stack{list, detail} } }
@@ -75,7 +75,7 @@ fn tabbed_handle() -> RouterHandle {
             ]),
         ],
     )]));
-    RouterHandle::new(tree, registry())
+    RouterHandle::new((tree, registry()))
 }
 
 // ----- registry -------------------------------------------------------
@@ -302,7 +302,7 @@ fn counting_tabbed_handle(counts: Counts) -> RouterHandle {
             RouteTransition::none(),
             mk("detail", counts.clone()),
         );
-    RouterHandle::new(tree, registry)
+    RouterHandle::new((tree, registry))
 }
 
 #[test]
@@ -361,7 +361,7 @@ fn slide_stack_handle() -> RouterHandle {
         .route_with("detail", RouteTransition::slide(), |_: &RouteInstance| {
             whisker::runtime::view::create_phantom_element()
         });
-    RouterHandle::new(tree, registry)
+    RouterHandle::new((tree, registry))
 }
 
 /// Advance animation frames + flush until nothing is animating (or a
@@ -517,7 +517,7 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
                     },
                 )
         };
-        let h = RouterHandle::new(tree, registry);
+        let h = RouterHandle::new((tree, registry));
         let _slot = mount_node(&h, NodePath::root());
         flush();
 
