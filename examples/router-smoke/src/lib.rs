@@ -43,11 +43,15 @@ fn build_handle() -> RouterHandle {
     // Switch. Each route's id is its component name in snake_case (`Detail`
     // → `detail`, `ListScreen` → `list_screen`); `Detail` reads its `:id`
     // via `use_param`.
+    // `detail` is shared by both tabs — declare it once as a spreadable
+    // fragment and `..shared` it into each stack (each tab keeps its own
+    // history; the two instances dedupe to a single nav target by id).
+    let shared = routes! { Route("detail/:id", Detail) };
     RouterHandle::new(routes! {
         Layout(TabsLayout) {
             Switch {
-                Stack { Route("", Home)            Route("detail/:id", Detail) }
-                Stack { Route("list", ListScreen)  Route("detail/:id", Detail) }
+                Stack { Route("", Home)            ..shared }
+                Stack { Route("list", ListScreen)  ..shared }
             }
         }
     })

@@ -880,3 +880,44 @@ fn screen_corner_radius_follows_device_then_user_override() {
     set_device_corner_radius(24.0);
     set_screen_corner_radius(None);
 }
+
+#[test]
+fn registry_merge_keeps_first_and_folds_new_ids() {
+    use crate::core::RouteTree;
+    use crate::render::registry::RouteFragment;
+
+    // A parent registry that already owns `detail` (with a slide).
+    let base = RouteRegistry::new()
+        .route("home", |_: &RouteInstance| {
+            whisker::runtime::view::create_phantom_element()
+        })
+        .route_with("detail", RouteTransition::slide(), |_: &RouteInstance| {
+            whisker::runtime::view::create_phantom_element()
+        });
+
+    // A spreadable fragment that re-declares `detail` (fade) and adds `post`.
+    let frag = RouteFragment::new(
+        vec![
+            RouteTree::route("detail/:id", "detail"),
+            RouteTree::route("post/:id", "post"),
+        ],
+        RouteRegistry::new()
+            .route_with("detail", RouteTransition::fade(), |_: &RouteInstance| {
+                whisker::runtime::view::create_phantom_element()
+            })
+            .route("post", |_: &RouteInstance| {
+                whisker::runtime::view::create_phantom_element()
+            }),
+    );
+
+    let merged = base.merge(frag.registry());
+
+    // First declaration wins: the parent's `detail` (slide) is kept, not the
+    // fragment's fade.
+    assert_eq!(merged.transition("detail").name(), "slide");
+    // A new id from the fragment is folded in.
+    assert!(merged.contains("post"));
+    assert!(merged.contains("home"));
+    // The fragment exposes its roots for splicing at each `..` site.
+    assert_eq!(frag.roots().len(), 2);
+}

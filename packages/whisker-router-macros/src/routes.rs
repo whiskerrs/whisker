@@ -23,9 +23,29 @@
 //!   shared route must declare the **same** transition (or only one site
 //!   declares it) — conflicting transitions for one id are a compile error.
 //! - `Stack { … }` / `Switch { … }` — the two containers.
+//! - `..frag` — **spread** a reusable [`RouteFragment`] (an un-rooted
+//!   `routes! { Route(..) Route(..) }` value bound to a variable) into a
+//!   `Stack` / `Switch`, splicing its routes in at that position:
 //!
-//! Later phases add per-route **directional** (4-slot) transitions,
-//! `..spread`, typed nav targets, and branch enums.
+//!   ```ignore
+//!   let content = routes! { Route("post/:id", Post)  Route("u/:id", Profile) };
+//!   routes! {
+//!       Switch {
+//!           Stack { Route("", Timeline)  ..content }   // + /post/:id, /u/:id
+//!           Stack { Route("me", MyPage)  ..content }   // same routes, own stack
+//!       }
+//!   }
+//!   ```
+//!
+//!   A body whose top level is a single container evaluates to a `RouteSet`
+//!   (→ a `RouterHandle`); a body of bare `Route`s / spreads evaluates to a
+//!   spreadable `RouteFragment`. Spreading a fragment into N stacks creates N
+//!   tree instances that dedupe to one nav target by id (the registry holds
+//!   one entry per id; resolution picks the instance relative to the current
+//!   position).
+//!
+//! Later phases add per-route **directional** (4-slot) transitions, typed
+//! nav targets, and branch enums.
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
@@ -51,10 +71,19 @@ enum Node {
         component: Ident,
         child: Box<Node>,
     },
+    /// `..frag` — splice a [`RouteFragment`] value's routes in at this
+    /// position. The expression must evaluate to a `RouteFragment`.
+    Spread(Expr),
 }
 
 impl Parse for Node {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        // `..frag` — a spread of a `RouteFragment` value.
+        if input.peek(Token![..]) {
+            input.parse::<Token![..]>()?;
+            let expr: Expr = input.parse()?;
+            return Ok(Node::Spread(expr));
+        }
         let kw: Ident = input.parse()?;
         match kw.to_string().as_str() {
             "Switch" => {
@@ -165,22 +194,30 @@ fn snake_case(ident: &Ident) -> String {
 }
 
 pub fn expand(routes: Routes) -> TokenStream {
-    // This phase requires exactly one rooted node (a `Stack`/`Switch` tree).
-    // Multi-node fragments are for the future `..spread` feature.
-    if routes.roots.len() != 1 {
+    if routes.roots.is_empty() {
         return syn::Error::new(
             Span::call_site(),
-            "routes! currently requires a single root `Stack { … }` or `Switch { … }`",
+            "routes! { … } must contain at least one `Route` or container",
         )
         .to_compile_error();
     }
 
-    // Collect (id → component, transition) registry entries, deduping shared
-    // routes and erroring if one id maps to two different components or two
-    // different transitions.
+    // A single container at the top → a rooted `RouteSet` (→ a
+    // `RouterHandle`). Anything else (bare `Route`s and/or `..spread`s) → a
+    // spreadable `RouteFragment` value.
+    let is_rooted = routes.roots.len() == 1
+        && matches!(
+            routes.roots[0],
+            Node::Stack(_) | Node::Switch(_) | Node::Layout { .. }
+        );
+
+    // Collect (id → component, transition) registry entries (deduping shared
+    // routes / erroring on conflicts) and the `..spread` expressions whose
+    // registries must be merged in.
     let mut reg: Vec<RegEntry> = Vec::new();
+    let mut spreads: Vec<Expr> = Vec::new();
     let mut err: Option<syn::Error> = None;
-    collect(&routes.roots, &mut reg, &mut err);
+    collect(&routes.roots, &mut reg, &mut spreads, &mut err);
     if let Some(e) = err {
         return e.to_compile_error();
     }
@@ -210,26 +247,83 @@ pub fn expand(routes: Routes) -> TokenStream {
         }
     });
 
-    let mut switch_n = 0usize;
-    let mut layouts: Vec<(Vec<usize>, Ident)> = Vec::new();
-    let root_tree = node_to_tree(&routes.roots[0], &[], &mut switch_n, &mut layouts);
-
-    let layout_inserts = layouts.iter().map(|(path, comp)| {
-        let idxs = path.iter();
+    // Fold each distinct spread fragment's id → render/transition entries in
+    // (id-keyed, first declaration wins).
+    let spread_merges = dedup_exprs(&spreads).into_iter().map(|e| {
         quote! {
-            .with(
-                ::whisker_router::core::NodePath(::std::vec![ #(#idxs),* ]),
-                ::whisker_router::render::LayoutFn::new(|| ::whisker::render! { #comp {} }),
-            )
+            .merge(::whisker_router::render::RouteFragment::registry(&(#e)))
         }
     });
 
-    quote! {{
-        let __registry = ::whisker_router::render::RouteRegistry::new() #(#reg_inserts)*;
-        let __layouts = ::whisker_router::render::LayoutRegistry::new() #(#layout_inserts)*;
-        let __tree = ::whisker_router::core::CompiledTree::new(#root_tree);
-        ::whisker_router::render::RouteSet::from_parts_with_layouts(__tree, __registry, __layouts)
-    }}
+    let registry_expr = quote! {
+        ::whisker_router::render::RouteRegistry::new()
+            #(#reg_inserts)*
+            #(#spread_merges)*
+    };
+
+    let mut switch_n = 0usize;
+    let mut layouts: Vec<(Vec<usize>, Ident)> = Vec::new();
+
+    if is_rooted {
+        let root_tree = node_to_tree(&routes.roots[0], &[], &mut switch_n, &mut layouts);
+        let layout_inserts = layout_inserts(&layouts);
+        quote! {{
+            let __registry = #registry_expr;
+            let __layouts = ::whisker_router::render::LayoutRegistry::new() #(#layout_inserts)*;
+            let __tree = ::whisker_router::core::CompiledTree::new(#root_tree);
+            ::whisker_router::render::RouteSet::from_parts_with_layouts(
+                __tree, __registry, __layouts,
+            )
+        }}
+    } else {
+        // A spreadable fragment: a flat list of route roots (+ spreads). A
+        // `Layout(X)` can't keep a stable compile-time path once the fragment
+        // is spliced at an arbitrary position, so it isn't allowed here.
+        let roots = children_vec_tokens(&routes.roots, &[], &mut switch_n, &mut layouts);
+        if !layouts.is_empty() {
+            return syn::Error::new(
+                Span::call_site(),
+                "a spreadable `routes!` fragment cannot contain a `Layout(X)`; \
+                 declare layouts in the rooted `routes!` that consumes the fragment",
+            )
+            .to_compile_error();
+        }
+        quote! {{
+            let __registry = #registry_expr;
+            let __roots = #roots;
+            ::whisker_router::render::RouteFragment::new(__roots, __registry)
+        }}
+    }
+}
+
+/// Emit the `LayoutRegistry` `.with(path, layout)` inserts for the collected
+/// `(path, component)` layouts.
+fn layout_inserts(layouts: &[(Vec<usize>, Ident)]) -> Vec<TokenStream> {
+    layouts
+        .iter()
+        .map(|(path, comp)| {
+            let idxs = path.iter();
+            quote! {
+                .with(
+                    ::whisker_router::core::NodePath(::std::vec![ #(#idxs),* ]),
+                    ::whisker_router::render::LayoutFn::new(|| ::whisker::render! { #comp {} }),
+                )
+            }
+        })
+        .collect()
+}
+
+/// Distinct spread expressions (by token text), preserving first-seen order,
+/// so spreading one fragment into several containers merges its registry once.
+fn dedup_exprs(exprs: &[Expr]) -> Vec<Expr> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for e in exprs {
+        if seen.insert(quote!(#e).to_string()) {
+            out.push(e.clone());
+        }
+    }
+    out
 }
 
 /// One collected registry entry: a route id, its component, and its
@@ -240,7 +334,12 @@ struct RegEntry {
     transition: Option<Expr>,
 }
 
-fn collect(nodes: &[Node], reg: &mut Vec<RegEntry>, err: &mut Option<syn::Error>) {
+fn collect(
+    nodes: &[Node],
+    reg: &mut Vec<RegEntry>,
+    spreads: &mut Vec<Expr>,
+    err: &mut Option<syn::Error>,
+) {
     fn push_err(err: &mut Option<syn::Error>, e: syn::Error) {
         match err {
             Some(p) => p.combine(e),
@@ -249,8 +348,11 @@ fn collect(nodes: &[Node], reg: &mut Vec<RegEntry>, err: &mut Option<syn::Error>
     }
     for node in nodes {
         match node {
-            Node::Switch(children) | Node::Stack(children) => collect(children, reg, err),
-            Node::Layout { child, .. } => collect(std::slice::from_ref(child.as_ref()), reg, err),
+            Node::Switch(children) | Node::Stack(children) => collect(children, reg, spreads, err),
+            Node::Layout { child, .. } => {
+                collect(std::slice::from_ref(child.as_ref()), reg, spreads, err)
+            }
+            Node::Spread(expr) => spreads.push(expr.clone()),
             Node::Route {
                 component,
                 transition,
@@ -329,25 +431,17 @@ fn node_to_tree(
             quote! { ::whisker_router::core::RouteTree::route(#seg, #id) }
         }
         Node::Stack(children) => {
-            let kids = children.iter().enumerate().map(|(i, c)| {
-                let mut child = path.to_vec();
-                child.push(i);
-                node_to_tree(c, &child, switch_n, layouts)
-            });
-            quote! { ::whisker_router::core::RouteTree::stack(::std::vec![ #(#kids),* ]) }
+            let kids = children_vec_tokens(children, path, switch_n, layouts);
+            quote! { ::whisker_router::core::RouteTree::stack(#kids) }
         }
         Node::Switch(children) => {
             let id = format!("switch_{}", *switch_n);
             *switch_n += 1;
-            let kids = children.iter().enumerate().map(|(i, c)| {
-                let mut child = path.to_vec();
-                child.push(i);
-                node_to_tree(c, &child, switch_n, layouts)
-            });
+            let kids = children_vec_tokens(children, path, switch_n, layouts);
             quote! {
                 ::whisker_router::core::RouteTree::switch(
                     ::whisker_router::core::SwitchDef::new(#id, 0usize),
-                    ::std::vec![ #(#kids),* ],
+                    #kids,
                 )
             }
         }
@@ -358,5 +452,69 @@ fn node_to_tree(
             layouts.push((path.to_vec(), component.clone()));
             node_to_tree(child, path, switch_n, layouts)
         }
+        Node::Spread(_) => {
+            // Spreads are spliced by `children_vec_tokens` as a *list* of
+            // children; one can't stand alone as a single tree node. Reaching
+            // here means a spread in a non-list position, e.g.
+            // `Layout(X) { ..frag }`.
+            syn::Error::new(
+                Span::call_site(),
+                "`..spread` must be a direct child of a `Stack` or `Switch`",
+            )
+            .to_compile_error()
+        }
     }
+}
+
+/// Emit a `Vec<RouteTree>` expression for a container's `children`, handling
+/// `..spread` items.
+///
+/// With no spread it is a plain `::std::vec![ … ]`. With a spread it becomes a
+/// block that pushes the literal children and `extend`s each spread fragment's
+/// roots — so the splice happens at runtime. Literal children keep their
+/// compile-time indices (used only for `Layout` paths); because a spread
+/// shifts the *runtime* indices of later siblings, a positioned `Layout` must
+/// not follow a spread in the same container (rare — spreads are trailing leaf
+/// routes in practice).
+fn children_vec_tokens(
+    children: &[Node],
+    path: &[usize],
+    switch_n: &mut usize,
+    layouts: &mut Vec<(Vec<usize>, Ident)>,
+) -> TokenStream {
+    let has_spread = children.iter().any(|c| matches!(c, Node::Spread(_)));
+    if !has_spread {
+        let kids = children.iter().enumerate().map(|(i, c)| {
+            let mut child = path.to_vec();
+            child.push(i);
+            node_to_tree(c, &child, switch_n, layouts)
+        });
+        return quote! { ::std::vec![ #(#kids),* ] };
+    }
+    let mut stmts: Vec<TokenStream> = Vec::new();
+    let mut lit_index = 0usize;
+    for c in children {
+        match c {
+            Node::Spread(expr) => stmts.push(quote! {
+                __kids.extend(
+                    ::whisker_router::render::RouteFragment::roots(&(#expr))
+                        .iter()
+                        .cloned(),
+                );
+            }),
+            other => {
+                let mut child = path.to_vec();
+                child.push(lit_index);
+                lit_index += 1;
+                let t = node_to_tree(other, &child, switch_n, layouts);
+                stmts.push(quote! { __kids.push(#t); });
+            }
+        }
+    }
+    quote! {{
+        let mut __kids: ::std::vec::Vec<::whisker_router::core::RouteTree> =
+            ::std::vec::Vec::new();
+        #(#stmts)*
+        __kids
+    }}
 }

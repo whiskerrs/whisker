@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use whisker::runtime::view::Element;
 
-use crate::core::{CompiledTree, NodePath, RouteInstance};
+use crate::core::{CompiledTree, NodePath, RouteInstance, RouteTree};
 use crate::render::transition::RouteTransition;
 
 /// A screen-render closure: maps the concrete [`RouteInstance`] (its
@@ -118,6 +118,58 @@ impl RouteRegistry {
     /// Whether `id` has a registered render closure.
     pub fn contains(&self, id: &str) -> bool {
         self.entries.contains_key(id)
+    }
+
+    /// Merge `other`'s entries into this one, **keeping existing ids**
+    /// (first registration wins). Used by `..spread`: a fragment's id →
+    /// render/transition entries fold into the parent registry, and an id
+    /// already declared in the parent (or by an earlier spread) is left
+    /// untouched — matching the macro's left-to-right declaration order.
+    pub fn merge(mut self, other: &RouteRegistry) -> Self {
+        for (id, entry) in &other.entries {
+            self.entries
+                .entry(id.clone())
+                .or_insert_with(|| entry.clone());
+        }
+        self
+    }
+}
+
+/// A reusable, **un-rooted** group of routes — the value a
+/// `routes! { Route(..) Route(..) }` (no single container root) evaluates
+/// to. Spread into a `Stack` / `Switch` with `..frag` to splice its routes
+/// into that container.
+///
+/// It carries its route nodes as a list of [`RouteTree`] roots plus the
+/// id → render/transition [`RouteRegistry`] entries they need. Spreading the
+/// same fragment into N containers creates N tree instances of each route
+/// that **dedupe to a single nav target** by id (the registry holds one
+/// entry; [`resolve`](crate::core::resolve) picks the right instance
+/// relative to the current position).
+///
+/// `Clone` (cheap — `RouteTree` is a small tree, the registry is
+/// `Rc`-backed) so one binding can be spread into several containers.
+#[derive(Clone)]
+pub struct RouteFragment {
+    roots: Vec<RouteTree>,
+    registry: RouteRegistry,
+}
+
+impl RouteFragment {
+    /// Bundle a fragment's route roots with the registry entries they need.
+    /// (Emitted by the `routes!` macro; rarely constructed by hand.)
+    pub fn new(roots: Vec<RouteTree>, registry: RouteRegistry) -> Self {
+        RouteFragment { roots, registry }
+    }
+
+    /// The route nodes to splice (cloned at each `..` spread site).
+    pub fn roots(&self) -> &[RouteTree] {
+        &self.roots
+    }
+
+    /// The id → render/transition entries to merge into the parent registry.
+    pub fn registry(&self) -> &RouteRegistry {
+        &self.registry
     }
 }
 
