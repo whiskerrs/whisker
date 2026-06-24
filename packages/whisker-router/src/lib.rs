@@ -69,6 +69,28 @@ pub use crate::plugin::{RouterPlugin, RouterPluginConfig};
 /// The declarative route-tree macro — see [`routes`](macro@routes).
 pub use whisker_router_macros::routes;
 
+/// Completion markers for the `routes!` macro keywords — **not a public API**.
+///
+/// The `routes!` macro emits a span-carrying path into this module for each
+/// container keyword (`Stack` / `Switch` / `Route` / `Layout`), so rust-analyzer
+/// can complete the keyword name while you type — the same trick `render!` uses
+/// for built-in tag names via `whisker::__tags`. Has no runtime role.
+#[doc(hidden)]
+pub mod __kw {
+    /// `routes! { Stack { … } }` — ordered container.
+    #[derive(Clone, Copy)]
+    pub struct Stack;
+    /// `routes! { Switch { … } }` — parallel container.
+    #[derive(Clone, Copy)]
+    pub struct Switch;
+    /// `routes! { Route("path", Component) }` — a screen.
+    #[derive(Clone, Copy)]
+    pub struct Route;
+    /// `routes! { Layout(Component) { … } }` — chrome wrapper.
+    #[derive(Clone, Copy)]
+    pub struct Layout;
+}
+
 // The new API: the pure core graphs/ops + the reactive render layer.
 pub use crate::core::{
     CompiledTree, NavError, Navigator, NodeId, NodeInfo, NodePath, RouteDef, RouteInstance,

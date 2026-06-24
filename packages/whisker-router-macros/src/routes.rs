@@ -87,6 +87,11 @@ enum Node {
     /// `..frag` — splice a [`RouteFragment`] value's routes in at this
     /// position. The expression must evaluate to a `RouteFragment`.
     Spread(Expr),
+    /// An **unknown / half-typed keyword** (e.g. `Sta|` mid-edit). Rather than
+    /// hard-erroring, we keep it so the macro still expands and emits a span-
+    /// carrying probe into `whisker_router::__kw`, letting rust-analyzer
+    /// complete the keyword name — the same trick `render!` uses for tag names.
+    Unknown(Ident),
 }
 
 impl Parse for Node {
@@ -171,8 +176,13 @@ impl Parse for Node {
                 }
                 // The wrapped child must be a container — a `Layout` adds chrome
                 // *around* a `Stack`/`Switch`; it can't wrap a bare `Route`,
-                // a `..spread`, or another `Layout`.
-                if !matches!(children[0], Node::Stack(_) | Node::Switch(_)) {
+                // a `..spread`, or another `Layout`. `Unknown` (a half-typed
+                // keyword like `Swi|`) is allowed so completion survives the
+                // edit — it would otherwise error and wipe the expansion.
+                if !matches!(
+                    children[0],
+                    Node::Stack(_) | Node::Switch(_) | Node::Unknown(_)
+                ) {
                     return Err(syn::Error::new(
                         kw.span(),
                         "Layout(X) { … } must wrap a `Stack` or `Switch` (not a bare `Route`, \
@@ -184,10 +194,21 @@ impl Parse for Node {
                     child: Box::new(children.remove(0)),
                 })
             }
-            other => Err(syn::Error::new(
-                kw.span(),
-                format!("expected `Switch`, `Stack`, `Route`, or `Layout`, found `{other}`"),
-            )),
+            _ => {
+                // Unknown / half-typed keyword. Don't hard-error (that would
+                // wipe the whole expansion and kill completion). Consume any
+                // following `(...)` / `{...}` groups so the rest still parses,
+                // and keep the ident for the completion probe.
+                if input.peek(syn::token::Paren) {
+                    let _discard;
+                    parenthesized!(_discard in input);
+                }
+                if input.peek(syn::token::Brace) {
+                    let _discard;
+                    braced!(_discard in input);
+                }
+                Ok(Node::Unknown(kw))
+            }
         }
     }
 }
@@ -394,7 +415,12 @@ fn validate(nodes: &[Node], err: &mut Option<syn::Error>) {
             Node::Switch(children) => {
                 for c in children {
                     match c {
-                        Node::Stack(_) | Node::Switch(_) | Node::Layout { .. } => {}
+                        // `Unknown` is a half-typed branch — allow it (no error)
+                        // so completion survives mid-edit.
+                        Node::Stack(_)
+                        | Node::Switch(_)
+                        | Node::Layout { .. }
+                        | Node::Unknown(_) => {}
                         Node::Route { component, .. } => push_err(
                             err,
                             syn::Error::new(
@@ -417,7 +443,7 @@ fn validate(nodes: &[Node], err: &mut Option<syn::Error>) {
             }
             Node::Stack(children) => validate(children, err),
             Node::Layout { child, .. } => validate(std::slice::from_ref(child.as_ref()), err),
-            Node::Route { .. } | Node::Spread(_) => {}
+            Node::Route { .. } | Node::Spread(_) | Node::Unknown(_) => {}
         }
     }
 }
@@ -443,6 +469,10 @@ fn collect(
                 collect(std::slice::from_ref(child.as_ref()), reg, spreads, err)
             }
             Node::Spread(expr) => spreads.push(expr.clone()),
+            // A half-typed keyword contributes nothing to the registry; it must
+            // NOT add an error, or `expand` would replace the whole expansion
+            // (probe included) with the error and break completion.
+            Node::Unknown(_) => {}
             Node::Route {
                 component,
                 transition,
@@ -552,6 +582,20 @@ fn node_to_tree(
                 "`..spread` must be a direct child of a `Stack` or `Switch`",
             )
             .to_compile_error()
+        }
+        Node::Unknown(kw) => {
+            // A half-typed keyword. Emit a **completion probe**: a path into
+            // `whisker_router::__kw` carrying the keyword's span, so
+            // rust-analyzer completes `Stack` / `Switch` / `Route` / `Layout`
+            // here (same mechanism `render!` uses for tag names). It has no
+            // runtime effect; the dummy `RouteTree::route` keeps the expansion
+            // well-typed so RA can descend into it. A real typo becomes an
+            // "unresolved item in `__kw`" error pointing at the bad keyword.
+            quote! {{
+                #[allow(unused)]
+                let _ = ::whisker_router::__kw::#kw;
+                ::whisker_router::core::RouteTree::route("", "")
+            }}
         }
     }
 }
