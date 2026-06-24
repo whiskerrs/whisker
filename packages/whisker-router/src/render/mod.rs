@@ -1,25 +1,25 @@
-//! # Reactive rendering of the new router core (phase 2)
+//! # Reactive rendering layer
 //!
-//! This module draws the Phase-1 [`RouteTree`](crate::core::RouteTree) /
+//! This module draws the [`RouteTree`](crate::core::RouteTree) /
 //! [`RouteState`](crate::core::RouteState) core in the Whisker reactive
 //! runtime: a signal-backed [`RouterHandle`] + [`use_navigator`], the
-//! [`Outlet`] / [`Stack`] / [`Switch`] renderers, the [`Tabs`] chrome,
+//! [`Outlet`] / [`Stack`] / [`Switch`] renderers, the [`TabBar`] chrome,
 //! float-`Tween` transitions (via `whisker-animation`, **not** Lynx's
 //! animator), and the interactive back gestures ([`SwipeBack`] for iOS
 //! edge swipe, [`AndroidPredictiveBack`] for Android 13+ predictive back)
 //! — both driving the same coordinated two-screen scrub.
 //!
-//! The id → component map is a **hand-written** [`RouteRegistry`] in this
-//! phase; the `routes!` macro will generate it in phase 3.
+//! The id → component map is built by the [`routes!`](crate::routes) macro
+//! (which also builds the route tree); for advanced use-cases a
+//! [`RouteRegistry`] can be assembled by hand.
 //!
 //! ## The signal model
 //!
 //! [`RouterHandle`] owns the immutable [`CompiledTree`](crate::core::CompiledTree),
 //! the [`RouteRegistry`], and a single `RwSignal<RouteState>`. Every verb
 //! (`navigate` / `select` / `back` / `replace` / `pop_to` / `reset`)
-//! clones the state, runs the Phase-1 [`Navigator`](crate::core::Navigator)
-//! op, and writes the signal back. `current` is a `computed`, never
-//! stored.
+//! clones the state, runs the [`Navigator`](crate::core::Navigator) op,
+//! and writes the signal back. `current` is a `computed`, never stored.
 //!
 //! ## Fine-grained re-render
 //!
@@ -32,27 +32,25 @@
 //! [`Owner::pause`](whisker::runtime::reactive::Owner::pause)) — only the
 //! affected leaf swaps.
 //!
-//! ## Usage (hand-written registry, no macro yet)
+//! ## Usage
 //!
 //! ```ignore
-//! use whisker_router::core::{CompiledTree, RouteTree, Target};
-//! use whisker_router::render::*;
+//! use whisker_router::{routes, render::*};
 //!
-//! let tree = CompiledTree::new(RouteTree::stack(vec![
-//!     RouteTree::route("", "home"),
-//!     RouteTree::route("detail/:id", "detail"),
-//! ]));
-//! let registry = RouteRegistry::new()
-//!     .route("home",   |_| render! { Home {} })
-//!     .route("detail", |inst| render! { Detail(id: inst.params.get("id").cloned().unwrap_or_default()) });
-//! let handle = RouterHandle::new((tree, registry));
+//! let handle = routes! {
+//!     Stack {
+//!         Route("", Home)
+//!         Route("detail/:id", Detail)
+//!     }
+//! };
 //!
 //! render! {
-//!     Router(handle: handle.clone()) {
+//!     Router(handle: handle) {
+//!         Outlet {}
 //!         SwipeBack {}
 //!     }
 //! }
-//! // inside a screen:  use_navigator().navigate(&Target::id("detail"));
+//! // inside a screen:  use_navigator().navigate("/detail/42");
 //! ```
 
 pub mod components;

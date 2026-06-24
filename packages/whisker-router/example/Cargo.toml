@@ -1,0 +1,13 @@
+[package]
+name = "whisker-router-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Example app for `whisker-router`: a tabbed app (one `Stack` per tab sharing a `Detail` route via a spread fragment) declared with `routes!`, exercising URL navigation, the self-highlighting `TabBar`, iOS swipe-back, and Android predictive back."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-router = { path = ".." }

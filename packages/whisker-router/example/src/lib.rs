@@ -1,30 +1,27 @@
-//! router-smoke — on-device check of the new whisker-router rendering
-//! layer (phase 2).
-//!
-//! A tabbed app, hand-wired (no `routes!` macro yet). The **Switch is the
-//! root** so the whole tree is drawn on a single path by one `Tabs`:
+//! Example app for `whisker-router` — a tabbed app declared with `routes!`:
 //!
 //! ```text
-//! Switch (root, drawn by Tabs)
-//!   ├ branch 0 [0]  Stack { Route("", home)       Route("detail/:id", detail) }
-//!   └ branch 1 [1]  Stack { Route("list", list)   Route("detail/:id", detail) }
+//! Layout(TabsLayout) {            // the tab bar chrome (a `Layout`, not the Switch)
+//!     Switch {
+//!         Stack { Route("", Home)            ..shared }   // tab 0 + /detail/:id
+//!         Stack { Route("list", ListScreen)  ..shared }   // tab 1 + /detail/:id
+//!     }
+//! }   // `let shared = routes! { Route("detail/:id", Detail) };`
 //! ```
 //!
-//! - **Home tab**: a button → `navigate(detail)` pushes a Detail onto the
-//!   Home stack (Slide transition). Detail has a Back button → `back()`.
-//! - **List tab**: rows → `navigate(detail)` pushes Detail onto the List
-//!   stack. Each tab keeps its **own** history (switching tabs preserves
-//!   where you were), and the shared `detail` route dedupes to whichever
-//!   tab you are in (relative resolution).
-//! - **Tabs bar**: the persistent bottom chrome (a `Layout`, not the
-//!   `Switch`) — tapping a tab calls `navigator.select(..)`.
-//! - **Swipe-back**: an iOS edge swipe pops the active stack with a
-//!   velocity hand-off.
+//! - **Home / List tabs**: a button → `nav.navigate("/detail/N")` pushes a
+//!   Detail onto the active tab's stack; `Detail` reads its `:id` via
+//!   `use_param`. Each tab keeps its **own** history (switching tabs preserves
+//!   where you were); the shared `detail` route — declared once and `..shared`
+//!   into both stacks — dedupes to whichever tab you are in (relative
+//!   resolution).
+//! - **`TabBar`**: the bottom chrome; it **highlights the active tab itself**
+//!   by matching the current route, and tapping a tab calls `nav.select(..)`.
+//! - **Back gestures**: `SwipeBack` (iOS edge swipe) and `AndroidPredictiveBack`
+//!   (Android 13+ Material preview) pop the active stack.
 //!
-//! `Router` only publishes context + renders its children; the tree is
-//! drawn **once** by the `Tabs` child (an outside route stacked above the
-//! tabs would need a wrapping root `Stack` + a Layout node, which the
-//! `routes!` macro will generate in phase 3).
+//! `Router` only publishes context + renders a bare `Outlet`; the route tree
+//! (with its `Layout` chrome) is drawn there.
 
 use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent};
 use whisker::prelude::*;

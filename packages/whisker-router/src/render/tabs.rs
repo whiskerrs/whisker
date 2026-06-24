@@ -43,7 +43,7 @@ impl TabItem {
     }
 }
 
-/// Visual style for the built-in [`TabBar`] / [`Tabs`]. Defaults to a dark
+/// Visual style for the built-in [`TabBar`]. Defaults to a dark
 /// theme; pass a custom one to retheme the default bar without reimplementing
 /// it. (For a fundamentally different bar, build your own chrome via
 /// [`Layout`](crate::render::Layout) — see the module docs.)

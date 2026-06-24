@@ -1,16 +1,15 @@
 //! The user-facing rendering components: [`Router`], [`Outlet`],
-//! [`Stack`], [`Switch`], and the tab chrome ([`Tabs`] / [`TabBar`]).
+//! [`Stack`], [`Switch`], and [`Layout`].
 //!
 //! [`Router`] is the root: it publishes the [`RouterHandle`] into context
 //! and renders the route tree. [`Outlet`] renders "the active child of
 //! the container I'm in" — its anchor (which container) comes from a
-//! context value an enclosing [`Layout`](crate::render::Layout) /
-//! [`Tabs`] sets, defaulting to the tree root. [`Stack`] / [`Switch`]
-//! render an explicit subtree path for advanced compositions; most apps
-//! only need [`Router`] + [`Outlet`].
+//! context value an enclosing [`Layout`] sets, defaulting to the tree
+//! root. [`Stack`] / [`Switch`] render an explicit subtree path for
+//! advanced compositions; most apps only need [`Router`] + [`Outlet`].
 //!
-//! All four stand on the recursive [`mount_node`](crate::render::node)
-//! engine; they differ only in *which* [`NodePath`] they hand it.
+//! All stand on the recursive [`mount_node`](crate::render::node) engine;
+//! they differ only in *which* [`NodePath`] they hand it.
 
 use whisker::css::{Display, FlexDirection};
 use whisker::prelude::*;

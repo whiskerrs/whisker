@@ -397,7 +397,7 @@ fn join_url(base: &str, segment: &str) -> String {
 mod tests {
     use super::*;
 
-    /// The router-smoke shape: tabs (a Switch) whose two stacks share the
+    /// The example app shape: tabs (a Switch) whose two stacks share the
     /// `detail/:id` route.
     fn tree() -> CompiledTree {
         CompiledTree::new(RouteTree::switch(
