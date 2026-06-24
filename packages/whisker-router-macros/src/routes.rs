@@ -67,10 +67,23 @@ use syn::spanned::Spanned;
 use syn::{Expr, Ident, LitStr, Token, braced, parenthesized};
 
 /// One node in the route-tree DSL.
+///
+/// Container nodes keep their `kw` (the `Stack` / `Switch` / `Route` / `Layout`
+/// keyword `Ident`, with its source span) so the expansion can emit a
+/// span-carrying `whisker_router::__kw` reference — that's what gives the
+/// keyword rust-analyzer completion AND go-to-definition / hover (the same way
+/// `render!` always emits `__tags::__<tag>_ctor()`).
 enum Node {
-    Switch(Vec<Node>),
-    Stack(Vec<Node>),
+    Switch {
+        kw: Ident,
+        children: Vec<Node>,
+    },
+    Stack {
+        kw: Ident,
+        children: Vec<Node>,
+    },
     Route {
+        kw: Ident,
         path: LitStr,
         component: Ident,
         /// Optional `transition = <expr>` — an expression yielding a
@@ -81,6 +94,7 @@ enum Node {
     /// nav node: the wrapped child takes the position, and `Comp` is recorded
     /// as that path's layout.
     Layout {
+        kw: Ident,
         component: Ident,
         child: Box<Node>,
     },
@@ -114,7 +128,7 @@ impl Parse for Node {
                         "`Switch { }` needs at least one branch",
                     ));
                 }
-                Ok(Node::Switch(children))
+                Ok(Node::Switch { kw, children })
             }
             "Stack" => {
                 let content;
@@ -126,7 +140,7 @@ impl Parse for Node {
                         "`Stack { }` needs at least one route or container",
                     ));
                 }
-                Ok(Node::Stack(children))
+                Ok(Node::Stack { kw, children })
             }
             "Route" => {
                 let content;
@@ -156,6 +170,7 @@ impl Parse for Node {
                     }
                 }
                 Ok(Node::Route {
+                    kw,
                     path,
                     component,
                     transition,
@@ -181,7 +196,7 @@ impl Parse for Node {
                 // edit — it would otherwise error and wipe the expansion.
                 if !matches!(
                     children[0],
-                    Node::Stack(_) | Node::Switch(_) | Node::Unknown(_)
+                    Node::Stack { .. } | Node::Switch { .. } | Node::Unknown(_)
                 ) {
                     return Err(syn::Error::new(
                         kw.span(),
@@ -190,6 +205,7 @@ impl Parse for Node {
                     ));
                 }
                 Ok(Node::Layout {
+                    kw,
                     component,
                     child: Box::new(children.remove(0)),
                 })
@@ -266,7 +282,7 @@ pub fn expand(routes: Routes) -> TokenStream {
     let is_rooted = routes.roots.len() == 1
         && matches!(
             routes.roots[0],
-            Node::Stack(_) | Node::Switch(_) | Node::Layout { .. }
+            Node::Stack { .. } | Node::Switch { .. } | Node::Layout { .. }
         );
 
     // Structure checks (parent/child constraints) + collect (id → component,
@@ -412,13 +428,13 @@ fn push_err(err: &mut Option<syn::Error>, e: syn::Error) {
 fn validate(nodes: &[Node], err: &mut Option<syn::Error>) {
     for node in nodes {
         match node {
-            Node::Switch(children) => {
+            Node::Switch { children, .. } => {
                 for c in children {
                     match c {
                         // `Unknown` is a half-typed branch — allow it (no error)
                         // so completion survives mid-edit.
-                        Node::Stack(_)
-                        | Node::Switch(_)
+                        Node::Stack { .. }
+                        | Node::Switch { .. }
                         | Node::Layout { .. }
                         | Node::Unknown(_) => {}
                         Node::Route { component, .. } => push_err(
@@ -441,7 +457,7 @@ fn validate(nodes: &[Node], err: &mut Option<syn::Error>) {
                 }
                 validate(children, err);
             }
-            Node::Stack(children) => validate(children, err),
+            Node::Stack { children, .. } => validate(children, err),
             Node::Layout { child, .. } => validate(std::slice::from_ref(child.as_ref()), err),
             Node::Route { .. } | Node::Spread(_) | Node::Unknown(_) => {}
         }
@@ -464,7 +480,9 @@ fn collect(
 ) {
     for node in nodes {
         match node {
-            Node::Switch(children) | Node::Stack(children) => collect(children, reg, spreads, err),
+            Node::Switch { children, .. } | Node::Stack { children, .. } => {
+                collect(children, reg, spreads, err)
+            }
             Node::Layout { child, .. } => {
                 collect(std::slice::from_ref(child.as_ref()), reg, spreads, err)
             }
@@ -543,34 +561,45 @@ fn node_to_tree(
 ) -> TokenStream {
     match node {
         Node::Route {
+            kw,
             path: seg,
             component,
             ..
         } => {
             let id = snake_case(component);
-            quote! { ::whisker_router::core::RouteTree::route(#seg, #id) }
+            let anchor = kw_anchor(kw);
+            quote! {{ #anchor ::whisker_router::core::RouteTree::route(#seg, #id) }}
         }
-        Node::Stack(children) => {
+        Node::Stack { kw, children } => {
             let kids = children_vec_tokens(children, path, switch_n, layouts);
-            quote! { ::whisker_router::core::RouteTree::stack(#kids) }
+            let anchor = kw_anchor(kw);
+            quote! {{ #anchor ::whisker_router::core::RouteTree::stack(#kids) }}
         }
-        Node::Switch(children) => {
+        Node::Switch { kw, children } => {
             let id = format!("switch_{}", *switch_n);
             *switch_n += 1;
             let kids = children_vec_tokens(children, path, switch_n, layouts);
-            quote! {
+            let anchor = kw_anchor(kw);
+            quote! {{
+                #anchor
                 ::whisker_router::core::RouteTree::switch(
                     ::whisker_router::core::SwitchDef::new(#id, 0usize),
                     #kids,
                 )
-            }
+            }}
         }
-        Node::Layout { component, child } => {
+        Node::Layout {
+            kw,
+            component,
+            child,
+        } => {
             // Layout is transparent in the nav tree: the wrapped child takes
             // this position. Record the chrome at this path, then emit the
-            // child here.
+            // child here (with the keyword anchor).
             layouts.push((path.to_vec(), component.clone()));
-            node_to_tree(child, path, switch_n, layouts)
+            let inner = node_to_tree(child, path, switch_n, layouts);
+            let anchor = kw_anchor(kw);
+            quote! {{ #anchor #inner }}
         }
         Node::Spread(_) => {
             // Spreads are spliced by `children_vec_tokens` as a *list* of
@@ -584,20 +613,22 @@ fn node_to_tree(
             .to_compile_error()
         }
         Node::Unknown(kw) => {
-            // A half-typed keyword. Emit a **completion probe**: a path into
-            // `whisker_router::__kw` carrying the keyword's span, so
-            // rust-analyzer completes `Stack` / `Switch` / `Route` / `Layout`
-            // here (same mechanism `render!` uses for tag names). It has no
-            // runtime effect; the dummy `RouteTree::route` keeps the expansion
-            // well-typed so RA can descend into it. A real typo becomes an
-            // "unresolved item in `__kw`" error pointing at the bad keyword.
-            quote! {{
-                #[allow(unused)]
-                let _ = ::whisker_router::__kw::#kw;
-                ::whisker_router::core::RouteTree::route("", "")
-            }}
+            // A half-typed keyword. Same `__kw` anchor as the known containers
+            // (the source of completion + go-to-def), plus a dummy `RouteTree`
+            // so the expansion stays well-typed and RA can descend. A real typo
+            // surfaces as an unresolved-`__kw`-item error at the keyword.
+            let anchor = kw_anchor(kw);
+            quote! {{ #anchor ::whisker_router::core::RouteTree::route("", "") }}
         }
     }
+}
+
+/// A span-carrying reference into `whisker_router::__kw` for the keyword `kw`.
+/// Emitting it at the keyword's source span is what gives the `routes!`
+/// keywords rust-analyzer completion, go-to-definition, and hover — the same
+/// way `render!` emits `__tags::__<tag>_ctor()` for every tag. No runtime role.
+fn kw_anchor(kw: &Ident) -> TokenStream {
+    quote! { #[allow(unused, clippy::let_unit_value)] let _ = ::whisker_router::__kw::#kw; }
 }
 
 /// Emit a `Vec<RouteTree>` expression for a container's `children`, handling
