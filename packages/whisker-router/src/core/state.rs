@@ -21,6 +21,7 @@ use super::tree::{CompiledTree, NodePath, RouteTree, SwitchDef};
 
 /// The runtime state of one node, mirroring the static tree's shape.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive] // mirrors RouteTree — a future container kind adds a variant
 pub enum RouteState {
     /// A leaf instance carrying its concrete param values (segment
     /// name → value). A bare route has an empty map.

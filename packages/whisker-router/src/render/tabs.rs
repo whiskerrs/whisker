@@ -42,6 +42,39 @@ impl TabItem {
     }
 }
 
+/// Visual style for the built-in [`TabBar`] / [`Tabs`]. Defaults to a dark
+/// theme; pass a custom one to retheme the default bar without reimplementing
+/// it. (For a fundamentally different bar, build your own chrome via
+/// [`Layout`](crate::render::Layout) — see the module docs.)
+#[derive(Clone)]
+pub struct TabBarStyle {
+    /// Bar background color.
+    pub background: Color,
+    /// Bar / tab height (px).
+    pub height: f32,
+    /// Tab label color.
+    pub label_color: Color,
+    /// Tab label font size (px).
+    pub font_size: f32,
+    /// Opacity of the active tab.
+    pub active_opacity: f32,
+    /// Opacity of inactive tabs.
+    pub inactive_opacity: f32,
+}
+
+impl Default for TabBarStyle {
+    fn default() -> Self {
+        TabBarStyle {
+            background: Color::hex(0x16161D),
+            height: 56.0,
+            label_color: Color::hex(0xFFFFFF),
+            font_size: 13.0,
+            active_opacity: 1.0,
+            inactive_opacity: 0.5,
+        }
+    }
+}
+
 /// Standard tabs layout: the selected branch's content above a fixed
 /// bottom bar.
 ///
@@ -59,7 +92,11 @@ impl TabItem {
 /// }
 /// ```
 #[component]
-pub fn tabs(path: NodePath, items: Vec<TabItem>) -> Element {
+pub fn tabs(
+    path: NodePath,
+    items: Vec<TabItem>,
+    #[prop(default = TabBarStyle::default())] style: TabBarStyle,
+) -> Element {
     render! {
         view(style: css!(
             flex_grow: 1.0,
@@ -80,7 +117,7 @@ pub fn tabs(path: NodePath, items: Vec<TabItem>) -> Element {
                 }
             }
             // Bottom navigation bar — highlights the active tab itself.
-            TabBar(items: items.clone())
+            TabBar(items: items.clone(), style: style.clone())
         }
     }
 }
@@ -92,7 +129,10 @@ pub fn tabs(path: NodePath, items: Vec<TabItem>) -> Element {
 /// [`Target`] lives in the active branch), not passed in — drop it into any
 /// layout and it reflects navigation automatically.
 #[component]
-pub fn tab_bar(items: Vec<TabItem>) -> Element {
+pub fn tab_bar(
+    items: Vec<TabItem>,
+    #[prop(default = TabBarStyle::default())] style: TabBarStyle,
+) -> Element {
     let nav = use_navigator();
 
     // expo-router style: highlight the tab whose target is in the active
@@ -107,14 +147,23 @@ pub fn tab_bar(items: Vec<TabItem>) -> Element {
         })
     };
 
+    // Theme values (all `Copy`) lifted out so the per-item closures capture
+    // them without cloning the whole style.
+    let bar_bg = style.background;
+    let item_h = style.height;
+    let label_color = style.label_color;
+    let font_size = style.font_size;
+    let active_op = style.active_opacity;
+    let inactive_op = style.inactive_opacity;
+
     render! {
         view(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             justify_content: JustifyContent::SpaceAround,
             align_items: AlignItems::Center,
-            height: px(56),
-            background_color: Color::hex(0x16161D),
+            height: px(item_h),
+            background_color: bar_bg,
         )) {
             ForEach(
                 each: {
@@ -129,15 +178,19 @@ pub fn tab_bar(items: Vec<TabItem>) -> Element {
                     render! {
                         view(
                             style: computed(move || {
-                                let on = active.get() == i;
+                                let opacity = if active.get() == i {
+                                    active_op
+                                } else {
+                                    inactive_op
+                                };
                                 css!(
                                     flex_grow: 1.0,
                                     display: Display::Flex,
                                     align_items: AlignItems::Center,
                                     justify_content: JustifyContent::Center,
-                                    height: px(56),
+                                    height: px(item_h),
                                 )
-                                .raw("opacity", if on { "1.0" } else { "0.5" })
+                                .raw("opacity", opacity.to_string())
                             }),
                             on_tap: move |_| {
                                 let _ = nav.select(&target);
@@ -145,7 +198,7 @@ pub fn tab_bar(items: Vec<TabItem>) -> Element {
                         ) {
                             text(
                                 value: item.label.clone(),
-                                style: css!(color: Color::hex(0xFFFFFF), font_size: px(13)),
+                                style: css!(color: label_color, font_size: px(font_size)),
                             )
                         }
                     }

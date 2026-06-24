@@ -325,6 +325,7 @@ pub fn pose_for(mode: &PoseMode, role: Role, progress: f32) -> Pose {
 /// is applied on the inner clip view (see [`crate::render::node`]), which
 /// needs the `clip-radius` Lynx attribute for the rounding to clip children.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive] // a pose may grow fields (filter, scrim) — construct via the ctors
 pub struct Pose {
     /// The `transform` CSS value.
     pub transform: String,
@@ -444,12 +445,25 @@ pub fn predictive_dim(value: f32) -> f32 {
 
 // ----- Built-in transitions -------------------------------------------
 
+/// Push/pop duration (ms) of the iOS [`Slide`].
+const SLIDE_MS: u32 = 300;
+/// Push/pop duration (ms) of the Android-default [`SmallSlideFade`].
+const ANDROID_DEFAULT_MS: u32 = 280;
+/// Push/pop duration (ms) of the [`Modal`] presentation.
+const MODAL_MS: u32 = 340;
+/// Cross-fade duration (ms) of the [`Fade`].
+const FADE_MS: u32 = 220;
+/// A (near-)instant controller for [`NoneTransition`] — the swap is settled
+/// synchronously via [`Transition::is_instant`]; this only keeps the wiring
+/// uniform.
+const INSTANT_MS: u32 = 1;
+
 /// Horizontal iOS slide: top enters from the right (100% → 0%), under
 /// parallaxes left (0% → -30%) and dims slightly.
 struct Slide;
 impl Transition for Slide {
     fn config(&self) -> AnimConfig {
-        AnimConfig::ease_out(300)
+        AnimConfig::ease_out(SLIDE_MS)
     }
     fn name(&self) -> &'static str {
         "slide"
@@ -477,7 +491,7 @@ impl Transition for Slide {
 struct SmallSlideFade;
 impl Transition for SmallSlideFade {
     fn config(&self) -> AnimConfig {
-        AnimConfig::ease_out(280)
+        AnimConfig::ease_out(ANDROID_DEFAULT_MS)
     }
     fn name(&self) -> &'static str {
         "android-default"
@@ -504,7 +518,7 @@ impl Transition for SmallSlideFade {
 struct Modal;
 impl Transition for Modal {
     fn config(&self) -> AnimConfig {
-        AnimConfig::ease_out(340)
+        AnimConfig::ease_out(MODAL_MS)
     }
     fn name(&self) -> &'static str {
         "modal"
@@ -526,7 +540,7 @@ impl Transition for Modal {
 struct Fade;
 impl Transition for Fade {
     fn config(&self) -> AnimConfig {
-        AnimConfig::ease_out(220)
+        AnimConfig::ease_out(FADE_MS)
     }
     fn name(&self) -> &'static str {
         "fade"
@@ -547,7 +561,7 @@ struct NoneTransition;
 impl Transition for NoneTransition {
     fn config(&self) -> AnimConfig {
         // A (near-)instant controller so the wiring stays uniform.
-        AnimConfig::ease_out(1)
+        AnimConfig::ease_out(INSTANT_MS)
     }
     fn name(&self) -> &'static str {
         "none"

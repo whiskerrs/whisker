@@ -19,6 +19,7 @@ use super::tree::{CompiledTree, NodePath};
 /// An error from an operation that cannot be expressed as a clean
 /// mutation.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive] // new failure modes (e.g. NothingToPop) can be added later
 pub enum NavError {
     /// The target id/url matched no node in the tree.
     NoSuchTarget,

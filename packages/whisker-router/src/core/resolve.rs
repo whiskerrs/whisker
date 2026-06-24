@@ -18,6 +18,7 @@ use super::tree::{CompiledTree, NodePath};
 ///
 /// [`RouteDef::id`]: super::tree::RouteDef::id
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive] // a typed/NodeId target kind could be added later
 pub enum Target {
     /// Match by nav-target identity (the deduped shared-route case).
     Id(String),

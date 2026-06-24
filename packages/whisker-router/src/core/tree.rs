@@ -130,6 +130,7 @@ impl SwitchDef {
 /// and [`RouteTree::switch`]. Wrap in a [`CompiledTree`] to address and
 /// query it.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive] // reserve room for a future container kind (e.g. Drawer)
 pub enum RouteTree {
     /// A leaf screen with a path segment + param spec.
     Route(RouteDef),

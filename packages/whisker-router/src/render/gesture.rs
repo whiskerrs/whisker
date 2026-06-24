@@ -32,13 +32,80 @@ use crate::render::components::RouterRoot;
 use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
 use crate::render::transition::{self, PoseMode, Role, RouteTransition, SwipeEdge};
 
-/// Approximate viewport width (pt) the finger travels for a full swipe.
-/// A future revision can read the real container width.
-const SWIPE_FULL_DISTANCE_PX: f32 = 402.0;
+/// Default viewport width (pt) the finger travels for a full swipe, used
+/// until [`set_swipe_back_distance`] overrides it — the gesture maps
+/// `deltaX / distance` onto `0..1` progress, so on a non-default-width device
+/// this default mis-scales the swipe.
+const SWIPE_FULL_DISTANCE_DEFAULT_PX: f32 = 402.0;
 /// `clientX` within which a touchstart qualifies as an edge swipe.
 const SWIPE_EDGE_THRESHOLD_PX: f32 = 24.0;
 /// Progress (toward back) at release above which the gesture commits.
 const SWIPE_COMMIT_THRESHOLD: f32 = 0.5;
+
+/// The full-swipe distance (pt), overridable via [`set_swipe_back_distance`].
+/// Stored as `f32` bits; **global** (not thread-local) so a value set from app
+/// init is visible to the gesture handler regardless of thread.
+static SWIPE_FULL_DISTANCE_BITS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(SWIPE_FULL_DISTANCE_DEFAULT_PX.to_bits());
+
+/// Override the finger-travel distance (pt) treated as a full iOS swipe-back.
+/// The default assumes a ~402pt phone; set this to the router container's real
+/// width on other widths (tablets, landscape) so the swipe progress scales
+/// correctly. Pass `None` to revert to the default.
+pub fn set_swipe_back_distance(px: Option<f32>) {
+    let v = match px {
+        Some(v) if v.is_finite() && v > 0.0 => v,
+        _ => SWIPE_FULL_DISTANCE_DEFAULT_PX,
+    };
+    SWIPE_FULL_DISTANCE_BITS.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The current full-swipe distance (pt).
+fn swipe_full_distance() -> f32 {
+    f32::from_bits(SWIPE_FULL_DISTANCE_BITS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SWIPE_FULL_DISTANCE_DEFAULT_PX, set_swipe_back_distance, swipe_full_distance};
+
+    #[test]
+    fn swipe_distance_override_and_revert() {
+        // Default until overridden.
+        assert!((swipe_full_distance() - SWIPE_FULL_DISTANCE_DEFAULT_PX).abs() < 1e-3);
+        // A real width overrides it.
+        set_swipe_back_distance(Some(800.0));
+        assert!((swipe_full_distance() - 800.0).abs() < 1e-3);
+        // Garbage (non-finite / non-positive) and `None` both revert.
+        set_swipe_back_distance(Some(-5.0));
+        assert!((swipe_full_distance() - SWIPE_FULL_DISTANCE_DEFAULT_PX).abs() < 1e-3);
+        set_swipe_back_distance(Some(800.0));
+        set_swipe_back_distance(None);
+        assert!((swipe_full_distance() - SWIPE_FULL_DISTANCE_DEFAULT_PX).abs() < 1e-3);
+    }
+}
+
+// The Android predictive-back native protocol, centralized so a rename is a
+// single-site change (the failure mode otherwise is a silent no-op). The
+// module name itself must stay a literal — `module!` `concat!`s the package
+// name — so it lives in [`pb_module`].
+/// Predictive-back event names (must match the native emitter).
+const PB_EV_STARTED: &str = "backStarted";
+const PB_EV_PROGRESSED: &str = "backProgressed";
+const PB_EV_CANCELLED: &str = "backCancelled";
+const PB_EV_INVOKED: &str = "backInvoked";
+/// Module method returning the device display corner radius (dp).
+const PB_M_DEVICE_CORNER_RADIUS: &str = "getDeviceCornerRadius";
+/// Predictive-back event payload keys.
+const PB_K_TOUCH_Y: &str = "touchY";
+const PB_K_PROGRESS: &str = "progress";
+const PB_K_SWIPE_EDGE: &str = "swipeEdge";
+
+/// The Android predictive-back native module. One site for the module name
+/// (`module!` needs a literal, so this helper is the single source).
+fn pb_module() -> whisker::PlatformModule {
+    module!("PredictiveBack")
+}
 
 /// In-flight gesture state. `None` when no swipe is active.
 struct Gesture {
@@ -128,7 +195,7 @@ fn install(container: Element, nav: RouterHandle) {
             let x = touch.client_x as f32;
             state.last_x = x;
             let delta = (x - state.start_x).max(0.0);
-            let progress = (delta / SWIPE_FULL_DISTANCE_PX).clamp(0.0, 1.0);
+            let progress = (delta / swipe_full_distance()).clamp(0.0, 1.0);
             state.progress = progress;
             scrub(&state.bridge, progress);
         });
@@ -302,7 +369,7 @@ fn point(binding: &PoseBinding, c: &AnimationController, role: Role, mode: PoseM
 #[component]
 pub fn android_predictive_back() -> Element {
     let nav = use_navigator();
-    let module = module!("PredictiveBack");
+    let module = pb_module();
 
     // The in-flight bridge for the current predictive-back gesture. Shared
     // across the four event listeners. The native `PredictiveBack` module
@@ -316,7 +383,7 @@ pub fn android_predictive_back() -> Element {
         let shared = MainThreadOnly {
             inner: (nav.clone(), state.clone()),
         };
-        module.on_event("backStarted", move |payload| {
+        module.on_event(PB_EV_STARTED, move |payload| {
             // Capture `shared` whole (not `shared.inner`) so Rust 2021
             // disjoint captures carry its `Send + Sync` impl.
             let shared = &shared;
@@ -332,7 +399,7 @@ pub fn android_predictive_back() -> Element {
         let shared = MainThreadOnly {
             inner: state.clone(),
         };
-        module.on_event("backProgressed", move |payload| {
+        module.on_event(PB_EV_PROGRESSED, move |payload| {
             let shared = &shared;
             let state = &shared.inner;
             // Also retry here in case the platform skips `backStarted`.
@@ -353,7 +420,7 @@ pub fn android_predictive_back() -> Element {
         let shared = MainThreadOnly {
             inner: (nav.clone(), state.clone()),
         };
-        module.on_event("backCancelled", move |_payload| {
+        module.on_event(PB_EV_CANCELLED, move |_payload| {
             let shared = &shared;
             let (nav, state) = &shared.inner;
             if let Some(bridge) = state.borrow_mut().take() {
@@ -366,7 +433,7 @@ pub fn android_predictive_back() -> Element {
         let shared = MainThreadOnly {
             inner: (nav.clone(), state.clone()),
         };
-        module.on_event("backInvoked", move |_payload| {
+        module.on_event(PB_EV_INVOKED, move |_payload| {
             let shared = &shared;
             let (nav, state) = &shared.inner;
             match state.borrow_mut().take() {
@@ -400,7 +467,7 @@ fn payload_touch_y(payload: &WhiskerValue) -> f32 {
     let WhiskerValue::Map(fields) = payload else {
         return 0.5;
     };
-    match fields.get("touchY") {
+    match fields.get(PB_K_TOUCH_Y) {
         Some(WhiskerValue::Float(v)) => *v as f32,
         Some(WhiskerValue::Int(v)) => *v as f32,
         _ => 0.5,
@@ -412,7 +479,7 @@ pub(crate) fn back_progress(payload: &WhiskerValue) -> f32 {
     let WhiskerValue::Map(fields) = payload else {
         return 0.0;
     };
-    match fields.get("progress") {
+    match fields.get(PB_K_PROGRESS) {
         Some(WhiskerValue::Float(v)) => *v as f32,
         Some(WhiskerValue::Int(v)) => *v as f32,
         _ => 0.0,
@@ -436,7 +503,7 @@ pub(crate) fn try_fetch_device_corner_radius() {
     if CORNER_RADIUS_INSTALLED.load(Ordering::Relaxed) {
         return;
     }
-    let dp = match module!("PredictiveBack").invoke("getDeviceCornerRadius", std::vec![]) {
+    let dp = match pb_module().invoke(PB_M_DEVICE_CORNER_RADIUS, std::vec![]) {
         WhiskerValue::Float(f) => f as f32,
         WhiskerValue::Int(i) => i as f32,
         // Non-numeric: module not ready / wrong platform — retry later.
@@ -458,7 +525,7 @@ fn back_edge(payload: &WhiskerValue) -> SwipeEdge {
     let WhiskerValue::Map(fields) = payload else {
         return SwipeEdge::Left;
     };
-    match fields.get("swipeEdge") {
+    match fields.get(PB_K_SWIPE_EDGE) {
         Some(WhiskerValue::Int(v)) => SwipeEdge::from_android(*v),
         Some(WhiskerValue::Float(v)) => SwipeEdge::from_android(*v as i64),
         _ => SwipeEdge::Left,
