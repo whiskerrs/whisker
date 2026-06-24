@@ -1,4 +1,4 @@
-//! Shared parse AST for Whisker's `render!` and `css!` macros.
+//! Shared parse AST for Whisker's `render!`, `css!` and `routes!` macros.
 //!
 //! This crate holds ONLY the parse side (the AST structs/enums plus
 //! their [`syn::parse::Parse`] impls). It is deliberately NOT a
@@ -18,9 +18,11 @@
 
 pub mod css;
 pub mod render;
+pub mod routes;
 
 pub use css::{CssInput, CssKwarg};
 pub use render::{
     ElementNode, Kwarg, Node, Root, UserComponentNode, is_builtin_tag, is_pascal_case,
     snake_to_pascal,
 };
+pub use routes::{RoutesInput, RoutesNode};

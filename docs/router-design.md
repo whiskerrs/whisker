@@ -129,6 +129,46 @@ let app = routes! {
 - `video`/`compose` sit *above* the tabs (no tab bar) — purely a
   consequence of where they are in the tree.
 
+### Route nesting ≠ URL nesting
+
+Nesting a `Route` inside another `Route` creates a **layout
+relationship**, not just a URL prefix. The parent becomes a layout route
+whose component must render an `Outlet` for the child to appear. The
+child is NOT pushed onto a `Stack` — it lives inside the parent's
+subtree and is always present in the state.
+
+```rust
+// ✗ Wrong — Detail is a child of Home (layout relationship).
+//   navigate("/detail/1") modifies the child state in-place;
+//   Home must render Outlet for Detail to appear; back() does not pop.
+Stack {
+    Route(path: "", component: Home) {
+        Route(path: "detail/:id", component: Detail)
+    }
+}
+
+// ✓ Correct — Home and Detail are siblings in the Stack.
+//   navigate("/detail/1") pushes Detail; back() pops to Home.
+Stack {
+    Route(path: "", component: Home)
+    Route(path: "detail/:id", component: Detail)
+}
+```
+
+To share a URL prefix among push/pop screens, spell the full path on
+each sibling — do not nest `Route` nodes:
+
+```rust
+Stack {
+    Route(path: "settings", component: Settings)            // /settings
+    Route(path: "settings/account", component: Account)     // /settings/account
+    Route(path: "settings/privacy", component: Privacy)     // /settings/privacy
+}
+```
+
+Reserve `Route` nesting for layout routes (tab bar, header chrome, etc.)
+where the parent renders shared UI around an `Outlet`.
+
 ### Shared routes are just a spread
 
 `content` above is an ordinary `routes!` value spread with `..content`
