@@ -80,7 +80,7 @@ pub use handle::{
 };
 pub use registry::{LayoutFn, LayoutRegistry, RenderFn, RouteFragment, RouteRegistry, RouteSet};
 pub use tabs::{TabBar, TabBarProps, TabBarStyle, TabItem, Tabs, TabsProps};
-pub use transition::{Pose, Role, RouteTransition, Transition};
+pub use transition::{Direction, Pose, PoseContext, Role, RouteTransition, Transition};
 // Re-exported for custom `Transition` authors (the return type of
 // `config()`), so everything needed for a custom transition is in one place.
 pub use whisker::AnimConfig;

@@ -400,7 +400,11 @@ fn pop_settles_survivor_to_active_pose() {
         let top = bridge.top_pose.expect("top has a pose binding");
         let role = top.role.get();
         let progress = top.ctrl.get().value().get();
-        let pose = RouteTransition::slide().pose(role, progress);
+        let pose = RouteTransition::slide().pose(crate::render::transition::PoseContext::new(
+            role,
+            progress,
+            crate::render::transition::Direction::Push,
+        ));
         assert_eq!(
             pose.transform, "translateX(0%)",
             "survivor settled to active 0% pose; role={role:?} progress={progress}"
@@ -944,4 +948,38 @@ fn predictive_dim_constant_during_drag_then_fades_on_commit() {
         predictive_dim(0.0) < 1e-3,
         "dim is gone once the back has committed (previous screen present)"
     );
+}
+
+#[test]
+fn one_transition_poses_all_four_directional_slots() {
+    use crate::render::transition::{
+        Direction, Pose, PoseContext, PoseMode, Role, RouteTransition, Transition, pose_for,
+    };
+
+    // A single asymmetric transition that tags each (role × direction) case —
+    // the four Jetpack-Compose slots expressed by ONE `Transition`.
+    struct Asym;
+    impl Transition for Asym {
+        fn config(&self) -> whisker::AnimConfig {
+            whisker::AnimConfig::ease_out(1)
+        }
+        fn pose(&self, ctx: PoseContext) -> Pose {
+            let slot = match (ctx.role, ctx.direction) {
+                (Role::Top, Direction::Push) => "enter",
+                (Role::Under, Direction::Push) => "exit",
+                (Role::Top, Direction::Pop) => "pop_exit",
+                (Role::Under, Direction::Pop) => "pop_enter",
+            };
+            Pose::new(slot.to_string(), 1.0)
+        }
+    }
+
+    let t = RouteTransition::custom(Asym);
+    let push = PoseMode::Transition(t.clone(), Direction::Push);
+    let pop = PoseMode::Transition(t, Direction::Pop);
+
+    assert_eq!(pose_for(&push, Role::Top, 0.5).transform, "enter");
+    assert_eq!(pose_for(&push, Role::Under, 0.5).transform, "exit");
+    assert_eq!(pose_for(&pop, Role::Top, 0.5).transform, "pop_exit");
+    assert_eq!(pose_for(&pop, Role::Under, 0.5).transform, "pop_enter");
 }

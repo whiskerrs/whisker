@@ -246,7 +246,8 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
     let mode = if android {
         PoseMode::Predictive(edge)
     } else {
-        PoseMode::Transition(RouteTransition::slide())
+        // A swipe-back is a Pop direction.
+        PoseMode::Transition(RouteTransition::slide(), transition::Direction::Pop)
     };
     if let (Some(ctrl), Some(top), Some(under)) =
         (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)

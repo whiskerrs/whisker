@@ -55,8 +55,10 @@
 //! - `Layout(X) { … }` must wrap exactly one `Stack` or `Switch`;
 //! - `Stack { }` / `Switch { }` must be non-empty.
 //!
-//! Later phases add per-route **directional** (4-slot) transitions, typed
-//! nav targets, and branch enums.
+//! Directional (enter/exit/pop-enter/pop-exit) animation is handled by the
+//! `Transition` itself — its `pose` sees a `Direction`, so a single
+//! `transition = <expr>` can be fully asymmetric without extra macro syntax.
+//! Later phases add typed nav targets and branch enums.
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;

@@ -75,8 +75,8 @@ pub use crate::core::{
     RouteState, RouteTree, StackEntry, StackState, SwitchDef, SwitchState, Target, resolve,
 };
 pub use crate::render::{
-    AndroidPredictiveBack, AnimConfig, IntoNav, Layout, Outlet, Pose, RenderFn, Role,
-    RouteFragment, RouteRegistry, RouteTransition, Router, RouterHandle, Stack, StackBridge,
-    SwipeBack, Switch, TabBar, TabBarStyle, TabItem, Tabs, Transition, provide_router,
+    AndroidPredictiveBack, AnimConfig, Direction, IntoNav, Layout, Outlet, Pose, PoseContext,
+    RenderFn, Role, RouteFragment, RouteRegistry, RouteTransition, Router, RouterHandle, Stack,
+    StackBridge, SwipeBack, Switch, TabBar, TabBarStyle, TabItem, Tabs, Transition, provide_router,
     set_swipe_back_distance, use_navigator, use_param, use_pathname,
 };

@@ -51,10 +51,17 @@ pub trait Transition {
     /// Flutter, which keeps it on the route).
     fn config(&self) -> AnimConfig;
 
-    /// The CSS [`Pose`] for `role` at `progress` (the "presence of the top
-    /// screen": `1.0` = top fully present, `0.0` = top fully off). `Top` is
-    /// the entering/leaving screen, `Under` the one beneath it.
-    fn pose(&self, role: Role, progress: f32) -> Pose;
+    /// The CSS [`Pose`] for the screen described by `ctx`: its [`Role`]
+    /// (`Top` = the entering/leaving screen, `Under` = the one beneath), the
+    /// `progress` ("presence of the top screen": `1.0` = top fully present,
+    /// `0.0` = top fully off), and the [`Direction`] (`Push` = forward,
+    /// `Pop` = back).
+    ///
+    /// `role × direction` gives the four directional cases — `(Top, Push)`
+    /// enter, `(Under, Push)` exit, `(Top, Pop)` pop-exit, `(Under, Pop)`
+    /// pop-enter — so a single transition can be fully asymmetric. A symmetric
+    /// transition (a plain slide/fade) simply ignores `ctx.direction`.
+    fn pose(&self, ctx: PoseContext) -> Pose;
 
     /// Whether the swap is instant (no animation) — the screen is exchanged
     /// in one frame and the controller is settled synchronously. Default
@@ -107,9 +114,9 @@ impl RouteTransition {
         self.0.config()
     }
 
-    /// The pose for `role` at `progress`.
-    pub fn pose(&self, role: Role, progress: f32) -> Pose {
-        self.0.pose(role, progress)
+    /// The pose for the screen described by `ctx`.
+    pub fn pose(&self, ctx: PoseContext) -> Pose {
+        self.0.pose(ctx)
     }
 
     /// Whether the swap is instant (no animation).
@@ -154,6 +161,45 @@ pub enum Role {
     /// The screen directly beneath the top — covered on push, revealed
     /// on pop.
     Under,
+}
+
+/// The direction of a route-transition run: a forward navigation (`Push`)
+/// or a back (`Pop`). Combined with [`Role`] it selects which of the four
+/// directional cases a [`Transition`] poses (see [`Transition::pose`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// A forward navigation — `navigate` / `replace` / `reset`.
+    Push,
+    /// A back — `back`, swipe-back, or predictive-back.
+    Pop,
+}
+
+/// The input to [`Transition::pose`]: the screen's [`Role`], the run
+/// `progress` (`0..1`), and the [`Direction`].
+///
+/// `#[non_exhaustive]` so future pose inputs (e.g. gesture velocity) can be
+/// added without breaking custom [`Transition`] impls — read its fields and
+/// construct via [`PoseContext::new`].
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct PoseContext {
+    /// `Top` (entering/leaving) or `Under` (the screen beneath).
+    pub role: Role,
+    /// Presence of the top screen: `1.0` fully present → `0.0` fully off.
+    pub progress: f32,
+    /// `Push` (forward) or `Pop` (back).
+    pub direction: Direction,
+}
+
+impl PoseContext {
+    /// Build a pose context.
+    pub fn new(role: Role, progress: f32, direction: Direction) -> Self {
+        PoseContext {
+            role,
+            progress,
+            direction,
+        }
+    }
 }
 
 /// Which screen edge a back gesture started from. Drives the
@@ -302,8 +348,9 @@ const DIM: f32 = 0.12;
 /// `Clone` (not `Copy`) since [`RouteTransition`] is `Rc`-backed.
 #[derive(Clone, Debug)]
 pub enum PoseMode {
-    /// Normal push/pop/replace transition for this route.
-    Transition(RouteTransition),
+    /// Normal push/pop/replace transition for this route, in the given
+    /// [`Direction`] (`Push` for a forward navigation, `Pop` for a back).
+    Transition(RouteTransition, Direction),
     /// Interactive predictive-back preview from `edge`.
     Predictive(SwipeEdge),
 }
@@ -311,7 +358,7 @@ pub enum PoseMode {
 /// Resolve a wrapper's [`Pose`] for `role` at `progress` under `mode`.
 pub fn pose_for(mode: &PoseMode, role: Role, progress: f32) -> Pose {
     match mode {
-        PoseMode::Transition(t) => t.pose(role, progress),
+        PoseMode::Transition(t, dir) => t.pose(PoseContext::new(role, progress, *dir)),
         PoseMode::Predictive(edge) => predictive_pose(role, progress, *edge),
     }
 }
@@ -468,7 +515,9 @@ impl Transition for Slide {
     fn name(&self) -> &'static str {
         "slide"
     }
-    fn pose(&self, role: Role, progress: f32) -> Pose {
+    fn pose(&self, ctx: PoseContext) -> Pose {
+        // The built-ins are symmetric: they ignore `ctx.direction`.
+        let PoseContext { role, progress, .. } = ctx;
         let p = progress.clamp(0.0, 1.0);
         match role {
             Role::Top => {
@@ -496,7 +545,9 @@ impl Transition for SmallSlideFade {
     fn name(&self) -> &'static str {
         "android-default"
     }
-    fn pose(&self, role: Role, progress: f32) -> Pose {
+    fn pose(&self, ctx: PoseContext) -> Pose {
+        // The built-ins are symmetric: they ignore `ctx.direction`.
+        let PoseContext { role, progress, .. } = ctx;
         let p = progress.clamp(0.0, 1.0);
         match role {
             Role::Top => {
@@ -523,7 +574,9 @@ impl Transition for Modal {
     fn name(&self) -> &'static str {
         "modal"
     }
-    fn pose(&self, role: Role, progress: f32) -> Pose {
+    fn pose(&self, ctx: PoseContext) -> Pose {
+        // The built-ins are symmetric: they ignore `ctx.direction`.
+        let PoseContext { role, progress, .. } = ctx;
         let p = progress.clamp(0.0, 1.0);
         match role {
             Role::Top => {
@@ -545,7 +598,9 @@ impl Transition for Fade {
     fn name(&self) -> &'static str {
         "fade"
     }
-    fn pose(&self, role: Role, progress: f32) -> Pose {
+    fn pose(&self, ctx: PoseContext) -> Pose {
+        // The built-ins are symmetric: they ignore `ctx.direction`.
+        let PoseContext { role, progress, .. } = ctx;
         let p = progress.clamp(0.0, 1.0);
         match role {
             Role::Top => Pose::new("translateX(0px)".to_string(), p),
@@ -569,7 +624,9 @@ impl Transition for NoneTransition {
     fn is_instant(&self) -> bool {
         true
     }
-    fn pose(&self, role: Role, progress: f32) -> Pose {
+    fn pose(&self, ctx: PoseContext) -> Pose {
+        // The built-ins are symmetric: they ignore `ctx.direction`.
+        let PoseContext { role, progress, .. } = ctx;
         let p = progress.clamp(0.0, 1.0);
         match role {
             // Hide the top until it is at least half in so a swap doesn't

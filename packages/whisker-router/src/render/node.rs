@@ -38,7 +38,7 @@ use crate::core::{NodePath, RouteState, RouteTree};
 use crate::render::components::OutletAnchor;
 use crate::render::handle::RouterHandle;
 use crate::render::registry::LayoutFn;
-use crate::render::transition::{self, Pose, PoseMode, Role, RouteTransition};
+use crate::render::transition::{self, Direction, Pose, PoseMode, Role, RouteTransition};
 
 /// Context marker: the `Layout(X)` chrome for this path is already being
 /// applied. The layout's own `Outlet` re-enters [`mount_node`] at the same
@@ -352,7 +352,7 @@ fn reconcile_stack(
             if idx == 0 {
                 // First entry: already present, no animation.
                 w.ctrl.set_value(1.0);
-                set_pose(&w, &w.ctrl.clone(), Role::Top);
+                set_pose(&w, &w.ctrl.clone(), Role::Top, Direction::Push);
                 live.borrow_mut().push(w);
             } else {
                 // Real push: drive the new top's controller 0 → 1 and
@@ -363,12 +363,12 @@ fn reconcile_stack(
                 // pose) then repoint the bindings.
                 let drive = w.ctrl.clone();
                 w.ctrl.set_value(0.0);
-                set_pose(&w, &drive, Role::Top);
+                set_pose(&w, &drive, Role::Top, Direction::Push);
                 {
                     let l = live.borrow();
                     if let Some(under) = l.last() {
                         under.owner.resume(); // animate it while covered
-                        set_pose(under, &drive, Role::Under);
+                        set_pose(under, &drive, Role::Under, Direction::Push);
                     }
                 }
                 if w.transition.is_instant() {
@@ -414,7 +414,7 @@ fn reconcile_stack(
             dispose_wrapper(slot, old);
             let w = mount_wrapper(handle, slot, top_idx, entry);
             w.ctrl.set_value(1.0);
-            set_pose(&w, &w.ctrl.clone(), Role::Top);
+            set_pose(&w, &w.ctrl.clone(), Role::Top, Direction::Push);
             live.borrow_mut().insert(top_idx, w);
         }
     }
@@ -434,13 +434,13 @@ fn reconcile_stack(
                 if !pose_animating {
                     // Steady top: own controller, fully present (0%).
                     w.ctrl.set_value(1.0);
-                    set_pose(w, &w.ctrl.clone(), Role::Top);
+                    set_pose(w, &w.ctrl.clone(), Role::Top, Direction::Push);
                 }
             } else if !pose_animating {
                 // A buried entry not part of an in-flight transition:
                 // freeze it fully covered.
                 w.ctrl.set_value(1.0);
-                set_pose(w, &w.ctrl.clone(), Role::Under);
+                set_pose(w, &w.ctrl.clone(), Role::Under, Direction::Push);
                 w.owner.pause();
             }
             let _ = w.key;
@@ -503,13 +503,13 @@ fn run_pop(slot: Element, live: &Rc<RefCell<Vec<StackWrapper>>>, popped: StackWr
     // and writes the coordinated pose. We `reverse()` from the controller's
     // *current* value: after a push that is 1.0; on a swipe-back commit it
     // is the scrubbed value, so the slide-out continues from the finger.
-    set_pose(&popped, &drive, Role::Top);
+    set_pose(&popped, &drive, Role::Top, Direction::Pop);
 
     let survivor_handle = {
         let l = live.borrow();
         l.last().map(|w| {
             w.owner.resume();
-            set_pose(w, &drive, Role::Under);
+            set_pose(w, &drive, Role::Under, Direction::Pop);
             // Capture what we need to re-settle the survivor on finish.
             (w.wrapper, w.ctrl.clone(), w.pose_ctrl, w.pose_role)
         })
@@ -596,7 +596,8 @@ fn mount_wrapper(
         // `mode` to `Predictive` swaps in the Material preview.
         let pose_ctrl = whisker::RwSignal::new(ctrl.clone());
         let pose_role = whisker::RwSignal::new(Role::Top);
-        let pose_mode = whisker::RwSignal::new(PoseMode::Transition(transition.clone()));
+        let pose_mode =
+            whisker::RwSignal::new(PoseMode::Transition(transition.clone(), Direction::Push));
 
         // The single style writer for this wrapper: read the currently
         // assigned controller's progress + role + mode, compute the pose,
@@ -655,12 +656,13 @@ fn mount_wrapper(
     }
 }
 
-/// Point `w`'s pose at controller `c` playing `role`, in the normal
-/// route-transition mode (resets any predictive-back preview).
-fn set_pose(w: &StackWrapper, c: &AnimationController, role: Role) {
+/// Point `w`'s pose at controller `c` playing `role` in `direction`, in the
+/// normal route-transition mode (resets any predictive-back preview).
+fn set_pose(w: &StackWrapper, c: &AnimationController, role: Role, direction: Direction) {
     w.pose_ctrl.set(c.clone());
     w.pose_role.set(role);
-    w.pose_mode.set(PoseMode::Transition(w.transition.clone()));
+    w.pose_mode
+        .set(PoseMode::Transition(w.transition.clone(), direction));
 }
 
 /// Tear down a popped wrapper immediately (no animation).
