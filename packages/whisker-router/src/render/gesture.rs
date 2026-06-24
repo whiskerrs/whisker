@@ -41,6 +41,11 @@ const SWIPE_FULL_DISTANCE_DEFAULT_PX: f32 = 402.0;
 const SWIPE_EDGE_THRESHOLD_PX: f32 = 24.0;
 /// Progress (toward back) at release above which the gesture commits.
 const SWIPE_COMMIT_THRESHOLD: f32 = 0.5;
+/// Gain mapping release progress → a rough hand-off velocity for the settle
+/// run (we don't track true finger velocity; this approximates it).
+const SWIPE_VELOCITY_GAIN: f32 = 4.0;
+/// Cap on the approximated hand-off velocity.
+const SWIPE_VELOCITY_MAX: f32 = 6.0;
 
 /// The full-swipe distance (pt), overridable via [`set_swipe_back_distance`].
 /// Stored as `f32` bits; **global** (not thread-local) so a value set from app
@@ -213,7 +218,7 @@ fn install(container: Element, nav: RouterHandle) {
             // A rough release velocity in progress units / second. Without
             // precise timestamps we approximate from the gesture's reach;
             // the controller clamps and springs regardless.
-            let velocity = (state.progress * 4.0).clamp(0.0, 6.0);
+            let velocity = (state.progress * SWIPE_VELOCITY_GAIN).clamp(0.0, SWIPE_VELOCITY_MAX);
             settle(&nav, &state.bridge, commit, Some(velocity));
         });
     }
@@ -312,7 +317,7 @@ pub(crate) fn settle(
                 if let Some(d) = dim_drive {
                     d.set(None);
                 }
-                nav.back();
+                let _ = nav.back();
             }
         });
         match velocity {
@@ -412,7 +417,10 @@ pub fn android_predictive_back() -> Element {
                 // the commit/cancel settle drives the rest. See
                 // `predictive_pose`'s two-phase doc.
                 transition::set_gesture_pivot_y(payload_touch_y(&payload));
-                scrub(bridge, back_progress(&payload) * 0.5);
+                scrub(
+                    bridge,
+                    back_progress(&payload) * (1.0 - transition::PB_PREVIEW_SPLIT),
+                );
             }
         })
     };
@@ -443,7 +451,7 @@ pub fn android_predictive_back() -> Element {
                 Some(bridge) => settle(nav, &bridge, /* commit = */ true, None),
                 // No preview (API < 34, or a discrete press): just pop.
                 None => {
-                    nav.back();
+                    let _ = nav.back();
                 }
             }
         })

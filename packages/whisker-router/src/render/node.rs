@@ -40,6 +40,11 @@ use crate::render::handle::RouterHandle;
 use crate::render::registry::LayoutFn;
 use crate::render::transition::{self, Direction, Pose, PoseMode, Role, RouteTransition};
 
+/// Lynx `@LynxProp` **attribute** (not a CSS style) that makes a view clip its
+/// children to `border-radius`. Drift here silently disables corner clipping,
+/// so it lives in one named place. See the memory `lynx_border_radius_clip_radius_attr`.
+const CLIP_RADIUS_ATTR: &str = "clip-radius";
+
 /// Context marker: the `Layout(X)` chrome for this path is already being
 /// applied. The layout's own `Outlet` re-enters [`mount_node`] at the same
 /// path, and must mount the **raw** container rather than re-wrap it.
@@ -625,7 +630,7 @@ fn mount_wrapper(
         // auto overflow:hidden path is disabled in the fork:
         // `UIGroup.enableAutoClipRadius() == false`). The radius itself is
         // written reactively below so it animates with the gesture.
-        set_attribute(clip, "clip-radius", "true");
+        set_attribute(clip, CLIP_RADIUS_ATTR, "true");
 
         // One style writer drives both elements from the pose: the wrapper's
         // transform/opacity AND the clip view's animated corner radius.

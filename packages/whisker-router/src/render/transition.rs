@@ -246,6 +246,17 @@ const PB_Y_FOLLOW: f32 = 0.08;
 /// predictive-back drag is in progress (held constant during the drag, then
 /// faded out on commit — see [`predictive_dim`]).
 pub const PB_MAX_DIM: f32 = 0.5;
+/// Extra scale the top card loses as the back commits (on top of the
+/// preview shrink) so it recedes as the previous screen comes forward.
+const PB_COMMIT_SHRINK: f32 = 0.04;
+/// How far (fraction of width, %) the under card sits off to the left as a
+/// peek during the predictive-back drag.
+const PB_UNDER_PEEK_PCT: f32 = 60.0;
+/// The controller value at the **preview / dismiss boundary** of the
+/// predictive-back timeline: the drag scrubs `1.0 → PB_PREVIEW_SPLIT`
+/// (preview), the commit settle drives `PB_PREVIEW_SPLIT → 0.0` (dismiss).
+/// `pub(crate)` so the Android gesture maps the drag onto the same split.
+pub(crate) const PB_PREVIEW_SPLIT: f32 = 0.5;
 
 /// The corner radius (dp) the predictive-back card rounds to at full
 /// progress, stored as `f32` bits. Defaults to [`PB_DEFAULT_RADIUS`]; the
@@ -426,8 +437,8 @@ pub fn predictive_pose(role: Role, value: f32, edge: SwipeEdge) -> Pose {
     //  `preview` 0 at present → 1 at preview max (value 0.5), DECELERATED so
     //  the shrink is "more apparent in the beginning" (the official spec).
     //  `dismiss` 0 until value < 0.5 → 1 at value 0 (committed).
-    let preview = decelerate(((1.0 - v) / 0.5).clamp(0.0, 1.0));
-    let dismiss = ((0.5 - v) / 0.5).clamp(0.0, 1.0);
+    let preview = decelerate(((1.0 - v) / (1.0 - PB_PREVIEW_SPLIT)).clamp(0.0, 1.0));
+    let dismiss = ((PB_PREVIEW_SPLIT - v) / PB_PREVIEW_SPLIT).clamp(0.0, 1.0);
     let max_radius = screen_corner_radius();
     let shrink = 1.0 - PB_MIN_SCALE; // 0.1 → scales to 90%
     match role {
@@ -436,7 +447,7 @@ pub fn predictive_pose(role: Role, value: f32, edge: SwipeEdge) -> Pose {
             // a card that shrinks to 90% and FOLLOWS THE FINGER — shifting
             // toward the swipe edge horizontally and toward the finger's Y
             // vertically. On commit it fades + drifts away.
-            let scale = 1.0 - preview * shrink - dismiss * 0.04;
+            let scale = 1.0 - preview * shrink - dismiss * PB_COMMIT_SHRINK;
             let dir = match edge {
                 SwipeEdge::Left => 1.0,   // left-edge swipe → card moves right
                 SwipeEdge::Right => -1.0, // right-edge swipe → card moves left
@@ -463,7 +474,7 @@ pub fn predictive_pose(role: Role, value: f32, edge: SwipeEdge) -> Pose {
             let scale = 1.0 - preview * shrink + dismiss * shrink; // 1 → 0.9 → 1
             // Fixed at -60% (peek) during the drag; -60% → 0% (present) on
             // commit. No `preview` term ⇒ the drag scales without sliding.
-            let x = -60.0 + dismiss * 60.0;
+            let x = -PB_UNDER_PEEK_PCT + dismiss * PB_UNDER_PEEK_PCT;
             let radius = max_radius * preview * (1.0 - dismiss);
             Pose::with_radius(format!("translateX({x}%) scale({scale})"), 1.0, radius)
         }
@@ -486,7 +497,7 @@ pub fn predictive_pose(role: Role, value: f32, edge: SwipeEdge) -> Pose {
 /// detached, so the layer is fully transparent regardless of this value.)
 pub fn predictive_dim(value: f32) -> f32 {
     let v = value.clamp(0.0, 1.0);
-    let dismiss = ((0.5 - v) / 0.5).clamp(0.0, 1.0);
+    let dismiss = ((PB_PREVIEW_SPLIT - v) / PB_PREVIEW_SPLIT).clamp(0.0, 1.0);
     (1.0 - dismiss) * PB_MAX_DIM
 }
 
@@ -504,6 +515,16 @@ const FADE_MS: u32 = 220;
 /// synchronously via [`Transition::is_instant`]; this only keeps the wiring
 /// uniform.
 const INSTANT_MS: u32 = 1;
+
+/// [`SmallSlideFade`] top: distance (fraction of width, %) it slides from the
+/// right while fading in.
+const ANDROID_TOP_SLIDE_PCT: f32 = 8.0;
+/// [`SmallSlideFade`] under: distance (%) it reverse-slides as it is covered.
+const ANDROID_UNDER_SLIDE_PCT: f32 = 4.0;
+/// [`SmallSlideFade`] under: how much it dims (0..1) at full cover.
+const ANDROID_UNDER_DIM: f32 = 0.3;
+/// [`Fade`] under: how much it fades out (0..1) at full cover.
+const FADE_UNDER_DIM: f32 = 0.5;
 
 /// Horizontal iOS slide: top enters from the right (100% → 0%), under
 /// parallaxes left (0% → -30%) and dims slightly.
@@ -552,13 +573,13 @@ impl Transition for SmallSlideFade {
         match role {
             Role::Top => {
                 // Small slide: ~8% of width from the right, plus a fade in.
-                let x = (1.0 - p) * 8.0;
+                let x = (1.0 - p) * ANDROID_TOP_SLIDE_PCT;
                 Pose::new(format!("translateX({x}%)"), p)
             }
             Role::Under => {
                 // A slight reverse slide + fade out so the swap reads.
-                let x = -((1.0 - (1.0 - p)) * 4.0); // = -(p * 4.0)
-                Pose::new(format!("translateX({x}%)"), 1.0 - p * 0.3)
+                let x = -(p * ANDROID_UNDER_SLIDE_PCT);
+                Pose::new(format!("translateX({x}%)"), 1.0 - p * ANDROID_UNDER_DIM)
             }
         }
     }
@@ -604,7 +625,7 @@ impl Transition for Fade {
         let p = progress.clamp(0.0, 1.0);
         match role {
             Role::Top => Pose::new("translateX(0px)".to_string(), p),
-            Role::Under => Pose::new("translateX(0px)".to_string(), 1.0 - p * 0.5),
+            Role::Under => Pose::new("translateX(0px)".to_string(), 1.0 - p * FADE_UNDER_DIM),
         }
     }
 }
