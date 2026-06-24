@@ -6,10 +6,8 @@
 //! no-stored-marker invariant. The 14 numbered behaviours from the phase
 //! brief are tagged in the test names / comments.
 
-use std::collections::BTreeMap;
-
 use whisker_router::core::{
-    CompiledTree, NavError, Navigator, NodePath, RouteState, RouteTree, Scope, SwitchDef, Target,
+    CompiledTree, NavError, Navigator, NodePath, RouteState, RouteTree, Scope, SwitchDef,
 };
 
 // ===================================================================
@@ -72,12 +70,6 @@ fn twitter_tree() -> CompiledTree {
 
 fn p(indices: &[usize]) -> NodePath {
     NodePath(indices.to_vec())
-}
-
-fn one_param(k: &str, v: &str) -> BTreeMap<String, String> {
-    let mut m = BTreeMap::new();
-    m.insert(k.to_string(), v.to_string());
-    m
 }
 
 // ===================================================================
@@ -157,8 +149,7 @@ fn navigate_within_same_tab_lands_in_that_tabs_stack() {
     let t = twitter_tree();
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
-    nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-        .unwrap();
+    nav.navigate("/post/1").unwrap();
     // timeline tab still selected; post is in timeline's stack.
     assert_eq!(nav.current().path, p(&[0, 0, 1]));
     assert_eq!(
@@ -177,10 +168,10 @@ fn navigate_shared_route_resolves_within_current_tab() {
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
     // Move to the search tab first.
-    nav.navigate(&Target::id("search")).unwrap();
+    nav.navigate("/search").unwrap();
     assert_eq!(nav.current().path, p(&[0, 1, 0]));
     // Now go to a profile: must resolve inside the SEARCH tab's subtree.
-    nav.navigate(&Target::id("profile")).unwrap();
+    nav.navigate("/profile/1").unwrap();
     assert_eq!(nav.current().path, p(&[0, 1, 2]));
 }
 
@@ -195,13 +186,11 @@ fn navigate_shared_route_from_outside_uses_declaration_order() {
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
     // Push video (outside the tabs, on the root stack).
-    nav.navigate_with(&Target::id("video"), one_param_inst("id", "9"))
-        .unwrap();
+    nav.navigate("/video/9").unwrap();
     assert_eq!(nav.current().path, p(&[1]));
     // From video, go to post. Common ancestor is the root stack ⇒ the
     // first-declared post = timeline tab's post [0,0,0,1].
-    nav.navigate_with(&Target::id("post"), one_param_inst("id", "7"))
-        .unwrap();
+    nav.navigate("/post/7").unwrap();
     assert_eq!(nav.current().path, p(&[0, 0, 1]));
     // And the tabs Switch is now selected on timeline (branch 0).
     if let RouteState::Stack(root) = &st {
@@ -226,10 +215,8 @@ fn navigate_always_pushes_distinct_instances() {
     let mut st = RouteState::initial(&t);
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-            .unwrap();
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "2"))
-            .unwrap();
+        nav.navigate("/post/1").unwrap();
+        nav.navigate("/post/2").unwrap();
         assert_eq!(nav.current().params.get("id").unwrap(), "2");
     }
     // timeline stack now: [ "", post(1), post(2) ]
@@ -244,10 +231,8 @@ fn navigate_always_pushes_even_identical_instance() {
     let t = twitter_tree();
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
-    nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-        .unwrap();
-    nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-        .unwrap();
+    nav.navigate("/post/1").unwrap();
+    nav.navigate("/post/1").unwrap();
     let hist = timeline_history(&st);
     // Two post entries even though params are identical ("always push").
     assert_eq!(hist.len(), 3);
@@ -268,10 +253,9 @@ fn navigate_reveals_buried_tabs_switch() {
         let mut nav = Navigator::new(&t, &mut st);
         // Drive the search tab into a post first so we can check the
         // Switch's retained selection survives being buried.
-        nav.navigate(&Target::id("search")).unwrap();
+        nav.navigate("/search").unwrap();
         // Now push video over the tabs.
-        nav.navigate_with(&Target::id("video"), one_param_inst("id", "1"))
-            .unwrap();
+        nav.navigate("/video/1").unwrap();
         assert_eq!(nav.current().path, p(&[1]));
     }
     // root stack history: [ Switch, video ]
@@ -282,8 +266,7 @@ fn navigate_reveals_buried_tabs_switch() {
     // timeline. Current path passes through the Switch again.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "5"))
-            .unwrap();
+        nav.navigate("/post/5").unwrap();
         assert_eq!(nav.current().path, p(&[0, 0, 1]));
     }
     // video was popped → root stack back to length 1 (just the Switch).
@@ -304,10 +287,9 @@ fn back_pops_deepest_nontrivial_stack() {
     let t = twitter_tree();
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
-    nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-        .unwrap();
+    nav.navigate("/post/1").unwrap();
     assert_eq!(nav.current().path, p(&[0, 0, 1])); // timeline post
-    assert!(nav.back());
+    nav.back().unwrap();
     // Back to timeline home.
     assert_eq!(nav.current().path, p(&[0, 0, 0]));
 }
@@ -318,15 +300,13 @@ fn back_from_outside_reveals_tab_screen() {
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
     // timeline → post, then push video over the tabs.
-    nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-        .unwrap();
-    nav.navigate_with(&Target::id("video"), one_param_inst("id", "2"))
-        .unwrap();
+    nav.navigate("/post/1").unwrap();
+    nav.navigate("/video/2").unwrap();
     assert_eq!(nav.current().path, p(&[1]));
     // back pops video off the ROOT stack (the deepest non-trivial stack
     // on the active path is the root: the tabs Switch hides the inner
     // post, but `video` lives directly on root).
-    assert!(nav.back());
+    nav.back().unwrap();
     // Reveals the timeline post that the Switch retained.
     assert_eq!(nav.current().path, p(&[0, 0, 1]));
 }
@@ -338,7 +318,7 @@ fn back_at_tab_root_is_noop() {
     let before = st.clone();
     let mut nav = Navigator::new(&t, &mut st);
     // At the timeline home with nothing pushed anywhere → no-op.
-    assert!(!nav.back());
+    assert!(nav.back().is_err());
     assert_eq!(st, before);
 }
 
@@ -348,11 +328,11 @@ fn back_never_pops_switch_selection() {
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
     // Select search (a pure Switch change), no stack pushes.
-    nav.select(&Target::id("search")).unwrap();
+    nav.select("/search").unwrap();
     assert_eq!(nav.current().path, p(&[0, 1, 0]));
     // back has nothing to pop (search stack is trivial, root is trivial)
     // and must NOT revert the Switch selection.
-    assert!(!nav.back());
+    assert!(nav.back().is_err());
     assert_eq!(nav.current().path, p(&[0, 1, 0]));
 }
 
@@ -365,11 +345,9 @@ fn replace_swaps_top_of_current_stack() {
     let t = twitter_tree();
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
-    nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-        .unwrap();
+    nav.navigate("/post/1").unwrap();
     // Replace the top post with a profile (same timeline stack).
-    nav.replace_with(&Target::id("profile"), one_param("id", "9"))
-        .unwrap();
+    nav.replace("/profile/9").unwrap();
     assert_eq!(nav.current().path, p(&[0, 0, 2]));
     assert_eq!(nav.current().params.get("id").unwrap(), "9");
     // History length unchanged: [ "", profile(9) ].
@@ -383,7 +361,7 @@ fn replace_cross_switch_errors() {
     let mut nav = Navigator::new(&t, &mut st);
     // The current stack is the timeline tab's stack. `video` lives on the
     // ROOT stack (a different stack), so replacing to it must error.
-    let err = nav.replace(&Target::id("video")).unwrap_err();
+    let err = nav.replace("/video/1").unwrap_err();
     assert_eq!(err, NavError::CrossStack);
     // State unchanged.
     assert_eq!(nav.current().path, p(&[0, 0, 0]));
@@ -399,19 +377,16 @@ fn pop_to_unwinds_current_stack() {
     let mut st = RouteState::initial(&t);
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-            .unwrap();
-        nav.navigate_with(&Target::id("profile"), one_param_inst("id", "2"))
-            .unwrap();
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "3"))
-            .unwrap();
+        nav.navigate("/post/1").unwrap();
+        nav.navigate("/profile/2").unwrap();
+        nav.navigate("/post/3").unwrap();
     }
     // timeline: [ "", post(1), profile(2), post(3) ]
     assert_eq!(timeline_history(&st).len(), 4);
     // pop_to the timeline home route "" (id "timeline").
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.pop_to(&Target::id("timeline")).unwrap();
+        nav.pop_to("/").unwrap();
         assert_eq!(nav.current().path, p(&[0, 0, 0]));
     }
     assert_eq!(timeline_history(&st).len(), 1);
@@ -422,10 +397,9 @@ fn pop_to_missing_target_errors() {
     let t = twitter_tree();
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
-    nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-        .unwrap();
+    nav.navigate("/post/1").unwrap();
     // profile is a child of this stack but no profile entry is present.
-    let err = nav.pop_to(&Target::id("profile")).unwrap_err();
+    let err = nav.pop_to("/profile/1").unwrap_err();
     assert_eq!(err, NavError::NotInStack);
 }
 
@@ -439,16 +413,14 @@ fn reset_clears_current_stack_to_single_entry() {
     let mut st = RouteState::initial(&t);
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-            .unwrap();
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "2"))
-            .unwrap();
+        nav.navigate("/post/1").unwrap();
+        nav.navigate("/post/2").unwrap();
     }
     assert_eq!(timeline_history(&st).len(), 3);
     // Reset the timeline stack to its home.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.reset(&Target::id("timeline")).unwrap();
+        nav.reset("/").unwrap();
         assert_eq!(nav.current().path, p(&[0, 0, 0]));
     }
     assert_eq!(timeline_history(&st).len(), 1);
@@ -463,14 +435,13 @@ fn reset_logout_clears_root_back_stack() {
     // root-level route first so the deepest active stack IS the root.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate_with(&Target::id("video"), one_param_inst("id", "1"))
-            .unwrap();
+        nav.navigate("/video/1").unwrap();
     }
     assert_eq!(root_history_len(&st), 2);
     // current stack is the root stack (video is a leaf directly on root).
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.reset(&Target::id("login")).unwrap();
+        nav.reset("/login").unwrap();
         assert_eq!(nav.current().path, p(&[2]));
     }
     assert_eq!(root_history_len(&st), 1);
@@ -485,10 +456,10 @@ fn cold_start_resolution_uses_declaration_order() {
     let t = twitter_tree();
     // No current position (cold deep-link): resolve directly with
     // `current = None`. Must pick the first-declared post (timeline's).
-    let dest = whisker_router::core::resolve(&t, &Target::id("post"), None).unwrap();
+    let dest = whisker_router::core::resolve(&t, "/post/1", None).unwrap();
     assert_eq!(dest, p(&[0, 0, 1]));
     // And profile cold-start → first-declared profile too.
-    let prof = whisker_router::core::resolve(&t, &Target::id("profile"), None).unwrap();
+    let prof = whisker_router::core::resolve(&t, "/profile/1", None).unwrap();
     assert_eq!(prof, p(&[0, 0, 2]));
 }
 
@@ -523,28 +494,25 @@ fn no_marker_current_is_always_the_walked_leaf() {
     type Op = Box<dyn Fn(&mut Navigator)>;
     let ops: Vec<Op> = vec![
         Box::new(|n| {
-            n.navigate(&Target::id("search")).unwrap();
+            n.navigate("/search").unwrap();
         }),
         Box::new(|n| {
-            n.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-                .unwrap();
+            n.navigate("/post/1").unwrap();
         }),
         Box::new(|n| {
-            n.navigate_with(&Target::id("video"), one_param_inst("id", "2"))
-                .unwrap();
+            n.navigate("/video/2").unwrap();
         }),
         Box::new(|n| {
-            n.navigate_with(&Target::id("post"), one_param_inst("id", "3"))
-                .unwrap();
+            n.navigate("/post/3").unwrap();
         }),
         Box::new(|n| {
-            n.back();
+            let _ = n.back();
         }),
         Box::new(|n| {
-            n.back();
+            let _ = n.back();
         }),
         Box::new(|n| {
-            n.navigate(&Target::id("mypage")).unwrap();
+            n.navigate("/mypage").unwrap();
         }),
     ];
 
@@ -569,6 +537,7 @@ fn manual_walk(state: &RouteState) -> NodePath {
         RouteState::Route(r) => r.path.clone(),
         RouteState::Stack(s) => manual_walk(&s.history.last().unwrap().state),
         RouteState::Switch(s) => manual_walk(&s.branches[s.selected]),
+        _ => unreachable!("unexpected RouteState variant"),
     }
 }
 
@@ -584,16 +553,14 @@ fn tabs_keep_independent_stacks() {
     // Drive timeline into a post.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "11"))
-            .unwrap();
+        nav.navigate("/post/11").unwrap();
         assert_eq!(nav.current().path, p(&[0, 0, 1]));
     }
     // Switch to search (a pure `select`) and drive it into a profile.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.select(&Target::id("search")).unwrap();
-        nav.navigate_with(&Target::id("profile"), one_param_inst("id", "22"))
-            .unwrap();
+        nav.select("/search").unwrap();
+        nav.navigate("/profile/22").unwrap();
         assert_eq!(nav.current().path, p(&[0, 1, 2]));
     }
     // Timeline stack untouched: still [ "", post(11) ].
@@ -612,7 +579,7 @@ fn tabs_keep_independent_stacks() {
     // `navigate`).
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.select(&Target::id("timeline")).unwrap();
+        nav.select("/").unwrap();
         assert_eq!(nav.current().path, p(&[0, 0, 1])); // back on the post
     }
     assert_eq!(timeline_history(&st).len(), 2);
@@ -637,19 +604,18 @@ fn switching_tabs_preserves_each_stack_via_select() {
     let mut st = RouteState::initial(&t);
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-            .unwrap(); // timeline: ["", post]
+        nav.navigate("/post/1").unwrap(); // timeline: ["", post]
     }
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.select(&Target::id("search")).unwrap(); // select search
+        nav.select("/search").unwrap(); // select search
     }
     // timeline preserved its 2-entry stack while search is active.
     assert_eq!(timeline_history(&st).len(), 2);
     // back in search (trivial) is a no-op and doesn't touch timeline.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        assert!(!nav.back());
+        assert!(nav.back().is_err());
     }
     assert_eq!(timeline_history(&st).len(), 2);
 }
@@ -661,17 +627,15 @@ fn select_is_nondestructive_and_returns_to_retained_screen() {
     // Drive timeline deep: ["", post(1), post(2)].
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "1"))
-            .unwrap();
-        nav.navigate_with(&Target::id("post"), one_param_inst("id", "2"))
-            .unwrap();
+        nav.navigate("/post/1").unwrap();
+        nav.navigate("/post/2").unwrap();
     }
     // select away to search, then back to timeline.
     {
         let mut nav = Navigator::new(&t, &mut st);
-        nav.select(&Target::id("search")).unwrap();
+        nav.select("/search").unwrap();
         assert_eq!(nav.current().path, p(&[0, 1, 0])); // search home
-        nav.select(&Target::id("timeline")).unwrap();
+        nav.select("/").unwrap();
         // Returns to timeline's RETAINED top (post(2)) — nothing pushed.
         assert_eq!(nav.current().path, p(&[0, 0, 1]));
         assert_eq!(nav.current().params.get("id").unwrap(), "2");
@@ -691,8 +655,7 @@ fn within_scope_restricts_resolution_to_branch() {
     let mut nav = Navigator::new(&t, &mut st);
     // From timeline, target post but scope it to the search tab subtree.
     let search_scope = Scope::at(p(&[0, 1]));
-    nav.navigate_within(&Target::id("post"), &search_scope)
-        .unwrap();
+    nav.navigate_within("/post/1", &search_scope).unwrap();
     // Resolves inside the search tab → its post.
     assert_eq!(nav.current().path, p(&[0, 1, 1]));
 }
@@ -706,17 +669,13 @@ fn navigate_unknown_target_errors() {
     let t = twitter_tree();
     let mut st = RouteState::initial(&t);
     let mut nav = Navigator::new(&t, &mut st);
-    let err = nav.navigate(&Target::id("nope")).unwrap_err();
+    let err = nav.navigate("/nope").unwrap_err();
     assert_eq!(err, NavError::NoSuchTarget);
 }
 
 // ===================================================================
 // helpers that reach into the state tree for assertions
 // ===================================================================
-
-fn one_param_inst(k: &str, v: &str) -> whisker_router::core::RouteInstance {
-    whisker_router::core::RouteInstance::with_param(NodePath::root(), k, v)
-}
 
 fn root_history_len(st: &RouteState) -> usize {
     match st {
@@ -753,6 +712,7 @@ fn active_chain_kinds(st: &RouteState) -> Vec<&'static str> {
             RouteState::Route(_) => "Route",
             RouteState::Stack(_) => "Stack",
             RouteState::Switch(_) => "Switch",
+            _ => "Unknown",
         })
         .collect()
 }

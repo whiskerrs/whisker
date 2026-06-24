@@ -21,10 +21,10 @@ use super::tree::{CompiledTree, NodePath, RouteTree, SwitchDef};
 
 /// The runtime state of one node, mirroring the static tree's shape.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive] // mirrors RouteTree — a future container kind adds a variant
+#[non_exhaustive]
 pub enum RouteState {
-    /// A leaf instance carrying its concrete param values (segment
-    /// name → value). A bare route has an empty map.
+    /// A `Route` node instance. If the static `Route` has children, the
+    /// child states are in `children` (mirroring the static tree).
     Route(RouteInstance),
     /// An ordered container's history.
     Stack(StackState),
@@ -38,20 +38,24 @@ pub enum RouteState {
 /// `post(1)` and `post(2)` are two distinct instances of the same
 /// static `Route` node, differing only in [`params`](RouteInstance::params).
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive] // future fields (query, fragment) stay additive; build via `new` / `with_param`
+#[non_exhaustive]
 pub struct RouteInstance {
     /// The static node this instantiates.
     pub path: NodePath,
     /// Concrete param values, keyed by segment name (e.g. `id` → `42`).
     pub params: BTreeMap<String, String>,
+    /// Child states, mirroring the static Route's children. Empty for
+    /// leaf Routes; non-empty when the Route has Stack/Switch/Route children.
+    pub children: Vec<RouteState>,
 }
 
 impl RouteInstance {
-    /// A bare route instance with no params.
+    /// A bare route instance with no params and no children.
     pub fn new(path: NodePath) -> Self {
         RouteInstance {
             path,
             params: BTreeMap::new(),
+            children: Vec::new(),
         }
     }
 
@@ -59,7 +63,11 @@ impl RouteInstance {
     pub fn with_param(path: NodePath, key: impl Into<String>, value: impl Into<String>) -> Self {
         let mut params = BTreeMap::new();
         params.insert(key.into(), value.into());
-        RouteInstance { path, params }
+        RouteInstance {
+            path,
+            params,
+            children: Vec::new(),
+        }
     }
 }
 
@@ -114,7 +122,18 @@ impl RouteState {
             .node_at(path)
             .expect("initial_at: path must address a node in the tree");
         match node {
-            RouteTree::Route(_) => RouteState::Route(RouteInstance::new(path.clone())),
+            RouteTree::Route(_, children) => {
+                let child_states: Vec<RouteState> = children
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| Self::initial_at(tree, &path.child(i)))
+                    .collect();
+                RouteState::Route(RouteInstance {
+                    path: path.clone(),
+                    params: BTreeMap::new(),
+                    children: child_states,
+                })
+            }
             RouteTree::Stack(children) => {
                 assert!(!children.is_empty(), "a Stack must have at least one child");
                 let child_path = path.child(0);
@@ -160,7 +179,24 @@ impl RouteState {
     /// anywhere in [`RouteState`].
     pub fn current(&self) -> &RouteInstance {
         match self {
-            RouteState::Route(r) => r,
+            RouteState::Route(r) => {
+                if r.children.is_empty() {
+                    r
+                } else {
+                    // A Route with children: descend through each child's
+                    // active path to find the deepest current leaf. The
+                    // first child that carries a non-trivial active path wins.
+                    // (In practice a Route has one container child —
+                    // Stack or Switch — that determines the active leaf.)
+                    for child in &r.children {
+                        let c = child.current();
+                        if c.path != r.path {
+                            return c;
+                        }
+                    }
+                    r
+                }
+            }
             RouteState::Stack(s) => s
                 .history
                 .last()
@@ -179,7 +215,20 @@ impl RouteState {
         let mut node = self;
         loop {
             let next = match node {
-                RouteState::Route(_) => break,
+                RouteState::Route(r) => {
+                    if r.children.is_empty() {
+                        break;
+                    }
+                    // Descend through the first container child.
+                    match r
+                        .children
+                        .iter()
+                        .find(|c| !matches!(c, RouteState::Route(ri) if ri.children.is_empty()))
+                    {
+                        Some(child) => child,
+                        None => break,
+                    }
+                }
                 RouteState::Stack(s) => &s.history.last().expect("non-empty").state,
                 RouteState::Switch(s) => &s.branches[s.selected],
             };

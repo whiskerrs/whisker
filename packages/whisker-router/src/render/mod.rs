@@ -3,7 +3,7 @@
 //! This module draws the [`RouteTree`](crate::core::RouteTree) /
 //! [`RouteState`](crate::core::RouteState) core in the Whisker reactive
 //! runtime: a signal-backed [`RouterHandle`] + [`use_navigator`], the
-//! [`Outlet`] / [`Stack`] / [`Switch`] renderers, the [`TabBar`] chrome,
+//! [`Outlet`] / [`Stack`] / [`Switch`] renderers,
 //! float-`Tween` transitions (via `whisker-animation`, **not** Lynx's
 //! animator), and the interactive back gestures ([`SwipeBack`] for iOS
 //! edge swipe, [`AndroidPredictiveBack`] for Android 13+ predictive back)
@@ -58,7 +58,6 @@ pub mod gesture;
 pub mod handle;
 pub mod node;
 pub mod registry;
-pub mod tabs;
 pub mod transition;
 
 #[cfg(test)]
@@ -70,9 +69,8 @@ pub use components::{
 };
 pub use components::{Outlet, OutletProps};
 pub use gesture::{AndroidPredictiveBack, AndroidPredictiveBackProps, SwipeBack, SwipeBackProps};
-pub use handle::{IntoNav, RouterHandle, provide_router, use_navigator, use_param, use_pathname};
+pub use handle::{RouterHandle, provide_router, use_navigator, use_param, use_pathname};
 pub use registry::{LayoutFn, LayoutRegistry, RenderFn, RouteFragment, RouteRegistry, RouteSet};
-pub use tabs::{TabBar, TabBarProps, TabBarStyle, TabItem};
 pub use transition::{Direction, Pose, PoseContext, Role, RouteTransition, Transition};
 // Re-exported for custom `Transition` authors (the return type of
 // `config()`), so everything needed for a custom transition is in one place.

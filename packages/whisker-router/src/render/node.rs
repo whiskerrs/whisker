@@ -68,7 +68,7 @@ pub fn mount_node(handle: &RouterHandle, path: NodePath) -> Element {
         }
     }
     match handle.tree().node_at(&path) {
-        Some(RouteTree::Route(_)) => mount_route(handle, path),
+        Some(RouteTree::Route(..)) => mount_route(handle, path),
         Some(RouteTree::Switch(_, _)) => mount_switch(handle, path),
         Some(RouteTree::Stack(_)) => mount_stack(handle, path),
         None => create_phantom_element(),
@@ -90,6 +90,19 @@ fn mount_with_layout(handle: &RouterHandle, path: NodePath, layout: LayoutFn) ->
 // =====================================================================
 
 fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
+    // Route with children: mount each child (the Route is a structural
+    // grouping node — its children are Stack/Switch/Route).
+    if let Some(RouteTree::Route(_, children)) = handle.tree().node_at(&path) {
+        if !children.is_empty() {
+            let slot = create_phantom_element();
+            for i in 0..children.len() {
+                let child = mount_node(handle, path.child(i));
+                append_child(slot, child);
+            }
+            return slot;
+        }
+    }
+
     let slot = create_phantom_element();
     let handle = handle.clone();
 

@@ -31,7 +31,7 @@
 //!
 //! ```ignore
 //! use whisker::prelude::*;
-//! use whisker_router::core::{CompiledTree, RouteTree, Target};
+//! use whisker_router::core::{CompiledTree, RouteTree};
 //! use whisker_router::render::*;
 //!
 //! let tree = CompiledTree::new(RouteTree::stack(vec![
@@ -51,7 +51,7 @@
 //!         SwipeBack {}
 //!     }
 //! }
-//! // inside a screen:  use_navigator().navigate(&Target::id("detail"));
+//! // inside a screen:  use_navigator().navigate("/detail/42");
 //! ```
 //!
 //! Design lives in [issue #95](https://github.com/whiskerrs/whisker/issues/95).
@@ -83,22 +83,18 @@ pub mod __kw {
     /// `routes! { Switch { … } }` — parallel container.
     #[derive(Clone, Copy)]
     pub struct Switch;
-    /// `routes! { Route("path", Component) }` — a screen.
+    /// `routes! { Route(path: "path", component: Comp) }` — a screen or layout.
     #[derive(Clone, Copy)]
     pub struct Route;
-    /// `routes! { Layout(Component) { … } }` — chrome wrapper.
-    #[derive(Clone, Copy)]
-    pub struct Layout;
 }
 
 // The new API: the pure core graphs/ops + the reactive render layer.
 pub use crate::core::{
     CompiledTree, NavError, Navigator, NodeId, NodeInfo, NodePath, RouteDef, RouteInstance,
-    RouteState, RouteTree, StackEntry, StackState, SwitchDef, SwitchState, Target, resolve,
+    RouteState, RouteTree, StackEntry, StackState, SwitchDef, SwitchState, resolve,
 };
 pub use crate::render::{
-    AndroidPredictiveBack, AnimConfig, Direction, IntoNav, Layout, Outlet, Pose, PoseContext,
-    RenderFn, Role, RouteFragment, RouteRegistry, RouteSet, RouteTransition, Router, RouterHandle,
-    Stack, SwipeBack, Switch, TabBar, TabBarStyle, TabItem, Transition, provide_router,
-    use_navigator, use_param, use_pathname,
+    AndroidPredictiveBack, AnimConfig, Direction, Layout, Outlet, Pose, PoseContext, RenderFn,
+    Role, RouteFragment, RouteRegistry, RouteSet, RouteTransition, Router, RouterHandle, Stack,
+    SwipeBack, Switch, Transition, provide_router, use_navigator, use_param, use_pathname,
 };

@@ -1,64 +1,40 @@
 //! The `routes!` macro — lowers a declarative route tree into a
 //! `RouteSet` (a compiled tree + its id → component registry).
 //!
-//! Grammar (this phase):
+//! Grammar:
 //!
 //! ```ignore
 //! routes! {
 //!     Switch {
-//!         Stack { Route("", Home)  Route("detail/:id", Detail) }
-//!         Stack { Route("list", List)  Route("detail/:id", Detail) }
+//!         Route(path: "(home)", component: TabLayout) {
+//!             Stack {
+//!                 Route(path: "", component: Home)
+//!                 Route(path: "detail/:id", component: Detail)
+//!             }
+//!         }
+//!         Route(path: "(search)", component: TabLayout) {
+//!             Stack {
+//!                 Route(path: "search", component: Search)
+//!             }
+//!         }
 //!     }
 //! }
 //! ```
 //!
-//! - `Route("path", Component)` — a screen. Its **id is the component name
-//!   in snake_case** (`Detail` → `"detail"`); the same component routed in
-//!   several stacks shares that id (a shared route → one registry entry).
-//!   The component reads its own `:param`s via `use_param`.
-//! - `Route("path", Component, transition = <expr>)` — a screen with an
-//!   explicit [`RouteTransition`]. `<expr>` is any expression yielding a
-//!   `RouteTransition` (e.g. `RouteTransition::modal()`); omitted, the route
-//!   uses the platform default. The transition is keyed by route id, so a
-//!   shared route must declare the **same** transition (or only one site
-//!   declares it) — conflicting transitions for one id are a compile error.
+//! - `Route(path: "segment", component: Comp) { children }` — a named route
+//!   with a component and child routes. The component renders with an `Outlet`
+//!   for the active child (expo-router's `_layout.tsx` model).
+//! - `Route(path: "segment", component: Comp)` — a leaf route (no children).
+//! - `Route(path: "segment") { children }` — a structural route with no
+//!   component (grouping only, expo-router's `(group)` folder).
+//! - `Route(component: Comp) { children }` — a pathless route with a layout
+//!   component.
 //! - `Stack { … }` / `Switch { … }` — the two containers.
-//! - `..frag` — **spread** a reusable [`RouteFragment`] (an un-rooted
-//!   `routes! { Route(..) Route(..) }` value bound to a variable) into a
-//!   `Stack` / `Switch`, splicing its routes in at that position:
+//! - `..frag` — **spread** a reusable [`RouteFragment`].
 //!
-//!   ```ignore
-//!   let content = routes! { Route("post/:id", Post)  Route("u/:id", Profile) };
-//!   routes! {
-//!       Switch {
-//!           Stack { Route("", Timeline)  ..content }   // + /post/:id, /u/:id
-//!           Stack { Route("me", MyPage)  ..content }   // same routes, own stack
-//!       }
-//!   }
-//!   ```
-//!
-//!   A body whose top level is a single container evaluates to a `RouteSet`
-//!   (→ a `RouterHandle`); a body of bare `Route`s / spreads evaluates to a
-//!   spreadable `RouteFragment`. Spreading a fragment into N stacks creates N
-//!   tree instances that dedupe to one nav target by id (the registry holds
-//!   one entry per id; resolution picks the instance relative to the current
-//!   position).
-//!
-//! ## Structure checks
-//!
-//! The macro enforces the tree's parent/child rules at compile time, with a
-//! span on the offending node:
-//!
-//! - a `Switch` branch must be its own container (`Stack` / `Switch` /
-//!   `Layout`) — a bare `Route` (no history) or a `..spread` (yields routes)
-//!   is rejected;
-//! - `Layout(X) { … }` must wrap exactly one `Stack` or `Switch`;
-//! - `Stack { }` / `Switch { }` must be non-empty.
-//!
-//! Directional (enter/exit/pop-enter/pop-exit) animation is handled by the
-//! `Transition` itself — its `pose` sees a `Direction`, so a single
-//! `transition = <expr>` can be fully asymmetric without extra macro syntax.
-//! Later phases add typed nav targets and branch enums.
+//! Route IDs are derived from the component name in snake_case. Routes without
+//! a component get their ID from the path segment (or a generated ID for
+//! pathless/group routes).
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
@@ -68,11 +44,10 @@ use syn::{Expr, Ident, LitStr, Token, braced, parenthesized};
 
 /// One node in the route-tree DSL.
 ///
-/// Container nodes keep their `kw` (the `Stack` / `Switch` / `Route` / `Layout`
+/// Container nodes keep their `kw` (the `Stack` / `Switch` / `Route`
 /// keyword `Ident`, with its source span) so the expansion can emit a
 /// span-carrying `whisker_router::__kw` reference — that's what gives the
-/// keyword rust-analyzer completion AND go-to-definition / hover (the same way
-/// `render!` always emits `__tags::__<tag>_ctor()`).
+/// keyword rust-analyzer completion AND go-to-definition / hover.
 enum Node {
     Switch {
         kw: Ident,
@@ -84,27 +59,17 @@ enum Node {
     },
     Route {
         kw: Ident,
-        path: LitStr,
-        component: Ident,
-        /// Optional `transition = <expr>` — an expression yielding a
-        /// `RouteTransition`. `None` → the platform default.
+        path: Option<LitStr>,
+        component: Option<Ident>,
         transition: Option<Expr>,
-    },
-    /// `Layout(Comp) { <container> }` — chrome wrapping a container. NOT a
-    /// nav node: the wrapped child takes the position, and `Comp` is recorded
-    /// as that path's layout.
-    Layout {
-        kw: Ident,
-        component: Ident,
-        child: Box<Node>,
+        children: Vec<Node>,
     },
     /// `..frag` — splice a [`RouteFragment`] value's routes in at this
-    /// position. The expression must evaluate to a `RouteFragment`.
+    /// position.
     Spread(Expr),
-    /// An **unknown / half-typed keyword** (e.g. `Sta|` mid-edit). Rather than
-    /// hard-erroring, we keep it so the macro still expands and emits a span-
-    /// carrying probe into `whisker_router::__kw`, letting rust-analyzer
-    /// complete the keyword name — the same trick `render!` uses for tag names.
+    /// An **unknown / half-typed keyword** (e.g. `Sta|` mid-edit). Kept so
+    /// the macro still expands and emits a span-carrying probe into
+    /// `whisker_router::__kw`, letting rust-analyzer complete the keyword.
     Unknown(Ident),
 }
 
@@ -142,91 +107,90 @@ impl Parse for Node {
                 }
                 Ok(Node::Stack { kw, children })
             }
-            "Route" => {
-                let content;
-                parenthesized!(content in input);
-                let path: LitStr = content.parse()?;
-                content.parse::<Token![,]>()?;
-                let component: Ident = content.parse()?;
-                // Optional trailing `, key = value` options (currently only
-                // `transition`). Tolerates a trailing comma.
-                let mut transition: Option<Expr> = None;
-                while !content.is_empty() {
-                    content.parse::<Token![,]>()?;
-                    if content.is_empty() {
-                        break; // trailing comma after the last arg
-                    }
-                    let key: Ident = content.parse()?;
-                    content.parse::<Token![=]>()?;
-                    let val: Expr = content.parse()?;
-                    match key.to_string().as_str() {
-                        "transition" => transition = Some(val),
-                        other => {
-                            return Err(syn::Error::new(
-                                key.span(),
-                                format!("unknown Route option `{other}`; expected `transition`"),
-                            ));
-                        }
-                    }
-                }
-                Ok(Node::Route {
-                    kw,
-                    path,
-                    component,
-                    transition,
-                })
-            }
-            "Layout" => {
-                let args;
-                parenthesized!(args in input);
-                let component: Ident = args.parse()?;
-                let content;
-                braced!(content in input);
-                let mut children = parse_nodes(&content)?;
-                if children.len() != 1 {
-                    return Err(syn::Error::new(
-                        kw.span(),
-                        "Layout(X) { … } must wrap exactly one container (a Stack or Switch)",
-                    ));
-                }
-                // The wrapped child must be a container — a `Layout` adds chrome
-                // *around* a `Stack`/`Switch`; it can't wrap a bare `Route`,
-                // a `..spread`, or another `Layout`. `Unknown` (a half-typed
-                // keyword like `Swi|`) is allowed so completion survives the
-                // edit — it would otherwise error and wipe the expansion.
-                if !matches!(
-                    children[0],
-                    Node::Stack { .. } | Node::Switch { .. } | Node::Unknown(_)
-                ) {
-                    return Err(syn::Error::new(
-                        kw.span(),
-                        "Layout(X) { … } must wrap a `Stack` or `Switch` (not a bare `Route`, \
-                         a `..spread`, or another `Layout`)",
-                    ));
-                }
-                Ok(Node::Layout {
-                    kw,
-                    component,
-                    child: Box::new(children.remove(0)),
-                })
-            }
+            "Route" => parse_route(input, kw),
             _ => {
-                // Unknown / half-typed keyword. Don't hard-error (that would
-                // wipe the whole expansion and kill completion). Consume any
-                // following `(...)` / `{...}` groups so the rest still parses,
-                // and keep the ident for the completion probe.
+                // Unknown keyword — possibly half-typed. Absorb an optional
+                // braced or parenthesised body so the rest of the stream
+                // stays parseable, then emit an `Unknown` node (the RA probe).
                 if input.peek(syn::token::Paren) {
-                    let _discard;
-                    parenthesized!(_discard in input);
+                    let _content;
+                    parenthesized!(_content in input);
                 }
                 if input.peek(syn::token::Brace) {
-                    let _discard;
-                    braced!(_discard in input);
+                    let _content;
+                    braced!(_content in input);
                 }
                 Ok(Node::Unknown(kw))
             }
         }
     }
+}
+
+/// Parse a `Route(...)` node with named keyword arguments.
+///
+/// Supported kwargs: `path`, `component`, `transition`.
+fn parse_route(input: ParseStream, kw: Ident) -> syn::Result<Node> {
+    let mut path: Option<LitStr> = None;
+    let mut component: Option<Ident> = None;
+    let mut transition: Option<Expr> = None;
+
+    if input.peek(syn::token::Paren) {
+        let content;
+        parenthesized!(content in input);
+        while !content.is_empty() {
+            let key: Ident = content.parse()?;
+            content.parse::<Token![:]>()?;
+            match key.to_string().as_str() {
+                "path" => {
+                    path = Some(content.parse()?);
+                }
+                "component" => {
+                    component = Some(content.parse()?);
+                }
+                "transition" => {
+                    transition = Some(content.parse()?);
+                }
+                other => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        format!(
+                            "unknown Route option `{other}`; expected `path`, `component`, \
+                             or `transition`"
+                        ),
+                    ));
+                }
+            }
+            // Eat optional trailing comma.
+            if content.peek(Token![,]) {
+                content.parse::<Token![,]>()?;
+            }
+        }
+    }
+
+    // Parse optional braced children.
+    let children = if input.peek(syn::token::Brace) {
+        let content;
+        braced!(content in input);
+        parse_nodes(&content)?
+    } else {
+        Vec::new()
+    };
+
+    // A Route must have at least a path or a component.
+    if path.is_none() && component.is_none() {
+        return Err(syn::Error::new(
+            kw.span(),
+            "`Route` must have at least a `path` or a `component`",
+        ));
+    }
+
+    Ok(Node::Route {
+        kw,
+        path,
+        component,
+        transition,
+        children,
+    })
 }
 
 fn parse_nodes(input: ParseStream) -> syn::Result<Vec<Node>> {
@@ -267,6 +231,30 @@ fn snake_case(ident: &Ident) -> String {
     out
 }
 
+/// Derive a route ID from a `Route` node. Component name wins (snake_case);
+/// if no component, use the path segment as-is; if neither, fall back to
+/// `"route"`.
+fn route_id(component: &Option<Ident>, path: &Option<LitStr>) -> String {
+    if let Some(comp) = component {
+        return snake_case(comp);
+    }
+    if let Some(p) = path {
+        let seg = p.value();
+        if seg.is_empty() {
+            return "index".to_string();
+        }
+        seg
+    } else {
+        "route".to_string()
+    }
+}
+
+/// Detect whether a path literal is a group segment: `(name)`.
+fn is_group_path(path: &LitStr) -> bool {
+    let v = path.value();
+    v.starts_with('(') && v.ends_with(')')
+}
+
 pub fn expand(routes: Routes) -> TokenStream {
     if routes.roots.is_empty() {
         return syn::Error::new(
@@ -276,19 +264,14 @@ pub fn expand(routes: Routes) -> TokenStream {
         .to_compile_error();
     }
 
-    // A single container at the top → a rooted `RouteSet` (→ a
-    // `RouterHandle`). Anything else (bare `Route`s and/or `..spread`s) → a
-    // spreadable `RouteFragment` value.
+    // A single container at the top → a rooted `RouteSet`.
+    // Anything else → a spreadable `RouteFragment`.
     let is_rooted = routes.roots.len() == 1
         && matches!(
             routes.roots[0],
-            Node::Stack { .. } | Node::Switch { .. } | Node::Layout { .. }
+            Node::Stack { .. } | Node::Switch { .. } | Node::Route { .. }
         );
 
-    // Structure checks (parent/child constraints) + collect (id → component,
-    // transition) registry entries (deduping shared routes / erroring on
-    // conflicts) and the `..spread` expressions whose registries must be merged
-    // in. Both accumulate into one `err` so every problem surfaces at once.
     let mut err: Option<syn::Error> = None;
     validate(&routes.roots, &mut err);
     let mut reg: Vec<RegEntry> = Vec::new();
@@ -304,15 +287,10 @@ pub fn expand(routes: Routes) -> TokenStream {
             component: comp,
             transition,
         } = entry;
-        // Emit the **desugared** component instantiation (`Comp(Comp::builder()
-        // .build())`) that `render! { Comp {} }` lowers to, rather than nesting
-        // `render!` itself. Two reasons: (1) `#comp` appears as a direct path
-        // reference, so rust-analyzer can resolve + complete the component name
-        // inside `routes!` (a nested proc-macro breaks RA's span mapping); (2)
-        // one less expansion layer. The result is identical to the `render!`
-        // form for a prop-less component.
+        let comp = comp
+            .as_ref()
+            .expect("registry entries always have a component");
         match transition {
-            // `transition = <expr>` → register with the explicit transition.
             Some(t) => quote! {
                 .route_with(
                     #id,
@@ -320,7 +298,6 @@ pub fn expand(routes: Routes) -> TokenStream {
                     |_: &::whisker_router::core::RouteInstance| #comp(#comp::builder().build()),
                 )
             },
-            // No transition → platform default.
             None => quote! {
                 .route(
                     #id,
@@ -330,8 +307,6 @@ pub fn expand(routes: Routes) -> TokenStream {
         }
     });
 
-    // Fold each distinct spread fragment's id → render/transition entries in
-    // (id-keyed, first declaration wins).
     let spread_merges = dedup_exprs(&spreads).into_iter().map(|e| {
         quote! {
             .merge(::whisker_router::render::RouteFragment::registry(&(#e)))
@@ -359,15 +334,12 @@ pub fn expand(routes: Routes) -> TokenStream {
             )
         }}
     } else {
-        // A spreadable fragment: a flat list of route roots (+ spreads). A
-        // `Layout(X)` can't keep a stable compile-time path once the fragment
-        // is spliced at an arbitrary position, so it isn't allowed here.
         let roots = children_vec_tokens(&routes.roots, &[], &mut switch_n, &mut layouts);
         if !layouts.is_empty() {
             return syn::Error::new(
                 Span::call_site(),
-                "a spreadable `routes!` fragment cannot contain a `Layout(X)`; \
-                 declare layouts in the rooted `routes!` that consumes the fragment",
+                "a spreadable `routes!` fragment cannot contain layout routes; \
+                 declare layout routes in the rooted `routes!` that consumes the fragment",
             )
             .to_compile_error();
         }
@@ -379,8 +351,7 @@ pub fn expand(routes: Routes) -> TokenStream {
     }
 }
 
-/// Emit the `LayoutRegistry` `.with(path, layout)` inserts for the collected
-/// `(path, component)` layouts.
+/// Emit the `LayoutRegistry` `.with(path, layout)` inserts.
 fn layout_inserts(layouts: &[(Vec<usize>, Ident)]) -> Vec<TokenStream> {
     layouts
         .iter()
@@ -389,8 +360,6 @@ fn layout_inserts(layouts: &[(Vec<usize>, Ident)]) -> Vec<TokenStream> {
             quote! {
                 .with(
                     ::whisker_router::core::NodePath(::std::vec![ #(#idxs),* ]),
-                    // Desugared form (see `expand`) so RA can complete the
-                    // layout component name; equivalent to `render! { #comp {} }`.
                     ::whisker_router::render::LayoutFn::new(|| #comp(#comp::builder().build())),
                 )
             }
@@ -398,8 +367,7 @@ fn layout_inserts(layouts: &[(Vec<usize>, Ident)]) -> Vec<TokenStream> {
         .collect()
 }
 
-/// Distinct spread expressions (by token text), preserving first-seen order,
-/// so spreading one fragment into several containers merges its registry once.
+/// Distinct spread expressions (by token text), preserving first-seen order.
 fn dedup_exprs(exprs: &[Expr]) -> Vec<Expr> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -411,8 +379,6 @@ fn dedup_exprs(exprs: &[Expr]) -> Vec<Expr> {
     out
 }
 
-/// Accumulate `e` into `err`, combining with any error already collected so
-/// every problem surfaces in one compile pass (not just the first).
 fn push_err(err: &mut Option<syn::Error>, e: syn::Error) {
     match err {
         Some(p) => p.combine(e),
@@ -420,37 +386,33 @@ fn push_err(err: &mut Option<syn::Error>, e: syn::Error) {
     }
 }
 
-/// Enforce the route-tree's parent/child structure rules. Empty containers and
-/// `Layout`'s child kind are checked at parse time (where the keyword span is
-/// in hand); this pass covers the rules that need a node's *parent* context —
-/// a `Switch` branch must be its own container, never a bare `Route` (it would
-/// have no history) or a `..spread` (which yields routes).
+/// Enforce the route-tree's parent/child structure rules.
 fn validate(nodes: &[Node], err: &mut Option<syn::Error>) {
     for node in nodes {
         match node {
             Node::Switch { children, .. } => {
                 for c in children {
                     match c {
-                        // `Unknown` is a half-typed branch — allow it (no error)
-                        // so completion survives mid-edit.
-                        Node::Stack { .. }
-                        | Node::Switch { .. }
-                        | Node::Layout { .. }
-                        | Node::Unknown(_) => {}
-                        Node::Route { component, .. } => push_err(
+                        // A Switch branch must be a Route-with-children, Stack,
+                        // Switch, or Unknown (half-typed).
+                        Node::Stack { .. } | Node::Switch { .. } | Node::Unknown(_) => {}
+                        Node::Route { children, .. } if !children.is_empty() => {}
+                        Node::Route { kw, .. } => push_err(
                             err,
                             syn::Error::new(
-                                component.span(),
-                                "a `Switch` branch must be its own container; wrap this in \
-                                 `Stack { … }` (a bare `Route` can't be a tab — it has no history)",
+                                kw.span(),
+                                "a `Switch` branch must be a container (Route with children, \
+                                 Stack, or Switch); a leaf `Route` can't be a tab — \
+                                 wrap it in `Stack { … }` or give it children",
                             ),
                         ),
                         Node::Spread(expr) => push_err(
                             err,
                             syn::Error::new(
                                 expr.span(),
-                                "a `Switch` branch must be a `Stack` / `Switch`; `..spread` yields \
-                                 routes — put the spread inside a branch's `Stack { … }`",
+                                "a `Switch` branch must be a container; \
+                                 `..spread` yields routes — put the spread inside \
+                                 a branch's `Stack { … }`",
                             ),
                         ),
                     }
@@ -458,17 +420,16 @@ fn validate(nodes: &[Node], err: &mut Option<syn::Error>) {
                 validate(children, err);
             }
             Node::Stack { children, .. } => validate(children, err),
-            Node::Layout { child, .. } => validate(std::slice::from_ref(child.as_ref()), err),
-            Node::Route { .. } | Node::Spread(_) | Node::Unknown(_) => {}
+            Node::Route { children, .. } => validate(children, err),
+            Node::Spread(_) | Node::Unknown(_) => {}
         }
     }
 }
 
-/// One collected registry entry: a route id, its component, and its
-/// optional `transition` expression.
+/// One collected registry entry.
 struct RegEntry {
     id: String,
-    component: Ident,
+    component: Option<Ident>,
     transition: Option<Expr>,
 }
 
@@ -483,76 +444,70 @@ fn collect(
             Node::Switch { children, .. } | Node::Stack { children, .. } => {
                 collect(children, reg, spreads, err)
             }
-            Node::Layout { child, .. } => {
-                collect(std::slice::from_ref(child.as_ref()), reg, spreads, err)
-            }
             Node::Spread(expr) => spreads.push(expr.clone()),
-            // A half-typed keyword contributes nothing to the registry; it must
-            // NOT add an error, or `expand` would replace the whole expansion
-            // (probe included) with the error and break completion.
             Node::Unknown(_) => {}
             Node::Route {
+                path,
                 component,
                 transition,
+                children,
                 ..
             } => {
-                let id = snake_case(component);
-                match reg.iter_mut().find(|e| e.id == id) {
-                    Some(existing) => {
-                        // Shared route: must agree on the component…
-                        if &existing.component != component {
-                            push_err(
-                                err,
-                                syn::Error::new(
-                                    component.span(),
-                                    format!(
-                                        "route id `{id}` maps to both `{}` and `{component}`; \
-                                         routes sharing an id must use the same component \
-                                         (a shared route)",
-                                        existing.component
-                                    ),
-                                ),
-                            );
-                        }
-                        // …and on the transition. The transition is keyed by
-                        // id, so two sites can't give it different ones. If
-                        // only one site declares it, that wins; if both do,
-                        // they must be token-identical.
-                        match (&existing.transition, transition) {
-                            (Some(a), Some(b))
-                                if quote!(#a).to_string() != quote!(#b).to_string() =>
-                            {
+                // Only register routes that have a component.
+                if let Some(comp) = component {
+                    let id = route_id(&Some(comp.clone()), path);
+                    match reg.iter_mut().find(|e| e.id == id) {
+                        Some(existing) => {
+                            if existing.component.as_ref() != Some(comp) {
                                 push_err(
                                     err,
                                     syn::Error::new(
-                                        b.span(),
+                                        comp.span(),
                                         format!(
-                                            "route id `{id}` declares two different transitions; \
-                                             a shared route's transition must match at every site \
-                                             (per-site transitions need the 4-slot form, not yet \
-                                             implemented)"
+                                            "route id `{id}` maps to both `{}` and `{comp}`; \
+                                             routes sharing an id must use the same component",
+                                            existing
+                                                .component
+                                                .as_ref()
+                                                .map(|c| c.to_string())
+                                                .unwrap_or_default()
                                         ),
                                     ),
                                 );
                             }
-                            (None, Some(b)) => existing.transition = Some(b.clone()),
-                            _ => { /* same transition, or none new — keep existing */ }
+                            match (&existing.transition, transition) {
+                                (Some(a), Some(b))
+                                    if quote!(#a).to_string() != quote!(#b).to_string() =>
+                                {
+                                    push_err(
+                                        err,
+                                        syn::Error::new(
+                                            b.span(),
+                                            format!(
+                                                "route id `{id}` declares two different transitions"
+                                            ),
+                                        ),
+                                    );
+                                }
+                                (None, Some(b)) => existing.transition = Some(b.clone()),
+                                _ => {}
+                            }
                         }
+                        None => reg.push(RegEntry {
+                            id,
+                            component: Some(comp.clone()),
+                            transition: transition.clone(),
+                        }),
                     }
-                    None => reg.push(RegEntry {
-                        id,
-                        component: component.clone(),
-                        transition: transition.clone(),
-                    }),
                 }
+                // Recurse into children.
+                collect(children, reg, spreads, err);
             }
         }
     }
 }
 
-/// Emit the `RouteTree` for `node`, threading its compile-time `path` so
-/// `Layout(X)` wrappers can register their chrome against the wrapped
-/// container's path. `layouts` accumulates `(path, layout component)`.
+/// Emit the `RouteTree` for `node`.
 fn node_to_tree(
     node: &Node,
     path: &[usize],
@@ -564,11 +519,64 @@ fn node_to_tree(
             kw,
             path: seg,
             component,
+            children,
             ..
         } => {
-            let id = snake_case(component);
+            let id = route_id(component, seg);
             let anchor = kw_anchor(kw);
-            quote! {{ #anchor ::whisker_router::core::RouteTree::route(#seg, #id) }}
+
+            // Build the RouteDef.
+            let segment_expr = match seg {
+                Some(s) => quote! { ::std::option::Option::Some(::std::string::String::from(#s)) },
+                None => quote! { ::std::option::Option::None },
+            };
+            let component_expr = match component {
+                Some(_) => {
+                    let id_str = &id;
+                    quote! { ::std::option::Option::Some(::std::string::String::from(#id_str)) }
+                }
+                None => quote! { ::std::option::Option::None },
+            };
+            let is_group = seg.as_ref().map(is_group_path).unwrap_or(false);
+
+            // If this Route has a component and children, it's a layout route:
+            // register it in the layout registry.
+            if component.is_some() && !children.is_empty() {
+                layouts.push((path.to_vec(), component.as_ref().unwrap().clone()));
+            }
+
+            let kids = if children.is_empty() {
+                quote! { ::std::vec::Vec::new() }
+            } else {
+                children_vec_tokens(children, path, switch_n, layouts)
+            };
+
+            // Extract params from the path segment.
+            let params: Vec<String> = seg
+                .as_ref()
+                .map(|s| {
+                    s.value()
+                        .split('/')
+                        .filter(|s| s.starts_with(':'))
+                        .map(|s| s[1..].to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let params_expr = params.iter();
+
+            quote! {{
+                #anchor
+                ::whisker_router::core::RouteTree::route_with(
+                    ::whisker_router::core::RouteDef {
+                        segment: #segment_expr,
+                        id: ::std::string::String::from(#id),
+                        params: ::std::vec![ #(::std::string::String::from(#params_expr)),* ],
+                        component: #component_expr,
+                        is_group: #is_group,
+                    },
+                    #kids,
+                )
+            }}
         }
         Node::Stack { kw, children } => {
             let kids = children_vec_tokens(children, path, switch_n, layouts);
@@ -588,59 +596,36 @@ fn node_to_tree(
                 )
             }}
         }
-        Node::Layout {
-            kw,
-            component,
-            child,
-        } => {
-            // Layout is transparent in the nav tree: the wrapped child takes
-            // this position. Record the chrome at this path, then emit the
-            // child here (with the keyword anchor).
-            layouts.push((path.to_vec(), component.clone()));
-            let inner = node_to_tree(child, path, switch_n, layouts);
-            let anchor = kw_anchor(kw);
-            quote! {{ #anchor #inner }}
-        }
-        Node::Spread(_) => {
-            // Spreads are spliced by `children_vec_tokens` as a *list* of
-            // children; one can't stand alone as a single tree node. Reaching
-            // here means a spread in a non-list position, e.g.
-            // `Layout(X) { ..frag }`.
-            syn::Error::new(
-                Span::call_site(),
-                "`..spread` must be a direct child of a `Stack` or `Switch`",
-            )
-            .to_compile_error()
-        }
+        Node::Spread(_) => syn::Error::new(
+            Span::call_site(),
+            "`..spread` must be a direct child of a `Stack` or `Switch`",
+        )
+        .to_compile_error(),
         Node::Unknown(kw) => {
-            // A half-typed keyword. Same `__kw` anchor as the known containers
-            // (the source of completion + go-to-def), plus a dummy `RouteTree`
-            // so the expansion stays well-typed and RA can descend. A real typo
-            // surfaces as an unresolved-`__kw`-item error at the keyword.
             let anchor = kw_anchor(kw);
-            quote! {{ #anchor ::whisker_router::core::RouteTree::route("", "") }}
+            quote! {{
+                #anchor
+                ::whisker_router::core::RouteTree::route_with(
+                    ::whisker_router::core::RouteDef {
+                        segment: ::std::option::Option::Some(::std::string::String::from("")),
+                        id: ::std::string::String::from(""),
+                        params: ::std::vec::Vec::new(),
+                        component: ::std::option::Option::None,
+                        is_group: false,
+                    },
+                    ::std::vec::Vec::new(),
+                )
+            }}
         }
     }
 }
 
 /// A span-carrying reference into `whisker_router::__kw` for the keyword `kw`.
-/// Emitting it at the keyword's source span is what gives the `routes!`
-/// keywords rust-analyzer completion, go-to-definition, and hover — the same
-/// way `render!` emits `__tags::__<tag>_ctor()` for every tag. No runtime role.
 fn kw_anchor(kw: &Ident) -> TokenStream {
     quote! { #[allow(unused, clippy::let_unit_value)] let _ = ::whisker_router::__kw::#kw; }
 }
 
-/// Emit a `Vec<RouteTree>` expression for a container's `children`, handling
-/// `..spread` items.
-///
-/// With no spread it is a plain `::std::vec![ … ]`. With a spread it becomes a
-/// block that pushes the literal children and `extend`s each spread fragment's
-/// roots — so the splice happens at runtime. Literal children keep their
-/// compile-time indices (used only for `Layout` paths); because a spread
-/// shifts the *runtime* indices of later siblings, a positioned `Layout` must
-/// not follow a spread in the same container (rare — spreads are trailing leaf
-/// routes in practice).
+/// Emit a `Vec<RouteTree>` expression for a container's `children`.
 fn children_vec_tokens(
     children: &[Node],
     path: &[usize],

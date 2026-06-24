@@ -38,32 +38,9 @@ use std::rc::Rc;
 use whisker::runtime::reactive::Owner;
 use whisker::{AnimationController, ReadSignal, RwSignal, computed, provide_context, use_context};
 
-use crate::core::{CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState, Target};
+use crate::core::{CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState};
 use crate::render::registry::{LayoutFn, LayoutRegistry, RenderFn, RouteRegistry, RouteSet};
 use crate::render::transition::RouteTransition;
-
-/// What [`RouterHandle::navigate`] accepts: a **URL** string (matched
-/// against the route patterns, binding its `:param`s) or an explicit
-/// [`Target`]. Both lower to a `(Target, RouteInstance)` the navigator runs.
-pub trait IntoNav {
-    /// Resolve `self` against `tree` into a target + its bound params.
-    fn into_nav(self, tree: &CompiledTree) -> Result<(Target, RouteInstance), NavError>;
-}
-
-impl IntoNav for &str {
-    fn into_nav(self, tree: &CompiledTree) -> Result<(Target, RouteInstance), NavError> {
-        let (route_id, params) = tree.match_url(self).ok_or(NavError::NoSuchTarget)?;
-        let mut instance = RouteInstance::new(NodePath::root());
-        instance.params = params;
-        Ok((Target::id(route_id), instance))
-    }
-}
-
-impl IntoNav for &Target {
-    fn into_nav(self, _tree: &CompiledTree) -> Result<(Target, RouteInstance), NavError> {
-        Ok((self.clone(), RouteInstance::new(NodePath::root())))
-    }
-}
 
 /// A repointable pose binding for one stack wrapper: the controller whose
 /// progress drives it + the role it plays. The swipe-back gesture sets
@@ -245,9 +222,7 @@ impl RouterHandle {
     }
 
     /// A `computed` of the selected branch index of the `Switch` at
-    /// `path` (or `None` if that node is not a live `Switch`). The
-    /// reactive primitive for reading tab selection (the built-in
-    /// [`TabBar`](crate::render::TabBar) derives its active tab this way).
+    /// `path` (or `None` if that node is not a live `Switch`).
     pub(crate) fn selected_at(&self, path: NodePath) -> ReadSignal<Option<usize>> {
         let state = self.inner.state;
         computed(move || {
@@ -274,21 +249,19 @@ impl RouterHandle {
         out
     }
 
-    /// Navigate forward. Accepts either a **URL** string —
-    /// `navigate("/detail/123")`, matched against the route patterns
-    /// (`/detail/:id`) with its `:param`s bound — or a [`Target`] —
-    /// `navigate(&Target::id("detail"))`. A shared route resolves to the
-    /// right branch via the usual relative resolution. Returns
-    /// [`NavError::NoSuchTarget`] when nothing matches.
-    pub fn navigate(&self, to: impl IntoNav) -> Result<(), NavError> {
-        let (target, instance) = to.into_nav(&self.inner.tree)?;
-        self.with_navigator(|nav| nav.navigate_with(&target, instance))
+    /// Navigate forward to `url`. The URL is matched against the route
+    /// patterns (`/(home)/detail/:id`) with its `:param`s captured, and
+    /// the matched route is pushed onto the active Stack. Group segments
+    /// are optional: both `"/detail/42"` and `"/(home)/detail/42"` work.
+    pub fn navigate(&self, url: &str) -> Result<(), NavError> {
+        self.with_navigator(|nav| nav.navigate(url))
     }
 
-    /// Select the `Switch` branch toward `target` (the tab-switch
-    /// primitive), preserving the target tab's retained history.
-    pub fn select(&self, target: &Target) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.select(target))
+    /// Select the Switch branch containing the route matched by `url`
+    /// (the tab-switch primitive). The target tab's retained history is
+    /// preserved. E.g. `select("/(home)")` or `select("/list")`.
+    pub fn select(&self, url: &str) -> Result<(), NavError> {
+        self.with_navigator(|nav| nav.select(url))
     }
 
     /// Pop the deepest non-trivial stack. [`NavError::NothingToPop`] when
@@ -297,19 +270,19 @@ impl RouterHandle {
         self.with_navigator(|nav| nav.back())
     }
 
-    /// Swap the top of the current stack with `target` (same stack only).
-    pub fn replace(&self, target: &Target) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.replace(target))
+    /// Swap the top of the current stack with the route matched by `url`.
+    pub fn replace(&self, url: &str) -> Result<(), NavError> {
+        self.with_navigator(|nav| nav.replace(url))
     }
 
-    /// Pop the current stack until `target` is the top (same stack only).
-    pub fn pop_to(&self, target: &Target) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.pop_to(target))
+    /// Pop the current stack until the route matched by `url` is the top.
+    pub fn pop_to(&self, url: &str) -> Result<(), NavError> {
+        self.with_navigator(|nav| nav.pop_to(url))
     }
 
-    /// Replace the entire current stack with `[target]`.
-    pub fn reset(&self, target: &Target) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.reset(target))
+    /// Replace the entire current stack with the route matched by `url`.
+    pub fn reset(&self, url: &str) -> Result<(), NavError> {
+        self.with_navigator(|nav| nav.reset(url))
     }
 }
 
@@ -335,7 +308,7 @@ pub(crate) fn state_at<'a>(state: &'a RouteState, path: &NodePath) -> Option<&'a
                     .find(|e| e.child.0.last() == Some(&idx))?;
                 &entry.state
             }
-            RouteState::Route(_) => return None,
+            RouteState::Route(r) => r.children.get(idx)?,
         };
     }
     Some(node)
@@ -395,9 +368,8 @@ pub fn use_param(name: &str) -> ReadSignal<Option<String>> {
 ///
 /// Derived from the active leaf's path; recomputes whenever navigation
 /// changes it. This is the general primitive custom chrome uses to reflect
-/// the current route (the built-in [`TabBar`](crate::render::TabBar) does
-/// this matching itself, so a tab bar needs no hook). Returns `"/"` if the
-/// path can't be resolved (should not happen for a mounted router).
+/// the current route. Returns `"/"` if the path can't be resolved
+/// (should not happen for a mounted router).
 pub fn use_pathname() -> ReadSignal<String> {
     let handle = use_navigator();
     let current = handle.current();

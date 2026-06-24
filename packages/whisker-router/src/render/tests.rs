@@ -13,9 +13,7 @@ use std::rc::Rc;
 
 use whisker::runtime::reactive::Owner;
 
-use crate::core::{
-    CompiledTree, NodePath, RouteInstance, RouteState, RouteTree, SwitchDef, Target,
-};
+use crate::core::{CompiledTree, NodePath, RouteInstance, RouteState, RouteTree, SwitchDef};
 use crate::render::handle::{RouterHandle, state_at};
 use crate::render::node::mount_node;
 use crate::render::registry::RouteRegistry;
@@ -109,7 +107,7 @@ fn navigate_pushes_and_current_tracks_signal() {
         // Starts on home (root stack child 0).
         assert_eq!(current.get().path, NodePath(vec![0]));
 
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         // Now on detail (child 1).
         assert_eq!(current.get().path, NodePath(vec![1]));
@@ -141,7 +139,7 @@ fn replace_swaps_top_same_depth() {
         let h = simple_handle();
         h.navigate("/detail/1").unwrap();
         // replace the top detail with another detail (same stack).
-        h.replace(&Target::id("detail")).unwrap();
+        h.replace("/detail/1").unwrap();
         // Still depth 2 (home + detail), still on detail.
         assert_eq!(h.current().get().path, NodePath(vec![1]));
         let RouteState::Stack(s) = h.state().get() else {
@@ -155,10 +153,10 @@ fn replace_swaps_top_same_depth() {
 fn pop_to_returns_to_target() {
     with_runtime(|| {
         let h = simple_handle();
-        h.navigate(&Target::id("detail")).unwrap();
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
+        h.navigate("/detail/1").unwrap();
         // pop back to home.
-        h.pop_to(&Target::id("home")).unwrap();
+        h.pop_to("/").unwrap();
         assert_eq!(h.current().get().path, NodePath(vec![0]));
     });
 }
@@ -167,9 +165,9 @@ fn pop_to_returns_to_target() {
 fn reset_clears_stack_to_target() {
     with_runtime(|| {
         let h = simple_handle();
-        h.navigate(&Target::id("detail")).unwrap();
-        h.navigate(&Target::id("detail")).unwrap();
-        h.reset(&Target::id("home")).unwrap();
+        h.navigate("/detail/1").unwrap();
+        h.navigate("/detail/1").unwrap();
+        h.reset("/").unwrap();
         let RouteState::Stack(s) = h.state().get() else {
             panic!("root is a stack")
         };
@@ -189,8 +187,8 @@ fn select_switches_tab_and_keeps_history() {
         assert_eq!(selected.get(), Some(0));
 
         // Push a detail in tab 0, then switch to tab 1.
-        h.navigate(&Target::id("detail")).unwrap();
-        h.select(&Target::id("list")).unwrap();
+        h.navigate("/detail/1").unwrap();
+        h.select("/list").unwrap();
         flush();
         assert_eq!(selected.get(), Some(1));
         // Tab 1 shows its own home (list), depth 1.
@@ -202,7 +200,7 @@ fn select_switches_tab_and_keeps_history() {
         );
 
         // Switch back to tab 0 — its pushed detail is retained.
-        h.select(&Target::id("home")).unwrap();
+        h.select("/").unwrap();
         flush();
         assert_eq!(selected.get(), Some(0));
         // Back in tab 0 on the detail we pushed (path [0,0,1]).
@@ -223,7 +221,7 @@ fn slice_only_changes_for_touched_tab() {
         let before_a = slice_a.get();
 
         // Push a detail into tab A.
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
 
         // Tab A's slice changed; tab B's did NOT — the memoised computed
@@ -239,7 +237,7 @@ fn slice_only_changes_for_touched_tab() {
 fn state_at_walks_to_active_child() {
     with_runtime(|| {
         let h = tabbed_handle();
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         let root = h.state().get();
 
         // Root is the stack; [0] is the switch.
@@ -328,7 +326,7 @@ fn navigate_mounts_new_leaf_exactly_once() {
         flush();
 
         // Push a detail into the Home tab.
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
 
         // detail mounted once; home was NOT re-mounted by the push.
@@ -382,7 +380,7 @@ fn pop_settles_survivor_to_active_pose() {
         flush();
 
         // Push detail, let the slide-in finish.
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
 
@@ -423,7 +421,7 @@ fn push_settles_top_to_full_progress() {
         let _slot = mount_node(&h, NodePath::root());
         flush();
 
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
 
@@ -453,7 +451,7 @@ fn pop_animates_outgoing_top_through_intermediate_frames() {
         let _slot = mount_node(&h, NodePath::root());
         flush();
 
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
 
@@ -518,7 +516,7 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
         let _slot = mount_node(&h, NodePath::root());
         flush();
 
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
         assert_eq!(*cleanups.borrow(), 0, "detail content alive after push");
@@ -586,7 +584,7 @@ fn predictive_back_progress_scrubs_top_controller() {
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
 
@@ -622,7 +620,7 @@ fn predictive_back_invoke_commits_pop() {
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
         assert_eq!(h.current().get().path, NodePath(vec![1]), "on detail");
@@ -652,7 +650,7 @@ fn settle_commit_animates_from_current_value_without_jumping_back() {
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
 
@@ -699,7 +697,7 @@ fn settle_full_drag_commits_immediately() {
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
 
@@ -721,7 +719,7 @@ fn predictive_back_cancel_restores_top() {
         let h = slide_stack_handle();
         let _slot = mount_node(&h, NodePath::root());
         flush();
-        h.navigate(&Target::id("detail")).unwrap();
+        h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
 
@@ -734,6 +732,112 @@ fn predictive_back_cancel_restores_top() {
 
         assert_eq!(ctrl.value().get_untracked(), 1.0, "top restored to present");
         assert_eq!(h.current().get().path, NodePath(vec![1]), "still on detail");
+    });
+    owner.dispose();
+}
+
+/// Verify that predictive-back works for a **grouped tabbed** tree (the
+/// example-app shape: Route-with-children wrapping a Switch with group
+/// routes). This is the exact scenario that failed on the real device.
+#[test]
+fn predictive_back_works_with_grouped_tabs() {
+    use crate::core::{RouteDef, RouteTree};
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let tree = CompiledTree::new(RouteTree::route_with(
+            RouteDef {
+                id: "tabs_layout".into(),
+                segment: None,
+                params: vec![],
+                component: Some("tabs_layout".into()),
+                is_group: false,
+            },
+            vec![RouteTree::switch(
+                SwitchDef::new("tabs", 0),
+                vec![
+                    RouteTree::route_with(
+                        RouteDef {
+                            id: "(home)".into(),
+                            segment: Some("(home)".into()),
+                            params: vec![],
+                            component: None,
+                            is_group: true,
+                        },
+                        vec![RouteTree::stack(vec![
+                            RouteTree::route("", "home"),
+                            RouteTree::route("detail/:id", "detail"),
+                        ])],
+                    ),
+                    RouteTree::route_with(
+                        RouteDef {
+                            id: "(search)".into(),
+                            segment: Some("(search)".into()),
+                            params: vec![],
+                            component: None,
+                            is_group: true,
+                        },
+                        vec![RouteTree::stack(vec![
+                            RouteTree::route("list", "list"),
+                            RouteTree::route("detail/:id", "detail"),
+                        ])],
+                    ),
+                ],
+            )],
+        ));
+        let reg = RouteRegistry::new()
+            .route_with("home", RouteTransition::slide(), |_: &RouteInstance| {
+                whisker::runtime::view::create_phantom_element()
+            })
+            .route_with("detail", RouteTransition::slide(), |_: &RouteInstance| {
+                whisker::runtime::view::create_phantom_element()
+            })
+            .route_with("list", RouteTransition::slide(), |_: &RouteInstance| {
+                whisker::runtime::view::create_phantom_element()
+            })
+            .route_with(
+                "tabs_layout",
+                RouteTransition::default(),
+                |_: &RouteInstance| whisker::runtime::view::create_phantom_element(),
+            );
+        let h = RouterHandle::new((tree, reg));
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        // Navigate to detail in home tab.
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+
+        // Verify we're on detail.
+        assert_eq!(
+            h.current().get().path,
+            NodePath(vec![0, 0, 0, 1]),
+            "should be on detail in home tab"
+        );
+
+        // Try to begin a predictive-back gesture.
+        let bridge = begin(&h, SwipeEdge::Left);
+        assert!(
+            bridge.is_some(),
+            "begin() must return a bridge (stack has >1 entry)"
+        );
+
+        let bridge = bridge.unwrap();
+        assert!(bridge.can_back, "can_back must be true");
+
+        // Scrub and commit.
+        scrub(&bridge, 0.5);
+        settle(&h, &bridge, true, None);
+        settle_animations();
+
+        // Back should have popped to Home.
+        assert_eq!(
+            h.current().get().path,
+            NodePath(vec![0, 0, 0, 0]),
+            "commits the pop to home"
+        );
     });
     owner.dispose();
 }
