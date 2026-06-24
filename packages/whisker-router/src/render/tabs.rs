@@ -19,9 +19,12 @@ use whisker::runtime::view::Element;
 use crate::core::{CompiledTree, NodePath, Target};
 use crate::render::handle::use_navigator;
 
-/// One entry in the [`Tabs`] bar: a label + the [`Target`] selecting its
-/// branch.
+/// One entry in the [`TabBar`]: a label + the [`Target`] selecting its branch.
+///
+/// `#[non_exhaustive]` so future fields (an icon, a badge) stay additive —
+/// construct it with [`TabItem::new`].
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct TabItem {
     /// The text shown in the bar.
     pub label: String,
@@ -44,20 +47,22 @@ impl TabItem {
 /// theme; pass a custom one to retheme the default bar without reimplementing
 /// it. (For a fundamentally different bar, build your own chrome via
 /// [`Layout`](crate::render::Layout) — see the module docs.)
+/// Built as a **builder** off [`TabBarStyle::default`] so future style options
+/// stay additive (a new field is a new setter, never a broken struct literal):
+///
+/// ```ignore
+/// TabBar(items: items, style: TabBarStyle::default()
+///     .background(Color::hex(0xFFFFFF))
+///     .label_color(Color::hex(0x111111)))
+/// ```
 #[derive(Clone)]
 pub struct TabBarStyle {
-    /// Bar background color.
-    pub background: Color,
-    /// Bar / tab height (px).
-    pub height: f32,
-    /// Tab label color.
-    pub label_color: Color,
-    /// Tab label font size (px).
-    pub font_size: f32,
-    /// Opacity of the active tab.
-    pub active_opacity: f32,
-    /// Opacity of inactive tabs.
-    pub inactive_opacity: f32,
+    pub(crate) background: Color,
+    pub(crate) height: f32,
+    pub(crate) label_color: Color,
+    pub(crate) font_size: f32,
+    pub(crate) active_opacity: f32,
+    pub(crate) inactive_opacity: f32,
 }
 
 impl Default for TabBarStyle {
@@ -70,6 +75,39 @@ impl Default for TabBarStyle {
             active_opacity: 1.0,
             inactive_opacity: 0.5,
         }
+    }
+}
+
+impl TabBarStyle {
+    /// Bar background color.
+    pub fn background(mut self, color: Color) -> Self {
+        self.background = color;
+        self
+    }
+    /// Bar / tab height (px).
+    pub fn height(mut self, px: f32) -> Self {
+        self.height = px;
+        self
+    }
+    /// Tab label color.
+    pub fn label_color(mut self, color: Color) -> Self {
+        self.label_color = color;
+        self
+    }
+    /// Tab label font size (px).
+    pub fn font_size(mut self, px: f32) -> Self {
+        self.font_size = px;
+        self
+    }
+    /// Opacity of the active tab (0..1).
+    pub fn active_opacity(mut self, o: f32) -> Self {
+        self.active_opacity = o;
+        self
+    }
+    /// Opacity of inactive tabs (0..1).
+    pub fn inactive_opacity(mut self, o: f32) -> Self {
+        self.inactive_opacity = o;
+        self
     }
 }
 

@@ -38,6 +38,7 @@ pub enum RouteState {
 /// `post(1)` and `post(2)` are two distinct instances of the same
 /// static `Route` node, differing only in [`params`](RouteInstance::params).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive] // future fields (query, fragment) stay additive; build via `new` / `with_param`
 pub struct RouteInstance {
     /// The static node this instantiates.
     pub path: NodePath,
