@@ -75,11 +75,9 @@ pub use gesture::{
     AndroidPredictiveBack, AndroidPredictiveBackProps, SwipeBack, SwipeBackProps,
     set_swipe_back_distance,
 };
-pub use handle::{
-    IntoNav, RouterHandle, StackBridge, provide_router, use_navigator, use_param, use_pathname,
-};
+pub use handle::{IntoNav, RouterHandle, provide_router, use_navigator, use_param, use_pathname};
 pub use registry::{LayoutFn, LayoutRegistry, RenderFn, RouteFragment, RouteRegistry, RouteSet};
-pub use tabs::{TabBar, TabBarProps, TabBarStyle, TabItem, Tabs, TabsProps};
+pub use tabs::{TabBar, TabBarProps, TabBarStyle, TabItem};
 pub use transition::{Direction, Pose, PoseContext, Role, RouteTransition, Transition};
 // Re-exported for custom `Transition` authors (the return type of
 // `config()`), so everything needed for a custom transition is in one place.

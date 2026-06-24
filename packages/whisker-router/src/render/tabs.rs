@@ -1,16 +1,15 @@
-//! [`Tabs`] — the standard bottom-nav chrome for a
-//! [`Switch`](crate::core::RouteTree::Switch).
+//! [`TabBar`] — the default bottom navigation bar.
 //!
-//! Per the design doc, the **tab bar is a `Layout`, not the `Switch`**:
-//! the `Switch` is pure selection logic and draws nothing; the chrome is
-//! a separate layout that renders an [`Outlet`](crate::render::Outlet)
-//! for the selected branch plus a bottom bar. [`Tabs`] ships a basic
-//! default bar.
+//! There is **no all-in-one `Tabs` component**: a tab layout is just a
+//! [`Layout`](crate::render::Layout) component you write (an
+//! [`Outlet`](crate::render::Outlet) for the active branch above a bar), so
+//! the chrome stays fully in your hands. [`TabBar`] is the ready-made bar to
+//! drop into that layout — it **highlights itself by matching the current
+//! location** against each tab's [`Target`] (the Expo-Router model — a tab is
+//! "active" when the current route lives in its branch), so it needs no
+//! active-index prop or hook. Tapping a tab calls `navigator.select(..)`.
 //!
-//! The bar **highlights itself by matching the current location** against
-//! each tab's [`Target`] (the Expo-Router model — a tab is "active" when the
-//! current route lives in its branch), so it needs no active-index prop or
-//! hook. For fully custom chrome, read [`use_pathname`](crate::render::use_pathname)
+//! For a fully custom bar, read [`use_pathname`](crate::render::use_pathname)
 //! and call `navigator.select(..)` yourself.
 
 use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent};
@@ -18,7 +17,6 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 
 use crate::core::{CompiledTree, NodePath, Target};
-use crate::render::components::{Layout, Outlet};
 use crate::render::handle::use_navigator;
 
 /// One entry in the [`Tabs`] bar: a label + the [`Target`] selecting its
@@ -75,55 +73,25 @@ impl Default for TabBarStyle {
     }
 }
 
-/// Standard tabs layout: the selected branch's content above a fixed
-/// bottom bar.
-///
-/// `path` is the [`Switch`](crate::core::RouteTree::Switch)'s
-/// [`NodePath`]; `items` are the bar entries in branch (declaration)
-/// order. The bar reflects the active branch and calls
-/// `navigator.select(target)` on tap.
+/// The default bottom bar — a row of tappable labels, the active one
+/// highlighted. Drop it into your own tab [`Layout`](crate::render::Layout):
 ///
 /// ```ignore
-/// render! {
-///     Tabs(path: switch_path, items: vec![
-///         TabItem::new("Home",   Target::id("home")),
-///         TabItem::new("Search", Target::id("search")),
-///     ])
+/// #[component]
+/// fn tabs_layout() -> Element {
+///     render! {
+///         view(style: css!(flex_grow: 1.0, display: Display::Flex,
+///                          flex_direction: FlexDirection::Column)) {
+///             view(style: css!(flex_grow: 1.0)) { Outlet {} }
+///             TabBar(items: vec![
+///                 TabItem::new("Home",   Target::id("home")),
+///                 TabItem::new("Search", Target::id("search")),
+///             ])
+///         }
+///     }
 /// }
+/// // routes!: Layout(TabsLayout) { Switch { … } }
 /// ```
-#[component]
-pub fn tabs(
-    path: NodePath,
-    items: Vec<TabItem>,
-    #[prop(default = TabBarStyle::default())] style: TabBarStyle,
-) -> Element {
-    render! {
-        view(style: css!(
-            flex_grow: 1.0,
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-        )) {
-            // Content area: the selected branch renders here. `Layout`
-            // sets the OutletAnchor to this Switch's path so the inner
-            // `Outlet` draws THIS container (not whatever the ambient
-            // anchor was) — the single draw path for the switch.
-            view(style: css!(
-                flex_grow: 1.0,
-                display: Display::Flex,
-                flex_direction: FlexDirection::Column,
-            )) {
-                Layout(path: path.clone()) {
-                    Outlet {}
-                }
-            }
-            // Bottom navigation bar — highlights the active tab itself.
-            TabBar(items: items.clone(), style: style.clone())
-        }
-    }
-}
-
-/// The default bottom bar — a row of tappable labels, the active one
-/// highlighted. Split out from [`Tabs`] so a custom layout can reuse it.
 ///
 /// The active tab is **derived from the current location** (the item whose
 /// [`Target`] lives in the active branch), not passed in — drop it into any

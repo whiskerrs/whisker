@@ -71,7 +71,7 @@ impl IntoNav for &Target {
 /// scrubbed progress moves the pair — the identical coordinated model the
 /// non-interactive push/pop uses.
 #[derive(Copy, Clone)]
-pub struct PoseBinding {
+pub(crate) struct PoseBinding {
     /// The controller this wrapper's pose currently reads.
     pub ctrl: RwSignal<AnimationController>,
     /// The role (`Top` / `Under`) this wrapper plays.
@@ -87,7 +87,7 @@ pub struct PoseBinding {
 /// top/under wrappers as a coordinated pair. Re-published on every
 /// reconcile so it always points at the current top.
 #[derive(Clone)]
-pub struct StackBridge {
+pub(crate) struct StackBridge {
     /// The top wrapper's transition controller (what the gesture scrubs).
     pub top_ctrl: Option<AnimationController>,
     /// The top wrapper's pose binding.
@@ -160,29 +160,29 @@ impl RouterHandle {
     }
 
     /// The `Layout(X)` chrome registered for the container at `path`, if any.
-    pub fn layout_at(&self, path: &NodePath) -> Option<LayoutFn> {
+    pub(crate) fn layout_at(&self, path: &NodePath) -> Option<LayoutFn> {
         self.inner.layouts.get(path).cloned()
     }
 
     /// Register / refresh the gesture bridge for the stack at `path`.
     /// Called by [`Stack`](crate::render::Stack) reconcile each time its
     /// top wrapper changes.
-    pub fn set_stack_bridge(&self, path: NodePath, bridge: StackBridge) {
+    pub(crate) fn set_stack_bridge(&self, path: NodePath, bridge: StackBridge) {
         self.inner.bridges.borrow_mut().insert(path, bridge);
     }
 
     /// (Test only) the bridge registered for the stack at `path`,
     /// regardless of whether it can currently pop — used to assert a
     /// survivor's resting pose after a coordinated pop.
-    #[doc(hidden)]
-    pub fn active_stack_bridge_for_test(&self, path: &NodePath) -> Option<StackBridge> {
+    #[cfg(test)]
+    pub(crate) fn active_stack_bridge_for_test(&self, path: &NodePath) -> Option<StackBridge> {
         self.inner.bridges.borrow().get(path).cloned()
     }
 
     /// The gesture bridge for the **deepest active stack** — the one a
     /// swipe-back would pop. Walks the active chain to the bottom-most
     /// registered stack that currently has something to pop.
-    pub fn active_stack_bridge(&self) -> Option<StackBridge> {
+    pub(crate) fn active_stack_bridge(&self) -> Option<StackBridge> {
         let state = self.inner.state.get_untracked();
         let bridges = self.inner.bridges.borrow();
         let mut found: Option<StackBridge> = None;
@@ -218,9 +218,11 @@ impl RouterHandle {
         self.inner.registry.transition(id)
     }
 
-    /// The raw state signal. Prefer [`slice_at`](Self::slice_at) /
-    /// [`current`](Self::current) for fine-grained reads.
-    pub fn state(&self) -> RwSignal<RouteState> {
+    /// The raw state signal (test only). Production code reads via
+    /// [`slice_at`](Self::slice_at) / [`current`](Self::current) and mutates
+    /// via the verbs.
+    #[cfg(test)]
+    pub(crate) fn state(&self) -> RwSignal<RouteState> {
         self.inner.state
     }
 
@@ -244,7 +246,8 @@ impl RouterHandle {
 
     /// A `computed` of the selected branch index of the `Switch` at
     /// `path` (or `None` if that node is not a live `Switch`). The
-    /// reactive primitive behind [`use_active_tab`](crate::render::use_active_tab).
+    /// reactive primitive for reading tab selection (the built-in
+    /// [`TabBar`](crate::render::TabBar) derives its active tab this way).
     pub fn selected_at(&self, path: NodePath) -> ReadSignal<Option<usize>> {
         let state = self.inner.state;
         computed(move || {
@@ -283,14 +286,14 @@ impl RouterHandle {
     }
 
     /// Select the `Switch` branch toward `target` (the tab-switch
-    /// primitive). Returns the resolved [`NodePath`].
-    pub fn select(&self, target: &Target) -> Result<NodePath, NavError> {
+    /// primitive), preserving the target tab's retained history.
+    pub fn select(&self, target: &Target) -> Result<(), NavError> {
         self.with_navigator(|nav| nav.select(target))
     }
 
-    /// Pop the deepest non-trivial stack. Returns `true` if something
-    /// was popped.
-    pub fn back(&self) -> bool {
+    /// Pop the deepest non-trivial stack. [`NavError::NothingToPop`] when
+    /// there is nothing to pop (e.g. at a tab root).
+    pub fn back(&self) -> Result<(), NavError> {
         self.with_navigator(|nav| nav.back())
     }
 

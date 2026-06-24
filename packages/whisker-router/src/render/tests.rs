@@ -114,11 +114,11 @@ fn navigate_pushes_and_current_tracks_signal() {
         // Now on detail (child 1).
         assert_eq!(current.get().path, NodePath(vec![1]));
 
-        assert!(h.back());
+        assert!(h.back().is_ok());
         flush();
         assert_eq!(current.get().path, NodePath(vec![0]));
         // Nothing left to pop.
-        assert!(!h.back());
+        assert_eq!(h.back(), Err(crate::core::NavError::NothingToPop));
     });
 }
 
@@ -387,7 +387,7 @@ fn pop_settles_survivor_to_active_pose() {
         settle_animations();
 
         // Pop back to home; let the coordinated slide-out + reveal finish.
-        assert!(h.back());
+        assert!(h.back().is_ok());
         flush();
         settle_animations();
 
@@ -466,7 +466,7 @@ fn pop_animates_outgoing_top_through_intermediate_frames() {
         // outgoing top's progress trajectory: it must descend through
         // intermediate values (a visible slide-out), not instant-finish at
         // 0 on the first frame (the "Detail vanishes from frame 1" bug).
-        assert!(h.back());
+        assert!(h.back().is_ok());
         flush();
         let mut t = 1000.0;
         let mut traj = Vec::new();
@@ -527,7 +527,7 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
         // animation finishes — the detail content must STILL be mounted
         // (this is the bug: the leaf used to tear itself down the moment
         // its RouteState entry vanished, blanking the sliding-out screen).
-        assert!(h.back());
+        assert!(h.back().is_ok());
         flush();
         // step a couple of mid-animation frames
         whisker_animation::__step_for_tests(1000.0);

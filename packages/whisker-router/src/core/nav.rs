@@ -31,6 +31,9 @@ pub enum NavError {
     /// `pop_to` target is not present anywhere in the current stack's
     /// history.
     NotInStack,
+    /// `back` had nothing to pop (at a stack/tab root). A no-op outcome,
+    /// surfaced as an error so the verb's result is uniform with the others.
+    NothingToPop,
 }
 
 /// A handle bundling the static tree with the mutable state, exposing
@@ -110,26 +113,30 @@ impl<'a> Navigator<'a> {
     /// [`navigate`](Navigator::navigate), which always advances a stack
     /// by one. `target` is resolved relative to the current position
     /// (so a `select` to a shared route stays in the most relevant
-    /// branch). Returns the resolved [`NodePath`].
+    /// branch).
     ///
     /// Only `Switch` selections along the path to `target` are changed;
     /// `Stack` histories are left exactly as they are (the target tab's
     /// own current screen is whatever it was last left at).
-    pub fn select(&mut self, target: &Target) -> Result<NodePath, NavError> {
+    pub fn select(&mut self, target: &Target) -> Result<(), NavError> {
         let current = self.current_path();
         let dest =
             resolve::resolve(self.tree, target, Some(&current)).ok_or(NavError::NoSuchTarget)?;
         select_toward(self.state, &dest, 0);
-        Ok(dest)
+        Ok(())
     }
 
     // ----- back -----------------------------------------------------
 
-    /// Pop the top of the deepest non-trivial `Stack` on the active
-    /// path. Returns `true` if something was popped, `false` for a
-    /// no-op (nothing poppable — e.g. at a tab root).
-    pub fn back(&mut self) -> bool {
-        back_at(self.state)
+    /// Pop the top of the deepest non-trivial `Stack` on the active path.
+    /// [`NavError::NothingToPop`] when there is nothing poppable (e.g. at a
+    /// tab root) — a no-op surfaced as an error for a uniform verb result.
+    pub fn back(&mut self) -> Result<(), NavError> {
+        if back_at(self.state) {
+            Ok(())
+        } else {
+            Err(NavError::NothingToPop)
+        }
     }
 
     // ----- replace --------------------------------------------------
