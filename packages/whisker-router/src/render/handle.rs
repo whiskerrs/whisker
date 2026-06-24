@@ -228,7 +228,7 @@ impl RouterHandle {
 
     /// A `computed` of the **current (shown) leaf instance** — derived
     /// by walking the state, never stored.
-    pub fn current(&self) -> ReadSignal<RouteInstance> {
+    pub(crate) fn current(&self) -> ReadSignal<RouteInstance> {
         let state = self.inner.state;
         computed(move || state.with(|s| s.current().clone()))
     }
@@ -239,7 +239,7 @@ impl RouterHandle {
     /// node in the current state — e.g. a not-yet-entered container).
     /// Memoised by `PartialEq`, so subscribers only re-run when *this*
     /// subtree changes.
-    pub fn slice_at(&self, path: NodePath) -> ReadSignal<Option<RouteState>> {
+    pub(crate) fn slice_at(&self, path: NodePath) -> ReadSignal<Option<RouteState>> {
         let state = self.inner.state;
         computed(move || state.with(|s| state_at(s, &path).cloned()))
     }
@@ -248,7 +248,7 @@ impl RouterHandle {
     /// `path` (or `None` if that node is not a live `Switch`). The
     /// reactive primitive for reading tab selection (the built-in
     /// [`TabBar`](crate::render::TabBar) derives its active tab this way).
-    pub fn selected_at(&self, path: NodePath) -> ReadSignal<Option<usize>> {
+    pub(crate) fn selected_at(&self, path: NodePath) -> ReadSignal<Option<usize>> {
         let state = self.inner.state;
         computed(move || {
             state.with(|s| match state_at(s, &path) {
