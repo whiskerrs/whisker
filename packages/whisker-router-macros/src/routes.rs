@@ -267,20 +267,27 @@ pub fn expand(routes: Routes) -> TokenStream {
             component: comp,
             transition,
         } = entry;
+        // Emit the **desugared** component instantiation (`Comp(Comp::builder()
+        // .build())`) that `render! { Comp {} }` lowers to, rather than nesting
+        // `render!` itself. Two reasons: (1) `#comp` appears as a direct path
+        // reference, so rust-analyzer can resolve + complete the component name
+        // inside `routes!` (a nested proc-macro breaks RA's span mapping); (2)
+        // one less expansion layer. The result is identical to the `render!`
+        // form for a prop-less component.
         match transition {
             // `transition = <expr>` → register with the explicit transition.
             Some(t) => quote! {
                 .route_with(
                     #id,
                     #t,
-                    |_: &::whisker_router::core::RouteInstance| ::whisker::render! { #comp {} },
+                    |_: &::whisker_router::core::RouteInstance| #comp(#comp::builder().build()),
                 )
             },
             // No transition → platform default.
             None => quote! {
                 .route(
                     #id,
-                    |_: &::whisker_router::core::RouteInstance| ::whisker::render! { #comp {} },
+                    |_: &::whisker_router::core::RouteInstance| #comp(#comp::builder().build()),
                 )
             },
         }
@@ -345,7 +352,9 @@ fn layout_inserts(layouts: &[(Vec<usize>, Ident)]) -> Vec<TokenStream> {
             quote! {
                 .with(
                     ::whisker_router::core::NodePath(::std::vec![ #(#idxs),* ]),
-                    ::whisker_router::render::LayoutFn::new(|| ::whisker::render! { #comp {} }),
+                    // Desugared form (see `expand`) so RA can complete the
+                    // layout component name; equivalent to `render! { #comp {} }`.
+                    ::whisker_router::render::LayoutFn::new(|| #comp(#comp::builder().build())),
                 )
             }
         })
