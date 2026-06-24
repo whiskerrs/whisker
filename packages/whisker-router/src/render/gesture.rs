@@ -32,11 +32,11 @@ use crate::render::components::RouterRoot;
 use crate::render::handle::{PoseBinding, RouterHandle, StackBridge, use_navigator};
 use crate::render::transition::{self, PoseMode, Role, RouteTransition, SwipeEdge};
 
-/// Default viewport width (pt) the finger travels for a full swipe, used
-/// until [`set_swipe_back_distance`] overrides it — the gesture maps
-/// `deltaX / distance` onto `0..1` progress, so on a non-default-width device
-/// this default mis-scales the swipe.
-const SWIPE_FULL_DISTANCE_DEFAULT_PX: f32 = 402.0;
+/// Viewport width (pt) the finger travels for a full swipe — a hardcoded
+/// ~402pt phone width. The gesture maps `deltaX / distance` onto `0..1`
+/// progress, so on a very different width this mis-scales; a future revision
+/// can read the real container width internally.
+const SWIPE_FULL_DISTANCE_PX: f32 = 402.0;
 /// `clientX` within which a touchstart qualifies as an edge swipe.
 const SWIPE_EDGE_THRESHOLD_PX: f32 = 24.0;
 /// Progress (toward back) at release above which the gesture commits.
@@ -46,49 +46,6 @@ const SWIPE_COMMIT_THRESHOLD: f32 = 0.5;
 const SWIPE_VELOCITY_GAIN: f32 = 4.0;
 /// Cap on the approximated hand-off velocity.
 const SWIPE_VELOCITY_MAX: f32 = 6.0;
-
-/// The full-swipe distance (pt), overridable via [`set_swipe_back_distance`].
-/// Stored as `f32` bits; **global** (not thread-local) so a value set from app
-/// init is visible to the gesture handler regardless of thread.
-static SWIPE_FULL_DISTANCE_BITS: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(SWIPE_FULL_DISTANCE_DEFAULT_PX.to_bits());
-
-/// Override the finger-travel distance (pt) treated as a full iOS swipe-back.
-/// The default assumes a ~402pt phone; set this to the router container's real
-/// width on other widths (tablets, landscape) so the swipe progress scales
-/// correctly. Pass `None` to revert to the default.
-pub fn set_swipe_back_distance(px: Option<f32>) {
-    let v = match px {
-        Some(v) if v.is_finite() && v > 0.0 => v,
-        _ => SWIPE_FULL_DISTANCE_DEFAULT_PX,
-    };
-    SWIPE_FULL_DISTANCE_BITS.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The current full-swipe distance (pt).
-fn swipe_full_distance() -> f32 {
-    f32::from_bits(SWIPE_FULL_DISTANCE_BITS.load(std::sync::atomic::Ordering::Relaxed))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{SWIPE_FULL_DISTANCE_DEFAULT_PX, set_swipe_back_distance, swipe_full_distance};
-
-    #[test]
-    fn swipe_distance_override_and_revert() {
-        // Default until overridden.
-        assert!((swipe_full_distance() - SWIPE_FULL_DISTANCE_DEFAULT_PX).abs() < 1e-3);
-        // A real width overrides it.
-        set_swipe_back_distance(Some(800.0));
-        assert!((swipe_full_distance() - 800.0).abs() < 1e-3);
-        // Garbage (non-finite / non-positive) and `None` both revert.
-        set_swipe_back_distance(Some(-5.0));
-        assert!((swipe_full_distance() - SWIPE_FULL_DISTANCE_DEFAULT_PX).abs() < 1e-3);
-        set_swipe_back_distance(Some(800.0));
-        set_swipe_back_distance(None);
-        assert!((swipe_full_distance() - SWIPE_FULL_DISTANCE_DEFAULT_PX).abs() < 1e-3);
-    }
-}
 
 // The Android predictive-back native protocol, centralized so a rename is a
 // single-site change (the failure mode otherwise is a silent no-op). The
@@ -200,7 +157,7 @@ fn install(container: Element, nav: RouterHandle) {
             let x = touch.client_x as f32;
             state.last_x = x;
             let delta = (x - state.start_x).max(0.0);
-            let progress = (delta / swipe_full_distance()).clamp(0.0, 1.0);
+            let progress = (delta / SWIPE_FULL_DISTANCE_PX).clamp(0.0, 1.0);
             state.progress = progress;
             scrub(&state.bridge, progress);
         });

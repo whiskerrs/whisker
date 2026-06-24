@@ -763,12 +763,9 @@ fn back_edge_decodes_payload() {
 
 #[test]
 fn predictive_pose_material_shape() {
-    use crate::render::transition::{
-        Role, SwipeEdge, predictive_pose, set_device_corner_radius, set_screen_corner_radius,
-    };
+    use crate::render::transition::{Role, SwipeEdge, predictive_pose, set_device_corner_radius};
 
     // Pin a known device radius so the animated rounding is deterministic.
-    set_screen_corner_radius(None);
     set_device_corner_radius(40.0);
 
     // Two phases share the controller timeline:
@@ -856,15 +853,13 @@ fn predictive_pose_material_shape() {
 }
 
 #[test]
-fn screen_corner_radius_follows_device_then_user_override() {
+fn screen_corner_radius_follows_device() {
     use crate::render::transition::{
-        max_corner_radius, screen_corner_radius, set_device_corner_radius, set_screen_corner_radius,
+        max_corner_radius, screen_corner_radius, set_device_corner_radius,
     };
 
-    // Default: the device radius (24dp until set), and the screen clip
-    // tracks it.
+    // The screen clip is the device display radius (24dp until set).
     set_device_corner_radius(24.0);
-    set_screen_corner_radius(None);
     assert!((max_corner_radius() - 24.0).abs() < 1e-3);
     assert!((screen_corner_radius() - 24.0).abs() < 1e-3);
 
@@ -872,17 +867,8 @@ fn screen_corner_radius_follows_device_then_user_override() {
     set_device_corner_radius(52.0);
     assert!((screen_corner_radius() - 52.0).abs() < 1e-3);
 
-    // A user override pins the screen radius regardless of device.
-    set_screen_corner_radius(Some(16.0));
-    assert!((screen_corner_radius() - 16.0).abs() < 1e-3);
-
-    // Clearing the override reverts to the device radius.
-    set_screen_corner_radius(None);
-    assert!((screen_corner_radius() - 52.0).abs() < 1e-3);
-
-    // Restore defaults so test ordering can't leak globals.
+    // Restore so test ordering can't leak the global.
     set_device_corner_radius(24.0);
-    set_screen_corner_radius(None);
 }
 
 #[test]

@@ -283,35 +283,11 @@ pub(crate) fn max_corner_radius() -> f32 {
 }
 
 /// The corner radius (dp) every router screen is clipped to — the
-/// router's layout-level rounding. Defaults to the device display radius
-/// ([`max_corner_radius`]); a future router-layout config can override it
-/// per app (the `screen_corner_radius` extension point). Read by the
+/// router's layout-level rounding, the **device display radius**
+/// ([`max_corner_radius`], queried from the host once at init). Read by the
 /// stack wrapper's constant clip in [`crate::render::node`].
 pub(crate) fn screen_corner_radius() -> f32 {
-    if let Some(r) = SCREEN_CORNER_RADIUS_OVERRIDE_BITS
-        .load(std::sync::atomic::Ordering::Relaxed)
-        .checked_sub(1)
-    {
-        return f32::from_bits(r);
-    }
     max_corner_radius()
-}
-
-/// User override for the screen corner radius (dp), stored as `f32` bits
-/// **+ 1** so `0` means "unset → fall back to the device radius". Lets an
-/// app pin a fixed router screen rounding regardless of device.
-static SCREEN_CORNER_RADIUS_OVERRIDE_BITS: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(0);
-
-/// Override the router's screen corner radius (dp); pass `None` to revert
-/// to the device display radius. The extensible hook behind
-/// [`screen_corner_radius`].
-pub fn set_screen_corner_radius(dp: Option<f32>) {
-    let stored = match dp {
-        Some(v) if v.is_finite() && v >= 0.0 => v.to_bits().wrapping_add(1),
-        _ => 0,
-    };
-    SCREEN_CORNER_RADIUS_OVERRIDE_BITS.store(stored, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// The finger's vertical position during a predictive-back gesture, as a

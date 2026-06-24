@@ -78,5 +78,5 @@ pub use crate::render::{
     AndroidPredictiveBack, AnimConfig, Direction, IntoNav, Layout, Outlet, Pose, PoseContext,
     RenderFn, Role, RouteFragment, RouteRegistry, RouteSet, RouteTransition, Router, RouterHandle,
     Stack, SwipeBack, Switch, TabBar, TabBarStyle, TabItem, Transition, provide_router,
-    set_swipe_back_distance, use_navigator, use_param, use_pathname,
+    use_navigator, use_param, use_pathname,
 };
