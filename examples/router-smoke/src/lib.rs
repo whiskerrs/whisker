@@ -168,7 +168,7 @@ fn detail() -> Element {
             view(
                 style: button_style(),
                 on_tap: move |_| {
-                    nav.back();
+                    let _ = nav.back();
                 },
             ) {
                 text(value: "Back", style: button_label_style())

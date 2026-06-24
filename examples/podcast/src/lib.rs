@@ -91,7 +91,7 @@ fn navigator_from_handle(handle: RouterHandle) -> Navigator {
             let _ = handle_for_search.navigate("/search");
         }),
         go_back: Rc::new(move || {
-            handle_for_back.back();
+            let _ = handle_for_back.back();
         }),
     }
 }
