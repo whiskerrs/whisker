@@ -123,14 +123,11 @@ fn navigate_pushes_and_current_tracks_signal() {
 }
 
 #[test]
-fn navigate_with_params_lands_on_signal() {
+fn navigate_url_params_land_on_signal() {
     with_runtime(|| {
         let h = simple_handle();
-        h.navigate_with(
-            &Target::id("detail"),
-            RouteInstance::with_param(NodePath::root(), "id", "7"),
-        )
-        .unwrap();
+        // URL navigation is the param channel: `:id` binds from the path.
+        h.navigate("/detail/7").unwrap();
         let inst = h.current().get();
         assert_eq!(inst.params.get("id").map(String::as_str), Some("7"));
     });
@@ -142,11 +139,7 @@ fn navigate_with_params_lands_on_signal() {
 fn replace_swaps_top_same_depth() {
     with_runtime(|| {
         let h = simple_handle();
-        h.navigate_with(
-            &Target::id("detail"),
-            RouteInstance::with_param(NodePath::root(), "id", "1"),
-        )
-        .unwrap();
+        h.navigate("/detail/1").unwrap();
         // replace the top detail with another detail (same stack).
         h.replace(&Target::id("detail")).unwrap();
         // Still depth 2 (home + detail), still on detail.

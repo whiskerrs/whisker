@@ -68,11 +68,13 @@ mod tests;
 
 pub use components::{
     Layout, LayoutProps, OutletAnchor, Router, RouterProps, RouterRoot, Stack, StackProps, Switch,
-    SwitchProps, use_active_tab, use_active_tab_at,
+    SwitchProps,
 };
 pub use components::{Outlet, OutletProps};
 pub use gesture::{AndroidPredictiveBack, AndroidPredictiveBackProps, SwipeBack, SwipeBackProps};
-pub use handle::{IntoNav, RouterHandle, StackBridge, provide_router, use_navigator, use_param};
+pub use handle::{
+    IntoNav, RouterHandle, StackBridge, provide_router, use_navigator, use_param, use_pathname,
+};
 pub use registry::{LayoutFn, LayoutRegistry, RenderFn, RouteFragment, RouteRegistry, RouteSet};
 pub use tabs::{TabBar, TabBarProps, TabItem, Tabs, TabsProps};
 pub use transition::{Pose, Role, RouteTransition, Transition};

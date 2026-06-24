@@ -72,12 +72,11 @@ pub use whisker_router_macros::routes;
 // The new API: the pure core graphs/ops + the reactive render layer.
 pub use crate::core::{
     CompiledTree, NavError, Navigator, NodeId, NodeInfo, NodePath, RouteDef, RouteInstance,
-    RouteState, RouteTree, Scope, StackEntry, StackState, SwitchDef, SwitchState, Target, resolve,
-    resolve_within,
+    RouteState, RouteTree, StackEntry, StackState, SwitchDef, SwitchState, Target, resolve,
 };
 pub use crate::render::{
     AndroidPredictiveBack, AnimConfig, IntoNav, Layout, Outlet, Pose, RenderFn, Role,
     RouteFragment, RouteRegistry, RouteTransition, Router, RouterHandle, Stack, StackBridge,
-    SwipeBack, Switch, TabBar, TabItem, Tabs, Transition, provide_router, use_active_tab,
-    use_active_tab_at, use_navigator, use_param,
+    SwipeBack, Switch, TabBar, TabItem, Tabs, Transition, provide_router, use_navigator, use_param,
+    use_pathname,
 };

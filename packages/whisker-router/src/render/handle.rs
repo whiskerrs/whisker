@@ -38,9 +38,7 @@ use std::rc::Rc;
 use whisker::runtime::reactive::Owner;
 use whisker::{AnimationController, ReadSignal, RwSignal, computed, provide_context, use_context};
 
-use crate::core::{
-    CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState, Scope, Target,
-};
+use crate::core::{CompiledTree, NavError, Navigator, NodePath, RouteInstance, RouteState, Target};
 use crate::render::registry::{LayoutFn, LayoutRegistry, RenderFn, RouteRegistry, RouteSet};
 use crate::render::transition::RouteTransition;
 
@@ -284,16 +282,6 @@ impl RouterHandle {
         self.with_navigator(|nav| nav.navigate_with(&target, instance))
     }
 
-    /// Navigate to `target`, attaching `instance`'s params.
-    pub fn navigate_with(&self, target: &Target, instance: RouteInstance) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.navigate_with(target, instance))
-    }
-
-    /// Navigate to `target` within an explicit [`Scope`].
-    pub fn navigate_within(&self, target: &Target, scope: &Scope) -> Result<(), NavError> {
-        self.with_navigator(|nav| nav.navigate_within(target, scope))
-    }
-
     /// Select the `Switch` branch toward `target` (the tab-switch
     /// primitive). Returns the resolved [`NodePath`].
     pub fn select(&self, target: &Target) -> Result<NodePath, NavError> {
@@ -396,5 +384,25 @@ pub fn use_param(name: &str) -> ReadSignal<Option<String>> {
     computed(move || match slice.get() {
         Some(RouteState::Route(inst)) => inst.params.get(&name).cloned(),
         _ => None,
+    })
+}
+
+/// The current location as a URL string (e.g. `/podcast/42`) — the
+/// reactive "where am I" read, analogous to Expo Router's `usePathname()`.
+///
+/// Derived from the active leaf's path; recomputes whenever navigation
+/// changes it. This is the general primitive custom chrome uses to reflect
+/// the current route (the built-in [`TabBar`](crate::render::TabBar) does
+/// this matching itself, so a tab bar needs no hook). Returns `"/"` if the
+/// path can't be resolved (should not happen for a mounted router).
+pub fn use_pathname() -> ReadSignal<String> {
+    let handle = use_navigator();
+    let current = handle.current();
+    computed(move || {
+        let path = current.get().path;
+        handle
+            .tree()
+            .url_of(&path)
+            .unwrap_or_else(|| "/".to_string())
     })
 }

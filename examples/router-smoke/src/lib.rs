@@ -31,8 +31,8 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_router::core::Target;
 use whisker_router::render::{
-    AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, TabBar, TabItem,
-    use_active_tab, use_navigator, use_param,
+    AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, TabBar, TabItem, use_navigator,
+    use_param,
 };
 use whisker_router::routes;
 
@@ -58,11 +58,10 @@ fn build_handle() -> RouterHandle {
 }
 
 /// The tab-bar chrome (a `Layout(X)` component): an `Outlet` for the active
-/// branch above a bottom nav bar. `use_active_tab()` reads the wrapped
-/// Switch's selected branch from context.
+/// branch above a bottom nav bar. `TabBar` highlights the active tab itself
+/// (by matching the current route), so the chrome needs no active-index wiring.
 #[component]
 fn tabs_layout() -> Element {
-    let active = use_active_tab();
     render! {
         view(style: css!(
             flex_grow: 1.0,
@@ -81,7 +80,6 @@ fn tabs_layout() -> Element {
                     TabItem::new("Home", Target::id("home")),
                     TabItem::new("List", Target::id("list_screen")),
                 ],
-                active: active,
             )
         }
     }
