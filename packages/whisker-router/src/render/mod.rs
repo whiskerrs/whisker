@@ -37,13 +37,15 @@
 //! ```ignore
 //! use whisker_router::{routes, render::*};
 //!
+//! let handle = RouterHandle::new(routes! {
+//!     Stack {
+//!         Route(path: "", component: Home)
+//!         Route(path: "detail/:id", component: Detail)
+//!     }
+//! });
+//!
 //! render! {
-//!     Router(routes: routes! {
-//!         Stack {
-//!             Route(path: "", component: Home)
-//!             Route(path: "detail/:id", component: Detail)
-//!         }
-//!     }) {
+//!     Router(handle: handle) {
 //!         Outlet {}
 //!         SwipeBack {}
 //!     }

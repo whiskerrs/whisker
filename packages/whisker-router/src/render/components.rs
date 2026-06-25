@@ -19,7 +19,6 @@ use whisker::{Children, component, provide_context, render, use_context};
 use crate::core::NodePath;
 use crate::render::handle::{RouterHandle, use_navigator};
 use crate::render::node::mount_node;
-use crate::render::registry::RouteSet;
 
 /// The router's screen-spanning root element. [`Router`] publishes it so
 /// the [`SwipeBack`](crate::render::SwipeBack) gesture can bind its touch
@@ -51,16 +50,15 @@ pub struct OutletAnchor(pub NodePath);
 ///
 /// ```ignore
 /// render! {
-///     Router(routes: routes! { Stack { ... } }) {
+///     Router(handle: RouterHandle::new(routes! { Stack { ... } })) {
 ///         Outlet {}
 ///         SwipeBack {}
 ///     }
 /// }
 /// ```
 #[component]
-pub fn router(routes: RouteSet, children: Children) -> Element {
-    let handle = RouterHandle::new(routes.clone());
-    provide_context(handle);
+pub fn router(handle: RouterHandle, children: Children) -> Element {
+    provide_context(handle.clone());
     provide_context(OutletAnchor(NodePath::root()));
 
     // A real, screen-spanning root so transitions have a positioned

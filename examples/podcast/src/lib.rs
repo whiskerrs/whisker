@@ -104,9 +104,9 @@ fn app() -> Element {
     // (`navigate("/podcast/42")`), wired through the `Navigator` facade below.
     let handle = RouterHandle::new(routes! {
         Stack {
-            Route("", BrowseScreen)
-            Route("podcast/:id", DetailScreen)
-            Route("search", SearchScreen)
+            Route(path: "", component: BrowseScreen)
+            Route(path: "podcast/:id", component: DetailScreen)
+            Route(path: "search", component: SearchScreen)
         }
     });
     let index: PodcastIndex = Rc::new(RefCell::new(HashMap::new()));
