@@ -38,27 +38,6 @@ use whisker_router::render::{
 };
 use whisker_router::routes;
 
-fn build_handle() -> RouterHandle {
-    RouterHandle::new(routes! {
-        Route(component: TabsLayout) {
-            Switch {
-                Route(path: "(home)") {
-                    Stack {
-                        Route(path: "", component: Home)
-                        Route(path: "detail/:id", component: Detail)
-                    }
-                }
-                Route(path: "(search)") {
-                    Stack {
-                        Route(path: "list", component: ListScreen)
-                        Route(path: "detail/:id", component: Detail)
-                    }
-                }
-            }
-        }
-    })
-}
-
 /// Tab bar layout: an `Outlet` for the active branch above a custom tab bar.
 #[component]
 fn tabs_layout() -> Element {
@@ -144,14 +123,26 @@ fn tab_bar_item(
 
 #[whisker::main]
 fn app() -> Element {
-    let handle = build_handle();
     render! {
-        Router(handle: handle) {
-            // The route tree (with its `Layout` chrome) draws here.
+        Router(routes: routes! {
+            Route(component: TabsLayout) {
+                Switch {
+                    Route(path: "(home)") {
+                        Stack {
+                            Route(path: "", component: Home)
+                            Route(path: "detail/:id", component: Detail)
+                        }
+                    }
+                    Route(path: "(search)") {
+                        Stack {
+                            Route(path: "list", component: ListScreen)
+                            Route(path: "detail/:id", component: Detail)
+                        }
+                    }
+                }
+            }
+        }) {
             Outlet {}
-            // Interactive back gestures — both mounted; each waits on its
-            // own platform input. iOS = leading-edge swipe; Android =
-            // system predictive back (13+ shows the Material live preview).
             AndroidPredictiveBack {}
             SwipeBack {}
         }

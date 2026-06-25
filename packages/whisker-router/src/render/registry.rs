@@ -185,6 +185,7 @@ impl RouteFragment {
 ///
 /// (Composable sub-sets — the design's `..content` spread — land with the
 /// macro in a later phase; today a `RouteSet` is a single rooted tree.)
+#[derive(Clone)]
 pub struct RouteSet {
     pub(crate) tree: CompiledTree,
     pub(crate) registry: RouteRegistry,

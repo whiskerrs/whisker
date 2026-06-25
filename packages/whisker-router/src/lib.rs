@@ -31,22 +31,16 @@
 //!
 //! ```ignore
 //! use whisker::prelude::*;
-//! use whisker_router::core::{CompiledTree, RouteTree};
 //! use whisker_router::render::*;
-//!
-//! let tree = CompiledTree::new(RouteTree::stack(vec![
-//!     RouteTree::route("", "home"),
-//!     RouteTree::route("detail/:id", "detail"),
-//! ]));
-//! let registry = RouteRegistry::new()
-//!     .route("home",   |_| render! { Home {} })
-//!     .route_with("detail", RouteTransition::slide(), |inst| {
-//!         render! { Detail(id: inst.params.get("id").cloned().unwrap_or_default()) }
-//!     });
-//! let handle = RouterHandle::new((tree, registry));
+//! use whisker_router::routes;
 //!
 //! render! {
-//!     Router(handle: handle.clone()) {
+//!     Router(routes: routes! {
+//!         Stack {
+//!             Route(path: "", component: Home)
+//!             Route(path: "detail/:id", component: Detail)
+//!         }
+//!     }) {
 //!         Outlet {}
 //!         SwipeBack {}
 //!     }
