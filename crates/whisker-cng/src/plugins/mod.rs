@@ -34,6 +34,7 @@
 //! brief justification in this list and a registration line in
 //! [`crate::Engine::with_builtins`].
 
+pub mod android_application_attributes;
 pub mod android_extra_files;
 pub mod android_gradle_dependencies;
 pub mod android_gradle_plugins;

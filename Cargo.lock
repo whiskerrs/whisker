@@ -1050,9 +1050,9 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
 dependencies = [
  "libc",
 ]
@@ -1289,9 +1289,6 @@ dependencies = [
 [[package]]
 name = "podcast-routing"
 version = "0.1.0"
-dependencies = [
- "whisker-router",
-]
 
 [[package]]
 name = "podcast-theme"
@@ -1465,23 +1462,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "router-example-feature-detail"
-version = "0.1.0"
-dependencies = [
- "whisker",
- "whisker-router",
-]
-
-[[package]]
-name = "router-example-feature-home"
-version = "0.1.0"
-dependencies = [
- "whisker",
- "whisker-router",
- "whisker-safe-area",
-]
-
-[[package]]
 name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1515,9 +1495,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "6b92b125634d9b795e7beca796cc790df15a7fb38323bf3196fda83292d06b1f"
 dependencies = [
  "log",
  "once_cell",
@@ -2516,7 +2496,13 @@ dependencies = [
 name = "whisker-router"
 version = "0.6.0"
 dependencies = [
+ "anyhow",
+ "serde",
  "whisker",
+ "whisker-animation",
+ "whisker-cng",
+ "whisker-config",
+ "whisker-plugin",
  "whisker-router-macros",
 ]
 
@@ -2524,8 +2510,6 @@ dependencies = [
 name = "whisker-router-example"
 version = "0.1.0"
 dependencies = [
- "router-example-feature-detail",
- "router-example-feature-home",
  "whisker",
  "whisker-router",
 ]

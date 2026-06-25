@@ -51,6 +51,6 @@ pub mod state;
 pub mod tree;
 
 pub use nav::{NavError, Navigator};
-pub use resolve::{Scope, Target, resolve, resolve_within};
+pub use resolve::{Scope, resolve, resolve_within};
 pub use state::{RouteInstance, RouteState, StackEntry, StackState, SwitchState};
 pub use tree::{CompiledTree, NodeId, NodeInfo, NodePath, RouteDef, RouteTree, SwitchDef};

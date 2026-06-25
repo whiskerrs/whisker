@@ -394,7 +394,7 @@ fn collect_macro_edits(
         // Look for `IDENT ! GROUP` where IDENT is render/css.
         if let TokenTree::Ident(ident) = &trees[i] {
             let name = ident.to_string();
-            if (name == "render" || name == "css")
+            if (name == "render" || name == "css" || name == "routes")
                 && i + 2 < trees.len()
                 && matches!(&trees[i + 1], TokenTree::Punct(p) if p.as_char() == '!')
             {
@@ -508,6 +508,28 @@ fn macro_body_edit(
                 (s, comments)
             }
             // Not a well-formed render! body (e.g. mid-edit) — leave it.
+            Err(_) => return Ok(None),
+        },
+        "routes" => match whisker_macro_syntax::routes::parse_input(body_ts.clone()) {
+            Ok(input) => {
+                if input.roots.is_empty() {
+                    return Ok(None);
+                }
+                let mut spans = Vec::new();
+                collect_routes_expr_spans(&input.roots, &mut spans);
+                let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
+                let expr_map = build_expr_map(&spans, &body_map, exprfmt);
+                let s = printer::print_routes(
+                    &input,
+                    &body_map,
+                    opts,
+                    base_indent,
+                    &expr_map,
+                    &comments,
+                    body_len,
+                );
+                (s, comments)
+            }
             Err(_) => return Ok(None),
         },
         "css" => match whisker_macro_syntax::css::parse_input(body_ts.clone()) {
@@ -693,6 +715,33 @@ fn collect_render_expr_spans(node: &whisker_macro_syntax::Node, out: &mut Vec<Sp
     }
 }
 
+/// Walk a parsed `routes!` node tree collecting the span of every
+/// embedded expr (transition values, spread expressions).
+fn collect_routes_expr_spans(nodes: &[whisker_macro_syntax::RoutesNode], out: &mut Vec<Span>) {
+    use whisker_macro_syntax::RoutesNode;
+    for node in nodes {
+        match node {
+            RoutesNode::Route {
+                transition,
+                children,
+                ..
+            } => {
+                if let Some(expr) = transition {
+                    out.push(span_of_expr(expr));
+                }
+                collect_routes_expr_spans(children, out);
+            }
+            RoutesNode::Switch { children, .. } | RoutesNode::Stack { children, .. } => {
+                collect_routes_expr_spans(children, out);
+            }
+            RoutesNode::Spread(expr) => {
+                out.push(span_of_expr(expr));
+            }
+            RoutesNode::Unknown(_) => {}
+        }
+    }
+}
+
 /// Slice each expr's verbatim source from `body_map` and batch-format
 /// the whole set with one rustfmt spawn (via `exprfmt`). Returns an
 /// [`ExprMap`] keyed by span. When `exprfmt` is `None` (rustfmt-free
@@ -846,6 +895,67 @@ mod tests {
         let input = "fn x() {\n    println!(\"hi {}\", v);\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
         assert_eq!(out, input);
+    }
+
+    // ---- routes! ----------------------------------------------------------
+
+    #[test]
+    fn formats_routes_simple_stack() {
+        let input = "fn r() -> Routes {\n    routes! { Stack{Route(path:\"a\",component:A)Route(path:\"b\",component:B)} }\n}\n";
+        let out = reformat_macros(input, &opts(4, 100)).unwrap();
+        let expected = "fn r() -> Routes {\n    routes! {\n        Stack {\n            Route(path: \"a\", component: A)\n            Route(path: \"b\", component: B)\n        }\n    }\n}\n";
+        assert_eq!(out, expected, "got:\n{out}");
+    }
+
+    #[test]
+    fn formats_routes_nested_switch() {
+        let input = "fn r() -> Routes {\n    routes! { Switch{Route(path:\"(home)\"){Stack{Route(path:\"\",component:Home)Route(path:\"detail/:id\",component:Detail)}}Route(path:\"(search)\"){Stack{Route(path:\"list\",component:List)}}} }\n}\n";
+        let out = reformat_macros(input, &opts(4, 100)).unwrap();
+        assert!(
+            out.contains("Switch {\n"),
+            "Switch should have newline:\n{out}"
+        );
+        assert!(
+            out.contains("Route(path: \"(home)\") {\n"),
+            "group route:\n{out}"
+        );
+        assert!(
+            out.contains("Route(path: \"\", component: Home)\n"),
+            "leaf route:\n{out}"
+        );
+    }
+
+    #[test]
+    fn formats_routes_with_spread() {
+        let input =
+            "fn r() -> Routes {\n    routes! { Stack{Route(path:\"a\",component:A)..frag} }\n}\n";
+        let out = reformat_macros(input, &opts(4, 100)).unwrap();
+        assert!(out.contains("..frag"), "spread preserved:\n{out}");
+    }
+
+    #[test]
+    fn routes_idempotent() {
+        let input = "fn r() -> Routes {\n    routes! { Stack{Route(path:\"a\",component:A)Route(path:\"b\",component:B)} }\n}\n";
+        let once = reformat_macros(input, &opts(4, 100)).unwrap();
+        let twice = reformat_macros(&once, &opts(4, 100)).unwrap();
+        assert_eq!(
+            once, twice,
+            "not idempotent:\nonce:\n{once}\ntwice:\n{twice}"
+        );
+    }
+
+    #[test]
+    fn routes_leaf_route_no_braces() {
+        let input = "fn r() -> Routes {\n    routes! { Route(path:\"x\",component:X) }\n}\n";
+        let out = reformat_macros(input, &opts(4, 100)).unwrap();
+        assert!(
+            !out.contains("Route(path: \"x\", component: X) {"),
+            "leaf should not get braces:\n{out}"
+        );
+        assert!(
+            out.contains("Route(path: \"x\", component: X)"),
+            "leaf format:\n{out}"
+        );
     }
 
     // ---- edition resolution ----------------------------------------------

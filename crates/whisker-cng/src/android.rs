@@ -31,7 +31,7 @@ use anyhow::{Context, Result, anyhow};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use whisker_config::Config;
-use whisker_plugin::{FileEntry, MetaDataEntry};
+use whisker_plugin::{ApplicationAttribute, FileEntry, MetaDataEntry};
 
 use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
@@ -114,6 +114,11 @@ pub struct AndroidInputs {
     /// plugins contributing entries see deterministic output.
     #[serde(default)]
     pub extra_meta_data: Vec<MetaDataEntry>,
+    /// Attributes on the `<application>` tag itself (e.g.
+    /// `android:enableOnBackInvokedCallback="true"`) from the engine's
+    /// post-pipeline IR. Dedup'd by attribute name (last writer wins).
+    #[serde(default)]
+    pub extra_application_attributes: Vec<ApplicationAttribute>,
     /// Extra entries the renderer drops into the app module's
     /// `plugins { … }` block, just after the baseline Whisker /
     /// AGP / Kotlin plugin ids. Bare ids (e.g.
@@ -210,6 +215,10 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
         render_extra_meta_data(&inputs.extra_meta_data),
     );
     v.insert(
+        "extra_application_attributes",
+        render_extra_application_attributes(&inputs.extra_application_attributes),
+    );
+    v.insert(
         "extra_gradle_plugins",
         render_extra_gradle_plugins(&inputs.extra_gradle_plugins),
     );
@@ -296,6 +305,39 @@ fn render_extra_meta_data(entries: &[MetaDataEntry]) -> String {
             "        <meta-data android:name=\"{}\" android:value=\"{}\" />\n",
             escape_xml(&e.name),
             escape_xml(&e.value),
+        ));
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// Render `<application>`-tag attributes as `android:name="value"`
+/// lines, one per attribute, indented to sit under the template's
+/// `<application` open tag. Dedup'd by attribute name (LAST writer
+/// wins — a later plugin overriding `enableOnBackInvokedCallback`
+/// replaces an earlier one). Empty input → empty string.
+fn render_extra_application_attributes(attrs: &[ApplicationAttribute]) -> String {
+    if attrs.is_empty() {
+        return String::new();
+    }
+    // Keep last-writer-wins while preserving first-seen order for a
+    // deterministic, readable manifest.
+    let mut order: Vec<&str> = Vec::new();
+    let mut by_name: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for a in attrs {
+        if by_name.insert(a.name.as_str(), a.value.as_str()).is_none() {
+            order.push(a.name.as_str());
+        }
+    }
+    let mut out = String::new();
+    for name in order {
+        let value = by_name[name];
+        out.push_str(&format!(
+            "        {}=\"{}\"\n",
+            escape_xml(name),
+            escape_xml(value),
         ));
     }
     if out.ends_with('\n') {
@@ -609,6 +651,7 @@ pub fn inputs_from_with_engine(
 
     let extra_permissions = android_ir.manifest.permissions.clone();
     let extra_meta_data = android_ir.manifest.application_meta_data.clone();
+    let extra_application_attributes = android_ir.manifest.application_attributes.clone();
     let extra_gradle_plugins = android_ir.gradle.apply_plugins.clone();
     let extra_gradle_dependencies = android_ir.gradle.dependencies.clone();
     let extra_files = android_ir.extra_files.clone();
@@ -629,13 +672,15 @@ pub fn inputs_from_with_engine(
         lynx_maven_url,
         extra_permissions,
         extra_meta_data,
+        extra_application_attributes,
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        // Bumped 8 → 9 for `extra_files` write-through (RFC #164
-        // B-direction PR 3). The fingerprint shape grew an
-        // `extra_files` field; existing trees regenerate.
-        template_version: 9,
+        // Bumped 9 → 10 for `<application>` attribute injection
+        // (`extra_application_attributes`): the template's
+        // `<application` open tag grew a placeholder + the inputs/
+        // fingerprint shape grew a field, so existing trees regenerate.
+        template_version: 10,
     })
 }
 
@@ -674,10 +719,11 @@ mod tests {
             lynx_maven_url: "https://whiskerrs.github.io/lynx/maven".into(),
             extra_permissions: Vec::new(),
             extra_meta_data: Vec::new(),
+            extra_application_attributes: Vec::new(),
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 9,
+            template_version: 10,
         }
     }
 
@@ -782,6 +828,52 @@ mod tests {
         )
         .unwrap();
         assert!(main_activity.starts_with("package rs.whisker.examples.helloworld\n"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn application_attributes_render_on_the_application_tag() {
+        let tmp = unique_tempdir();
+        let out = tmp.join("gen/android");
+        let mut inputs = sample_inputs();
+        inputs.extra_application_attributes = vec![
+            ApplicationAttribute {
+                name: "android:enableOnBackInvokedCallback".into(),
+                value: "true".into(),
+            },
+            // Duplicate name → last-writer-wins, rendered once.
+            ApplicationAttribute {
+                name: "android:enableOnBackInvokedCallback".into(),
+                value: "true".into(),
+            },
+        ];
+        sync(&out, &inputs).unwrap();
+
+        let manifest =
+            std::fs::read_to_string(out.join("app/src/main/AndroidManifest.xml")).unwrap();
+        assert!(
+            manifest.contains("android:enableOnBackInvokedCallback=\"true\""),
+            "attribute should appear in the manifest:\n{manifest}"
+        );
+        // Rendered exactly once (dedup by name) and inside the
+        // `<application …>` open tag (before the first child element).
+        assert_eq!(
+            manifest
+                .matches("android:enableOnBackInvokedCallback")
+                .count(),
+            1,
+            "deduped to a single occurrence"
+        );
+        let app_open = manifest.find("<application").unwrap();
+        // First `>` at or after the `<application` open tag closes it.
+        let app_close = app_open + manifest[app_open..].find('>').unwrap();
+        let attr_pos = manifest.find("enableOnBackInvokedCallback").unwrap();
+        assert!(
+            attr_pos > app_open && attr_pos < app_close,
+            "attribute must sit inside the <application …> open tag"
+        );
+        assert!(!manifest.contains("{{"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

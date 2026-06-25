@@ -35,6 +35,8 @@
 
 #if defined(__ANDROID__)
 #include <android/log.h>
+#elif defined(__APPLE__)
+#include <os/log.h>
 #endif
 
 #include "lynx_capi.h"
@@ -589,6 +591,9 @@ extern "C" void whisker_bridge_log_info(const char* tag, const char* msg) {
 #if defined(__ANDROID__)
     __android_log_print(ANDROID_LOG_INFO,
                         tag != nullptr ? tag : "WhiskerRust", "%s", msg);
+#elif defined(__APPLE__)
+    os_log(OS_LOG_DEFAULT, "[%{public}s] %{public}s",
+           tag != nullptr ? tag : "WhiskerRust", msg);
 #else
     (void)tag;
     (void)msg;

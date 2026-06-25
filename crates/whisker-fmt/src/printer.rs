@@ -40,7 +40,10 @@ use crate::source_map::SourceMap;
 use proc_macro2::Span;
 use quote::ToTokens;
 use std::cell::Cell;
-use whisker_macro_syntax::{CssInput, ElementNode, Kwarg, Node, Root, UserComponentNode};
+use syn::{Expr, Ident, LitStr};
+use whisker_macro_syntax::{
+    CssInput, ElementNode, Kwarg, Node, Root, RoutesInput, RoutesNode, UserComponentNode,
+};
 
 /// Pretty-print a parsed `render!` body.
 ///
@@ -119,6 +122,57 @@ pub(crate) fn print_css(
         next: Cell::new(0),
     };
     p.css(input, base_indent + 1, body_len)
+}
+
+/// Pretty-print a parsed `routes!` body.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn print_routes(
+    input: &RoutesInput,
+    map: &SourceMap,
+    opts: &FmtOptions,
+    base_indent: usize,
+    expr_map: &ExprMap,
+    comments: &[GrammarComment],
+    body_len: usize,
+) -> String {
+    let p = Printer {
+        map,
+        opts,
+        expr_map,
+        comments,
+        next: Cell::new(0),
+    };
+    let mut out = String::new();
+    let level = base_indent + 1;
+    for (i, node) in input.roots.iter().enumerate() {
+        if let Some(start) = routes_node_start_byte(&p, node) {
+            p.flush(start, level, &mut out);
+        }
+        p.routes_node(node, level, &mut out);
+        if let Some(end) = routes_node_end_byte(&p, node) {
+            if let Some(idx) = p.pending_trailing_on_line(end) {
+                let before = p.comments[idx].start + 1;
+                p.flush(before, level, &mut out);
+            }
+        }
+        if i + 1 < input.roots.len() || p.next.get() < comments.len() {
+            out.push('\n');
+        }
+    }
+    let idx = p.next.get();
+    if idx < comments.len() {
+        let mut tail = String::new();
+        p.flush(body_len, level, &mut tail);
+        if !tail.is_empty() {
+            out.push_str(tail.trim_end_matches('\n'));
+            out.push('\n');
+        }
+    }
+    // Strip one trailing newline — the caller wraps with \n...\n.
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 struct Printer<'a> {
@@ -454,6 +508,168 @@ impl Printer<'_> {
             None => name,
         }
     }
+
+    // ---- routes! ----------------------------------------------------------
+
+    fn routes_node(&self, node: &RoutesNode, level: usize, out: &mut String) {
+        match node {
+            RoutesNode::Switch { kw, children } => {
+                self.routes_container(&kw.to_string(), children, level, out);
+            }
+            RoutesNode::Stack { kw, children } => {
+                self.routes_container(&kw.to_string(), children, level, out);
+            }
+            RoutesNode::Route {
+                kw,
+                path,
+                component,
+                transition,
+                children,
+            } => {
+                self.routes_route(
+                    &kw.to_string(),
+                    path.as_ref(),
+                    component.as_ref(),
+                    transition.as_ref(),
+                    children,
+                    level,
+                    out,
+                );
+            }
+            RoutesNode::Spread(expr) => {
+                let indent = self.indent(level);
+                let src = self.expr_src(span_of(expr), expr);
+                out.push_str(&indent);
+                out.push_str("..");
+                out.push_str(&src);
+            }
+            RoutesNode::Unknown(ident) => {
+                let indent = self.indent(level);
+                out.push_str(&indent);
+                out.push_str(&ident.to_string());
+            }
+        }
+    }
+
+    fn routes_container(
+        &self,
+        keyword: &str,
+        children: &[RoutesNode],
+        level: usize,
+        out: &mut String,
+    ) {
+        let indent = self.indent(level);
+        out.push_str(&indent);
+        out.push_str(keyword);
+        out.push_str(" {\n");
+        let child_level = level + 1;
+        for child in children {
+            if let Some(start) = routes_node_start_byte(self, child) {
+                self.flush(start, child_level, out);
+            }
+            self.routes_node(child, child_level, out);
+            if let Some(end) = routes_node_end_byte(self, child) {
+                if let Some(idx) = self.pending_trailing_on_line(end) {
+                    let before = self.comments[idx].start + 1;
+                    self.flush(before, child_level, out);
+                }
+            }
+            out.push('\n');
+        }
+        out.push_str(&indent);
+        out.push('}');
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn routes_route(
+        &self,
+        keyword: &str,
+        path: Option<&LitStr>,
+        component: Option<&Ident>,
+        transition: Option<&Expr>,
+        children: &[RoutesNode],
+        level: usize,
+        out: &mut String,
+    ) {
+        let indent = self.indent(level);
+        out.push_str(&indent);
+        out.push_str(keyword);
+
+        // Build kwargs
+        let mut kwargs: Vec<String> = Vec::new();
+        if let Some(p) = path {
+            kwargs.push(format!("path: {:?}", p.value()));
+        }
+        if let Some(c) = component {
+            kwargs.push(format!("component: {c}"));
+        }
+        if let Some(t) = transition {
+            let src = self.expr_src(span_of(t), t);
+            kwargs.push(format!(
+                "transition: {}",
+                reindent(&src, &self.indent(level + 1))
+            ));
+        }
+
+        if !kwargs.is_empty() {
+            let inline = format!("({})", kwargs.join(", "));
+            let inline_width = self.opts.indent_width(level)
+                + keyword.len()
+                + inline.len()
+                + if children.is_empty() { 0 } else { " {".len() };
+            if !inline.contains('\n') && inline_width <= self.opts.max_width {
+                out.push_str(&inline);
+            } else {
+                out.push_str("(\n");
+                let inner = self.indent(level + 1);
+                for (i, kw) in kwargs.iter().enumerate() {
+                    out.push_str(&inner);
+                    out.push_str(&reindent(kw, &inner));
+                    out.push(',');
+                    if i + 1 < kwargs.len() {
+                        out.push('\n');
+                    }
+                }
+                out.push('\n');
+                out.push_str(&indent);
+                out.push(')');
+            }
+        }
+
+        if !children.is_empty() {
+            out.push_str(" {\n");
+            let child_level = level + 1;
+            for child in children {
+                if let Some(start) = routes_node_start_byte(self, child) {
+                    self.flush(start, child_level, out);
+                }
+                self.routes_node(child, child_level, out);
+                if let Some(end) = routes_node_end_byte(self, child) {
+                    if let Some(idx) = self.pending_trailing_on_line(end) {
+                        let before = self.comments[idx].start + 1;
+                        self.flush(before, child_level, out);
+                    }
+                }
+                out.push('\n');
+            }
+            out.push_str(&indent);
+            out.push('}');
+        }
+    }
+}
+
+/// First source byte of a routes node (its keyword ident / spread expr).
+fn routes_node_start_byte(p: &Printer, node: &RoutesNode) -> Option<usize> {
+    let span = node.kw_span()?;
+    p.map.byte_range(span).map(|(s, _)| s)
+}
+
+/// End byte of a routes node (past its closing brace or last token).
+fn routes_node_end_byte(p: &Printer, node: &RoutesNode) -> Option<usize> {
+    let span = node.kw_span()?;
+    let start = p.map.byte_range(span).map(|(s, _)| s)?;
+    let (_, end) = p.map.node_extent(start);
+    Some(end)
 }
 
 /// Byte extent `(start, end)` of a child node via its tag span +

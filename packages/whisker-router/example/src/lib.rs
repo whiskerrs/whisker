@@ -1,140 +1,263 @@
-//! `whisker-router` `StackLayout` cross-crate crash repro.
+//! Example app for `whisker-router` — Route nesting with tabs:
 //!
-//! ## Findings (May 2026 bisection)
-//!
-//! Wiring a cross-crate `#[component]` through `StackLayout`'s
-//! `RouteRenderFn` panics inside the first `tick_callback` IFF that
-//! component creates a [`computed`] whose body reads a signal
-//! returned by [`whisker_safe_area::safe_area_insets`]. The same
-//! component mounted directly under `page` (no `StackLayout`)
-//! renders without issue.
-//!
-//! Cross-product (Android emulator, `v3.8.0-whisker.1`):
-//!
-//! | screen body                                         | StackLayout | direct mount |
-//! |-----------------------------------------------------|-------------|--------------|
-//! | text only                                           | ✓ renders   | ✓ renders    |
-//! | nested `#[component]` only                          | ✓ renders   | ✓ renders    |
-//! | nested + `use_context::<Rc<dyn Fn>>` + ctx provider | ✓ renders   | n/a          |
-//! | + `safe_area_insets()` (no `.get()`)                | ✓ renders   | ✓ renders    |
-//! | + `safe_area_insets()` + `computed(insets.get())`   | ✗ aborts    | ✓ renders    |
-//!
-//! Panic stack (Android, abridged):
 //! ```text
-//!   panic_cannot_unwind
-//!     whisker_driver::lynx::bootstrap::tick_callback
-//!     lynx_shell_run_on_tasm_thread
-//!     whisker_bridge_dispatch
-//!     whisker_tick
-//!     Java_rs_whisker_runtime_WhiskerView_nativeTick
+//! Route(component: TabsLayout) {          // layout: tab bar chrome + Outlet
+//!     Switch {
+//!         Route(path: "(home)") {          // group: no URL segment
+//!             Stack {
+//!                 Route(path: "", component: Home)
+//!                 Route(path: "detail/:id", component: Detail)
+//!             }
+//!         }
+//!         Route(path: "(search)") {
+//!             Stack {
+//!                 Route(path: "list", component: ListScreen)
+//!                 Route(path: "detail/:id", component: Detail)
+//!             }
+//!         }
+//!     }
+//! }
 //! ```
 //!
-//! `panic_cannot_unwind` means a Rust panic walked into an
-//! `extern "C"` boundary (`tick_callback`) and was forced to abort.
-//! The underlying Rust panic message doesn't reach `logcat`
-//! (`std::panic::set_hook` apparently isn't wired to the Android
-//! log) — we narrowed the trigger by bisection rather than by
-//! reading the panic text.
-//!
-//! ## Root cause (confirmed June 2026) + fix
-//!
-//! Not the `computed` timing — the **handle ownership**.
-//! `safe_area_insets()` used to convert its process-global
-//! `ArcReadSignal` into an arena `ReadSignal` (`.into()`) **on every
-//! call**, minting a fresh arena entry in *whichever owner was current
-//! at call time*. Under `StackLayout` that owner is the per-route /
-//! per-component scope. When a later read of that handle outlives the
-//! scope — a surviving `computed`/effect, or a native `insetsChanged`
-//! event after the scope disposed — `ReadSignal`'s `fetch_value` hits
-//! `expect("signal disposed …")`, and the panic aborts as
-//! `panic_cannot_unwind` at the `tick_callback` FFI boundary. The
-//! `computed(insets.get())` row in the table is just the smallest body
-//! that retains a handle long enough to be read after disposal; plain
-//! `safe_area_insets()` with no read never trips it. The direct mount
-//! never disposes its owner, so it never trips it either.
-//!
-//! The mechanism is pinned by two whisker-runtime unit tests:
-//! `reading_arc_backed_arena_signal_after_owner_dispose_panics`
-//! (reproduces the abort) and
-//! `arc_backed_arena_signal_under_detached_root_survives_sibling_dispose`
-//! (proves the fix).
-//!
-//! **Fix (shipped).** `safe_area_insets()` now mints its arena handle
-//! **once**, under a never-disposed [`whisker::Owner::detached_root`],
-//! and caches it — every call returns the same `Copy` handle, pinned
-//! to a process-lifetime root instead of a transient scope. See
-//! `packages/whisker-safe-area/src/lib.rs`. This repro is kept as a
-//! living regression: with the fix, `MOUNT_VIA_STACK_LAYOUT = true`
-//! renders without aborting.
-//!
-//! ## Switching the repro
-//!
-//! Edit `MOUNT_VIA_STACK_LAYOUT` below to flip between the crashing
-//! `StackLayout` mount and the working direct mount. The body of
-//! `HomeScreen` in `crates/router-example-feature-home/` is the
-//! safe-area + computed pattern that triggers the bug; reducing
-//! that body to plain text makes both modes work.
+//! - **Route nesting**: `Route(component: TabsLayout)` at the root is a layout
+//!   route — its component renders with an `Outlet` for children, like
+//!   expo-router's `_layout.tsx`.
+//! - **Group routes**: `Route(path: "(home)")` and `Route(path: "(search)")`
+//!   are pathless groups (expo-router's `(group)` folders). They don't add a
+//!   URL segment but organize children under a Switch branch.
+//! - **Custom tab bar**: built with `use_pathname` + `navigator.select("/(home)")` —
+//!   no built-in TabBar component needed.
+//! - **Back gestures**: `SwipeBack` (iOS) and `AndroidPredictiveBack` (Android 13+).
 
-use router_example_feature_detail::DetailScreen;
-use router_example_feature_home::HomeScreen;
+use whisker::css::{AlignItems, Color, Display, FlexDirection, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_router::{
-    AndroidPredictiveBack, IosSwipeBack, RouteProvider, RouteRenderFn, StackLayout, route,
-    route_stack,
+use whisker_router::render::{
+    AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_navigator, use_param,
+    use_pathname,
 };
+use whisker_router::routes;
 
-/// Flip to `false` to mount `HomeScreen` directly under `page`
-/// (the working control case). Keep `true` to reproduce the crash.
-const MOUNT_VIA_STACK_LAYOUT: bool = true;
-
-#[route]
-#[derive(Clone, Debug, PartialEq)]
-pub enum AppRoute {
-    #[at("/")]
-    Home,
-    #[at("/detail")]
-    Detail,
-}
-
-#[whisker::main]
-pub fn render_app() -> Element {
-    if MOUNT_VIA_STACK_LAYOUT {
-        render_stacked()
-    } else {
-        render_direct()
+/// Tab bar layout: an `Outlet` for the active branch above a custom tab bar.
+#[component]
+fn tabs_layout() -> Element {
+    render! {
+        view(style: css!(
+            flex_grow: 1.0,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+        )) {
+            view(style: css!(
+                flex_grow: 1.0,
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+            )) {
+                Outlet {}
+            }
+            MyTabBar {}
+        }
     }
 }
 
-fn render_stacked() -> Element {
-    let stack = route_stack(AppRoute::Home);
-    let render: RouteRenderFn<AppRoute> = (|r: AppRoute| match r {
-        AppRoute::Home => render! { HomeScreen() },
-        AppRoute::Detail => render! { DetailScreen() },
-    })
-    .into();
+#[component]
+fn my_tab_bar() -> Element {
+    let nav = use_navigator();
+    let pathname = use_pathname();
+
+    render! {
+        view(style: css!(
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::SpaceAround,
+            align_items: AlignItems::Center,
+            height: px(56),
+            background_color: Color::hex(0x16161D),
+        )) {
+            TabBarItem(label: "Home", url: "/(home)", pathname: pathname, nav: nav.clone())
+            TabBarItem(label: "List", url: "/(search)", pathname: pathname, nav: nav.clone())
+        }
+    }
+}
+
+#[component]
+fn tab_bar_item(
+    label: &'static str,
+    url: &'static str,
+    pathname: ReadSignal<String>,
+    nav: RouterHandle,
+) -> Element {
+    let is_home = label == "Home";
+    let is_active = computed(move || {
+        let p = pathname.get();
+        if is_home {
+            !p.contains("/list")
+        } else {
+            p.contains("/list")
+        }
+    });
+    let nav = nav.clone();
     render! {
         view(
-            style: "flex-grow: 1; width: 100vw; height: 100vh; background-color: white; \
-                    display: flex; flex-direction: column;",
+            style: computed(move || {
+                let opacity = if is_active.get() { 1.0 } else { 0.5 };
+                css!(
+                    flex_grow: 1.0,
+                    display: Display::Flex,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    height: px(56),
+                    opacity: opacity,
+                )
+            }),
+            on_tap: move |_| {
+                let _ = nav.select(url);
+            },
         ) {
-            RouteProvider(stack: stack) {
-                StackLayout(render: render.clone()) {
-                    IosSwipeBack()
-                    AndroidPredictiveBack()
+            text(
+                value: label.to_string(),
+                style: css!(color: Color::hex(0xFFFFFF), font_size: px(13)),
+            )
+        }
+    }
+}
+
+#[whisker::main]
+fn app() -> Element {
+    let handle = RouterHandle::new(routes! {
+        Route(component: TabsLayout) {
+            Switch {
+                Route(path: "(home)") {
+                    Stack {
+                        Route(path: "", component: Home)
+                        Route(path: "detail/:id", component: Detail)
+                    }
                 }
+                Route(path: "(search)") {
+                    Stack {
+                        Route(path: "list", component: ListScreen)
+                        Route(path: "detail/:id", component: Detail)
+                    }
+                }
+            }
+        }
+    });
+    render! {
+        Router(handle: handle) {
+            Outlet {}
+            AndroidPredictiveBack {}
+            SwipeBack {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// Screens
+// ---------------------------------------------------------------------
+
+#[component]
+fn home() -> Element {
+    let nav = use_navigator();
+    render! {
+        view(style: screen_style(0x101018)) {
+            text(value: "Home", style: title_style())
+            text(value: "Tab 0 · its own stack", style: subtitle_style())
+            view(
+                style: button_style(),
+                on_tap: move |_| {
+                    let _ = nav.navigate("/detail/1");
+                },
+            ) {
+                text(value: "Open Detail 1", style: button_label_style())
             }
         }
     }
 }
 
-fn render_direct() -> Element {
+#[component]
+fn list_screen() -> Element {
+    let nav = use_navigator();
     render! {
-        view(
-            style: "flex-grow: 1; width: 100vw; height: 100vh; background-color: white; \
-                    display: flex; flex-direction: column;",
-        ) {
-            HomeScreen()
+        view(style: screen_style(0x0E1414)) {
+            text(value: "List", style: title_style())
+            text(value: "Tab 1 · its own stack", style: subtitle_style())
+            view(
+                style: button_style(),
+                on_tap: {
+                    let nav = nav.clone();
+                    move |_| {
+                        let _ = nav.navigate("/detail/42");
+                    }
+                },
+            ) {
+                text(value: "Open Detail 42", style: button_label_style())
+            }
+            view(
+                style: button_style(),
+                on_tap: move |_| {
+                    let _ = nav.navigate("/detail/99");
+                },
+            ) {
+                text(value: "Open Detail 99", style: button_label_style())
+            }
         }
     }
+}
+
+#[component]
+fn detail() -> Element {
+    let nav = use_navigator();
+    // Read this route's `:id` param from context — the macro-free analogue
+    // of `routes! { Route("detail/:id", Detail) }` + `use_param`.
+    let id = use_param("id");
+    let label = format!("Detail #{}", id.get().unwrap_or_default());
+    render! {
+        view(style: screen_style(0x1A1422)) {
+            text(value: label, style: title_style())
+            text(value: "Swipe from the left edge, or tap Back.", style: subtitle_style())
+            view(
+                style: button_style(),
+                on_tap: move |_| {
+                    let _ = nav.back();
+                },
+            ) {
+                text(value: "Back", style: button_label_style())
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// Tiny shared styles
+// ---------------------------------------------------------------------
+
+fn button_style() -> Css {
+    css!(
+        padding: (px(12), px(24)),
+        margin_top: px(16),
+        border_radius: px(12),
+        background_color: Color::hex(0x7C5CFF),
+    )
+}
+
+fn button_label_style() -> Css {
+    css!(color: Color::hex(0xFFFFFF), font_size: px(16))
+}
+
+fn screen_style(bg: u32) -> Css {
+    css!(
+        flex_grow: 1.0,
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        background_color: Color::hex(bg),
+    )
+}
+
+fn title_style() -> Css {
+    css!(color: Color::hex(0xFFFFFF), font_size: px(28))
+}
+
+fn subtitle_style() -> Css {
+    css!(color: Color::hex(0x9A9AB0), font_size: px(14), margin_top: px(8))
 }

@@ -12,7 +12,8 @@
         android:name=".{{android_application_class}}"
         android:label="{{app_name}}"
         android:usesCleartextTraffic="true"
-        android:theme="@style/Theme.AppCompat.NoActionBar">
+        android:theme="@style/Theme.AppCompat.NoActionBar"
+{{extra_application_attributes}}        >
 {{extra_application_meta_data}}
         <activity
             android:name=".MainActivity"
