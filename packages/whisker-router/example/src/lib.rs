@@ -123,26 +123,25 @@ fn tab_bar_item(
 
 #[whisker::main]
 fn app() -> Element {
-    let handle = RouterHandle::new(routes! {
-        Route(component: TabsLayout) {
-            Switch {
-                Route(path: "(home)") {
-                    Stack {
-                        Route(path: "", component: Home)
-                        Route(path: "detail/:id", component: Detail)
+    render! {
+        Router(routes: routes! {
+            Route(component: TabsLayout) {
+                Switch {
+                    Route(path: "(home)") {
+                        Stack {
+                            Route(path: "", component: Home)
+                            Route(path: "detail/:id", component: Detail)
+                        }
                     }
-                }
-                Route(path: "(search)") {
-                    Stack {
-                        Route(path: "list", component: ListScreen)
-                        Route(path: "detail/:id", component: Detail)
+                    Route(path: "(search)") {
+                        Stack {
+                            Route(path: "list", component: ListScreen)
+                            Route(path: "detail/:id", component: Detail)
+                        }
                     }
                 }
             }
-        }
-    });
-    render! {
-        Router(handle: handle) {
+        }) {
             Outlet {}
             AndroidPredictiveBack {}
             SwipeBack {}
