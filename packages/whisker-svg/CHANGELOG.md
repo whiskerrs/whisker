@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-svg-v0.6.0...whisker-svg-v0.7.0) - 2026-06-26
+
+### Other
+
+- migrate to Rust 2024 edition ([#248](https://github.com/whiskerrs/whisker/pull/248))
+
 ## [0.3.0](https://github.com/whiskerrs/whisker/compare/whisker-svg-v0.2.5...whisker-svg-v0.3.0) - 2026-06-15
 
 ### Added

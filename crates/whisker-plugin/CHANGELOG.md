@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.6.0...whisker-plugin-v0.7.0) - 2026-06-26
+
+### Added
+
+- *(whisker-router)* reactive rendering — Outlet/Stack/Switch, transitions, swipe-back (phase 2) ([#258](https://github.com/whiskerrs/whisker/pull/258))
+
 ## [0.4.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.3.1...whisker-plugin-v0.4.0) - 2026-06-16
 
 ### Added

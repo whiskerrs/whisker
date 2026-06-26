@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.6.0...whisker-router-v0.7.0) - 2026-06-26
+
+### Added
+
+- *(whisker-router)* Router accepts routes: RouteSet directly ([#261](https://github.com/whiskerrs/whisker/pull/261))
+- *(whisker-router)* reactive rendering — Outlet/Stack/Switch, transitions, swipe-back (phase 2) ([#258](https://github.com/whiskerrs/whisker/pull/258))
+- *(whisker-router)* RouteTree + RouteState core (new router, phase 1) ([#257](https://github.com/whiskerrs/whisker/pull/257))
+
+### Other
+
+- migrate to Rust 2024 edition ([#248](https://github.com/whiskerrs/whisker/pull/248))
+
 ## [0.4.1](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.4.0...whisker-router-v0.4.1) - 2026-06-16
 
 ### Fixed

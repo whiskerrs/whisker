@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-v0.6.0...whisker-driver-v0.7.0) - 2026-06-26
+
+### Added
+
+- *(whisker-driver)* tokio feature — host a multi-thread runtime so reqwest/spawn_blocking just work ([#262](https://github.com/whiskerrs/whisker/pull/262))
+- *(whisker-animation)* continuous signal-based animation engine ([#251](https://github.com/whiskerrs/whisker/pull/251))
+
+### Other
+
+- migrate to Rust 2024 edition ([#248](https://github.com/whiskerrs/whisker/pull/248))
+
 ## [0.5.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-v0.4.3...whisker-driver-v0.5.0) - 2026-06-17
 
 ### Other
