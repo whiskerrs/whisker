@@ -11,7 +11,7 @@
 
 [package]
 name = "whisker-subsecond"
-version = "0.7.10"
+version = "0.7.11"
 edition.workspace = true
 rust-version.workspace = true
 license = "MIT OR Apache-2.0"
