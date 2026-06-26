@@ -24,6 +24,7 @@ members = [
     "examples/asset-demo",
     "examples/aurora-wallet",
     "examples/podcast",
+    "examples/tokio-smoke",
     "packages/whisker-icons",
     "packages/whisker-icons/example",
     "packages/whisker-image",
