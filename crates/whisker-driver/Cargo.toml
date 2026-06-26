@@ -27,10 +27,24 @@ hot-reload = [
     "dep:whisker-dev-runtime",
     "whisker-dev-runtime/hot-reload",
 ]
+# Hosts a multi-thread tokio runtime at bootstrap and keeps its context
+# `enter()`ed on the TASM thread for the process lifetime. With this on,
+# tokio-based libraries (reqwest, sqlx, tokio::time, spawn_blocking) work
+# directly inside `resource()` / `spawn_local()` futures: those futures
+# are still polled on the TASM thread (no `Send` required, signals stay
+# reachable), while tokio's reactor/timer run on its own background
+# threads. Off by default — tokio drops out of release builds entirely.
+tokio = ["dep:tokio"]
 
 [dependencies]
 whisker-runtime = { workspace = true }
 whisker-driver-sys = { workspace = true }
+# `tokio` feature only. `rt-multi-thread` is mandatory: a current-thread
+# runtime only drives its reactor inside `block_on`, but Whisker polls
+# futures via its own `run_until_stalled`, so a current-thread reactor
+# would never advance the IO our futures register. Multi-thread drives
+# IO/timer on tokio's own background threads regardless of who polls.
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "time", "net", "io-util"] }
 # `module::invoke_async` bridges the Whisker bridge's C callback
 # (`whisker_bridge_invoke_module_async`) into a Rust `Future` via a
 # oneshot channel. Pulled directly rather than full `futures` to

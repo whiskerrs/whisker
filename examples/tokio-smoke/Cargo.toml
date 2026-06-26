@@ -1,0 +1,22 @@
+[package]
+name = "tokio-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Smoke test for whisker's `tokio` feature: a `resource()` fetcher that does an HTTP GET with reqwest (tokio reactor) and a CPU offload with tokio::task::spawn_blocking, both driven on the TASM thread without freezing the UI. If the byte count renders, the runtime is entered correctly."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# `tokio` feature on: whisker-driver builds + enters a multi-thread tokio
+# runtime at bootstrap, so the reqwest / spawn_blocking calls below find a
+# reactor instead of panicking.
+whisker = { workspace = true, features = ["tokio"] }
+# rustls (not native-tls/openssl) so the TLS stack cross-compiles cleanly
+# to iOS/Android — same choice the podcast example makes with ureq.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# Pulled in directly for `tokio::task::spawn_blocking`. `rt` carries the
+# task API; the actual runtime is owned by whisker-driver, and cargo
+# feature unification makes it the same tokio crate.
+tokio = { version = "1", default-features = false, features = ["rt"] }

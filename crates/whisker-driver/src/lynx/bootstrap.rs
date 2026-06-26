@@ -151,6 +151,14 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // ticking, and no race against a paused CADisplayLink/Choreographer.
     whisker_runtime::main_thread::set_drive_callback(Some(drive));
 
+    // Stand up the tokio runtime (feature-gated) and `enter()` its
+    // context on THIS (TASM) thread before any user code runs. We're on
+    // the same thread that `tick_frame` later polls the task pool on, so
+    // keeping the context entered here means every future poll can find
+    // tokio's reactor — making `reqwest` / `spawn_blocking` / `tokio::time`
+    // work directly inside `resource()` fetchers. No-op without the feature.
+    init_tokio_runtime();
+
     // Route the platform reporter's events through Whisker's Rust-side
     // propagation reconstruction (capture/bubble/catch over the
     // driver's own element tree). The bridge calls this dispatcher
@@ -225,6 +233,30 @@ fn start_hot_reload_receiver() {
 
 #[cfg(not(feature = "hot-reload"))]
 fn start_hot_reload_receiver() {}
+
+// Build a multi-thread tokio runtime and keep its context entered on the
+// TASM thread for the whole process. Must be multi-thread: a
+// current-thread runtime only drives its reactor inside `block_on`, but
+// Whisker polls futures via `run_until_stalled`, so a current-thread
+// reactor would never advance the IO our futures register.
+#[cfg(feature = "tokio")]
+fn init_tokio_runtime() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all() // IO (mio: epoll on Android / kqueue on iOS) + timer
+        .worker_threads(2) // conservative for mobile; tune later if needed
+        .thread_name("whisker-tokio")
+        .build()
+        .expect("whisker: build tokio runtime");
+    // Leak the runtime to `'static`, then `forget` the EnterGuard so its
+    // Drop never runs — the context stays entered on this thread (which
+    // lives for the process lifetime) and tokio's background threads keep
+    // driving the reactor regardless of who polls the futures.
+    let rt: &'static tokio::runtime::Runtime = Box::leak(Box::new(rt));
+    std::mem::forget(rt.enter());
+}
+
+#[cfg(not(feature = "tokio"))]
+fn init_tokio_runtime() {}
 
 #[cfg(feature = "hot-reload")]
 fn start_log_capture() {

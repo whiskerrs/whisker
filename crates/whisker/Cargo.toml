@@ -23,6 +23,10 @@ default = []
 # both sides — otherwise subsecond can't dispatch to the patched
 # version.
 hot-reload = ["whisker-driver/hot-reload", "dep:subsecond"]
+# Forwarded to `whisker-driver` — hosts a tokio runtime so tokio-based
+# async libraries (reqwest, etc.) work inside `resource()`/`spawn_local()`.
+# Off by default; tokio drops out of release builds when unused.
+tokio = ["whisker-driver/tokio"]
 
 [dependencies]
 whisker-runtime = { workspace = true }
