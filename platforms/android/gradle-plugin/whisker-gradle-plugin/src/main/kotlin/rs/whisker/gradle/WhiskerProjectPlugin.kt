@@ -121,6 +121,12 @@ class WhiskerProjectPlugin : Plugin<Project> {
                     this.abi.set(abi)
                     this.jniLibsDir.set(jniLibsDir)
                     minSdk.set(minSdkProvider)
+                    // The Rust sources are `@Internal` (not declared inputs),
+                    // so Gradle can't tell when they change and would mark this
+                    // task UP-TO-DATE and skip the cargo recompile — shipping a
+                    // stale `.so` (#260). Always run; cargo is the single
+                    // authority and skips the actual rustc when nothing changed.
+                    outputs.upToDateWhen { false }
                 }
                 variant.sources.jniLibs?.addGeneratedSourceDirectory(
                     task,
