@@ -1,0 +1,29 @@
+[package]
+name = "bsky-auth"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "AT Protocol OAuth client wrapper for the Bluesky example. Wraps atrium-oauth (identity resolution, PKCE, PAR, DPoP) behind begin_login / complete_login, plus authenticated XRPC calls (timeline). Uses a rustls HTTP client + DNS-over-HTTPS resolver so the whole stack cross-compiles to iOS/Android with no OpenSSL."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+bsky-domain = { path = "../bsky-domain" }
+# atproto OAuth: identity resolution + PKCE + PAR + DPoP + token refresh.
+# `default-features = false` drops atrium-oauth's `default-client` (which
+# pulls reqwest/default-tls → OpenSSL); we supply our own rustls client.
+atrium-oauth = { version = "0.1.7", default-features = false }
+# `doh-handle-resolver` = DNS-over-HTTPS handle resolution (hickory-proto,
+# pure Rust). Avoids system /etc/resolv.conf which is unreliable on Android.
+atrium-identity = { version = "0.1.9", features = ["doh-handle-resolver"] }
+atrium-api = "0.25.8"
+atrium-xrpc = "0.12"
+# Our HTTP client. rustls (not native-tls) so the TLS stack cross-compiles
+# to iOS/Android — same choice tokio-smoke proved works.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Parse the OAuth callback query string (code/state/iss) — same crate the
+# atrium-oauth example uses.
+serde_html_form = "0.2"

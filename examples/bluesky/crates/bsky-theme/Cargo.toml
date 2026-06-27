@@ -1,0 +1,12 @@
+[package]
+name = "bsky-theme"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Design tokens (colors, type scale, spacing) for the Bluesky example. Typed consts the UI drops straight into css!()."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker-css = { workspace = true }

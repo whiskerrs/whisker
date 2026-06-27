@@ -336,6 +336,71 @@ fn navigate_mounts_new_leaf_exactly_once() {
     });
 }
 
+/// A single root Stack with mount-counting leaves (`home` at `""`, `detail`
+/// at `detail/:id`).
+fn counting_simple_handle(counts: Counts) -> RouterHandle {
+    let tree = CompiledTree::new(RouteTree::stack(vec![
+        RouteTree::route("", "home"),
+        RouteTree::route("detail/:id", "detail"),
+    ]));
+    let mk = |id: &'static str, counts: Counts| {
+        move |_: &RouteInstance| {
+            *counts.borrow_mut().entry(id).or_insert(0) += 1;
+            whisker::runtime::view::create_phantom_element()
+        }
+    };
+    let registry = RouteRegistry::new()
+        .route("home", mk("home", counts.clone()))
+        .route_with(
+            "detail",
+            RouteTransition::none(),
+            mk("detail", counts.clone()),
+        );
+    RouterHandle::new((tree, registry))
+}
+
+/// Regression for #264. When `reset` replaces the whole history with a route
+/// that differs from the surviving index-0 wrapper, the reconcile must dispose
+/// the stale survivor and mount the new route — not re-show the old screen.
+/// (Wrappers are keyed by history index; a naive shrink kept the stale
+/// survivor, so the cleared screen reappeared and its native views leaked.)
+#[test]
+fn reset_to_different_route_reinstantiates_revealed_top() {
+    with_runtime(|| {
+        let counts: Counts = Rc::new(RefCell::new(HashMap::new()));
+        let h = counting_simple_handle(counts.clone());
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        // history: [home]; home mounted once.
+        assert_eq!(counts.borrow().get("home").copied(), Some(1));
+
+        // Push detail → history [home, detail/1].
+        h.navigate("/detail/1").unwrap();
+        flush();
+        assert_eq!(counts.borrow().get("detail").copied(), Some(1));
+
+        // Reset to a route DIFFERENT from index 0 (home) → history [detail/2].
+        // The shrink reveals the index-0 survivor (home), which no longer
+        // matches the history (detail/2), so it must be swapped.
+        h.reset("/detail/2").unwrap();
+        flush();
+
+        let RouteState::Stack(s) = h.state().get() else {
+            panic!("root is a stack")
+        };
+        assert_eq!(s.history.len(), 1, "reset collapses to a single entry");
+
+        // The revealed top is a NEW detail leaf (mounted for /2), so detail
+        // mounted twice total. Pre-fix this stayed at 1 — the stale `home`
+        // wrapper was kept and `detail/2` never mounted.
+        assert_eq!(
+            counts.borrow().get("detail").copied(),
+            Some(2),
+            "reset must re-instantiate the revealed top when its route changed"
+        );
+    });
+}
+
 // ----- coordinated pop: survivor returns to the active (0%) pose -------
 
 /// A single-stack handle with Slide routes so a push/pop runs a real

@@ -1,0 +1,21 @@
+[package]
+name = "bluesky"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Bluesky (AT Protocol) client example. OAuth login via an embedded WebView (atrium-oauth, no hosted client metadata), session persisted with whisker-local-store, and an authenticated timeline. Demonstrates whisker's tokio feature carrying a full async networking + crypto stack on iOS/Android."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true, features = ["tokio"] }
+whisker-router = { path = "../../packages/whisker-router" }
+whisker-webview = { path = "../../packages/whisker-webview" }
+whisker-input = { path = "../../packages/whisker-input" }
+whisker-local-store = { path = "../../packages/whisker-local-store" }
+whisker-image = { path = "../../packages/whisker-image" }
+bsky-domain = { path = "crates/bsky-domain" }
+bsky-auth = { path = "crates/bsky-auth" }
+bsky-theme = { path = "crates/bsky-theme" }
+bsky-ui-kit = { path = "crates/bsky-ui-kit" }

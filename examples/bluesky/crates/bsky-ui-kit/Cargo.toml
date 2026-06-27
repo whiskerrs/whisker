@@ -1,0 +1,15 @@
+[package]
+name = "bsky-ui-kit"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Reusable, stateless UI components for the Bluesky example (PostCard, Avatar). All values via props; reads no context."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-image = { path = "../../../../packages/whisker-image" }
+bsky-theme = { path = "../bsky-theme" }
+bsky-domain = { path = "../bsky-domain" }

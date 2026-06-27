@@ -1,0 +1,12 @@
+[package]
+name = "bsky-domain"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Pure value types for the Bluesky example (Author, FeedPost, Timeline). No I/O, no UI, no whisker dependency — shared by the data and UI layers."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
