@@ -207,9 +207,21 @@ fn run_inner(
         &m.package,
     )
     .context("sync native project (gen/{android,ios}/)")?;
+    // Always say which path was taken — a silent "reused" is exactly the
+    // staleness trap (#260): a template/source edit that didn't bump the cng
+    // `template_version` leaves the old gen/ tree on disk and nothing told you.
+    let tv = sync
+        .template_version
+        .map(|v| format!(" (template_version {v})"))
+        .unwrap_or_default();
     if sync.regenerated {
         eprintln!(
-            "[whisker run] native project regenerated at {}",
+            "[whisker run] regenerated gen/ at {}{tv}",
+            sync.gen_dir.display(),
+        );
+    } else {
+        eprintln!(
+            "[whisker run] reused cached gen/ at {}{tv}",
             sync.gen_dir.display(),
         );
     }
