@@ -10,7 +10,7 @@
 //! | [`back`](Navigator::back) | pop the top of the **deepest non-trivial `Stack`** (history > 1) on the active path; `Switch` selection is never popped; tab-root with nothing to pop → no-op |
 //! | [`replace`](Navigator::replace) | swap the **top** of the current stack with the target; same stack only (else [`NavError::CrossStack`]) |
 //! | [`pop_to`](Navigator::pop_to) | pop the current stack until the target is the top; same stack only |
-//! | [`reset`](Navigator::reset) | replace the **entire** current stack with `[target]` |
+//! | [`reset`](Navigator::reset) | *global*: rebuild the whole state onto one clean path to `target` — select `Switch`es toward it and collapse **every** `Stack` to a single entry (no back history anywhere) |
 
 use super::resolve::{self, Scope};
 use super::state::{RouteInstance, RouteState, StackEntry, StackState};
@@ -181,21 +181,19 @@ impl<'a> Navigator<'a> {
 
     // ----- reset ----------------------------------------------------
 
-    /// Replace the **entire** current stack's history with the route
-    /// matched by `url` (the logout / clear-back-stack case). Same stack
-    /// only.
+    /// **Reset the whole navigation state** onto a single clean path to the
+    /// route matched by `url` (the logout / clear-everything case). Unlike
+    /// the other verbs this is *global*, not same-stack: `url` is resolved
+    /// across the entire tree (like `navigate`), every `Switch` is selected
+    /// toward the target, and **every `Stack` collapses to a single entry**
+    /// so no back history survives anywhere — on the path to the target or in
+    /// any other branch. Errors only with [`NavError::NoSuchTarget`].
     pub fn reset(&mut self, url: &str) -> Result<(), NavError> {
         let current = self.current_path();
         let params = self.tree.match_url(url).map(|(_, p)| p).unwrap_or_default();
         let dest =
             resolve::resolve(self.tree, url, Some(&current)).ok_or(NavError::NoSuchTarget)?;
-        let stack_path = deepest_active_stack_path(self.state).ok_or(NavError::CrossStack)?;
-        if !is_child_of(&stack_path, &dest) {
-            return Err(NavError::CrossStack);
-        }
-        let entry = make_entry(self.tree, &dest, params);
-        let stack = active_stack_mut(self.state).expect("stack exists");
-        stack.history = vec![entry];
+        *self.state = RouteState::focused_at(self.tree, &dest, params);
         Ok(())
     }
 }

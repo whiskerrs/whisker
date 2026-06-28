@@ -447,6 +447,55 @@ fn reset_logout_clears_root_back_stack() {
     assert_eq!(root_history_len(&st), 1);
 }
 
+#[test]
+fn reset_is_global_clears_every_stack_and_branch() {
+    let t = twitter_tree();
+    let mut st = RouteState::initial(&t);
+    // Deepen the timeline stack, switch to the search tab, deepen that too.
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.navigate("/post/1").unwrap();
+        nav.navigate("/post/2").unwrap(); // timeline depth 3
+        nav.select("/search").unwrap();
+        nav.navigate("/post/9").unwrap(); // search depth 2
+    }
+    assert_eq!(timeline_history(&st).len(), 3);
+    assert_eq!(search_history(&st).len(), 2);
+
+    // A global reset to the timeline home must collapse EVERYTHING — the
+    // target branch, the other branch, and the root stack — to one entry.
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.reset("/").unwrap();
+        assert_eq!(nav.current().path, p(&[0, 0, 0]), "current = timeline home");
+    }
+    assert_eq!(root_history_len(&st), 1, "root stack collapsed");
+    assert_eq!(timeline_history(&st).len(), 1, "target branch collapsed");
+    assert_eq!(
+        search_history(&st).len(),
+        1,
+        "the OTHER branch (search) is cleared to its root too"
+    );
+    assert_eq!(switch_selected(&st), 0, "switch selects the target branch");
+}
+
+#[test]
+fn reset_crosses_into_another_branch() {
+    let t = twitter_tree();
+    let mut st = RouteState::initial(&t);
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.navigate("/post/1").unwrap(); // timeline depth 2, switch on timeline
+        // Reset straight into the search tab (a different Switch branch) —
+        // the old same-stack `reset` would have errored CrossStack.
+        nav.reset("/search").unwrap();
+        assert_eq!(nav.current().path, p(&[0, 1, 0]), "current = search home");
+    }
+    assert_eq!(switch_selected(&st), 1, "switch moved to search");
+    assert_eq!(timeline_history(&st).len(), 1, "timeline cleared");
+    assert_eq!(search_history(&st).len(), 1);
+}
+
 // ===================================================================
 // 12. cold-start resolution → declaration order; Switch(default) honored
 // ===================================================================
@@ -690,6 +739,15 @@ fn timeline_history(st: &RouteState) -> &[whisker_router::core::StackEntry] {
 
 fn search_history(st: &RouteState) -> &[whisker_router::core::StackEntry] {
     tab_history(st, 1)
+}
+
+fn switch_selected(st: &RouteState) -> usize {
+    if let RouteState::Stack(root) = st {
+        if let RouteState::Switch(sw) = &root.history[0].state {
+            return sw.selected;
+        }
+    }
+    panic!("could not reach the tabs switch");
 }
 
 fn tab_history(st: &RouteState, branch: usize) -> &[whisker_router::core::StackEntry] {
