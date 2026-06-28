@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>rs.whisker</groupId>
+  <artifactId>rs.whisker.gradle.plugin</artifactId>
+  <version>0.4.1</version>
+  <packaging>pom</packaging>
+  <name>Whisker Settings plugin</name>
+  <description>Discovers Whisker module deps via `whisker modules`, includes each as a Gradle subproject, and stages a state file the Project plugin (`rs.whisker.gradle`) reads.</description>
+  <dependencies>
+    <dependency>
+      <groupId>rs.whisker</groupId>
+      <artifactId>whisker-settings-plugin</artifactId>
+      <version>0.4.1</version>
+    </dependency>
+  </dependencies>
+</project>
