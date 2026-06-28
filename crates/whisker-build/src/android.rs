@@ -233,15 +233,11 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         }
     }
 
-    let cargo_step = crate::ui::step("compile", format!("{} ({triple})", b.package));
-    let status = cargo_step
-        .pipe(&mut cmd)
-        .with_context(|| format!("spawn cargo for {triple}"))?;
-    cargo_step.done("");
-    if !status.success() {
-        return Err(anyhow!("cargo build failed ({status}) for {triple}"));
-    }
-
+    // Resolve the output `.so` up-front and snapshot its mtime, so the step
+    // summary can report whether cargo actually relinked a fresh lib or
+    // no-op'd (`up-to-date`). This is the "did my change reach native code?"
+    // signal the dev loop was missing: a stale `.so` (#260) shows as
+    // `up-to-date` exactly when you expected a rebuild. mtime-only, so it's free.
     let lib_name = format!("lib{}.so", b.package.replace('-', "_"));
     let so_path = b
         .workspace_root
@@ -249,6 +245,24 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         .join(triple)
         .join(b.profile.dir_name())
         .join(&lib_name);
+    let so_mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let before = so_mtime(&so_path);
+
+    let cargo_step = crate::ui::step("compile", format!("{} ({triple})", b.package));
+    let status = cargo_step
+        .pipe(&mut cmd)
+        .with_context(|| format!("spawn cargo for {triple}"))?;
+    if !status.success() {
+        cargo_step.done("failed");
+        return Err(anyhow!("cargo build failed ({status}) for {triple}"));
+    }
+    cargo_step.done(match (before, so_mtime(&so_path)) {
+        (None, Some(_)) => "linked",
+        (Some(b), Some(a)) if a > b => "relinked",
+        (_, Some(_)) => "up-to-date",
+        (_, None) => "",
+    });
+
     if !so_path.is_file() {
         return Err(anyhow!(
             "cargo finished but {} is missing",

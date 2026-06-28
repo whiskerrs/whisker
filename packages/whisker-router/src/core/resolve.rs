@@ -43,11 +43,29 @@ impl Scope {
 /// Returns the chosen candidate's [`NodePath`], or `None` if nothing
 /// matches.
 pub fn resolve(tree: &CompiledTree, url: &str, current: Option<&NodePath>) -> Option<NodePath> {
-    let cands = tree.paths_matching_url(url);
+    // Prefer a leaf **screen** matching the URL.
+    if let Some(found) = pick_relative(&tree.paths_matching_url(url), current) {
+        return Some(found);
+    }
+    // Fallback: the URL named a **container** (e.g. a bare `/(group)` whose
+    // group has no index `""` screen) — resolve to the index leaf inside the
+    // chosen container so it is still a navigable destination.
+    let container = pick_relative(&tree.container_paths_matching_url(url), current)?;
+    Some(
+        super::state::RouteState::initial_at(tree, &container)
+            .current()
+            .path
+            .clone(),
+    )
+}
+
+/// Pick from `cands` by the deepest-common-ancestor-with-`current` rule
+/// (declaration order breaks ties); cold start (no current) takes the first.
+/// `None` when `cands` is empty.
+fn pick_relative(cands: &[NodePath], current: Option<&NodePath>) -> Option<NodePath> {
     if cands.is_empty() {
         return None;
     }
-
     match current {
         None => Some(cands[0].clone()),
         Some(cur) => {

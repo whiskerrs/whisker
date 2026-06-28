@@ -208,18 +208,72 @@ fn detail() -> Element {
     // Read this route's `:id` param from context — the macro-free analogue
     // of `routes! { Route("detail/:id", Detail) }` + `use_param`.
     let id = use_param("id");
-    let label = format!("Detail #{}", id.get().unwrap_or_default());
+    let cur = id.get().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    let next = cur + 1;
     render! {
         view(style: screen_style(0x1A1422)) {
-            text(value: label, style: title_style())
-            text(value: "Swipe from the left edge, or tap Back.", style: subtitle_style())
+            text(value: format!("Detail #{cur}"), style: title_style())
+            text(
+                value: "Try the stack ops below. Push/Back are the baseline; \
+                        Replace and Reset are what #265 / #264 fixed.",
+                style: subtitle_style(),
+            )
+
+            // Push (baseline): grows the stack — slides in.
+            view(
+                style: button_style(),
+                on_tap: {
+                    let nav = nav.clone();
+                    move |_| { let _ = nav.navigate(&format!("/detail/{next}")); }
+                },
+            ) {
+                text(value: format!("Push → Detail #{next}"), style: button_label_style())
+            }
+
+            // Replace (#265): swaps the top in place. Must SLIDE the new
+            // screen in like a push, not snap instantly.
+            view(
+                style: button_style(),
+                on_tap: {
+                    let nav = nav.clone();
+                    move |_| { let _ = nav.replace(&format!("/detail/{next}")); }
+                },
+            ) {
+                text(value: format!("Replace → Detail #{next}"), style: button_label_style())
+            }
+
+            // Reset to a NEW route (not in the back stack): global reset
+            // collapses every stack to `[detail/5]`. Direction would be a
+            // push once reset animates.
+            view(
+                style: button_style(),
+                on_tap: {
+                    let nav = nav.clone();
+                    move |_| { let _ = nav.reset("/detail/5"); }
+                },
+            ) {
+                text(value: "Reset → Detail #5", style: button_label_style())
+            }
+
+            // Reset to the Home tab. "/" resolves to the home index screen
+            // (the "" route inside the "(home)" group), even from another tab.
+            view(
+                style: button_style(),
+                on_tap: {
+                    let nav = nav.clone();
+                    move |_| { let _ = nav.reset("/"); }
+                },
+            ) {
+                text(value: "Reset → Home", style: button_label_style())
+            }
+
             view(
                 style: button_style(),
                 on_tap: move |_| {
                     let _ = nav.back();
                 },
             ) {
-                text(value: "Back", style: button_label_style())
+                text(value: "Back (or swipe from the left edge)", style: button_label_style())
             }
         }
     }

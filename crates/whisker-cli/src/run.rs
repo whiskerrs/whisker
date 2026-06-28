@@ -199,6 +199,12 @@ fn run_inner(
     // the SDK pom. Neither path needs the workspace `target/lynx-*`
     // tree the cli used to stage here.
 
+    // cng templates are `include_str!`-baked into this binary, so a CLI that
+    // predates an edit under `crates/whisker-cng/src` renders stale gen/ files
+    // (#260 trap #3). Read-only mtime check; only fires inside a whisker repo
+    // checkout (where those sources exist), never for installed users.
+    warn_if_cli_older_than_cng(&workspace_root);
+
     let sync = crate::platforms::sync_for_target(
         target,
         &m.config,
@@ -207,9 +213,21 @@ fn run_inner(
         &m.package,
     )
     .context("sync native project (gen/{android,ios}/)")?;
+    // Always say which path was taken — a silent "reused" is exactly the
+    // staleness trap (#260): a template/source edit that didn't bump the cng
+    // `template_version` leaves the old gen/ tree on disk and nothing told you.
+    let tv = sync
+        .template_version
+        .map(|v| format!(" (template_version {v})"))
+        .unwrap_or_default();
     if sync.regenerated {
         eprintln!(
-            "[whisker run] native project regenerated at {}",
+            "[whisker run] regenerated gen/ at {}{tv}",
+            sync.gen_dir.display(),
+        );
+    } else {
+        eprintln!(
+            "[whisker run] reused cached gen/ at {}{tv}",
             sync.gen_dir.display(),
         );
     }
@@ -521,6 +539,59 @@ fn find_workspace_root(start: &Path) -> Option<PathBuf> {
             return None;
         }
     }
+}
+
+/// Warn if the running `whisker` binary predates the cng template/renderer
+/// sources, i.e. its `include_str!`-baked templates are stale relative to the
+/// repo (#260 trap #3). No-op unless `crates/whisker-cng/src` exists under
+/// `workspace_root` — installed users (no whisker sources) never see this.
+/// Read-only: compares file mtimes and prints a warning, nothing else.
+fn warn_if_cli_older_than_cng(workspace_root: &Path) {
+    let cng_src = workspace_root.join("crates/whisker-cng/src");
+    if !cng_src.is_dir() {
+        return; // not a whisker repo checkout
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Ok(cli_mtime) = std::fs::metadata(&exe).and_then(|m| m.modified()) else {
+        return;
+    };
+    let Some(cng_mtime) = newest_mtime_under(&cng_src) else {
+        return;
+    };
+    if cng_mtime > cli_mtime {
+        whisker_build::ui::warn(format!(
+            "running `whisker` ({}) is older than crates/whisker-cng/src — its \
+             embedded templates may be stale and gen/ could be generated from old \
+             templates. Rebuild and use the workspace CLI \
+             (e.g. `cargo run -p whisker-cli -- run …`).",
+            exe.display(),
+        ));
+    }
+}
+
+/// Newest file mtime anywhere under `dir` (recursive). `None` if the tree is
+/// unreadable or empty. Best-effort: unreadable entries are skipped.
+fn newest_mtime_under(dir: &Path) -> Option<std::time::SystemTime> {
+    let mut newest: Option<std::time::SystemTime> = None;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                stack.push(entry.path());
+                continue;
+            }
+            if let Ok(mtime) = entry.metadata().and_then(|m| m.modified()) {
+                newest = Some(newest.map_or(mtime, |n| n.max(mtime)));
+            }
+        }
+    }
+    newest
 }
 
 #[cfg(test)]

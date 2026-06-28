@@ -48,6 +48,10 @@ pub struct PlatformSync {
     /// `true` if the renderer rewrote files this pass, `false` if the
     /// fingerprint matched and the existing tree was reused.
     pub regenerated: bool,
+    /// cng template version that drives `gen/` regeneration (Android only;
+    /// `None` for iOS). Surfaced in the run log so a "reused cached gen/"
+    /// line tells the user which template generation is on disk.
+    pub template_version: Option<u32>,
 }
 
 /// SDK version pinned into the cng-generated
@@ -80,7 +84,7 @@ const WHISKER_SDK_VERSION: &str = "0.1.1";
 ///     alone, plus places the staged `.so` into a nested
 ///     `<jniLibsDir>/<abi>/` subdir so AGP's `mergeJniLibFolders`
 ///     recognises the layout.
-const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.4.0";
+const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.4.1";
 const WHISKER_MAVEN_URL: &str = "https://whiskerrs.github.io/whisker/maven";
 const LYNX_MAVEN_URL: &str = "https://whiskerrs.github.io/lynx/maven";
 
@@ -111,10 +115,12 @@ fn sync_android(
         LYNX_MAVEN_URL.to_string(),
     )?;
     let gen_dir = crate_dir.join("gen/android");
+    let template_version = inputs.template_version;
     let regenerated = whisker_cng::sync_android(&gen_dir, &inputs).context("render gen/android")?;
     Ok(PlatformSync {
         gen_dir,
         regenerated,
+        template_version: Some(template_version),
     })
 }
 
@@ -149,6 +155,7 @@ fn sync_ios(
     Ok(PlatformSync {
         gen_dir,
         regenerated,
+        template_version: None,
     })
 }
 

@@ -435,6 +435,43 @@ impl CompiledTree {
         self.by_path
             .values()
             .filter(|i| {
+                // A destination is a navigable **leaf** screen, never a
+                // container Route (a `(group)` / layout with children). A
+                // group's URL equals its index child's, so without this a bare
+                // `/` (or `/(group)`) matches the container too and — being a
+                // nearer common ancestor of the current position — gets picked
+                // over the index screen inside it.
+                if !self.is_leaf_route(&i.path) {
+                    return false;
+                }
+                let Some(pattern) = i.url.as_deref() else {
+                    return false;
+                };
+                let pat: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+                match_segments(&pat, &input).is_some()
+            })
+            .map(|i| i.path.clone())
+            .collect()
+    }
+
+    /// Whether `path` addresses a leaf `Route` (a screen) — a `Route` with no
+    /// children, as opposed to a `Stack` / `Switch` / `(group)` container.
+    fn is_leaf_route(&self, path: &NodePath) -> bool {
+        matches!(self.node_at(path), Some(RouteTree::Route(_, kids)) if kids.is_empty())
+    }
+
+    /// **Container** Routes (a `(group)` / layout with children) whose URL
+    /// matches `url`. The fallback for a URL that names no leaf screen — e.g.
+    /// a bare `/(group)` whose group has no index `""` child; the caller
+    /// descends the chosen container to its index leaf.
+    pub fn container_paths_matching_url(&self, url: &str) -> Vec<NodePath> {
+        let input: Vec<&str> = url.split('/').filter(|s| !s.is_empty()).collect();
+        self.by_path
+            .values()
+            .filter(|i| {
+                if self.is_leaf_route(&i.path) {
+                    return false;
+                }
                 let Some(pattern) = i.url.as_deref() else {
                     return false;
                 };
