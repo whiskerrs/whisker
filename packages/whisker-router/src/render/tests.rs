@@ -725,6 +725,53 @@ fn back_after_replace_animates_under_a_layout_route() {
     owner.dispose();
 }
 
+/// After a `replace`, the revealed under is a paused buried entry (the settle
+/// freezes it because its pose controller is idle — unlike a push, whose under
+/// is mid-animation and so stays live). An interactive swipe-back must resume
+/// it so its pose effect follows the finger through the scrub; the gesture can
+/// only re-point the bridge's pose bindings, so the bridge carries the under's
+/// owner for exactly this. Regression for "SwipeBack intermediate animation
+/// doesn't work after replace".
+#[test]
+fn swipe_back_resumes_the_paused_under_after_replace() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = layout_slide_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+
+        h.replace("/detail/2").unwrap();
+        flush();
+        settle_animations();
+
+        let under_owner = h
+            .active_stack_bridge()
+            .and_then(|b| b.under_owner)
+            .expect("under owner present after replace");
+
+        // The replace settle freezes (pauses) the buried under.
+        assert!(
+            under_owner.is_paused(),
+            "precondition: the under is paused after a replace"
+        );
+
+        // Starting a swipe-back must resume it so the scrub animates it.
+        crate::render::gesture::begin(&h, crate::render::transition::SwipeEdge::Left)
+            .expect("swipe-back begins (stack can pop)");
+        assert!(
+            !under_owner.is_paused(),
+            "swipe-back must resume the under so it follows the finger"
+        );
+    });
+    owner.dispose();
+}
+
 #[test]
 fn pop_animates_outgoing_top_through_intermediate_frames() {
     whisker::runtime::reactive::__reset_for_tests();

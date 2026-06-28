@@ -71,6 +71,12 @@ pub(crate) struct StackBridge {
     pub top_pose: Option<PoseBinding>,
     /// The revealed-under wrapper's pose binding, if any.
     pub under_pose: Option<PoseBinding>,
+    /// The revealed-under wrapper's owner. A gesture re-points the under's
+    /// pose bindings but must also `resume()` it: a buried under is paused
+    /// (no effects run), so without this its pose effect would not follow
+    /// the finger during an interactive back. `run_pop` resumes the survivor
+    /// itself; the gesture path has only the bridge, hence this handle.
+    pub under_owner: Option<Owner>,
     /// The stack's backdrop-dim **drive**: when `Some(ctrl)`, the dim
     /// opacity reactively follows `(1 - ctrl.value()) * PB_MAX_DIM`, so it
     /// darkens during the drag AND animates in lockstep with the settle

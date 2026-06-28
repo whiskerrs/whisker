@@ -561,6 +561,7 @@ fn reconcile_stack(
         top_ctrl: top_w.map(|w| w.ctrl.clone()),
         top_pose: top_w.map(pose_of),
         under_pose: under_w.map(pose_of),
+        under_owner: under_w.map(|w| w.owner),
         dim_drive: Some(dim_drive),
         can_back: l.len() > 1,
     };
