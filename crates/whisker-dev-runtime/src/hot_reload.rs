@@ -204,8 +204,11 @@ fn dev_token() -> Option<String> {
 #[cfg(target_os = "android")]
 fn android_system_property(name: &str) -> Option<String> {
     let cname = std::ffi::CString::new(name).ok()?;
-    // PROP_VALUE_MAX = 92.
-    let mut buf = [0i8; 92];
+    // PROP_VALUE_MAX = 92. Use `c_char` for the buffer so its pointer matches
+    // bionic's `__system_property_get` signature regardless of `c_char`
+    // signedness (it is unsigned on Android — `libc` 0.2.186 made this a hard
+    // type mismatch against a plain `i8` buffer).
+    let mut buf = [0 as libc::c_char; 92];
     // SAFETY: `cname` is a valid NUL-terminated C string; `buf` is a
     // 92-byte buffer matching PROP_VALUE_MAX, which is the size bionic
     // writes into. The return value is the length written (excluding
