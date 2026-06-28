@@ -475,6 +475,27 @@ fn slide_stack_handle() -> RouterHandle {
     RouterHandle::new((tree, registry))
 }
 
+/// `Route(layout) { Stack { home(slide), detail/:id(slide) } }` — the same
+/// layout-Route-above-a-stack shape as the tabbed example, with slide
+/// transitions so animation is observable.
+fn layout_slide_handle() -> RouterHandle {
+    let tree = CompiledTree::new(RouteTree::route_with(
+        RouteDef::new("", "layout"),
+        vec![RouteTree::stack(vec![
+            RouteTree::route("", "home"),
+            RouteTree::route("detail/:id", "detail"),
+        ])],
+    ));
+    let registry = RouteRegistry::new()
+        .route_with("home", RouteTransition::slide(), |_: &RouteInstance| {
+            whisker::runtime::view::create_phantom_element()
+        })
+        .route_with("detail", RouteTransition::slide(), |_: &RouteInstance| {
+            whisker::runtime::view::create_phantom_element()
+        });
+    RouterHandle::new((tree, registry))
+}
+
 /// Advance animation frames + flush until nothing is animating (or a
 /// budget is hit), driving any in-flight push/pop/settle to completion.
 fn settle_animations() {
@@ -609,6 +630,96 @@ fn replace_animates_the_new_top_in() {
             top_ctrl.value().get_untracked(),
             1.0,
             "replaced top settles at progress 1.0"
+        );
+    });
+    owner.dispose();
+}
+
+/// After a `replace`, a `back` must still animate the revealed survivor (the
+/// screen below) sliding in from covered → rest — not snap it in. Regression
+/// for the "Home doesn't animate on back after replace" report.
+#[test]
+fn back_after_replace_animates_the_revealed_survivor() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+
+        h.replace("/detail/2").unwrap();
+        flush();
+        settle_animations();
+
+        // The survivor (home) below the replaced top.
+        let under = h
+            .active_stack_bridge_for_test(&NodePath::root())
+            .and_then(|b| b.under_pose)
+            .expect("home is the under after replace");
+
+        // Back: the survivor must be coupled to the leaving controller and
+        // slide in through intermediate frames.
+        assert!(h.back().is_ok());
+        flush();
+        let mut t = 1000.0;
+        let mut traj = Vec::new();
+        for _ in 0..6 {
+            whisker_animation::__step_for_tests(t);
+            flush();
+            traj.push(under.ctrl.get().value().get_untracked());
+            t += 16.0;
+        }
+        assert!(
+            traj.iter().any(|&p| p > 0.05 && p < 0.95),
+            "the revealed survivor must animate in on back-after-replace; traj={traj:?}"
+        );
+    });
+    owner.dispose();
+}
+
+/// Same as above but with a layout Route above the stack (the tabbed example's
+/// shape). Reproduces the "Home doesn't animate on back after replace" report.
+#[test]
+fn back_after_replace_animates_under_a_layout_route() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = layout_slide_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+
+        h.replace("/detail/2").unwrap();
+        flush();
+        settle_animations();
+
+        let under = h
+            .active_stack_bridge()
+            .and_then(|b| b.under_pose)
+            .expect("home is the under after replace");
+
+        assert!(h.back().is_ok());
+        flush();
+        let mut t = 1000.0;
+        let mut traj = Vec::new();
+        for _ in 0..6 {
+            whisker_animation::__step_for_tests(t);
+            flush();
+            traj.push(under.ctrl.get().value().get_untracked());
+            t += 16.0;
+        }
+        assert!(
+            traj.iter().any(|&p| p > 0.05 && p < 0.95),
+            "survivor must animate in on back-after-replace under a layout route; traj={traj:?}"
         );
     });
     owner.dispose();

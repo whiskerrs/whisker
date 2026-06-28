@@ -476,13 +476,17 @@ fn reconcile_stack(
                 drive.set_value(1.0);
                 dispose_wrapper(slot, old);
             } else {
-                // Tear the old top down ONLY when the slide finishes (mirrors
-                // `run_pop`), never mid-animation.
+                // Tear the old top down on the slide's first completion —
+                // whether it finished or was cancelled by a follow-up nav
+                // (e.g. an immediate Back, which `reverse()`s this same
+                // controller and fires `on_finish(false)`). The old top is
+                // logically gone the moment the replace starts, so it must
+                // never linger and cover the revealed screen.
                 let old_wrapper = old.wrapper;
                 let old_owner = old.owner;
                 let done = Rc::new(RefCell::new(false));
-                drive.on_finish(move |finished| {
-                    if !finished || *done.borrow() {
+                drive.on_finish(move |_finished| {
+                    if *done.borrow() {
                         return;
                     }
                     *done.borrow_mut() = true;
