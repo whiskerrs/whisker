@@ -163,6 +163,82 @@ impl RouteState {
         }
     }
 
+    /// Build a fresh state for the whole tree **collapsed onto the single
+    /// path that leads to `dest`** — the global `reset` shape. Every `Stack`
+    /// holds exactly one entry (the child toward `dest`, or its first child
+    /// when `dest` is off this branch), so no back history survives anywhere;
+    /// every `Switch` selects the branch toward `dest` (else its default);
+    /// off-path subtrees are at their plain initial state. The `dest` Route
+    /// carries `params`.
+    pub fn focused_at(
+        tree: &CompiledTree,
+        dest: &NodePath,
+        params: BTreeMap<String, String>,
+    ) -> RouteState {
+        Self::focused_inner(tree, &NodePath::root(), dest, &params)
+    }
+
+    fn focused_inner(
+        tree: &CompiledTree,
+        path: &NodePath,
+        dest: &NodePath,
+        params: &BTreeMap<String, String>,
+    ) -> RouteState {
+        let node = tree
+            .node_at(path)
+            .expect("focused_at: path must address a node in the tree");
+        // The child index whose subtree contains `dest`, if any.
+        let toward =
+            |n: usize| -> Option<usize> { (0..n).find(|&i| dest.0.starts_with(&path.child(i).0)) };
+        match node {
+            RouteTree::Route(_, children) => {
+                let child_states = children
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| Self::focused_inner(tree, &path.child(i), dest, params))
+                    .collect();
+                RouteState::Route(RouteInstance {
+                    path: path.clone(),
+                    params: if path == dest {
+                        params.clone()
+                    } else {
+                        BTreeMap::new()
+                    },
+                    children: child_states,
+                })
+            }
+            RouteTree::Stack(children) => {
+                assert!(!children.is_empty(), "a Stack must have at least one child");
+                // Collapse to a single entry: the child toward `dest`, else
+                // the first child (an off-path stack reset to its root).
+                let child_path = path.child(toward(children.len()).unwrap_or(0));
+                RouteState::Stack(StackState {
+                    path: path.clone(),
+                    history: vec![StackEntry {
+                        child: child_path.clone(),
+                        state: Self::focused_inner(tree, &child_path, dest, params),
+                    }],
+                })
+            }
+            RouteTree::Switch(def, branches) => {
+                assert!(
+                    !branches.is_empty(),
+                    "a Switch must have at least one branch"
+                );
+                let selected =
+                    toward(branches.len()).unwrap_or_else(|| clamp_default(def, branches.len()));
+                let branch_states = (0..branches.len())
+                    .map(|i| Self::focused_inner(tree, &path.child(i), dest, params))
+                    .collect();
+                RouteState::Switch(SwitchState {
+                    path: path.clone(),
+                    selected,
+                    branches: branch_states,
+                })
+            }
+        }
+    }
+
     /// The [`NodePath`] of the static node this state instantiates.
     pub fn path(&self) -> &NodePath {
         match self {

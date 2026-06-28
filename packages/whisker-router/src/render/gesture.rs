@@ -214,6 +214,13 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
     if let (Some(ctrl), Some(top), Some(under)) =
         (&bridge.top_ctrl, &bridge.top_pose, &bridge.under_pose)
     {
+        // The under may be a paused buried entry (after a `replace` the
+        // settle freezes it); resume it so its pose effect runs and follows
+        // the finger through the scrub. Without this the under stays frozen
+        // and only snaps at the end of the gesture.
+        if let Some(under_owner) = bridge.under_owner {
+            under_owner.resume();
+        }
         point(top, ctrl, Role::Top, mode.clone());
         point(under, ctrl, Role::Under, mode);
         // The Material backdrop dim is Android-only; the iOS slide carries

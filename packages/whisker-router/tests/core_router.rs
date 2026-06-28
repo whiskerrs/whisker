@@ -7,8 +7,88 @@
 //! brief are tagged in the test names / comments.
 
 use whisker_router::core::{
-    CompiledTree, NavError, Navigator, NodePath, RouteState, RouteTree, Scope, SwitchDef,
+    CompiledTree, NavError, Navigator, NodePath, RouteDef, RouteState, RouteTree, Scope, SwitchDef,
 };
+
+/// Mirror the router example: a layout `Route` over a `Switch` whose branches
+/// are `(group) → Stack` tabs (home tab + search tab).
+fn grouped_tabs_tree() -> CompiledTree {
+    CompiledTree::new(RouteTree::route_with(
+        RouteDef::new("", "layout"),
+        vec![RouteTree::switch(
+            SwitchDef::new("tabs", 0),
+            vec![
+                RouteTree::route_with(
+                    RouteDef::new("(home)", "home_grp"),
+                    vec![RouteTree::stack(vec![
+                        RouteTree::route("", "home"),
+                        RouteTree::route("detail/:id", "detail"),
+                    ])],
+                ),
+                RouteTree::route_with(
+                    RouteDef::new("(search)", "search_grp"),
+                    vec![RouteTree::stack(vec![
+                        RouteTree::route("list", "list"),
+                        RouteTree::route("detail/:id", "detail"),
+                    ])],
+                ),
+            ],
+        )],
+    ))
+}
+
+#[test]
+fn reset_to_home_tab_from_another_tab() {
+    let t = grouped_tabs_tree();
+    let mut st = RouteState::initial(&t);
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.select("/list").unwrap(); // switch to the search tab
+        nav.navigate("/detail/1").unwrap(); // list → detail
+        assert_eq!(
+            nav.current().path,
+            NodePath(vec![0, 1, 0, 1]),
+            "in search/detail"
+        );
+    }
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        // The home is the index "" route under the "(home)" group. "/" must
+        // resolve to that leaf screen — not the group container (which shares
+        // the URL) — so reset("/") from the search tab lands on the Home tab.
+        nav.reset("/").unwrap();
+        assert_eq!(
+            nav.current().path,
+            NodePath(vec![0, 0, 0, 0]),
+            "reset(\"/\") from the search tab lands on the Home tab"
+        );
+    }
+    // The explicit group URL works identically.
+    {
+        let mut st2 = RouteState::initial(&t);
+        let mut nav = Navigator::new(&t, &mut st2);
+        nav.select("/list").unwrap();
+        nav.navigate("/detail/1").unwrap();
+        nav.reset("/(home)").unwrap();
+        assert_eq!(nav.current().path, NodePath(vec![0, 0, 0, 0]));
+    }
+}
+
+#[test]
+fn bare_group_url_resolves_to_its_first_screen() {
+    // The "(search)" group has no index "" child. A bare "/(search)" (e.g. a
+    // tab-bar `select("/(search)")`) must still resolve — to the group's first
+    // screen (list) — so the tab stays selectable.
+    let t = grouped_tabs_tree();
+    let mut st = RouteState::initial(&t);
+    let mut nav = Navigator::new(&t, &mut st);
+    nav.select("/(search)").unwrap();
+    assert_eq!(
+        nav.current().path,
+        NodePath(vec![0, 1, 0, 0]),
+        "select(\"/(search)\") lands on the search tab's first screen (list)"
+    );
+}
 
 // ===================================================================
 // The Twitter-style tree (built by hand — no macro yet)
@@ -447,6 +527,55 @@ fn reset_logout_clears_root_back_stack() {
     assert_eq!(root_history_len(&st), 1);
 }
 
+#[test]
+fn reset_is_global_clears_every_stack_and_branch() {
+    let t = twitter_tree();
+    let mut st = RouteState::initial(&t);
+    // Deepen the timeline stack, switch to the search tab, deepen that too.
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.navigate("/post/1").unwrap();
+        nav.navigate("/post/2").unwrap(); // timeline depth 3
+        nav.select("/search").unwrap();
+        nav.navigate("/post/9").unwrap(); // search depth 2
+    }
+    assert_eq!(timeline_history(&st).len(), 3);
+    assert_eq!(search_history(&st).len(), 2);
+
+    // A global reset to the timeline home must collapse EVERYTHING — the
+    // target branch, the other branch, and the root stack — to one entry.
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.reset("/").unwrap();
+        assert_eq!(nav.current().path, p(&[0, 0, 0]), "current = timeline home");
+    }
+    assert_eq!(root_history_len(&st), 1, "root stack collapsed");
+    assert_eq!(timeline_history(&st).len(), 1, "target branch collapsed");
+    assert_eq!(
+        search_history(&st).len(),
+        1,
+        "the OTHER branch (search) is cleared to its root too"
+    );
+    assert_eq!(switch_selected(&st), 0, "switch selects the target branch");
+}
+
+#[test]
+fn reset_crosses_into_another_branch() {
+    let t = twitter_tree();
+    let mut st = RouteState::initial(&t);
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.navigate("/post/1").unwrap(); // timeline depth 2, switch on timeline
+        // Reset straight into the search tab (a different Switch branch) —
+        // the old same-stack `reset` would have errored CrossStack.
+        nav.reset("/search").unwrap();
+        assert_eq!(nav.current().path, p(&[0, 1, 0]), "current = search home");
+    }
+    assert_eq!(switch_selected(&st), 1, "switch moved to search");
+    assert_eq!(timeline_history(&st).len(), 1, "timeline cleared");
+    assert_eq!(search_history(&st).len(), 1);
+}
+
 // ===================================================================
 // 12. cold-start resolution → declaration order; Switch(default) honored
 // ===================================================================
@@ -690,6 +819,15 @@ fn timeline_history(st: &RouteState) -> &[whisker_router::core::StackEntry] {
 
 fn search_history(st: &RouteState) -> &[whisker_router::core::StackEntry] {
     tab_history(st, 1)
+}
+
+fn switch_selected(st: &RouteState) -> usize {
+    if let RouteState::Stack(root) = st {
+        if let RouteState::Switch(sw) = &root.history[0].state {
+            return sw.selected;
+        }
+    }
+    panic!("could not reach the tabs switch");
 }
 
 fn tab_history(st: &RouteState, branch: usize) -> &[whisker_router::core::StackEntry] {
