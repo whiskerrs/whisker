@@ -74,6 +74,22 @@ fn reset_to_home_tab_from_another_tab() {
     }
 }
 
+#[test]
+fn bare_group_url_resolves_to_its_first_screen() {
+    // The "(search)" group has no index "" child. A bare "/(search)" (e.g. a
+    // tab-bar `select("/(search)")`) must still resolve — to the group's first
+    // screen (list) — so the tab stays selectable.
+    let t = grouped_tabs_tree();
+    let mut st = RouteState::initial(&t);
+    let mut nav = Navigator::new(&t, &mut st);
+    nav.select("/(search)").unwrap();
+    assert_eq!(
+        nav.current().path,
+        NodePath(vec![0, 1, 0, 0]),
+        "select(\"/(search)\") lands on the search tab's first screen (list)"
+    );
+}
+
 // ===================================================================
 // The Twitter-style tree (built by hand — no macro yet)
 // ===================================================================

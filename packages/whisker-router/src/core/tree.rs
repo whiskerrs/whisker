@@ -460,6 +460,28 @@ impl CompiledTree {
         matches!(self.node_at(path), Some(RouteTree::Route(_, kids)) if kids.is_empty())
     }
 
+    /// **Container** Routes (a `(group)` / layout with children) whose URL
+    /// matches `url`. The fallback for a URL that names no leaf screen — e.g.
+    /// a bare `/(group)` whose group has no index `""` child; the caller
+    /// descends the chosen container to its index leaf.
+    pub fn container_paths_matching_url(&self, url: &str) -> Vec<NodePath> {
+        let input: Vec<&str> = url.split('/').filter(|s| !s.is_empty()).collect();
+        self.by_path
+            .values()
+            .filter(|i| {
+                if self.is_leaf_route(&i.path) {
+                    return false;
+                }
+                let Some(pattern) = i.url.as_deref() else {
+                    return false;
+                };
+                let pat: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+                match_segments(&pat, &input).is_some()
+            })
+            .map(|i| i.path.clone())
+            .collect()
+    }
+
     /// All [`NodePath`]s whose `Route` derives the given full URL
     /// (exact match, no group-optional logic), in declaration order.
     pub fn paths_with_url(&self, url: &str) -> Vec<NodePath> {
