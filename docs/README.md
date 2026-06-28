@@ -10,6 +10,9 @@ Whisker itself**.
 
 ## Contents
 
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — the practical "how do I build
+  from source, run an example on a device, and submit a change" guide.
+  **Read this first if you're new.**
 - [`architecture.md`](architecture.md) — how the workspace is sliced
   into crates, the runtime layers, the Lynx bridge, and how the
   `whisker run` dev loop wires them together. **Start here.**
