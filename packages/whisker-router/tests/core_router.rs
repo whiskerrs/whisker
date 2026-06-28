@@ -53,15 +53,24 @@ fn reset_to_home_tab_from_another_tab() {
     }
     {
         let mut nav = Navigator::new(&t, &mut st);
-        // The home route is "" under the "(home)" group, so its canonical URL
-        // is "/(home)". A bare "/" matches no route here and resolves relative
-        // to the current tab — use the explicit group URL to target Home.
-        nav.reset("/(home)").unwrap();
+        // The home is the index "" route under the "(home)" group. "/" must
+        // resolve to that leaf screen — not the group container (which shares
+        // the URL) — so reset("/") from the search tab lands on the Home tab.
+        nav.reset("/").unwrap();
         assert_eq!(
             nav.current().path,
             NodePath(vec![0, 0, 0, 0]),
-            "reset(\"/(home)\") from the search tab lands on the Home tab"
+            "reset(\"/\") from the search tab lands on the Home tab"
         );
+    }
+    // The explicit group URL works identically.
+    {
+        let mut st2 = RouteState::initial(&t);
+        let mut nav = Navigator::new(&t, &mut st2);
+        nav.select("/list").unwrap();
+        nav.navigate("/detail/1").unwrap();
+        nav.reset("/(home)").unwrap();
+        assert_eq!(nav.current().path, NodePath(vec![0, 0, 0, 0]));
     }
 }
 

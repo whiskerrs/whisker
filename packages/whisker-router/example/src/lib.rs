@@ -255,14 +255,13 @@ fn detail() -> Element {
                 text(value: "Reset → Detail #5", style: button_label_style())
             }
 
-            // Reset to the Home tab. Use the canonical "/(home)" URL (the
-            // home route is "" under the "(home)" group, so its URL is
-            // "/(home)"); a bare "/" resolves relative to the current tab.
+            // Reset to the Home tab. "/" resolves to the home index screen
+            // (the "" route inside the "(home)" group), even from another tab.
             view(
                 style: button_style(),
                 on_tap: {
                     let nav = nav.clone();
-                    move |_| { let _ = nav.reset("/(home)"); }
+                    move |_| { let _ = nav.reset("/"); }
                 },
             ) {
                 text(value: "Reset → Home", style: button_label_style())
