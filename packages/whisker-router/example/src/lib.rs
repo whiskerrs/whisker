@@ -242,9 +242,9 @@ fn detail() -> Element {
                 text(value: format!("Replace → Detail #{next}"), style: button_label_style())
             }
 
-            // Reset (#264): collapse the whole stack to a single entry whose
-            // route differs from the bottom (Home). Must show Detail #5
-            // cleanly — pre-fix it kept the stale bottom screen.
+            // Reset to a NEW route (not in the back stack): global reset
+            // collapses every stack to `[detail/5]`. Direction would be a
+            // push once reset animates.
             view(
                 style: button_style(),
                 on_tap: {
@@ -253,6 +253,19 @@ fn detail() -> Element {
                 },
             ) {
                 text(value: "Reset → Detail #5", style: button_label_style())
+            }
+
+            // Reset to the Home tab. Use the canonical "/(home)" URL (the
+            // home route is "" under the "(home)" group, so its URL is
+            // "/(home)"); a bare "/" resolves relative to the current tab.
+            view(
+                style: button_style(),
+                on_tap: {
+                    let nav = nav.clone();
+                    move |_| { let _ = nav.reset("/(home)"); }
+                },
+            ) {
+                text(value: "Reset → Home", style: button_label_style())
             }
 
             view(

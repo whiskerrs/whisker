@@ -7,8 +7,63 @@
 //! brief are tagged in the test names / comments.
 
 use whisker_router::core::{
-    CompiledTree, NavError, Navigator, NodePath, RouteState, RouteTree, Scope, SwitchDef,
+    CompiledTree, NavError, Navigator, NodePath, RouteDef, RouteState, RouteTree, Scope, SwitchDef,
 };
+
+/// Mirror the router example: a layout `Route` over a `Switch` whose branches
+/// are `(group) → Stack` tabs (home tab + search tab).
+fn grouped_tabs_tree() -> CompiledTree {
+    CompiledTree::new(RouteTree::route_with(
+        RouteDef::new("", "layout"),
+        vec![RouteTree::switch(
+            SwitchDef::new("tabs", 0),
+            vec![
+                RouteTree::route_with(
+                    RouteDef::new("(home)", "home_grp"),
+                    vec![RouteTree::stack(vec![
+                        RouteTree::route("", "home"),
+                        RouteTree::route("detail/:id", "detail"),
+                    ])],
+                ),
+                RouteTree::route_with(
+                    RouteDef::new("(search)", "search_grp"),
+                    vec![RouteTree::stack(vec![
+                        RouteTree::route("list", "list"),
+                        RouteTree::route("detail/:id", "detail"),
+                    ])],
+                ),
+            ],
+        )],
+    ))
+}
+
+#[test]
+fn reset_to_home_tab_from_another_tab() {
+    let t = grouped_tabs_tree();
+    let mut st = RouteState::initial(&t);
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        nav.select("/list").unwrap(); // switch to the search tab
+        nav.navigate("/detail/1").unwrap(); // list → detail
+        assert_eq!(
+            nav.current().path,
+            NodePath(vec![0, 1, 0, 1]),
+            "in search/detail"
+        );
+    }
+    {
+        let mut nav = Navigator::new(&t, &mut st);
+        // The home route is "" under the "(home)" group, so its canonical URL
+        // is "/(home)". A bare "/" matches no route here and resolves relative
+        // to the current tab — use the explicit group URL to target Home.
+        nav.reset("/(home)").unwrap();
+        assert_eq!(
+            nav.current().path,
+            NodePath(vec![0, 0, 0, 0]),
+            "reset(\"/(home)\") from the search tab lands on the Home tab"
+        );
+    }
+}
 
 // ===================================================================
 // The Twitter-style tree (built by hand — no macro yet)
