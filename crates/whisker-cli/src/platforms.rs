@@ -84,7 +84,7 @@ const WHISKER_SDK_VERSION: &str = "0.1.1";
 ///     alone, plus places the staged `.so` into a nested
 ///     `<jniLibsDir>/<abi>/` subdir so AGP's `mergeJniLibFolders`
 ///     recognises the layout.
-const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.4.0";
+const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.4.1";
 const WHISKER_MAVEN_URL: &str = "https://whiskerrs.github.io/whisker/maven";
 const LYNX_MAVEN_URL: &str = "https://whiskerrs.github.io/lynx/maven";
 
