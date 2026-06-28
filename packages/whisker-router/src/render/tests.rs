@@ -13,7 +13,9 @@ use std::rc::Rc;
 
 use whisker::runtime::reactive::Owner;
 
-use crate::core::{CompiledTree, NodePath, RouteInstance, RouteState, RouteTree, SwitchDef};
+use crate::core::{
+    CompiledTree, NodePath, RouteDef, RouteInstance, RouteState, RouteTree, SwitchDef,
+};
 use crate::render::handle::{RouterHandle, state_at};
 use crate::render::node::mount_node;
 use crate::render::registry::RouteRegistry;
@@ -173,6 +175,60 @@ fn reset_clears_stack_to_target() {
         };
         assert_eq!(s.history.len(), 1);
         assert_eq!(h.current().get().path, NodePath(vec![0]));
+    });
+}
+
+/// `Route(layout) { Stack { home, detail/:id } }` — a layout Route (a
+/// `Route` with children, like `routes! { Route(component: X) { … } }`) above
+/// the active stack.
+fn layout_wrapped_handle() -> RouterHandle {
+    let tree = CompiledTree::new(RouteTree::route_with(
+        RouteDef::new("", "layout"),
+        vec![RouteTree::stack(vec![
+            RouteTree::route("", "home"),
+            RouteTree::route("detail/:id", "detail"),
+        ])],
+    ));
+    RouterHandle::new((tree, registry()))
+}
+
+fn layout_stack_history_len(h: &RouterHandle) -> usize {
+    let RouteState::Route(r) = h.state().get() else {
+        panic!("root is a layout route")
+    };
+    let RouteState::Stack(s) = &r.children[0] else {
+        panic!("layout child is a stack")
+    };
+    s.history.len()
+}
+
+/// Regression: `replace` / `reset` (and `pop_to`) must work when a layout
+/// Route sits above the active stack. `active_stack_mut` returned `None` for
+/// any `Route`, so it disagreed with `deepest_active_stack_path` and the
+/// `.expect("stack exists")` panicked — surfaced by the tabbed router example
+/// (tap Replace / Reset → "panic in event handler for `tap`; event dropped").
+#[test]
+fn stack_ops_work_under_a_layout_route() {
+    with_runtime(|| {
+        let h = layout_wrapped_handle();
+        h.navigate("/detail/1").unwrap();
+        flush();
+
+        // replace: swaps the top in place (no panic), depth unchanged.
+        h.replace("/detail/2").unwrap();
+        assert_eq!(
+            h.current().get().params.get("id").map(String::as_str),
+            Some("2"),
+        );
+        assert_eq!(layout_stack_history_len(&h), 2, "replace keeps depth");
+
+        // reset: collapses the stack to a single entry (no panic).
+        h.reset("/detail/5").unwrap();
+        assert_eq!(
+            h.current().get().params.get("id").map(String::as_str),
+            Some("5"),
+        );
+        assert_eq!(layout_stack_history_len(&h), 1, "reset collapses to one");
     });
 }
 

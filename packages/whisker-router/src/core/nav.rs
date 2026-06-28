@@ -402,7 +402,22 @@ fn active_stack_mut(state: &mut RouteState) -> Option<&mut StackState> {
     // recursion that returns the deepest one.
     fn go(state: &mut RouteState) -> Option<&mut StackState> {
         match state {
-            RouteState::Route(_) => None,
+            RouteState::Route(r) => {
+                // A *leaf* Route has no stack below it. A layout/group Route
+                // (`Route(component:) { … }` / a pathless `(group)`) wraps a
+                // Switch/Stack/Route child — we must descend into it, exactly
+                // as `active_chain`/`deepest_active_stack_path` do. Without
+                // this the two disagreed (path found, but no `&mut` stack)
+                // and `replace`/`reset`/`pop_to` panicked on `expect`.
+                if r.children.is_empty() {
+                    return None;
+                }
+                let idx = r
+                    .children
+                    .iter()
+                    .position(|c| !matches!(c, RouteState::Route(ri) if ri.children.is_empty()))?;
+                go(&mut r.children[idx])
+            }
             RouteState::Switch(s) => {
                 let sel = s.selected;
                 go(&mut s.branches[sel])
