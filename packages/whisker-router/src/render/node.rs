@@ -446,10 +446,12 @@ fn reconcile_stack(
         }
     }
 
-    // ----- Same length but the top changed = `replace`. Swap the top in
-    // place and slide the new screen in (drive its controller 0 → 1) using
-    // its route transition, instead of snapping to the final pose. The entry
-    // beneath (if any) stays put — a replace swaps only the top. (#265)
+    // ----- Same length but the top changed = `replace`. Animate it like a
+    // push: the new screen slides in OVER the old top (kept mounted as a
+    // transient `Under`), and the old wrapper is disposed when the slide
+    // finishes. The entry *below* the old top is left untouched (it stays
+    // covered), so the lower screen never flashes into view behind the
+    // incoming one. (#265)
     if new_len == old_len && new_len > 0 {
         let top_idx = new_len - 1;
         let entry = &stack.history[top_idx];
@@ -459,18 +461,36 @@ fn reconcile_stack(
             w.child != entry.child || w.fingerprint != entry.state
         };
         if needs_swap {
+            // Detach the old top from `live` but keep it mounted — it is the
+            // incoming screen's `Under` for the duration of the slide.
             let old = live.borrow_mut().remove(top_idx);
-            dispose_wrapper(slot, old);
             let w = mount_wrapper(handle, slot, top_idx, entry);
             let drive = w.ctrl.clone();
+            let instant = w.transition.is_instant();
             w.ctrl.set_value(0.0);
             set_pose(&w, &drive, Role::Top, Direction::Push);
-            if w.transition.is_instant() {
+            set_pose(&old, &drive, Role::Under, Direction::Push);
+            live.borrow_mut().insert(top_idx, w);
+
+            if instant {
                 drive.set_value(1.0);
+                dispose_wrapper(slot, old);
             } else {
+                // Tear the old top down ONLY when the slide finishes (mirrors
+                // `run_pop`), never mid-animation.
+                let old_wrapper = old.wrapper;
+                let old_owner = old.owner;
+                let done = Rc::new(RefCell::new(false));
+                drive.on_finish(move |finished| {
+                    if !finished || *done.borrow() {
+                        return;
+                    }
+                    *done.borrow_mut() = true;
+                    remove_child(slot, old_wrapper);
+                    old_owner.dispose();
+                });
                 drive.forward();
             }
-            live.borrow_mut().insert(top_idx, w);
         }
     }
 
