@@ -336,6 +336,70 @@ fn navigate_mounts_new_leaf_exactly_once() {
     });
 }
 
+/// A single root Stack with mount-counting leaves (`home` at `""`, `detail`
+/// at `detail/:id`).
+fn counting_simple_handle(counts: Counts) -> RouterHandle {
+    let tree = CompiledTree::new(RouteTree::stack(vec![
+        RouteTree::route("", "home"),
+        RouteTree::route("detail/:id", "detail"),
+    ]));
+    let mk = |id: &'static str, counts: Counts| {
+        move |_: &RouteInstance| {
+            *counts.borrow_mut().entry(id).or_insert(0) += 1;
+            whisker::runtime::view::create_phantom_element()
+        }
+    };
+    let registry = RouteRegistry::new()
+        .route("home", mk("home", counts.clone()))
+        .route_with(
+            "detail",
+            RouteTransition::none(),
+            mk("detail", counts.clone()),
+        );
+    RouterHandle::new((tree, registry))
+}
+
+/// Regression for #264. When `reset` replaces the whole history with a route
+/// that differs from the surviving index-0 wrapper, the reconcile must dispose
+/// the stale survivor and mount the new route — not re-show the old screen.
+/// (Wrappers are keyed by history index; a naive shrink kept the stale
+/// survivor, so the cleared screen reappeared and its native views leaked.)
+#[test]
+fn reset_to_different_route_reinstantiates_revealed_top() {
+    with_runtime(|| {
+        let counts: Counts = Rc::new(RefCell::new(HashMap::new()));
+        let h = counting_simple_handle(counts.clone());
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+        assert_eq!(counts.borrow().get("home").copied(), Some(1));
+
+        // Push detail → history [home, detail/1].
+        h.navigate("/detail/1").unwrap();
+        flush();
+        assert_eq!(counts.borrow().get("detail").copied(), Some(1));
+
+        // Reset to a route DIFFERENT from index 0 (home) → history [detail/2].
+        // The shrink reveals the index-0 survivor (home), which no longer
+        // matches the history (detail/2), so it must be swapped.
+        h.reset("/detail/2").unwrap();
+        flush();
+
+        let RouteState::Stack(s) = h.state().get() else {
+            panic!("root is a stack")
+        };
+        assert_eq!(s.history.len(), 1, "reset collapses to a single entry");
+
+        // The revealed top is a NEW detail leaf (mounted for /2), so detail
+        // mounted twice total. Pre-fix this stayed at 1 — the stale `home`
+        // wrapper was kept and `detail/2` never mounted.
+        assert_eq!(
+            counts.borrow().get("detail").copied(),
+            Some(2),
+            "reset must re-instantiate the revealed top when its route changed"
+        );
+    });
+}
+
 // ----- coordinated pop: survivor returns to the active (0%) pose -------
 
 /// A single-stack handle with Slide routes so a push/pop runs a real
@@ -436,6 +500,59 @@ fn push_settles_top_to_full_progress() {
             detail_ctrl.value().get_untracked(),
             1.0,
             "top settles at progress 1.0 after push"
+        );
+    });
+    owner.dispose();
+}
+
+/// Regression for #265. `replace` used to snap the new top to its final pose
+/// (`ctrl.set_value(1.0)`); it must instead slide the new screen in (drive
+/// 0 → 1) using the route transition.
+#[test]
+fn replace_animates_the_new_top_in() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        // Push detail/1 and let it settle (top at progress 1.0).
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+
+        // Replace the top (detail/1 → detail/2, same depth).
+        h.replace("/detail/2").unwrap();
+        flush();
+        let top_ctrl = h
+            .active_stack_bridge_for_test(&NodePath::root())
+            .and_then(|b| b.top_ctrl)
+            .expect("new top ctrl");
+
+        // Step a few frames WITHOUT settling: the new top's progress must
+        // traverse intermediate values (a visible slide-in), not be pinned at
+        // 1.0 from the first frame (the pre-fix instant-swap bug).
+        let mut t = 1000.0;
+        let mut traj = Vec::new();
+        for _ in 0..6 {
+            whisker_animation::__step_for_tests(t);
+            flush();
+            traj.push(top_ctrl.value().get_untracked());
+            t += 16.0;
+        }
+        assert!(
+            traj.iter().any(|&p| p > 0.05 && p < 0.95),
+            "replace should animate the new top in, not snap; traj={traj:?}"
+        );
+
+        // …and it must still settle fully present.
+        settle_animations();
+        assert_eq!(
+            top_ctrl.value().get_untracked(),
+            1.0,
+            "replaced top settles at progress 1.0"
         );
     });
     owner.dispose();

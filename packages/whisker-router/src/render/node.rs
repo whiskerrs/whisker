@@ -399,26 +399,57 @@ fn reconcile_stack(
         }
     }
 
-    // ----- Shrink: a pop / reset.
+    // ----- Shrink: a pop or a reset.
     if new_len < old_len {
-        let popped: Vec<StackWrapper> = {
-            let mut l = live.borrow_mut();
-            l.split_off(new_len)
+        // A genuine pop leaves the revealed survivor unchanged, so we animate
+        // the removed top out over it. A `reset` (full-history replacement)
+        // can instead leave a *different* route at the new top index — the
+        // surviving wrapper is stale. Wrappers are keyed by index, so a naive
+        // shrink would keep that stale screen mounted (showing the wrong
+        // screen and leaking its native views). Check the survivor: if it no
+        // longer matches the history, this is a reset — swap it in place
+        // (disposing the stale wrapper) with no pop animation.
+        let survivor_matches = new_len == 0 || {
+            let l = live.borrow();
+            let w = &l[new_len - 1];
+            let entry = &stack.history[new_len - 1];
+            w.child == entry.child && w.fingerprint == entry.state
         };
-        // The deepest-removed (the visible top) animates out coordinated
-        // with the newly-revealed survivor; any extra removed entries
-        // (multi-pop / reset) just vanish.
-        let mut popped = popped.into_iter();
-        if let Some(top_popped) = popped.next() {
-            run_pop(slot, live, top_popped);
-        }
-        for w in popped {
-            dispose_wrapper(slot, w);
+        let popped: Vec<StackWrapper> = live.borrow_mut().split_off(new_len);
+        if survivor_matches {
+            // The deepest-removed (the visible top) animates out coordinated
+            // with the newly-revealed survivor; any extra removed entries
+            // (multi-pop) just vanish.
+            let mut popped = popped.into_iter();
+            if let Some(top_popped) = popped.next() {
+                run_pop(slot, live, top_popped);
+            }
+            for w in popped {
+                dispose_wrapper(slot, w);
+            }
+        } else {
+            // Reset: dispose every removed wrapper (no pop animation), then
+            // replace the stale survivor top with the route the history now
+            // wants there. Disposing the old wrapper tears down its native
+            // views, so nothing from the cleared screens lingers.
+            for w in popped {
+                dispose_wrapper(slot, w);
+            }
+            let top_idx = new_len - 1;
+            let old = live.borrow_mut().remove(top_idx);
+            dispose_wrapper(slot, old);
+            let entry = &stack.history[top_idx];
+            let w = mount_wrapper(handle, slot, top_idx, entry);
+            w.ctrl.set_value(1.0);
+            set_pose(&w, &w.ctrl.clone(), Role::Top, Direction::Push);
+            live.borrow_mut().insert(top_idx, w);
         }
     }
 
-    // ----- Same length but the top changed = `replace`. Swap in place,
-    // no animation (the new top is already present).
+    // ----- Same length but the top changed = `replace`. Swap the top in
+    // place and slide the new screen in (drive its controller 0 → 1) using
+    // its route transition, instead of snapping to the final pose. The entry
+    // beneath (if any) stays put — a replace swaps only the top. (#265)
     if new_len == old_len && new_len > 0 {
         let top_idx = new_len - 1;
         let entry = &stack.history[top_idx];
@@ -431,8 +462,14 @@ fn reconcile_stack(
             let old = live.borrow_mut().remove(top_idx);
             dispose_wrapper(slot, old);
             let w = mount_wrapper(handle, slot, top_idx, entry);
-            w.ctrl.set_value(1.0);
-            set_pose(&w, &w.ctrl.clone(), Role::Top, Direction::Push);
+            let drive = w.ctrl.clone();
+            w.ctrl.set_value(0.0);
+            set_pose(&w, &drive, Role::Top, Direction::Push);
+            if w.transition.is_instant() {
+                drive.set_value(1.0);
+            } else {
+                drive.forward();
+            }
             live.borrow_mut().insert(top_idx, w);
         }
     }
