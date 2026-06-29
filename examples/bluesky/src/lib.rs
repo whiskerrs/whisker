@@ -360,7 +360,14 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
                     show_logout: show_logout,
                 )
             }
-            post_list(posts: feed.get().unwrap_or_default())
+            // Gate the list inside its own `Show` (like the home timeline) so
+            // it mounts once, with the full feed, when `feed` resolves.
+            // Rendering `post_list(feed.get())` unconditionally read `feed`
+            // outside a reactive scope, so a feed that resolved after the
+            // first render never re-rendered the list (it stayed empty).
+            Show(when: move || feed.get().is_some(), fallback: || render! { fragment() }) {
+                post_list(posts: feed.get().unwrap_or_default())
+            }
         }
     }
 }
