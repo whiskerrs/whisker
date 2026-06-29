@@ -312,6 +312,16 @@ fn profile_screen() -> Element {
     }
 }
 
+/// One row of the profile screen's single virtualised `list`: the header
+/// is the first item, the author's posts follow. Keeping them in one
+/// `list` (rather than a header above a list) makes the header scroll with
+/// the feed while staying virtualised.
+#[derive(Clone)]
+enum ProfileRow {
+    Header(bsky_domain::Profile, String, bool),
+    Post(bsky_domain::FeedPost),
+}
+
 /// Profile header (banner / avatar / name / bio / counts + follow or
 /// logout) followed by the account's authored posts.
 #[component]
@@ -335,45 +345,34 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
         }
     });
 
-    // The header scrolls with the feed: both live inside one `scroll_view`,
-    // the header first and the posts (a keyed `ForEach`) after it. They stay
-    // independent reactive siblings — the header reads only `prof`, the list
-    // only `feed` — so a feed update re-diffs the list without blanking the
-    // header. (A profile feed is bounded, so the non-virtualised `ForEach`
-    // is fine here; the home timeline keeps the virtualised `list`.)
+    // One virtualised `list` carries the header (first item) + the author's
+    // posts, so the header scrolls with the feed. The header is a keyed item
+    // (`::header`), so a feed update only inserts new post items and never
+    // re-renders / blanks the already-mounted header.
     render! {
-        scroll_view(
-            enable_scroll: true,
-            style: css!(
-                flex_grow: 1.0,
-                flex_shrink: 1.0,
-                width: percent(100),
-                flex_direction: FlexDirection::Column,
-            ),
-        ) {
-            Show(
-                when: move || prof.get().is_some(),
-                fallback: move || render! {
-                    status_pane(
-                        message: match prof.error() {
-                            Some(e) if !e.is_empty() => e,
-                            _ => "読み込み中…".to_string(),
-                        },
-                    )
+        list(
+            style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
+            each: move || {
+                let mut rows = Vec::new();
+                if let Some((p, me)) = prof.get() {
+                    rows.push(ProfileRow::Header(p, me, show_logout));
+                }
+                for post in feed.get().unwrap_or_default() {
+                    rows.push(ProfileRow::Post(post));
+                }
+                rows
+            },
+            key: |r: &ProfileRow| match r {
+                ProfileRow::Header(..) => "::header".to_string(),
+                ProfileRow::Post(p) => p.uri.clone(),
+            },
+            children: |r: ProfileRow| match r {
+                ProfileRow::Header(p, me, sl) => render! {
+                    profile_header(profile: p, my_did: me, show_logout: sl)
                 },
-            ) {
-                profile_header(
-                    profile: prof.get().map(|(p, _)| p).unwrap_or_default(),
-                    my_did: prof.get().map(|(_, me)| me).unwrap_or_default(),
-                    show_logout: show_logout,
-                )
-            }
-            ForEach(
-                each: move || feed.get().unwrap_or_default(),
-                key: |p: &bsky_domain::FeedPost| p.uri.clone(),
-                children: |p: bsky_domain::FeedPost| render! { PostRow(post: p) },
-            )
-        }
+                ProfileRow::Post(p) => render! { PostRow(post: p) },
+            },
+        )
     }
 }
 

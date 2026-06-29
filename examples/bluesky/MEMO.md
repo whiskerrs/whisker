@@ -44,14 +44,15 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
   認証状態は keep-alive でもログイン直後にタイムラインが再取得されるよう、共有 `RwSignal<bool>`
   (`AuthState`) を root で `provide_context` して扱う。
   → DX: 「タブ＝瞬時、push＝アニメ」を出すための入れ子の作り方が直感的に分かりにくく、example 必須。
-- **仮想化 `list` にヘッダースロットが無い → スクロールするヘッダーは `scroll_view` + `ForEach`**:
-  プロフィールの「ヘッダー＋著者フィードが一緒にスクロール」を作るとき、whisker の `list`（Lynx 仮想化）は
-  `each`/`key`/`children` の 3 kwarg だけで **body もヘッダー item も取らない**（list-item は内部生成）。
-  そのため固定ヘッダー＋仮想リストか、`scroll_view` 内に `[header, ForEach(posts)]` を並べて全部一緒に
-  スクロールさせるか、の二択。後者を採用（プロフィールは投稿件数が有界なので全マウントで可。ホームの
-  タイムラインは件数が多いので仮想化 `list` のまま）。
-  → DX: 「ヘッダー付きの長いスクロールリスト」は頻出パターンなので、`list` に header/footer/sticky スロット
-  （または mixed-item）があると仮想化を捨てずに書けて嬉しい。
+- **仮想化 `list` にヘッダースロットが無い → ヘッダーは「混在アイテム」で先頭に入れる**:
+  長いスクロールは必ず仮想化 `list` を使う方針（`scroll_view`+`ForEach` だと全マウントで重い）。
+  ただし whisker の `list` は `each`/`key`/`children` の 3 kwarg だけで **body もヘッダー item も sticky も
+  取らない**（list-item は内部生成）。そこで **行を enum（`Header(Profile,…) | Post(FeedPost)`）にして
+  `each` の先頭に Header を 1 件積む**ことで、ヘッダーも仮想化リストの一部としてスクロールさせた。
+  Header は固定 key（`"::header"`）にしておくと、feed 更新時に新規 Post だけが差分追加され、
+  既にマウント済みのヘッダーは再描画/空白化しない（先の「同一 Show children 問題」もこれで回避）。
+  異なる要素構造のアイテムを 1 つの `list` に混ぜても decoupled-native list は per-item subtree なので問題なし。
+  → DX: 「ヘッダー付きの長いリスト」は頻出。`list` に header/footer/sticky スロットがあれば enum 化せず書ける。
 - **同じ `Show` children 内で複数リソースを読むと、片方の更新が他方を巻き込んで再レンダリング**:
   プロフィール画面で `Show(when: prof.is_some()){ profile_header(prof.get()…) post_list(feed.get()…) }`
   と書いたら、**`feed` が解決した瞬間にヘッダーが空白化**した（最初は表示され、フィード到着で消える）。
