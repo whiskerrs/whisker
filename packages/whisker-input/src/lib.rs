@@ -99,6 +99,9 @@
 //! | `max_length`       | `u32`                                 | unset (`0`)   | Maximum character count. |
 //! | `keyboard_type`    | [`KeyboardType`]                      | `Default`     | On-screen keyboard layout. |
 //! | `return_key`       | [`ReturnKey`]                         | `Default`     | Return-key label / action. |
+//! | `auto_capitalize`  | [`AutoCapitalize`]                    | `Sentences`   | Keyboard auto-capitalization (`None` for handles / emails). |
+//! | `autocorrect`      | `bool`                                | `true`        | Automatic typo replacement (`false` for identifiers). |
+//! | `spell_check`      | `bool`                                | `true`        | Spell-check underline / suggestion strip (`false` for identifiers). |
 //! | `caret_color`      | `Signal<String>`                      | `""`          | Cursor color (CSS color string). |
 //! | `placeholder_color`| `Signal<String>`                      | `""`          | Placeholder text color. |
 //! | `selection_color`  | `Signal<String>`                      | `""`          | Selection-highlight color. |
@@ -323,6 +326,45 @@ impl ReturnKey {
     }
 }
 
+/// Auto-capitalization behaviour for an [`Input`]. Controls whether the
+/// on-screen keyboard auto-shifts to uppercase as the user types.
+///
+/// The default is [`Sentences`](Self::Sentences) — the platform-typical
+/// "capitalize the first letter of each sentence" behaviour. Identifier
+/// fields (handles, emails, URLs, usernames) should set
+/// [`None`](Self::None) so the very first character isn't forced upper.
+///
+/// Variant wire strings are locked against the native modules' string
+/// dispatch. `#[non_exhaustive]` so a future mode can be added without
+/// breaking exhaustive matches downstream.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum AutoCapitalize {
+    /// `"sentences"` — capitalize the first letter of each sentence.
+    /// The default; matches the platform standard for prose entry.
+    #[default]
+    Sentences,
+    /// `"none"` — never auto-capitalize. Use for handles / emails /
+    /// URLs / any case-sensitive identifier.
+    None,
+    /// `"words"` — capitalize the first letter of every word.
+    Words,
+    /// `"characters"` — capitalize every character (all-caps).
+    Characters,
+}
+
+impl AutoCapitalize {
+    /// Canonical wire string the native view dispatches on.
+    pub const fn as_attr(self) -> &'static str {
+        match self {
+            Self::Sentences => "sentences",
+            Self::None => "none",
+            Self::Words => "words",
+            Self::Characters => "characters",
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Imperative handle
 // ---------------------------------------------------------------------------
@@ -457,6 +499,9 @@ pub fn native_input(
     max_length: Signal<String>,
     keyboard_type: Signal<String>,
     return_key: Signal<String>,
+    auto_capitalize: Signal<String>,
+    autocorrect: Signal<String>,
+    spell_check: Signal<String>,
     style: Style,
     on_input: InputEvent,
     on_change: InputEvent,
@@ -516,6 +561,29 @@ pub fn input(
     /// Return-key label / action.
     #[prop(default = ReturnKey::Default)]
     return_key: ReturnKey,
+    /// Keyboard auto-capitalization. Defaults to
+    /// [`Sentences`](AutoCapitalize::Sentences); set
+    /// [`None`](AutoCapitalize::None) for handles / emails / URLs.
+    #[prop(default = AutoCapitalize::Sentences)]
+    auto_capitalize: AutoCapitalize,
+    /// Automatic typo replacement as the user types. Defaults to `true`
+    /// (the platform standard for prose); set `false` for handles /
+    /// emails / URLs / any case- or spelling-sensitive identifier.
+    ///
+    /// iOS maps this to `UITextField.autocorrectionType` (`true` →
+    /// `.default`, `false` → `.no`); Android to the `inputType`
+    /// `TYPE_TEXT_FLAG_AUTO_CORRECT` flag.
+    #[prop(default = true)]
+    autocorrect: bool,
+    /// Spelling / suggestion assistance — the iOS red-underline spell
+    /// check and the Android keyboard suggestion strip. Defaults to
+    /// `true`; set `false` to suppress both for identifier fields.
+    ///
+    /// iOS maps this to `UITextField.spellCheckingType` (`true` →
+    /// `.default`, `false` → `.no`); Android to the *inverse* of the
+    /// `inputType` `TYPE_TEXT_FLAG_NO_SUGGESTIONS` flag.
+    #[prop(default = true)]
+    spell_check: bool,
     /// Cursor color (CSS color string).
     caret_color: Option<Signal<String>>,
     /// Placeholder text color (CSS color string).
@@ -625,6 +693,9 @@ pub fn input(
     let max_length_attr = max_length.unwrap_or(0).to_string();
     let keyboard_type_attr = keyboard_type.as_attr().to_string();
     let return_key_attr = return_key.as_attr().to_string();
+    let auto_capitalize_attr = auto_capitalize.as_attr().to_string();
+    let autocorrect_attr = bool_attr(autocorrect);
+    let spell_check_attr = bool_attr(spell_check);
 
     // ----- Imperative handle: forward its ElementRef as `ref:` ---------
     let element_ref = input_ref.as_ref().map(|h| h.r());
@@ -643,6 +714,9 @@ pub fn input(
         .max_length(max_length_attr)
         .keyboard_type(keyboard_type_attr)
         .return_key(return_key_attr)
+        .auto_capitalize(auto_capitalize_attr)
+        .autocorrect(autocorrect_attr)
+        .spell_check(spell_check_attr)
         .style(style_prop)
         .on_input(on_input_cb)
         .on_change(on_change_cb)
@@ -687,9 +761,20 @@ mod tests {
     }
 
     #[test]
+    fn auto_capitalize_wire_strings() {
+        assert_eq!(AutoCapitalize::Sentences.as_attr(), "sentences");
+        assert_eq!(AutoCapitalize::None.as_attr(), "none");
+        assert_eq!(AutoCapitalize::Words.as_attr(), "words");
+        assert_eq!(AutoCapitalize::Characters.as_attr(), "characters");
+    }
+
+    #[test]
     fn enum_defaults() {
         assert_eq!(KeyboardType::default(), KeyboardType::Default);
         assert_eq!(ReturnKey::default(), ReturnKey::Default);
+        // Default matches iOS UIKit's `.sentences` so existing iOS behaviour
+        // is preserved; Android honours the same default explicitly.
+        assert_eq!(AutoCapitalize::default(), AutoCapitalize::Sentences);
     }
 
     #[test]

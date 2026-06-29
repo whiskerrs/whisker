@@ -69,6 +69,34 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     /// window (EditText must be attached before requesting focus works).
     private var pendingAutoFocus: Boolean = false
 
+    /// Selected auto-capitalization flag bit (one of the
+    /// `InputType.TYPE_TEXT_FLAG_CAP_*` flags, or `0` for "none").
+    ///
+    /// On Android, autocapitalization is NOT a standalone property like
+    /// iOS's `autocapitalizationType`; it's a few flag bits packed into
+    /// the same `inputType` Int that also carries the class / variation /
+    /// multiline / password bits. So `setKeyboardType`, `setSecure`, and
+    /// `setMultiline` — which all rebuild `inputType` — would wipe this
+    /// flag. We cache it here and reapply via [applyTextFlags] after every
+    /// such rebuild, so the cap setting survives regardless of prop order.
+    ///
+    /// Default `TYPE_TEXT_FLAG_CAP_SENTENCES` matches iOS UIKit's
+    /// `.sentences` default, keeping the two platforms consistent (the
+    /// Rust component always sends an explicit `auto-capitalize` attr,
+    /// defaulting to `"sentences"`).
+    private var capFlag: Int = InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+
+    /// `auto-capitalize`'s siblings: the autocorrect and "no suggestions"
+    /// flag bits. Like [capFlag] these live in the shared `inputType` and
+    /// are reinstated by [applyTextFlags] after any inputType rebuild.
+    ///
+    /// `autoCorrectFlag` defaults to `TYPE_TEXT_FLAG_AUTO_CORRECT` (ON) to
+    /// match iOS's `.default` autocorrect, per the platform-alignment
+    /// decision. `noSuggestionsFlag` defaults to `0` (suggestions shown),
+    /// matching both Android's native default and iOS spell-check on.
+    private var autoCorrectFlag: Int = InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
+    private var noSuggestionsFlag: Int = 0
+
     /// Last-applied CSS `background-color` (ARGB int) and corner radius
     /// (device px). We render these ourselves via a [GradientDrawable]
     /// rather than relying on Lynx's `BackgroundDrawable` — see
@@ -246,6 +274,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             et.inputType = et.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE.inv()
             et.gravity = Gravity.CENTER_VERTICAL or (et.gravity and Gravity.HORIZONTAL_GRAVITY_MASK)
         }
+        // `isSingleLine` / the MULTI_LINE flag toggle can reset inputType
+        // bits; reinstate the cached cap flag.
+        applyTextFlags()
     }
 
     fun setLines(countStr: String) {
@@ -267,6 +298,8 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             val base = et.inputType and InputType.TYPE_MASK_CLASS
             et.inputType = base or InputType.TYPE_TEXT_VARIATION_NORMAL
         }
+        // The masked rebuild above drops the cap flags; reinstate them.
+        applyTextFlags()
     }
 
     fun setEditable(flag: String) {
@@ -315,6 +348,8 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
                 InputType.TYPE_TEXT_VARIATION_URI
             else -> InputType.TYPE_CLASS_TEXT or variation
         }
+        // Rebuilding `inputType` from scratch drops the cap flags; reinstate.
+        applyTextFlags()
     }
 
     fun setReturnKey(type: String) {
@@ -327,6 +362,52 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             "send" -> EditorInfo.IME_ACTION_SEND
             else -> EditorInfo.IME_ACTION_UNSPECIFIED
         }
+    }
+
+    fun setAutoCapitalize(mode: String) {
+        capFlag = when (mode) {
+            "none" -> 0
+            "words" -> InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            "characters" -> InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            else -> InputType.TYPE_TEXT_FLAG_CAP_SENTENCES // "sentences"
+        }
+        applyTextFlags()
+    }
+
+    fun setAutocorrect(flag: String) {
+        autoCorrectFlag = if (flag == "false") 0 else InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
+        applyTextFlags()
+    }
+
+    fun setSpellCheck(flag: String) {
+        // `spell_check` is the inverse of the `NO_SUGGESTIONS` flag:
+        // spell-check OFF → set NO_SUGGESTIONS to hide the suggestion strip.
+        noSuggestionsFlag = if (flag == "false") InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS else 0
+        applyTextFlags()
+    }
+
+    /**
+     * Reapply the cached text-behaviour flag bits ([capFlag],
+     * [autoCorrectFlag], [noSuggestionsFlag]) onto the EditText's current
+     * `inputType`, clearing the managed bits first. Called from each
+     * behaviour setter and after every setter that rebuilds `inputType`
+     * ([setKeyboardType], [setSecure], [setMultiline]) so these settings
+     * survive a rebuild regardless of prop-arrival order — they all share
+     * the single `inputType` Int (unlike iOS's orthogonal traits).
+     *
+     * These flags only have an effect under `TYPE_CLASS_TEXT`; for
+     * number / phone classes (or email / URI variations) Android ignores
+     * them, so ORing unconditionally is harmless.
+     */
+    private fun applyTextFlags() {
+        val et = view ?: return
+        val managed = InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+            InputType.TYPE_TEXT_FLAG_CAP_WORDS or
+            InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
+            InputType.TYPE_TEXT_FLAG_AUTO_CORRECT or
+            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        et.inputType = (et.inputType and managed.inv()) or
+            capFlag or autoCorrectFlag or noSuggestionsFlag
     }
 
     // -------------------------------------------------------------------------
