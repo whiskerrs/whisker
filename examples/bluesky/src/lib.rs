@@ -17,6 +17,7 @@ use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyConten
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_icons::{Icon, lucide};
+use whisker_image::{Image, ImageMode};
 use whisker_input::{AutoCapitalize, Input, KeyboardType};
 use whisker_router::render::{
     AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_navigator, use_param,
@@ -44,6 +45,7 @@ pub fn app() -> Element {
                                 Stack {
                                     Route(path: "", component: TimelineScreen)
                                     Route(path: "post/:uri", component: PostDetailScreen)
+                                    Route(path: "profile/:did", component: ProfileScreen)
                                 }
                             }
                             Route(path: "(search)") {
@@ -211,9 +213,354 @@ fn notifications_screen() -> Element {
     render! { placeholder_screen(title: "通知（準備中）") }
 }
 
+/// The signed-in user's own profile (Profile tab root). Resolves the own
+/// DID, then renders the shared profile view with a logout action.
 #[component]
 fn my_profile_screen() -> Element {
-    render! { placeholder_screen(title: "プロフィール（準備中）") }
+    let me = resource(|| async {
+        bsky_auth::my_did()
+            .await
+            .ok_or_else(|| "not authenticated".to_string())
+    });
+    let insets = safe_area_insets();
+    let pad = computed(move || css!(padding_top: px(insets.get().top as f32 + 8.0)));
+    render! {
+        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            view(style: pad) {}
+            Show(
+                when: move || me.get().is_some(),
+                fallback: move || render! { status_pane(message: "読み込み中…".to_string()) },
+            ) {
+                profile_view(actor: me.get().unwrap_or_default(), show_logout: true)
+            }
+        }
+    }
+}
+
+/// Another account's profile (pushed `profile/:did`). DID arrives
+/// percent-encoded in the route param.
+#[component]
+fn profile_screen() -> Element {
+    let did_param = use_param("did");
+    let enc = did_param.get().unwrap_or_default();
+    let actor = urlencoding::decode(&enc)
+        .map(|c| c.into_owned())
+        .unwrap_or(enc);
+    render! {
+        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            nav_header(title: "プロフィール".to_string())
+            profile_view(actor: actor, show_logout: false)
+        }
+    }
+}
+
+/// Profile header (banner / avatar / name / bio / counts + follow or
+/// logout) followed by the account's authored posts.
+#[component]
+fn profile_view(actor: String, show_logout: bool) -> Element {
+    let prof = resource({
+        let actor = actor.clone();
+        move || {
+            let actor = actor.clone();
+            async move {
+                let me = bsky_auth::my_did().await.unwrap_or_default();
+                let p = bsky_auth::get_profile(&actor).await?;
+                Ok::<_, String>((p, me))
+            }
+        }
+    });
+    let feed = resource({
+        let actor = actor.clone();
+        move || {
+            let actor = actor.clone();
+            async move { bsky_auth::get_author_feed(&actor, 50).await }
+        }
+    });
+
+    render! {
+        view(style: css!(flex_grow: 1.0, flex_shrink: 1.0, flex_direction: FlexDirection::Column)) {
+            Show(
+                when: move || prof.get().is_some(),
+                fallback: move || render! {
+                    status_pane(
+                        message: match prof.error() {
+                            Some(e) if !e.is_empty() => e,
+                            _ => "読み込み中…".to_string(),
+                        },
+                    )
+                },
+            ) {
+                profile_header(
+                    profile: prof.get().map(|(p, _)| p).unwrap_or_default(),
+                    my_did: prof.get().map(|(_, me)| me).unwrap_or_default(),
+                    show_logout: show_logout,
+                )
+                post_list(posts: feed.get().unwrap_or_default())
+            }
+        }
+    }
+}
+
+#[component]
+fn profile_header(profile: bsky_domain::Profile, my_did: String, show_logout: bool) -> Element {
+    let banner = profile.banner.clone().unwrap_or_default();
+    let avatar = profile.avatar.clone().unwrap_or_default();
+    let is_me = profile.did == my_did;
+    let counts = format!(
+        "{} フォロー中 · {} フォロワー · {} ポスト",
+        profile.follows_count, profile.followers_count, profile.posts_count
+    );
+    // Cloned for the (re-invokable) follow-button Show children closure.
+    // `following_uri` is passed as a String (empty == not following).
+    let follow_did = profile.did.clone();
+    let follow_uri = profile.following_uri.clone().unwrap_or_default();
+    // Extract every field to an owned local so `profile` isn't referenced
+    // inside the render closures (it's not `Copy`).
+    let name = profile.name();
+    let handle = format!("@{}", profile.handle);
+    let description = profile.description.clone().unwrap_or_default();
+    let has_desc = !description.is_empty();
+
+    render! {
+        view(style: css!(
+            flex_direction: FlexDirection::Column,
+            padding_bottom: px(12),
+            border_bottom_width: px(1),
+            border_bottom_color: theme::BORDER,
+        )) {
+            Show(when: { let b = !banner.is_empty(); move || b }, fallback: || render! { fragment() }) {
+                Image(
+                    style: css!(width: percent(100), height: px(120), background_color: theme::SURFACE),
+                    src: banner.clone(),
+                    mode: ImageMode::AspectFill,
+                )
+            }
+            view(style: css!(
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                padding_left: theme::GUTTER,
+                padding_right: theme::GUTTER,
+                margin_top: px(8),
+            )) {
+                avatar_disc(src: avatar)
+                Show(when: move || show_logout, fallback: || render! { fragment() }) {
+                    logout_button()
+                }
+                Show(when: move || !show_logout && !is_me, fallback: || render! { fragment() }) {
+                    follow_button(
+                        did: follow_did.clone(),
+                        following_uri: follow_uri.clone(),
+                    )
+                }
+            }
+            text(
+                style: css!(
+                    font_size: px(20),
+                    font_weight: FontWeight::Bold,
+                    color: theme::TEXT_PRIMARY,
+                    margin_top: px(8),
+                    margin_left: theme::GUTTER,
+                ),
+                value: name,
+            )
+            text(
+                style: css!(font_size: theme::T_HANDLE, color: theme::TEXT_SECONDARY, margin_left: theme::GUTTER),
+                value: handle,
+            )
+            Show(when: move || has_desc, fallback: || render! { fragment() }) {
+                text(
+                    style: css!(
+                        font_size: theme::T_BODY,
+                        color: theme::TEXT_PRIMARY,
+                        margin_top: px(8),
+                        margin_left: theme::GUTTER,
+                        margin_right: theme::GUTTER,
+                    ),
+                    value: description.clone(),
+                )
+            }
+            text(
+                style: css!(
+                    font_size: theme::T_META,
+                    color: theme::TEXT_SECONDARY,
+                    margin_top: px(10),
+                    margin_left: theme::GUTTER,
+                ),
+                value: counts.clone(),
+            )
+        }
+    }
+}
+
+/// A 64px circular avatar for the profile header.
+#[component]
+fn avatar_disc(src: String) -> Element {
+    if src.is_empty() {
+        render! {
+            view(style: css!(
+                width: px(64),
+                height: px(64),
+                border_radius: px(32),
+                background_color: theme::ACCENT,
+            )) {}
+        }
+    } else {
+        render! {
+            Image(
+                style: css!(
+                    width: px(64),
+                    height: px(64),
+                    border_radius: px(32),
+                    background_color: theme::SURFACE,
+                ),
+                src: src.clone(),
+                mode: ImageMode::AspectFill,
+            )
+        }
+    }
+}
+
+/// Follow / unfollow toggle with optimistic state.
+#[component]
+fn follow_button(did: String, following_uri: String) -> Element {
+    // Empty `following_uri` == not following (avoids an `Option` prop,
+    // which `#[component]` treats as an optional setter — see MEMO).
+    let following = RwSignal::new(!following_uri.is_empty());
+    let uri = RwSignal::new(if following_uri.is_empty() {
+        None
+    } else {
+        Some(following_uri.clone())
+    });
+    let did = did.clone();
+    let label = computed(move || {
+        if following.get() {
+            "フォロー中".to_string()
+        } else {
+            "フォロー".to_string()
+        }
+    });
+    render! {
+        view(
+            style: computed(move || {
+                let on = following.get();
+                css!(
+                    height: px(34),
+                    padding_left: px(16),
+                    padding_right: px(16),
+                    border_radius: px(17),
+                    display: Display::Flex,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    background_color: if on { theme::SURFACE } else { theme::ACCENT },
+                )
+            }),
+            on_tap: move |_| {
+                let was = following.get();
+                following.set(!was);
+                let did = did.clone();
+                spawn_local(async move {
+                    if was {
+                        if let Some(u) = uri.get() {
+                            if bsky_auth::unfollow(&u).await.is_ok() {
+                                uri.set(None);
+                            } else {
+                                following.set(true);
+                            }
+                        }
+                    } else {
+                        match bsky_auth::follow(&did).await {
+                            Ok(u) => uri.set(Some(u)),
+                            Err(_) => following.set(false),
+                        }
+                    }
+                });
+            },
+        ) {
+            text(
+                style: computed(move || css!(
+                    font_size: px(14),
+                    font_weight: FontWeight::Bold,
+                    color: if following.get() { theme::TEXT_PRIMARY } else { theme::ON_ACCENT },
+                )),
+                value: label,
+            )
+        }
+    }
+}
+
+/// Logout: clear the session and reset to the login screen.
+#[component]
+fn logout_button() -> Element {
+    let nav = use_navigator();
+    render! {
+        view(
+            style: css!(
+                height: px(34),
+                padding_left: px(16),
+                padding_right: px(16),
+                border_radius: px(17),
+                display: Display::Flex,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                background_color: theme::SURFACE,
+            ),
+            on_tap: move |_| {
+                let nav = nav.clone();
+                spawn_local(async move {
+                    bsky_auth::logout().await;
+                    let _ = nav.reset("/login");
+                });
+            },
+        ) {
+            text(
+                style: css!(font_size: px(14), color: theme::TEXT_PRIMARY),
+                value: "ログアウト",
+            )
+        }
+    }
+}
+
+/// Reusable top bar with a back chevron + title (safe-area aware).
+#[component]
+fn nav_header(title: String) -> Element {
+    let nav = use_navigator();
+    let insets = safe_area_insets();
+    let style = computed(move || {
+        css!(
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            background_color: theme::BG,
+            border_bottom_width: px(1),
+            border_bottom_color: theme::BORDER,
+            padding_top: px(insets.get().top as f32 + 8.0),
+            padding_bottom: px(8),
+            padding_left: px(8),
+            padding_right: px(16),
+        )
+    });
+    render! {
+        view(style: style) {
+            view(
+                style: css!(padding: px(8), display: Display::Flex, align_items: AlignItems::Center),
+                on_tap: move |_| {
+                    let _ = nav.back();
+                },
+            ) {
+                Icon(svg: lucide::ChevronLeft, color: "#FFFFFF", size: "26")
+            }
+            text(
+                style: css!(
+                    font_size: theme::T_NAME,
+                    font_weight: FontWeight::Bold,
+                    color: theme::TEXT_PRIMARY,
+                    margin_left: px(4),
+                ),
+                value: title.clone(),
+            )
+        }
+    }
 }
 
 /// Enter a handle, then navigate to the auth screen which runs the OAuth flow.
@@ -573,6 +920,14 @@ fn post_row(post: bsky_domain::FeedPost) -> Element {
         let _ = nav_open.navigate(&format!("/post/{enc}"));
     });
 
+    // Tap the avatar → the author's profile.
+    let author_did = post.author.did.clone();
+    let nav_author = nav.clone();
+    let on_author: std::rc::Rc<dyn Fn()> = std::rc::Rc::new(move || {
+        let enc = urlencoding::encode(&author_did);
+        let _ = nav_author.navigate(&format!("/profile/{enc}"));
+    });
+
     // Like / unlike with optimistic toggle + count, reverting on error.
     let su = subject_uri.clone();
     let sc = subject_cid.clone();
@@ -651,6 +1006,7 @@ fn post_row(post: bsky_domain::FeedPost) -> Element {
             on_open: on_open,
             on_like: on_like,
             on_repost: on_repost,
+            on_author: on_author,
         )
     }
 }

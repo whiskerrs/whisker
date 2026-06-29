@@ -13,10 +13,14 @@
 use std::sync::{Mutex, OnceLock};
 
 use atrium_api::agent::{Agent, SessionManager};
-use atrium_api::app::bsky::feed::{get_post_thread, get_timeline, like, post, repost};
+use atrium_api::app::bsky::actor::get_profile;
+use atrium_api::app::bsky::feed::{
+    get_author_feed, get_post_thread, get_timeline, like, post, repost,
+};
+use atrium_api::app::bsky::graph::follow;
 use atrium_api::app::bsky::richtext::facet;
 use atrium_api::com::atproto::repo::{create_record, delete_record, strong_ref};
-use atrium_api::types::string::{Cid, Datetime, Did, Nsid, RecordKey};
+use atrium_api::types::string::{AtIdentifier, Cid, Datetime, Did, Nsid, RecordKey};
 use atrium_api::types::{TryFromUnknown, TryIntoUnknown, Union, Unknown};
 use atrium_common::store::Store;
 use atrium_identity::did::{CommonDidResolver, CommonDidResolverConfig, DEFAULT_PLC_DIRECTORY_URL};
@@ -513,6 +517,82 @@ pub async fn repost(subject_uri: &str, subject_cid: &str) -> Result<String, Stri
 pub async fn unrepost(repost_uri: &str) -> Result<(), String> {
     let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
     delete_record(&agent, "app.bsky.feed.repost", repost_uri).await
+}
+
+/// The signed-in user's own DID, if a session is active.
+pub async fn my_did() -> Option<String> {
+    let agent = AGENT.lock().unwrap().clone()?;
+    agent.did().await.map(|d| d.as_str().to_string())
+}
+
+/// Fetch a profile by DID or handle.
+pub async fn get_profile(actor: &str) -> Result<bsky_domain::Profile, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let id = actor.parse::<AtIdentifier>().map_err(|e| e.to_string())?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .actor
+        .get_profile(get_profile::ParametersData { actor: id }.into())
+        .await
+        .map_err(|e| e.to_string())?;
+    let following_uri = out.viewer.as_ref().and_then(|v| v.following.clone());
+    Ok(bsky_domain::Profile {
+        did: out.did.as_str().to_string(),
+        handle: out.handle.as_str().to_string(),
+        display_name: out.display_name.clone(),
+        description: out.description.clone(),
+        avatar: out.avatar.clone(),
+        banner: out.banner.clone(),
+        followers_count: out.followers_count.unwrap_or(0).max(0) as u64,
+        follows_count: out.follows_count.unwrap_or(0).max(0) as u64,
+        posts_count: out.posts_count.unwrap_or(0).max(0) as u64,
+        following_uri,
+    })
+}
+
+/// Fetch an account's authored posts (its profile feed).
+pub async fn get_author_feed(actor: &str, limit: u8) -> Result<Vec<bsky_domain::FeedPost>, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let id = actor.parse::<AtIdentifier>().map_err(|e| e.to_string())?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .feed
+        .get_author_feed(
+            get_author_feed::ParametersData {
+                actor: id,
+                cursor: None,
+                filter: None,
+                include_pins: Some(true),
+                limit: limit.try_into().ok(),
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out.feed.iter().map(map_feed_post).collect())
+}
+
+/// Follow an account; returns the new follow record URI (for [`unfollow`]).
+pub async fn follow(did: &str) -> Result<String, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let subject = did.parse::<Did>().map_err(|e| e.to_string())?;
+    let record = follow::RecordData {
+        created_at: Datetime::now(),
+        subject,
+    }
+    .try_into_unknown()
+    .map_err(|e| e.to_string())?;
+    create_record(&agent, "app.bsky.graph.follow", record).await
+}
+
+/// Undo a follow, given the follow record URI returned by [`follow`].
+pub async fn unfollow(follow_uri: &str) -> Result<(), String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    delete_record(&agent, "app.bsky.graph.follow", follow_uri).await
 }
 
 /// Publish a new text post. Link / hashtag facets are detected from the

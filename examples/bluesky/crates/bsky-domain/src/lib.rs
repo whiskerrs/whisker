@@ -59,6 +59,33 @@ pub struct Thread {
     pub replies: Vec<FeedPost>,
 }
 
+/// A user profile (atproto `getProfile` → `ProfileViewDetailed`, trimmed).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Profile {
+    pub did: String,
+    pub handle: String,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub avatar: Option<String>,
+    pub banner: Option<String>,
+    pub followers_count: u64,
+    pub follows_count: u64,
+    pub posts_count: u64,
+    /// Viewer state: the `at://` URI of *this viewer's* follow record on
+    /// this account, if any. `Some` ⇒ following.
+    pub following_uri: Option<String>,
+}
+
+impl Profile {
+    /// Display name if set and non-empty, else `@handle`.
+    pub fn name(&self) -> String {
+        match &self.display_name {
+            Some(n) if !n.trim().is_empty() => n.clone(),
+            _ => format!("@{}", self.handle),
+        }
+    }
+}
+
 /// A page of the home timeline.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Timeline {

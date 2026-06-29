@@ -38,6 +38,7 @@ pub fn post_card(
     on_open: Rc<dyn Fn()>,
     on_like: Rc<dyn Fn()>,
     on_repost: Rc<dyn Fn()>,
+    on_author: Rc<dyn Fn()>,
 ) -> Element {
     let avatar = post.author.avatar.clone().unwrap_or_default();
     let name = post.author.name();
@@ -49,6 +50,7 @@ pub fn post_card(
     let open = on_open.clone();
     let like_cb = on_like.clone();
     let repost_cb = on_repost.clone();
+    let author_cb = on_author.clone();
 
     render! {
         view(style: css!(
@@ -58,7 +60,9 @@ pub fn post_card(
             border_bottom_width: px(1),
             border_bottom_color: theme::BORDER,
         )) {
-            avatar_view(src: avatar)
+            view(on_tap: move |_| (author_cb)()) {
+                avatar_view(src: avatar)
+            }
             view(style: css!(
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,

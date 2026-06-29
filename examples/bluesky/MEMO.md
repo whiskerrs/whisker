@@ -35,6 +35,16 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
     などの対話はスクリーンショットだけでは確認しづらい。レンダリングは目視できるが、操作系は
     実機の手動確認に頼ることになる。dev ループに「要素を tap/scroll する」テスト用フックがあると
     自動検証が大きく楽になる。
+- **`#[component]` の `Option<T>` 引数は「省略可能 prop」に特別扱いされる**: `following_uri: Option<String>`
+  のような引数を定義すると、生成される builder の setter が `impl Into<T>`（= 内側の `String`）を取り
+  省略時 `None`、という挙動になる。そのため**呼び出し側で `Option<String>` をそのまま渡せない**
+  （`From<Option<String>>` for `String` が無い、というエラーになる）。回避として `following_uri: String`
+  （空文字＝なし）の sentinel 方式にした。任意の `Option` 値を子に渡したいケースでは直感に反する。
+  → 「省略可能 prop」と「Option 値を渡す prop」を区別できる仕組み（例: `#[prop(optional)]` 明示 vs
+  生の型）があると分かりやすい。
+- **小さいタップターゲットの自動検証**: 合成タップは「down→待機→up（`cliclick dd: w: du:`）」のホールド形なら
+  FAB（画面上 ~16px）まで効くが、投稿ボタンのような極薄要素（~10px）は不安定。シミュレータ窓が
+  349px 固定で全 UI が 0.29 倍に縮むのが主因（窓を任意サイズに広げられない）。
 - **tier-1 hot-patch は新規クレート依存を拾えない**: `urlencoding` を新たに足した変更は
   tier-1 patch が `unlinked crate` で失敗し、tier-2 cold rebuild にフォールバックした（想定内
   だが、依存追加を伴う反復は毎回フルビルドになる点は DX メモとして記録）。
