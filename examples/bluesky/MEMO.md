@@ -61,6 +61,15 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
   ヘッダーを一緒にスクロールさせたい場合は `list` に header/section スロットが必要（要フレームワーク改修）。
   なお header と post_list は **prof だけ / feed だけ** を読む独立した兄弟にする（同一 `Show` children で
   両方読むと feed 更新時にヘッダーが一瞬空白化するため。下の項目参照）。
+- **子コンポーネントの引数で `resource.get()` を直接読んでもリアクティブ依存が張られない**（重要）:
+  `post_list(posts: feed.get().unwrap_or_default())` のように `render!` の**引数式**でリソースを読むと、
+  初回 render の値（まだ None → 空）で子がマウントされ、**後から feed が解決しても子が再 render されず空のまま**
+  だった（feed が初回 render に間に合った時だけ表示される、という不安定挙動）。home のタイムラインのように
+  **`Show(when: move || feed.get().is_some()){ post_list(posts: feed.get()…) }` でゲート**すると、Show の
+  `when` クロージャがリアクティブに feed を購読し、解決後にフルデータで1回マウントされて安定。
+  → DX: 「`get()` を読めば依存が張られる」と思いがちだが、**リアクティブに追跡されるのは
+  クロージャ（`Show`/`computed`/`effect`）の中で読んだ時だけ**。引数式での `get()` はスナップショット。
+  非同期データを子に渡すときは `Show`/`computed` で包む必要があり、直感に反する。
 - **同じ `Show` children 内で複数リソースを読むと、片方の更新が他方を巻き込んで再レンダリング**:
   プロフィール画面で `Show(when: prof.is_some()){ profile_header(prof.get()…) post_list(feed.get()…) }`
   と書いたら、**`feed` が解決した瞬間にヘッダーが空白化**した（最初は表示され、フィード到着で消える）。
