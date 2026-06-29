@@ -65,6 +65,7 @@ pub fn app() -> Element {
                     }
                     Route(path: "login", component: LoginScreen)
                     Route(path: "auth/:handle", component: AuthScreen)
+                    Route(path: "compose", component: ComposeScreen)
                 }
             }) {
                 Outlet {}
@@ -466,18 +467,17 @@ fn timeline_screen() -> Element {
 
     // Inset the feed by the safe-area: top keeps the first post clear of the
     // status bar / notch, bottom keeps the last clear of the home indicator.
+    // Only the top inset is ours; the tab bar below the Outlet owns the
+    // bottom inset. `position: relative` anchors the floating compose button.
     let insets = safe_area_insets();
     let root_style = computed(move || {
-        let i = insets.get();
         css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             background_color: theme::BG,
-            padding_top: px(i.top as f32),
-            padding_bottom: px(i.bottom as f32),
-            padding_left: px(i.leading as f32),
-            padding_right: px(i.trailing as f32),
+            padding_top: px(insets.get().top as f32),
         )
+        .raw("position", "relative")
     });
 
     render! {
@@ -497,6 +497,34 @@ fn timeline_screen() -> Element {
             ) {
                 post_list(posts: feed.get().map(|t| t.posts).unwrap_or_default())
             }
+            ComposeFab {}
+        }
+    }
+}
+
+/// Floating compose button, anchored bottom-right above the tab bar.
+#[component]
+fn compose_fab() -> Element {
+    let nav = use_navigator();
+    render! {
+        view(
+            style: css!(
+                width: px(56),
+                height: px(56),
+                border_radius: px(28),
+                background_color: theme::ACCENT,
+                display: Display::Flex,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+            )
+            .raw("position", "absolute")
+            .raw("right", "16px")
+            .raw("bottom", "16px"),
+            on_tap: move |_| {
+                let _ = nav.navigate("/compose");
+            },
+        ) {
+            Icon(svg: lucide::Pencil, color: "#FFFFFF", size: "24")
         }
     }
 }
@@ -712,6 +740,140 @@ fn post_detail_screen() -> Element {
                     v.extend(t.replies);
                     v
                 })
+            }
+        }
+    }
+}
+
+/// New-post composer (full-screen route over the tabs). Text only —
+/// media upload is skipped (no whisker picker module; see MEMO). On
+/// success it pops back to the feed.
+#[component]
+fn compose_screen() -> Element {
+    let nav = use_navigator();
+    let text = RwSignal::new(String::new());
+    let posting = RwSignal::new(false);
+    let error = RwSignal::new(String::new());
+    let insets = safe_area_insets();
+
+    let remaining = computed(move || 300i64 - text.get().chars().count() as i64);
+    let can_post =
+        computed(move || !text.get().trim().is_empty() && remaining.get() >= 0 && !posting.get());
+
+    let header_style = computed(move || {
+        css!(
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::SpaceBetween,
+            padding_top: px(insets.get().top as f32 + 8.0),
+            padding_bottom: px(8),
+            padding_left: px(16),
+            padding_right: px(16),
+            border_bottom_width: px(1),
+            border_bottom_color: theme::BORDER,
+        )
+    });
+
+    let nav_cancel = nav.clone();
+    let nav_post = nav.clone();
+    render! {
+        view(style: css!(
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            background_color: theme::BG,
+        )) {
+            view(style: header_style) {
+                view(
+                    style: css!(padding: px(4)),
+                    on_tap: move |_| {
+                        let _ = nav_cancel.back();
+                    },
+                ) {
+                    text(
+                        style: css!(font_size: px(16), color: theme::TEXT_PRIMARY),
+                        value: "キャンセル",
+                    )
+                }
+                view(style: css!(
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                )) {
+                    text(
+                        style: computed(move || css!(
+                            font_size: theme::T_META,
+                            color: if remaining.get() < 0 {
+                                Color::hex(0xFF6B6B)
+                            } else {
+                                theme::TEXT_SECONDARY
+                            },
+                            margin_right: px(12),
+                        )),
+                        value: computed(move || remaining.get().to_string()),
+                    )
+                    view(
+                        style: computed(move || css!(
+                            height: px(34),
+                            padding_left: px(16),
+                            padding_right: px(16),
+                            border_radius: px(17),
+                            background_color: theme::ACCENT,
+                            display: Display::Flex,
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            opacity: if can_post.get() { 1.0 } else { 0.4 },
+                        )),
+                        on_tap: move |_| {
+                            if !can_post.get() {
+                                return;
+                            }
+                            let body = text.get().trim().to_string();
+                            posting.set(true);
+                            error.set(String::new());
+                            let nav = nav_post.clone();
+                            spawn_local(async move {
+                                match bsky_auth::create_post(&body).await {
+                                    Ok(_) => {
+                                        let _ = nav.back();
+                                    }
+                                    Err(e) => {
+                                        error.set(e);
+                                        posting.set(false);
+                                    }
+                                }
+                            });
+                        },
+                    ) {
+                        text(
+                            style: css!(
+                                font_size: px(15),
+                                font_weight: FontWeight::Bold,
+                                color: theme::ON_ACCENT,
+                            ),
+                            value: "投稿",
+                        )
+                    }
+                }
+            }
+            Input(
+                text: text,
+                placeholder: "いまどうしてる？",
+                multiline: true,
+                auto_focus: true,
+                placeholder_color: "#8B98A5",
+                caret_color: "#1083FE",
+                style: "flex-grow: 1; padding: 16px; color: #FFFFFF; font-size: 18px;",
+            )
+            Show(when: move || !error.get().is_empty(), fallback: || render! { fragment() }) {
+                text(
+                    style: css!(
+                        font_size: theme::T_META,
+                        color: Color::hex(0xFF6B6B),
+                        padding: px(16),
+                    ),
+                    value: computed(move || error.get()),
+                )
             }
         }
     }

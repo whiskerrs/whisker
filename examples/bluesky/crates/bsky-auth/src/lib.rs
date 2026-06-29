@@ -14,6 +14,7 @@ use std::sync::{Mutex, OnceLock};
 
 use atrium_api::agent::{Agent, SessionManager};
 use atrium_api::app::bsky::feed::{get_post_thread, get_timeline, like, post, repost};
+use atrium_api::app::bsky::richtext::facet;
 use atrium_api::com::atproto::repo::{create_record, delete_record, strong_ref};
 use atrium_api::types::string::{Cid, Datetime, Did, Nsid, RecordKey};
 use atrium_api::types::{TryFromUnknown, TryIntoUnknown, Union, Unknown};
@@ -512,6 +513,122 @@ pub async fn repost(subject_uri: &str, subject_cid: &str) -> Result<String, Stri
 pub async fn unrepost(repost_uri: &str) -> Result<(), String> {
     let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
     delete_record(&agent, "app.bsky.feed.repost", repost_uri).await
+}
+
+/// Publish a new text post. Link / hashtag facets are detected from the
+/// text (mentions are deferred — see MEMO). Returns the new post's URI.
+pub async fn create_post(text: &str) -> Result<String, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let facets = detect_facets(text);
+    let record = post::RecordData {
+        created_at: Datetime::now(),
+        text: text.to_string(),
+        facets: if facets.is_empty() {
+            None
+        } else {
+            Some(facets)
+        },
+        embed: None,
+        entities: None,
+        labels: None,
+        langs: None,
+        reply: None,
+        tags: None,
+    }
+    .try_into_unknown()
+    .map_err(|e| e.to_string())?;
+    create_record(&agent, "app.bsky.feed.post", record).await
+}
+
+/// Detect link (`http(s)://…`) and hashtag (`#tag`) facets and their
+/// UTF-8 byte ranges. A deliberately small scanner — good enough for the
+/// example; mention facets (which need handle→DID resolution) are left
+/// out for now.
+fn detect_facets(text: &str) -> Vec<facet::Main> {
+    let mut out = Vec::new();
+
+    // Links.
+    for proto in ["https://", "http://"] {
+        let mut from = 0;
+        while let Some(rel) = text[from..].find(proto) {
+            let bs = from + rel;
+            let mut be = bs + proto.len();
+            for (i, c) in text[bs + proto.len()..].char_indices() {
+                if c.is_whitespace() {
+                    break;
+                }
+                be = bs + proto.len() + i + c.len_utf8();
+            }
+            // Trim trailing punctuation commonly adjacent to URLs.
+            while be > bs + proto.len()
+                && matches!(
+                    text.as_bytes()[be - 1],
+                    b'.' | b',' | b'!' | b'?' | b')' | b';' | b':'
+                )
+            {
+                be -= 1;
+            }
+            out.push(link_facet(bs, be, text[bs..be].to_string()));
+            from = be.max(bs + 1);
+        }
+    }
+
+    // Hashtags: `#` at a word boundary followed by alphanumerics / `_`.
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let (bs, c) = chars[i];
+        let boundary = i == 0 || chars[i - 1].1.is_whitespace();
+        if c == '#' && boundary {
+            let tag_start = bs + 1;
+            let mut be = tag_start;
+            let mut j = i + 1;
+            while let Some(&(idx, cc)) = chars.get(j) {
+                if cc.is_alphanumeric() || cc == '_' {
+                    be = idx + cc.len_utf8();
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            if be > tag_start {
+                out.push(tag_facet(bs, be, text[tag_start..be].to_string()));
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    out
+}
+
+fn link_facet(byte_start: usize, byte_end: usize, uri: String) -> facet::Main {
+    facet::MainData {
+        index: facet::ByteSliceData {
+            byte_start,
+            byte_end,
+        }
+        .into(),
+        features: vec![Union::Refs(facet::MainFeaturesItem::Link(Box::new(
+            facet::LinkData { uri }.into(),
+        )))],
+    }
+    .into()
+}
+
+fn tag_facet(byte_start: usize, byte_end: usize, tag: String) -> facet::Main {
+    facet::MainData {
+        index: facet::ByteSliceData {
+            byte_start,
+            byte_end,
+        }
+        .into(),
+        features: vec![Union::Refs(facet::MainFeaturesItem::Tag(Box::new(
+            facet::TagData { tag }.into(),
+        )))],
+    }
+    .into()
 }
 
 /// Does `url` look like our loopback redirect (the signal to call
