@@ -13,9 +13,10 @@
 use std::sync::{Mutex, OnceLock};
 
 use atrium_api::agent::{Agent, SessionManager};
-use atrium_api::app::bsky::feed::{get_timeline, post};
-use atrium_api::types::TryFromUnknown;
-use atrium_api::types::string::Did;
+use atrium_api::app::bsky::feed::{get_post_thread, get_timeline, like, post, repost};
+use atrium_api::com::atproto::repo::{create_record, delete_record, strong_ref};
+use atrium_api::types::string::{Cid, Datetime, Did, Nsid, RecordKey};
+use atrium_api::types::{TryFromUnknown, TryIntoUnknown, Union, Unknown};
 use atrium_common::store::Store;
 use atrium_identity::did::{CommonDidResolver, CommonDidResolverConfig, DEFAULT_PLC_DIRECTORY_URL};
 use atrium_identity::handle::{
@@ -320,15 +321,26 @@ pub async fn fetch_timeline(limit: u8) -> Result<bsky_domain::Timeline, String> 
 
 /// Map atrium's `FeedViewPost` into our trimmed [`bsky_domain::FeedPost`].
 fn map_feed_post(fv: &atrium_api::app::bsky::feed::defs::FeedViewPost) -> bsky_domain::FeedPost {
-    let p = &fv.post;
+    map_post_view(&fv.post)
+}
+
+/// Map a `PostView` (the shape `getTimeline` / `getPostThread` / author
+/// feeds all carry) into our [`bsky_domain::FeedPost`], including the
+/// content hash and the viewer's like / repost record URIs.
+fn map_post_view(p: &atrium_api::app::bsky::feed::defs::PostView) -> bsky_domain::FeedPost {
     // The post body lives in an `Unknown` record; deserialize the app.bsky.feed.post
     // shape out of it, falling back to empty text if it isn't a normal post.
     let text = post::RecordData::try_from_unknown(p.record.clone())
         .map(|r| r.text)
         .unwrap_or_default();
     let a = &p.author;
+    let (like_uri, repost_uri) = match &p.viewer {
+        Some(v) => (v.like.clone(), v.repost.clone()),
+        None => (None, None),
+    };
     bsky_domain::FeedPost {
         uri: p.uri.clone(),
+        cid: p.cid.as_ref().to_string(),
         author: bsky_domain::Author {
             did: a.did.as_str().to_string(),
             handle: a.handle.as_str().to_string(),
@@ -339,8 +351,167 @@ fn map_feed_post(fv: &atrium_api::app::bsky::feed::defs::FeedViewPost) -> bsky_d
         reply_count: p.reply_count.unwrap_or(0).max(0) as u64,
         repost_count: p.repost_count.unwrap_or(0).max(0) as u64,
         like_count: p.like_count.unwrap_or(0).max(0) as u64,
+        like_uri,
+        repost_uri,
         indexed_at: p.indexed_at.as_str().to_string(),
     }
+}
+
+/// Fetch a post's thread (the focused post + its direct replies).
+pub async fn get_post_thread(uri: &str) -> Result<bsky_domain::Thread, String> {
+    use atrium_api::app::bsky::feed::defs::ThreadViewPostRepliesItem as ReplyItem;
+    use atrium_api::app::bsky::feed::get_post_thread::OutputThreadRefs as ThreadRef;
+
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .feed
+        .get_post_thread(
+            get_post_thread::ParametersData {
+                uri: uri.to_string(),
+                depth: None,
+                parent_height: None,
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    match &out.thread {
+        Union::Refs(ThreadRef::AppBskyFeedDefsThreadViewPost(tv)) => {
+            let post = map_post_view(&tv.post);
+            let replies = tv
+                .replies
+                .iter()
+                .flatten()
+                .filter_map(|item| match item {
+                    Union::Refs(ReplyItem::ThreadViewPost(child)) => {
+                        Some(map_post_view(&child.post))
+                    }
+                    _ => None,
+                })
+                .collect();
+            Ok(bsky_domain::Thread {
+                post: Some(post),
+                replies,
+            })
+        }
+        _ => Err("post not found or blocked".to_string()),
+    }
+}
+
+/// Build a strong reference (`{uri, cid}`) to a record subject.
+fn strong_ref(uri: &str, cid: &str) -> Result<strong_ref::Main, String> {
+    let cid = cid.parse::<Cid>().map_err(|e| e.to_string())?;
+    Ok(strong_ref::MainData {
+        uri: uri.to_string(),
+        cid,
+    }
+    .into())
+}
+
+/// `createRecord` in the signed-in user's repo; returns the new record URI.
+async fn create_record(
+    agent: &BskyAgent,
+    collection: &str,
+    record: Unknown,
+) -> Result<String, String> {
+    let did = agent.did().await.ok_or("no session DID")?;
+    let collection = collection.parse::<Nsid>().map_err(|e| e.to_string())?;
+    let out = agent
+        .api
+        .com
+        .atproto
+        .repo
+        .create_record(
+            create_record::InputData {
+                collection,
+                record,
+                repo: did.into(),
+                rkey: None,
+                swap_commit: None,
+                validate: None,
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out.uri.clone())
+}
+
+/// `deleteRecord` for a record the viewer authored, identified by its
+/// `at://…/<collection>/<rkey>` URI.
+async fn delete_record(
+    agent: &BskyAgent,
+    collection: &str,
+    record_uri: &str,
+) -> Result<(), String> {
+    let did = agent.did().await.ok_or("no session DID")?;
+    let rkey = record_uri
+        .rsplit('/')
+        .next()
+        .ok_or("malformed record URI")?
+        .parse::<RecordKey>()
+        .map_err(|e| e.to_string())?;
+    let collection = collection.parse::<Nsid>().map_err(|e| e.to_string())?;
+    agent
+        .api
+        .com
+        .atproto
+        .repo
+        .delete_record(
+            delete_record::InputData {
+                collection,
+                repo: did.into(),
+                rkey,
+                swap_commit: None,
+                swap_record: None,
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Like a post; returns the new like record's URI (pass it to [`unlike`]).
+pub async fn like(subject_uri: &str, subject_cid: &str) -> Result<String, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let record = like::RecordData {
+        created_at: Datetime::now(),
+        subject: strong_ref(subject_uri, subject_cid)?,
+        via: None,
+    }
+    .try_into_unknown()
+    .map_err(|e| e.to_string())?;
+    create_record(&agent, "app.bsky.feed.like", record).await
+}
+
+/// Undo a like, given the like record URI returned by [`like`].
+pub async fn unlike(like_uri: &str) -> Result<(), String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    delete_record(&agent, "app.bsky.feed.like", like_uri).await
+}
+
+/// Repost a post; returns the new repost record's URI (pass it to [`unrepost`]).
+pub async fn repost(subject_uri: &str, subject_cid: &str) -> Result<String, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let record = repost::RecordData {
+        created_at: Datetime::now(),
+        subject: strong_ref(subject_uri, subject_cid)?,
+        via: None,
+    }
+    .try_into_unknown()
+    .map_err(|e| e.to_string())?;
+    create_record(&agent, "app.bsky.feed.repost", record).await
+}
+
+/// Undo a repost, given the repost record URI returned by [`repost`].
+pub async fn unrepost(repost_uri: &str) -> Result<(), String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    delete_record(&agent, "app.bsky.feed.repost", repost_uri).await
 }
 
 /// Does `url` look like our loopback redirect (the signal to call

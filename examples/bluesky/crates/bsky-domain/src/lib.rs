@@ -32,6 +32,9 @@ impl Author {
 pub struct FeedPost {
     /// `at://` URI — stable identity, used as the list key.
     pub uri: String,
+    /// Content hash of the record — needed (with `uri`) to build the
+    /// strong reference a like / repost record points at.
+    pub cid: String,
     pub author: Author,
     /// The post body text.
     pub text: String,
@@ -39,8 +42,21 @@ pub struct FeedPost {
     pub reply_count: u64,
     pub repost_count: u64,
     pub like_count: u64,
+    /// Viewer state: the `at://` URI of *this viewer's* like / repost
+    /// record on the post, if any. `Some` ⇒ liked / reposted (and the
+    /// URI is what `deleteRecord` needs to undo it).
+    pub like_uri: Option<String>,
+    pub repost_uri: Option<String>,
     /// ISO-8601 timestamp the post was indexed.
     pub indexed_at: String,
+}
+
+/// A post thread (atproto `getPostThread`): the focused post plus its
+/// direct replies. Parent context is omitted for now (see MEMO).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Thread {
+    pub post: Option<FeedPost>,
+    pub replies: Vec<FeedPost>,
 }
 
 /// A page of the home timeline.
