@@ -335,13 +335,22 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
         }
     });
 
-    // Header and feed are rendered as INDEPENDENT siblings, each reading its
-    // own resource. If they shared a `Show` children block, reading
-    // `feed.get()` there would re-render the header subtree every time the
-    // feed updated — which blanked the header once the feed arrived. Keeping
-    // them separate means a feed update only re-renders the list.
+    // The header scrolls with the feed: both live inside one `scroll_view`,
+    // the header first and the posts (a keyed `ForEach`) after it. They stay
+    // independent reactive siblings — the header reads only `prof`, the list
+    // only `feed` — so a feed update re-diffs the list without blanking the
+    // header. (A profile feed is bounded, so the non-virtualised `ForEach`
+    // is fine here; the home timeline keeps the virtualised `list`.)
     render! {
-        view(style: css!(flex_grow: 1.0, flex_shrink: 1.0, flex_direction: FlexDirection::Column)) {
+        scroll_view(
+            enable_scroll: true,
+            style: css!(
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                width: percent(100),
+                flex_direction: FlexDirection::Column,
+            ),
+        ) {
             Show(
                 when: move || prof.get().is_some(),
                 fallback: move || render! {
@@ -359,7 +368,11 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
                     show_logout: show_logout,
                 )
             }
-            post_list(posts: feed.get().unwrap_or_default())
+            ForEach(
+                each: move || feed.get().unwrap_or_default(),
+                key: |p: &bsky_domain::FeedPost| p.uri.clone(),
+                children: |p: bsky_domain::FeedPost| render! { PostRow(post: p) },
+            )
         }
     }
 }

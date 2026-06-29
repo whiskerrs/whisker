@@ -44,6 +44,14 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
   認証状態は keep-alive でもログイン直後にタイムラインが再取得されるよう、共有 `RwSignal<bool>`
   (`AuthState`) を root で `provide_context` して扱う。
   → DX: 「タブ＝瞬時、push＝アニメ」を出すための入れ子の作り方が直感的に分かりにくく、example 必須。
+- **仮想化 `list` にヘッダースロットが無い → スクロールするヘッダーは `scroll_view` + `ForEach`**:
+  プロフィールの「ヘッダー＋著者フィードが一緒にスクロール」を作るとき、whisker の `list`（Lynx 仮想化）は
+  `each`/`key`/`children` の 3 kwarg だけで **body もヘッダー item も取らない**（list-item は内部生成）。
+  そのため固定ヘッダー＋仮想リストか、`scroll_view` 内に `[header, ForEach(posts)]` を並べて全部一緒に
+  スクロールさせるか、の二択。後者を採用（プロフィールは投稿件数が有界なので全マウントで可。ホームの
+  タイムラインは件数が多いので仮想化 `list` のまま）。
+  → DX: 「ヘッダー付きの長いスクロールリスト」は頻出パターンなので、`list` に header/footer/sticky スロット
+  （または mixed-item）があると仮想化を捨てずに書けて嬉しい。
 - **同じ `Show` children 内で複数リソースを読むと、片方の更新が他方を巻き込んで再レンダリング**:
   プロフィール画面で `Show(when: prof.is_some()){ profile_header(prof.get()…) post_list(feed.get()…) }`
   と書いたら、**`feed` が解決した瞬間にヘッダーが空白化**した（最初は表示され、フィード到着で消える）。
