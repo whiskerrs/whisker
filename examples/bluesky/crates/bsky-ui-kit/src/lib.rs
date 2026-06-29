@@ -56,6 +56,10 @@ pub fn post_card(
         view(style: css!(
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
+            // A virtualised `<list>` cell shrink-wraps to its content width,
+            // so each row would be as wide as its own text. Pin to 100% so
+            // every row (and its bottom hairline) spans the full list width.
+            width: percent(100),
             padding: theme::GUTTER,
             border_bottom_width: px(1),
             border_bottom_color: theme::BORDER,

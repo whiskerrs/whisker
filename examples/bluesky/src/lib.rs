@@ -415,6 +415,11 @@ fn profile_header(profile: bsky_domain::Profile, my_did: String, show_logout: bo
     render! {
         view(style: css!(
             flex_direction: FlexDirection::Column,
+            // The virtualised `<list>` sizes each cell to its content width,
+            // not the list's cross-axis width. Without this the header (and
+            // its `width: 100%` banner) shrink-wraps to the counts text and
+            // ends up narrower than the post rows. Pin to the full width.
+            width: percent(100),
             // Don't let the virtualised `<list>` below collapse the header:
             // once the feed populates, its intrinsic height balloons and a
             // shrinkable header (flex-shrink defaults to 1) gets squeezed to
