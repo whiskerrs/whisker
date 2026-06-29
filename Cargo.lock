@@ -357,6 +357,7 @@ dependencies = [
  "bsky-theme",
  "bsky-ui-kit",
  "whisker",
+ "whisker-icons",
  "whisker-image",
  "whisker-input",
  "whisker-local-store",
