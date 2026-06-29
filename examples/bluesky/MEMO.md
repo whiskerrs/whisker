@@ -44,22 +44,23 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
   認証状態は keep-alive でもログイン直後にタイムラインが再取得されるよう、共有 `RwSignal<bool>`
   (`AuthState`) を root で `provide_context` して扱う。
   → DX: 「タブ＝瞬時、push＝アニメ」を出すための入れ子の作り方が直感的に分かりにくく、example 必須。
-- **仮想化 `list` にヘッダースロットが無い → ヘッダーは「混在アイテム」で先頭に入れる**:
-  長いスクロールは必ず仮想化 `list` を使う方針（`scroll_view`+`ForEach` だと全マウントで重い）。
-  ただし whisker の `list` は `each`/`key`/`children` の 3 kwarg だけで **body もヘッダー item も sticky も
-  取らない**（list-item は内部生成）。そこで **行を enum（`Header(Profile,…) | Post(FeedPost)`）にして
-  `each` の先頭に Header を 1 件積む**ことで、ヘッダーも仮想化リストの一部としてスクロールさせた。
-  Header は固定 key（`"::header"`）にしておくと、feed 更新時に新規 Post だけが差分追加され、
-  既にマウント済みのヘッダーは再描画/空白化しない（先の「同一 Show children 問題」もこれで回避）。
-  異なる要素構造のアイテムを 1 つの `list` に混ぜても decoupled-native list は per-item subtree なので問題なし。
-  - **ただし `list` にアイテムを増分追加すると並び順が壊れる**（重要）: ヘッダーを先に 1 件入れ、
-    後から feed の投稿を append すると、**ヘッダーが末尾に押し出される**（新規アイテムは
-    `append_child` で後から入るが、レイアウトが各() の index 順／item-key 順を保たない）。
-    回避：**prof と feed の両方が settle してから `list` を 1 回の diff で `[header, …posts]` と
-    一括マウント**する（ホームのタイムラインが全件一括で正しく並ぶのと同じ）。`Show(when: 両方settled)`
-    でラップし、それまではローディング表示。増分（count 0→1→N）を避けるのがポイント。
-  → DX: 「ヘッダー付きの長いリスト」は頻出。`list` に header/footer/sticky スロットがあれば enum 化＋
-  一括マウント調整なしで書ける。増分追加時の並び順保証も欲しい。
+- **`list` は更新時に key で並べ替えない＝増分追加・先頭挿入・並べ替えで表示順が壊れる**（重要・要改善）:
+  React / SolidJS / SwiftUI の keyed list は `render` が返す配列順に毎回 reconcile するので、
+  「望む順で配列を返す」だけで無限スクロール（末尾追加）も pull更新（先頭挿入）も途中挿入も正しく動く。
+  whisker の `list` は **更新時に既存アイテムを並べ替えず、新規 key を末尾に `append_child` するだけ**。
+  そのため `each()` が返す順序と表示順が**更新をまたぐと乖離**する。実証：プロフィールでヘッダーを
+  先に 1 件出し、後から feed の投稿が来ると**ヘッダーが末尾に押し出された**。エラーも出ず静かに壊れる。
+  → 実用上の制約は「**リストの中身は 1 回の更新で確定させ、増分追加/並べ替えをするな**」。これは
+  keyed list の常識（React 等）に反し、**無限スクロール・プル更新・途中挿入が軒並み危険**。
+  ルールというより `list` の reconcile 不足。`list` が key で並べ替えるべき。
+- **`list` にヘッダースロット（header/section/sticky）が無い → スクロールするヘッダーは作れない**:
+  `list` は `each`/`key`/`children` の 3 kwarg だけ（body もヘッダー item も取らない）。背の高い
+  非均一なヘッダーを先頭アイテムに混ぜると、上記の順序問題に加え、**スクロール時に仮想化のリサイクル/
+  再計測でヘッダーの高さが潰れる**。結論（ユーザー判断）：**ヘッダーは上部固定、フィードのみ `list`**
+  にした（`view(column){ Show(prof){ profile_header(flex_shrink:0) } post_list(feed) }`）。
+  ヘッダーを一緒にスクロールさせたい場合は `list` に header/section スロットが必要（要フレームワーク改修）。
+  なお header と post_list は **prof だけ / feed だけ** を読む独立した兄弟にする（同一 `Show` children で
+  両方読むと feed 更新時にヘッダーが一瞬空白化するため。下の項目参照）。
 - **同じ `Show` children 内で複数リソースを読むと、片方の更新が他方を巻き込んで再レンダリング**:
   プロフィール画面で `Show(when: prof.is_some()){ profile_header(prof.get()…) post_list(feed.get()…) }`
   と書いたら、**`feed` が解決した瞬間にヘッダーが空白化**した（最初は表示され、フィード到着で消える）。

@@ -312,22 +312,6 @@ fn profile_screen() -> Element {
     }
 }
 
-/// One row of the profile screen's single virtualised `list`: the header
-/// is always the first item, the author's posts follow. Keeping them in
-/// one `list` (rather than a header above a list) makes the header scroll
-/// with the feed while staying virtualised. The header carries no data —
-/// its content reads the profile resource reactively — so the row exists
-/// from the first render and stays pinned at index 0 even when the feed
-/// (a separate resource) resolves later. (whisker's `list` appends new
-/// items to the end, so a header added *after* the posts would otherwise
-/// land at the bottom.)
-#[derive(Clone)]
-enum ProfileRow {
-    Header,
-    // Boxed so the enum isn't sized by the large `FeedPost` variant.
-    Post(Box<bsky_domain::FeedPost>),
-}
-
 /// Profile header (banner / avatar / name / bio / counts + follow or
 /// logout) followed by the account's authored posts.
 #[component]
@@ -351,48 +335,32 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
         }
     });
 
-    // One virtualised `list` carries the header (item 0) + the author's
-    // posts, so the header scrolls with the feed. The list is only mounted
-    // once BOTH the profile and the feed have settled, so it materialises in
-    // a single diff (`[header, …posts]`) — the same one-shot mount the home
-    // timeline does. Adding the rows incrementally (header first, posts
-    // later) instead pushed the header to the bottom, because the list
-    // appends late arrivals after the already-laid-out header.
-    let ready = move || prof.get().is_some() && (feed.get().is_some() || feed.error().is_some());
+    // Fixed header pinned at the top + the author's feed in a virtualised
+    // `list` below it. The header reads only `prof` and the list only
+    // `feed`, as independent siblings, so a feed update re-diffs the list
+    // without touching the header. The header is `flex-shrink: 0` so the
+    // list (which fills the rest and scrolls internally) can't squeeze it.
+    // (A header that scrolls *with* the feed would need a header slot in
+    // `list`; mixing a tall header item into the virtualised list misorders
+    // / collapses it — see MEMO.)
     render! {
-        Show(
-            when: ready,
-            fallback: move || render! {
-                status_pane(message: match prof.error() {
-                    Some(e) if !e.is_empty() => e,
-                    _ => "読み込み中…".to_string(),
-                })
-            },
-        ) {
-            list(
-                style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
-                each: move || {
-                    let mut rows = vec![ProfileRow::Header];
-                    if let Some(posts) = feed.get() {
-                        rows.extend(posts.into_iter().map(|p| ProfileRow::Post(Box::new(p))));
-                    }
-                    rows
+        view(style: css!(flex_grow: 1.0, flex_shrink: 1.0, flex_direction: FlexDirection::Column)) {
+            Show(
+                when: move || prof.get().is_some(),
+                fallback: move || render! {
+                    status_pane(message: match prof.error() {
+                        Some(e) if !e.is_empty() => e,
+                        _ => "読み込み中…".to_string(),
+                    })
                 },
-                key: |r: &ProfileRow| match r {
-                    ProfileRow::Header => "::header".to_string(),
-                    ProfileRow::Post(p) => p.uri.clone(),
-                },
-                children: move |r: ProfileRow| match r {
-                    ProfileRow::Header => render! {
-                        profile_header(
-                            profile: prof.get().map(|(p, _)| p).unwrap_or_default(),
-                            my_did: prof.get().map(|(_, me)| me).unwrap_or_default(),
-                            show_logout: show_logout,
-                        )
-                    },
-                    ProfileRow::Post(p) => render! { PostRow(post: *p) },
-                },
-            )
+            ) {
+                profile_header(
+                    profile: prof.get().map(|(p, _)| p).unwrap_or_default(),
+                    my_did: prof.get().map(|(_, me)| me).unwrap_or_default(),
+                    show_logout: show_logout,
+                )
+            }
+            post_list(posts: feed.get().unwrap_or_default())
         }
     }
 }
