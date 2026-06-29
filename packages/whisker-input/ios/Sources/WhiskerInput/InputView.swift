@@ -91,6 +91,15 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     private var cachedMaxLength: Int = 0                // 0 = unset
     private var cachedKeyboardType: UIKeyboardType = .default
     private var cachedReturnKeyType: UIReturnKeyType = .default
+    // Default `.sentences` matches UIKit's own UITextField/UITextView
+    // default, so a field that never sets `auto-capitalize` behaves
+    // exactly as before this prop existed.
+    private var cachedAutoCapitalize: UITextAutocapitalizationType = .sentences
+    // `.default` (not `.yes`) for the enabled case so UIKit keeps its
+    // contextual behaviour — e.g. it already disables autocorrect on URL
+    // / email keyboards. `false` forces `.no`.
+    private var cachedAutocorrect: UITextAutocorrectionType = .default
+    private var cachedSpellCheck: UITextSpellCheckingType = .default
     private var cachedTextColor: UIColor = .label
     private var cachedFontSize: CGFloat = 17
     private var cachedFontWeight: UIFont.Weight = .regular
@@ -219,7 +228,9 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         let tf = PaddedTextField()
         tf.borderStyle = .none
         tf.backgroundColor = .clear
-        tf.autocorrectionType = .default
+        // `autocorrectionType` / `spellCheckingType` are applied from the
+        // cached prop state in `applyBehaviour` (called via
+        // `applyAllCachedProps` right after this build).
         tf.addTarget(self, action: #selector(textFieldDidChange(_:)), for: .editingChanged)
         tf.addTarget(self, action: #selector(textFieldDidEndOnExit(_:)), for: .editingDidEndOnExit)
         tf.delegate = self
@@ -333,11 +344,17 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
             tf.isEnabled = cachedEditable
             tf.keyboardType = cachedKeyboardType
             tf.returnKeyType = cachedReturnKeyType
+            tf.autocapitalizationType = cachedAutoCapitalize
+            tf.autocorrectionType = cachedAutocorrect
+            tf.spellCheckingType = cachedSpellCheck
         }
         if let tv = textView {
             tv.isEditable = cachedEditable
             tv.keyboardType = cachedKeyboardType
             tv.returnKeyType = cachedReturnKeyType
+            tv.autocapitalizationType = cachedAutoCapitalize
+            tv.autocorrectionType = cachedAutocorrect
+            tv.spellCheckingType = cachedSpellCheck
             // UITextView has no `isSecureTextEntry`; secure flag is a no-op
             // for multiline (passwords are always single-line in practice).
         }
@@ -455,6 +472,35 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         cachedReturnKeyType = Self.mapReturnKeyType(s)
         textField?.returnKeyType = cachedReturnKeyType
         textView?.returnKeyType = cachedReturnKeyType
+    }
+
+    public func setAutoCapitalize(_ s: String) {
+        cachedAutoCapitalize = Self.mapAutoCapitalize(s)
+        textField?.autocapitalizationType = cachedAutoCapitalize
+        textView?.autocapitalizationType = cachedAutoCapitalize
+        // Changing the autocapitalization type while the keyboard is up
+        // only takes effect on the next keyboard presentation; UIKit
+        // exposes `reloadInputViews()` to apply it live.
+        if textField?.isFirstResponder == true { textField?.reloadInputViews() }
+        if textView?.isFirstResponder == true { textView?.reloadInputViews() }
+    }
+
+    public func setAutocorrect(_ s: String) {
+        // `.default` (not `.yes`) for the enabled case — see the cached
+        // property's declaration.
+        cachedAutocorrect = (s == "false") ? .no : .default
+        textField?.autocorrectionType = cachedAutocorrect
+        textView?.autocorrectionType = cachedAutocorrect
+        if textField?.isFirstResponder == true { textField?.reloadInputViews() }
+        if textView?.isFirstResponder == true { textView?.reloadInputViews() }
+    }
+
+    public func setSpellCheck(_ s: String) {
+        cachedSpellCheck = (s == "false") ? .no : .default
+        textField?.spellCheckingType = cachedSpellCheck
+        textView?.spellCheckingType = cachedSpellCheck
+        if textField?.isFirstResponder == true { textField?.reloadInputViews() }
+        if textView?.isFirstResponder == true { textView?.reloadInputViews() }
     }
 
     // ---- CSS text-style props ------------------------------------------
@@ -633,6 +679,15 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         case "search": return .search
         case "send":   return .send
         default:       return .default
+        }
+    }
+
+    private static func mapAutoCapitalize(_ s: String) -> UITextAutocapitalizationType {
+        switch s {
+        case "none":       return .none
+        case "words":      return .words
+        case "characters": return .allCharacters
+        default:           return .sentences
         }
     }
 

@@ -62,6 +62,15 @@ class InputModule : Module() {
             Prop("return-key") { view: WhiskerInputView, value ->
                 view.setReturnKey(value.asString() ?: "default")
             }
+            Prop("auto-capitalize") { view: WhiskerInputView, value ->
+                view.setAutoCapitalize(value.asString() ?: "sentences")
+            }
+            Prop("autocorrect") { view: WhiskerInputView, value ->
+                view.setAutocorrect(value.asString() ?: "true")
+            }
+            Prop("spell-check") { view: WhiskerInputView, value ->
+                view.setSpellCheck(value.asString() ?: "true")
+            }
 
             // Declaration-only metadata (parity with the iOS module);
             // actual dispatch is the imperative WhiskerCustomEvent path
