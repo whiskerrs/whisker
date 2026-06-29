@@ -35,6 +35,15 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
     などの対話はスクリーンショットだけでは確認しづらい。レンダリングは目視できるが、操作系は
     実機の手動確認に頼ることになる。dev ループに「要素を tap/scroll する」テスト用フックがあると
     自動検証が大きく楽になる。
+- **タブは「root レイアウト直下に `Switch`」にしないと切替が重く感じる**: 当初は
+  `Stack { Route("", TabsLayout){ Switch{...} } , login, ... }` と root を `Stack` で包み、
+  その index レイアウトに `Switch` をネストしていた。これだとタブ切替にアニメーションが付いて
+  見えた。whisker-router の example どおり **root を `Route(component: TabsLayout){ Switch{...} }`**
+  （Stack で包まない）にすると、タブ切替は `Switch` の display トグル（瞬時）、タブ内 push は
+  `Stack` のアニメ、と期待通りに分離できた。login/compose は Switch のブランチ / タブ内 Stack に配置。
+  認証状態は keep-alive でもログイン直後にタイムラインが再取得されるよう、共有 `RwSignal<bool>`
+  (`AuthState`) を root で `provide_context` して扱う。
+  → DX: 「タブ＝瞬時、push＝アニメ」を出すための入れ子の作り方が直感的に分かりにくく、example 必須。
 - **`#[component]` の `Option<T>` 引数は「省略可能 prop」に特別扱いされる**: `following_uri: Option<String>`
   のような引数を定義すると、生成される builder の setter が `impl Into<T>`（= 内側の `String`）を取り
   省略時 `None`、という挙動になる。そのため**呼び出し側で `Option<String>` をそのまま渡せない**

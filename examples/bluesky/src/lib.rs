@@ -29,45 +29,66 @@ use whisker_webview::WebView;
 
 use bsky_theme as theme;
 
+/// App-wide auth state, provided at the root and read by screens that
+/// gate on it. Flipped by the boot restore / login / logout flows.
+/// Keeping it reactive lets the (keep-alive) timeline re-fetch the moment
+/// a login completes, without remounting the tab shell.
+#[derive(Clone, Copy)]
+struct AuthState(RwSignal<bool>);
+
 #[whisker::main]
 pub fn app() -> Element {
+    // Seed from any in-process session (none on a cold start).
+    provide_context(AuthState(RwSignal::new(bsky_auth::is_authenticated())));
     render! {
         view(style: css!(
             flex_grow: 1.0,
             background_color: theme::BG,
             flex_direction: FlexDirection::Column,
         )) {
+            // Root is the tab layout with the tab `Switch` directly under it
+            // (mirrors whisker-router's example): tab switches are instant
+            // `Switch` toggles, while per-tab `Stack`s animate push/pop. The
+            // pre-auth login flow is a sibling `(auth)` branch (no tab bar).
             Router(routes: routes! {
-                Stack {
-                    Route(path: "", component: TabsLayout) {
-                        Switch {
-                            Route(path: "(home)") {
-                                Stack {
-                                    Route(path: "", component: TimelineScreen)
-                                    Route(path: "post/:uri", component: PostDetailScreen)
-                                    Route(path: "profile/:did", component: ProfileScreen)
-                                }
+                Route(component: TabsLayout) {
+                    Switch {
+                        Route(path: "(home)") {
+                            Stack {
+                                Route(path: "", component: TimelineScreen)
+                                Route(path: "compose", component: ComposeScreen)
+                                Route(path: "post/:uri", component: PostDetailScreen)
+                                Route(path: "profile/:did", component: ProfileScreen)
                             }
-                            Route(path: "(search)") {
-                                Stack {
-                                    Route(path: "", component: SearchScreen)
-                                }
+                        }
+                        Route(path: "(search)") {
+                            Stack {
+                                Route(path: "", component: SearchScreen)
+                                Route(path: "post/:uri", component: PostDetailScreen)
+                                Route(path: "profile/:did", component: ProfileScreen)
                             }
-                            Route(path: "(notifications)") {
-                                Stack {
-                                    Route(path: "", component: NotificationsScreen)
-                                }
+                        }
+                        Route(path: "(notifications)") {
+                            Stack {
+                                Route(path: "", component: NotificationsScreen)
+                                Route(path: "post/:uri", component: PostDetailScreen)
+                                Route(path: "profile/:did", component: ProfileScreen)
                             }
-                            Route(path: "(profile)") {
-                                Stack {
-                                    Route(path: "", component: MyProfileScreen)
-                                }
+                        }
+                        Route(path: "(profile)") {
+                            Stack {
+                                Route(path: "", component: MyProfileScreen)
+                                Route(path: "post/:uri", component: PostDetailScreen)
+                                Route(path: "profile/:did", component: ProfileScreen)
+                            }
+                        }
+                        Route(path: "(auth)") {
+                            Stack {
+                                Route(path: "", component: LoginScreen)
+                                Route(path: "auth/:handle", component: AuthScreen)
                             }
                         }
                     }
-                    Route(path: "login", component: LoginScreen)
-                    Route(path: "auth/:handle", component: AuthScreen)
-                    Route(path: "compose", component: ComposeScreen)
                 }
             }) {
                 Outlet {}
@@ -78,9 +99,31 @@ pub fn app() -> Element {
     }
 }
 
-/// Authenticated shell: the active tab's `Outlet` above a bottom tab bar.
+/// Root shell: the active branch's `Outlet` above a bottom tab bar. The
+/// tab bar is hidden on the pre-auth `(auth)` branch. On mount it restores
+/// a persisted session (flipping `AuthState`) or selects the login branch.
 #[component]
 fn tabs_layout() -> Element {
+    let nav = use_navigator();
+    let pathname = use_pathname();
+    let AuthState(authed) = use_context::<AuthState>().expect("AuthState provided at root");
+
+    on_mount(move || {
+        if authed.get() {
+            return;
+        }
+        let nav = nav.clone();
+        spawn_local(async move {
+            if bsky_auth::restore_session().await {
+                authed.set(true);
+            } else {
+                let _ = nav.select("/(auth)");
+            }
+        });
+    });
+
+    let on_auth = computed(move || pathname.get().contains("/(auth)"));
+
     render! {
         view(style: css!(
             flex_grow: 1.0,
@@ -95,7 +138,9 @@ fn tabs_layout() -> Element {
             )) {
                 Outlet {}
             }
-            TabBar {}
+            Show(when: move || !on_auth.get(), fallback: || render! { fragment() }) {
+                TabBar {}
+            }
         }
     }
 }
@@ -144,7 +189,10 @@ fn tab_bar_item(
     let is_active = computed(move || {
         let p = pathname.get();
         if group == "(home)" {
-            !p.contains("/(search)") && !p.contains("/(notifications)") && !p.contains("/(profile)")
+            !p.contains("/(search)")
+                && !p.contains("/(notifications)")
+                && !p.contains("/(profile)")
+                && !p.contains("/(auth)")
         } else {
             p.contains(group)
         }
@@ -489,10 +537,11 @@ fn follow_button(did: String, following_uri: String) -> Element {
     }
 }
 
-/// Logout: clear the session and reset to the login screen.
+/// Logout: clear the session and return to the login branch.
 #[component]
 fn logout_button() -> Element {
     let nav = use_navigator();
+    let AuthState(authed) = use_context::<AuthState>().expect("AuthState provided at root");
     render! {
         view(
             style: css!(
@@ -509,7 +558,8 @@ fn logout_button() -> Element {
                 let nav = nav.clone();
                 spawn_local(async move {
                     bsky_auth::logout().await;
-                    let _ = nav.reset("/login");
+                    authed.set(false);
+                    let _ = nav.select("/(auth)");
                 });
             },
         ) {
@@ -673,6 +723,7 @@ fn auth_screen() -> Element {
     let error = RwSignal::new(String::new());
     let completing = RwSignal::new(false);
     let nav = use_navigator();
+    let AuthState(authed) = use_context::<AuthState>().expect("AuthState provided at root");
 
     // Kick off the (network-heavy) OAuth authorize once, on mount.
     on_mount(move || {
@@ -699,9 +750,10 @@ fn auth_screen() -> Element {
         spawn_local(async move {
             match bsky_auth::complete_login(&url).await {
                 Ok(()) => {
-                    // Clear the auth stack so the timeline (the root route)
-                    // is the only entry — no login/auth screens linger.
-                    let _ = nav.reset("/");
+                    // Flip auth state (so the keep-alive timeline re-fetches)
+                    // and switch from the `(auth)` branch to the Home tab.
+                    authed.set(true);
+                    let _ = nav.select("/(home)");
                 }
                 Err(e) => {
                     error.set(e);
@@ -777,31 +829,11 @@ fn auth_loading(error: RwSignal<String>) -> Element {
 /// Authenticated home timeline.
 #[component]
 fn timeline_screen() -> Element {
-    let nav = use_navigator();
-    // Auth gate. Start from what this process already knows; on a cold
-    // launch (`authed` false) restore the persisted session, flipping
-    // `authed` on success or hopping to /login when there's nothing to
-    // restore — so the timeline is the default screen and login is only
-    // the fallback. This runs once (`on_mount`), so it can't feed back
-    // into a reactive loop the way a router-mutating `effect` could.
-    let authed = RwSignal::new(bsky_auth::is_authenticated());
-    on_mount(move || {
-        if authed.get() {
-            return;
-        }
-        let nav = nav.clone();
-        spawn_local(async move {
-            if bsky_auth::restore_session().await {
-                authed.set(true);
-            } else {
-                let _ = nav.reset("/login");
-            }
-        });
-    });
-
-    // Load the feed once authenticated. Reading `authed` in the fetcher's
-    // synchronous prefix makes the resource re-run when restore flips it
-    // true; until then it yields the empty "still waiting" sentinel.
+    // Gate on the shared auth state (the boot restore in `tabs_layout`
+    // flips it; login does too). Reading it in the fetcher's synchronous
+    // prefix makes the feed re-run the moment auth flips true — so a fresh
+    // login lands on a populated timeline without remounting the shell.
+    let AuthState(authed) = use_context::<AuthState>().expect("AuthState provided at root");
     let feed = resource(move || {
         let ready = authed.get();
         async move {
