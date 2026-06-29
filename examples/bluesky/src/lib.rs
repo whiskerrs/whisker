@@ -265,10 +265,20 @@ fn notifications_screen() -> Element {
 /// DID, then renders the shared profile view with a logout action.
 #[component]
 fn my_profile_screen() -> Element {
-    let me = resource(|| async {
-        bsky_auth::my_did()
-            .await
-            .ok_or_else(|| "not authenticated".to_string())
+    // This tab mounts at app start (keep-alive Switch), possibly before the
+    // boot restore has set the agent. Gate the DID lookup on `AuthState` so
+    // it re-runs once auth flips true (`my_did` itself isn't reactive).
+    let AuthState(authed) = use_context::<AuthState>().expect("AuthState provided at root");
+    let me = resource(move || {
+        let ready = authed.get();
+        async move {
+            if !ready {
+                return Err(String::new());
+            }
+            bsky_auth::my_did()
+                .await
+                .ok_or_else(|| "not authenticated".to_string())
+        }
     });
     let insets = safe_area_insets();
     let pad = computed(move || css!(padding_top: px(insets.get().top as f32 + 8.0)));
@@ -325,6 +335,11 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
         }
     });
 
+    // Header and feed are rendered as INDEPENDENT siblings, each reading its
+    // own resource. If they shared a `Show` children block, reading
+    // `feed.get()` there would re-render the header subtree every time the
+    // feed updated — which blanked the header once the feed arrived. Keeping
+    // them separate means a feed update only re-renders the list.
     render! {
         view(style: css!(flex_grow: 1.0, flex_shrink: 1.0, flex_direction: FlexDirection::Column)) {
             Show(
@@ -343,8 +358,8 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
                     my_did: prof.get().map(|(_, me)| me).unwrap_or_default(),
                     show_logout: show_logout,
                 )
-                post_list(posts: feed.get().unwrap_or_default())
             }
+            post_list(posts: feed.get().unwrap_or_default())
         }
     }
 }
@@ -372,6 +387,11 @@ fn profile_header(profile: bsky_domain::Profile, my_did: String, show_logout: bo
     render! {
         view(style: css!(
             flex_direction: FlexDirection::Column,
+            // Don't let the virtualised `<list>` below collapse the header:
+            // once the feed populates, its intrinsic height balloons and a
+            // shrinkable header (flex-shrink defaults to 1) gets squeezed to
+            // nothing. Pin it.
+            flex_shrink: 0.0,
             padding_bottom: px(12),
             border_bottom_width: px(1),
             border_bottom_color: theme::BORDER,

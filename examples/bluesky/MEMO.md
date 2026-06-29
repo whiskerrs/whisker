@@ -44,6 +44,16 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
   認証状態は keep-alive でもログイン直後にタイムラインが再取得されるよう、共有 `RwSignal<bool>`
   (`AuthState`) を root で `provide_context` して扱う。
   → DX: 「タブ＝瞬時、push＝アニメ」を出すための入れ子の作り方が直感的に分かりにくく、example 必須。
+- **同じ `Show` children 内で複数リソースを読むと、片方の更新が他方を巻き込んで再レンダリング**:
+  プロフィール画面で `Show(when: prof.is_some()){ profile_header(prof.get()…) post_list(feed.get()…) }`
+  と書いたら、**`feed` が解決した瞬間にヘッダーが空白化**した（最初は表示され、フィード到着で消える）。
+  children ブロックは reactive クロージャで、中で `feed.get()` を読むと feed 更新時に children 全体
+  （= profile_header も）が再評価され、その再評価フレームで一瞬デフォルト値になり潰れた。
+  **post_list を `Show` の外の独立した兄弟ノードに出す**（ヘッダーは prof だけの `Show`、リストは feed だけ）
+  と fine-grained に分離でき解決。併せて、仮想化 `<list>`（intrinsic 高が巨大）が隣の可変高ヘッダーを
+  flex で潰さないよう、ヘッダーに `flex_shrink: 0` をピン留め。
+  → DX: 「どの reactive read がどのノードの再レンダリングを誘発するか」が直感的に見えにくい。
+  複数の非同期状態を1画面で混ぜるときは描画ノードを分けるのが安全。
 - **`#[component]` の `Option<T>` 引数は「省略可能 prop」に特別扱いされる**: `following_uri: Option<String>`
   のような引数を定義すると、生成される builder の setter が `impl Into<T>`（= 内側の `String`）を取り
   省略時 `None`、という挙動になる。そのため**呼び出し側で `Option<String>` をそのまま渡せない**
