@@ -3619,6 +3619,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-secure-store"
+version = "0.7.0"
+dependencies = [
+ "whisker",
+]
+
+[[package]]
+name = "whisker-secure-store-example"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-secure-store",
+]
+
+[[package]]
 name = "whisker-subsecond"
 version = "0.7.11"
 dependencies = [

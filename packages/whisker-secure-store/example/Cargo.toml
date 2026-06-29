@@ -1,0 +1,13 @@
+[package]
+name = "whisker-secure-store-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Example app for `whisker-secure-store`. On launch it runs a save → load → remove → load round-trip against the platform secure store (iOS Keychain / Android Tink+Keystore) and shows the result, so on-device verification of the module wiring happens in one place."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-secure-store = { path = ".." }

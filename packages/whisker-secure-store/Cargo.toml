@@ -1,0 +1,40 @@
+[package]
+name = "whisker-secure-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Whisker platform module — hardware-backed secure key-value store. iOS Keychain (Security framework); Android Keystore-backed AES-256-GCM via Google Tink. For tokens, keys, and other secrets that must NOT sit in plaintext UserDefaults / SharedPreferences (use whisker-local-store for non-secrets)."
+
+# Explicit `include` list — mirrors `whisker-local-store`. `cargo
+# publish` ships the Kotlin + Swift platform sources alongside
+# `src/lib.rs`, but never the local Gradle / Xcode build artifacts.
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
+    "src/lib.rs",
+    "android/**/*.kt",
+    "ios/**/*.swift",
+    "README.md",
+]
+
+# rlib only. The Whisker module system handles native-source
+# distribution out-of-band via the `android/` + `ios/` package dirs —
+# we don't ship a cdylib here. Sibling of `whisker-local-store`.
+[lib]
+crate-type = ["rlib"]
+
+# Module-system opt-in marker. The bare table identifies this cargo
+# crate as a Whisker module; `whisker-build` walks the consuming app's
+# dep tree, picks out every dep carrying it, and wires the Android
+# Gradle subproject + iOS SwiftPM package into the host build.
+[package.metadata.whisker]
+
+[dependencies]
+whisker = { workspace = true }
