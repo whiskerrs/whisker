@@ -313,13 +313,19 @@ fn profile_screen() -> Element {
 }
 
 /// One row of the profile screen's single virtualised `list`: the header
-/// is the first item, the author's posts follow. Keeping them in one
-/// `list` (rather than a header above a list) makes the header scroll with
-/// the feed while staying virtualised.
+/// is always the first item, the author's posts follow. Keeping them in
+/// one `list` (rather than a header above a list) makes the header scroll
+/// with the feed while staying virtualised. The header carries no data —
+/// its content reads the profile resource reactively — so the row exists
+/// from the first render and stays pinned at index 0 even when the feed
+/// (a separate resource) resolves later. (whisker's `list` appends new
+/// items to the end, so a header added *after* the posts would otherwise
+/// land at the bottom.)
 #[derive(Clone)]
 enum ProfileRow {
-    Header(bsky_domain::Profile, String, bool),
-    Post(bsky_domain::FeedPost),
+    Header,
+    // Boxed so the enum isn't sized by the large `FeedPost` variant.
+    Post(Box<bsky_domain::FeedPost>),
 }
 
 /// Profile header (banner / avatar / name / bio / counts + follow or
@@ -345,34 +351,49 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
         }
     });
 
-    // One virtualised `list` carries the header (first item) + the author's
-    // posts, so the header scrolls with the feed. The header is a keyed item
-    // (`::header`), so a feed update only inserts new post items and never
-    // re-renders / blanks the already-mounted header.
+    // One virtualised `list` carries the header (item 0) + the author's
+    // posts, so the header scrolls with the feed. The list is only mounted
+    // once BOTH the profile and the feed have settled, so it materialises in
+    // a single diff (`[header, …posts]`) — the same one-shot mount the home
+    // timeline does. Adding the rows incrementally (header first, posts
+    // later) instead pushed the header to the bottom, because the list
+    // appends late arrivals after the already-laid-out header.
+    let ready = move || prof.get().is_some() && (feed.get().is_some() || feed.error().is_some());
     render! {
-        list(
-            style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
-            each: move || {
-                let mut rows = Vec::new();
-                if let Some((p, me)) = prof.get() {
-                    rows.push(ProfileRow::Header(p, me, show_logout));
-                }
-                for post in feed.get().unwrap_or_default() {
-                    rows.push(ProfileRow::Post(post));
-                }
-                rows
+        Show(
+            when: ready,
+            fallback: move || render! {
+                status_pane(message: match prof.error() {
+                    Some(e) if !e.is_empty() => e,
+                    _ => "読み込み中…".to_string(),
+                })
             },
-            key: |r: &ProfileRow| match r {
-                ProfileRow::Header(..) => "::header".to_string(),
-                ProfileRow::Post(p) => p.uri.clone(),
-            },
-            children: |r: ProfileRow| match r {
-                ProfileRow::Header(p, me, sl) => render! {
-                    profile_header(profile: p, my_did: me, show_logout: sl)
+        ) {
+            list(
+                style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
+                each: move || {
+                    let mut rows = vec![ProfileRow::Header];
+                    if let Some(posts) = feed.get() {
+                        rows.extend(posts.into_iter().map(|p| ProfileRow::Post(Box::new(p))));
+                    }
+                    rows
                 },
-                ProfileRow::Post(p) => render! { PostRow(post: p) },
-            },
-        )
+                key: |r: &ProfileRow| match r {
+                    ProfileRow::Header => "::header".to_string(),
+                    ProfileRow::Post(p) => p.uri.clone(),
+                },
+                children: move |r: ProfileRow| match r {
+                    ProfileRow::Header => render! {
+                        profile_header(
+                            profile: prof.get().map(|(p, _)| p).unwrap_or_default(),
+                            my_did: prof.get().map(|(_, me)| me).unwrap_or_default(),
+                            show_logout: show_logout,
+                        )
+                    },
+                    ProfileRow::Post(p) => render! { PostRow(post: *p) },
+                },
+            )
+        }
     }
 }
 

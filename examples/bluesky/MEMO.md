@@ -52,7 +52,14 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
   Header は固定 key（`"::header"`）にしておくと、feed 更新時に新規 Post だけが差分追加され、
   既にマウント済みのヘッダーは再描画/空白化しない（先の「同一 Show children 問題」もこれで回避）。
   異なる要素構造のアイテムを 1 つの `list` に混ぜても decoupled-native list は per-item subtree なので問題なし。
-  → DX: 「ヘッダー付きの長いリスト」は頻出。`list` に header/footer/sticky スロットがあれば enum 化せず書ける。
+  - **ただし `list` にアイテムを増分追加すると並び順が壊れる**（重要）: ヘッダーを先に 1 件入れ、
+    後から feed の投稿を append すると、**ヘッダーが末尾に押し出される**（新規アイテムは
+    `append_child` で後から入るが、レイアウトが各() の index 順／item-key 順を保たない）。
+    回避：**prof と feed の両方が settle してから `list` を 1 回の diff で `[header, …posts]` と
+    一括マウント**する（ホームのタイムラインが全件一括で正しく並ぶのと同じ）。`Show(when: 両方settled)`
+    でラップし、それまではローディング表示。増分（count 0→1→N）を避けるのがポイント。
+  → DX: 「ヘッダー付きの長いリスト」は頻出。`list` に header/footer/sticky スロットがあれば enum 化＋
+  一括マウント調整なしで書ける。増分追加時の並び順保証も欲しい。
 - **同じ `Show` children 内で複数リソースを読むと、片方の更新が他方を巻き込んで再レンダリング**:
   プロフィール画面で `Show(when: prof.is_some()){ profile_header(prof.get()…) post_list(feed.get()…) }`
   と書いたら、**`feed` が解決した瞬間にヘッダーが空白化**した（最初は表示され、フィード到着で消える）。
