@@ -38,9 +38,9 @@ pub fn app() -> Element {
         )) {
             Router(routes: routes! {
                 Stack {
-                    Route(path: "", component: LoginScreen)
+                    Route(path: "", component: TimelineScreen)
+                    Route(path: "login", component: LoginScreen)
                     Route(path: "auth/:handle", component: AuthScreen)
-                    Route(path: "timeline", component: TimelineScreen)
                 }
             }) {
                 Outlet {}
@@ -187,9 +187,9 @@ fn auth_screen() -> Element {
         spawn_local(async move {
             match bsky_auth::complete_login(&url).await {
                 Ok(()) => {
-                    // Clear the auth stack so the timeline is the only entry —
-                    // no login/auth screens linger behind it.
-                    let _ = nav.reset("/timeline");
+                    // Clear the auth stack so the timeline (the root route)
+                    // is the only entry — no login/auth screens linger.
+                    let _ = nav.reset("/");
                 }
                 Err(e) => {
                     error.set(e);
@@ -265,7 +265,40 @@ fn auth_loading(error: RwSignal<String>) -> Element {
 /// Authenticated home timeline.
 #[component]
 fn timeline_screen() -> Element {
-    let feed = resource(|| async { bsky_auth::fetch_timeline(50).await });
+    let nav = use_navigator();
+    // Auth gate. Start from what this process already knows; on a cold
+    // launch (`authed` false) restore the persisted session, flipping
+    // `authed` on success or hopping to /login when there's nothing to
+    // restore — so the timeline is the default screen and login is only
+    // the fallback. This runs once (`on_mount`), so it can't feed back
+    // into a reactive loop the way a router-mutating `effect` could.
+    let authed = RwSignal::new(bsky_auth::is_authenticated());
+    on_mount(move || {
+        if authed.get() {
+            return;
+        }
+        let nav = nav.clone();
+        spawn_local(async move {
+            if bsky_auth::restore_session().await {
+                authed.set(true);
+            } else {
+                let _ = nav.reset("/login");
+            }
+        });
+    });
+
+    // Load the feed once authenticated. Reading `authed` in the fetcher's
+    // synchronous prefix makes the resource re-run when restore flips it
+    // true; until then it yields the empty "still waiting" sentinel.
+    let feed = resource(move || {
+        let ready = authed.get();
+        async move {
+            if !ready {
+                return Err(String::new());
+            }
+            bsky_auth::fetch_timeline(50).await
+        }
+    });
 
     // Inset the feed by the safe-area: top keeps the first post clear of the
     // status bar / notch, bottom keeps the last clear of the home indicator.
@@ -289,10 +322,11 @@ fn timeline_screen() -> Element {
                 when: move || feed.get().is_some(),
                 fallback: move || render! {
                     status_pane(
-                        message: if feed.error().is_some() {
-                            feed.error().unwrap_or_default()
-                        } else {
-                            "読み込み中…".to_string()
+                        // Empty error == the "waiting for auth/restore"
+                        // sentinel — show loading, not a blank error line.
+                        message: match feed.error() {
+                            Some(e) if !e.is_empty() => e,
+                            _ => "読み込み中…".to_string(),
                         },
                     )
                 },

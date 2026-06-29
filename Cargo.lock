@@ -370,6 +370,7 @@ name = "bsky-auth"
 version = "0.1.0"
 dependencies = [
  "atrium-api",
+ "atrium-common",
  "atrium-identity",
  "atrium-oauth",
  "atrium-xrpc",
@@ -378,6 +379,8 @@ dependencies = [
  "serde",
  "serde_html_form",
  "serde_json",
+ "whisker-local-store",
+ "whisker-secure-store",
 ]
 
 [[package]]
