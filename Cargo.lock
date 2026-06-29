@@ -361,6 +361,7 @@ dependencies = [
  "whisker-input",
  "whisker-local-store",
  "whisker-router",
+ "whisker-safe-area",
  "whisker-webview",
 ]
 

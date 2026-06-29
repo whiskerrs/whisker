@@ -15,6 +15,7 @@ whisker-webview = { path = "../../packages/whisker-webview" }
 whisker-input = { path = "../../packages/whisker-input" }
 whisker-local-store = { path = "../../packages/whisker-local-store" }
 whisker-image = { path = "../../packages/whisker-image" }
+whisker-safe-area = { path = "../../packages/whisker-safe-area" }
 bsky-domain = { path = "crates/bsky-domain" }
 bsky-auth = { path = "crates/bsky-auth" }
 bsky-theme = { path = "crates/bsky-theme" }

@@ -18,11 +18,12 @@ use bsky_ui_kit::PostCard;
 use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
-use whisker_input::{Input, KeyboardType};
+use whisker_input::{AutoCapitalize, Input, KeyboardType};
 use whisker_router::render::{
     AndroidPredictiveBack, Outlet, Router, SwipeBack, use_navigator, use_param,
 };
 use whisker_router::routes;
+use whisker_safe_area::safe_area_insets;
 use whisker_webview::WebView;
 
 use bsky_theme as theme;
@@ -67,14 +68,28 @@ fn login_screen() -> Element {
         let _ = nav_go.navigate(&format!("/auth/{h}"));
     };
 
-    render! {
-        view(style: css!(
+    // Keep the 24px gutter, but push every edge out by the host safe-area
+    // (status bar / notch / home indicator) so the title and CTA never sit
+    // under system chrome. Reactive via `computed` — re-pads on rotation /
+    // Dynamic Island / Android edge-to-edge toggle.
+    let insets = safe_area_insets();
+    let root_style = computed(move || {
+        let i = insets.get();
+        css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Stretch,
-            padding: px(24),
-        )) {
+            background_color: theme::BG,
+            padding_top: px(24.0 + i.top as f32),
+            padding_bottom: px(24.0 + i.bottom as f32),
+            padding_left: px(24.0 + i.leading as f32),
+            padding_right: px(24.0 + i.trailing as f32),
+        )
+    });
+
+    render! {
+        view(style: root_style) {
             text(
                 style: css!(
                     font_size: theme::T_TITLE,
@@ -88,6 +103,13 @@ fn login_screen() -> Element {
                 text: handle,
                 placeholder: "you.bsky.social",
                 keyboard_type: KeyboardType::Url,
+                // A Bluesky handle is a case-sensitive identifier: don't
+                // auto-capitalize the first character, and suppress
+                // autocorrect / spelling suggestions so a typed handle is
+                // never silently rewritten.
+                auto_capitalize: AutoCapitalize::None,
+                autocorrect: false,
+                spell_check: false,
                 placeholder_color: "#8B98A5",
                 caret_color: "#1083FE",
                 style: "height: 48px; border-radius: 10px; \
@@ -177,17 +199,29 @@ fn auth_screen() -> Element {
         });
     };
 
-    render! {
-        // Opaque white on the OUTER container. The native WebView is transparent
-        // on iOS (WKWebView is forced to `.clear` and ignores CSS background), so
-        // without an opaque ancestor the leaving screen shows through it during
-        // the route transition and until the page paints. White also matches the
-        // light bsky auth page, so there's no flash.
-        view(style: css!(
+    // Opaque white on the OUTER container. The native WebView is transparent
+    // on iOS (WKWebView is forced to `.clear` and ignores CSS background), so
+    // without an opaque ancestor the leaving screen shows through it during
+    // the route transition and until the page paints. White also matches the
+    // light bsky auth page, so there's no flash. The safe-area padding insets
+    // the web page off the notch / home indicator; the strips paint white too
+    // (same container background), so there are no black bars.
+    let insets = safe_area_insets();
+    let root_style = computed(move || {
+        let i = insets.get();
+        css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
             background_color: Color::hex(0xFFFFFF),
-        )) {
+            padding_top: px(i.top as f32),
+            padding_bottom: px(i.bottom as f32),
+            padding_left: px(i.leading as f32),
+            padding_right: px(i.trailing as f32),
+        )
+    });
+
+    render! {
+        view(style: root_style) {
             Show(
                 when: move || !auth_url.get().is_empty(),
                 fallback: move || render! { auth_loading(error: error) },
@@ -233,8 +267,24 @@ fn auth_loading(error: RwSignal<String>) -> Element {
 fn timeline_screen() -> Element {
     let feed = resource(|| async { bsky_auth::fetch_timeline(50).await });
 
+    // Inset the feed by the safe-area: top keeps the first post clear of the
+    // status bar / notch, bottom keeps the last clear of the home indicator.
+    let insets = safe_area_insets();
+    let root_style = computed(move || {
+        let i = insets.get();
+        css!(
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            background_color: theme::BG,
+            padding_top: px(i.top as f32),
+            padding_bottom: px(i.bottom as f32),
+            padding_left: px(i.leading as f32),
+            padding_right: px(i.trailing as f32),
+        )
+    });
+
     render! {
-        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+        view(style: root_style) {
             Show(
                 when: move || feed.get().is_some(),
                 fallback: move || render! {
