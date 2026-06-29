@@ -11,5 +11,9 @@ crate-type = ["rlib"]
 [dependencies]
 whisker = { workspace = true }
 whisker-image = { path = "../../../../packages/whisker-image" }
+# `whisker-icons` exposes every Lucide icon as a tree-shakable
+# `pub const &str`; the timeline's engagement row uses `MessageCircle`
+# / `Repeat2` / `Heart` instead of emoji.
+whisker-icons = { path = "../../../../packages/whisker-icons" }
 bsky-theme = { path = "../bsky-theme" }
 bsky-domain = { path = "../bsky-domain" }

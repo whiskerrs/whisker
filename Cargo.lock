@@ -401,6 +401,7 @@ dependencies = [
  "bsky-domain",
  "bsky-theme",
  "whisker",
+ "whisker-icons",
  "whisker-image",
 ]
 

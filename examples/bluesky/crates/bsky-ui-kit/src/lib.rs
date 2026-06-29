@@ -7,6 +7,7 @@ use bsky_theme as theme;
 use whisker::css::{AlignItems, Display, FlexDirection, FontWeight};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
+use whisker_icons::{Icon, lucide};
 use whisker_image::{Image, ImageMode};
 
 /// One timeline row. Avatar on the left, author line + body + counts stacked on
@@ -16,10 +17,6 @@ pub fn post_card(post: FeedPost) -> Element {
     let avatar = post.author.avatar.clone().unwrap_or_default();
     let name = post.author.name();
     let handle = format!("@{}", post.author.handle);
-    let meta = format!(
-        "💬 {}   🔁 {}   ♥ {}",
-        post.reply_count, post.repost_count, post.like_count
-    );
 
     render! {
         view(style: css!(
@@ -64,15 +61,50 @@ pub fn post_card(post: FeedPost) -> Element {
                     ),
                     value: post.text.clone(),
                 )
-                text(
-                    style: css!(
-                        font_size: theme::T_META,
-                        color: theme::TEXT_SECONDARY,
-                        margin_top: px(8),
-                    ),
-                    value: meta,
-                )
+                view(style: css!(
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    margin_top: px(8),
+                )) {
+                    metric(icon: lucide::MessageCircle, count: post.reply_count)
+                    metric(icon: lucide::Repeat2, count: post.repost_count)
+                    metric(icon: lucide::Heart, count: post.like_count)
+                }
             }
+        }
+    }
+}
+
+/// One engagement stat — a Lucide glyph followed by its count, both in
+/// the secondary text colour. Replaces the old emoji meta line so the
+/// icons render identically across iOS / Android (no font-emoji drift).
+#[component]
+fn metric(icon: Signal<String>, count: u64) -> Element {
+    render! {
+        view(style: css!(
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            margin_right: px(20),
+        )) {
+            Icon(
+                svg: icon,
+                // `whisker-icons` forwards `color` straight to Lynx as the
+                // `currentColor` substitution; there's no typed `Color` prop
+                // yet, so the secondary text hex (theme::TEXT_SECONDARY)
+                // goes in as a string literal.
+                color: "#8B98A5",
+                size: "15",
+            )
+            text(
+                style: css!(
+                    font_size: theme::T_META,
+                    color: theme::TEXT_SECONDARY,
+                    margin_left: px(5),
+                ),
+                value: count.to_string(),
+            )
         }
     }
 }
