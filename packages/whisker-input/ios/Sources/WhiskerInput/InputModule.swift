@@ -100,6 +100,15 @@ public final class InputModule: Module {
                 Prop("return-key") { (view: WhiskerInputView, value: WhiskerValue) in
                     view.setReturnKey(value.asString ?? "default")
                 }
+                Prop("auto-capitalize") { (view: WhiskerInputView, value: WhiskerValue) in
+                    view.setAutoCapitalize(value.asString ?? "sentences")
+                }
+                Prop("autocorrect") { (view: WhiskerInputView, value: WhiskerValue) in
+                    view.setAutocorrect(value.asString ?? "true")
+                }
+                Prop("spell-check") { (view: WhiskerInputView, value: WhiskerValue) in
+                    view.setSpellCheck(value.asString ?? "true")
+                }
 
                 // ---- CSS text-style props --------------------------------
                 //
