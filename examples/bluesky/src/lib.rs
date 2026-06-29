@@ -312,6 +312,15 @@ fn profile_screen() -> Element {
     }
 }
 
+/// One row of the profile's single `list`: the profile-info header is the
+/// first item, the author's posts follow — so the header scrolls with the
+/// feed. Both payloads are boxed to keep the enum small.
+#[derive(Clone)]
+enum ProfileRow {
+    Header(Box<(bsky_domain::Profile, String, bool)>),
+    Post(Box<bsky_domain::FeedPost>),
+}
+
 /// Profile header (banner / avatar / name / bio / counts + follow or
 /// logout) followed by the account's authored posts.
 #[component]
@@ -335,39 +344,50 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
         }
     });
 
-    // Fixed header pinned at the top + the author's feed in a virtualised
-    // `list` below it. The header reads only `prof` and the list only
-    // `feed`, as independent siblings, so a feed update re-diffs the list
-    // without touching the header. The header is `flex-shrink: 0` so the
-    // list (which fills the rest and scrolls internally) can't squeeze it.
-    // (A header that scrolls *with* the feed would need a header slot in
-    // `list`; mixing a tall header item into the virtualised list misorders
-    // / collapses it — see MEMO.)
+    // Header + feed in ONE virtualised `list` (header is item 0), so the
+    // profile info scrolls with the timeline. The list is mounted only once
+    // BOTH the profile and feed have settled, so it materialises in a single
+    // diff (`[header, …posts]`) — the same one-shot mount the home timeline
+    // does. (Growing the list incrementally — header first, posts later —
+    // makes `list` append the late posts after the header, pushing it to the
+    // bottom; one-shot mounting avoids that.)
+    let ready = move || prof.get().is_some() && (feed.get().is_some() || feed.error().is_some());
     render! {
-        view(style: css!(flex_grow: 1.0, flex_shrink: 1.0, flex_direction: FlexDirection::Column)) {
-            Show(
-                when: move || prof.get().is_some(),
-                fallback: move || render! {
-                    status_pane(message: match prof.error() {
-                        Some(e) if !e.is_empty() => e,
-                        _ => "読み込み中…".to_string(),
-                    })
+        Show(
+            when: ready,
+            fallback: move || render! {
+                status_pane(message: match prof.error() {
+                    Some(e) if !e.is_empty() => e,
+                    _ => "読み込み中…".to_string(),
+                })
+            },
+        ) {
+            list(
+                style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
+                each: move || {
+                    let Some((p, me)) = prof.get() else {
+                        return Vec::new();
+                    };
+                    let mut rows = vec![ProfileRow::Header(Box::new((p, me, show_logout)))];
+                    if let Some(posts) = feed.get() {
+                        rows.extend(posts.into_iter().map(|x| ProfileRow::Post(Box::new(x))));
+                    }
+                    rows
                 },
-            ) {
-                profile_header(
-                    profile: prof.get().map(|(p, _)| p).unwrap_or_default(),
-                    my_did: prof.get().map(|(_, me)| me).unwrap_or_default(),
-                    show_logout: show_logout,
-                )
-            }
-            // Gate the list inside its own `Show` (like the home timeline) so
-            // it mounts once, with the full feed, when `feed` resolves.
-            // Rendering `post_list(feed.get())` unconditionally read `feed`
-            // outside a reactive scope, so a feed that resolved after the
-            // first render never re-rendered the list (it stayed empty).
-            Show(when: move || feed.get().is_some(), fallback: || render! { fragment() }) {
-                post_list(posts: feed.get().unwrap_or_default())
-            }
+                key: |r: &ProfileRow| match r {
+                    ProfileRow::Header(_) => "::header".to_string(),
+                    ProfileRow::Post(p) => p.uri.clone(),
+                },
+                children: |r: ProfileRow| match r {
+                    ProfileRow::Header(b) => {
+                        let (p, me, sl) = *b;
+                        render! {
+                            profile_header(profile: p, my_did: me, show_logout: sl)
+                        }
+                    }
+                    ProfileRow::Post(p) => render! { PostRow(post: *p) },
+                },
+            )
         }
     }
 }

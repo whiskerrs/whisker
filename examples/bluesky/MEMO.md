@@ -53,14 +53,16 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
   → 実用上の制約は「**リストの中身は 1 回の更新で確定させ、増分追加/並べ替えをするな**」。これは
   keyed list の常識（React 等）に反し、**無限スクロール・プル更新・途中挿入が軒並み危険**。
   ルールというより `list` の reconcile 不足。`list` が key で並べ替えるべき。
-- **`list` にヘッダースロット（header/section/sticky）が無い → スクロールするヘッダーは作れない**:
-  `list` は `each`/`key`/`children` の 3 kwarg だけ（body もヘッダー item も取らない）。背の高い
-  非均一なヘッダーを先頭アイテムに混ぜると、上記の順序問題に加え、**スクロール時に仮想化のリサイクル/
-  再計測でヘッダーの高さが潰れる**。結論（ユーザー判断）：**ヘッダーは上部固定、フィードのみ `list`**
-  にした（`view(column){ Show(prof){ profile_header(flex_shrink:0) } post_list(feed) }`）。
-  ヘッダーを一緒にスクロールさせたい場合は `list` に header/section スロットが必要（要フレームワーク改修）。
-  なお header と post_list は **prof だけ / feed だけ** を読む独立した兄弟にする（同一 `Show` children で
-  両方読むと feed 更新時にヘッダーが一瞬空白化するため。下の項目参照）。
+- **`list` にヘッダースロット（header/section/sticky）は無いが、「先頭アイテム＋一括マウント」で
+  スクロールするヘッダーは作れる**: `list` は `each`/`key`/`children` の 3 kwarg だけ（body もヘッダー
+  item スロットも取らない）。それでも **行を enum（`Header | Post`）にして `each` の先頭に Header を置く**
+  ことで、プロフィール情報をフィードと一緒にスクロールさせられた。**唯一の鍵は一括マウント**：
+  `Show(when: prof.is_some() && feed.settled){ list(...) }` でラップし、prof と feed が両方揃ってから
+  list を1回の diff で `[Header, …Posts]` とマウントする。これを増分（Header 先 → Posts 後）でやると
+  `list` が後発 Posts を末尾 append してヘッダーが下に回る／高さが潰れる。一括マウントなら順序も高さも
+  安定（serve-sim でスクロール検証済み：ヘッダーがフィードと一緒に流れ、潰れない）。
+  - トレードオフ：一括マウントは feed が揃うまでヘッダーを出せない（本家は先にヘッダー→後でフィード）。
+    `list` に正式な header/section スロットがあれば、この待ちも増分順序問題も無く書ける（要望）。
 - **子コンポーネントの引数で `resource.get()` を直接読んでもリアクティブ依存が張られない**（重要）:
   `post_list(posts: feed.get().unwrap_or_default())` のように `render!` の**引数式**でリソースを読むと、
   初回 render の値（まだ None → 空）で子がマウントされ、**後から feed が解決しても子が再 render されず空のまま**
