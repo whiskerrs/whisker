@@ -1633,6 +1633,13 @@ pub mod __tags {
             let entries: ::std::rc::Rc<
                 ::std::cell::RefCell<::std::collections::HashMap<K, ListEntry>>,
             > = ::std::rc::Rc::new(::std::cell::RefCell::new(::std::collections::HashMap::new()));
+            // Monotonic id source for STABLE `item-key`s. A logical key is
+            // stamped `item-key="w_{id}"` once on first appearance and keeps
+            // that element (and attr) across diffs, so it carries the same
+            // item-key when it reorders. Positional keys (the old
+            // `w_{index}`) defeated the native list's move/remove diff.
+            let next_id: ::std::rc::Rc<::std::cell::Cell<u64>> =
+                ::std::rc::Rc::new(::std::cell::Cell::new(0));
 
             ::whisker_runtime::reactive::effect(move || {
                 let new_items = each.call();
@@ -1648,23 +1655,23 @@ pub mod __tags {
                     if let ::std::option::Option::Some(existing) = old.remove(&k) {
                         new_entries.insert(k.clone(), existing);
                     } else {
+                        let id = next_id.get();
+                        next_id.set(id + 1);
                         let item_owner = ::whisker_runtime::reactive::Owner::new(None);
+                        // Option E: the user's `children(item)` returns a
+                        // `<list-item>` directly (no auto-wrap). Append it as
+                        // the list's child; the list OWNS `item-key` and
+                        // stamps a stable one from the key extractor.
                         let li = item_owner.with(|| {
-                            // Auto-wrap: the user's `children(item)` returns
-                            // arbitrary content (a story_row view, a custom
-                            // component, etc.). Lynx's <list> requires its
-                            // direct children to be UIComponent on the
-                            // platform side (LynxUIListItem on iOS,
-                            // UIListItem on Android — both
-                            // UIComponent-typed). Wrapping in <list-item>
-                            // is what realises that contract; user code
-                            // never has to write list_item itself.
-                            let li = create_element_by_name("list-item");
-                            let content = children.call(item);
-                            append_child(li, content);
+                            let li = children.call(item);
                             append_child(handle, li);
                             li
                         });
+                        apply_attr_owned::<_, ::std::string::String>(
+                            li,
+                            ::std::string::String::from("item-key"),
+                            ::std::format!("w_{}", id),
+                        );
                         new_entries.insert(
                             k.clone(),
                             ListEntry {
@@ -1682,18 +1689,13 @@ pub mod __tags {
                     entry.owner.dispose();
                 }
 
-                // Rebuild items Vec in new key order, capturing
-                // each leaf handle's Lynx sign (eager, from a safe
-                // scope — provider closure stays re-entrancy-safe).
+                // Rebuild items Vec in new key order, capturing each leaf
+                // handle's Lynx sign for the native item provider. `item-key`
+                // is stamped once at creation (stable), never re-assigned.
                 let mut new_items_vec: ::std::vec::Vec<(Element, i32)> =
                     ::std::vec::Vec::with_capacity(new_keys.len());
                 for k in &new_keys {
                     if let ::std::option::Option::Some(entry) = new_entries.get(k) {
-                        apply_attr_owned::<_, ::std::string::String>(
-                            entry.handle,
-                            ::std::string::String::from("item-key"),
-                            ::std::format!("w_{}", new_items_vec.len()),
-                        );
                         let sign = ::whisker_runtime::view::element_sign(entry.handle);
                         new_items_vec.push((entry.handle, sign));
                     }
@@ -1709,20 +1711,31 @@ pub mod __tags {
             handle
         }
     }
-    // `list_item` is an internal Lynx-side wrapper the `list`
-    // render-props builder auto-creates around each item slot. It
-    // realises the platform UI layer's `UIComponent` contract
-    // (`LynxUIListItem : LynxUIComponent` on iOS, `UIListItem extends
-    // UIComponent` on Android) that the list recycler / sticky /
-    // virtualisation machinery depends on. The list builder calls
-    // `create_element_by_name("list-item")` directly from its
-    // `__h()` effect; user code never reaches this builder.
-    #[allow(non_camel_case_types, dead_code)]
-    pub(crate) struct list_item {
+    /// `<list-item>` — the slot wrapper for a [`list`] item (Option E).
+    ///
+    /// A `<list>`'s `children` closure returns a `list_item` directly —
+    /// it realises the platform `UIComponent` contract
+    /// (`LynxUIListItem : LynxUIComponent` on iOS, `UIListItem extends
+    /// UIComponent` on Android) the recycler / sticky / virtualisation
+    /// machinery depends on, mirroring Lynx's mandatory `<list-item>`.
+    ///
+    /// `item-key` is **owned by the `list`** (stamped from the `key`
+    /// extractor), so it is not a `list_item` kwarg. The kwargs here are
+    /// the per-item attributes Lynx reads off each `<list-item>`.
+    ///
+    /// ```ignore
+    /// children: |p: Post| render! {
+    ///     list_item(full_span: p.is_header, reuse_identifier: "post") {
+    ///         post_card(post: p)
+    ///     }
+    /// }
+    /// ```
+    #[allow(non_camel_case_types)]
+    pub struct list_item {
         handle: Element,
     }
-    #[allow(non_snake_case, dead_code)]
-    pub(crate) fn __list_item_ctor() -> list_item {
+    #[allow(non_snake_case)]
+    pub fn __list_item_ctor() -> list_item {
         list_item {
             handle: create_element_by_name("list-item"),
         }
@@ -1732,15 +1745,60 @@ pub mod __tags {
             self.handle
         }
     }
-    #[allow(dead_code)]
     impl list_item {
-        /// `item-key` — stable identity for this item, used by the list
-        /// for recycling / diffing. Should be unique among siblings.
-        pub fn item_key<V>(self, v: V) -> Self
+        /// `full-span` — occupy the full row/column (e.g. a header in a
+        /// grid). Lynx reads via `IsBool()`.
+        pub fn full_span<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "full-span", v);
+            self
+        }
+        /// `sticky-top` — stick to the top edge while scrolling (needs
+        /// `sticky` on the parent `list`).
+        pub fn sticky_top<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "sticky-top", v);
+            self
+        }
+        /// `sticky-bottom` — stick to the bottom edge while scrolling.
+        pub fn sticky_bottom<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "sticky-bottom", v);
+            self
+        }
+        /// `recyclable` — whether this cell may be recycled (default
+        /// `true`). Lynx reads via `IsBool()`.
+        pub fn recyclable<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "recyclable", v);
+            self
+        }
+        /// `estimated-main-axis-size-px` — placeholder main-axis size
+        /// (px) used before the cell is measured. Stabilises recycling
+        /// of non-uniform cells. Lynx reads via `IsNumber()`.
+        pub fn estimated_size<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "estimated-main-axis-size-px", v);
+            self
+        }
+        /// `reuse-identifier` — recycling group. Cells sharing an
+        /// identifier reuse each other; distinct shapes (header vs row)
+        /// should use distinct identifiers.
+        pub fn reuse_identifier<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            apply_attr(self.handle, "item-key", v);
+            apply_attr(self.handle, "reuse-identifier", v);
             self
         }
     }
