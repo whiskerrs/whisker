@@ -12,6 +12,8 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
 - 投稿カード（アバター・著者・本文・エンゲージメント数、lucide アイコン）
 - 全画面 safe-area 対応、ハンドル入力の hygiene（auto_capitalize/autocorrect/spell_check off）
 - （Phase 0〜）タブナビゲーション …（以降フェーズごとに追記）
+- 検索（Phase 4）: `searchActors`（ユーザー）/`searchPosts`（投稿）をセグメント切替で表示。
+  検索フィールド + タブを固定ヘッダー、結果は仮想化 `list`。ユーザー行タップ→プロフィール遷移。
 
 ## スキップした機能と理由
 
@@ -25,6 +27,30 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
 ## DX の気づき（whisker 評価メモ）
 
 実装しながら気づいた「やりづらかった点・足りない機能・不揃いな API」を記録する。
+
+- **keep-alive な `Switch` ブランチ画面はホットパッチで再レンダリングされない＝編集の確認に
+  cold rebuild が要る**（重要・DX）: タブは root 直下の keep-alive `Switch`（全ブランチを起動時に
+  マウントして display トグル）。そのため Search/Notifications/Profile タブのような**起動時に
+  マウント済みの画面を編集しても、tier-1 ホットパッチでは画面に反映されない**（マウント済み
+  インスタンスは古いコードのまま）。home タブのように push で新規マウントされる画面や、遷移で
+  入り直す画面は反映されるが、keep-alive タブ直下の画面は**アプリ再起動（＝on-disk バイナリを
+  作り直す cold rebuild）が必要**。`whisker run` は tier-1 が通る限り cold rebuild しないので、
+  確認したいときは「アプリを terminate → ソースを touch」で `no client → Tier 2` を踏ませて
+  cold rebuild + 再 launch させた（simctl terminate/launch だけでは on-disk バイナリが古いままで
+  パッチも再適用されない点に注意）。Search 画面の反復はこれで毎回フルビルドになり遅かった。
+  → keep-alive ブランチの画面にもホットリロードの再レンダリングが届くと DX が大きく改善する。
+- **テキスト入力の自動検証は「合成タップは Lynx に届かないが、ネイティブ UITextField への
+  ホストキーボード入力は届く」**: serve-sim のタップでフィールドにフォーカスを当てた後、
+  `osascript`（System Events keystroke / key code 36=Return）で文字列と Return を送ると、
+  whisker-input（iOS は本物の `UITextField`）は普通に受け取れた。Lynx の合成 gesture が
+  届きにくいのとは別で、フォーカス済みネイティブ入力欄はホストのハードウェアキーボード入力を
+  受理する。検索クエリ投入の検証に使えた。
+- **`Input`（whisker-input のカスタムモジュール view）は親いっぱいに stretch しない＝
+  `width: 100%` を明示しないと中身幅に潰れる**: login 画面は root に `align_items: Stretch` を
+  置いていたので Input が全幅になっていたが、検索画面で Input をパディング付きラッパー view に
+  入れたら**幅が中身（空プレースホルダ）まで縮んだ**。Input の `style` 文字列に `width: 100%;`
+  を足して解決。custom module view は flex の cross-axis stretch を受けない（もしくは intrinsic
+  サイズを主張する）ようなので、明示幅が安全。
 
 - **dev ループでの認証セッションの扱い**: `whisker run ios` の cold rebuild は upgrade install
   （アンインストールしない）なので、**Keychain のセッションは rebuild を跨いで保持される**

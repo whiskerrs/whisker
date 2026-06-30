@@ -86,6 +86,27 @@ impl Profile {
     }
 }
 
+/// A search-result actor (atproto `ProfileView`, trimmed). Lighter than
+/// [`Profile`] — `searchActors` returns no counts or banner.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ActorView {
+    pub did: String,
+    pub handle: String,
+    pub display_name: Option<String>,
+    pub avatar: Option<String>,
+    pub description: Option<String>,
+}
+
+impl ActorView {
+    /// Display name if set and non-empty, else `@handle`.
+    pub fn name(&self) -> String {
+        match &self.display_name {
+            Some(n) if !n.trim().is_empty() => n.clone(),
+            _ => format!("@{}", self.handle),
+        }
+    }
+}
+
 /// A page of the home timeline.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Timeline {

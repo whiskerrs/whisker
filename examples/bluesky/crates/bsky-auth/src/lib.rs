@@ -13,9 +13,9 @@
 use std::sync::{Mutex, OnceLock};
 
 use atrium_api::agent::{Agent, SessionManager};
-use atrium_api::app::bsky::actor::get_profile;
+use atrium_api::app::bsky::actor::{defs as actor_defs, get_profile, search_actors};
 use atrium_api::app::bsky::feed::{
-    get_author_feed, get_post_thread, get_timeline, like, post, repost,
+    get_author_feed, get_post_thread, get_timeline, like, post, repost, search_posts,
 };
 use atrium_api::app::bsky::graph::follow;
 use atrium_api::app::bsky::richtext::facet;
@@ -574,6 +574,70 @@ pub async fn get_author_feed(actor: &str, limit: u8) -> Result<Vec<bsky_domain::
         .await
         .map_err(|e| e.to_string())?;
     Ok(out.feed.iter().map(map_feed_post).collect())
+}
+
+/// Map atrium's `ProfileView` (the shape `searchActors` returns) into our
+/// trimmed [`bsky_domain::ActorView`].
+fn map_actor(p: &actor_defs::ProfileView) -> bsky_domain::ActorView {
+    bsky_domain::ActorView {
+        did: p.did.as_str().to_string(),
+        handle: p.handle.as_str().to_string(),
+        display_name: p.display_name.clone(),
+        avatar: p.avatar.clone(),
+        description: p.description.clone(),
+    }
+}
+
+/// Search for accounts by query string (`searchActors`).
+pub async fn search_actors(query: &str, limit: u8) -> Result<Vec<bsky_domain::ActorView>, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .actor
+        .search_actors(
+            search_actors::ParametersData {
+                cursor: None,
+                limit: limit.try_into().ok(),
+                q: Some(query.to_string()),
+                term: None,
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out.actors.iter().map(map_actor).collect())
+}
+
+/// Search for posts by query string (`searchPosts`).
+pub async fn search_posts(query: &str, limit: u8) -> Result<Vec<bsky_domain::FeedPost>, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .feed
+        .search_posts(
+            search_posts::ParametersData {
+                author: None,
+                cursor: None,
+                domain: None,
+                lang: None,
+                limit: limit.try_into().ok(),
+                mentions: None,
+                q: query.to_string(),
+                since: None,
+                sort: None,
+                tag: None,
+                until: None,
+                url: None,
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out.posts.iter().map(map_post_view).collect())
 }
 
 /// Follow an account; returns the new follow record URI (for [`unfollow`]).

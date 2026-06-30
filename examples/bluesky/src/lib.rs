@@ -18,7 +18,7 @@ use whisker::prelude::*;
 use whisker::runtime::view::Element;
 use whisker_icons::{Icon, lucide};
 use whisker_image::{Image, ImageMode};
-use whisker_input::{AutoCapitalize, Input, KeyboardType};
+use whisker_input::{AutoCapitalize, Input, KeyboardType, ReturnKey};
 use whisker_router::render::{
     AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_navigator, use_param,
     use_pathname,
@@ -251,9 +251,240 @@ fn placeholder_screen(title: String) -> Element {
     }
 }
 
+/// Which result set the search screen is showing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchMode {
+    People,
+    Posts,
+}
+
 #[component]
 fn search_screen() -> Element {
-    render! { placeholder_screen(title: "検索（準備中）") }
+    let insets = safe_area_insets();
+    // `draft` is the live field text; `query` is the committed term (set on
+    // Return). Separating them means we only hit the network on submit, not
+    // on every keystroke.
+    let draft = RwSignal::new(String::new());
+    let query = RwSignal::new(String::new());
+    let mode = RwSignal::new(SearchMode::People);
+
+    // One resource per result kind. Each reads `query` + `mode` in its
+    // synchronous prefix, so it re-runs when either changes — but only the
+    // active mode actually calls the network; the other returns empty.
+    let actors = resource(move || {
+        let q = query.get();
+        let active = mode.get() == SearchMode::People;
+        async move {
+            let q = q.trim();
+            if !active || q.is_empty() {
+                return Ok::<_, String>(Vec::new());
+            }
+            bsky_auth::search_actors(q, 30).await
+        }
+    });
+    let posts = resource(move || {
+        let q = query.get();
+        let active = mode.get() == SearchMode::Posts;
+        async move {
+            let q = q.trim();
+            if !active || q.is_empty() {
+                return Ok::<_, String>(Vec::new());
+            }
+            bsky_auth::search_posts(q, 30).await
+        }
+    });
+
+    let top_pad =
+        computed(move || css!(flex_shrink: 0.0, padding_top: px(insets.get().top as f32 + 8.0)));
+    let has_query = move || !query.get().trim().is_empty();
+
+    render! {
+        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            // Search field + segmented control: fixed above the results list
+            // (the same fixed-header + list shape the profile uses). Each is
+            // pinned `flex-shrink: 0` so the virtualised results `list`
+            // (flex-grow:1, huge intrinsic height) can't squeeze them to zero.
+            view(style: top_pad) {}
+            view(style: css!(
+                flex_shrink: 0.0,
+                padding_left: theme::GUTTER,
+                padding_right: theme::GUTTER,
+                padding_bottom: px(8),
+            )) {
+                Input(
+                    text: draft,
+                    placeholder: "ユーザーや投稿を検索",
+                    return_key: ReturnKey::Search,
+                    keyboard_type: KeyboardType::Default,
+                    auto_capitalize: AutoCapitalize::None,
+                    autocorrect: false,
+                    spell_check: false,
+                    on_submit: move |v: String| query.set(v),
+                    placeholder_color: "#8B98A5",
+                    caret_color: "#1083FE",
+                    style: "width: 100%; height: 40px; border-radius: 10px; \
+                            background-color: #16191F; color: #FFFFFF; font-size: 16px; \
+                            padding-left: 14px; padding-right: 14px;",
+                )
+            }
+            view(style: css!(
+                flex_shrink: 0.0,
+                flex_direction: FlexDirection::Row,
+                border_bottom_width: px(1),
+                border_bottom_color: theme::BORDER,
+            )) {
+                search_tab(label: "ユーザー", active: computed(move || mode.get() == SearchMode::People), on_tap: { let mode = mode; std::rc::Rc::new(move || mode.set(SearchMode::People)) as std::rc::Rc<dyn Fn()> })
+                search_tab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: { let mode = mode; std::rc::Rc::new(move || mode.set(SearchMode::Posts)) as std::rc::Rc<dyn Fn()> })
+            }
+            Show(when: has_query, fallback: || render! { status_pane(message: "ユーザーや投稿を検索できます".to_string()) }) {
+                Show(
+                    when: move || mode.get() == SearchMode::People,
+                    fallback: move || render! {
+                        Show(when: move || posts.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
+                            post_list(posts: posts.get().unwrap_or_default())
+                        }
+                    },
+                ) {
+                    Show(when: move || actors.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
+                        actor_list(actors: actors.get().unwrap_or_default())
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One tab of the search segmented control. Active tab gets an accent
+/// underline + brighter label.
+#[component]
+fn search_tab(label: &'static str, active: Signal<bool>, on_tap: std::rc::Rc<dyn Fn()>) -> Element {
+    let cb = on_tap.clone();
+    let label_style = computed(move || {
+        css!(
+            font_size: theme::T_NAME,
+            font_weight: FontWeight::Bold,
+            color: if active.get() { theme::TEXT_PRIMARY } else { theme::TEXT_SECONDARY },
+        )
+    });
+    let underline_style = computed(move || {
+        css!(
+            height: px(3),
+            margin_top: px(8),
+            border_radius: px(2),
+            width: percent(100),
+            background_color: if active.get() { theme::ACCENT } else { theme::BG },
+        )
+    });
+    render! {
+        view(
+            style: css!(
+                flex_grow: 1.0,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                padding_top: px(10),
+            ),
+            on_tap: move |_| (cb)(),
+        ) {
+            text(style: label_style, value: label)
+            view(style: underline_style) {}
+        }
+    }
+}
+
+/// Virtualised list of [`actor_row`]s (people search results).
+#[component]
+fn actor_list(actors: Vec<bsky_domain::ActorView>) -> Element {
+    render! {
+        list(
+            style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
+            each: {
+                let actors = actors.clone();
+                move || actors.clone()
+            },
+            key: |a: &bsky_domain::ActorView| a.did.clone(),
+            children: |a: bsky_domain::ActorView| render! { actor_row(actor: a) },
+        )
+    }
+}
+
+/// One people-search row: avatar + name / handle + bio snippet. Tapping
+/// opens the account's profile.
+#[component]
+fn actor_row(actor: bsky_domain::ActorView) -> Element {
+    let nav = use_navigator();
+    let did = actor.did.clone();
+    let avatar = actor.avatar.clone().unwrap_or_default();
+    let name = actor.name();
+    let handle = format!("@{}", actor.handle);
+    let description = actor.description.clone().unwrap_or_default();
+    let has_desc = !description.trim().is_empty();
+    render! {
+        view(
+            style: css!(
+                flex_direction: FlexDirection::Row,
+                width: percent(100),
+                padding: theme::GUTTER,
+                border_bottom_width: px(1),
+                border_bottom_color: theme::BORDER,
+            ),
+            on_tap: move |_| {
+                let enc = urlencoding::encode(&did);
+                let _ = nav.navigate(&format!("/profile/{enc}"));
+            },
+        ) {
+            row_avatar(src: avatar)
+            view(style: css!(
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                margin_left: theme::ROW_GAP,
+            )) {
+                text(
+                    style: css!(font_size: theme::T_NAME, font_weight: FontWeight::Bold, color: theme::TEXT_PRIMARY),
+                    value: name,
+                )
+                text(
+                    style: css!(font_size: theme::T_HANDLE, color: theme::TEXT_SECONDARY),
+                    value: handle,
+                )
+                Show(when: move || has_desc, fallback: || render! { fragment() }) {
+                    text(
+                        style: css!(font_size: theme::T_BODY, color: theme::TEXT_PRIMARY, margin_top: px(2)),
+                        value: description.clone(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// A 44px circular avatar for list rows (CDN image, or a flat accent disc
+/// when the account has none).
+#[component]
+fn row_avatar(src: String) -> Element {
+    if src.is_empty() {
+        render! {
+            view(style: css!(
+                width: px(44),
+                height: px(44),
+                border_radius: px(22),
+                background_color: theme::ACCENT,
+            )) {}
+        }
+    } else {
+        render! {
+            Image(
+                style: css!(
+                    width: px(44),
+                    height: px(44),
+                    border_radius: px(22),
+                    background_color: theme::SURFACE,
+                ),
+                src: src.clone(),
+                mode: ImageMode::AspectFill,
+            )
+        }
+    }
 }
 
 #[component]
