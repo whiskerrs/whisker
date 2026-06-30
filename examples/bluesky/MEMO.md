@@ -26,6 +26,10 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
     （失敗時はロールバック）。`getProfile` の viewer から `muted`/`blocking_uri` を読んで状態反映。
     ※ ブロックは相手から見える副作用があるため実機ライブ検証はせず、ミュートのみ
     （非公開・即可逆）でトグル往復を検証した。
+- 設定（Phase 7）: 自分のプロフィールヘッダーのギア（`lucide::Settings`）→ 設定画面。
+  アカウント（ログイン中ハンドル + ログアウト）/ モデレーション（ミュート中・ブロック中
+  アカウント一覧、`getMutes`/`getBlocks` → `actor_list` 再利用、空状態あり）/ アプリ情報
+  （バージョン）。ログアウトはプロフィールヘッダーから設定内へ移動（本家同様）。
 
 ## スキップした機能と理由
 
@@ -188,6 +192,23 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
 - **tier-1 hot-patch は新規クレート依存を拾えない**: `urlencoding` を新たに足した変更は
   tier-1 patch が `unlinked crate` で失敗し、tier-2 cold rebuild にフォールバックした（想定内
   だが、依存追加を伴う反復は毎回フルビルドになる点は DX メモとして記録）。
+- **`env!("CARGO_PKG_VERSION")` は tier-1 ホットパッチを壊す＝`option_env!` を使う**（重要・DX）:
+  設定画面のバージョン表示に `env!("CARGO_PKG_VERSION")` を書いたら、**通常の `cargo check` は
+  通るのに tier-1 thin patch が `error: environment variable 'CARGO_PKG_VERSION' not defined` で
+  失敗**した。tier-1 は Cargo を介さず**生の `rustc --emit=obj`** で差分ビルドするため、Cargo が
+  注入する `CARGO_*` 環境変数が無く、`env!`（コンパイル時必須・無いとハードエラー）が落ちる。
+  しかも**crate 全体がコンパイルできなくなる**ので、この crate の以後のホットパッチが軒並み
+  tier-2 cold rebuild に落ちる（home タイムライン編集すら遅くなる）。
+  → 対処：`option_env!("CARGO_PKG_VERSION").unwrap_or("dev")`。`option_env!` は無ければ `None` を
+  返すだけでエラーにならず、tier-1（生 rustc）では `"dev"`、tier-2/通常ビルドでは実際の版が出る。
+  Cargo 由来の env var に依存する `env!` は全般にこの罠がある（hot-patch するアプリでは避ける）。
+- **`Resource<T>` の `T` は「Ok 型」＝`resource(|| async { ... Result ... })` の `Result` を剥がす**:
+  子コンポーネントに resource を渡すため引数型を書くとき、`resource` のクロージャが
+  `Result<Vec<X>, String>` を返すからと `Resource<Result<Vec<X>, String>>` と書くと、
+  `res.get()` が `Option<Result<Vec<X>, String>>` になって `.unwrap_or_default()` が `Result` を
+  返し型エラー。正しくは **`Resource<Vec<X>>`**（`resource` が Ok/Err を分離し、`.get()` →
+  `Option<Ok>`、`.error()` → `Option<Err>`）。ローカル変数なら推論で気づかないが、prop の型注釈で
+  初めて顕在化する。
 - **at:// URI をルートパラメータに乗せにくい**（見込み）: ポスト URI は `at://did/coll/rkey` と
   スラッシュを含むため `Route("post/:uri")` に素直に入らない。percent-encode が要りそう。
   実装時に確認して追記する。

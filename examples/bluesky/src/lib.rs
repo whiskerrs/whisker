@@ -88,6 +88,9 @@ pub fn app() -> Element {
                                 Route(path: "profile/:did", component: ProfileScreen)
                                 Route(path: "followers/:did", component: FollowersScreen)
                                 Route(path: "following/:did", component: FollowingScreen)
+                                Route(path: "settings", component: SettingsScreen)
+                                Route(path: "settings/muted", component: MutedAccountsScreen)
+                                Route(path: "settings/blocked", component: BlockedAccountsScreen)
                             }
                         }
                         Route(path: "(auth)") {
@@ -840,7 +843,7 @@ fn profile_header(profile: bsky_domain::Profile, my_did: String, show_logout: bo
                 avatar_disc(src: avatar)
                 view(style: css!(flex_direction: FlexDirection::Row, align_items: AlignItems::Center)) {
                     Show(when: move || show_logout, fallback: || render! { fragment() }) {
-                        logout_button()
+                        settings_button()
                     }
                     Show(when: move || show_actions, fallback: || render! { fragment() }) {
                         view(
@@ -1246,6 +1249,215 @@ fn logout_button() -> Element {
                 style: css!(font_size: px(14), color: theme::TEXT_PRIMARY),
                 value: "ログアウト",
             )
+        }
+    }
+}
+
+/// Gear button on the logged-in profile header → the settings screen.
+#[component]
+fn settings_button() -> Element {
+    let nav = use_navigator();
+    render! {
+        view(
+            style: css!(
+                width: px(34),
+                height: px(34),
+                border_radius: px(17),
+                background_color: theme::SURFACE,
+                display: Display::Flex,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+            ),
+            on_tap: move |_| {
+                let _ = nav.navigate("/settings");
+            },
+        ) {
+            Icon(svg: lucide::Settings, color: "#FFFFFF", size: "18")
+        }
+    }
+}
+
+/// Settings screen: account (handle + logout), moderation (muted / blocked
+/// account lists), and app info. Reached from the profile gear button.
+#[component]
+fn settings_screen() -> Element {
+    let AuthState(authed) = use_context::<AuthState>().expect("AuthState provided at root");
+    // Resolve the logged-in handle for the account row. Gated on auth so it
+    // re-runs if the boot restore lands after first mount.
+    let handle = resource(move || {
+        let ready = authed.get();
+        async move {
+            if !ready {
+                return Err(String::new());
+            }
+            let did = bsky_auth::my_did()
+                .await
+                .ok_or_else(|| "not authenticated".to_string())?;
+            let p = bsky_auth::get_profile(&did).await?;
+            Ok(format!("@{}", p.handle))
+        }
+    });
+    let handle_label = computed(move || handle.get().unwrap_or_default());
+    render! {
+        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            nav_header(title: "設定".to_string())
+            view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                settings_section(title: "アカウント".to_string())
+                view(style: css!(
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::SpaceBetween,
+                    padding_left: theme::GUTTER,
+                    padding_right: theme::GUTTER,
+                    padding_top: px(12),
+                    padding_bottom: px(12),
+                )) {
+                    text(
+                        style: css!(font_size: theme::T_BODY, color: theme::TEXT_PRIMARY),
+                        value: handle_label,
+                    )
+                    logout_button()
+                }
+                settings_section(title: "モデレーション".to_string())
+                settings_row(
+                    icon: lucide::VolumeX,
+                    label: "ミュート中のアカウント".to_string(),
+                    route: "/settings/muted".to_string(),
+                )
+                settings_row(
+                    icon: lucide::Ban,
+                    label: "ブロック中のアカウント".to_string(),
+                    route: "/settings/blocked".to_string(),
+                )
+                settings_section(title: "アプリ情報".to_string())
+                view(style: css!(
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::SpaceBetween,
+                    padding_left: theme::GUTTER,
+                    padding_right: theme::GUTTER,
+                    padding_top: px(12),
+                    padding_bottom: px(12),
+                )) {
+                    text(
+                        style: css!(font_size: theme::T_BODY, color: theme::TEXT_PRIMARY),
+                        value: "バージョン",
+                    )
+                    text(
+                        style: css!(font_size: theme::T_META, color: theme::TEXT_SECONDARY),
+                        // `option_env!` (not `env!`): the tier-1 hot-patch runs
+                        // raw `rustc` without Cargo's env, so `env!` is a hard
+                        // compile error there — `option_env!` degrades to None.
+                        value: option_env!("CARGO_PKG_VERSION").unwrap_or("dev"),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// A small uppercase-ish section header inside the settings list.
+#[component]
+fn settings_section(title: String) -> Element {
+    render! {
+        text(
+            style: css!(
+                font_size: theme::T_META,
+                font_weight: FontWeight::Bold,
+                color: theme::TEXT_SECONDARY,
+                background_color: theme::BG,
+                padding_left: theme::GUTTER,
+                padding_top: px(16),
+                padding_bottom: px(6),
+            ),
+            value: title.clone(),
+        )
+    }
+}
+
+/// A tappable settings row: leading icon + label + trailing chevron.
+#[component]
+fn settings_row(icon: &'static str, label: String, route: String) -> Element {
+    let nav = use_navigator();
+    render! {
+        view(
+            style: css!(
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                padding_left: theme::GUTTER,
+                padding_right: theme::GUTTER,
+                padding_top: px(14),
+                padding_bottom: px(14),
+                border_bottom_width: px(1),
+                border_bottom_color: theme::BORDER,
+            ),
+            on_tap: {
+                let nav = nav.clone();
+                let route = route.clone();
+                move |_| {
+                    let _ = nav.navigate(&route);
+                }
+            },
+        ) {
+            Icon(svg: icon, color: "#FFFFFF", size: "20")
+            text(
+                style: css!(
+                    flex_grow: 1.0,
+                    font_size: theme::T_BODY,
+                    color: theme::TEXT_PRIMARY,
+                    margin_left: px(12),
+                ),
+                value: label.clone(),
+            )
+            Icon(svg: lucide::ChevronRight, color: "#8B98A5", size: "20")
+        }
+    }
+}
+
+/// Muted accounts list (`getMutes`).
+#[component]
+fn muted_accounts_screen() -> Element {
+    let res = resource(|| async { bsky_auth::get_mutes(50).await });
+    render! {
+        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            nav_header(title: "ミュート中のアカウント".to_string())
+            moderation_account_list(res: res)
+        }
+    }
+}
+
+/// Blocked accounts list (`getBlocks`).
+#[component]
+fn blocked_accounts_screen() -> Element {
+    let res = resource(|| async { bsky_auth::get_blocks(50).await });
+    render! {
+        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            nav_header(title: "ブロック中のアカウント".to_string())
+            moderation_account_list(res: res)
+        }
+    }
+}
+
+/// Shared body for the muted / blocked screens: gate on the resource and
+/// render the actor list (or a status pane while loading / empty).
+#[component]
+fn moderation_account_list(res: Resource<Vec<bsky_domain::ActorView>>) -> Element {
+    render! {
+        Show(
+            when: move || res.get().is_some(),
+            fallback: move || render! {
+                status_pane(message: match res.error() {
+                    Some(e) if !e.is_empty() => e,
+                    _ => "読み込み中…".to_string(),
+                })
+            },
+        ) {
+            Show(
+                when: move || !res.get().unwrap_or_default().is_empty(),
+                fallback: move || render! { status_pane(message: "該当するアカウントはありません".to_string()) },
+            ) {
+                actor_list(actors: res.get().unwrap_or_default())
+            }
         }
     }
 }

@@ -18,7 +18,7 @@ use atrium_api::app::bsky::feed::{
     get_author_feed, get_post_thread, get_timeline, like, post, repost, search_posts,
 };
 use atrium_api::app::bsky::graph::{
-    block, follow, get_followers, get_follows, mute_actor, unmute_actor,
+    block, follow, get_blocks, get_followers, get_follows, get_mutes, mute_actor, unmute_actor,
 };
 use atrium_api::app::bsky::notification::list_notifications;
 use atrium_api::app::bsky::richtext::facet;
@@ -601,6 +601,46 @@ pub async fn get_follows(actor: &str, limit: u8) -> Result<Vec<bsky_domain::Acto
         .await
         .map_err(|e| e.to_string())?;
     Ok(out.follows.iter().map(map_actor).collect())
+}
+
+/// Accounts the viewer has muted (`getMutes`).
+pub async fn get_mutes(limit: u8) -> Result<Vec<bsky_domain::ActorView>, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .graph
+        .get_mutes(
+            get_mutes::ParametersData {
+                cursor: None,
+                limit: limit.try_into().ok(),
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out.mutes.iter().map(map_actor).collect())
+}
+
+/// Accounts the viewer has blocked (`getBlocks`).
+pub async fn get_blocks(limit: u8) -> Result<Vec<bsky_domain::ActorView>, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .graph
+        .get_blocks(
+            get_blocks::ParametersData {
+                cursor: None,
+                limit: limit.try_into().ok(),
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out.blocks.iter().map(map_actor).collect())
 }
 
 /// Mute an account (server-side mute; no record).
