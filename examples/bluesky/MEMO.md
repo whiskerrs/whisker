@@ -70,6 +70,26 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
     固定される（UX が本家と異なる）。`list` に正式な header/section スロット、または「先頭の不均一セルを
     リサイクル対象から外す」hook があれば本家どおり書ける（要望）。ユーザー判断で「固定ヘッダー +
     仮想化 list」を選択（潰れない・仮想化ありを優先）。
+  - **追加調査（「これは whisker のバグか？」の切り分け）**:
+    - **コード**: `list` ビルダー（`crates/whisker/src/lib.rs` `__h()`）は全アイテムを実体としてツリーに
+      materialize し、各 `<list-item>` に **位置ベースの `item-key="w_{index}"`** を振り、`count` だけを
+      `set_update_list_info` で Lynx に渡す。**`reuse-identifier`/item-type も per-item 高さも sticky/header
+      スロットも露出していない**。リサイクル・レイアウトは完全に Lynx の decoupled native list 側。
+      → whisker の Rust ロジックが明確に誤っている類のバグではなく、**list バインディングの機能欠落
+      （不均一高さセルを安定させる制御を出していない）+ Lynx 側の仮想化の癖**、という位置づけ。
+    - **再現**: serve-sim の合成ジェスチャ（ゆっくりドラッグも高速フリングも、スクロール往復も）では
+      **「縦に潰れる」現象は再現できなかった**。ヘッダーを list の item 0 に戻し、intrinsic 高さ／固定高さ
+      px(460) の両方で試したが、いずれもスクロール後もヘッダーは満寸で表示された。ユーザーは実機の
+      手操作で潰れを観測しており、合成タップが Lynx gesture に完全には一致しない既知の制約（上記の
+      別項）が再現できない一因と思われる。
+    - **再現できた別異常**: item 0 にヘッダーを置くと、**ヘッダーのセル高さが中身より大きく**なり
+      （カウント行と最初の投稿の間に余白が出る＝セル高 ≠ コンテンツ高）。潰れとは逆向きだが、
+      「Lynx が不均一な先頭セルの高さを正しく measure できていない」ことの傍証。
+    - **結論**: 「whisker 単体のバグ」と断定はできない。Lynx native list が不均一高さの先頭セルを
+      正しく扱えない（過大／過小の measure）制約が主因で、whisker はそれを回避する API を露出して
+      いない。固定ヘッダー分離が現状の正解。深掘りするなら Lynx fork 側の list セル sizing
+      （`componentAtIndex`/`OnComponentFinished` 周辺）と、`reuse-identifier`/per-item-height の
+      バインディング追加が候補。
 - **`list` のセルは「クロス軸いっぱい」ではなく「コンテンツ幅」に縮む＝各アイテム root に
   `width: 100%` を明示しないと幅が不揃いになる**（重要・直感に反する）: 通常の flex/SwiftUI の
   縦リストはアイテムがクロス軸（横幅）いっぱいに stretch するが、whisker の仮想化 `<list>` は
