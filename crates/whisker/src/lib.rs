@@ -87,9 +87,9 @@ pub use whisker_runtime::view::Element;
 pub use whisker_macros::{component, main, module_component, render};
 
 pub use whisker_driver::{
-    AnimateOp, AnimateOptions, BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo,
-    ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo, animate_cancel, animate_start,
-    invoke_element_animate,
+    AnimateOp, AnimateOptions, BoundingClientRect, ElementHandle, ElementRef, ListHandle, RefError,
+    ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo, VisibleCell, VisibleCells,
+    animate_cancel, animate_start, invoke_element_animate,
 };
 
 pub use whisker_driver::module::PlatformModule;
@@ -108,9 +108,10 @@ pub use whisker_runtime::value::WhiskerValue;
 /// lifecycle / component-state events a [`CustomEvent`](event::CustomEvent).
 pub mod event {
     pub use whisker_runtime::event::{
-        AnimationEvent, BindType, CustomEvent, Event, Point, ScrollDetail, ScrollEvent,
-        SelectionChangeEvent, SelectionDetail, Size, Target, TextLayoutDetail, TextLayoutEvent,
-        TextLineInfo, Touch, TouchEvent,
+        AnimationEvent, BindType, CustomEvent, Event, LayoutCompleteDetail, LayoutCompleteEvent,
+        Point, ScrollDetail, ScrollEvent, ScrollStateChangeDetail, ScrollStateChangeEvent,
+        SelectionChangeEvent, SelectionDetail, Size, SnapDetail, SnapEvent, Target,
+        TextLayoutDetail, TextLayoutEvent, TextLineInfo, Touch, TouchEvent,
     };
 }
 
@@ -188,8 +189,8 @@ pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
 pub mod __tags {
     use crate::ElementTag;
     use whisker_runtime::event::{
-        AnimationEvent, CustomEvent, ScrollEvent, SelectionChangeEvent, TextLayoutEvent,
-        TouchEvent, bind_typed,
+        AnimationEvent, CustomEvent, LayoutCompleteEvent, ScrollEvent, ScrollStateChangeEvent,
+        SelectionChangeEvent, SnapEvent, TextLayoutEvent, TouchEvent, bind_typed,
     };
     use whisker_runtime::reactive::Signal;
     use whisker_runtime::value::WhiskerValue;
@@ -1288,22 +1289,9 @@ pub mod __tags {
             apply_attr(self.handle, "list-type", v);
             self
         }
-        /// `column-count` — number of columns (default 1). Lynx
-        /// reads this via `IsNumber()` on the decoupled list
-        /// container, so the int path is required — the stringified
-        /// `apply_attr` would silently no-op.
-        pub fn column_count<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<i32>>,
-        {
-            apply_attr_int(self.handle, "column-count", v);
-            self
-        }
-        /// `span-count` — preferred grid attribute on newer Lynx
-        /// builds (`column-count` is marked `@deprecated` in the
-        /// Lynx source). Same numeric-typed dispatch as
-        /// [`column_count`]; setting both is the safe shape while
-        /// older Lynx builds are still in the field.
+        /// `span-count` — number of columns (`flow`) / rows
+        /// (`waterfall`). Lynx reads this via `IsNumber()`, so the
+        /// int path is required. The documented attribute on newer Lynx.
         pub fn span_count<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<i32>>,
@@ -1311,14 +1299,222 @@ pub mod __tags {
             apply_attr_int(self.handle, "span-count", v);
             self
         }
-        /// `vertical-orientation` — `true` (default) scrolls
-        /// vertically, `false` horizontally. Lynx reads via
-        /// `IsBool()`, so the bool path is required.
-        pub fn vertical_orientation<V>(self, v: V) -> Self
+        /// `column-count` — **deprecated** alias for [`span_count`], not
+        /// in the current Lynx docs. Retained because the pinned fork's
+        /// *Android* `<list>` reads `column-count` while iOS reads
+        /// `span-count` — set both for cross-platform grid parity until
+        /// Android also honors `span-count`. Lynx reads via `IsNumber()`.
+        pub fn column_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "column-count", v);
+            self
+        }
+        /// `scroll-orientation` — scroll axis (default `Vertical`).
+        /// Takes the typed [`ScrollOrientation`](crate::attrs::ScrollOrientation) enum.
+        pub fn scroll_orientation<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<crate::attrs::ScrollOrientation>>,
+        {
+            apply_attr(self.handle, "scroll-orientation", v);
+            self
+        }
+        /// `update-animation` — animate data updates (default) or not.
+        /// Takes the typed [`ListUpdateAnimation`](crate::attrs::ListUpdateAnimation) enum.
+        pub fn update_animation<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<crate::attrs::ListUpdateAnimation>>,
+        {
+            apply_attr(self.handle, "update-animation", v);
+            self
+        }
+
+        // ---- bool props (Lynx reads via `IsBool()`) ----
+
+        /// `enable-scroll` — allow the user to drag-scroll the list.
+        pub fn enable_scroll<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<bool>>,
         {
-            apply_attr_bool(self.handle, "vertical-orientation", v);
+            apply_attr_bool(self.handle, "enable-scroll", v);
+            self
+        }
+        /// `enable-nested-scroll` — cooperate with a scrolling ancestor.
+        pub fn enable_nested_scroll<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "enable-nested-scroll", v);
+            self
+        }
+        /// `sticky` — enable sticky positioning for child nodes marked
+        /// `sticky_top` / `sticky_bottom`.
+        pub fn sticky<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "sticky", v);
+            self
+        }
+        /// `bounces` — edge bounce effect.
+        pub fn bounces<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "bounces", v);
+            self
+        }
+        /// `need-visible-item-info` — include visible-item geometry in
+        /// `scroll` events.
+        pub fn need_visible_item_info<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "need-visible-item-info", v);
+            self
+        }
+        /// `need-layout-complete-info` — include diff details in
+        /// `layoutcomplete` events.
+        pub fn need_layout_complete_info<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "need-layout-complete-info", v);
+            self
+        }
+        /// `scroll-bar-enable` — show the scrollbar indicator.
+        pub fn scroll_bar_enable<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "scroll-bar-enable", v);
+            self
+        }
+        /// `experimental-recycle-sticky-item` — recycle sticky cells.
+        pub fn experimental_recycle_sticky_item<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "experimental-recycle-sticky-item", v);
+            self
+        }
+
+        // ---- numeric props (Lynx reads via `IsNumber()`) ----
+
+        /// `sticky-offset` — offset (px) for sticky positioning.
+        pub fn sticky_offset<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "sticky-offset", v);
+            self
+        }
+        /// `initial-scroll-index` — item index to jump to on first render.
+        pub fn initial_scroll_index<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "initial-scroll-index", v);
+            self
+        }
+        /// `upper-threshold-item-count` — fire `scrolltoupper` when this
+        /// many items remain above the viewport.
+        pub fn upper_threshold_item_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "upper-threshold-item-count", v);
+            self
+        }
+        /// `lower-threshold-item-count` — fire `scrolltolower` when this
+        /// many items remain below the viewport (infinite scroll).
+        pub fn lower_threshold_item_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "lower-threshold-item-count", v);
+            self
+        }
+        /// `scroll-event-throttle` — minimum interval (ms) between
+        /// `scroll` event callbacks (default 200).
+        pub fn scroll_event_throttle<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "scroll-event-throttle", v);
+            self
+        }
+        /// `layout-id` — identifier marking a data-source update; lets
+        /// the native diff correlate `layoutcomplete` with the update.
+        pub fn layout_id<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "layout-id", v);
+            self
+        }
+        /// `preload-buffer-count` — number of off-screen items to keep
+        /// prepared (the virtualization draw buffer).
+        pub fn preload_buffer_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "preload-buffer-count", v);
+            self
+        }
+        /// `list-main-axis-gap` — spacing (px) between items along the
+        /// scroll axis.
+        pub fn list_main_axis_gap<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "list-main-axis-gap", v);
+            self
+        }
+        /// `list-cross-axis-gap` — spacing (px) between items across the
+        /// scroll axis (columns / rows).
+        pub fn list_cross_axis_gap<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "list-cross-axis-gap", v);
+            self
+        }
+
+        // ---- list events (CustomEvent → bind only) ----
+
+        /// `scroll` — fired continuously while scrolling. The
+        /// [`ScrollEvent`] `detail` carries offset + content size.
+        pub fn on_scroll<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scroll", BindType::Bind, f);
+            self
+        }
+        /// `scrolltoupper` — reached the `upper-threshold-item-count`.
+        pub fn on_scrolltoupper<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scrolltoupper", BindType::Bind, f);
+            self
+        }
+        /// `scrolltolower` — reached the `lower-threshold-item-count`
+        /// (infinite-scroll trigger).
+        pub fn on_scrolltolower<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scrolltolower", BindType::Bind, f);
+            self
+        }
+        /// `scrollstatechange` — scroll state transitions
+        /// (idle / dragging / fling / animated).
+        pub fn on_scrollstatechange<F: Fn(ScrollStateChangeEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scrollstatechange", BindType::Bind, f);
+            self
+        }
+        /// `layoutcomplete` — the list finished a layout pass.
+        pub fn on_layoutcomplete<F: Fn(LayoutCompleteEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "layoutcomplete", BindType::Bind, f);
+            self
+        }
+        /// `snap` — a paginated (`item-snap`) scroll began settling.
+        pub fn on_snap<F: Fn(SnapEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "snap", BindType::Bind, f);
             self
         }
     }

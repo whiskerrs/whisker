@@ -114,6 +114,17 @@ attr_enum! {
     }
 }
 
+attr_enum! {
+    /// `<list>` data-update animation — maps to Lynx's
+    /// `update-animation` attribute.
+    ListUpdateAnimation {
+        /// `"default"` — animate inserts / moves / removes.
+        Default => "default",
+        /// `"none"` — apply data updates without animation.
+        None => "none",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // pan-intercept-*
 // ---------------------------------------------------------------------------

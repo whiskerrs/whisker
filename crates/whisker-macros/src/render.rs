@@ -303,9 +303,27 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("scroll_view", "upper_threshold")
             | ("scroll_view", "lower_threshold")
             | ("list", "list_type")
-            | ("list", "column_count")
             | ("list", "span_count")
-            | ("list", "vertical_orientation")
+            | ("list", "column_count") // deprecated alias, kept for Android grid parity
+            | ("list", "scroll_orientation")
+            | ("list", "update_animation")
+            | ("list", "enable_scroll")
+            | ("list", "enable_nested_scroll")
+            | ("list", "sticky")
+            | ("list", "bounces")
+            | ("list", "need_visible_item_info")
+            | ("list", "need_layout_complete_info")
+            | ("list", "scroll_bar_enable")
+            | ("list", "experimental_recycle_sticky_item")
+            | ("list", "sticky_offset")
+            | ("list", "initial_scroll_index")
+            | ("list", "upper_threshold_item_count")
+            | ("list", "lower_threshold_item_count")
+            | ("list", "scroll_event_throttle")
+            | ("list", "layout_id")
+            | ("list", "preload_buffer_count")
+            | ("list", "list_main_axis_gap")
+            | ("list", "list_cross_axis_gap")
             // Render-props setters on `list` — type-stated, take
             // closure literals via `Into<EachFn<T>>` etc. The
             // typed-setter route is what makes the closure flow
@@ -313,9 +331,14 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             // fallback would try `Into<Signal<String>>`).
             | ("list", "each")
             | ("list", "key")
-            | ("list", "children") // (`list_item` is no longer a user-writable tag; the
-                                   // list builder owns the wrap. `item_key` is set by the
-                                   // list's effect, not by author code.)
+            | ("list", "children")
+            // Per-item props on the user-written `<list-item>` (Option E).
+            | ("list_item", "full_span")
+            | ("list_item", "sticky_top")
+            | ("list_item", "sticky_bottom")
+            | ("list_item", "reuse_identifier")
+            | ("list_item", "estimated_size")
+            | ("list_item", "recyclable")
     )
 }
 
@@ -355,6 +378,10 @@ fn is_known_event_method(name: &str) -> bool {
             | "on_scrolltolower"
             | "on_scrollend"
             | "on_contentsizechanged"
+            // `<list>`-specific scroll events.
+            | "on_scrollstatechange"
+            | "on_layoutcomplete"
+            | "on_snap"
             | "on_layout"
             | "on_selectionchange"
     );

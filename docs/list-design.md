@@ -145,7 +145,7 @@ Lynx itself). Documented as a rule.
 
 | Action | Detail |
 |---|---|
-| Remove `column-count` | Non-doc (doc has only `span-count`). Confirm no fielded Lynx build still needs it. |
+| Keep `column-count` as a deprecated alias | Non-doc (doc has only `span-count`), BUT the pinned fork's Android `<list>` reads `column-count` while iOS reads `span-count` (per the icons example). Removing it regresses the Android grid, so it stays — documented as deprecated. |
 | Replace `vertical-orientation` → `scroll-orientation` | Doc name; enum `vertical`/`horizontal`. |
 | `item-key`: positional → stable `key` | Bug ① core. |
 
@@ -252,8 +252,8 @@ Removed whisker internals:
 - **`children` auto-wrap** in `__h()` (`create_element_by_name("list-item")` + wrap) — Option E has the
   user write `list_item` explicitly.
 - **Positional `item-key="w_{index}"`** — replaced by stamping the stable `key`.
-- **`column_count` builder method** — non-doc (doc has only `span-count`).
-- **`vertical_orientation` builder method** — replaced by `scroll_orientation`.
+- **`vertical_orientation` builder method** — replaced by `scroll_orientation` (the documented name).
+  (`column_count` is **kept** as a deprecated alias — Android grid still needs it; see corrections.)
 - **Eager-materialize body** in `__h()` (Phase 4) — replaced by `Virtualizer` on-demand.
 - **`enqueue_component: None`** — replaced by real recycle.
 - **`list_mount` v1** (`let _ = key`) — refactored into `Virtualizer<T, K>`.
