@@ -18,6 +18,7 @@ use atrium_api::app::bsky::feed::{
     get_author_feed, get_post_thread, get_timeline, like, post, repost, search_posts,
 };
 use atrium_api::app::bsky::graph::follow;
+use atrium_api::app::bsky::notification::list_notifications;
 use atrium_api::app::bsky::richtext::facet;
 use atrium_api::com::atproto::repo::{create_record, delete_record, strong_ref};
 use atrium_api::types::string::{AtIdentifier, Cid, Datetime, Did, Nsid, RecordKey};
@@ -638,6 +639,67 @@ pub async fn search_posts(query: &str, limit: u8) -> Result<Vec<bsky_domain::Fee
         .await
         .map_err(|e| e.to_string())?;
     Ok(out.posts.iter().map(map_post_view).collect())
+}
+
+/// Pull the `text` field out of an arbitrary record without assuming it's a
+/// post. We deliberately do NOT use `post::RecordData::try_from_unknown`
+/// here: atrium's `TryFromUnknown` impl `.unwrap()`s the inner
+/// `serde_json::from_slice` (atrium-api types.rs:279), so probing a non-post
+/// record (a follow / like / repost) panics with "missing field `text`"
+/// instead of returning `Err`. Serialising to JSON and reading `text`
+/// defensively can't panic.
+fn record_text(record: &Unknown) -> Option<String> {
+    let json = serde_json::to_vec(record).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&json).ok()?;
+    value
+        .get("text")
+        .and_then(|t| t.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Map atrium's `Notification` into our trimmed [`bsky_domain::Notification`].
+/// `text` is the post body when the record is itself a post (reply / mention
+/// / quote); for like / repost / follow the record isn't a post, so it's None.
+fn map_notification(n: &list_notifications::Notification) -> bsky_domain::Notification {
+    let text = record_text(&n.record);
+    let a = &n.author;
+    bsky_domain::Notification {
+        uri: n.uri.clone(),
+        reason: n.reason.clone(),
+        reason_subject: n.reason_subject.clone(),
+        author: bsky_domain::Author {
+            did: a.did.as_str().to_string(),
+            handle: a.handle.as_str().to_string(),
+            display_name: a.display_name.clone(),
+            avatar: a.avatar.clone(),
+        },
+        text,
+        is_read: n.is_read,
+        indexed_at: n.indexed_at.as_str().to_string(),
+    }
+}
+
+/// Fetch the signed-in user's notifications (`listNotifications`).
+pub async fn list_notifications(limit: u8) -> Result<Vec<bsky_domain::Notification>, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .notification
+        .list_notifications(
+            list_notifications::ParametersData {
+                cursor: None,
+                limit: limit.try_into().ok(),
+                priority: None,
+                reasons: None,
+                seen_at: None,
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out.notifications.iter().map(map_notification).collect())
 }
 
 /// Follow an account; returns the new follow record URI (for [`unfollow`]).

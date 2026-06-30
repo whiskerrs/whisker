@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The author of a post (atproto `ProfileViewBasic`, trimmed).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Author {
     pub did: String,
     pub handle: String,
@@ -105,6 +105,26 @@ impl ActorView {
             _ => format!("@{}", self.handle),
         }
     }
+}
+
+/// One notification (atproto `listNotifications` → `Notification`,
+/// trimmed). `reason` is `like` / `repost` / `follow` / `mention` /
+/// `reply` / `quote` / …; `text` carries the post body for the reasons
+/// whose record is a post (reply / mention / quote).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Notification {
+    /// `at://` URI of the notification record (a post for reply/mention/
+    /// quote; a like/repost/follow record otherwise). Used as the list key.
+    pub uri: String,
+    pub reason: String,
+    /// `at://` URI of the subject the notification is about (e.g. the post
+    /// that was liked / reposted). Absent for follows.
+    pub reason_subject: Option<String>,
+    pub author: Author,
+    /// Post body, when the notification's record is itself a post.
+    pub text: Option<String>,
+    pub is_read: bool,
+    pub indexed_at: String,
 }
 
 /// A page of the home timeline.

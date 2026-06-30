@@ -14,6 +14,9 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
 - （Phase 0〜）タブナビゲーション …（以降フェーズごとに追記）
 - 検索（Phase 4）: `searchActors`（ユーザー）/`searchPosts`（投稿）をセグメント切替で表示。
   検索フィールド + タブを固定ヘッダー、結果は仮想化 `list`。ユーザー行タップ→プロフィール遷移。
+- 通知（Phase 5）: `listNotifications` を仮想化 `list` で表示。理由（like/repost/follow/
+  reply/mention/quote）ごとにアイコン + 文言、reply/mention/quote は本文も表示。タップで
+  対象ポスト（like/repost/reply…）またはフォロワーのプロフィールへ遷移。固定ヘッダー「通知」。
 
 ## スキップした機能と理由
 
@@ -51,6 +54,20 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
   入れたら**幅が中身（空プレースホルダ）まで縮んだ**。Input の `style` 文字列に `width: 100%;`
   を足して解決。custom module view は flex の cross-axis stretch を受けない（もしくは intrinsic
   サイズを主張する）ようなので、明示幅が安全。
+- **atrium-api の `try_from_unknown` は失敗時に `Err` を返さず `unwrap()` で panic する**
+  （依存ライブラリの罠・重要）: `Unknown`（生レコード）を型に落とす `T::try_from_unknown` は、
+  実装が `serde_json::from_slice(&json).unwrap()`（atrium-api types.rs:279）なので、**形が合わない
+  と panic** する。そのため「ポストかどうか不明なレコードから `text` を取り出す」用途で
+  `post::RecordData::try_from_unknown(rec).ok()` と書いても、`.ok()` に届く前に内部 unwrap が
+  panic する。通知の record は follow/like/repost だと `text` が無く、これで `missing field text`
+  panic。→ 対処：`Unknown` を `serde_json::to_vec` → `Value` にして `text` を防御的に読む
+  自前ヘルパー（`record_text`）にした。タイムラインは record が必ずポストなので顕在化せず、
+  通知で初めて踏んだ。**Unknown の形を「試しに」型へ落とすのに try_from_unknown は使えない**。
+- **resource の async タスク内 panic は「無限ローディング」になる（エラーが表に出ない）**:
+  上記 panic は `resource(|| async { … })` のフェッチ内で起きたため、resource が解決も失敗も
+  せず**ずっと `読み込み中…`** のままになった（`.error()` にも出ない）。原因究明は
+  `whisker run` の `[device:err]` ログ（`thread '<unnamed>' panicked at …`）で判明。
+  画面が無限ローディングのときはまずデバイス stderr の panic を疑う。
 
 - **dev ループでの認証セッションの扱い**: `whisker run ios` の cold rebuild は upgrade install
   （アンインストールしない）なので、**Keychain のセッションは rebuild を跨いで保持される**
