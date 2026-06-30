@@ -59,6 +59,8 @@ pub fn app() -> Element {
                                 Route(path: "compose", component: ComposeScreen)
                                 Route(path: "post/:uri", component: PostDetailScreen)
                                 Route(path: "profile/:did", component: ProfileScreen)
+                                Route(path: "followers/:did", component: FollowersScreen)
+                                Route(path: "following/:did", component: FollowingScreen)
                             }
                         }
                         Route(path: "(search)") {
@@ -66,6 +68,8 @@ pub fn app() -> Element {
                                 Route(path: "", component: SearchScreen)
                                 Route(path: "post/:uri", component: PostDetailScreen)
                                 Route(path: "profile/:did", component: ProfileScreen)
+                                Route(path: "followers/:did", component: FollowersScreen)
+                                Route(path: "following/:did", component: FollowingScreen)
                             }
                         }
                         Route(path: "(notifications)") {
@@ -73,6 +77,8 @@ pub fn app() -> Element {
                                 Route(path: "", component: NotificationsScreen)
                                 Route(path: "post/:uri", component: PostDetailScreen)
                                 Route(path: "profile/:did", component: ProfileScreen)
+                                Route(path: "followers/:did", component: FollowersScreen)
+                                Route(path: "following/:did", component: FollowingScreen)
                             }
                         }
                         Route(path: "(profile)") {
@@ -80,6 +86,8 @@ pub fn app() -> Element {
                                 Route(path: "", component: MyProfileScreen)
                                 Route(path: "post/:uri", component: PostDetailScreen)
                                 Route(path: "profile/:did", component: ProfileScreen)
+                                Route(path: "followers/:did", component: FollowersScreen)
+                                Route(path: "following/:did", component: FollowingScreen)
                             }
                         }
                         Route(path: "(auth)") {
@@ -771,23 +779,31 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
 
 #[component]
 fn profile_header(profile: bsky_domain::Profile, my_did: String, show_logout: bool) -> Element {
+    let nav = use_navigator();
     let banner = profile.banner.clone().unwrap_or_default();
     let avatar = profile.avatar.clone().unwrap_or_default();
     let is_me = profile.did == my_did;
-    let counts = format!(
-        "{} フォロー中 · {} フォロワー · {} ポスト",
-        profile.follows_count, profile.followers_count, profile.posts_count
-    );
     // Cloned for the (re-invokable) follow-button Show children closure.
     // `following_uri` is passed as a String (empty == not following).
     let follow_did = profile.did.clone();
     let follow_uri = profile.following_uri.clone().unwrap_or_default();
+    let count_did = profile.did.clone();
+    let mod_did = profile.did.clone();
+    let muted = profile.muted;
+    let blocking = profile.blocking_uri.clone().unwrap_or_default();
+    let follows_count = profile.follows_count;
+    let followers_count = profile.followers_count;
+    let posts_count = profile.posts_count;
     // Extract every field to an owned local so `profile` isn't referenced
     // inside the render closures (it's not `Copy`).
     let name = profile.name();
     let handle = format!("@{}", profile.handle);
     let description = profile.description.clone().unwrap_or_default();
     let has_desc = !description.is_empty();
+    // Other users get follow + an overflow (mute / block) menu; self / the
+    // logged-in account get logout instead.
+    let show_actions = !show_logout && !is_me;
+    let menu_open = RwSignal::new(false);
 
     render! {
         view(style: css!(
@@ -822,15 +838,42 @@ fn profile_header(profile: bsky_domain::Profile, my_did: String, show_logout: bo
                 margin_top: px(8),
             )) {
                 avatar_disc(src: avatar)
-                Show(when: move || show_logout, fallback: || render! { fragment() }) {
-                    logout_button()
+                view(style: css!(flex_direction: FlexDirection::Row, align_items: AlignItems::Center)) {
+                    Show(when: move || show_logout, fallback: || render! { fragment() }) {
+                        logout_button()
+                    }
+                    Show(when: move || show_actions, fallback: || render! { fragment() }) {
+                        view(
+                            style: css!(
+                                width: px(34),
+                                height: px(34),
+                                border_radius: px(17),
+                                background_color: theme::SURFACE,
+                                display: Display::Flex,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                margin_right: px(8),
+                            ),
+                            on_tap: move |_| menu_open.set(!menu_open.get()),
+                        ) {
+                            Icon(svg: lucide::Ellipsis, color: "#FFFFFF", size: "18")
+                        }
+                    }
+                    Show(when: move || show_actions, fallback: || render! { fragment() }) {
+                        follow_button(
+                            did: follow_did.clone(),
+                            following_uri: follow_uri.clone(),
+                        )
+                    }
                 }
-                Show(when: move || !show_logout && !is_me, fallback: || render! { fragment() }) {
-                    follow_button(
-                        did: follow_did.clone(),
-                        following_uri: follow_uri.clone(),
-                    )
-                }
+            }
+            Show(when: move || show_actions, fallback: || render! { fragment() }) {
+                moderation_menu(
+                    did: mod_did.clone(),
+                    muted: muted,
+                    blocking_uri: blocking.clone(),
+                    open: menu_open,
+                )
             }
             text(
                 style: css!(
@@ -858,15 +901,221 @@ fn profile_header(profile: bsky_domain::Profile, my_did: String, show_logout: bo
                     value: description.clone(),
                 )
             }
-            text(
-                style: css!(
-                    font_size: theme::T_META,
-                    color: theme::TEXT_SECONDARY,
-                    margin_top: px(10),
-                    margin_left: theme::GUTTER,
-                ),
-                value: counts.clone(),
-            )
+            // Counts row: フォロー中 / フォロワー are tappable → their lists.
+            view(style: css!(
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                margin_top: px(10),
+                margin_left: theme::GUTTER,
+            )) {
+                view(on_tap: {
+                    let nav = nav.clone();
+                    let did = count_did.clone();
+                    move |_| {
+                        let _ = nav.navigate(&format!("/following/{}", urlencoding::encode(&did)));
+                    }
+                }) {
+                    text(
+                        style: css!(font_size: theme::T_META, color: theme::TEXT_PRIMARY),
+                        value: format!("{follows_count} フォロー中"),
+                    )
+                }
+                text(
+                    style: css!(font_size: theme::T_META, color: theme::TEXT_SECONDARY),
+                    value: "  ·  ",
+                )
+                view(on_tap: {
+                    let nav = nav.clone();
+                    let did = count_did.clone();
+                    move |_| {
+                        let _ = nav.navigate(&format!("/followers/{}", urlencoding::encode(&did)));
+                    }
+                }) {
+                    text(
+                        style: css!(font_size: theme::T_META, color: theme::TEXT_PRIMARY),
+                        value: format!("{followers_count} フォロワー"),
+                    )
+                }
+                text(
+                    style: css!(font_size: theme::T_META, color: theme::TEXT_SECONDARY),
+                    value: format!("  ·  {posts_count} ポスト"),
+                )
+            }
+        }
+    }
+}
+
+/// Inline mute / block menu, shown below the profile action row when the
+/// overflow button toggles `open`. Optimistic, like [`follow_button`];
+/// `blocking_uri` empty == not blocking (avoids an `Option` prop).
+#[component]
+fn moderation_menu(did: String, muted: bool, blocking_uri: String, open: Signal<bool>) -> Element {
+    let is_muted = RwSignal::new(muted);
+    let block_uri = RwSignal::new(if blocking_uri.is_empty() {
+        None
+    } else {
+        Some(blocking_uri.clone())
+    });
+    let mute_label = computed(move || {
+        if is_muted.get() {
+            "ミュート解除".to_string()
+        } else {
+            "ミュートする".to_string()
+        }
+    });
+    let block_label = computed(move || {
+        if block_uri.get().is_some() {
+            "ブロック解除".to_string()
+        } else {
+            "ブロックする".to_string()
+        }
+    });
+    // Clone the captured param into a body-local once; the per-action
+    // closures clone *this* (cloning the captured param directly inside a
+    // nested `move` block makes the macro's FnMut wrapper move it out).
+    let menu_did = did.clone();
+    render! {
+        Show(when: move || open.get(), fallback: || render! { fragment() }) {
+            view(style: css!(
+                flex_direction: FlexDirection::Column,
+                margin_top: px(10),
+                margin_left: theme::GUTTER,
+                margin_right: theme::GUTTER,
+                border_radius: px(10),
+                background_color: theme::SURFACE,
+            )) {
+                view(
+                    style: css!(
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        padding: px(12),
+                    ),
+                    on_tap: {
+                        let did = menu_did.clone();
+                        move |_| {
+                            let was = is_muted.get();
+                            is_muted.set(!was);
+                            let did = did.clone();
+                            spawn_local(async move {
+                                let r = if was {
+                                    bsky_auth::unmute(&did).await
+                                } else {
+                                    bsky_auth::mute(&did).await
+                                };
+                                if r.is_err() {
+                                    is_muted.set(was);
+                                }
+                            });
+                        }
+                    },
+                ) {
+                    Icon(svg: lucide::VolumeX, color: "#FFFFFF", size: "18")
+                    text(
+                        style: css!(font_size: theme::T_BODY, color: theme::TEXT_PRIMARY, margin_left: px(10)),
+                        value: mute_label,
+                    )
+                }
+                view(
+                    style: css!(
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        padding: px(12),
+                        border_top_width: px(1),
+                        border_top_color: theme::BORDER,
+                    ),
+                    on_tap: {
+                        let did = menu_did.clone();
+                        move |_| match block_uri.get() {
+                            Some(uri) => {
+                                block_uri.set(None);
+                                spawn_local(async move {
+                                    if bsky_auth::unblock(&uri).await.is_err() {
+                                        block_uri.set(Some(uri));
+                                    }
+                                });
+                            }
+                            None => {
+                                let did = did.clone();
+                                spawn_local(async move {
+                                    if let Ok(uri) = bsky_auth::block(&did).await {
+                                        block_uri.set(Some(uri));
+                                    }
+                                });
+                            }
+                        }
+                    },
+                ) {
+                    Icon(svg: lucide::Ban, color: "#FF6B6B", size: "18")
+                    text(
+                        style: css!(font_size: theme::T_BODY, color: Color::hex(0xFF6B6B), margin_left: px(10)),
+                        value: block_label,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// Followers list (`getFollowers`) for the `:did` route param.
+#[component]
+fn followers_screen() -> Element {
+    let did_param = use_param("did");
+    let enc = did_param.get().unwrap_or_default();
+    let actor = urlencoding::decode(&enc)
+        .map(|c| c.into_owned())
+        .unwrap_or(enc);
+    render! {
+        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            nav_header(title: "フォロワー".to_string())
+            follow_list(actor: actor, followers: true)
+        }
+    }
+}
+
+/// Following list (`getFollows`) for the `:did` route param.
+#[component]
+fn following_screen() -> Element {
+    let did_param = use_param("did");
+    let enc = did_param.get().unwrap_or_default();
+    let actor = urlencoding::decode(&enc)
+        .map(|c| c.into_owned())
+        .unwrap_or(enc);
+    render! {
+        view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
+            nav_header(title: "フォロー中".to_string())
+            follow_list(actor: actor, followers: false)
+        }
+    }
+}
+
+/// Shared body for the followers / following screens: fetch the relevant
+/// actor list and render it. `followers` picks the endpoint.
+#[component]
+fn follow_list(actor: String, followers: bool) -> Element {
+    let res = resource({
+        let actor = actor.clone();
+        move || {
+            let actor = actor.clone();
+            async move {
+                if followers {
+                    bsky_auth::get_followers(&actor, 50).await
+                } else {
+                    bsky_auth::get_follows(&actor, 50).await
+                }
+            }
+        }
+    });
+    render! {
+        Show(
+            when: move || res.get().is_some(),
+            fallback: move || render! {
+                status_pane(message: match res.error() {
+                    Some(e) if !e.is_empty() => e,
+                    _ => "読み込み中…".to_string(),
+                })
+            },
+        ) {
+            actor_list(actors: res.get().unwrap_or_default())
         }
     }
 }

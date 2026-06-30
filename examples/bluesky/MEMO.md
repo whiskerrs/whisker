@@ -17,6 +17,15 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
 - 通知（Phase 5）: `listNotifications` を仮想化 `list` で表示。理由（like/repost/follow/
   reply/mention/quote）ごとにアイコン + 文言、reply/mention/quote は本文も表示。タップで
   対象ポスト（like/repost/reply…）またはフォロワーのプロフィールへ遷移。固定ヘッダー「通知」。
+- ソーシャルグラフ / モデレーション（Phase 6）:
+  - フォロワー / フォロー中一覧（`getFollowers`/`getFollows`）。プロフィールのカウント行
+    （「N フォロー中 · M フォロワー · K ポスト」）をタップで `/followers/:did`・`/following/:did` へ遷移、
+    アクター行タップでプロフィールへ。
+  - モデレーション: プロフィールのオーバーフロー「⋯」メニューからミュート（`muteActor`/
+    `unmuteActor`）・ブロック（`graph.block` レコード作成 / `deleteRecord` で解除）。楽観的トグル
+    （失敗時はロールバック）。`getProfile` の viewer から `muted`/`blocking_uri` を読んで状態反映。
+    ※ ブロックは相手から見える副作用があるため実機ライブ検証はせず、ミュートのみ
+    （非公開・即可逆）でトグル往復を検証した。
 
 ## スキップした機能と理由
 
@@ -182,3 +191,19 @@ whisker の実地評価のための Bluesky クライアント。本家アプリ
 - **at:// URI をルートパラメータに乗せにくい**（見込み）: ポスト URI は `at://did/coll/rkey` と
   スラッシュを含むため `Route("post/:uri")` に素直に入らない。percent-encode が要りそう。
   実装時に確認して追記する。
+- **`#[component]` 本体は subsecond の `FnMut` に包まれる＝引数を `on_tap` 等のクロージャに
+  そのまま `move` で取り込むと「captured variable を move out できない」E0507 になる**（重要・DX）:
+  `#[component]` はホットリロードのため body 全体を再呼出し可能な `FnMut` クロージャでラップする。
+  そのため**コンポーネント引数（や body 直下の `let`）は FnMut にキャプチャされた変数**になり、
+  ハンドラ内で `move |_| { … did … }` と書くと `FnMut` から `did` を move out しようとして
+  `cannot move out of 'did', a captured variable in an 'FnMut' closure` でコンパイルエラー。
+  → 対処：**ハンドラに渡す前に body ローカルへ一度 clone**し、ハンドラのキャプチャ用に
+  さらにブロックで clone する二段構え:
+  ```rust
+  let menu_did = did.clone();                 // body ローカル（FnMut キャプチャの clone）
+  // …
+  on_tap: { let did = menu_did.clone(); move |_| { /* did を消費して OK */ } }
+  ```
+  複数ハンドラ・ループで同じ引数を使うときに頻発する。`render!` 引数式で `String` 等の
+  非 Copy 値を扱うたびにこの定型 clone が要るのは冗長で、直感に反する（Copy な `Signal` は無問題）。
+  → DX: マクロが「引数を各ハンドラ用に自動 clone する」糖衣があると定型コードが減る。

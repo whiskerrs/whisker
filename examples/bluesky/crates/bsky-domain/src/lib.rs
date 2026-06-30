@@ -74,6 +74,11 @@ pub struct Profile {
     /// Viewer state: the `at://` URI of *this viewer's* follow record on
     /// this account, if any. `Some` ⇒ following.
     pub following_uri: Option<String>,
+    /// Viewer state: is this account muted by the viewer?
+    pub muted: bool,
+    /// Viewer state: the `at://` URI of the viewer's block record on this
+    /// account, if any. `Some` ⇒ blocking.
+    pub blocking_uri: Option<String>,
 }
 
 impl Profile {

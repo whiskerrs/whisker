@@ -17,7 +17,9 @@ use atrium_api::app::bsky::actor::{defs as actor_defs, get_profile, search_actor
 use atrium_api::app::bsky::feed::{
     get_author_feed, get_post_thread, get_timeline, like, post, repost, search_posts,
 };
-use atrium_api::app::bsky::graph::follow;
+use atrium_api::app::bsky::graph::{
+    block, follow, get_followers, get_follows, mute_actor, unmute_actor,
+};
 use atrium_api::app::bsky::notification::list_notifications;
 use atrium_api::app::bsky::richtext::facet;
 use atrium_api::com::atproto::repo::{create_record, delete_record, strong_ref};
@@ -539,6 +541,8 @@ pub async fn get_profile(actor: &str) -> Result<bsky_domain::Profile, String> {
         .await
         .map_err(|e| e.to_string())?;
     let following_uri = out.viewer.as_ref().and_then(|v| v.following.clone());
+    let muted = out.viewer.as_ref().and_then(|v| v.muted).unwrap_or(false);
+    let blocking_uri = out.viewer.as_ref().and_then(|v| v.blocking.clone());
     Ok(bsky_domain::Profile {
         did: out.did.as_str().to_string(),
         handle: out.handle.as_str().to_string(),
@@ -550,7 +554,100 @@ pub async fn get_profile(actor: &str) -> Result<bsky_domain::Profile, String> {
         follows_count: out.follows_count.unwrap_or(0).max(0) as u64,
         posts_count: out.posts_count.unwrap_or(0).max(0) as u64,
         following_uri,
+        muted,
+        blocking_uri,
     })
+}
+
+/// Accounts that follow `actor` (`getFollowers`).
+pub async fn get_followers(actor: &str, limit: u8) -> Result<Vec<bsky_domain::ActorView>, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let id = actor.parse::<AtIdentifier>().map_err(|e| e.to_string())?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .graph
+        .get_followers(
+            get_followers::ParametersData {
+                actor: id,
+                cursor: None,
+                limit: limit.try_into().ok(),
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out.followers.iter().map(map_actor).collect())
+}
+
+/// Accounts `actor` follows (`getFollows`).
+pub async fn get_follows(actor: &str, limit: u8) -> Result<Vec<bsky_domain::ActorView>, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let id = actor.parse::<AtIdentifier>().map_err(|e| e.to_string())?;
+    let out = agent
+        .api
+        .app
+        .bsky
+        .graph
+        .get_follows(
+            get_follows::ParametersData {
+                actor: id,
+                cursor: None,
+                limit: limit.try_into().ok(),
+            }
+            .into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(out.follows.iter().map(map_actor).collect())
+}
+
+/// Mute an account (server-side mute; no record).
+pub async fn mute(did: &str) -> Result<(), String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let id = did.parse::<AtIdentifier>().map_err(|e| e.to_string())?;
+    agent
+        .api
+        .app
+        .bsky
+        .graph
+        .mute_actor(mute_actor::InputData { actor: id }.into())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Unmute an account.
+pub async fn unmute(did: &str) -> Result<(), String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let id = did.parse::<AtIdentifier>().map_err(|e| e.to_string())?;
+    agent
+        .api
+        .app
+        .bsky
+        .graph
+        .unmute_actor(unmute_actor::InputData { actor: id }.into())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Block an account; returns the new block record URI (for [`unblock`]).
+pub async fn block(did: &str) -> Result<String, String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    let subject = did.parse::<Did>().map_err(|e| e.to_string())?;
+    let record = block::RecordData {
+        created_at: Datetime::now(),
+        subject,
+    }
+    .try_into_unknown()
+    .map_err(|e| e.to_string())?;
+    create_record(&agent, "app.bsky.graph.block", record).await
+}
+
+/// Undo a block, given the block record URI returned by [`block`].
+pub async fn unblock(block_uri: &str) -> Result<(), String> {
+    let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
+    delete_record(&agent, "app.bsky.graph.block", block_uri).await
 }
 
 /// Fetch an account's authored posts (its profile feed).
