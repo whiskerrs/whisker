@@ -413,7 +413,7 @@ fn actor_list(actors: Vec<bsky_domain::ActorView>) -> Element {
                 move || actors.clone()
             },
             key: |a: &bsky_domain::ActorView| a.did.clone(),
-            children: |a: bsky_domain::ActorView| render! { actor_row(actor: a) },
+            children: |a: bsky_domain::ActorView| render! { list_item { actor_row(actor: a) } },
         )
     }
 }
@@ -563,7 +563,7 @@ fn notification_list(items: Vec<bsky_domain::Notification>) -> Element {
                 move || items.clone()
             },
             key: |n: &bsky_domain::Notification| n.uri.clone(),
-            children: |n: bsky_domain::Notification| render! { notification_row(item: n) },
+            children: |n: bsky_domain::Notification| render! { list_item { notification_row(item: n) } },
         )
     }
 }
@@ -1812,7 +1812,7 @@ fn post_list(posts: Vec<bsky_domain::FeedPost>) -> Element {
                 move || posts.clone()
             },
             key: |p: &bsky_domain::FeedPost| p.uri.clone(),
-            children: |p: bsky_domain::FeedPost| render! { PostRow(post: p) },
+            children: |p: bsky_domain::FeedPost| render! { list_item { PostRow(post: p) } },
         )
     }
 }
