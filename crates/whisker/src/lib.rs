@@ -197,7 +197,7 @@ pub mod __tags {
     use whisker_runtime::view::{
         BindType, Element, append_child, apply_attr, apply_attr_bool, apply_attr_int,
         apply_attr_owned, create_element, create_element_by_name, create_phantom_element,
-        install_list_native_item_provider, set_event_listener, set_update_list_info,
+        set_event_listener,
     };
 
     // Why a trait (and not `macro_rules!`): RA's method-completion
@@ -1572,11 +1572,21 @@ pub mod __tags {
             ::whisker_runtime::view::ItemFn<T>,
         >
     where
-        T: 'static,
+        // `T: Clone` — the virtualized list builds items on demand from a
+        // snapshot, so it clones `items[i]` per slot (unlike the old eager
+        // path that consumed each item once).
+        T: ::std::clone::Clone + 'static,
         K: ::std::cmp::Eq + ::std::hash::Hash + ::std::clone::Clone + 'static,
     {
-        /// Finalise the builder: install the reactive-items effect +
-        /// the native-item provider + the initial count broadcast.
+        /// Finalise the builder: drive the `<list>`'s native item
+        /// provider on demand via the container-agnostic
+        /// [`virtualize`](whisker_runtime::view::virtualize) core.
+        ///
+        /// Items are built lazily in `componentAtIndex` (only visible
+        /// slots exist), each stamped a stable `item-key` from the `key`
+        /// extractor and recycled on `enqueueComponent`. See
+        /// `docs/list-design.md` — the on-demand contract is pending
+        /// on-device verification against the Lynx fork's list.
         #[allow(non_snake_case)]
         pub fn __h(self) -> Element {
             let handle = self.handle;
@@ -1584,129 +1594,12 @@ pub mod __tags {
             let key = self.key;
             let children = self.children;
 
-            // Shared items Vec — the provider closure (installed
-            // below, reads-only) and the effect (rewrites on every
-            // diff) both clone the Rc.
-            let items: ::std::rc::Rc<::std::cell::RefCell<::std::vec::Vec<(Element, i32)>>> =
-                ::std::rc::Rc::new(::std::cell::RefCell::new(::std::vec::Vec::new()));
-
-            // Native item provider — reads sign by index from the
-            // shared items Vec. Must NOT call back into the renderer
-            // (Lynx's layout C++ that invokes this closure is itself
-            // inside `with_renderer`'s RefCell borrow).
-            let items_for_provider = items.clone();
-            let provider = ::whisker_runtime::view::list_provider::NativeItemProvider {
-                component_at_index: ::std::boxed::Box::new(move |index, _op, _reuse| {
-                    items_for_provider
-                        .borrow()
-                        .get(index as usize)
-                        .map(|&(_, sign)| sign)
-                        .unwrap_or(::whisker_runtime::view::list_provider::INVALID_ITEM_INDEX)
-                }),
-                enqueue_component: ::std::option::Option::None,
-            };
-            install_list_native_item_provider(handle, provider);
-
-            // Reactive items effect. Diffs `each()` against
-            // per-key bookkeeping, materialises new items + detaches
-            // removed ones under `handle`, sets `item-key` on each,
-            // rebuilds the items Vec + broadcasts the new count.
-            //
-            // Owner cascade: per-item owners are detached
-            // (`Owner::new(None)`); the effect explicitly disposes
-            // them on diff. When the surrounding component disposes,
-            // the released list element + items are torn down
-            // through their respective owner releases.
-            struct ListEntry {
-                owner: ::whisker_runtime::reactive::Owner,
-                handle: Element,
-            }
-            let entries: ::std::rc::Rc<
-                ::std::cell::RefCell<::std::collections::HashMap<K, ListEntry>>,
-            > = ::std::rc::Rc::new(::std::cell::RefCell::new(::std::collections::HashMap::new()));
-            // Monotonic id source for STABLE `item-key`s. A logical key is
-            // stamped `item-key="w_{id}"` once on first appearance and keeps
-            // that element (and attr) across diffs, so it carries the same
-            // item-key when it reorders. Positional keys (the old
-            // `w_{index}`) defeated the native list's move/remove diff.
-            let next_id: ::std::rc::Rc<::std::cell::Cell<u64>> =
-                ::std::rc::Rc::new(::std::cell::Cell::new(0));
-            // `layout-id` is owned by the list (like ReactLynx): bumped on
-            // every data update so the native list knows a new version
-            // arrived and `layoutcomplete` can be correlated to it.
-            let layout_id: ::std::rc::Rc<::std::cell::Cell<i64>> =
-                ::std::rc::Rc::new(::std::cell::Cell::new(0));
-
-            ::whisker_runtime::reactive::effect(move || {
-                let new_items = each.call();
-                let mut new_entries: ::std::collections::HashMap<K, ListEntry> =
-                    ::std::collections::HashMap::new();
-                let mut new_keys: ::std::vec::Vec<K> =
-                    ::std::vec::Vec::with_capacity(new_items.len());
-
-                let mut old = ::std::mem::take(&mut *entries.borrow_mut());
-
-                for item in new_items {
-                    let k = key.call(&item);
-                    if let ::std::option::Option::Some(existing) = old.remove(&k) {
-                        new_entries.insert(k.clone(), existing);
-                    } else {
-                        let id = next_id.get();
-                        next_id.set(id + 1);
-                        let item_owner = ::whisker_runtime::reactive::Owner::new(None);
-                        // Option E: the user's `children(item)` returns a
-                        // `<list-item>` directly (no auto-wrap). Append it as
-                        // the list's child; the list OWNS `item-key` and
-                        // stamps a stable one from the key extractor.
-                        let li = item_owner.with(|| {
-                            let li = children.call(item);
-                            append_child(handle, li);
-                            li
-                        });
-                        apply_attr_owned::<_, ::std::string::String>(
-                            li,
-                            ::std::string::String::from("item-key"),
-                            ::std::format!("w_{}", id),
-                        );
-                        new_entries.insert(
-                            k.clone(),
-                            ListEntry {
-                                owner: item_owner,
-                                handle: li,
-                            },
-                        );
-                    }
-                    new_keys.push(k);
-                }
-
-                // Disappeared items: detach + dispose.
-                for (_, entry) in old.drain() {
-                    ::whisker_runtime::view::remove_child(handle, entry.handle);
-                    entry.owner.dispose();
-                }
-
-                // Rebuild items Vec in new key order, capturing each leaf
-                // handle's Lynx sign for the native item provider. `item-key`
-                // is stamped once at creation (stable), never re-assigned.
-                let mut new_items_vec: ::std::vec::Vec<(Element, i32)> =
-                    ::std::vec::Vec::with_capacity(new_keys.len());
-                for k in &new_keys {
-                    if let ::std::option::Option::Some(entry) = new_entries.get(k) {
-                        let sign = ::whisker_runtime::view::element_sign(entry.handle);
-                        new_items_vec.push((entry.handle, sign));
-                    }
-                }
-
-                let count = new_items_vec.len() as i32;
-                *items.borrow_mut() = new_items_vec;
-                *entries.borrow_mut() = new_entries;
-
-                // Mark this data version, then broadcast the new count.
-                let lid = layout_id.get();
-                layout_id.set(lid + 1);
-                ::whisker_runtime::view::set_attribute_int(handle, "layout-id", lid);
-                set_update_list_info(handle, count);
-            });
+            ::whisker_runtime::view::virtualize(
+                handle,
+                move || each.call(),
+                move |t: &T| key.call(t),
+                move |t: T| children.call(t),
+            );
 
             handle
         }
