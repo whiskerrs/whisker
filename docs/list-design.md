@@ -209,8 +209,8 @@ issue notes this costs ~50 lines up front vs hundreds retrofitted.
 
 ## On-device verifications
 
-**Done (iOS simulator, bluesky timeline):** the on-demand virtualization gate. Two bugs surfaced and
-were fixed — both whisker-side, no fork change:
+**Verified on iOS simulator** (bluesky timeline + the `list-smoke` example). Four bugs surfaced and
+were fixed — all whisker-side, **no fork change**:
 
 - **P-4 / re-entrancy** — safe (bridge renderer holds no field borrow across FFI, #214). ✓
 - **Context inheritance** — slot owners built in the native callback were detached roots, severing the
@@ -218,16 +218,33 @@ were fixed — both whisker-side, no fork change:
   owner. ✓
 - **Provider append contract** — Lynx `ListElement::ComponentAtIndex` *requires* the embedder to
   `append_child(list, item)`; returning the sign alone crashed the native list
-  (`OnListItemWillAppear` null deref). Fixed: append on build, remove on enqueue (still virtualized). ✓
-- Result: the bluesky timeline renders posts through the on-demand `Virtualizer`. ✓
+  (`OnListItemWillAppear` null deref). Fixed: append on build. ✓
+- **Scroll/recycle use-after-free** — `enqueue_component` destroyed the element, but Lynx's
+  `EnqueueElement` calls the callback *before* it detaches the element itself, so rows blanked out
+  after scrolling. Fixed: `enqueue_component` is a no-op on the element; `component_at_index` caches
+  built items by stable key and reuses the same element on re-query (built once per logical item). ✓
+- **Bugs ②③** — the `list-smoke` full-span header renders full-width + full-height and stays intact
+  through scroll-away-and-back (no crush); variable-height rows are all full-width. ✓
+- Result: on-demand `Virtualizer` renders + scrolls (rows build on demand, reuse on scroll-back) with
+  no blanks / crashes; bluesky timeline renders too. ✓
 
-**Still open (need a device / more scenarios):**
+**Trade-off:** lazy materialization, **not true recycling** — a visited item's element stays alive
+until list teardown (memory grows with distinct items scrolled to, not total). A recycle pool that
+safely releases scrolled-out elements (deferred past the native's detach) is a follow-up.
 
-1. `item-key` (stable) + `layout-id` + `update-animation` → does reorder/insert (bug ①) work?
-2. `full-span` + `estimated-main-axis-size-px` + `reuse-identifier` → does the header crush (bug ②) stop?
-3. Event `detail` payload shapes (`bindscroll`, `bindsnap`, `bindlayoutcomplete`).
-4. Scroll-driven recycle path (`enqueue_component` → `remove_child`) under real fling; Android parity.
-5. `getVisibleCells` result return on Android.
+**Still open:**
+
+1. Bug ① (reorder/insert): stable item-key + dedup-reuse is unit-tested, but the live tap can't be
+   automated (synthetic taps don't reach Lynx's `on_tap` recognizer on the sim). Needs a real device
+   or an auto-trigger to confirm on-device.
+2. Event `detail` payload shapes (`bindscroll`, `bindsnap`, `bindlayoutcomplete`) — structs use
+   defaulted fields; confirm on device.
+3. **Android parity** — all verification is iOS-sim so far.
+4. `getVisibleCells` result return on Android.
+5. `item-snap` — Lynx reads it as an **object** (`value[@"factor"]`); whisker's attr path is
+   scalar-only, so it needs a new object-attribute bridge capi (fork work). Deferred.
+6. `reuse-identifier` per-list default (P-2) and per-item in-place re-bind on same-key update (P-3):
+   not implemented (relies on Lynx default / rebuild-on-change); optimizations, deferred.
 
 ## What this adds to Whisker
 
