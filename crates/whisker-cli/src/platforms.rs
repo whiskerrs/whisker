@@ -65,7 +65,14 @@ pub struct PlatformSync {
 /// downstream apps that pull `whisker-runtime-android:0.1.0`
 /// transitively get the older Lynx and the bridge loader aborts on
 /// "undefined symbol: lynx_capi_abi_version" at engine_attach time.
-const WHISKER_SDK_VERSION: &str = "0.1.1";
+///
+/// 0.1.2 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.7` →
+/// `v3.8.0-whisker.8`, which raises the capi ABI to **v2** (list data
+/// source driven by real item-keys + per-item metadata; object-valued
+/// attributes for `item-snap`). The per-app WhiskerDriver bridge is now
+/// built for ABI v2, so it refuses to attach to the ABI v1 Lynx that
+/// `whisker-runtime-android:0.1.1` still pulls — apps must move to 0.1.2.
+const WHISKER_SDK_VERSION: &str = "0.1.2";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
