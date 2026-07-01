@@ -199,7 +199,7 @@ fn browse_body(sections: Vec<ChartSection>) -> Element {
                         move || items.clone()
                     },
                     key: |s: &ChartSection| s.title.clone(),
-                    children: |s: ChartSection| render! { section_block(section: s) },
+                    children: |s: ChartSection| render! { list_item { section_block(section: s) } },
                 )
             }
         }
@@ -235,7 +235,7 @@ fn section_block(section: ChartSection) -> Element {
                     },
                     key: |(_, p): &(u32, Podcast)| p.id,
                     children: move |(rank, podcast): (u32, Podcast)| render! {
-                        card_with_gap(podcast: podcast, rank: rank, layout: layout)
+                        list_item { card_with_gap(podcast: podcast, rank: rank, layout: layout) }
                     },
                 )
             }

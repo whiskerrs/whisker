@@ -26,9 +26,9 @@ pub mod apply;
 pub mod control_flow;
 pub mod handle;
 pub mod into_view;
-pub mod list_mount;
 pub mod list_provider;
 pub mod renderer;
+pub mod virtualizer;
 
 #[cfg(test)]
 mod tests;
@@ -40,10 +40,10 @@ pub use handle::Element;
 pub use into_view::{
     Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, View, WhenFn, mount_children,
 };
-pub use list_mount::list_mount;
 pub use list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 #[doc(hidden)]
 pub use renderer::__reset_children_mirror_for_tests;
+pub use virtualizer::virtualize;
 
 // Element-manipulation + lifecycle surface the `render!` macro expands
 // against and that framework-extension authors (custom control flow,
@@ -52,7 +52,8 @@ pub use renderer::{
     BindType, append_child, child_index, children_of, create_element, create_element_by_name,
     create_phantom_element, dispatch_event, flush, insert_child_at,
     install_list_native_item_provider, is_phantom, previous_sibling, release_element, remove_child,
-    set_attribute, set_event_listener, set_inline_styles, set_root, set_update_list_info,
+    set_attribute, set_attribute_int, set_event_listener, set_inline_styles, set_root,
+    set_update_list_info,
 };
 
 // Renderer-wiring internals. Public because `whisker-driver` (and test

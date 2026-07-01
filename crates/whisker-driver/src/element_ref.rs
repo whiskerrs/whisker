@@ -87,6 +87,48 @@ pub struct ScrollInfo {
     pub scroll_height: f64,
 }
 
+/// Result of [`ListHandle::get_visible_cells`] — the cells currently
+/// attached/visible in a `<list>` (Lynx's `getVisibleCells`). Field set
+/// confirmed on-device (see `docs/list-design.md`). **Result-returning,
+/// so async — and may not resolve on Android until a fork build wires
+/// the result channel (see the `whisker-driver` element-method notes).**
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct VisibleCells {
+    /// Index of the first attached cell.
+    #[serde(default)]
+    pub from: i64,
+    /// Index of the last attached cell.
+    #[serde(default)]
+    pub to: i64,
+    /// Per-cell info for the currently attached cells.
+    #[serde(default)]
+    pub attached_cells: Vec<VisibleCell>,
+}
+
+/// One attached cell inside a [`VisibleCells`] result.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct VisibleCell {
+    /// Adapter index of the cell.
+    #[serde(default)]
+    pub index: i64,
+    /// The cell's `item-key`.
+    #[serde(default)]
+    pub item_key: String,
+    /// Layout box (when reported).
+    #[serde(default)]
+    pub left: f64,
+    #[serde(default)]
+    pub top: f64,
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
+}
+
 /// Result of [`TextHandle::get_text_bounding_rect`] — the layout boxes
 /// of a `<text>` substring (Lynx's `getTextBoundingRect`). `bounding_rect`
 /// is the union box covering `[start, end)`; `boxes` is the per-line
@@ -613,6 +655,94 @@ impl ScrollViewHandle {
 }
 
 impl Default for ScrollViewHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Imperative handle to a mounted `<list>`. Allocate with
+/// [`ListHandle::new`], bind via `list(ref: handle.r())` in `render!`,
+/// then drive scrolling or query the visible cells. Mirrors
+/// [`ScrollViewHandle`] but targets the `<list>` UI methods.
+///
+/// `Copy` (the inner `ElementRef` is an arena handle), so it can be
+/// captured by value into multiple event closures.
+#[derive(Copy, Clone)]
+pub struct ListHandle {
+    r: ElementRef,
+}
+
+impl ListHandle {
+    /// Allocate a fresh, unbound list handle.
+    pub fn new() -> Self {
+        Self {
+            r: ElementRef::new(),
+        }
+    }
+
+    /// The underlying [`ElementRef`] — pass to a `ref:` prop to bind it
+    /// on mount (`list(ref: handle.r())`).
+    pub fn r(&self) -> ElementRef {
+        self.r
+    }
+
+    generic_element_methods!();
+
+    /// `scrollToPosition` — scroll so the item at adapter `index` aligns
+    /// to the list's scroll start. `smooth` animates the scroll.
+    ///
+    /// Anchor-model list, so this is a single shot (no FlashList-style
+    /// progressive refinement is needed — the native list lays out from
+    /// the target index directly).
+    pub fn scroll_to_position(&self, index: i32, smooth: bool) {
+        let _ = self.r.invoke(
+            "scrollToPosition",
+            WhiskerValue::map([
+                ("position", WhiskerValue::Int(index as i64)),
+                ("smooth", WhiskerValue::Bool(smooth)),
+            ]),
+        );
+    }
+
+    /// `scrollBy` — scroll by a relative `offset` (logical pixels) from
+    /// the current position along the scroll axis.
+    pub fn scroll_by(&self, offset: f64) {
+        let _ = self.r.invoke(
+            "scrollBy",
+            WhiskerValue::map([("offset", WhiskerValue::Float(offset))]),
+        );
+    }
+
+    /// `autoScroll` — start auto-scrolling at `rate` logical pixels per
+    /// second. Pair with [`stop_auto_scroll`](Self::stop_auto_scroll).
+    pub fn auto_scroll(&self, rate: f64) {
+        let _ = self.r.invoke(
+            "autoScroll",
+            WhiskerValue::map([
+                ("start", WhiskerValue::Bool(true)),
+                ("rate", WhiskerValue::Float(rate)),
+            ]),
+        );
+    }
+
+    /// `autoScroll` with `start: false` — stop an in-progress auto-scroll.
+    pub fn stop_auto_scroll(&self) {
+        let _ = self.r.invoke(
+            "autoScroll",
+            WhiskerValue::map([("start", WhiskerValue::Bool(false))]),
+        );
+    }
+
+    /// `getVisibleCells` — info about the cells currently attached to the
+    /// viewport. Async: resolves once the platform reports back.
+    pub async fn get_visible_cells(&self) -> Result<VisibleCells, RefError> {
+        self.r
+            .invoke_typed::<VisibleCells>("getVisibleCells", WhiskerValue::Null)
+            .await
+    }
+}
+
+impl Default for ListHandle {
     fn default() -> Self {
         Self::new()
     }
