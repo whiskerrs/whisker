@@ -207,16 +207,26 @@ Per **#83**, extract the container-agnostic core as **`Virtualizer<T, K>`** from
 (`ListMount = Virtualizer + <list> element`; future `PagerMount = Virtualizer + module element`). The
 issue notes this costs ~50 lines up front vs hundreds retrofitted.
 
-## On-device verifications (gates, not fork work)
+## On-device verifications
 
-Because everything here is documented Lynx behavior, the open questions are *“does feeding the
-documented attribute/event actually work,”* answerable by adding the binding and testing on a real
-device (iOS + Android):
+**Done (iOS simulator, bluesky timeline):** the on-demand virtualization gate. Two bugs surfaced and
+were fixed — both whisker-side, no fork change:
+
+- **P-4 / re-entrancy** — safe (bridge renderer holds no field borrow across FFI, #214). ✓
+- **Context inheritance** — slot owners built in the native callback were detached roots, severing the
+  context chain (items panicked in `use_navigator()`). Fixed by parenting slot owners to the setup
+  owner. ✓
+- **Provider append contract** — Lynx `ListElement::ComponentAtIndex` *requires* the embedder to
+  `append_child(list, item)`; returning the sign alone crashed the native list
+  (`OnListItemWillAppear` null deref). Fixed: append on build, remove on enqueue (still virtualized). ✓
+- Result: the bluesky timeline renders posts through the on-demand `Virtualizer`. ✓
+
+**Still open (need a device / more scenarios):**
 
 1. `item-key` (stable) + `layout-id` + `update-animation` → does reorder/insert (bug ①) work?
 2. `full-span` + `estimated-main-axis-size-px` + `reuse-identifier` → does the header crush (bug ②) stop?
 3. Event `detail` payload shapes (`bindscroll`, `bindsnap`, `bindlayoutcomplete`).
-4. P-4 re-entrancy safety with the real renderer.
+4. Scroll-driven recycle path (`enqueue_component` → `remove_child`) under real fling; Android parity.
 5. `getVisibleCells` result return on Android.
 
 ## What this adds to Whisker
