@@ -1472,6 +1472,11 @@ fn nav_header(title: String) -> Element {
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
+            // Pin to content height: this nav bar is a flex sibling of a
+            // `flex_grow: 1` screen body, so without `flex_shrink: 0` Lynx's
+            // default `flex_shrink: 1` lets the body squeeze it (the back
+            // button + title looked crushed on the profile screen).
+            flex_shrink: 0.0,
             background_color: theme::BG,
             border_bottom_width: px(1),
             border_bottom_color: theme::BORDER,
