@@ -309,7 +309,6 @@ fn search_screen() -> Element {
 
     let top_pad =
         computed(move || css!(flex_shrink: 0.0, padding_top: px(insets.get().top as f32 + 8.0)));
-    let has_query = move || !query.get().trim().is_empty();
 
     render! {
         view(style: css!(flex_grow: 1.0, flex_direction: FlexDirection::Column, background_color: theme::BG)) {
@@ -351,51 +350,55 @@ fn search_screen() -> Element {
             }
             // Swipeable pager: a horizontal `<list>` of two full-viewport-width
             // pages (People / Posts) with `item_snap` for ViewPager-style
-            // paging. Swiping snaps to a page → `on_snap` syncs the tab
-            // highlight; tapping a tab calls `scroll_to_position` to page over.
-            Show(when: has_query, fallback: || render! { status_pane(message: "ユーザーや投稿を検索できます".to_string()) }) {
-                list(
-                    ref: pager.r(),
-                    style: css!(flex_grow: 1.0, width: percent(100)),
-                    scroll_orientation: ScrollOrientation::Horizontal,
-                    item_snap: (0.0, 0.0),
-                    on_snap: move |e| {
-                        let m = if e.detail.position <= 0 {
-                            SearchMode::People
-                        } else {
-                            SearchMode::Posts
-                        };
-                        if mode.get() != m {
-                            mode.set(m);
-                        }
-                    },
-                    each: move || vec![SearchMode::People, SearchMode::Posts],
-                    key: |m: &SearchMode| match m {
-                        SearchMode::People => "people".to_string(),
-                        SearchMode::Posts => "posts".to_string(),
-                    },
-                    children: move |m: SearchMode| match m {
-                        SearchMode::People => render! {
-                            list_item(reuse_identifier: "page-people", recyclable: false) {
-                                view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+            // paging. Always mounted — swipeable even before a query, with each
+            // page showing its own empty state. Swiping snaps to a page →
+            // `on_snap` syncs the tab highlight; tapping a tab calls
+            // `scroll_to_position` to page over.
+            list(
+                ref: pager.r(),
+                style: css!(flex_grow: 1.0, width: percent(100)),
+                scroll_orientation: ScrollOrientation::Horizontal,
+                item_snap: (0.0, 0.0),
+                on_snap: move |e| {
+                    let m = if e.detail.position <= 0 {
+                        SearchMode::People
+                    } else {
+                        SearchMode::Posts
+                    };
+                    if mode.get() != m {
+                        mode.set(m);
+                    }
+                },
+                each: move || vec![SearchMode::People, SearchMode::Posts],
+                key: |m: &SearchMode| match m {
+                    SearchMode::People => "people".to_string(),
+                    SearchMode::Posts => "posts".to_string(),
+                },
+                children: move |m: SearchMode| match m {
+                    SearchMode::People => render! {
+                        list_item(reuse_identifier: "page-people", recyclable: false) {
+                            view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                                Show(when: move || !query.get().trim().is_empty(), fallback: || render! { status_pane(message: "ユーザーを検索できます".to_string()) }) {
                                     Show(when: move || actors.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
                                         actor_list(actors: actors.get().unwrap_or_default())
                                     }
                                 }
                             }
-                        },
-                        SearchMode::Posts => render! {
-                            list_item(reuse_identifier: "page-posts", recyclable: false) {
-                                view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                        }
+                    },
+                    SearchMode::Posts => render! {
+                        list_item(reuse_identifier: "page-posts", recyclable: false) {
+                            view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                                Show(when: move || !query.get().trim().is_empty(), fallback: || render! { status_pane(message: "投稿を検索できます".to_string()) }) {
                                     Show(when: move || posts.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
                                         post_list(posts: posts.get().unwrap_or_default())
                                     }
                                 }
                             }
-                        },
+                        }
                     },
-                )
-            }
+                },
+            )
         }
     }
 }
