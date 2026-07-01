@@ -53,18 +53,9 @@ use super::apply::apply_attr_owned;
 use super::handle::Element;
 use super::list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 use super::renderer::{
-    append_child, element_sign, install_list_native_item_provider, remove_child, set_attribute_int,
+    append_child, element_sign, install_list_native_item_provider, set_attribute_int,
     set_update_list_info,
 };
-
-/// One live slot — its element and the reactive owner the builder ran
-/// under. Dropped when the slot is enqueued out of the viewport, or
-/// all-at-once on `virtualize`'s `on_cleanup`.
-struct Slot {
-    #[allow(dead_code)] // kept for future "manual move / measure" paths
-    element: Element,
-    owner: Owner,
-}
 
 /// Drive `handle`'s native item provider on demand.
 ///
@@ -89,11 +80,15 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
     BuildFn: Fn(T) -> Element + 'static,
 {
     let current_items: Rc<RefCell<Vec<T>>> = Rc::new(RefCell::new(Vec::new()));
-    let slots: Rc<RefCell<HashMap<i32, Slot>>> = Rc::new(RefCell::new(HashMap::new()));
+    // Cache of already-built items, keyed by the STABLE logical key →
+    // (element, sign). A `component_at_index(index)` looks the item up by
+    // key and returns the cached sign if it exists, so a given logical
+    // item is built exactly once and REUSED across scroll / reorder (the
+    // native list attaches/detaches the same element via its item_holder).
+    let built: Rc<RefCell<HashMap<K, (Element, i32)>>> = Rc::new(RefCell::new(HashMap::new()));
     // Stable `item-key` ids: a logical key is assigned an id on first
     // sight and keeps it, so its `item-key="w_{id}"` is stable across
-    // reorders. Assigned lazily in `component_at_index` (only for the
-    // items actually built), so it stays virtualisation-friendly.
+    // reorders.
     let key_ids: Rc<RefCell<HashMap<K, u64>>> = Rc::new(RefCell::new(HashMap::new()));
     let next_id: Rc<Cell<u64>> = Rc::new(Cell::new(0));
     let layout_id: Rc<Cell<i64>> = Rc::new(Cell::new(0));
@@ -126,7 +121,7 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
     let provider = NativeItemProvider {
         component_at_index: {
             let current_items = current_items.clone();
-            let slots = slots.clone();
+            let built = built.clone();
             let key_ids = key_ids.clone();
             let next_id = next_id.clone();
             let key = key.clone();
@@ -136,8 +131,15 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
                     Some(t) => t.clone(),
                     None => return INVALID_ITEM_INDEX,
                 };
-                // Stable id for this logical key (assign on first sight).
                 let k = key(&item);
+                // Reuse the element if this logical item was already built —
+                // the native list re-attaches the same sign at its new
+                // position. This is what makes scroll + reorder work: one
+                // element per logical item, never rebuilt.
+                if let Some((_, sign)) = built.borrow().get(&k) {
+                    return *sign;
+                }
+                // Stable id for the `item-key` (assign on first sight).
                 let id = {
                     let mut ids = key_ids.borrow_mut();
                     match ids.get(&k) {
@@ -145,57 +147,45 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
                         None => {
                             let id = next_id.get();
                             next_id.set(id + 1);
-                            ids.insert(k, id);
+                            ids.insert(k.clone(), id);
                             id
                         }
                     }
                 };
-                // Per-slot owner, parented to the setup owner so the
-                // builder inherits context; disposed when the slot is
-                // enqueued out.
+                // Per-item owner, parented to the setup owner so the builder
+                // inherits context (`use_context` / `use_navigator`).
                 let owner = Owner::new(Some(parent_owner));
                 let element = owner.with(|| (build)(item));
                 apply_attr_owned::<_, String>(element, "item-key".to_string(), format!("w_{id}"));
-                // Contract: `component_at_index` must ATTACH the item to
-                // the list (Lynx `ListElement::ComponentAtIndex` then runs
+                // Contract: `component_at_index` must ATTACH the item to the
+                // list — Lynx `ListElement::ComponentAtIndex` then runs
                 // `OnComponentFinished` → layout over the freshly-appended
-                // subtree). Returning the sign without appending leaves the
-                // item unparented and the native list crashes in
-                // `OnListItemWillAppear` (null element_container). Only the
-                // visible + buffered slots are appended at any time — an
-                // `enqueue_component` removes them again — so this stays
-                // virtualised, not eager.
+                // subtree. Returning the sign without appending crashes the
+                // native list (`OnListItemWillAppear` null element_container).
                 append_child(handle, element);
-                // Lynx keys slots by the element's *sign* (its bridge
-                // `impl_id`), not by `Element::id()`. `enqueue_component`
-                // is later called with the real sign.
                 let sign = element_sign(element);
-                slots.borrow_mut().insert(sign, Slot { element, owner });
+                built.borrow_mut().insert(k, (element, sign));
                 sign
             })
         },
-        enqueue_component: Some({
-            let slots = slots.clone();
-            Box::new(move |sign| {
-                if let Some(slot) = slots.borrow_mut().remove(&sign) {
-                    // Detach from the list (mirror + native) and dispose the
-                    // slot's reactive scope — the item leaves memory until it
-                    // scrolls back into view.
-                    remove_child(handle, slot.element);
-                    slot.owner.dispose();
-                }
-            })
-        }),
+        // `enqueue_component` is intentionally a no-op on the element. The
+        // native `EnqueueElement` calls this callback and THEN detaches the
+        // element itself (`RemoveListItemPaintingNode` + `DetachChild`), so
+        // destroying it here is a use-after-free (found on-device: rows blank
+        // out after scroll). The element stays alive and cached; the native
+        // list recycles the platform view. Elements are freed together on
+        // list teardown. (True element pooling is a follow-up — see
+        // docs/list-design.md.)
+        enqueue_component: None,
     };
     install_list_native_item_provider(handle, provider);
 
-    // Disposing the setup owner cascades to every live slot owner (each
-    // is its child), so the per-slot reactive scopes are torn down when
-    // the surrounding component disposes. Idempotent — slots already
-    // disposed by `enqueue_component` are unaffected.
+    // Dispose every built item's owner on teardown by disposing the setup
+    // owner they were parented to (cascades to children). Also clear the
+    // cache so the elements drop.
     on_cleanup(move || {
         parent_owner.dispose();
-        slots.borrow_mut().clear();
+        built.borrow_mut().clear();
     });
 }
 
@@ -379,20 +369,19 @@ mod tests {
     }
 
     #[test]
-    fn enqueue_disposes_slot_owner() {
+    fn same_key_builds_once_and_reuses() {
         with_capturing(|_count, installed, _| {
             let owner = Owner::new(None);
-            let dropped = Rc::new(RefCell::new(false));
+            let builds = Rc::new(RefCell::new(0u32));
             owner.with(|| {
                 let handle = create_element_by_name("list");
-                let dr = dropped.clone();
+                let b = builds.clone();
                 virtualize(
                     handle,
-                    || vec![1_i32],
+                    || vec![7_i32],
                     |x| *x,
                     move |_x| {
-                        let dr = dr.clone();
-                        crate::reactive::on_cleanup(move || *dr.borrow_mut() = true);
+                        *b.borrow_mut() += 1;
                         create_element_by_name("list-item")
                     },
                 );
@@ -400,11 +389,17 @@ mod tests {
             flush();
 
             let mut provider = installed.borrow_mut().take().expect("provider");
-            let sign = (provider.component_at_index)(0, 0, false);
-            assert!(!*dropped.borrow());
-            let enqueue = provider.enqueue_component.as_mut().expect("enqueue");
-            (enqueue)(sign);
-            assert!(*dropped.borrow(), "enqueue disposes the slot owner");
+            // Same index/key queried repeatedly (scroll away + back) →
+            // built once, same sign returned.
+            let s0 = (provider.component_at_index)(0, 0, false);
+            let s1 = (provider.component_at_index)(0, 1, false);
+            let s2 = (provider.component_at_index)(0, 2, true);
+            assert_eq!(s0, s1);
+            assert_eq!(s1, s2);
+            assert_eq!(*builds.borrow(), 1, "logical item built exactly once");
+            // enqueue is a no-op on the element (native manages detach); the
+            // callback is intentionally absent so nothing is destroyed early.
+            assert!(provider.enqueue_component.is_none());
             owner.dispose();
         });
     }
