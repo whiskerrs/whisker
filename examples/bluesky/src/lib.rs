@@ -13,6 +13,7 @@
 //! auth screen resets to `/` (the Home tab).
 
 use bsky_ui_kit::PostCard;
+use whisker::ListHandle;
 use whisker::css::{AlignItems, Display, FlexDirection, FontWeight, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
@@ -278,16 +279,18 @@ fn search_screen() -> Element {
     let draft = RwSignal::new(String::new());
     let query = RwSignal::new(String::new());
     let mode = RwSignal::new(SearchMode::People);
+    // Drives the swipeable pager: `scroll_to_position` on a tab tap, bound
+    // via `ref:` on the horizontal `<list>` below.
+    let pager = ListHandle::new();
 
-    // One resource per result kind. Each reads `query` + `mode` in its
-    // synchronous prefix, so it re-runs when either changes — but only the
-    // active mode actually calls the network; the other returns empty.
+    // One resource per result kind. Both fetch on every committed `query`
+    // (not gated on the active tab) so both pager pages are populated and
+    // swiping shows results immediately without a re-fetch.
     let actors = resource(move || {
         let q = query.get();
-        let active = mode.get() == SearchMode::People;
         async move {
             let q = q.trim();
-            if !active || q.is_empty() {
+            if q.is_empty() {
                 return Ok::<_, String>(Vec::new());
             }
             bsky_auth::search_actors(q, 30).await
@@ -295,10 +298,9 @@ fn search_screen() -> Element {
     });
     let posts = resource(move || {
         let q = query.get();
-        let active = mode.get() == SearchMode::Posts;
         async move {
             let q = q.trim();
-            if !active || q.is_empty() {
+            if q.is_empty() {
                 return Ok::<_, String>(Vec::new());
             }
             bsky_auth::search_posts(q, 30).await
@@ -344,22 +346,55 @@ fn search_screen() -> Element {
                 border_bottom_width: px(1),
                 border_bottom_color: theme::BORDER,
             )) {
-                search_tab(label: "ユーザー", active: computed(move || mode.get() == SearchMode::People), on_tap: { let mode = mode; std::rc::Rc::new(move || mode.set(SearchMode::People)) as std::rc::Rc<dyn Fn()> })
-                search_tab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: { let mode = mode; std::rc::Rc::new(move || mode.set(SearchMode::Posts)) as std::rc::Rc<dyn Fn()> })
+                search_tab(label: "ユーザー", active: computed(move || mode.get() == SearchMode::People), on_tap: { let pager = pager; std::rc::Rc::new(move || { mode.set(SearchMode::People); pager.scroll_to_position(0, true); }) as std::rc::Rc<dyn Fn()> })
+                search_tab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: { let pager = pager; std::rc::Rc::new(move || { mode.set(SearchMode::Posts); pager.scroll_to_position(1, true); }) as std::rc::Rc<dyn Fn()> })
             }
+            // Swipeable pager: a horizontal `<list>` of two full-viewport-width
+            // pages (People / Posts) with `item_snap` for ViewPager-style
+            // paging. Swiping snaps to a page → `on_snap` syncs the tab
+            // highlight; tapping a tab calls `scroll_to_position` to page over.
             Show(when: has_query, fallback: || render! { status_pane(message: "ユーザーや投稿を検索できます".to_string()) }) {
-                Show(
-                    when: move || mode.get() == SearchMode::People,
-                    fallback: move || render! {
-                        Show(when: move || posts.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
-                            post_list(posts: posts.get().unwrap_or_default())
+                list(
+                    ref: pager.r(),
+                    style: css!(flex_grow: 1.0, width: percent(100)),
+                    scroll_orientation: ScrollOrientation::Horizontal,
+                    item_snap: (0.0, 0.0),
+                    on_snap: move |e| {
+                        let m = if e.detail.position <= 0 {
+                            SearchMode::People
+                        } else {
+                            SearchMode::Posts
+                        };
+                        if mode.get() != m {
+                            mode.set(m);
                         }
                     },
-                ) {
-                    Show(when: move || actors.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
-                        actor_list(actors: actors.get().unwrap_or_default())
-                    }
-                }
+                    each: move || vec![SearchMode::People, SearchMode::Posts],
+                    key: |m: &SearchMode| match m {
+                        SearchMode::People => "people".to_string(),
+                        SearchMode::Posts => "posts".to_string(),
+                    },
+                    children: move |m: SearchMode| match m {
+                        SearchMode::People => render! {
+                            list_item(reuse_identifier: "page-people", recyclable: false) {
+                                view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                                    Show(when: move || actors.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
+                                        actor_list(actors: actors.get().unwrap_or_default())
+                                    }
+                                }
+                            }
+                        },
+                        SearchMode::Posts => render! {
+                            list_item(reuse_identifier: "page-posts", recyclable: false) {
+                                view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                                    Show(when: move || posts.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
+                                        post_list(posts: posts.get().unwrap_or_default())
+                                    }
+                                }
+                            }
+                        },
+                    },
+                )
             }
         }
     }
