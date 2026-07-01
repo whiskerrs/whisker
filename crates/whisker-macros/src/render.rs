@@ -320,7 +320,6 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("list", "upper_threshold_item_count")
             | ("list", "lower_threshold_item_count")
             | ("list", "scroll_event_throttle")
-            | ("list", "layout_id")
             | ("list", "preload_buffer_count")
             | ("list", "list_main_axis_gap")
             | ("list", "list_cross_axis_gap")

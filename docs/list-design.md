@@ -154,9 +154,12 @@ Lynx itself). Documented as a rule.
 `scroll-orientation`, `enable-scroll`, `enable-nested-scroll`, `sticky`, `sticky-offset`, `bounces`,
 `initial-scroll-index`, `need-visible-item-info`, `upper-threshold-item-count`,
 `lower-threshold-item-count`, `scroll-event-throttle`, `item-snap` (`{factor, offset}`),
-`update-animation`, `need-layout-complete-info`, `layout-id`, `preload-buffer-count`,
+`update-animation`, `need-layout-complete-info`, `preload-buffer-count`,
 `scroll-bar-enable`, `experimental-recycle-sticky-item`, `list-main-axis-gap`, `list-cross-axis-gap`,
 `harmony-scroll-edge-effect` (low priority). Already bound: `list-type`, `span-count`.
+
+`layout-id` is **owned by the list** (like `item-key`): `__h()` bumps it on every data update so the
+native list registers a new version and `layoutcomplete` can be correlated. Not a user prop.
 
 ### Item props → `list_item` element kwargs (Option E)
 

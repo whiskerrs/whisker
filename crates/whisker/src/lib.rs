@@ -1445,15 +1445,6 @@ pub mod __tags {
             apply_attr_int(self.handle, "scroll-event-throttle", v);
             self
         }
-        /// `layout-id` — identifier marking a data-source update; lets
-        /// the native diff correlate `layoutcomplete` with the update.
-        pub fn layout_id<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<i32>>,
-        {
-            apply_attr_int(self.handle, "layout-id", v);
-            self
-        }
         /// `preload-buffer-count` — number of off-screen items to keep
         /// prepared (the virtualization draw buffer).
         pub fn preload_buffer_count<V>(self, v: V) -> Self
@@ -1640,6 +1631,11 @@ pub mod __tags {
             // `w_{index}`) defeated the native list's move/remove diff.
             let next_id: ::std::rc::Rc<::std::cell::Cell<u64>> =
                 ::std::rc::Rc::new(::std::cell::Cell::new(0));
+            // `layout-id` is owned by the list (like ReactLynx): bumped on
+            // every data update so the native list knows a new version
+            // arrived and `layoutcomplete` can be correlated to it.
+            let layout_id: ::std::rc::Rc<::std::cell::Cell<i64>> =
+                ::std::rc::Rc::new(::std::cell::Cell::new(0));
 
             ::whisker_runtime::reactive::effect(move || {
                 let new_items = each.call();
@@ -1705,6 +1701,10 @@ pub mod __tags {
                 *items.borrow_mut() = new_items_vec;
                 *entries.borrow_mut() = new_entries;
 
+                // Mark this data version, then broadcast the new count.
+                let lid = layout_id.get();
+                layout_id.set(lid + 1);
+                ::whisker_runtime::view::set_attribute_int(handle, "layout-id", lid);
                 set_update_list_info(handle, count);
             });
 
