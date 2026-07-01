@@ -87,9 +87,9 @@ pub use whisker_runtime::view::Element;
 pub use whisker_macros::{component, main, module_component, render};
 
 pub use whisker_driver::{
-    AnimateOp, AnimateOptions, BoundingClientRect, ElementHandle, ElementRef, ListHandle, RefError,
-    ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo, VisibleCell, VisibleCells,
-    animate_cancel, animate_start, invoke_element_animate,
+    AnimateOp, AnimateOptions, BoundingClientRect, ElementHandle, ElementRef, ListHandle,
+    ListScrollAlign, RefError, ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo,
+    VisibleCell, VisibleCells, animate_cancel, animate_start, invoke_element_animate,
 };
 
 pub use whisker_driver::module::PlatformModule;
@@ -1397,6 +1397,15 @@ pub mod __tags {
             V: ::std::convert::Into<Signal<bool>>,
         {
             apply_attr_bool(self.handle, "experimental-recycle-sticky-item", v);
+            self
+        }
+        /// `harmony-scroll-edge-effect` — enable the scroll edge effect on
+        /// the OpenHarmony platform (no-op elsewhere).
+        pub fn harmony_scroll_edge_effect<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "harmony-scroll-edge-effect", v);
             self
         }
 

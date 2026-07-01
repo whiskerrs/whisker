@@ -660,6 +660,28 @@ impl Default for ScrollViewHandle {
     }
 }
 
+/// Where a [`ListHandle::scroll_to_position_with`] target aligns in the
+/// viewport (Lynx's `alignTo`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListScrollAlign {
+    /// Align the item's leading edge to the viewport start.
+    Top,
+    /// Center the item in the viewport.
+    Middle,
+    /// Align the item's trailing edge to the viewport end.
+    Bottom,
+}
+
+impl ListScrollAlign {
+    fn as_str(self) -> &'static str {
+        match self {
+            ListScrollAlign::Top => "top",
+            ListScrollAlign::Middle => "middle",
+            ListScrollAlign::Bottom => "bottom",
+        }
+    }
+}
+
 /// Imperative handle to a mounted `<list>`. Allocate with
 /// [`ListHandle::new`], bind via `list(ref: handle.r())` in `render!`,
 /// then drive scrolling or query the visible cells. Mirrors
@@ -693,12 +715,35 @@ impl ListHandle {
     ///
     /// Anchor-model list, so this is a single shot (no FlashList-style
     /// progressive refinement is needed — the native list lays out from
-    /// the target index directly).
+    /// the target index directly). For alignment / extra offset use
+    /// [`scroll_to_position_with`](Self::scroll_to_position_with).
     pub fn scroll_to_position(&self, index: i32, smooth: bool) {
         let _ = self.r.invoke(
             "scrollToPosition",
             WhiskerValue::map([
                 ("position", WhiskerValue::Int(index as i64)),
+                ("smooth", WhiskerValue::Bool(smooth)),
+            ]),
+        );
+    }
+
+    /// `scrollToPosition` with alignment (`alignTo`) and an extra pixel
+    /// `offset` from the aligned edge. Maps to Lynx's list
+    /// `scrollToPosition` params `position` / `alignTo` / `offset` /
+    /// `smooth`.
+    pub fn scroll_to_position_with(
+        &self,
+        index: i32,
+        align: ListScrollAlign,
+        offset: f64,
+        smooth: bool,
+    ) {
+        let _ = self.r.invoke(
+            "scrollToPosition",
+            WhiskerValue::map([
+                ("position", WhiskerValue::Int(index as i64)),
+                ("alignTo", WhiskerValue::String(align.as_str().to_string())),
+                ("offset", WhiskerValue::Float(offset)),
                 ("smooth", WhiskerValue::Bool(smooth)),
             ]),
         );
