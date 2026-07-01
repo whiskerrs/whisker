@@ -315,6 +315,7 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("list", "need_layout_complete_info")
             | ("list", "scroll_bar_enable")
             | ("list", "experimental_recycle_sticky_item")
+            | ("list", "harmony_scroll_edge_effect")
             | ("list", "sticky_offset")
             | ("list", "initial_scroll_index")
             | ("list", "upper_threshold_item_count")
