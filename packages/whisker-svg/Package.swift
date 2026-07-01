@@ -23,7 +23,7 @@ let package = Package(
         .library(name: "WhiskerSvg", targets: ["WhiskerSvg"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.0"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.1"),
     ],
     targets: [
         .target(

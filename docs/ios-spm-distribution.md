@@ -33,7 +33,7 @@ The remote URL + version are defined once, in Rust:
 ```rust
 // crates/whisker-build/src/ios.rs
 pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
-pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.0";
+pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.1";
 ```
 
 These drive the generated app's `XCRemoteSwiftPackageReference`
@@ -97,3 +97,11 @@ Keep these aligned per release:
 | crates.io | iOS SwiftPM tag | Android SDK (Maven) | Gradle plugin | Lynx fork |
 |---|---|---|---|---|
 | `0.1.0` | `v0.1.0` | `0.1.1` | `0.4.0` | `3.8.0-whisker.7` |
+| `0.1.1` | `v0.1.1` | _(unchanged)_ | _(unchanged)_ | `3.8.0-whisker.8` |
+
+`v0.1.1` bumps the Lynx fork to `3.8.0-whisker.8`, which raises the
+capi ABI to **v2** (list data source driven by real item-keys +
+per-item metadata; object-valued attributes for `item-snap`). Apps must
+rebuild against `v0.1.1` — a bridge built for ABI v2 refuses to attach
+to an ABI v1 Lynx (`whisker_bridge_engine_attach` returns NULL), and
+vice-versa.
