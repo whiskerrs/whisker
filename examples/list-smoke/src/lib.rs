@@ -106,7 +106,7 @@ pub fn app() -> Element {
                         }
                     },
                     Row::Item(n) => render! {
-                        list_item(reuse_identifier: "row") {
+                        list_item(reuse_identifier: "row", estimated_size: 84) {
                             view(style: css!(
                                 width: percent(100),
                                 padding: px(16),
