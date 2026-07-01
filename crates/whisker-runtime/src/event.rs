@@ -358,6 +358,100 @@ pub struct ScrollDetail {
     pub is_dragging: bool,
 }
 
+// list events (beyond the shared `ScrollEvent` used for
+// `scroll` / `scrolltoupper` / `scrolltolower`).
+
+/// `<list>` `scrollstatechange` — fired when the scroll state changes
+/// (idle / dragging / fling / animated). The exact `state` codes are
+/// platform-reported; treat unknown values defensively.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
+pub struct ScrollStateChangeEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+    #[serde(default)]
+    pub detail: ScrollStateChangeDetail,
+}
+
+/// State carried by a [`ScrollStateChangeEvent`]. Field set confirmed
+/// on-device (see `docs/list-design.md` § On-device verifications).
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct ScrollStateChangeDetail {
+    /// Scroll state code (e.g. stationary / dragging / inertial /
+    /// animated). Raw platform value.
+    #[serde(default)]
+    pub state: i64,
+}
+
+/// `<list>` `snap` — fired when a paginated (`item-snap`) scroll begins
+/// settling toward a target item.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
+pub struct SnapEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+    #[serde(default)]
+    pub detail: SnapDetail,
+}
+
+/// Snap target carried by a [`SnapEvent`].
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct SnapDetail {
+    /// Target item index the list is snapping to.
+    #[serde(default)]
+    pub position: i64,
+    /// Pixel offset of the snap target.
+    #[serde(default)]
+    pub current_scroll_left: f64,
+    /// Pixel offset of the snap target (vertical).
+    #[serde(default)]
+    pub current_scroll_top: f64,
+}
+
+/// `<list>` `layoutcomplete` — fired after the list finishes a layout
+/// pass. Carries the `layout-id` of the data update it completed (and,
+/// when `need-layout-complete-info` is set, diff details).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[non_exhaustive]
+pub struct LayoutCompleteEvent {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub timestamp: f64,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(rename = "currentTarget", default)]
+    pub current_target: Target,
+    #[serde(default)]
+    pub detail: LayoutCompleteDetail,
+}
+
+/// Layout info carried by a [`LayoutCompleteEvent`].
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct LayoutCompleteDetail {
+    /// The `layout-id` of the completed data update.
+    #[serde(default)]
+    pub layout_id: i64,
+}
+
 // text events.
 
 /// `layout` on `<text>` — fired after text layout completes.

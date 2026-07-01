@@ -34,7 +34,7 @@ extern "C" {
 // Whisker refuses to load a Lynx whose ABI version differs from this.
 // Bumped in lockstep with the fork's `kLynxCapiAbiVersion` whenever the
 // C ABI changes incompatibly.
-#define WHISKER_LYNX_CAPI_ABI_VERSION 1
+#define WHISKER_LYNX_CAPI_ABI_VERSION 2
 
 // ----- Opaque handle types --------------------------------------------------
 
@@ -157,9 +157,27 @@ typedef void (*lynx_element_set_attribute_bool_fn)(lynx_fiber_element_t* element
 typedef void (*lynx_element_set_attribute_double_fn)(lynx_fiber_element_t* element,
                                                       const char* key,
                                                       double value);
+// Object-valued attribute (`{obj_keys[i]: obj_values[i]}` of doubles) —
+// for props like `<list>` `item-snap` {factor, offset}.
+typedef void (*lynx_element_set_attribute_object_fn)(lynx_fiber_element_t* element,
+                                                      const char* key,
+                                                      const char* const* obj_keys,
+                                                      const double* obj_values,
+                                                      int32_t obj_count);
 typedef void (*lynx_element_set_inline_styles_fn)(lynx_fiber_element_t* element,
                                                     const char* css);
+// Decoupled `<list>` data source: `item_keys[0..count)` are the real
+// (stable) item-keys in current order; the parallel arrays carry per-item
+// metadata (may be null); `prev_count` is the previous item count (full
+// replace). ABI v2.
 typedef void (*lynx_element_set_update_list_info_fn)(lynx_fiber_element_t* element,
+                                                      int32_t prev_count,
+                                                      const char* const* item_keys,
+                                                      const int32_t* estimated_main_axis_px,
+                                                      const uint8_t* full_span,
+                                                      const uint8_t* sticky_top,
+                                                      const uint8_t* sticky_bottom,
+                                                      const uint8_t* recyclable,
                                                       int32_t count);
 typedef void (*lynx_element_set_event_handler_fn)(lynx_fiber_element_t* element,
                                                     const char* event_name);
@@ -240,6 +258,7 @@ typedef struct WhiskerLynxCapi {
   lynx_element_set_attribute_int_fn element_set_attribute_int;
   lynx_element_set_attribute_bool_fn element_set_attribute_bool;
   lynx_element_set_attribute_double_fn element_set_attribute_double;
+  lynx_element_set_attribute_object_fn element_set_attribute_object;
   lynx_element_set_inline_styles_fn element_set_inline_styles;
   lynx_element_set_update_list_info_fn element_set_update_list_info;
   lynx_element_set_event_handler_fn element_set_event_handler;

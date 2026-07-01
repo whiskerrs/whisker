@@ -156,6 +156,7 @@ int DoLoad() {
     BindSymbol(handle, "lynx_element_set_attribute_int", &g_capi.element_set_attribute_int, &ok);
     BindSymbol(handle, "lynx_element_set_attribute_bool", &g_capi.element_set_attribute_bool, &ok);
     BindSymbol(handle, "lynx_element_set_attribute_double", &g_capi.element_set_attribute_double, &ok);
+    BindSymbol(handle, "lynx_element_set_attribute_object", &g_capi.element_set_attribute_object, &ok);
     BindSymbol(handle, "lynx_element_set_inline_styles", &g_capi.element_set_inline_styles, &ok);
     BindSymbol(handle, "lynx_element_set_update_list_info", &g_capi.element_set_update_list_info, &ok);
     BindSymbol(handle, "lynx_element_set_event_handler", &g_capi.element_set_event_handler, &ok);

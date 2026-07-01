@@ -421,11 +421,13 @@ fn episode_list(episodes: Vec<Episode>, show_title: String, show_artwork: String
                     let show_title = show_title.clone();
                     let show_artwork = show_artwork.clone();
                     move |ep: Episode| render! {
-                        episode_row(
-                            episode: ep,
-                            show_title: show_title.clone(),
-                            show_artwork: show_artwork.clone(),
-                        )
+                        list_item {
+                            episode_row(
+                                episode: ep,
+                                show_title: show_title.clone(),
+                                show_artwork: show_artwork.clone(),
+                            )
+                        }
                     }
                 },
             )

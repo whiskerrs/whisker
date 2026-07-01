@@ -87,9 +87,9 @@ pub use whisker_runtime::view::Element;
 pub use whisker_macros::{component, main, module_component, render};
 
 pub use whisker_driver::{
-    AnimateOp, AnimateOptions, BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo,
-    ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo, animate_cancel, animate_start,
-    invoke_element_animate,
+    AnimateOp, AnimateOptions, BoundingClientRect, ElementHandle, ElementRef, ListHandle,
+    ListScrollAlign, RefError, ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo,
+    VisibleCell, VisibleCells, animate_cancel, animate_start, invoke_element_animate,
 };
 
 pub use whisker_driver::module::PlatformModule;
@@ -108,9 +108,10 @@ pub use whisker_runtime::value::WhiskerValue;
 /// lifecycle / component-state events a [`CustomEvent`](event::CustomEvent).
 pub mod event {
     pub use whisker_runtime::event::{
-        AnimationEvent, BindType, CustomEvent, Event, Point, ScrollDetail, ScrollEvent,
-        SelectionChangeEvent, SelectionDetail, Size, Target, TextLayoutDetail, TextLayoutEvent,
-        TextLineInfo, Touch, TouchEvent,
+        AnimationEvent, BindType, CustomEvent, Event, LayoutCompleteDetail, LayoutCompleteEvent,
+        Point, ScrollDetail, ScrollEvent, ScrollStateChangeDetail, ScrollStateChangeEvent,
+        SelectionChangeEvent, SelectionDetail, Size, SnapDetail, SnapEvent, Target,
+        TextLayoutDetail, TextLayoutEvent, TextLineInfo, Touch, TouchEvent,
     };
 }
 
@@ -188,15 +189,15 @@ pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
 pub mod __tags {
     use crate::ElementTag;
     use whisker_runtime::event::{
-        AnimationEvent, CustomEvent, ScrollEvent, SelectionChangeEvent, TextLayoutEvent,
-        TouchEvent, bind_typed,
+        AnimationEvent, CustomEvent, LayoutCompleteEvent, ScrollEvent, ScrollStateChangeEvent,
+        SelectionChangeEvent, SnapEvent, TextLayoutEvent, TouchEvent, bind_typed,
     };
     use whisker_runtime::reactive::Signal;
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
         BindType, Element, append_child, apply_attr, apply_attr_bool, apply_attr_int,
         apply_attr_owned, create_element, create_element_by_name, create_phantom_element,
-        install_list_native_item_provider, set_event_listener, set_update_list_info,
+        set_attribute_object, set_event_listener,
     };
 
     // Why a trait (and not `macro_rules!`): RA's method-completion
@@ -1288,22 +1289,9 @@ pub mod __tags {
             apply_attr(self.handle, "list-type", v);
             self
         }
-        /// `column-count` — number of columns (default 1). Lynx
-        /// reads this via `IsNumber()` on the decoupled list
-        /// container, so the int path is required — the stringified
-        /// `apply_attr` would silently no-op.
-        pub fn column_count<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<i32>>,
-        {
-            apply_attr_int(self.handle, "column-count", v);
-            self
-        }
-        /// `span-count` — preferred grid attribute on newer Lynx
-        /// builds (`column-count` is marked `@deprecated` in the
-        /// Lynx source). Same numeric-typed dispatch as
-        /// [`column_count`]; setting both is the safe shape while
-        /// older Lynx builds are still in the field.
+        /// `span-count` — number of columns (`flow`) / rows
+        /// (`waterfall`). Lynx reads this via `IsNumber()`, so the
+        /// int path is required. The documented attribute on newer Lynx.
         pub fn span_count<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<i32>>,
@@ -1311,14 +1299,239 @@ pub mod __tags {
             apply_attr_int(self.handle, "span-count", v);
             self
         }
-        /// `vertical-orientation` — `true` (default) scrolls
-        /// vertically, `false` horizontally. Lynx reads via
-        /// `IsBool()`, so the bool path is required.
-        pub fn vertical_orientation<V>(self, v: V) -> Self
+        /// `column-count` — **deprecated** alias for [`span_count`], not
+        /// in the current Lynx docs. Retained because the pinned fork's
+        /// *Android* `<list>` reads `column-count` while iOS reads
+        /// `span-count` — set both for cross-platform grid parity until
+        /// Android also honors `span-count`. Lynx reads via `IsNumber()`.
+        pub fn column_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "column-count", v);
+            self
+        }
+        /// `scroll-orientation` — scroll axis (default `Vertical`).
+        /// Takes the typed [`ScrollOrientation`](crate::attrs::ScrollOrientation) enum.
+        pub fn scroll_orientation<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<crate::attrs::ScrollOrientation>>,
+        {
+            apply_attr(self.handle, "scroll-orientation", v);
+            self
+        }
+        /// `update-animation` — animate data updates (default) or not.
+        /// Takes the typed [`ListUpdateAnimation`](crate::attrs::ListUpdateAnimation) enum.
+        pub fn update_animation<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<crate::attrs::ListUpdateAnimation>>,
+        {
+            apply_attr(self.handle, "update-animation", v);
+            self
+        }
+
+        // ---- bool props (Lynx reads via `IsBool()`) ----
+
+        /// `enable-scroll` — allow the user to drag-scroll the list.
+        pub fn enable_scroll<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<bool>>,
         {
-            apply_attr_bool(self.handle, "vertical-orientation", v);
+            apply_attr_bool(self.handle, "enable-scroll", v);
+            self
+        }
+        /// `enable-nested-scroll` — cooperate with a scrolling ancestor.
+        pub fn enable_nested_scroll<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "enable-nested-scroll", v);
+            self
+        }
+        /// `sticky` — enable sticky positioning for child nodes marked
+        /// `sticky_top` / `sticky_bottom`.
+        pub fn sticky<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "sticky", v);
+            self
+        }
+        /// `bounces` — edge bounce effect.
+        pub fn bounces<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "bounces", v);
+            self
+        }
+        /// `need-visible-item-info` — include visible-item geometry in
+        /// `scroll` events.
+        pub fn need_visible_item_info<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "need-visible-item-info", v);
+            self
+        }
+        /// `need-layout-complete-info` — include diff details in
+        /// `layoutcomplete` events.
+        pub fn need_layout_complete_info<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "need-layout-complete-info", v);
+            self
+        }
+        /// `scroll-bar-enable` — show the scrollbar indicator.
+        pub fn scroll_bar_enable<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "scroll-bar-enable", v);
+            self
+        }
+        /// `experimental-recycle-sticky-item` — recycle sticky cells.
+        pub fn experimental_recycle_sticky_item<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "experimental-recycle-sticky-item", v);
+            self
+        }
+        /// `harmony-scroll-edge-effect` — enable the scroll edge effect on
+        /// the OpenHarmony platform (no-op elsewhere).
+        pub fn harmony_scroll_edge_effect<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "harmony-scroll-edge-effect", v);
+            self
+        }
+        /// `item-snap` — paginated snapping (pager / gallery). Takes
+        /// `(factor, offset)`: `factor` (0.0–1.0) is the snap anchor within
+        /// an item (0 = start, 0.5 = center, 1 = end); `offset` is an extra
+        /// px offset. Lynx reads this as an object `{factor, offset}`, so it
+        /// goes through the object-attribute path (not a scalar setter).
+        pub fn item_snap(self, snap: (f64, f64)) -> Self {
+            let (factor, offset) = snap;
+            set_attribute_object(
+                self.handle,
+                "item-snap",
+                &[
+                    ("factor".to_string(), factor),
+                    ("offset".to_string(), offset),
+                ],
+            );
+            self
+        }
+
+        // ---- numeric props (Lynx reads via `IsNumber()`) ----
+
+        /// `sticky-offset` — offset (px) for sticky positioning.
+        pub fn sticky_offset<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "sticky-offset", v);
+            self
+        }
+        /// `initial-scroll-index` — item index to jump to on first render.
+        pub fn initial_scroll_index<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "initial-scroll-index", v);
+            self
+        }
+        /// `upper-threshold-item-count` — fire `scrolltoupper` when this
+        /// many items remain above the viewport.
+        pub fn upper_threshold_item_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "upper-threshold-item-count", v);
+            self
+        }
+        /// `lower-threshold-item-count` — fire `scrolltolower` when this
+        /// many items remain below the viewport (infinite scroll).
+        pub fn lower_threshold_item_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "lower-threshold-item-count", v);
+            self
+        }
+        /// `scroll-event-throttle` — minimum interval (ms) between
+        /// `scroll` event callbacks (default 200).
+        pub fn scroll_event_throttle<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "scroll-event-throttle", v);
+            self
+        }
+        /// `preload-buffer-count` — number of off-screen items to keep
+        /// prepared (the virtualization draw buffer).
+        pub fn preload_buffer_count<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "preload-buffer-count", v);
+            self
+        }
+        /// `list-main-axis-gap` — spacing (px) between items along the
+        /// scroll axis.
+        pub fn list_main_axis_gap<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "list-main-axis-gap", v);
+            self
+        }
+        /// `list-cross-axis-gap` — spacing (px) between items across the
+        /// scroll axis (columns / rows).
+        pub fn list_cross_axis_gap<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "list-cross-axis-gap", v);
+            self
+        }
+
+        // ---- list events (CustomEvent → bind only) ----
+
+        /// `scroll` — fired continuously while scrolling. The
+        /// [`ScrollEvent`] `detail` carries offset + content size.
+        pub fn on_scroll<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scroll", BindType::Bind, f);
+            self
+        }
+        /// `scrolltoupper` — reached the `upper-threshold-item-count`.
+        pub fn on_scrolltoupper<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scrolltoupper", BindType::Bind, f);
+            self
+        }
+        /// `scrolltolower` — reached the `lower-threshold-item-count`
+        /// (infinite-scroll trigger).
+        pub fn on_scrolltolower<F: Fn(ScrollEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scrolltolower", BindType::Bind, f);
+            self
+        }
+        /// `scrollstatechange` — scroll state transitions
+        /// (idle / dragging / fling / animated).
+        pub fn on_scrollstatechange<F: Fn(ScrollStateChangeEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "scrollstatechange", BindType::Bind, f);
+            self
+        }
+        /// `layoutcomplete` — the list finished a layout pass.
+        pub fn on_layoutcomplete<F: Fn(LayoutCompleteEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "layoutcomplete", BindType::Bind, f);
+            self
+        }
+        /// `snap` — a paginated (`item-snap`) scroll began settling.
+        pub fn on_snap<F: Fn(SnapEvent) + 'static>(self, f: F) -> Self {
+            bind_typed(self.handle, "snap", BindType::Bind, f);
             self
         }
     }
@@ -1385,11 +1598,21 @@ pub mod __tags {
             ::whisker_runtime::view::ItemFn<T>,
         >
     where
-        T: 'static,
+        // `T: Clone` — the virtualized list builds items on demand from a
+        // snapshot, so it clones `items[i]` per slot (unlike the old eager
+        // path that consumed each item once).
+        T: ::std::clone::Clone + 'static,
         K: ::std::cmp::Eq + ::std::hash::Hash + ::std::clone::Clone + 'static,
     {
-        /// Finalise the builder: install the reactive-items effect +
-        /// the native-item provider + the initial count broadcast.
+        /// Finalise the builder: drive the `<list>`'s native item
+        /// provider on demand via the container-agnostic
+        /// [`virtualize`](whisker_runtime::view::virtualize) core.
+        ///
+        /// Items are built lazily in `componentAtIndex` (only visible
+        /// slots exist), each stamped a stable `item-key` from the `key`
+        /// extractor and recycled on `enqueueComponent`. See
+        /// `docs/list-design.md` — the on-demand contract is pending
+        /// on-device verification against the Lynx fork's list.
         #[allow(non_snake_case)]
         pub fn __h(self) -> Element {
             let handle = self.handle;
@@ -1397,136 +1620,41 @@ pub mod __tags {
             let key = self.key;
             let children = self.children;
 
-            // Shared items Vec — the provider closure (installed
-            // below, reads-only) and the effect (rewrites on every
-            // diff) both clone the Rc.
-            let items: ::std::rc::Rc<::std::cell::RefCell<::std::vec::Vec<(Element, i32)>>> =
-                ::std::rc::Rc::new(::std::cell::RefCell::new(::std::vec::Vec::new()));
-
-            // Native item provider — reads sign by index from the
-            // shared items Vec. Must NOT call back into the renderer
-            // (Lynx's layout C++ that invokes this closure is itself
-            // inside `with_renderer`'s RefCell borrow).
-            let items_for_provider = items.clone();
-            let provider = ::whisker_runtime::view::list_provider::NativeItemProvider {
-                component_at_index: ::std::boxed::Box::new(move |index, _op, _reuse| {
-                    items_for_provider
-                        .borrow()
-                        .get(index as usize)
-                        .map(|&(_, sign)| sign)
-                        .unwrap_or(::whisker_runtime::view::list_provider::INVALID_ITEM_INDEX)
-                }),
-                enqueue_component: ::std::option::Option::None,
-            };
-            install_list_native_item_provider(handle, provider);
-
-            // Reactive items effect. Diffs `each()` against
-            // per-key bookkeeping, materialises new items + detaches
-            // removed ones under `handle`, sets `item-key` on each,
-            // rebuilds the items Vec + broadcasts the new count.
-            //
-            // Owner cascade: per-item owners are detached
-            // (`Owner::new(None)`); the effect explicitly disposes
-            // them on diff. When the surrounding component disposes,
-            // the released list element + items are torn down
-            // through their respective owner releases.
-            struct ListEntry {
-                owner: ::whisker_runtime::reactive::Owner,
-                handle: Element,
-            }
-            let entries: ::std::rc::Rc<
-                ::std::cell::RefCell<::std::collections::HashMap<K, ListEntry>>,
-            > = ::std::rc::Rc::new(::std::cell::RefCell::new(::std::collections::HashMap::new()));
-
-            ::whisker_runtime::reactive::effect(move || {
-                let new_items = each.call();
-                let mut new_entries: ::std::collections::HashMap<K, ListEntry> =
-                    ::std::collections::HashMap::new();
-                let mut new_keys: ::std::vec::Vec<K> =
-                    ::std::vec::Vec::with_capacity(new_items.len());
-
-                let mut old = ::std::mem::take(&mut *entries.borrow_mut());
-
-                for item in new_items {
-                    let k = key.call(&item);
-                    if let ::std::option::Option::Some(existing) = old.remove(&k) {
-                        new_entries.insert(k.clone(), existing);
-                    } else {
-                        let item_owner = ::whisker_runtime::reactive::Owner::new(None);
-                        let li = item_owner.with(|| {
-                            // Auto-wrap: the user's `children(item)` returns
-                            // arbitrary content (a story_row view, a custom
-                            // component, etc.). Lynx's <list> requires its
-                            // direct children to be UIComponent on the
-                            // platform side (LynxUIListItem on iOS,
-                            // UIListItem on Android — both
-                            // UIComponent-typed). Wrapping in <list-item>
-                            // is what realises that contract; user code
-                            // never has to write list_item itself.
-                            let li = create_element_by_name("list-item");
-                            let content = children.call(item);
-                            append_child(li, content);
-                            append_child(handle, li);
-                            li
-                        });
-                        new_entries.insert(
-                            k.clone(),
-                            ListEntry {
-                                owner: item_owner,
-                                handle: li,
-                            },
-                        );
-                    }
-                    new_keys.push(k);
-                }
-
-                // Disappeared items: detach + dispose.
-                for (_, entry) in old.drain() {
-                    ::whisker_runtime::view::remove_child(handle, entry.handle);
-                    entry.owner.dispose();
-                }
-
-                // Rebuild items Vec in new key order, capturing
-                // each leaf handle's Lynx sign (eager, from a safe
-                // scope — provider closure stays re-entrancy-safe).
-                let mut new_items_vec: ::std::vec::Vec<(Element, i32)> =
-                    ::std::vec::Vec::with_capacity(new_keys.len());
-                for k in &new_keys {
-                    if let ::std::option::Option::Some(entry) = new_entries.get(k) {
-                        apply_attr_owned::<_, ::std::string::String>(
-                            entry.handle,
-                            ::std::string::String::from("item-key"),
-                            ::std::format!("w_{}", new_items_vec.len()),
-                        );
-                        let sign = ::whisker_runtime::view::element_sign(entry.handle);
-                        new_items_vec.push((entry.handle, sign));
-                    }
-                }
-
-                let count = new_items_vec.len() as i32;
-                *items.borrow_mut() = new_items_vec;
-                *entries.borrow_mut() = new_entries;
-
-                set_update_list_info(handle, count);
-            });
+            ::whisker_runtime::view::virtualize(
+                handle,
+                move || each.call(),
+                move |t: &T| key.call(t),
+                move |t: T| children.call(t),
+            );
 
             handle
         }
     }
-    // `list_item` is an internal Lynx-side wrapper the `list`
-    // render-props builder auto-creates around each item slot. It
-    // realises the platform UI layer's `UIComponent` contract
-    // (`LynxUIListItem : LynxUIComponent` on iOS, `UIListItem extends
-    // UIComponent` on Android) that the list recycler / sticky /
-    // virtualisation machinery depends on. The list builder calls
-    // `create_element_by_name("list-item")` directly from its
-    // `__h()` effect; user code never reaches this builder.
-    #[allow(non_camel_case_types, dead_code)]
-    pub(crate) struct list_item {
+    /// `<list-item>` — the slot wrapper for a [`list`] item (Option E).
+    ///
+    /// A `<list>`'s `children` closure returns a `list_item` directly —
+    /// it realises the platform `UIComponent` contract
+    /// (`LynxUIListItem : LynxUIComponent` on iOS, `UIListItem extends
+    /// UIComponent` on Android) the recycler / sticky / virtualisation
+    /// machinery depends on, mirroring Lynx's mandatory `<list-item>`.
+    ///
+    /// `item-key` is **owned by the `list`** (stamped from the `key`
+    /// extractor), so it is not a `list_item` kwarg. The kwargs here are
+    /// the per-item attributes Lynx reads off each `<list-item>`.
+    ///
+    /// ```ignore
+    /// children: |p: Post| render! {
+    ///     list_item(full_span: p.is_header, reuse_identifier: "post") {
+    ///         post_card(post: p)
+    ///     }
+    /// }
+    /// ```
+    #[allow(non_camel_case_types)]
+    pub struct list_item {
         handle: Element,
     }
-    #[allow(non_snake_case, dead_code)]
-    pub(crate) fn __list_item_ctor() -> list_item {
+    #[allow(non_snake_case)]
+    pub fn __list_item_ctor() -> list_item {
         list_item {
             handle: create_element_by_name("list-item"),
         }
@@ -1536,15 +1664,60 @@ pub mod __tags {
             self.handle
         }
     }
-    #[allow(dead_code)]
     impl list_item {
-        /// `item-key` — stable identity for this item, used by the list
-        /// for recycling / diffing. Should be unique among siblings.
-        pub fn item_key<V>(self, v: V) -> Self
+        /// `full-span` — occupy the full row/column (e.g. a header in a
+        /// grid). Lynx reads via `IsBool()`.
+        pub fn full_span<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "full-span", v);
+            self
+        }
+        /// `sticky-top` — stick to the top edge while scrolling (needs
+        /// `sticky` on the parent `list`).
+        pub fn sticky_top<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "sticky-top", v);
+            self
+        }
+        /// `sticky-bottom` — stick to the bottom edge while scrolling.
+        pub fn sticky_bottom<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "sticky-bottom", v);
+            self
+        }
+        /// `recyclable` — whether this cell may be recycled (default
+        /// `true`). Lynx reads via `IsBool()`.
+        pub fn recyclable<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<bool>>,
+        {
+            apply_attr_bool(self.handle, "recyclable", v);
+            self
+        }
+        /// `estimated-main-axis-size-px` — placeholder main-axis size
+        /// (px) used before the cell is measured. Stabilises recycling
+        /// of non-uniform cells. Lynx reads via `IsNumber()`.
+        pub fn estimated_size<V>(self, v: V) -> Self
+        where
+            V: ::std::convert::Into<Signal<i32>>,
+        {
+            apply_attr_int(self.handle, "estimated-main-axis-size-px", v);
+            self
+        }
+        /// `reuse-identifier` — recycling group. Cells sharing an
+        /// identifier reuse each other; distinct shapes (header vs row)
+        /// should use distinct identifiers.
+        pub fn reuse_identifier<V>(self, v: V) -> Self
         where
             V: ::std::convert::Into<Signal<::std::string::String>>,
         {
-            apply_attr(self.handle, "item-key", v);
+            apply_attr(self.handle, "reuse-identifier", v);
             self
         }
     }
