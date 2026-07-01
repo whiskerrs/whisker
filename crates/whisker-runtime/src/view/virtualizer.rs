@@ -16,24 +16,31 @@
 //!    `set_update_list_info`. **No elements are created here.**
 //! 2. A [`NativeItemProvider`] is installed. When a slot enters the
 //!    viewport the native container calls `component_at_index(i)`; we
-//!    build the element for `items[i]` *on demand* under its own
-//!    reactive owner, stamp a STABLE `item-key` (so reorders diff
-//!    correctly), cache it by Lynx sign, and return the sign. When the
-//!    slot scrolls out `enqueue_component(sign)` disposes the owner
-//!    (recycle / release).
+//!    build the element for `items[i]` *on demand* under a per-slot
+//!    owner **parented to the setup owner** (so the item inherits the
+//!    list's context — `use_context` / `use_navigator` work even though
+//!    the callback fires outside any reactive scope), stamp a STABLE
+//!    `item-key` (so reorders diff correctly), **append it to the list**
+//!    (the provider contract — see below), and return its Lynx sign.
+//!    When the slot scrolls out `enqueue_component(sign)` removes it from
+//!    the list and disposes the owner (recycle / release). Only the
+//!    visible + buffered slots are attached at once, so this stays
+//!    virtualised even though items are real children while live.
 //!
 //! On owner disposal every live slot is disposed and the provider is
 //! released through `whisker-driver`'s `trampoline_free`.
 //!
-//! # ⚠️ On-device verification pending
+//! # Provider contract (verified on device)
 //!
-//! The pull contract here (build in `component_at_index`, no eager
-//! tree-append; the native container attaches via the returned sign)
-//! is the intended decoupled-list path but has NOT been verified on a
-//! real device against the Lynx fork's `ListElement`. The eager path it
-//! replaces is known-good. See `docs/list-design.md` § On-device
-//! verifications. Re-entrant element creation itself IS safe (the
-//! bridge renderer holds no field borrow across an FFI call, #214).
+//! Lynx `ListElement::ComponentAtIndex` requires the embedder callback
+//! to **attach the item to the list** (`append_child(list, item)`) and
+//! return its `impl_id`; it then runs `OnComponentFinished` → layout
+//! over that freshly-appended subtree. Returning the sign *without*
+//! appending leaves the item unparented and the native list crashes in
+//! `OnListItemWillAppear` (null `element_container`) — found on device,
+//! fixed by the `append_child` here. Re-entrant element creation during
+//! the callback is safe (the bridge renderer holds no field borrow
+//! across an FFI call, #214).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -46,7 +53,8 @@ use super::apply::apply_attr_owned;
 use super::handle::Element;
 use super::list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 use super::renderer::{
-    element_sign, install_list_native_item_provider, set_attribute_int, set_update_list_info,
+    append_child, element_sign, install_list_native_item_provider, remove_child, set_attribute_int,
+    set_update_list_info,
 };
 
 /// One live slot — its element and the reactive owner the builder ran
@@ -91,6 +99,14 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
     let layout_id: Rc<Cell<i64>> = Rc::new(Cell::new(0));
     let key = Rc::new(key);
     let build = Rc::new(build);
+    // Anchor slot owners to the owner active at SETUP (the list
+    // component's scope) so items built on demand in the native callback
+    // still inherit context — `provide_context` / `use_context` /
+    // `use_navigator` walk the owner chain. `component_at_index` fires
+    // outside any reactive scope (`current_owner()` is `None`), so a
+    // detached slot owner would sever the chain and panic in items that
+    // read context (found on-device: `use_navigator() outside a Router`).
+    let parent_owner = Owner::new(None);
 
     // Effect: items() -> snapshot + layout-id bump + count broadcast.
     {
@@ -134,11 +150,22 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
                         }
                     }
                 };
-                // Per-slot owner: reactive subscriptions inside the
-                // builder are cleaned up when the slot is enqueued out.
-                let owner = Owner::new(None);
+                // Per-slot owner, parented to the setup owner so the
+                // builder inherits context; disposed when the slot is
+                // enqueued out.
+                let owner = Owner::new(Some(parent_owner));
                 let element = owner.with(|| (build)(item));
                 apply_attr_owned::<_, String>(element, "item-key".to_string(), format!("w_{id}"));
+                // Contract: `component_at_index` must ATTACH the item to
+                // the list (Lynx `ListElement::ComponentAtIndex` then runs
+                // `OnComponentFinished` → layout over the freshly-appended
+                // subtree). Returning the sign without appending leaves the
+                // item unparented and the native list crashes in
+                // `OnListItemWillAppear` (null element_container). Only the
+                // visible + buffered slots are appended at any time — an
+                // `enqueue_component` removes them again — so this stays
+                // virtualised, not eager.
+                append_child(handle, element);
                 // Lynx keys slots by the element's *sign* (its bridge
                 // `impl_id`), not by `Element::id()`. `enqueue_component`
                 // is later called with the real sign.
@@ -151,6 +178,10 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
             let slots = slots.clone();
             Box::new(move |sign| {
                 if let Some(slot) = slots.borrow_mut().remove(&sign) {
+                    // Detach from the list (mirror + native) and dispose the
+                    // slot's reactive scope — the item leaves memory until it
+                    // scrolls back into view.
+                    remove_child(handle, slot.element);
                     slot.owner.dispose();
                 }
             })
@@ -158,14 +189,13 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
     };
     install_list_native_item_provider(handle, provider);
 
-    // The provider's closures are released by the bridge's
-    // `trampoline_free` when the container dies, which doesn't reach the
-    // per-slot owners — dispose those explicitly here.
+    // Disposing the setup owner cascades to every live slot owner (each
+    // is its child), so the per-slot reactive scopes are torn down when
+    // the surrounding component disposes. Idempotent — slots already
+    // disposed by `enqueue_component` are unaffected.
     on_cleanup(move || {
-        let mut slots = slots.borrow_mut();
-        for (_, slot) in slots.drain() {
-            slot.owner.dispose();
-        }
+        parent_owner.dispose();
+        slots.borrow_mut().clear();
     });
 }
 
