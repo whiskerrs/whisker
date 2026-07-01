@@ -1,0 +1,12 @@
+[package]
+name = "list-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Smoke test for whisker's <list>: a full-span header (item 0), variable-height rows, and Rotate/Prepend buttons that reorder the data. Verifies on-demand virtualization renders, stable item-keys reorder correctly (bug ①), and the full-span header spans + doesn't crush (bugs ②③)."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }

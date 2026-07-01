@@ -25,6 +25,7 @@ members = [
     "examples/aurora-wallet",
     "examples/podcast",
     "examples/tokio-smoke",
+    "examples/list-smoke",
     "examples/bluesky",
     "examples/bluesky/crates/bsky-domain",
     "examples/bluesky/crates/bsky-auth",
