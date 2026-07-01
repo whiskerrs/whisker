@@ -197,7 +197,7 @@ pub mod __tags {
     use whisker_runtime::view::{
         BindType, Element, append_child, apply_attr, apply_attr_bool, apply_attr_int,
         apply_attr_owned, create_element, create_element_by_name, create_phantom_element,
-        set_event_listener,
+        set_attribute_object, set_event_listener,
     };
 
     // Why a trait (and not `macro_rules!`): RA's method-completion
@@ -1406,6 +1406,23 @@ pub mod __tags {
             V: ::std::convert::Into<Signal<bool>>,
         {
             apply_attr_bool(self.handle, "harmony-scroll-edge-effect", v);
+            self
+        }
+        /// `item-snap` — paginated snapping (pager / gallery). Takes
+        /// `(factor, offset)`: `factor` (0.0–1.0) is the snap anchor within
+        /// an item (0 = start, 0.5 = center, 1 = end); `offset` is an extra
+        /// px offset. Lynx reads this as an object `{factor, offset}`, so it
+        /// goes through the object-attribute path (not a scalar setter).
+        pub fn item_snap(self, snap: (f64, f64)) -> Self {
+            let (factor, offset) = snap;
+            set_attribute_object(
+                self.handle,
+                "item-snap",
+                &[
+                    ("factor".to_string(), factor),
+                    ("offset".to_string(), offset),
+                ],
+            );
             self
         }
 

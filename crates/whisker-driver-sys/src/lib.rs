@@ -269,9 +269,21 @@ unsafe extern "C" {
         key: *const c_char,
         value: f64,
     );
+    pub fn whisker_bridge_set_attribute_object(
+        element: *mut WhiskerElement,
+        key: *const c_char,
+        obj_keys: *const *const c_char,
+        obj_values: *const f64,
+        obj_count: i32,
+    );
     pub fn whisker_bridge_set_inline_styles(element: *mut WhiskerElement, css: *const c_char);
 
-    pub fn whisker_bridge_list_set_item_count(element: *mut WhiskerElement, count: i32);
+    pub fn whisker_bridge_list_set_item_count(
+        element: *mut WhiskerElement,
+        prev_count: i32,
+        item_keys: *const *const c_char,
+        count: i32,
+    );
 
     pub fn whisker_bridge_list_set_native_item_provider(
         element: *mut WhiskerElement,

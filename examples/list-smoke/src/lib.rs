@@ -49,6 +49,16 @@ pub fn app() -> Element {
         v.insert(0, n);
         ids.set(v);
     };
+    // Rotate on scroll-to-bottom too — a data update triggerable by a
+    // synthetic drag (taps don't reach Lynx's on_tap on the simulator), so
+    // the reorder path can be verified without a device.
+    let rotate_on_scroll = move |_| {
+        let mut v = ids.get();
+        if !v.is_empty() {
+            v.rotate_left(1);
+        }
+        ids.set(v);
+    };
 
     render! {
         view(style: css!(
@@ -57,7 +67,7 @@ pub fn app() -> Element {
             background_color: Color::hex(0x101012),
             padding_top: px(48),
         )) {
-            view(style: css!(flex_direction: FlexDirection::Row, padding: px(12))) {
+            view(style: css!(flex_direction: FlexDirection::Row, padding: px(12), flex_shrink: 0.0)) {
                 view(
                     style: css!(
                         background_color: Color::hex(0x2563EB),
@@ -82,6 +92,8 @@ pub fn app() -> Element {
             }
             list(
                 style: css!(flex_grow: 1.0, width: percent(100)),
+                lower_threshold_item_count: 2,
+                on_scrolltolower: rotate_on_scroll,
                 each: move || {
                     let mut rows = vec![Row::Header];
                     rows.extend(ids.get().into_iter().map(Row::Item));

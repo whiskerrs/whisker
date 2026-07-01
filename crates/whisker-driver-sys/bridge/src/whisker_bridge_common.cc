@@ -269,15 +269,37 @@ extern "C" void whisker_bridge_set_attribute_double(WhiskerElement* element,
     whisker_lynx_capi()->element_set_attribute_double(element->handle, key, value);
 }
 
+// Object-valued attribute (`{obj_keys[i]: obj_values[i]}` of doubles),
+// e.g. `<list>` `item-snap` {factor, offset}. The scalar setters above
+// can't express a Map value.
+extern "C" void whisker_bridge_set_attribute_object(WhiskerElement* element,
+                                                    const char* key,
+                                                    const char* const* obj_keys,
+                                                    const double* obj_values,
+                                                    int32_t obj_count) {
+    if (element == nullptr || element->handle == nullptr) return;
+    whisker_lynx_capi()->element_set_attribute_object(element->handle, key,
+                                                      obj_keys, obj_values,
+                                                      obj_count);
+}
+
 // Feed a `<list>` element its item-count so Lynx's decoupled native
 // list can build its `update-list-info` map of positional item-keys.
 // Called by the `list` builder's `__h()` finalize after all children
 // have been appended; the builder also writes the matching `item-key`
 // attr (`w_<i>`) onto each child via `child()`.
 extern "C" void whisker_bridge_list_set_item_count(WhiskerElement* element,
+                                                  int32_t prev_count,
+                                                  const char* const* item_keys,
                                                   int32_t count) {
     if (element == nullptr || element->handle == nullptr) return;
-    whisker_lynx_capi()->element_set_update_list_info(element->handle, count);
+    // Per-item layout metadata (estimated size / full-span / sticky /
+    // recyclable) is carried on the `<list-item>` elements themselves for
+    // now; the data source only drives keys + diff. Pass null metadata.
+    whisker_lynx_capi()->element_set_update_list_info(
+        element->handle, prev_count, item_keys, /*estimated=*/nullptr,
+        /*full_span=*/nullptr, /*sticky_top=*/nullptr,
+        /*sticky_bottom=*/nullptr, /*recyclable=*/nullptr, count);
 }
 
 // Install a native item provider on a `<list>` element so Whisker can

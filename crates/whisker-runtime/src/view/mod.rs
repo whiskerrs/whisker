@@ -52,8 +52,8 @@ pub use renderer::{
     BindType, append_child, child_index, children_of, create_element, create_element_by_name,
     create_phantom_element, dispatch_event, flush, insert_child_at,
     install_list_native_item_provider, is_phantom, previous_sibling, release_element, remove_child,
-    set_attribute, set_attribute_int, set_event_listener, set_inline_styles, set_root,
-    set_update_list_info,
+    set_attribute, set_attribute_int, set_attribute_object, set_event_listener, set_inline_styles,
+    set_root, set_update_list_info,
 };
 
 // Renderer-wiring internals. Public because `whisker-driver` (and test
