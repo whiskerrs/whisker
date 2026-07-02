@@ -427,7 +427,6 @@ fn reset_to_different_route_reinstantiates_revealed_top() {
         let h = counting_simple_handle(counts.clone());
         let _slot = mount_node(&h, NodePath::root());
         flush();
-        // history: [home]; home mounted once.
         assert_eq!(counts.borrow().get("home").copied(), Some(1));
 
         // Push detail → history [home, detail/1].
