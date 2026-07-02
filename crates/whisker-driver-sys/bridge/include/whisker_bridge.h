@@ -116,12 +116,20 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_set_attribute(WhiskerElement* element,
 // Apply a raw inline-style string ("font-size: 32px; color: black;").
 WHISKER_BRIDGE_EXPORT void whisker_bridge_set_inline_styles(WhiskerElement* element, const char* css);
 
-// Tell a `<list>` element how many items it has so Lynx's decoupled
-// native list can build its `update-list-info` insert-all map (with
-// positional item-keys `w_<i>`). The list builder calls this once at
-// `__h()` finalize and pairs it with matching `item-key` attrs on
-// each child appended via its `child()` override.
-WHISKER_BRIDGE_EXPORT void whisker_bridge_list_set_item_count(WhiskerElement* element, int32_t count);
+// Drive a `<list>`'s decoupled data source: `item_keys[0..count)` are the
+// real (stable) item-keys in current order; `prev_count` is the previous
+// call's count. The list builder calls this on every data update; the
+// remove+insert full replace lets the native adapter diff moves/inserts/
+// removes from the keys.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_list_set_item_count(
+    WhiskerElement* element, int32_t prev_count, const char* const* item_keys,
+    int32_t count);
+
+// Object-valued attribute (`{obj_keys[i]: obj_values[i]}` of doubles),
+// e.g. `<list>` `item-snap` {factor, offset}.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_set_attribute_object(
+    WhiskerElement* element, const char* key, const char* const* obj_keys,
+    const double* obj_values, int32_t obj_count);
 
 // Install a native item provider on a `<list>` element. The provider's
 // `component_at_index` callback is invoked on demand by Lynx's list

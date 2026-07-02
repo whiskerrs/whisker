@@ -132,10 +132,16 @@ pub trait DynRenderer {
 
     /// Hand a `<list>` element its item count so the bridge can build
     /// the `update-list-info` map (positional item-keys `w_<i>`) that
-    /// Lynx's decoupled native list reads its items from. The `list`
-    /// builder calls this once at `__h()` finalize. Default no-op for
-    /// test renderers that don't model list virtualisation.
-    fn set_update_list_info(&self, _handle: Element, _count: i32) {}
+    /// Lynx's decoupled native list reads its items from. `item_keys`
+    /// are the real (stable) item-keys in current order; `prev_count` is
+    /// the previous call's item count (for the remove+insert diff). The
+    /// `list` virtualizer calls this on every data update. Default no-op
+    /// for test renderers that don't model list virtualisation.
+    fn set_update_list_info(&self, _handle: Element, _item_keys: &[String], _prev_count: usize) {}
+
+    /// Set an object-valued attribute (`{obj[i].0: obj[i].1}` of doubles)
+    /// — e.g. `<list>` `item-snap` {factor, offset}. Default no-op.
+    fn set_attribute_object(&self, _handle: Element, _key: &str, _obj: &[(String, f64)]) {}
 
     /// Install a native item provider on a `<list>` element. The
     /// `provider`'s callbacks are invoked by Lynx's list machinery to
@@ -578,11 +584,21 @@ pub fn element_sign(handle: Element) -> i32 {
     with_renderer(|r| r.element_sign(handle), 0)
 }
 
-pub fn set_update_list_info(handle: Element, count: i32) {
+pub fn set_update_list_info(handle: Element, item_keys: &[String], prev_count: usize) {
     if is_phantom(handle) {
         return;
     }
-    with_renderer(|r| r.set_update_list_info(handle, count), ())
+    with_renderer(
+        |r| r.set_update_list_info(handle, item_keys, prev_count),
+        (),
+    )
+}
+
+pub fn set_attribute_object(handle: Element, key: &str, obj: &[(String, f64)]) {
+    if is_phantom(handle) {
+        return;
+    }
+    with_renderer(|r| r.set_attribute_object(handle, key, obj), ())
 }
 
 pub fn install_list_native_item_provider(

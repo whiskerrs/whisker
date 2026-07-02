@@ -24,8 +24,8 @@ pub mod lynx;
 pub mod module;
 
 pub use element_ref::{
-    BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
-    TextBoundingRect, TextHandle, UiInfo,
+    BoundingClientRect, ElementHandle, ElementRef, ListHandle, ListScrollAlign, RefError,
+    ScrollInfo, ScrollViewHandle, TextBoundingRect, TextHandle, UiInfo, VisibleCell, VisibleCells,
 };
 pub use lynx::bootstrap;
 pub use lynx::renderer::BridgeRenderer;

@@ -239,11 +239,52 @@ impl DynRenderer for BridgeRenderer {
         unsafe { ffi::whisker_bridge_set_inline_styles(ptr.as_ptr(), css_c.as_ptr()) };
     }
 
-    fn set_update_list_info(&self, handle: Element, count: i32) {
+    fn set_update_list_info(&self, handle: Element, item_keys: &[String], prev_count: usize) {
         let Some(ptr) = self.lookup(handle) else {
             return;
         };
-        unsafe { ffi::whisker_bridge_list_set_item_count(ptr.as_ptr(), count) };
+        // Own the C strings for the duration of the call; build a
+        // NULL-safe `char*` pointer array. No borrow of any renderer field
+        // spans the FFI call.
+        let c_keys: Vec<std::ffi::CString> = item_keys
+            .iter()
+            .map(|k| std::ffi::CString::new(k.as_str()).unwrap_or_default())
+            .collect();
+        let key_ptrs: Vec<*const std::os::raw::c_char> =
+            c_keys.iter().map(|c| c.as_ptr()).collect();
+        unsafe {
+            ffi::whisker_bridge_list_set_item_count(
+                ptr.as_ptr(),
+                prev_count as i32,
+                key_ptrs.as_ptr(),
+                item_keys.len() as i32,
+            )
+        };
+    }
+
+    fn set_attribute_object(&self, handle: Element, key: &str, obj: &[(String, f64)]) {
+        let Some(ptr) = self.lookup(handle) else {
+            return;
+        };
+        let Ok(key_c) = std::ffi::CString::new(key) else {
+            return;
+        };
+        let c_keys: Vec<std::ffi::CString> = obj
+            .iter()
+            .map(|(k, _)| std::ffi::CString::new(k.as_str()).unwrap_or_default())
+            .collect();
+        let key_ptrs: Vec<*const std::os::raw::c_char> =
+            c_keys.iter().map(|c| c.as_ptr()).collect();
+        let values: Vec<f64> = obj.iter().map(|(_, v)| *v).collect();
+        unsafe {
+            ffi::whisker_bridge_set_attribute_object(
+                ptr.as_ptr(),
+                key_c.as_ptr(),
+                key_ptrs.as_ptr(),
+                values.as_ptr(),
+                obj.len() as i32,
+            )
+        };
     }
 
     fn install_list_native_item_provider(

@@ -33,7 +33,7 @@ The remote URL + version are defined once, in Rust:
 ```rust
 // crates/whisker-build/src/ios.rs
 pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
-pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.0";
+pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.1";
 ```
 
 These drive the generated app's `XCRemoteSwiftPackageReference`
@@ -97,3 +97,20 @@ Keep these aligned per release:
 | crates.io | iOS SwiftPM tag | Android SDK (Maven) | Gradle plugin | Lynx fork |
 |---|---|---|---|---|
 | `0.1.0` | `v0.1.0` | `0.1.1` | `0.4.0` | `3.8.0-whisker.7` |
+| `0.1.1` | `v0.1.1` | `0.1.2` | `0.4.0` | `3.8.0-whisker.8` |
+
+The `3.8.0-whisker.8` row bumps the Lynx fork on both platforms, raising
+the capi ABI to **v2** (list data source driven by real item-keys +
+per-item metadata; object-valued attributes for `item-snap`). The
+per-app WhiskerDriver bridge is built for ABI v2 and refuses to attach
+to an ABI v1 Lynx (`whisker_bridge_engine_attach` returns NULL), so apps
+must move to the new pins:
+
+- **iOS** — SwiftPM tag `v0.1.1` (`WHISKER_IOS_SPM_VERSION`).
+- **Android** — SDK `0.1.2` (`WHISKER_SDK_VERSION`), published by an
+  `sdk-v0.1.2` tag. Its POM rolls the transitive `lynx-android` pin
+  `3.8.0-whisker.7` → `.8` via the `lynxFork` default in
+  `platforms/android/{whisker-runtime,module}/build.gradle.kts`.
+
+The iOS SwiftPM tag and the Android `sdk-v*` tag are independent version
+streams (hence `v0.1.1` vs `0.1.2`), aligned here only by the Lynx fork.
