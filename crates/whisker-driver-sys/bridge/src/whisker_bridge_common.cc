@@ -100,6 +100,13 @@ WhiskerEventDispatcher& EventDispatcher() {
     return dispatcher;
 }
 
+// Separate channel for CORE-originated custom events (see the header
+// commentary on `whisker_bridge_register_custom_event_dispatcher`).
+WhiskerEventDispatcher& CustomEventDispatcher() {
+    static WhiskerEventDispatcher dispatcher = nullptr;
+    return dispatcher;
+}
+
 }  // namespace
 
 // ----------------------------------------------------------------------------
@@ -375,6 +382,11 @@ extern "C" void whisker_bridge_set_event_listener_with_value(
 extern "C" void whisker_bridge_register_event_dispatcher(
     WhiskerEventDispatcher dispatcher) {
     EventDispatcher() = dispatcher;
+}
+
+extern "C" void whisker_bridge_register_custom_event_dispatcher(
+    WhiskerEventDispatcher dispatcher) {
+    CustomEventDispatcher() = dispatcher;
 }
 
 extern "C" int32_t whisker_bridge_element_sign(WhiskerElement* element) {
@@ -1109,6 +1121,88 @@ void FailElementMethodAsync(WhiskerModuleCallback callback, void* user_data,
     whisker_bridge_value_release(&err);
 }
 }  // namespace
+
+// ----------------------------------------------------------------------------
+// Core-originated custom events (`<list>` scroll family, `<frame>`)
+// ----------------------------------------------------------------------------
+
+namespace {
+
+// malloc-duplicate a C string into a `WhiskerStringRef`, matching
+// `whisker_bridge_value_release`'s free pattern (not NUL-terminated;
+// len==0 still owns a 1-byte allocation).
+WhiskerStringRef DupWhiskerString(const char* s) {
+    const char* src = s != nullptr ? s : "";
+    size_t len = std::strlen(src);
+    char* buf = static_cast<char*>(std::malloc(len == 0 ? 1 : len));
+    if (len > 0) std::memcpy(buf, src, len);
+    WhiskerStringRef out;
+    out.ptr = buf;
+    out.len = len;
+    return out;
+}
+
+// The C callback handed to `lynx_shell_set_custom_event_callback`.
+// Fires synchronously on the TASM thread from INSIDE Lynx's engine
+// pipeline (mid-scroll, mid-layout) — which is exactly why it must not
+// run user handlers inline: the dispatcher on the Rust side queues the
+// event and drains it on the next frame tick. Builds the same
+// `{type, target, currentTarget, detail}` body shape the platform
+// reporter produces so the Rust deserialization path is shared.
+bool CustomEventReporterThunk(void* /*user_data*/,
+                              int32_t element_id,
+                              const char* event_name,
+                              const lynx_ui_method_value_t* params) {
+    WhiskerEventDispatcher dispatcher = CustomEventDispatcher();
+    if (dispatcher == nullptr || event_name == nullptr) return false;
+
+    WhiskerValueRaw body;
+    std::memset(&body, 0, sizeof(body));
+    body.type = WHISKER_VALUE_MAP;
+    body.v.map.count = 4;
+    body.v.map.entries = static_cast<WhiskerKeyValueRaw*>(
+        std::malloc(sizeof(WhiskerKeyValueRaw) * 4));
+
+    WhiskerKeyValueRaw* e = body.v.map.entries;
+    std::memset(e, 0, sizeof(WhiskerKeyValueRaw) * 4);
+
+    e[0].key = DupWhiskerString("type");
+    e[0].value.type = WHISKER_VALUE_STRING;
+    e[0].value.v.s = DupWhiskerString(event_name);
+
+    e[1].key = DupWhiskerString("target");
+    e[1].value.type = WHISKER_VALUE_INT;
+    e[1].value.v.i = element_id;
+
+    e[2].key = DupWhiskerString("currentTarget");
+    e[2].value.type = WHISKER_VALUE_INT;
+    e[2].value.v.i = element_id;
+
+    e[3].key = DupWhiskerString("detail");
+    e[3].value = CapiValueToWhisker(params);
+
+    bool consumed = dispatcher(element_id, event_name, &body);
+    whisker_bridge_value_release(&body);
+    return consumed;
+}
+
+}  // namespace
+
+extern "C" bool whisker_bridge_install_custom_event_reporter(
+    WhiskerEngine* engine) {
+    if (engine == nullptr || engine->shell == nullptr) return false;
+    const WhiskerLynxCapi* capi = whisker_lynx_capi();
+    // Feature-detect: the symbol is tail-added after ABI v2, so it is
+    // NULL when the loaded Lynx predates it — list events then simply
+    // stay dark, exactly as before the feature existed.
+    if (capi == nullptr || capi->shell_set_custom_event_callback == nullptr) {
+        return false;
+    }
+    capi->shell_set_custom_event_callback(engine->shell,
+                                          CustomEventReporterThunk,
+                                          nullptr);
+    return true;
+}
 
 extern "C" bool whisker_bridge_invoke_element_method_async(
     WhiskerElement* element,

@@ -177,6 +177,15 @@ int DoLoad() {
     // Animation.
     BindSymbol(handle, "lynx_element_animate", &g_capi.element_animate, &ok);
 
+    // Core-originated custom events — OPTIONAL (tail-added after ABI v2).
+    // A missing symbol is not an error: the field stays NULL and the
+    // bridge feature-detects at the install site (list events simply
+    // don't fire on an older Lynx, same as before the feature existed).
+    (void)dlerror();
+    g_capi.shell_set_custom_event_callback =
+        reinterpret_cast<lynx_shell_set_custom_event_callback_fn>(
+            dlsym(handle, "lynx_shell_set_custom_event_callback"));
+
     if (!ok) return WHISKER_BRIDGE_LYNX_LOAD_ERR_MISSING_SYMBOL;
     return WHISKER_BRIDGE_LYNX_LOAD_OK;
 }

@@ -165,6 +165,19 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // whenever its reporter hook fires.
     super::renderer::register_event_dispatcher();
 
+    // Route CORE-originated custom events (the `<list>` scroll family)
+    // through the queue-and-drain channel — they fire from inside
+    // Lynx's engine pipeline, so they can't dispatch inline like
+    // reporter events. Requires the fork capi tail-added after ABI v2;
+    // on an older Lynx this returns false and list events stay dark
+    // (exactly the pre-feature behaviour), so no hard failure here.
+    if !super::renderer::register_custom_event_dispatcher(ctx.engine) {
+        eprintln!(
+            "whisker: Lynx build lacks lynx_shell_set_custom_event_callback; \
+             <list> scroll/snap/layoutcomplete events will not fire"
+        );
+    }
+
     // Install the bridge renderer into the thread-local before
     // running user code. The `render!` macro's `view::*` calls
     // route through whatever is installed here.
@@ -423,6 +436,10 @@ fn tick_frame() {
         // survives.
         remount_components_for(&patched);
     }
+    // Dispatch core-originated events (`<list>` scroll family) queued
+    // since the last frame — before the reactive flush, so handler
+    // signal writes render in this same frame.
+    super::renderer::drain_custom_events();
     // Advance the continuous animation engine (whisker-animation) by
     // one frame *before* the reactive flush, so any progress signal it
     // writes is drained and painted in this same frame. `step` feeds a

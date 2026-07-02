@@ -319,6 +319,19 @@ unsafe extern "C" {
     /// [`WhiskerEventDispatcher`].
     pub fn whisker_bridge_register_event_dispatcher(dispatcher: WhiskerEventDispatcher);
 
+    /// Register the Rust dispatcher for CORE-originated custom events
+    /// (the `<list>` scroll family, `<frame>` events). Separate channel
+    /// from the reporter path: these fire from inside Lynx's engine
+    /// pipeline, so the dispatcher must queue and defer to the next
+    /// frame tick instead of running user handlers inline.
+    pub fn whisker_bridge_register_custom_event_dispatcher(dispatcher: WhiskerEventDispatcher);
+
+    /// Point Lynx's core custom-event callback at the bridge. Requires
+    /// the fork capi tail-added after ABI v2; returns `false` (list
+    /// events stay dark, as before the feature) on an older Lynx. Call
+    /// on the TASM thread after fiber-arch init.
+    pub fn whisker_bridge_install_custom_event_reporter(engine: *mut WhiskerEngine) -> bool;
+
     /// The Lynx element sign for `element` — same id the reporter
     /// reports as the event target, used as the key for the driver's
     /// tree + listener maps. Returns 0 for a null element.

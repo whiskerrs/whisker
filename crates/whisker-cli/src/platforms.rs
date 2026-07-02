@@ -72,7 +72,15 @@ pub struct PlatformSync {
 /// attributes for `item-snap`). The per-app WhiskerDriver bridge is now
 /// built for ABI v2, so it refuses to attach to the ABI v1 Lynx that
 /// `whisker-runtime-android:0.1.1` still pulls — apps must move to 0.1.2.
-const WHISKER_SDK_VERSION: &str = "0.1.2";
+///
+/// 0.1.3 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.8` →
+/// `v3.8.0-whisker.9`, which adds `lynx_shell_set_custom_event_callback`
+/// (tail addition, ABI stays v2) — the channel that routes core-
+/// originated `<list>` events (`scroll` / `scrolltolower` / `snap` /
+/// `layoutcomplete`) to whisker. Non-breaking: the bridge feature-
+/// detects the symbol, so 0.1.2's Lynx still attaches — list events
+/// just stay dark until the app moves to 0.1.3.
+const WHISKER_SDK_VERSION: &str = "0.1.3";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
