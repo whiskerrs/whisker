@@ -1813,15 +1813,53 @@ fn timeline_screen() -> Element {
     // prefix makes the feed re-run the moment auth flips true — so a fresh
     // login lands on a populated timeline without remounting the shell.
     let AuthState(authed) = use_context::<AuthState>().expect("AuthState provided at root");
+    // Initial page (auth-gated, re-runs when auth flips). `more` accumulates
+    // subsequent pages appended by infinite scroll; `next_cursor` tracks the
+    // cursor to fetch from once we've paged past the first page (`seeded`).
     let feed = resource(move || {
         let ready = authed.get();
         async move {
             if !ready {
                 return Err(String::new());
             }
-            bsky_auth::fetch_timeline(50).await
+            bsky_auth::fetch_timeline(50, None).await
         }
     });
+    let more = RwSignal::new(Vec::<bsky_domain::FeedPost>::new());
+    let next_cursor = RwSignal::new(None::<String>);
+    let seeded = RwSignal::new(false);
+    let loading_more = RwSignal::new(false);
+
+    // on_scrolltolower fires a few rows before the end (lower_threshold_item_count).
+    // Fetch the next page from the current cursor and append it. Guards against
+    // re-entrancy (loading_more) and the end of the feed (cursor == None).
+    let load_more = move |_| {
+        if loading_more.get() {
+            return;
+        }
+        let cursor = if seeded.get() {
+            next_cursor.get()
+        } else {
+            feed.get().and_then(|t| t.cursor)
+        };
+        let Some(cursor) = cursor else {
+            return; // no more pages
+        };
+        loading_more.set(true);
+        spawn_local(async move {
+            match bsky_auth::fetch_timeline(50, Some(cursor)).await {
+                Ok(page) => {
+                    let mut acc = more.get();
+                    acc.extend(page.posts);
+                    more.set(acc);
+                    next_cursor.set(page.cursor);
+                    seeded.set(true);
+                }
+                Err(e) => eprintln!("bluesky: timeline load-more failed: {e}"),
+            }
+            loading_more.set(false);
+        });
+    };
 
     // Inset the feed by the safe-area: top keeps the first post clear of the
     // status bar / notch, bottom keeps the last clear of the home indicator.
@@ -1853,7 +1891,22 @@ fn timeline_screen() -> Element {
                     )
                 },
             ) {
-                post_list(posts: feed.get().map(|t| t.posts).unwrap_or_default())
+                list(
+                    style: css!(flex_grow: 1.0, flex_shrink: 1.0, width: percent(100)),
+                    lower_threshold_item_count: 3,
+                    on_scrolltolower: load_more,
+                    each: move || {
+                        let mut all = feed.get().map(|t| t.posts).unwrap_or_default();
+                        all.extend(more.get());
+                        all
+                    },
+                    key: |p: &bsky_domain::FeedPost| p.uri.clone(),
+                    children: |p: bsky_domain::FeedPost| render! {
+                        list_item(reuse_identifier: "post", estimated_size: 140) {
+                            PostRow(post: p)
+                        }
+                    },
+                )
             }
             ComposeFab {}
         }
