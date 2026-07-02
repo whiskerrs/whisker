@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.7.0...whisker-router-v0.8.0) - 2026-07-02
+
+### Fixed
+
+- *(whisker-router)* [**breaking**] reset/replace/swipe-back fixes + global reset + leaf URL resolution ([#272](https://github.com/whiskerrs/whisker/pull/272))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.6.0...whisker-router-v0.7.0) - 2026-06-26
 
 ### Added

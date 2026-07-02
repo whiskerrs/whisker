@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-dev-runtime-v0.7.0...whisker-dev-runtime-v0.8.0) - 2026-07-02
+
+### Fixed
+
+- *(whisker-dev-runtime)* Android build broke on libc 0.2.186 (c_char buffer) ([#273](https://github.com/whiskerrs/whisker/pull/273))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-dev-runtime-v0.6.0...whisker-dev-runtime-v0.7.0) - 2026-06-26
 
 ### Other
