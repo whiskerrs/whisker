@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.7.0...whisker-build-v0.8.0) - 2026-07-02
+
+### Added
+
+- *(list)* exhaustive Lynx <list> binding + on-demand virtualization ([#276](https://github.com/whiskerrs/whisker/pull/276))
+- *(whisker-run)* surface build staleness — compile relinked/up-to-date + gen reused/regenerated ([#260](https://github.com/whiskerrs/whisker/pull/260)) ([#268](https://github.com/whiskerrs/whisker/pull/268))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.6.0...whisker-build-v0.7.0) - 2026-06-26
 
 ### Other

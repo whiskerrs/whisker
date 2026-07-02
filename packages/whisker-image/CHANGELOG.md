@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-image-v0.7.0...whisker-image-v0.8.0) - 2026-07-02
+
+### Added
+
+- *(list)* exhaustive Lynx <list> binding + on-demand virtualization ([#276](https://github.com/whiskerrs/whisker/pull/276))
+
 ## [0.4.0](https://github.com/whiskerrs/whisker/compare/whisker-image-v0.3.1...whisker-image-v0.4.0) - 2026-06-16
 
 ### Added
