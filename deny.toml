@@ -16,9 +16,19 @@ yanked = "deny"
 # replacement reaches our tree or the upstream lib drops them:
 #   RUSTSEC-2024-0436  paste         ← ratatui   (dev-loop TUI)
 #   RUSTSEC-2025-0119  number_prefix ← indicatif (progress output)
+#
+# Vulnerability accepted with rationale (no compatible fixed version):
+#   RUSTSEC-2026-0119  hickory-proto 0.24.4 ← atrium-identity's DoH TXT
+#     resolver, examples/bluesky ONLY. O(n²) CPU during DNS *message
+#     encoding* — reachable only by encoding a message with many
+#     compressible names. The example encodes a single `_atproto.<handle>`
+#     TXT query (one name) against a trusted DoH endpoint, so the
+#     pathological input isn't reachable. The fix lands in hickory 0.25,
+#     which atrium 0.24 doesn't yet allow. Revisit on the atrium bump.
 ignore = [
     "RUSTSEC-2024-0436",
     "RUSTSEC-2025-0119",
+    "RUSTSEC-2026-0119",
 ]
 
 [bans]

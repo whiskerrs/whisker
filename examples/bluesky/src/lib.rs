@@ -345,8 +345,8 @@ fn search_screen() -> Element {
                 border_bottom_width: px(1),
                 border_bottom_color: theme::BORDER,
             )) {
-                search_tab(label: "ユーザー", active: computed(move || mode.get() == SearchMode::People), on_tap: { let pager = pager; std::rc::Rc::new(move || { mode.set(SearchMode::People); pager.scroll_to_position(0, true); }) as std::rc::Rc<dyn Fn()> })
-                search_tab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: { let pager = pager; std::rc::Rc::new(move || { mode.set(SearchMode::Posts); pager.scroll_to_position(1, true); }) as std::rc::Rc<dyn Fn()> })
+                search_tab(label: "ユーザー", active: computed(move || mode.get() == SearchMode::People), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::People); pager.scroll_to_position(0, true); }) as std::rc::Rc<dyn Fn()>)
+                search_tab(label: "投稿", active: computed(move || mode.get() == SearchMode::Posts), on_tap: std::rc::Rc::new(move || { mode.set(SearchMode::Posts); pager.scroll_to_position(1, true); }) as std::rc::Rc<dyn Fn()>)
             }
             // Swipeable pager: a horizontal `<list>` of two full-viewport-width
             // pages (People / Posts) with `item_snap` for ViewPager-style
