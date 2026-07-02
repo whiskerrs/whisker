@@ -230,6 +230,20 @@ typedef int32_t (*lynx_element_animate_fn)(
     const lynx_ui_method_value_t* keyframes,
     const lynx_ui_method_value_t* options);
 
+// Core-originated custom events (the `<list>` family + `<frame>`).
+// `params` is the event payload (`detail`), valid only for the
+// duration of the call. Return true to consume (skip the JS-path
+// forward). Embedder passes it INTO Lynx → direct function pointer.
+typedef bool (*lynx_custom_event_callback_t)(
+    void* user_data,
+    int32_t element_id,
+    const char* event_name,
+    const lynx_ui_method_value_t* params);
+typedef void (*lynx_shell_set_custom_event_callback_fn)(
+    lynx_shell_t* shell,
+    lynx_custom_event_callback_t callback,
+    void* user_data);
+
 // ----- Dispatch table -------------------------------------------------------
 //
 // Populated by `whisker_bridge_load_lynx()`. Field order is purely
@@ -278,6 +292,11 @@ typedef struct WhiskerLynxCapi {
 
   // Element-level animation.
   lynx_element_animate_fn element_animate;
+
+  // Core-originated custom events. OPTIONAL: bound tail-additively —
+  // NULL when the loaded Lynx predates the symbol (feature-detect at
+  // the call site; list events simply stay dark on old engines).
+  lynx_shell_set_custom_event_callback_fn shell_set_custom_event_callback;
 } WhiskerLynxCapi;
 
 // ----- Loader API -----------------------------------------------------------

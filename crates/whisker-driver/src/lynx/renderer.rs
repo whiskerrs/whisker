@@ -545,3 +545,93 @@ extern "C" fn whisker_event_dispatch_entry(
 pub(crate) fn register_event_dispatcher() {
     unsafe { ffi::whisker_bridge_register_event_dispatcher(whisker_event_dispatch_entry) };
 }
+
+// ----- Core-originated custom events -----------------------------------------
+//
+// The `<list>` scroll family (`scroll` / `scrolltoupper` / `scrolltolower`
+// / `snap` / `layoutcomplete` / impression events) is generated inside
+// Lynx's C++ core, not by the platform UI layer, so it never reaches the
+// platform reporter. The bridge routes those events here through the
+// fork's `lynx_shell_set_custom_event_callback` capi instead.
+//
+// Unlike reporter events (which arrive from the platform event stack,
+// outside any engine call), these fire synchronously from INSIDE Lynx's
+// scroll/layout pipeline — often while the renderer `RefCell` is
+// borrowed (`renderer_flush` → Lynx layout → `layoutcomplete`). Running
+// user handlers inline would re-enter the borrow and panic, so the
+// entry queues the event and [`drain_custom_events`] dispatches the
+// backlog at the top of the next frame tick.
+
+thread_local! {
+    /// Pending core-originated events, drained by `tick_frame`. TASM
+    /// (main) thread only — both the enqueue (Lynx pipeline) and the
+    /// drain (frame tick) run there.
+    static CUSTOM_EVENT_QUEUE: std::cell::RefCell<Vec<(i32, String, WhiskerValue)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// C entry point for core-originated custom events (registered via
+/// `whisker_bridge_register_custom_event_dispatcher`). Copies the event
+/// out, queues it, and asks the host for a frame. Always reports
+/// "consumed" — Whisker owns event delivery; there is no JS runtime for
+/// the engine to forward to.
+extern "C" fn whisker_custom_event_entry(
+    target_sign: i32,
+    event_name: *const std::os::raw::c_char,
+    body: *const ffi::WhiskerValueRaw,
+) -> bool {
+    if event_name.is_null() {
+        return false;
+    }
+    // SAFETY: the bridge passes a valid NUL-terminated event name for
+    // the duration of the call.
+    let name = match unsafe { std::ffi::CStr::from_ptr(event_name) }.to_str() {
+        Ok(s) => s.to_owned(),
+        Err(_) => return false,
+    };
+    let value = if body.is_null() {
+        WhiskerValue::Null
+    } else {
+        // SAFETY: `body` points to a valid `WhiskerValueRaw` owned by
+        // the bridge, valid for this call. `from_raw` copies it out.
+        unsafe { crate::module::from_raw(&*body) }
+    };
+    CUSTOM_EVENT_QUEUE.with(|q| q.borrow_mut().push((target_sign, name, value)));
+    // Schedule a frame so the backlog drains promptly even when the
+    // render loop is idle (no signal writes pending).
+    whisker_runtime::host_wake::wake_runtime();
+    true
+}
+
+/// Dispatch every queued core-originated event through the same
+/// propagation path reporter events take. Called at the top of each
+/// frame tick, before the reactive flush, so handler signal writes
+/// render in the same frame. Events queued *during* this drain (e.g. a
+/// `layoutcomplete` fired by a flush a handler triggered) wait for the
+/// next frame — single pass, no loop-until-empty.
+pub(crate) fn drain_custom_events() {
+    let backlog = CUSTOM_EVENT_QUEUE.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    for (target_sign, name, value) in backlog {
+        // Contain handler panics per-event (same contract as
+        // `whisker_event_dispatch_entry`).
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            whisker_runtime::view::dispatch_event(target_sign, &name, value)
+        }))
+        .is_err()
+        {
+            eprintln!("whisker: panic in event handler for `{name}`; event dropped");
+        }
+    }
+}
+
+/// Register [`whisker_custom_event_entry`] and point Lynx's core
+/// custom-event callback at the bridge. `engine` must be inside a
+/// `whisker_bridge_dispatch` callback (TASM thread, fiber-arch
+/// initialized). Returns whether the loaded Lynx supports the capi
+/// (`false` on an older fork — list events stay dark, as before).
+pub(crate) fn register_custom_event_dispatcher(engine: *mut ffi::WhiskerEngine) -> bool {
+    unsafe {
+        ffi::whisker_bridge_register_custom_event_dispatcher(whisker_custom_event_entry);
+        ffi::whisker_bridge_install_custom_event_reporter(engine)
+    }
+}

@@ -308,6 +308,27 @@ typedef bool (*WhiskerEventDispatcher)(int32_t target_sign,
 WHISKER_BRIDGE_EXPORT void whisker_bridge_register_event_dispatcher(
     WhiskerEventDispatcher dispatcher);
 
+// Register (or clear, with NULL) the Rust dispatcher for CORE-originated
+// custom events (the `<list>` family, `<frame>` events). Same shape as
+// `WhiskerEventDispatcher`, but a SEPARATE channel: these events fire
+// from inside Lynx's engine pipeline (mid-scroll, mid-layout), so the
+// Rust side must queue them and dispatch on the next frame tick rather
+// than running user handlers synchronously. The body handed to the
+// dispatcher is `{type, target, currentTarget, detail}`, matching the
+// platform reporter's shape; borrowed for the call.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_register_custom_event_dispatcher(
+    WhiskerEventDispatcher dispatcher);
+
+// Point Lynx's core custom-event callback at the bridge, so core-
+// originated events flow to the dispatcher registered above. Requires
+// the Lynx fork's `lynx_shell_set_custom_event_callback` capi (tail-
+// added after ABI v2); returns false — and list events stay dark, as
+// they were before the feature — when the loaded Lynx predates it.
+// Must be called on the TASM thread after fiber-arch init (i.e. from
+// inside a `whisker_bridge_dispatch` callback).
+WHISKER_BRIDGE_EXPORT bool whisker_bridge_install_custom_event_reporter(
+    WhiskerEngine* engine);
+
 // The Lynx element sign (impl id) for `element` — the same identifier
 // the reporter reports as the event target, and the key the driver
 // uses for its tree + listener maps. Returns 0 for a null element.

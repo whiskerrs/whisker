@@ -6,6 +6,7 @@
 //! - **Rotate / Prepend** buttons mutate the data order — verifies bug ①
 //!   (stable item-key reorders correctly instead of appending at the tail).
 
+use whisker::ListHandle;
 use whisker::css::{AlignItems, FlexDirection, FontWeight, JustifyContent};
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
@@ -34,6 +35,13 @@ fn body_text(n: u32) -> String {
 pub fn app() -> Element {
     let ids = signal((1u32..=30).collect::<Vec<u32>>());
     let next = signal(100u32);
+    // Scroll-event smoke: on the FIRST layoutcomplete, smooth-scroll to
+    // the bottom. A programmatic smooth scroll drives the same native
+    // UIScrollView path a finger does, so `scroll` + `scrolltolower`
+    // fire without needing a human drag (synthetic touches don't reach
+    // Lynx's scroll pipeline on the simulator).
+    let list_handle = ListHandle::new();
+    let auto_scrolled = signal(false);
 
     let rotate = move |_| {
         let mut v = ids.get();
@@ -52,7 +60,8 @@ pub fn app() -> Element {
     // Rotate on scroll-to-bottom too — a data update triggerable by a
     // synthetic drag (taps don't reach Lynx's on_tap on the simulator), so
     // the reorder path can be verified without a device.
-    let rotate_on_scroll = move |_| {
+    let rotate_on_scroll = move |e| {
+        eprintln!("[SMOKE] scrolltolower fired: {e:?}");
         let mut v = ids.get();
         if !v.is_empty() {
             v.rotate_left(1);
@@ -94,6 +103,19 @@ pub fn app() -> Element {
                 style: css!(flex_grow: 1.0, width: percent(100)),
                 lower_threshold_item_count: 2,
                 on_scrolltolower: rotate_on_scroll,
+                // Event-pipeline smoke signals: `layoutcomplete` fires on
+                // first layout (no interaction needed), `scroll` on every
+                // scroll frame. Both are core-originated — they only fire
+                // when the capi custom-event channel works end-to-end.
+                ref: list_handle.r(),
+                on_layoutcomplete: move |e| {
+                    eprintln!("[SMOKE] layoutcomplete fired: {e:?}");
+                    if !auto_scrolled.get() {
+                        auto_scrolled.set(true);
+                        list_handle.scroll_to_position(30, true);
+                    }
+                },
+                on_scroll: |e| eprintln!("[SMOKE] scroll fired: {e:?}"),
                 each: move || {
                     let mut rows = vec![Row::Header];
                     rows.extend(ids.get().into_iter().map(Row::Item));
