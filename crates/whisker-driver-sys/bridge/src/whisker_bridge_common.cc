@@ -309,6 +309,23 @@ extern "C" void whisker_bridge_list_set_item_count(WhiskerElement* element,
         /*sticky_bottom=*/nullptr, /*recyclable=*/nullptr, count);
 }
 
+extern "C" bool whisker_bridge_list_update_actions(
+    WhiskerElement* element, const int32_t* remove_indices,
+    int32_t remove_count, const int32_t* insert_positions,
+    const char* const* insert_keys, int32_t insert_count) {
+    if (element == nullptr || element->handle == nullptr) return false;
+    const WhiskerLynxCapi* capi = whisker_lynx_capi();
+    // Feature-detect: tail-added after ABI v2 — NULL on an older Lynx.
+    // The caller falls back to the full-replace update.
+    if (capi == nullptr || capi->element_update_list_actions == nullptr) {
+        return false;
+    }
+    capi->element_update_list_actions(element->handle, remove_indices,
+                                      remove_count, insert_positions,
+                                      insert_keys, insert_count);
+    return true;
+}
+
 // Install a native item provider on a `<list>` element so Whisker can
 // drive Lynx's list virtualisation directly. On both platforms this
 // resolves to Lynx's `lynx_list_set_native_item_provider` (Android:

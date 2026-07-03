@@ -125,6 +125,21 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_list_set_item_count(
     WhiskerElement* element, int32_t prev_count, const char* const* item_keys,
     int32_t count);
 
+// Explicit `<list>` diff actions — the minimal-action alternative to
+// `whisker_bridge_list_set_item_count`'s full replace. Items mentioned
+// in neither action keep their native ItemHolder identity, which is
+// what lets the list hold its scroll position across an append.
+// Removals: ascending pre-update indices (applied first). Inserts:
+// `insert_positions`/`insert_keys` parallel arrays, ascending splice
+// points into the post-removal list.
+//
+// Returns false when the loaded Lynx predates the capi (tail-added
+// after ABI v2) — the caller then falls back to the full replace.
+WHISKER_BRIDGE_EXPORT bool whisker_bridge_list_update_actions(
+    WhiskerElement* element, const int32_t* remove_indices,
+    int32_t remove_count, const int32_t* insert_positions,
+    const char* const* insert_keys, int32_t insert_count);
+
 // Object-valued attribute (`{obj_keys[i]: obj_values[i]}` of doubles),
 // e.g. `<list>` `item-snap` {factor, offset}.
 WHISKER_BRIDGE_EXPORT void whisker_bridge_set_attribute_object(

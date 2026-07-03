@@ -33,15 +33,20 @@ fn body_text(n: u32) -> String {
 
 #[whisker::main]
 pub fn app() -> Element {
-    let ids = signal((1u32..=30).collect::<Vec<u32>>());
+    // Start EMPTY and populate in `on_mount` — the data then arrives
+    // AFTER the first layout, exercising the "late data source" fill
+    // path (a data-only update must still tick the list's viewport
+    // fill; regression: items only materialized on the first scroll).
+    let ids = signal(Vec::<u32>::new());
     let next = signal(100u32);
+    on_mount(move || ids.set((1u32..=30).collect::<Vec<u32>>()));
     // Scroll-event smoke: on the FIRST layoutcomplete, smooth-scroll to
     // the bottom. A programmatic smooth scroll drives the same native
     // UIScrollView path a finger does, so `scroll` + `scrolltolower`
     // fire without needing a human drag (synthetic touches don't reach
     // Lynx's scroll pipeline on the simulator).
     let list_handle = ListHandle::new();
-    let auto_scrolled = signal(false);
+    let lc_seen = signal(0u32);
 
     let rotate = move |_| {
         let mut v = ids.get();
@@ -57,16 +62,43 @@ pub fn app() -> Element {
         v.insert(0, n);
         ids.set(v);
     };
-    // Rotate on scroll-to-bottom too — a data update triggerable by a
-    // synthetic drag (taps don't reach Lynx's on_tap on the simulator), so
-    // the reorder path can be verified without a device.
-    let rotate_on_scroll = move |e| {
+    // Append a page on scroll-to-bottom — the infinite-scroll pattern.
+    // With diff-based data updates the append is insert-only, so the
+    // scroll position must HOLD at the bottom (regression: the full
+    // replace reset it to the top on every append). At the cap, scroll
+    // back to the top once — the first row must re-materialize after
+    // having been recycled off-screen.
+    let back_to_top_done = signal(false);
+    let chase_bottom = signal(false);
+    let append_on_scroll = move |e: whisker::event::ScrollEvent| {
         eprintln!("[SMOKE] scrolltolower fired: {e:?}");
-        let mut v = ids.get();
-        if !v.is_empty() {
-            v.rotate_left(1);
+        if e.detail.scroll_height < 500.0 {
+            // The pre-data (header-only, 160px) list is trivially "at
+            // the bottom" — ignore that spurious trigger. Gate on the
+            // EVENT's own content height: the signal may already hold
+            // the real data by the time this drains.
+            return;
         }
+        let mut v = ids.get();
+        if v.len() >= 60 {
+            if !back_to_top_done.get() {
+                back_to_top_done.set(true);
+                eprintln!("[SMOKE] cap reached — scrolling back to top");
+                list_handle.scroll_to_position(0, true);
+            }
+            return;
+        }
+        let n = next.get();
+        next.set(n + 10);
+        v.extend(n..n + 10);
         ids.set(v);
+        // Chase the new bottom ON THE NEXT layoutcomplete (scrolling now
+        // would target an index the NATIVE list doesn't have yet — the
+        // append flushes later this tick). The chase keeps the smoke
+        // paging until the cap: the position HOLD after an append means
+        // we drift out of the lower threshold, which is correct UX but
+        // would stall the run.
+        chase_bottom.set(true);
     };
 
     render! {
@@ -102,7 +134,7 @@ pub fn app() -> Element {
             list(
                 style: css!(flex_grow: 1.0, width: percent(100)),
                 lower_threshold_item_count: 2,
-                on_scrolltolower: rotate_on_scroll,
+                on_scrolltolower: append_on_scroll,
                 // Event-pipeline smoke signals: `layoutcomplete` fires on
                 // first layout (no interaction needed), `scroll` on every
                 // scroll frame. Both are core-originated — they only fire
@@ -110,9 +142,26 @@ pub fn app() -> Element {
                 ref: list_handle.r(),
                 on_layoutcomplete: move |e| {
                     eprintln!("[SMOKE] layoutcomplete fired: {e:?}");
-                    if !auto_scrolled.get() {
-                        auto_scrolled.set(true);
-                        list_handle.scroll_to_position(30, true);
+                    // `SIMCTL_CHILD_SMOKE_NO_AUTOSCROLL=1` (simctl launch env)
+                    // disables the auto-scroll so the "late data fills the
+                    // viewport WITHOUT any scroll" state can be observed.
+                    // Trigger on the SECOND layoutcomplete: the first is the
+                    // pre-data (header-only) layout — the signal already
+                    // holds 30 ids then, but the NATIVE list doesn't yet, so
+                    // scrolling on it would target an out-of-range index.
+                    let seen = lc_seen.get() + 1;
+                    lc_seen.set(seen);
+                    if seen == 2 && std::env::var("SMOKE_NO_AUTOSCROLL").is_err() {
+                        list_handle.scroll_to_position(ids.get().len() as i32, true);
+                    }
+                    // An append's layout completed — scroll back to the TOP:
+                    // the first row was recycled off-screen during the trip
+                    // to the bottom, so this exercises re-materialization of
+                    // item 0 (regression: it stayed blank).
+                    if chase_bottom.get() {
+                        chase_bottom.set(false);
+                        eprintln!("[SMOKE] append landed — scrolling back to top");
+                        list_handle.scroll_to_position(0, true);
                     }
                 },
                 on_scroll: |e| eprintln!("[SMOKE] scroll fired: {e:?}"),

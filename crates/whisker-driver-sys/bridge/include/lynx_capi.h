@@ -179,6 +179,17 @@ typedef void (*lynx_element_set_update_list_info_fn)(lynx_fiber_element_t* eleme
                                                       const uint8_t* sticky_bottom,
                                                       const uint8_t* recyclable,
                                                       int32_t count);
+// Explicit diff actions for the decoupled `<list>` data source —
+// minimal-action alternative to `lynx_element_set_update_list_info`.
+// Removals: ascending pre-update indices, applied first. Inserts:
+// ascending splice points into the post-removal list.
+typedef void (*lynx_element_update_list_actions_fn)(
+    lynx_fiber_element_t* element,
+    const int32_t* remove_indices,
+    int32_t remove_count,
+    const int32_t* insert_positions,
+    const char* const* insert_keys,
+    int32_t insert_count);
 typedef void (*lynx_element_set_event_handler_fn)(lynx_fiber_element_t* element,
                                                     const char* event_name);
 typedef void (*lynx_element_append_child_fn)(lynx_fiber_element_t* parent,
@@ -297,6 +308,12 @@ typedef struct WhiskerLynxCapi {
   // NULL when the loaded Lynx predates the symbol (feature-detect at
   // the call site; list events simply stay dark on old engines).
   lynx_shell_set_custom_event_callback_fn shell_set_custom_event_callback;
+
+  // Explicit list diff actions. OPTIONAL (tail-added after ABI v2) —
+  // NULL on an older Lynx; the caller falls back to the full-replace
+  // `element_set_update_list_info` (pre-feature behaviour: scroll
+  // position resets on data updates, but nothing breaks).
+  lynx_element_update_list_actions_fn element_update_list_actions;
 } WhiskerLynxCapi;
 
 // ----- Loader API -----------------------------------------------------------

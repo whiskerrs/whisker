@@ -285,6 +285,19 @@ unsafe extern "C" {
         count: i32,
     );
 
+    /// Explicit `<list>` diff actions (minimal-action alternative to
+    /// the full replace above). Returns `false` when the loaded Lynx
+    /// predates the capi — fall back to
+    /// [`whisker_bridge_list_set_item_count`].
+    pub fn whisker_bridge_list_update_actions(
+        element: *mut WhiskerElement,
+        remove_indices: *const i32,
+        remove_count: i32,
+        insert_positions: *const i32,
+        insert_keys: *const *const c_char,
+        insert_count: i32,
+    ) -> bool;
+
     pub fn whisker_bridge_list_set_native_item_provider(
         element: *mut WhiskerElement,
         component_at_index: LynxListComponentAtIndexFn,
