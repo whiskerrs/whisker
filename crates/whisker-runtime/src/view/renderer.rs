@@ -137,7 +137,32 @@ pub trait DynRenderer {
     /// the previous call's item count (for the remove+insert diff). The
     /// `list` virtualizer calls this on every data update. Default no-op
     /// for test renderers that don't model list virtualisation.
+    ///
+    /// This is the FULL-REPLACE form — it severs every native item's
+    /// identity, so the list cannot hold its scroll position across the
+    /// update. The virtualizer prefers [`update_list_actions`]
+    /// (Self::update_list_actions) and only falls back here.
     fn set_update_list_info(&self, _handle: Element, _item_keys: &[String], _prev_count: usize) {}
+
+    /// Explicit `<list>` diff actions — the minimal-action form.
+    /// `removals` are ascending indices into the PRE-update item-key
+    /// list (applied first); `inserts` are `(position, item_key)`
+    /// pairs with ascending splice points into the post-removal list.
+    /// Items mentioned in neither action keep their native identity,
+    /// which lets the list hold its scroll position across appends.
+    ///
+    /// Returns whether the renderer delivered the actions — `false`
+    /// (the default, also reported when the loaded Lynx predates the
+    /// capi) tells the virtualizer to fall back to the full-replace
+    /// [`set_update_list_info`](Self::set_update_list_info).
+    fn update_list_actions(
+        &self,
+        _handle: Element,
+        _removals: &[i32],
+        _inserts: &[(i32, String)],
+    ) -> bool {
+        false
+    }
 
     /// Set an object-valued attribute (`{obj[i].0: obj[i].1}` of doubles)
     /// — e.g. `<list>` `item-snap` {factor, offset}. Default no-op.
@@ -592,6 +617,13 @@ pub fn set_update_list_info(handle: Element, item_keys: &[String], prev_count: u
         |r| r.set_update_list_info(handle, item_keys, prev_count),
         (),
     )
+}
+
+pub fn update_list_actions(handle: Element, removals: &[i32], inserts: &[(i32, String)]) -> bool {
+    if is_phantom(handle) {
+        return false;
+    }
+    with_renderer(|r| r.update_list_actions(handle, removals, inserts), false)
 }
 
 pub fn set_attribute_object(handle: Element, key: &str, obj: &[(String, f64)]) {

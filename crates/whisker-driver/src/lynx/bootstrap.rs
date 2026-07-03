@@ -368,7 +368,16 @@ pub fn tick(engine_raw: *mut c_void) -> bool {
     // has run (the bridge dispatch above completes synchronously on the
     // TASM==main thread), so it observes any node a commit-time re-entry
     // left in the queue.
-    !dispatch_pending && !whisker_runtime::reactive::has_pending_work()
+    //
+    // The custom-event queue is part of the same level-triggered idle
+    // test: a core-originated event (list `layoutcomplete` / `scroll`)
+    // queued DURING this tick's own `renderer_flush` already had its
+    // `wake_runtime()` edge consumed by the tick in progress, so
+    // reporting idle here would pause the vsync loop with the event
+    // stranded in the queue.
+    !dispatch_pending
+        && !whisker_runtime::reactive::has_pending_work()
+        && !super::renderer::has_pending_custom_events()
 }
 
 extern "C" fn tick_callback(_user_data: *mut c_void) {
@@ -478,6 +487,10 @@ fn tick_frame() {
         reactive_flush_mounts();
         renderer_flush();
     }
+    // (A core-originated event queued DURING this tick — e.g. a
+    // `layoutcomplete` fired by this tick's own renderer_flush — is kept
+    // alive by `tick()`'s level-triggered idle test, which reports busy
+    // while the custom-event queue is non-empty.)
 }
 
 /// Monotonic wall-clock time in milliseconds, measured from a fixed

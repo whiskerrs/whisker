@@ -262,6 +262,36 @@ impl DynRenderer for BridgeRenderer {
         };
     }
 
+    fn update_list_actions(
+        &self,
+        handle: Element,
+        removals: &[i32],
+        inserts: &[(i32, String)],
+    ) -> bool {
+        let Some(ptr) = self.lookup(handle) else {
+            return false;
+        };
+        // Own the C strings for the duration of the call; no renderer
+        // field borrow spans the FFI.
+        let c_keys: Vec<std::ffi::CString> = inserts
+            .iter()
+            .map(|(_, k)| std::ffi::CString::new(k.as_str()).unwrap_or_default())
+            .collect();
+        let key_ptrs: Vec<*const std::os::raw::c_char> =
+            c_keys.iter().map(|c| c.as_ptr()).collect();
+        let positions: Vec<i32> = inserts.iter().map(|(p, _)| *p).collect();
+        unsafe {
+            ffi::whisker_bridge_list_update_actions(
+                ptr.as_ptr(),
+                removals.as_ptr(),
+                removals.len() as i32,
+                positions.as_ptr(),
+                key_ptrs.as_ptr(),
+                inserts.len() as i32,
+            )
+        }
+    }
+
     fn set_attribute_object(&self, handle: Element, key: &str, obj: &[(String, f64)]) {
         let Some(ptr) = self.lookup(handle) else {
             return;
@@ -601,6 +631,16 @@ extern "C" fn whisker_custom_event_entry(
     // render loop is idle (no signal writes pending).
     whisker_runtime::host_wake::wake_runtime();
     true
+}
+
+/// Whether core-originated events are queued and waiting for a drain.
+/// `tick_frame` checks this at the END of a frame: an event queued
+/// mid-tick (a `layoutcomplete` fired by this tick's own
+/// `renderer_flush`) has already had its `wake_runtime()` edge consumed
+/// by the tick in progress, so without a re-wake it would sit in the
+/// queue until some unrelated frame happened to run.
+pub(crate) fn has_pending_custom_events() -> bool {
+    CUSTOM_EVENT_QUEUE.with(|q| !q.borrow().is_empty())
 }
 
 /// Dispatch every queued core-originated event through the same
