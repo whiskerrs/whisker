@@ -105,7 +105,7 @@ pub fn app() -> Element {
     let chase_bottom = signal(false);
     let on_lower = move |e: whisker::event::ScrollEvent| {
         eprintln!("[SMOKE] scrolltolower fired: {e:?}");
-        if scenario() != "" {
+        if !scenario().is_empty() {
             return;
         }
         if e.detail.scroll_height < 500.0 {
