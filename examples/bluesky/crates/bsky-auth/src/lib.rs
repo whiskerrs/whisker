@@ -303,8 +303,14 @@ pub fn is_authenticated() -> bool {
     AGENT.lock().unwrap().is_some()
 }
 
-/// Fetch the home timeline as domain types. Errors if not logged in.
-pub async fn fetch_timeline(limit: u8) -> Result<bsky_domain::Timeline, String> {
+/// Fetch a page of the home timeline as domain types. Pass `cursor:
+/// None` for the first page, then the previous page's
+/// [`Timeline::cursor`](bsky_domain::Timeline) to load the next page
+/// (infinite scroll). Errors if not logged in.
+pub async fn fetch_timeline(
+    limit: u8,
+    cursor: Option<String>,
+) -> Result<bsky_domain::Timeline, String> {
     let agent = AGENT.lock().unwrap().clone().ok_or("not authenticated")?;
     let output = agent
         .api
@@ -314,7 +320,7 @@ pub async fn fetch_timeline(limit: u8) -> Result<bsky_domain::Timeline, String> 
         .get_timeline(
             get_timeline::ParametersData {
                 algorithm: None,
-                cursor: None,
+                cursor,
                 limit: limit.try_into().ok(),
             }
             .into(),
