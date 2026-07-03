@@ -3,11 +3,11 @@
   <groupId>rs.whisker</groupId>
   <artifactId>whisker-module-android</artifactId>
   <versioning>
-    <latest>0.1.3</latest>
-    <release>0.1.3</release>
+    <latest>0.1.4</latest>
+    <release>0.1.4</release>
     <versions>
-      <version>0.1.3</version>
+      <version>0.1.4</version>
     </versions>
-    <lastUpdated>20260702122904</lastUpdated>
+    <lastUpdated>20260703034626</lastUpdated>
   </versioning>
 </metadata>
