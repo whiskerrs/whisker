@@ -593,13 +593,16 @@ mod tests {
         );
     }
 
+    /// One recorded `update_list_actions` call: `(removals, inserts)`.
+    type RecordedActions = (Vec<i32>, Vec<(i32, String)>);
+
     /// Renderer that accepts explicit actions (like the real bridge on a
     /// new-enough Lynx) — the virtualizer must prefer them and NOT fall
     /// back to the full replace.
     #[derive(Default)]
     struct ActionsRenderer {
         next_id: std::cell::Cell<u32>,
-        actions: Rc<RefCell<Vec<(Vec<i32>, Vec<(i32, String)>)>>>,
+        actions: Rc<RefCell<Vec<RecordedActions>>>,
         full_replace_calls: Rc<RefCell<u32>>,
     }
 
