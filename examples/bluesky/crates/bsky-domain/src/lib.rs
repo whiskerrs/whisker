@@ -47,6 +47,12 @@ pub struct FeedPost {
     /// URI is what `deleteRecord` needs to undo it).
     pub like_uri: Option<String>,
     pub repost_uri: Option<String>,
+    /// `Some` when this feed ENTRY is a repost: the account whose
+    /// repost put the post in the timeline. Part of the entry's list
+    /// identity — the same post can appear both as the original and
+    /// as a repost, so a key of `uri` alone collides (duplicate
+    /// item-keys corrupt the native list's diff).
+    pub reposted_by: Option<Author>,
     /// ISO-8601 timestamp the post was indexed.
     pub indexed_at: String,
 }

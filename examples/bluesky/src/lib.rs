@@ -1900,7 +1900,13 @@ fn timeline_screen() -> Element {
                         all.extend(more.get());
                         all
                     },
-                    key: |p: &bsky_domain::FeedPost| p.uri.clone(),
+                    // Entry identity, not post identity: a post can appear
+                    // both as the original and as a repost in one timeline,
+                    // and duplicate item-keys corrupt the native list diff.
+                    key: |p: &bsky_domain::FeedPost| match &p.reposted_by {
+                        Some(by) => format!("{}#repost:{}", p.uri, by.did),
+                        None => p.uri.clone(),
+                    },
                     children: |p: bsky_domain::FeedPost| render! {
                         list_item(reuse_identifier: "post", estimated_size: 140) {
                             PostRow(post: p)

@@ -333,9 +333,24 @@ pub async fn fetch_timeline(
     })
 }
 
-/// Map atrium's `FeedViewPost` into our trimmed [`bsky_domain::FeedPost`].
+/// Map atrium's `FeedViewPost` into our trimmed [`bsky_domain::FeedPost`],
+/// carrying the repost reason: it is part of the entry's identity (the
+/// same post can appear as the original AND as a repost in one page).
 fn map_feed_post(fv: &atrium_api::app::bsky::feed::defs::FeedViewPost) -> bsky_domain::FeedPost {
-    map_post_view(&fv.post)
+    use atrium_api::app::bsky::feed::defs::FeedViewPostReasonRefs;
+    use atrium_api::types::Union;
+
+    let mut post = map_post_view(&fv.post);
+    if let Some(Union::Refs(FeedViewPostReasonRefs::ReasonRepost(r))) = &fv.reason {
+        let by = &r.by;
+        post.reposted_by = Some(bsky_domain::Author {
+            did: by.did.as_str().to_string(),
+            handle: by.handle.as_str().to_string(),
+            display_name: by.display_name.clone(),
+            avatar: by.avatar.clone(),
+        });
+    }
+    post
 }
 
 /// Map a `PostView` (the shape `getTimeline` / `getPostThread` / author
@@ -367,6 +382,7 @@ fn map_post_view(p: &atrium_api::app::bsky::feed::defs::PostView) -> bsky_domain
         like_count: p.like_count.unwrap_or(0).max(0) as u64,
         like_uri,
         repost_uri,
+        reposted_by: None,
         indexed_at: p.indexed_at.as_str().to_string(),
     }
 }
