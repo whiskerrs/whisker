@@ -80,7 +80,15 @@ pub struct PlatformSync {
 /// `layoutcomplete`) to whisker. Non-breaking: the bridge feature-
 /// detects the symbol, so 0.1.2's Lynx still attaches — list events
 /// just stay dark until the app moves to 0.1.3.
-const WHISKER_SDK_VERSION: &str = "0.1.3";
+///
+/// 0.1.4 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.9` →
+/// `v3.8.0-whisker.10`, which adds `lynx_element_update_list_actions`
+/// (tail addition, ABI stays v2) — explicit minimal diff actions for
+/// `<list>` data updates, so the scroll position holds across appends
+/// (infinite scroll) instead of resetting to the top. Non-breaking:
+/// feature-detected; on 0.1.3's Lynx whisker falls back to the
+/// full-replace update (the pre-fix behaviour).
+const WHISKER_SDK_VERSION: &str = "0.1.4";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
