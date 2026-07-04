@@ -331,15 +331,8 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             // through the right `Into` impl (the generic `attr`
             // fallback would try `Into<Signal<String>>`).
             | ("list", "each")
-            | ("list", "key")
+            | ("list", "meta")
             | ("list", "children")
-            // Per-item props on the user-written `<list-item>` (Option E).
-            | ("list_item", "full_span")
-            | ("list_item", "sticky_top")
-            | ("list_item", "sticky_bottom")
-            | ("list_item", "reuse_identifier")
-            | ("list_item", "estimated_size")
-            | ("list_item", "recyclable")
     )
 }
 
@@ -530,32 +523,9 @@ mod tests {
 
     #[test]
     fn builtin_tags_recognised() {
-        for t in [
-            "view",
-            "text",
-            "raw_text",
-            "scroll_view",
-            "list",
-            "list_item",
-        ] {
+        for t in ["view", "text", "raw_text", "scroll_view", "list"] {
             assert!(is_builtin_tag(t));
         }
-    }
-
-    #[test]
-    fn list_item_emission_uses_builder_chain() {
-        // Option E: `list_item { .. }` lowers as a built-in element
-        // (`__list_item_ctor()`), not a user component.
-        let input: TokenStream2 = quote::quote! { list_item(full_span: true) };
-        let output = super::expand_test(input).to_string();
-        assert!(
-            output.contains("__list_item_ctor"),
-            "list_item must lower via `__list_item_ctor()`; output was: {output}"
-        );
-        assert!(
-            output.contains(". full_span"),
-            "list_item full_span kwarg must lower to `.full_span(..)`; output was: {output}"
-        );
     }
 
     #[test]

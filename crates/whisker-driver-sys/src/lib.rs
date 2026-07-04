@@ -74,6 +74,22 @@ pub const LYNX_LIST_INVALID_INDEX: i32 = -1;
 pub type WhiskerEventValueCallback =
     extern "C" fn(user_data: *mut c_void, payload: *const WhiskerValueRaw);
 
+/// `#[repr(C)]` mirror of the bridge's `WhiskerListItemAction`: one
+/// `<list>` insert/update action entry (stable item-key + the per-item
+/// layout metadata Lynx's adapter ingests from the action stream).
+#[repr(C)]
+pub struct WhiskerListItemActionRaw {
+    pub position: i32,
+    /// NUL-terminated, borrowed for the duration of the call.
+    pub item_key: *const c_char,
+    /// `< 0` = unset.
+    pub estimated_main_axis_px: i32,
+    pub full_span: u8,
+    pub sticky_top: u8,
+    pub sticky_bottom: u8,
+    pub recyclable: u8,
+}
+
 /// The Rust event dispatcher the bridge calls when its reporter hook
 /// fires. Receives the hit-tested target's element sign, the event
 /// name (NUL-terminated), and the event body (`WhiskerValueRaw` tree,
@@ -286,16 +302,19 @@ unsafe extern "C" {
     );
 
     /// Explicit `<list>` diff actions (minimal-action alternative to
-    /// the full replace above). Returns `false` when the loaded Lynx
-    /// predates the capi — fall back to
-    /// [`whisker_bridge_list_set_item_count`].
+    /// the full replace above), carrying per-item layout metadata on
+    /// inserts and in-place metadata updates for surviving items.
+    /// Degrades by Lynx capability (v2 → v1 keys-only → `false`, at
+    /// which point fall back to
+    /// [`whisker_bridge_list_set_item_count`]).
     pub fn whisker_bridge_list_update_actions(
         element: *mut WhiskerElement,
         remove_indices: *const i32,
         remove_count: i32,
-        insert_positions: *const i32,
-        insert_keys: *const *const c_char,
+        inserts: *const WhiskerListItemActionRaw,
         insert_count: i32,
+        updates: *const WhiskerListItemActionRaw,
+        update_count: i32,
     ) -> bool;
 
     pub fn whisker_bridge_list_set_native_item_provider(

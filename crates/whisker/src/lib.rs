@@ -164,7 +164,7 @@ pub use style::{Style, apply_style};
 
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
 pub use whisker_runtime::view::Children;
-pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
+pub use whisker_runtime::view::{EachFn, Fallback, ItemFn, ItemMeta, KeyFn, MetaFn, WhenFn};
 
 /// Built-in tag builders. The `render!` macro lowers each built-in
 /// element invocation (`view(style: "x", on_tap: move |_| {})`) into a
@@ -1191,7 +1191,7 @@ pub mod __tags {
     // `<list-item>` children present in the element tree (via the native
     // `ListChildrenHelper`), with no framework callbacks. That fits
     // Whisker's direct-tree model — author code writes
-    // `list { list_item { … } … }` like any other container.
+    // `list { … }` like any other container.
     //
     // Two flags gate that mode (see `list_element.cc`):
     //   • `custom-list-name="list-container"` → `ResolveEnableNativeList`
@@ -1247,10 +1247,10 @@ pub mod __tags {
     ///   3. `set_update_list_info(handle, count)` on every reactive
     ///      update — what tells Lynx how many slots to lay out.
     #[allow(non_camel_case_types)]
-    pub struct list<EachF = (), KeyF = (), ChildF = ()> {
+    pub struct list<EachF = (), MetaF = (), ChildF = ()> {
         handle: Element,
         each: EachF,
-        key: KeyF,
+        meta: MetaF,
         children: ChildF,
     }
     #[allow(non_snake_case)]
@@ -1264,11 +1264,11 @@ pub mod __tags {
         list {
             handle,
             each: (),
-            key: (),
+            meta: (),
             children: (),
         }
     }
-    impl<EachF, KeyF, ChildF> ElementBuilder for list<EachF, KeyF, ChildF> {
+    impl<EachF, MetaF, ChildF> ElementBuilder for list<EachF, MetaF, ChildF> {
         fn __element(&self) -> Element {
             self.handle
         }
@@ -1278,7 +1278,7 @@ pub mod __tags {
         // default `.child()` semantics (a regular `append_child`)
         // would still work but is not the supported shape.
     }
-    impl<EachF, KeyF, ChildF> list<EachF, KeyF, ChildF> {
+    impl<EachF, MetaF, ChildF> list<EachF, MetaF, ChildF> {
         /// `list-type` layout — takes the typed
         /// [`ListType`](crate::attrs::ListType) enum (default
         /// `Single`).
@@ -1542,50 +1542,57 @@ pub mod __tags {
     // on the fully-populated state. The user can call the three in
     // any order — the render! macro emits them in whatever order
     // they appear in the source.
-    impl<KeyF, ChildF> list<(), KeyF, ChildF> {
+    impl<MetaF, ChildF> list<(), MetaF, ChildF> {
         pub fn each<T: 'static, F>(
             self,
             f: F,
-        ) -> list<::whisker_runtime::view::EachFn<T>, KeyF, ChildF>
+        ) -> list<::whisker_runtime::view::EachFn<T>, MetaF, ChildF>
         where
             F: ::std::convert::Into<::whisker_runtime::view::EachFn<T>>,
         {
             list {
                 handle: self.handle,
                 each: f.into(),
-                key: self.key,
+                meta: self.meta,
                 children: self.children,
             }
         }
     }
     impl<EachF, ChildF> list<EachF, (), ChildF> {
-        pub fn key<T: 'static, K: 'static, F>(
+        /// Identity + per-item layout metadata extractor — see
+        /// [`ItemMeta`]. Replaces the former `key:` prop: the key is
+        /// `ItemMeta::key(...)`, and the metadata (estimated size,
+        /// full-span, sticky, recyclable, reuse-identifier) rides the
+        /// same closure because it must be derivable from the DATA —
+        /// items build on demand, so no element exists yet when the
+        /// native data-source diff is sent.
+        pub fn meta<T: 'static, K: 'static, F>(
             self,
             f: F,
-        ) -> list<EachF, ::whisker_runtime::view::KeyFn<T, K>, ChildF>
+        ) -> list<EachF, ::whisker_runtime::view::MetaFn<T, K>, ChildF>
         where
-            F: ::std::convert::Into<::whisker_runtime::view::KeyFn<T, K>>,
+            F: ::std::convert::Into<::whisker_runtime::view::MetaFn<T, K>>,
         {
             list {
                 handle: self.handle,
                 each: self.each,
-                key: f.into(),
+                meta: f.into(),
                 children: self.children,
             }
         }
     }
-    impl<EachF, KeyF> list<EachF, KeyF, ()> {
+    impl<EachF, MetaF> list<EachF, MetaF, ()> {
         pub fn children<T: 'static, F>(
             self,
             f: F,
-        ) -> list<EachF, KeyF, ::whisker_runtime::view::ItemFn<T>>
+        ) -> list<EachF, MetaF, ::whisker_runtime::view::ItemFn<T>>
         where
             F: ::std::convert::Into<::whisker_runtime::view::ItemFn<T>>,
         {
             list {
                 handle: self.handle,
                 each: self.each,
-                key: self.key,
+                meta: self.meta,
                 children: f.into(),
             }
         }
@@ -1594,7 +1601,7 @@ pub mod __tags {
     impl<T, K>
         list<
             ::whisker_runtime::view::EachFn<T>,
-            ::whisker_runtime::view::KeyFn<T, K>,
+            ::whisker_runtime::view::MetaFn<T, K>,
             ::whisker_runtime::view::ItemFn<T>,
         >
     where
@@ -1617,111 +1624,19 @@ pub mod __tags {
         pub fn __h(self) -> Element {
             let handle = self.handle;
             let each = self.each;
-            let key = self.key;
+            let meta = self.meta;
             let children = self.children;
 
             ::whisker_runtime::view::virtualize(
                 handle,
                 move || each.call(),
-                move |t: &T| key.call(t),
+                move |t: &T| meta.call(t),
                 move |t: T| children.call(t),
             );
 
             handle
         }
     }
-    /// `<list-item>` — the slot wrapper for a [`list`] item (Option E).
-    ///
-    /// A `<list>`'s `children` closure returns a `list_item` directly —
-    /// it realises the platform `UIComponent` contract
-    /// (`LynxUIListItem : LynxUIComponent` on iOS, `UIListItem extends
-    /// UIComponent` on Android) the recycler / sticky / virtualisation
-    /// machinery depends on, mirroring Lynx's mandatory `<list-item>`.
-    ///
-    /// `item-key` is **owned by the `list`** (stamped from the `key`
-    /// extractor), so it is not a `list_item` kwarg. The kwargs here are
-    /// the per-item attributes Lynx reads off each `<list-item>`.
-    ///
-    /// ```ignore
-    /// children: |p: Post| render! {
-    ///     list_item(full_span: p.is_header, reuse_identifier: "post") {
-    ///         post_card(post: p)
-    ///     }
-    /// }
-    /// ```
-    #[allow(non_camel_case_types)]
-    pub struct list_item {
-        handle: Element,
-    }
-    #[allow(non_snake_case)]
-    pub fn __list_item_ctor() -> list_item {
-        list_item {
-            handle: create_element_by_name("list-item"),
-        }
-    }
-    impl ElementBuilder for list_item {
-        fn __element(&self) -> Element {
-            self.handle
-        }
-    }
-    impl list_item {
-        /// `full-span` — occupy the full row/column (e.g. a header in a
-        /// grid). Lynx reads via `IsBool()`.
-        pub fn full_span<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr_bool(self.handle, "full-span", v);
-            self
-        }
-        /// `sticky-top` — stick to the top edge while scrolling (needs
-        /// `sticky` on the parent `list`).
-        pub fn sticky_top<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr_bool(self.handle, "sticky-top", v);
-            self
-        }
-        /// `sticky-bottom` — stick to the bottom edge while scrolling.
-        pub fn sticky_bottom<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr_bool(self.handle, "sticky-bottom", v);
-            self
-        }
-        /// `recyclable` — whether this cell may be recycled (default
-        /// `true`). Lynx reads via `IsBool()`.
-        pub fn recyclable<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<bool>>,
-        {
-            apply_attr_bool(self.handle, "recyclable", v);
-            self
-        }
-        /// `estimated-main-axis-size-px` — placeholder main-axis size
-        /// (px) used before the cell is measured. Stabilises recycling
-        /// of non-uniform cells. Lynx reads via `IsNumber()`.
-        pub fn estimated_size<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<i32>>,
-        {
-            apply_attr_int(self.handle, "estimated-main-axis-size-px", v);
-            self
-        }
-        /// `reuse-identifier` — recycling group. Cells sharing an
-        /// identifier reuse each other; distinct shapes (header vs row)
-        /// should use distinct identifiers.
-        pub fn reuse_identifier<V>(self, v: V) -> Self
-        where
-            V: ::std::convert::Into<Signal<::std::string::String>>,
-        {
-            apply_attr(self.handle, "reuse-identifier", v);
-            self
-        }
-    }
-
     /// `<fragment>` — *transparent grouping container*. Mounts as a
     /// phantom element ([`create_phantom_element`]) the runtime
     /// tracks in its mirror but never forwards to Lynx. Children
@@ -1930,7 +1845,7 @@ pub mod prelude {
         BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
         TextBoundingRect, TextHandle,
     };
-    pub use crate::{EachFn, Fallback, ItemFn, KeyFn, WhenFn};
+    pub use crate::{EachFn, Fallback, ItemFn, ItemMeta, KeyFn, MetaFn, WhenFn};
     pub use crate::{Element, ElementTag};
     pub use crate::{ForEach, ForEachProps, Show, ShowProps};
     pub use crate::{component, main, render};
@@ -1952,6 +1867,6 @@ pub mod prelude {
     // method-call shape regardless of what `view` resolves to.
     #[doc(hidden)]
     pub use crate::__tags::{fragment, list, page, raw_text, scroll_view, text, view};
-    // `list_item` intentionally absent — the `list` render-props
+    // A separate list-item builder is intentionally absent — the `list` render-props
     // builder auto-wraps every item internally.
 }

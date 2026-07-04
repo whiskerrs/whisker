@@ -110,6 +110,13 @@ impl<T: 'static, K: 'static, F: Fn(&T) -> K + 'static> From<F> for KeyFn<T, K> {
     }
 }
 
+/// The `list` `meta:` prop's function shape: identity + per-item
+/// layout metadata derived from the data (see
+/// [`ItemMeta`](super::virtualizer::ItemMeta)). Structurally a
+/// [`KeyFn`] whose output is the full `ItemMeta` rather than a bare
+/// key.
+pub type MetaFn<T, K> = KeyFn<T, super::virtualizer::ItemMeta<K>>;
+
 impl<T: 'static, K: 'static> KeyFn<T, K> {
     /// Invoke the wrapped closure on `item`.
     pub fn call(&self, item: &T) -> K {

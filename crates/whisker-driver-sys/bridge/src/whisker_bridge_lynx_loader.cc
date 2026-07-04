@@ -186,13 +186,9 @@ int DoLoad() {
         reinterpret_cast<lynx_shell_set_custom_event_callback_fn>(
             dlsym(handle, "lynx_shell_set_custom_event_callback"));
 
-    // Explicit list diff actions — OPTIONAL (tail-added after ABI v2).
-    // NULL on an older Lynx; the bridge falls back to the full-replace
-    // update (scroll position resets on data updates, as before).
-    (void)dlerror();
-    g_capi.element_update_list_actions =
-        reinterpret_cast<lynx_element_update_list_actions_fn>(
-            dlsym(handle, "lynx_element_update_list_actions"));
+    // Explicit list diff actions — part of the ABI v3 surface, so a
+    // strict bind like the rest.
+    BindSymbol(handle, "lynx_element_update_list_actions", &g_capi.element_update_list_actions, &ok);
 
     if (!ok) return WHISKER_BRIDGE_LYNX_LOAD_ERR_MISSING_SYMBOL;
     return WHISKER_BRIDGE_LYNX_LOAD_OK;

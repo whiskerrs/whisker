@@ -311,18 +311,34 @@ extern "C" void whisker_bridge_list_set_item_count(WhiskerElement* element,
 
 extern "C" bool whisker_bridge_list_update_actions(
     WhiskerElement* element, const int32_t* remove_indices,
-    int32_t remove_count, const int32_t* insert_positions,
-    const char* const* insert_keys, int32_t insert_count) {
+    int32_t remove_count, const WhiskerListItemAction* inserts,
+    int32_t insert_count, const WhiskerListItemAction* updates,
+    int32_t update_count) {
     if (element == nullptr || element->handle == nullptr) return false;
-    const WhiskerLynxCapi* capi = whisker_lynx_capi();
-    // Feature-detect: tail-added after ABI v2 — NULL on an older Lynx.
-    // The caller falls back to the full-replace update.
-    if (capi == nullptr || capi->element_update_list_actions == nullptr) {
-        return false;
+    // The bridge struct mirrors `lynx_list_item_action_t` field for
+    // field, but convert explicitly — the two headers evolve
+    // independently and a silent layout drift would corrupt every
+    // list update.
+    std::vector<lynx_list_item_action_t> ins(
+        static_cast<size_t>(insert_count > 0 ? insert_count : 0));
+    for (int32_t i = 0; inserts != nullptr && i < insert_count; ++i) {
+        ins[i] = {inserts[i].position,        inserts[i].item_key,
+                  inserts[i].estimated_main_axis_px, inserts[i].full_span,
+                  inserts[i].sticky_top,      inserts[i].sticky_bottom,
+                  inserts[i].recyclable};
     }
-    capi->element_update_list_actions(element->handle, remove_indices,
-                                      remove_count, insert_positions,
-                                      insert_keys, insert_count);
+    std::vector<lynx_list_item_action_t> ups(
+        static_cast<size_t>(update_count > 0 ? update_count : 0));
+    for (int32_t i = 0; updates != nullptr && i < update_count; ++i) {
+        ups[i] = {updates[i].position,        updates[i].item_key,
+                  updates[i].estimated_main_axis_px, updates[i].full_span,
+                  updates[i].sticky_top,      updates[i].sticky_bottom,
+                  updates[i].recyclable};
+    }
+    whisker_lynx_capi()->element_update_list_actions(
+        element->handle, remove_indices, remove_count,
+        ins.empty() ? nullptr : ins.data(), insert_count,
+        ups.empty() ? nullptr : ups.data(), update_count);
     return true;
 }
 

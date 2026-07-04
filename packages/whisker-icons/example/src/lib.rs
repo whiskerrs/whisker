@@ -69,9 +69,11 @@ pub fn app() -> Element {
             }
             list(
                 each: || icons::ALL.to_vec(),
-                key: |(name, _): &(&'static str, &'static str)| name.to_string(),
+                meta: |(name, _): &(&'static str, &'static str)| {
+                    ItemMeta::key(name.to_string())
+                },
                 children: |(name, svg): (&'static str, &'static str)| render! {
-                    list_item { tile(label: name, svg: svg) }
+                    tile(label: name, svg: svg)
                 },
                 // `list-type: "flow"` activates Lynx's multi-column
                 // flow layout. iOS Lynx reads `span-count`; Android

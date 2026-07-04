@@ -1,6 +1,6 @@
 //! Smoke test for whisker's `<list>` (on-demand virtualization + Option E).
 //!
-//! - A **full-span header** as item 0 (`list_item(full_span, estimated_size)`)
+//! - A **full-span header** as item 0 (`ItemMeta … .full_span(true)`)
 //!   — verifies bugs ② (header crush) / ③ (cross-axis width).
 //! - **Variable-height rows** — verifies uniform width + recycling under scroll.
 //! - **Rotate / Prepend** buttons mutate the data order — verifies bug ①
@@ -266,47 +266,51 @@ pub fn app() -> Element {
                     rows.extend(ids.get().into_iter().map(Row::Item));
                     rows
                 },
-                key: |r: &Row| r.key(),
+                // Identity + per-item layout metadata, derived from the
+                // DATA (items build on demand, so no element exists when
+                // the native diff is sent). The metadata rides the diff
+                // actions — the only channel Lynx's adapter reads it from.
+                meta: |r: &Row| match r {
+                    Row::Header => ItemMeta::key(r.key())
+                        .reuse_identifier("header")
+                        .estimated_size(160)
+                        .full_span(true)
+                        .sticky_top(scenario() == "sticky"),
+                    Row::Item(_) => ItemMeta::key(r.key())
+                        .reuse_identifier("row")
+                        .estimated_size(84),
+                },
                 children: |r: Row| match r {
                     Row::Header => render! {
-                        list_item(
-                            full_span: true,
-                            sticky_top: scenario() == "sticky",
-                            estimated_size: 160,
-                            reuse_identifier: "header",
-                        ) {
-                            view(style: css!(
-                                width: percent(100),
-                                height: px(160),
-                                background_color: Color::hex(0x2563EB),
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::Center,
-                            )) {
-                                text(
-                                    style: css!(color: Color::hex(0xFFFFFF), font_size: px(20), font_weight: FontWeight::Bold),
-                                    value: "FULL-SPAN HEADER (item 0)",
-                                )
-                            }
+                        view(style: css!(
+                            width: percent(100),
+                            height: px(160),
+                            background_color: Color::hex(0x2563EB),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                        )) {
+                            text(
+                                style: css!(color: Color::hex(0xFFFFFF), font_size: px(20), font_weight: FontWeight::Bold),
+                                value: "FULL-SPAN HEADER (item 0)",
+                            )
                         }
                     },
                     Row::Item(n) => render! {
-                        list_item(reuse_identifier: "row", estimated_size: 84) {
-                            view(style: css!(
-                                width: percent(100),
-                                padding: px(16),
-                                flex_direction: FlexDirection::Column,
-                                background_color: Color::hex(0x18181B),
-                                margin_bottom: px(1),
-                            )) {
-                                text(
-                                    style: css!(color: Color::hex(0xF5F5F7), font_size: px(16), font_weight: FontWeight::Bold),
-                                    value: format!("Row {n}"),
-                                )
-                                text(
-                                    style: css!(color: Color::hex(0x9AA0AA), font_size: px(13)),
-                                    value: body_text(n),
-                                )
-                            }
+                        view(style: css!(
+                            width: percent(100),
+                            padding: px(16),
+                            flex_direction: FlexDirection::Column,
+                            background_color: Color::hex(0x18181B),
+                            margin_bottom: px(1),
+                        )) {
+                            text(
+                                style: css!(color: Color::hex(0xF5F5F7), font_size: px(16), font_weight: FontWeight::Bold),
+                                value: format!("Row {n}"),
+                            )
+                            text(
+                                style: css!(color: Color::hex(0x9AA0AA), font_size: px(13)),
+                                value: body_text(n),
+                            )
                         }
                     },
                 },
