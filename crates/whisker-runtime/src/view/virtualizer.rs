@@ -53,64 +53,195 @@ use super::apply::apply_attr_owned;
 use super::handle::Element;
 use super::list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 use super::renderer::{
-    append_child, element_sign, install_list_native_item_provider, remove_child, set_attribute_int,
+    ListItemAction, append_child, create_element_by_name, element_sign,
+    install_list_native_item_provider, remove_child, set_attribute_bool, set_attribute_int,
     set_update_list_info, update_list_actions,
 };
+
+/// Identity + per-item layout metadata for one list item, derived from
+/// the DATA by the list's `meta` closure. This is the single source of
+/// truth: items build on demand, so nothing element-side exists when
+/// the data-source diff is sent — Lynx's adapter ingests exactly these
+/// fields from the action stream (and re-ingests them via an in-place
+/// update when they change for a surviving key).
+///
+/// ```ignore
+/// meta: |r: &Row| match r {
+///     Row::Header => ItemMeta::key("header")
+///         .estimated_size(160)
+///         .full_span(true)
+///         .sticky_top(true),
+///     Row::Item(n) => ItemMeta::key(format!("item-{n}"))
+///         .reuse_identifier("row")
+///         .estimated_size(84),
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemMeta<K> {
+    key: K,
+    reuse_identifier: Option<String>,
+    estimated_size: Option<i32>,
+    full_span: bool,
+    sticky_top: bool,
+    sticky_bottom: bool,
+    recyclable: bool,
+}
+
+impl<K> ItemMeta<K> {
+    /// Stable logical identity — the same key must identify the same
+    /// item across data updates (it drives the native reorder /
+    /// insert / remove diff, exactly like the former `key:` prop).
+    pub fn key(key: K) -> Self {
+        Self {
+            key,
+            reuse_identifier: None,
+            estimated_size: None,
+            full_span: false,
+            sticky_top: false,
+            sticky_bottom: false,
+            recyclable: true,
+        }
+    }
+
+    /// Recycle-pool identifier: slots sharing one are reused for each
+    /// other. Defaults to a single shared pool.
+    pub fn reuse_identifier(mut self, id: impl Into<String>) -> Self {
+        self.reuse_identifier = Some(id.into());
+        self
+    }
+
+    /// Estimated main-axis size (px) used to lay out the slot before
+    /// its real content is measured.
+    pub fn estimated_size(mut self, px: i32) -> Self {
+        self.estimated_size = Some(px);
+        self
+    }
+
+    /// Span every column in a multi-column (`flow` / `waterfall`) list.
+    pub fn full_span(mut self, v: bool) -> Self {
+        self.full_span = v;
+        self
+    }
+
+    /// Pin to the top edge while scrolled past (requires `sticky` on
+    /// the list).
+    pub fn sticky_top(mut self, v: bool) -> Self {
+        self.sticky_top = v;
+        self
+    }
+
+    /// Pin to the bottom edge (requires `sticky` on the list).
+    pub fn sticky_bottom(mut self, v: bool) -> Self {
+        self.sticky_bottom = v;
+        self
+    }
+
+    /// Opt the slot out of recycling (`false`) — e.g. a page in a
+    /// pager list whose state must survive off-screen.
+    pub fn recyclable(mut self, v: bool) -> Self {
+        self.recyclable = v;
+        self
+    }
+}
+
+/// The metadata half of a resolved item entry (identity handled
+/// separately as the stable `w_<id>` wire key).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MetaFields {
+    reuse_identifier: Option<String>,
+    estimated_size: Option<i32>,
+    full_span: bool,
+    sticky_top: bool,
+    sticky_bottom: bool,
+    recyclable: bool,
+}
+
+impl MetaFields {
+    fn action(&self, position: i32, key: &str) -> ListItemAction {
+        ListItemAction {
+            position,
+            key: key.to_string(),
+            estimated_size: self.estimated_size,
+            full_span: self.full_span,
+            sticky_top: self.sticky_top,
+            sticky_bottom: self.sticky_bottom,
+            recyclable: self.recyclable,
+        }
+    }
+}
 
 /// Send a data-source update as the MINIMAL action set against the
 /// previous key list: the longest common prefix and suffix survive
 /// untouched (keeping their native `ItemHolder` identity — which is
 /// what lets the list hold its scroll position across an append), and
-/// only the middle window is expressed as remove+insert.
+/// only the middle window is expressed as remove+insert. Surviving
+/// items whose METADATA changed get an in-place update entry.
 ///
 /// Index contract (what Lynx's `AdapterHelper` expects, matching
 /// ReactLynx's `ListUpdateInfoRecording` output): removals are
 /// ascending indices into the PRE-update list and apply first; insert
-/// positions are ascending splice points into the post-removal list.
+/// positions are ascending splice points into the post-removal list;
+/// update positions index the FINAL list (the adapter applies
+/// remove → insert → update in that order).
 ///
 /// A reorder that survives neither prefix nor suffix degrades to a
 /// full-window remove+insert — same identity loss as the legacy full
 /// replace, no worse. When the renderer can't deliver explicit actions
 /// (a Lynx build predating the capi, or a test renderer), falls back
 /// to the full-replace [`set_update_list_info`].
-fn send_data_source_update(handle: Element, prev: &[String], keys: &[String]) {
-    let (removals, inserts) = splice_diff(prev, keys);
-    if removals.is_empty() && inserts.is_empty() {
-        // Identical key list — nothing structural to update.
+fn send_data_source_update(
+    handle: Element,
+    prev: &[String],
+    keys: &[String],
+    prev_meta: &HashMap<String, MetaFields>,
+    metas: &[MetaFields],
+) {
+    let (p, s) = splice_bounds(prev, keys);
+
+    let removals: Vec<i32> = (p..prev.len() - s).map(|i| i as i32).collect();
+    let inserts: Vec<ListItemAction> = keys[p..keys.len() - s]
+        .iter()
+        .zip(metas[p..keys.len() - s].iter())
+        .enumerate()
+        .map(|(k, (key, meta))| meta.action((p + k) as i32, key))
+        .collect();
+    // Surviving (prefix + suffix) keys whose metadata changed: refresh
+    // it in place. Positions index the FINAL list.
+    let mut updates: Vec<ListItemAction> = Vec::new();
+    let survivors = (0..p).chain((keys.len() - s)..keys.len());
+    for i in survivors {
+        let key = &keys[i];
+        if prev_meta.get(key).is_some_and(|m| *m != metas[i]) {
+            updates.push(metas[i].action(i as i32, key));
+        }
+    }
+
+    if removals.is_empty() && inserts.is_empty() && updates.is_empty() {
+        // Identical key list + metadata — nothing to send.
         return;
     }
-    if !update_list_actions(handle, &removals, &inserts) {
+    if !update_list_actions(handle, &removals, &inserts, &updates) {
         set_update_list_info(handle, keys, prev.len());
     }
 }
 
-/// The common-prefix/suffix splice between two key lists, as
-/// `(removals, inserts)` in `AdapterHelper`'s index spaces (removals:
-/// ascending pre-update indices; inserts: ascending `(position, key)`
-/// splice points into the post-removal list).
-fn splice_diff(prev: &[String], keys: &[String]) -> (Vec<i32>, Vec<(i32, String)>) {
+/// Longest common prefix / suffix lengths between two key lists. The
+/// zip over the two post-prefix slices yields at most
+/// `min(prev.len(), keys.len()) - p` pairs, so the suffix can never
+/// overlap the prefix.
+fn splice_bounds(prev: &[String], keys: &[String]) -> (usize, usize) {
     let p = prev
         .iter()
         .zip(keys.iter())
         .take_while(|(a, b)| a == b)
         .count();
-    // The zip over the two post-prefix slices yields at most
-    // `min(prev.len(), keys.len()) - p` pairs, so the suffix can never
-    // overlap the prefix.
     let s = prev[p..]
         .iter()
         .rev()
         .zip(keys[p..].iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
-
-    let removals: Vec<i32> = (p..prev.len() - s).map(|i| i as i32).collect();
-    let inserts: Vec<(i32, String)> = keys[p..keys.len() - s]
-        .iter()
-        .enumerate()
-        .map(|(k, key)| ((p + k) as i32, key.clone()))
-        .collect();
-    (removals, inserts)
+    (p, s)
 }
 
 /// Drive `handle`'s native item provider on demand.
@@ -118,21 +249,24 @@ fn splice_diff(prev: &[String], keys: &[String]) -> (Vec<i32>, Vec<(i32, String)
 /// - `handle` — the container element (already created) that carries a
 ///   native item provider (e.g. a `<list>`).
 /// - `items` — reactive data source; re-read on any change it tracks.
-/// - `key` — stable identity extractor. A logical key keeps the same
-///   `item-key` across data updates so the native diff can move/remove.
-/// - `build` — slot builder; called *once per slot creation* with a
-///   clone of `items()[i]`, returns the slot element (e.g. a
-///   `<list-item>`).
-pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
+/// - `meta` — identity + per-item layout metadata extractor (see
+///   [`ItemMeta`]). The key keeps the same `item-key` across data
+///   updates so the native diff can move/remove; the metadata rides
+///   the same actions (it can't come from the built elements — they
+///   don't exist yet at diff time).
+/// - `build` — slot CONTENT builder; called *once per slot creation*
+///   with a clone of `items()[i]`, returns any element. The
+///   virtualizer owns the native `list-item` wrapper around it.
+pub fn virtualize<T, K, ItemsFn, MetaFn, BuildFn>(
     handle: Element,
     items: ItemsFn,
-    key: KeyFn,
+    meta: MetaFn,
     build: BuildFn,
 ) where
     T: Clone + 'static,
     K: Eq + Hash + Clone + 'static,
     ItemsFn: Fn() -> Vec<T> + 'static,
-    KeyFn: Fn(&T) -> K + 'static,
+    MetaFn: Fn(&T) -> ItemMeta<K> + 'static,
     BuildFn: Fn(T) -> Element + 'static,
 {
     let current_items: Rc<RefCell<Vec<T>>> = Rc::new(RefCell::new(Vec::new()));
@@ -153,12 +287,15 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
     let key_ids: Rc<RefCell<HashMap<K, u64>>> = Rc::new(RefCell::new(HashMap::new()));
     let next_id: Rc<Cell<u64>> = Rc::new(Cell::new(0));
     let layout_id: Rc<Cell<i64>> = Rc::new(Cell::new(0));
-    // Item-key list from the previous data-source update — the minimal
-    // diff (common prefix/suffix splice) is computed against it, so
-    // untouched items keep their native identity and the list can hold
-    // its scroll position across appends.
+    // Item-key list + per-key metadata from the previous data-source
+    // update — the minimal diff (common prefix/suffix splice) is
+    // computed against the keys, so untouched items keep their native
+    // identity and the list can hold its scroll position across
+    // appends; metadata changes on surviving keys become in-place
+    // update actions.
     let prev_keys: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-    let key = Rc::new(key);
+    let prev_meta: Rc<RefCell<HashMap<String, MetaFields>>> = Rc::new(RefCell::new(HashMap::new()));
+    let meta = Rc::new(meta);
     let build = Rc::new(build);
     // Anchor slot owners to the owner active at SETUP (the list component's
     // scope) so items built on demand in the native callback still inherit
@@ -187,41 +324,57 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
         let current_items = current_items.clone();
         let layout_id = layout_id.clone();
         let prev_keys = prev_keys.clone();
+        let prev_meta = prev_meta.clone();
         let key_ids = key_ids.clone();
         let next_id = next_id.clone();
-        let key = key.clone();
+        let meta = meta.clone();
         let flush_pending = flush_pending.clone();
         effect(move || {
             flush_pending();
             let new_items = items();
-            // Stable item-key for every item in current order (assign an id
-            // to first-seen keys). `component_at_index` stamps the matching
-            // `item-key="w_{id}"` on each built element, so the native list
-            // reconciles them and can diff a reorder.
-            let keys: Vec<String> = {
+            // Stable item-key + metadata for every item in current order
+            // (assign an id to first-seen keys). `component_at_index`
+            // stamps the matching `item-key="w_{id}"` on each built
+            // wrapper, so the native list reconciles them and can diff a
+            // reorder.
+            let mut keys: Vec<String> = Vec::with_capacity(new_items.len());
+            let mut metas: Vec<MetaFields> = Vec::with_capacity(new_items.len());
+            {
                 let mut ids = key_ids.borrow_mut();
-                new_items
-                    .iter()
-                    .map(|item| {
-                        let k = key(item);
-                        let id = match ids.get(&k) {
-                            Some(id) => *id,
-                            None => {
-                                let id = next_id.get();
-                                next_id.set(id + 1);
-                                ids.insert(k, id);
-                                id
-                            }
-                        };
-                        format!("w_{id}")
-                    })
-                    .collect()
-            };
+                for item in &new_items {
+                    let m = meta(item);
+                    let id = match ids.get(&m.key) {
+                        Some(id) => *id,
+                        None => {
+                            let id = next_id.get();
+                            next_id.set(id + 1);
+                            ids.insert(m.key.clone(), id);
+                            id
+                        }
+                    };
+                    keys.push(format!("w_{id}"));
+                    metas.push(MetaFields {
+                        reuse_identifier: m.reuse_identifier,
+                        estimated_size: m.estimated_size,
+                        full_span: m.full_span,
+                        sticky_top: m.sticky_top,
+                        sticky_bottom: m.sticky_bottom,
+                        recyclable: m.recyclable,
+                    });
+                }
+            }
             *current_items.borrow_mut() = new_items;
             let lid = layout_id.get();
             layout_id.set(lid + 1);
             set_attribute_int(handle, "layout-id", lid);
-            send_data_source_update(handle, &prev_keys.borrow(), &keys);
+            send_data_source_update(
+                handle,
+                &prev_keys.borrow(),
+                &keys,
+                &prev_meta.borrow(),
+                &metas,
+            );
+            *prev_meta.borrow_mut() = keys.iter().cloned().zip(metas).collect();
             *prev_keys.borrow_mut() = keys;
         });
     }
@@ -232,7 +385,7 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
             let live = live.clone();
             let key_ids = key_ids.clone();
             let next_id = next_id.clone();
-            let key = key.clone();
+            let meta = meta.clone();
             let build = build.clone();
             let flush_pending = flush_pending.clone();
             Box::new(move |index, _op_id, _reuse| {
@@ -242,31 +395,52 @@ pub fn virtualize<T, K, ItemsFn, KeyFn, BuildFn>(
                     Some(t) => t.clone(),
                     None => return INVALID_ITEM_INDEX,
                 };
-                let k = key(&item);
+                let m = meta(&item);
                 // Stable id for the `item-key` (assign on first sight).
                 let id = {
                     let mut ids = key_ids.borrow_mut();
-                    match ids.get(&k) {
+                    match ids.get(&m.key) {
                         Some(id) => *id,
                         None => {
                             let id = next_id.get();
                             next_id.set(id + 1);
-                            ids.insert(k, id);
+                            ids.insert(m.key.clone(), id);
                             id
                         }
                     }
                 };
-                // Build a FRESH element under a per-item owner (context
-                // inherited via `parent_owner`), stamp the stable item-key,
-                // and ATTACH it — Lynx `ComponentAtIndex` then runs
-                // `OnComponentFinished` → layout over the appended subtree.
-                // Returning a sign without appending crashes the native list.
+                // Build the slot: the virtualizer OWNS the native
+                // `list-item` wrapper (the user's `build` returns plain
+                // content). Both are created under a per-item owner
+                // (context inherited via `parent_owner`), the wrapper is
+                // stamped with the stable item-key + recycle-pool id, and
+                // ATTACHED — Lynx `ComponentAtIndex` then runs
+                // `OnComponentFinished` → layout over the appended
+                // subtree. Returning a sign without appending crashes the
+                // native list. `full-span` is stamped AFTER the append:
+                // its element-side half (the LayoutNode list-component
+                // type) only applies when the parent is already the list.
                 let owner = Owner::new(Some(parent_owner));
-                let element = owner.with(|| (build)(item));
-                apply_attr_owned::<_, String>(element, "item-key".to_string(), format!("w_{id}"));
-                append_child(handle, element);
-                let sign = element_sign(element);
-                live.borrow_mut().insert(sign, (element, owner));
+                let (wrapper, content) = owner.with(|| {
+                    let wrapper = create_element_by_name("list-item");
+                    let content = (build)(item);
+                    (wrapper, content)
+                });
+                append_child(wrapper, content);
+                apply_attr_owned::<_, String>(wrapper, "item-key".to_string(), format!("w_{id}"));
+                if let Some(reuse) = &m.reuse_identifier {
+                    apply_attr_owned::<_, String>(
+                        wrapper,
+                        "reuse-identifier".to_string(),
+                        reuse.clone(),
+                    );
+                }
+                append_child(handle, wrapper);
+                if m.full_span {
+                    set_attribute_bool(wrapper, "full-span", true);
+                }
+                let sign = element_sign(wrapper);
+                live.borrow_mut().insert(sign, (wrapper, owner));
                 sign
             })
         },
@@ -391,7 +565,7 @@ mod tests {
                 virtualize(
                     handle,
                     || vec![10_i32, 20, 30],
-                    |x| *x,
+                    |x| ItemMeta::<i32>::key(*x),
                     |_x| create_element_by_name("list-item"),
                 );
             });
@@ -411,7 +585,7 @@ mod tests {
                 virtualize(
                     handle,
                     || vec![100_i32, 200, 300],
-                    |x| *x,
+                    |x| ItemMeta::<i32>::key(*x),
                     |_x| create_element_by_name("list-item"),
                 );
             });
@@ -442,7 +616,7 @@ mod tests {
                 virtualize(
                     handle,
                     move || items.get(),
-                    |x| *x,
+                    |x| ItemMeta::<i32>::key(*x),
                     |_x| create_element_by_name("list-item"),
                 );
             });
@@ -484,7 +658,7 @@ mod tests {
                 virtualize(
                     handle,
                     || vec![1_i32, 2],
-                    |x| *x,
+                    |x| ItemMeta::<i32>::key(*x),
                     move |_x| {
                         let dr = dr.clone();
                         crate::reactive::on_cleanup(move || *dr.borrow_mut() += 1);
@@ -521,7 +695,7 @@ mod tests {
                 virtualize(
                     handle,
                     || vec![1_i32, 2],
-                    |x| *x,
+                    |x| ItemMeta::<i32>::key(*x),
                     |_x| create_element_by_name("list-item"),
                 );
             });
@@ -539,16 +713,30 @@ mod tests {
         keys.iter().map(|s| s.to_string()).collect()
     }
 
+    /// The splice as `(removals, insert (position, key) pairs)` —
+    /// mirrors what `send_data_source_update` derives from
+    /// `splice_bounds`.
+    fn splice(prev: &[String], keys: &[String]) -> (Vec<i32>, Vec<(i32, String)>) {
+        let (p, s) = splice_bounds(prev, keys);
+        let removals: Vec<i32> = (p..prev.len() - s).map(|i| i as i32).collect();
+        let inserts: Vec<(i32, String)> = keys[p..keys.len() - s]
+            .iter()
+            .enumerate()
+            .map(|(k, key)| ((p + k) as i32, key.clone()))
+            .collect();
+        (removals, inserts)
+    }
+
     #[test]
     fn splice_diff_append_is_insert_only() {
-        let (removals, inserts) = splice_diff(&ks(&["a", "b"]), &ks(&["a", "b", "c", "d"]));
+        let (removals, inserts) = splice(&ks(&["a", "b"]), &ks(&["a", "b", "c", "d"]));
         assert!(removals.is_empty());
         assert_eq!(inserts, vec![(2, "c".to_string()), (3, "d".to_string())]);
     }
 
     #[test]
     fn splice_diff_prepend_is_insert_at_zero() {
-        let (removals, inserts) = splice_diff(&ks(&["a", "b"]), &ks(&["x", "a", "b"]));
+        let (removals, inserts) = splice(&ks(&["a", "b"]), &ks(&["x", "a", "b"]));
         assert!(removals.is_empty());
         assert_eq!(inserts, vec![(0, "x".to_string())]);
     }
@@ -556,7 +744,7 @@ mod tests {
     #[test]
     fn splice_diff_mid_replace_touches_only_the_window() {
         // [a b c d e] -> [a b X Y e]: remove old 2,3; insert X@2, Y@3.
-        let (removals, inserts) = splice_diff(
+        let (removals, inserts) = splice(
             &ks(&["a", "b", "c", "d", "e"]),
             &ks(&["a", "b", "X", "Y", "e"]),
         );
@@ -566,14 +754,14 @@ mod tests {
 
     #[test]
     fn splice_diff_removal_only() {
-        let (removals, inserts) = splice_diff(&ks(&["a", "b", "c"]), &ks(&["a", "c"]));
+        let (removals, inserts) = splice(&ks(&["a", "b", "c"]), &ks(&["a", "c"]));
         assert_eq!(removals, vec![1]);
         assert!(inserts.is_empty());
     }
 
     #[test]
     fn splice_diff_identical_is_empty() {
-        let (removals, inserts) = splice_diff(&ks(&["a", "b"]), &ks(&["a", "b"]));
+        let (removals, inserts) = splice(&ks(&["a", "b"]), &ks(&["a", "b"]));
         assert!(removals.is_empty());
         assert!(inserts.is_empty());
     }
@@ -581,7 +769,7 @@ mod tests {
     #[test]
     fn splice_diff_reorder_degrades_to_full_window() {
         // No common prefix/suffix survives a rotate — remove all, insert all.
-        let (removals, inserts) = splice_diff(&ks(&["a", "b", "c"]), &ks(&["b", "c", "a"]));
+        let (removals, inserts) = splice(&ks(&["a", "b", "c"]), &ks(&["b", "c", "a"]));
         assert_eq!(removals, vec![0, 1, 2]);
         assert_eq!(
             inserts,
@@ -594,7 +782,7 @@ mod tests {
     }
 
     /// One recorded `update_list_actions` call: `(removals, inserts)`.
-    type RecordedActions = (Vec<i32>, Vec<(i32, String)>);
+    type RecordedActions = (Vec<i32>, Vec<ListItemAction>, Vec<ListItemAction>);
 
     /// Renderer that accepts explicit actions (like the real bridge on a
     /// new-enough Lynx) — the virtualizer must prefer them and NOT fall
@@ -625,11 +813,12 @@ mod tests {
             &self,
             _h: Element,
             removals: &[i32],
-            inserts: &[(i32, String)],
+            inserts: &[ListItemAction],
+            updates: &[ListItemAction],
         ) -> bool {
             self.actions
                 .borrow_mut()
-                .push((removals.to_vec(), inserts.to_vec()));
+                .push((removals.to_vec(), inserts.to_vec(), updates.to_vec()));
             true
         }
         fn install_list_native_item_provider(&self, _h: Element, _p: NativeItemProvider) -> bool {
@@ -664,23 +853,29 @@ mod tests {
             virtualize(
                 handle,
                 move || items.get(),
-                |x| *x,
-                |_x| create_element_by_name("list-item"),
+                |x| ItemMeta::<i32>::key(*x).estimated_size(84),
+                |_x| create_element_by_name("view"),
             );
         });
         flush();
-        // Initial population: pure insert of both keys.
+        // Initial population: pure insert of both keys, metadata riding
+        // the entries.
         assert_eq!(actions.borrow().len(), 1);
         assert_eq!(actions.borrow()[0].0, Vec::<i32>::new());
         assert_eq!(actions.borrow()[0].1.len(), 2);
+        assert_eq!(actions.borrow()[0].1[0].estimated_size, Some(84));
+        assert!(actions.borrow()[0].2.is_empty());
 
         // Append: insert-only at the tail, untouched items unmentioned.
         set_items.set(vec![1_i32, 2, 3]);
         flush();
         assert_eq!(actions.borrow().len(), 2);
-        let (removals, inserts) = actions.borrow()[1].clone();
+        let (removals, inserts, updates) = actions.borrow()[1].clone();
         assert!(removals.is_empty());
-        assert_eq!(inserts, vec![(2, "w_2".to_string())]);
+        assert_eq!(inserts.len(), 1);
+        assert_eq!(inserts[0].position, 2);
+        assert_eq!(inserts[0].key, "w_2");
+        assert!(updates.is_empty());
 
         // Identical re-run: nothing sent.
         set_items.set(vec![1_i32, 2, 3]);
@@ -688,6 +883,47 @@ mod tests {
         assert_eq!(actions.borrow().len(), 2);
 
         assert_eq!(*full_replace.borrow(), 0, "must not fall back");
+        owner.dispose();
+        uninstall_renderer(prev);
+    }
+
+    #[test]
+    fn metadata_change_on_surviving_key_sends_in_place_update() {
+        crate::reactive::__reset_for_tests();
+        let recorder = ActionsRenderer::default();
+        let actions = recorder.actions.clone();
+        let prev = install_renderer(Box::new(recorder));
+
+        let owner = Owner::new(None);
+        // `full_span` derives from the DATA (value >= 100), so flipping
+        // an item's value past the threshold changes its metadata while
+        // its key (the index-stable first element) survives.
+        let (items, set_items) = crate::reactive::signal(vec![(1_i32, 0_i32), (2, 0)]).split();
+        owner.with(|| {
+            let handle = create_element_by_name("list");
+            virtualize(
+                handle,
+                move || items.get(),
+                |x: &(i32, i32)| ItemMeta::<i32>::key(x.0).full_span(x.1 >= 100),
+                |_x| create_element_by_name("view"),
+            );
+        });
+        flush();
+        assert_eq!(actions.borrow().len(), 1);
+
+        // Same keys, item 1's metadata flips → one in-place update, no
+        // structural actions.
+        set_items.set(vec![(1_i32, 0_i32), (2, 100)]);
+        flush();
+        assert_eq!(actions.borrow().len(), 2);
+        let (removals, inserts, updates) = actions.borrow()[1].clone();
+        assert!(removals.is_empty());
+        assert!(inserts.is_empty());
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].position, 1);
+        assert_eq!(updates[0].key, "w_1");
+        assert!(updates[0].full_span);
+
         owner.dispose();
         uninstall_renderer(prev);
     }

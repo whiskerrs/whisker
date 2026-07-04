@@ -331,7 +331,7 @@ fn result_list(podcasts: Vec<Podcast>) -> Element {
                     move || items.clone()
                 },
                 key: |p: &Podcast| p.id,
-                children: |p: Podcast| render! { list_item { result_row(podcast: p) } },
+                children: |p: Podcast| render! { result_row(podcast: p) },
             )
         }
     }

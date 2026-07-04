@@ -38,12 +38,13 @@ pub use apply::{
 };
 pub use handle::Element;
 pub use into_view::{
-    Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, View, WhenFn, mount_children,
+    Children, EachFn, Fallback, IntoView, ItemFn, KeyFn, MetaFn, View, WhenFn, mount_children,
 };
 pub use list_provider::{INVALID_ITEM_INDEX, NativeItemProvider};
 #[doc(hidden)]
 pub use renderer::__reset_children_mirror_for_tests;
-pub use virtualizer::virtualize;
+pub use renderer::ListItemAction;
+pub use virtualizer::{ItemMeta, virtualize};
 
 // Element-manipulation + lifecycle surface the `render!` macro expands
 // against and that framework-extension authors (custom control flow,

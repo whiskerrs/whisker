@@ -125,20 +125,37 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_list_set_item_count(
     WhiskerElement* element, int32_t prev_count, const char* const* item_keys,
     int32_t count);
 
+// One `<list>` insert/update action entry: the stable item-key plus the
+// per-item layout metadata Lynx's adapter ingests from the action
+// stream. For inserts `position` is the ascending splice point into
+// the post-removal list; for updates it is the item's index in the
+// FINAL list.
+typedef struct WhiskerListItemAction {
+    int32_t position;
+    const char* item_key;              // NUL-terminated, borrowed
+    int32_t estimated_main_axis_px;    // < 0 = unset
+    uint8_t full_span;
+    uint8_t sticky_top;
+    uint8_t sticky_bottom;
+    uint8_t recyclable;
+} WhiskerListItemAction;
+
 // Explicit `<list>` diff actions — the minimal-action alternative to
 // `whisker_bridge_list_set_item_count`'s full replace. Items mentioned
-// in neither action keep their native ItemHolder identity, which is
-// what lets the list hold its scroll position across an append.
-// Removals: ascending pre-update indices (applied first). Inserts:
-// `insert_positions`/`insert_keys` parallel arrays, ascending splice
-// points into the post-removal list.
+// in no action keep their native ItemHolder identity, which is what
+// lets the list hold its scroll position across an append. Removals:
+// ascending pre-update indices (applied first). Inserts carry per-item
+// metadata; updates refresh a surviving item's metadata in place.
 //
-// Returns false when the loaded Lynx predates the capi (tail-added
-// after ABI v2) — the caller then falls back to the full replace.
+// Degrades by capability of the loaded Lynx: the metadata-carrying v2
+// capi when present, else the v1 keys-only capi (metadata and updates
+// dropped), else returns false and the caller falls back to the full
+// replace.
 WHISKER_BRIDGE_EXPORT bool whisker_bridge_list_update_actions(
     WhiskerElement* element, const int32_t* remove_indices,
-    int32_t remove_count, const int32_t* insert_positions,
-    const char* const* insert_keys, int32_t insert_count);
+    int32_t remove_count, const WhiskerListItemAction* inserts,
+    int32_t insert_count, const WhiskerListItemAction* updates,
+    int32_t update_count);
 
 // Object-valued attribute (`{obj_keys[i]: obj_values[i]}` of doubles),
 // e.g. `<list>` `item-snap` {factor, offset}.

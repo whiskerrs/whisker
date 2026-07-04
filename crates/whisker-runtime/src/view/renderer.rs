@@ -90,6 +90,23 @@ pub struct EventDispatchPlan {
 /// rather than panicking with "RefCell already borrowed". Renderers
 /// own their mutable state behind per-field `RefCell`s and must scope
 /// each field borrow so it does **not** span a re-entrant FFI call.
+/// One `<list>` diff-action entry as it crosses the renderer: the
+/// resolved (stable) item-key plus the per-item layout metadata Lynx's
+/// adapter ingests from the action stream. For inserts `position` is
+/// the ascending splice point into the post-removal list; for updates
+/// it is the item's index in the FINAL list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListItemAction {
+    pub position: i32,
+    pub key: String,
+    /// Estimated main-axis size in px; `None` = native default.
+    pub estimated_size: Option<i32>,
+    pub full_span: bool,
+    pub sticky_top: bool,
+    pub sticky_bottom: bool,
+    pub recyclable: bool,
+}
+
 pub trait DynRenderer {
     fn create_element(&self, tag: ElementTag) -> Element;
     /// Phase 7: tag-by-name dispatch for custom / xelement-style
@@ -146,10 +163,13 @@ pub trait DynRenderer {
 
     /// Explicit `<list>` diff actions — the minimal-action form.
     /// `removals` are ascending indices into the PRE-update item-key
-    /// list (applied first); `inserts` are `(position, item_key)`
-    /// pairs with ascending splice points into the post-removal list.
-    /// Items mentioned in neither action keep their native identity,
-    /// which lets the list hold its scroll position across appends.
+    /// list (applied first); `inserts` splice into the post-removal
+    /// list at ascending positions, carrying the per-item layout
+    /// metadata (the action stream is the ONLY channel Lynx's adapter
+    /// ingests it from); `updates` refresh a SURVIVING item's metadata
+    /// in place (`position` = its index in the FINAL list). Items
+    /// mentioned in no action keep their native identity, which lets
+    /// the list hold its scroll position across appends.
     ///
     /// Returns whether the renderer delivered the actions — `false`
     /// (the default, also reported when the loaded Lynx predates the
@@ -159,7 +179,8 @@ pub trait DynRenderer {
         &self,
         _handle: Element,
         _removals: &[i32],
-        _inserts: &[(i32, String)],
+        _inserts: &[ListItemAction],
+        _updates: &[ListItemAction],
     ) -> bool {
         false
     }
@@ -619,11 +640,19 @@ pub fn set_update_list_info(handle: Element, item_keys: &[String], prev_count: u
     )
 }
 
-pub fn update_list_actions(handle: Element, removals: &[i32], inserts: &[(i32, String)]) -> bool {
+pub fn update_list_actions(
+    handle: Element,
+    removals: &[i32],
+    inserts: &[ListItemAction],
+    updates: &[ListItemAction],
+) -> bool {
     if is_phantom(handle) {
         return false;
     }
-    with_renderer(|r| r.update_list_actions(handle, removals, inserts), false)
+    with_renderer(
+        |r| r.update_list_actions(handle, removals, inserts, updates),
+        false,
+    )
 }
 
 pub fn set_attribute_object(handle: Element, key: &str, obj: &[(String, f64)]) {

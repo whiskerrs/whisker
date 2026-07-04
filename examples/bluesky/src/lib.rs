@@ -370,29 +370,29 @@ fn search_screen() -> Element {
                     }
                 },
                 each: move || vec![SearchMode::People, SearchMode::Posts],
-                key: |m: &SearchMode| match m {
-                    SearchMode::People => "people".to_string(),
-                    SearchMode::Posts => "posts".to_string(),
+                meta: |m: &SearchMode| match m {
+                    SearchMode::People => ItemMeta::key("people".to_string())
+                        .reuse_identifier("page-people")
+                        .recyclable(false),
+                    SearchMode::Posts => ItemMeta::key("posts".to_string())
+                        .reuse_identifier("page-posts")
+                        .recyclable(false),
                 },
                 children: move |m: SearchMode| match m {
                     SearchMode::People => render! {
-                        list_item(reuse_identifier: "page-people", recyclable: false) {
-                            view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
-                                Show(when: move || !query.get().trim().is_empty(), fallback: || render! { status_pane(message: "ユーザーを検索できます".to_string()) }) {
-                                    Show(when: move || actors.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
-                                        actor_list(actors: actors.get().unwrap_or_default())
-                                    }
+                        view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                            Show(when: move || !query.get().trim().is_empty(), fallback: || render! { status_pane(message: "ユーザーを検索できます".to_string()) }) {
+                                Show(when: move || actors.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
+                                    actor_list(actors: actors.get().unwrap_or_default())
                                 }
                             }
                         }
                     },
                     SearchMode::Posts => render! {
-                        list_item(reuse_identifier: "page-posts", recyclable: false) {
-                            view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
-                                Show(when: move || !query.get().trim().is_empty(), fallback: || render! { status_pane(message: "投稿を検索できます".to_string()) }) {
-                                    Show(when: move || posts.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
-                                        post_list(posts: posts.get().unwrap_or_default())
-                                    }
+                        view(style: css!(width: vw(100), flex_grow: 1.0, flex_direction: FlexDirection::Column)) {
+                            Show(when: move || !query.get().trim().is_empty(), fallback: || render! { status_pane(message: "投稿を検索できます".to_string()) }) {
+                                Show(when: move || posts.get().is_some(), fallback: || render! { status_pane(message: "検索中…".to_string()) }) {
+                                    post_list(posts: posts.get().unwrap_or_default())
                                 }
                             }
                         }
@@ -450,8 +450,8 @@ fn actor_list(actors: Vec<bsky_domain::ActorView>) -> Element {
                 let actors = actors.clone();
                 move || actors.clone()
             },
-            key: |a: &bsky_domain::ActorView| a.did.clone(),
-            children: |a: bsky_domain::ActorView| render! { list_item { actor_row(actor: a) } },
+            meta: |a: &bsky_domain::ActorView| ItemMeta::key(a.did.clone()),
+            children: |a: bsky_domain::ActorView| render! { actor_row(actor: a) },
         )
     }
 }
@@ -600,8 +600,8 @@ fn notification_list(items: Vec<bsky_domain::Notification>) -> Element {
                 let items = items.clone();
                 move || items.clone()
             },
-            key: |n: &bsky_domain::Notification| n.uri.clone(),
-            children: |n: bsky_domain::Notification| render! { list_item { notification_row(item: n) } },
+            meta: |n: &bsky_domain::Notification| ItemMeta::key(n.uri.clone()),
+            children: |n: bsky_domain::Notification| render! { notification_row(item: n) },
         )
     }
 }
@@ -829,9 +829,14 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
                         );
                         rows
                     },
-                    key: |r: &ProfileRow| match r {
-                        ProfileRow::Header { .. } => "header".to_string(),
-                        ProfileRow::Post(p) => p.uri.clone(),
+                    meta: |r: &ProfileRow| match r {
+                        ProfileRow::Header { .. } => ItemMeta::key("header".to_string())
+                            .reuse_identifier("profile-header")
+                            .estimated_size(320)
+                            .full_span(true),
+                        ProfileRow::Post(p) => ItemMeta::key(p.uri.clone())
+                            .reuse_identifier("post")
+                            .estimated_size(96),
                     },
                     children: |r: ProfileRow| match r {
                         ProfileRow::Header {
@@ -839,22 +844,14 @@ fn profile_view(actor: String, show_logout: bool) -> Element {
                             my_did,
                             show_logout,
                         } => render! {
-                            list_item(
-                                full_span: true,
-                                reuse_identifier: "profile-header",
-                                estimated_size: 320,
-                            ) {
-                                profile_header(
-                                    profile: profile,
-                                    my_did: my_did,
-                                    show_logout: show_logout,
-                                )
-                            }
+                            profile_header(
+                                profile: profile,
+                                my_did: my_did,
+                                show_logout: show_logout,
+                            )
                         },
                         ProfileRow::Post(p) => render! {
-                            list_item(reuse_identifier: "post", estimated_size: 96) {
-                                PostRow(post: p)
-                            }
+                            PostRow(post: p)
                         },
                     },
                 )
@@ -1903,14 +1900,15 @@ fn timeline_screen() -> Element {
                     // Entry identity, not post identity: a post can appear
                     // both as the original and as a repost in one timeline,
                     // and duplicate item-keys corrupt the native list diff.
-                    key: |p: &bsky_domain::FeedPost| match &p.reposted_by {
-                        Some(by) => format!("{}#repost:{}", p.uri, by.did),
-                        None => p.uri.clone(),
+                    meta: |p: &bsky_domain::FeedPost| {
+                        let key = match &p.reposted_by {
+                            Some(by) => format!("{}#repost:{}", p.uri, by.did),
+                            None => p.uri.clone(),
+                        };
+                        ItemMeta::key(key).reuse_identifier("post").estimated_size(140)
                     },
                     children: |p: bsky_domain::FeedPost| render! {
-                        list_item(reuse_identifier: "post", estimated_size: 140) {
-                            PostRow(post: p)
-                        }
+                        PostRow(post: p)
                     },
                 )
             }
@@ -1958,8 +1956,8 @@ fn post_list(posts: Vec<bsky_domain::FeedPost>) -> Element {
                 let posts = posts.clone();
                 move || posts.clone()
             },
-            key: |p: &bsky_domain::FeedPost| p.uri.clone(),
-            children: |p: bsky_domain::FeedPost| render! { list_item { PostRow(post: p) } },
+            meta: |p: &bsky_domain::FeedPost| ItemMeta::key(p.uri.clone()),
+            children: |p: bsky_domain::FeedPost| render! { PostRow(post: p) },
         )
     }
 }

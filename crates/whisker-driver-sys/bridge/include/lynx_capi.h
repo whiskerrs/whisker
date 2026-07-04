@@ -190,6 +190,32 @@ typedef void (*lynx_element_update_list_actions_fn)(
     const int32_t* insert_positions,
     const char* const* insert_keys,
     int32_t insert_count);
+
+// Mirror of the fork's `lynx_list_item_action_t` (v3.8.0-whisker.11):
+// one insert/update entry with the per-item layout metadata the
+// adapter ingests from the action stream. Fixed-width fields; layout
+// is part of the ABI.
+typedef struct lynx_list_item_action_t {
+  int32_t position;
+  const char* item_key;
+  int32_t estimated_main_axis_px;  // < 0 = unset
+  uint8_t full_span;
+  uint8_t sticky_top;
+  uint8_t sticky_bottom;
+  uint8_t recyclable;
+} lynx_list_item_action_t;
+
+// Metadata-carrying successor to `lynx_element_update_list_actions`.
+// `updates` refresh SURVIVING items' metadata in place
+// (updateAction {from == to, flush: false}).
+typedef void (*lynx_element_update_list_actions_v2_fn)(
+    lynx_fiber_element_t* element,
+    const int32_t* remove_indices,
+    int32_t remove_count,
+    const lynx_list_item_action_t* inserts,
+    int32_t insert_count,
+    const lynx_list_item_action_t* updates,
+    int32_t update_count);
 typedef void (*lynx_element_set_event_handler_fn)(lynx_fiber_element_t* element,
                                                     const char* event_name);
 typedef void (*lynx_element_append_child_fn)(lynx_fiber_element_t* parent,
@@ -314,6 +340,11 @@ typedef struct WhiskerLynxCapi {
   // `element_set_update_list_info` (pre-feature behaviour: scroll
   // position resets on data updates, but nothing breaks).
   lynx_element_update_list_actions_fn element_update_list_actions;
+
+  // Metadata-carrying v2 (v3.8.0-whisker.11). OPTIONAL — NULL on an
+  // older Lynx; the bridge degrades to v1 (metadata + in-place updates
+  // dropped), then to the full replace.
+  lynx_element_update_list_actions_v2_fn element_update_list_actions_v2;
 } WhiskerLynxCapi;
 
 // ----- Loader API -----------------------------------------------------------

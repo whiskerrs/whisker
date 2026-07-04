@@ -266,28 +266,47 @@ impl DynRenderer for BridgeRenderer {
         &self,
         handle: Element,
         removals: &[i32],
-        inserts: &[(i32, String)],
+        inserts: &[whisker_runtime::view::ListItemAction],
+        updates: &[whisker_runtime::view::ListItemAction],
     ) -> bool {
         let Some(ptr) = self.lookup(handle) else {
             return false;
         };
         // Own the C strings for the duration of the call; no renderer
         // field borrow spans the FFI.
-        let c_keys: Vec<std::ffi::CString> = inserts
-            .iter()
-            .map(|(_, k)| std::ffi::CString::new(k.as_str()).unwrap_or_default())
-            .collect();
-        let key_ptrs: Vec<*const std::os::raw::c_char> =
-            c_keys.iter().map(|c| c.as_ptr()).collect();
-        let positions: Vec<i32> = inserts.iter().map(|(p, _)| *p).collect();
+        fn to_raw(
+            actions: &[whisker_runtime::view::ListItemAction],
+        ) -> (Vec<std::ffi::CString>, Vec<ffi::WhiskerListItemActionRaw>) {
+            let keys: Vec<std::ffi::CString> = actions
+                .iter()
+                .map(|a| std::ffi::CString::new(a.key.as_str()).unwrap_or_default())
+                .collect();
+            let raw: Vec<ffi::WhiskerListItemActionRaw> = actions
+                .iter()
+                .zip(keys.iter())
+                .map(|(a, k)| ffi::WhiskerListItemActionRaw {
+                    position: a.position,
+                    item_key: k.as_ptr(),
+                    estimated_main_axis_px: a.estimated_size.unwrap_or(-1),
+                    full_span: a.full_span as u8,
+                    sticky_top: a.sticky_top as u8,
+                    sticky_bottom: a.sticky_bottom as u8,
+                    recyclable: a.recyclable as u8,
+                })
+                .collect();
+            (keys, raw)
+        }
+        let (_insert_keys, insert_raw) = to_raw(inserts);
+        let (_update_keys, update_raw) = to_raw(updates);
         unsafe {
             ffi::whisker_bridge_list_update_actions(
                 ptr.as_ptr(),
                 removals.as_ptr(),
                 removals.len() as i32,
-                positions.as_ptr(),
-                key_ptrs.as_ptr(),
-                inserts.len() as i32,
+                insert_raw.as_ptr(),
+                insert_raw.len() as i32,
+                update_raw.as_ptr(),
+                update_raw.len() as i32,
             )
         }
     }
