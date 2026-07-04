@@ -34,7 +34,7 @@ extern "C" {
 // Whisker refuses to load a Lynx whose ABI version differs from this.
 // Bumped in lockstep with the fork's `kLynxCapiAbiVersion` whenever the
 // C ABI changes incompatibly.
-#define WHISKER_LYNX_CAPI_ABI_VERSION 2
+#define WHISKER_LYNX_CAPI_ABI_VERSION 3
 
 // ----- Opaque handle types --------------------------------------------------
 
@@ -179,19 +179,7 @@ typedef void (*lynx_element_set_update_list_info_fn)(lynx_fiber_element_t* eleme
                                                       const uint8_t* sticky_bottom,
                                                       const uint8_t* recyclable,
                                                       int32_t count);
-// Explicit diff actions for the decoupled `<list>` data source —
-// minimal-action alternative to `lynx_element_set_update_list_info`.
-// Removals: ascending pre-update indices, applied first. Inserts:
-// ascending splice points into the post-removal list.
-typedef void (*lynx_element_update_list_actions_fn)(
-    lynx_fiber_element_t* element,
-    const int32_t* remove_indices,
-    int32_t remove_count,
-    const int32_t* insert_positions,
-    const char* const* insert_keys,
-    int32_t insert_count);
-
-// Mirror of the fork's `lynx_list_item_action_t` (v3.8.0-whisker.11):
+// Mirror of the fork's `lynx_list_item_action_t` (ABI v3):
 // one insert/update entry with the per-item layout metadata the
 // adapter ingests from the action stream. Fixed-width fields; layout
 // is part of the ABI.
@@ -205,10 +193,12 @@ typedef struct lynx_list_item_action_t {
   uint8_t recyclable;
 } lynx_list_item_action_t;
 
-// Metadata-carrying successor to `lynx_element_update_list_actions`.
-// `updates` refresh SURVIVING items' metadata in place
-// (updateAction {from == to, flush: false}).
-typedef void (*lynx_element_update_list_actions_v2_fn)(
+// Explicit diff actions for the decoupled `<list>` data source —
+// minimal-action alternative to `lynx_element_set_update_list_info`.
+// Removals: ascending pre-update indices, applied first; inserts carry
+// the per-item layout metadata; `updates` refresh SURVIVING items'
+// metadata in place (updateAction {from == to, flush: false}).
+typedef void (*lynx_element_update_list_actions_fn)(
     lynx_fiber_element_t* element,
     const int32_t* remove_indices,
     int32_t remove_count,
@@ -335,16 +325,8 @@ typedef struct WhiskerLynxCapi {
   // the call site; list events simply stay dark on old engines).
   lynx_shell_set_custom_event_callback_fn shell_set_custom_event_callback;
 
-  // Explicit list diff actions. OPTIONAL (tail-added after ABI v2) —
-  // NULL on an older Lynx; the caller falls back to the full-replace
-  // `element_set_update_list_info` (pre-feature behaviour: scroll
-  // position resets on data updates, but nothing breaks).
+  // Explicit list diff actions (metadata-carrying, ABI v3+).
   lynx_element_update_list_actions_fn element_update_list_actions;
-
-  // Metadata-carrying v2 (v3.8.0-whisker.11). OPTIONAL — NULL on an
-  // older Lynx; the bridge degrades to v1 (metadata + in-place updates
-  // dropped), then to the full replace.
-  lynx_element_update_list_actions_v2_fn element_update_list_actions_v2;
 } WhiskerLynxCapi;
 
 // ----- Loader API -----------------------------------------------------------

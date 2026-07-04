@@ -315,54 +315,31 @@ extern "C" bool whisker_bridge_list_update_actions(
     int32_t insert_count, const WhiskerListItemAction* updates,
     int32_t update_count) {
     if (element == nullptr || element->handle == nullptr) return false;
-    const WhiskerLynxCapi* capi = whisker_lynx_capi();
-    if (capi == nullptr) return false;
-    if (capi->element_update_list_actions_v2 != nullptr) {
-        // The bridge struct mirrors `lynx_list_item_action_t` field for
-        // field, but convert explicitly — the two headers evolve
-        // independently and a silent layout drift would corrupt every
-        // list update.
-        std::vector<lynx_list_item_action_t> ins(
-            static_cast<size_t>(insert_count > 0 ? insert_count : 0));
-        for (int32_t i = 0; inserts != nullptr && i < insert_count; ++i) {
-            ins[i] = {inserts[i].position,        inserts[i].item_key,
-                      inserts[i].estimated_main_axis_px, inserts[i].full_span,
-                      inserts[i].sticky_top,      inserts[i].sticky_bottom,
-                      inserts[i].recyclable};
-        }
-        std::vector<lynx_list_item_action_t> ups(
-            static_cast<size_t>(update_count > 0 ? update_count : 0));
-        for (int32_t i = 0; updates != nullptr && i < update_count; ++i) {
-            ups[i] = {updates[i].position,        updates[i].item_key,
-                      updates[i].estimated_main_axis_px, updates[i].full_span,
-                      updates[i].sticky_top,      updates[i].sticky_bottom,
-                      updates[i].recyclable};
-        }
-        capi->element_update_list_actions_v2(
-            element->handle, remove_indices, remove_count,
-            ins.empty() ? nullptr : ins.data(), insert_count,
-            ups.empty() ? nullptr : ups.data(), update_count);
-        return true;
+    // The bridge struct mirrors `lynx_list_item_action_t` field for
+    // field, but convert explicitly — the two headers evolve
+    // independently and a silent layout drift would corrupt every
+    // list update.
+    std::vector<lynx_list_item_action_t> ins(
+        static_cast<size_t>(insert_count > 0 ? insert_count : 0));
+    for (int32_t i = 0; inserts != nullptr && i < insert_count; ++i) {
+        ins[i] = {inserts[i].position,        inserts[i].item_key,
+                  inserts[i].estimated_main_axis_px, inserts[i].full_span,
+                  inserts[i].sticky_top,      inserts[i].sticky_bottom,
+                  inserts[i].recyclable};
     }
-    if (capi->element_update_list_actions != nullptr) {
-        // v1 degrade: keys-only inserts; metadata and in-place updates
-        // are dropped (the pre-.11 behaviour — sticky / full-span /
-        // estimates simply stay dark).
-        std::vector<int32_t> positions(
-            static_cast<size_t>(insert_count > 0 ? insert_count : 0));
-        std::vector<const char*> keys(
-            static_cast<size_t>(insert_count > 0 ? insert_count : 0));
-        for (int32_t i = 0; inserts != nullptr && i < insert_count; ++i) {
-            positions[i] = inserts[i].position;
-            keys[i] = inserts[i].item_key;
-        }
-        capi->element_update_list_actions(
-            element->handle, remove_indices, remove_count,
-            positions.empty() ? nullptr : positions.data(),
-            keys.empty() ? nullptr : keys.data(), insert_count);
-        return true;
+    std::vector<lynx_list_item_action_t> ups(
+        static_cast<size_t>(update_count > 0 ? update_count : 0));
+    for (int32_t i = 0; updates != nullptr && i < update_count; ++i) {
+        ups[i] = {updates[i].position,        updates[i].item_key,
+                  updates[i].estimated_main_axis_px, updates[i].full_span,
+                  updates[i].sticky_top,      updates[i].sticky_bottom,
+                  updates[i].recyclable};
     }
-    return false;
+    whisker_lynx_capi()->element_update_list_actions(
+        element->handle, remove_indices, remove_count,
+        ins.empty() ? nullptr : ins.data(), insert_count,
+        ups.empty() ? nullptr : ups.data(), update_count);
+    return true;
 }
 
 // Install a native item provider on a `<list>` element so Whisker can

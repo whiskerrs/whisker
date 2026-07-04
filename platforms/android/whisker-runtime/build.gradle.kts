@@ -20,7 +20,7 @@
 // `whiskerSdkRelease` Gradle property toggles the dep form: unset
 // (default) → flatDir-friendly `:LynxAndroid@aar`; `true` → Maven
 // coords pinned to `lynxFork`. The CI publish workflow sets
-// `-PwhiskerSdkRelease=true -PlynxFork=v3.8.0-whisker.11`; local CLI
+// `-PwhiskerSdkRelease=true -PlynxFork=v3.8.0-whisker.12`; local CLI
 // flows leave both unset and use flatDir as before.
 
 plugins {
@@ -70,7 +70,7 @@ android {
 }
 
 val whiskerSdkRelease = providers.gradleProperty("whiskerSdkRelease").orNull == "true"
-val lynxFork = providers.gradleProperty("lynxFork").getOrElse("v3.8.0-whisker.11").removePrefix("v")
+val lynxFork = providers.gradleProperty("lynxFork").getOrElse("v3.8.0-whisker.12").removePrefix("v")
 
 dependencies {
     api(project(":module"))

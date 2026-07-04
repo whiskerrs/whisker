@@ -147,10 +147,8 @@ typedef struct WhiskerListItemAction {
 // ascending pre-update indices (applied first). Inserts carry per-item
 // metadata; updates refresh a surviving item's metadata in place.
 //
-// Degrades by capability of the loaded Lynx: the metadata-carrying v2
-// capi when present, else the v1 keys-only capi (metadata and updates
-// dropped), else returns false and the caller falls back to the full
-// replace.
+// Requires the ABI v3 capi (a strict loader bind, so present whenever
+// the engine attached); returns false only for a null/unknown element.
 WHISKER_BRIDGE_EXPORT bool whisker_bridge_list_update_actions(
     WhiskerElement* element, const int32_t* remove_indices,
     int32_t remove_count, const WhiskerListItemAction* inserts,
