@@ -5,6 +5,24 @@
 //! - **Variable-height rows** — verifies uniform width + recycling under scroll.
 //! - **Rotate / Prepend** buttons mutate the data order — verifies bug ①
 //!   (stable item-key reorders correctly instead of appending at the tail).
+//!
+//! # Self-driving scenarios
+//!
+//! Synthetic touches don't reach Lynx's scroll pipeline on the simulator,
+//! so the smoke drives itself with programmatic scrolls chained off the
+//! `layoutcomplete` / `scrollstatechange` events. Pick a scenario with
+//! `SIMCTL_CHILD_SMOKE_SCENARIO=<name> xcrun simctl launch …`:
+//!
+//! | scenario  | data    | drives                                            |
+//! |-----------|---------|---------------------------------------------------|
+//! | (unset)   | late    | scroll to bottom → append page (position holds) → back to top (row 1 re-materializes) |
+//! | `fill`    | late    | nothing — observe the no-interaction viewport fill |
+//! | `prepend` | late    | scroll to mid → prepend 3 rows → position must stay anchored |
+//! | `remove`  | late    | scroll to mid → remove 5 rows above the viewport → anchored |
+//! | `upper`   | late    | scroll to bottom → back toward top → `scrolltoupper` fires |
+//! | `sticky`  | mounted | `sticky` list + `sticky_top` header → scroll to mid → header stays pinned |
+//! | `initial` | mounted | `initial_scroll_index: 15` → launches mid-list     |
+//! | `waterfall` | mounted | `list_type: waterfall` + `span_count: 2` — 2-column staggered layout |
 
 use whisker::ListHandle;
 use whisker::css::{AlignItems, FlexDirection, FontWeight, JustifyContent};
@@ -31,22 +49,38 @@ fn body_text(n: u32) -> String {
     "lorem ipsum dolor sit amet ".repeat(((n % 4) + 1) as usize)
 }
 
+fn scenario() -> &'static str {
+    // Leaked once — the scenario is fixed for the process lifetime.
+    static SCENARIO: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SCENARIO.get_or_init(|| std::env::var("SMOKE_SCENARIO").unwrap_or_default())
+}
+
 #[whisker::main]
 pub fn app() -> Element {
-    // Start EMPTY and populate in `on_mount` — the data then arrives
-    // AFTER the first layout, exercising the "late data source" fill
-    // path (a data-only update must still tick the list's viewport
-    // fill; regression: items only materialized on the first scroll).
-    let ids = signal(Vec::<u32>::new());
+    let scen = scenario();
+    // Late data (populated in `on_mount`, AFTER the first layout)
+    // exercises the late-data fill path. `sticky` / `initial` /
+    // `waterfall` need the data present at mount instead: their list
+    // attributes anchor the FIRST layout.
+    let late_data = !matches!(scen, "sticky" | "initial" | "waterfall");
+    let ids = signal(if late_data {
+        Vec::<u32>::new()
+    } else {
+        (1u32..=30).collect::<Vec<u32>>()
+    });
     let next = signal(100u32);
-    on_mount(move || ids.set((1u32..=30).collect::<Vec<u32>>()));
-    // Scroll-event smoke: on the FIRST layoutcomplete, smooth-scroll to
-    // the bottom. A programmatic smooth scroll drives the same native
-    // UIScrollView path a finger does, so `scroll` + `scrolltolower`
-    // fire without needing a human drag (synthetic touches don't reach
-    // Lynx's scroll pipeline on the simulator).
+    if late_data {
+        on_mount(move || ids.set((1u32..=30).collect::<Vec<u32>>()));
+    }
     let list_handle = ListHandle::new();
+    // The layoutcomplete on which the full data is native-side and the
+    // scenario's first scroll may run: with late data the FIRST
+    // layoutcomplete is the pre-data (header-only) layout.
+    let data_lc = if late_data { 2 } else { 1 };
     let lc_seen = signal(0u32);
+    // Scenario step machine: 0 = waiting for data layout, 1 = step-1
+    // scroll issued, 2 = mutation done (terminal).
+    let step = signal(0u32);
 
     let rotate = move |_| {
         let mut v = ids.get();
@@ -62,16 +96,18 @@ pub fn app() -> Element {
         v.insert(0, n);
         ids.set(v);
     };
-    // Append a page on scroll-to-bottom — the infinite-scroll pattern.
-    // With diff-based data updates the append is insert-only, so the
-    // scroll position must HOLD at the bottom (regression: the full
-    // replace reset it to the top on every append). At the cap, scroll
-    // back to the top once — the first row must re-materialize after
-    // having been recycled off-screen.
+
+    // Default scenario: append a page on scroll-to-bottom — the
+    // infinite-scroll pattern. Insert-only diff ⇒ the scroll position
+    // must HOLD at the bottom. At the cap, scroll back to the top once —
+    // the first row must re-materialize after having been recycled.
     let back_to_top_done = signal(false);
     let chase_bottom = signal(false);
-    let append_on_scroll = move |e: whisker::event::ScrollEvent| {
+    let on_lower = move |e: whisker::event::ScrollEvent| {
         eprintln!("[SMOKE] scrolltolower fired: {e:?}");
+        if !scenario().is_empty() {
+            return;
+        }
         if e.detail.scroll_height < 500.0 {
             // The pre-data (header-only, 160px) list is trivially "at
             // the bottom" — ignore that spurious trigger. Gate on the
@@ -92,13 +128,51 @@ pub fn app() -> Element {
         next.set(n + 10);
         v.extend(n..n + 10);
         ids.set(v);
-        // Chase the new bottom ON THE NEXT layoutcomplete (scrolling now
-        // would target an index the NATIVE list doesn't have yet — the
-        // append flushes later this tick). The chase keeps the smoke
-        // paging until the cap: the position HOLD after an append means
-        // we drift out of the lower threshold, which is correct UX but
-        // would stall the run.
+        // Chase via the NEXT layoutcomplete (scrolling now would target
+        // an index the NATIVE list doesn't have yet — the append flushes
+        // later this tick).
         chase_bottom.set(true);
+    };
+
+    let on_upper = |e: whisker::event::ScrollEvent| {
+        eprintln!("[SMOKE] scrolltoupper fired: {e:?}");
+    };
+
+    // Scenario mutations run once the step-1 scroll SETTLES. Observed
+    // iOS states: 4 = animated (programmatic smooth scroll in flight),
+    // 1 = idle/settled. Mutating mid-flight would race the animation.
+    let on_state = move |e: whisker::event::ScrollStateChangeEvent| {
+        eprintln!("[SMOKE] scrollstatechange: state={}", e.detail.state);
+        if e.detail.state != 1 || step.get() != 1 {
+            return;
+        }
+        step.set(2);
+        match scenario() {
+            "prepend" => {
+                let n = next.get();
+                next.set(n + 3);
+                let mut v = ids.get();
+                for k in n..n + 3 {
+                    v.insert(0, k);
+                }
+                eprintln!("[SMOKE] prepending 3 rows at top (anchored mid-list)");
+                ids.set(v);
+            }
+            "remove" => {
+                let v: Vec<u32> = ids
+                    .get()
+                    .into_iter()
+                    .filter(|n| !(1..=5).contains(n))
+                    .collect();
+                eprintln!("[SMOKE] removing rows 1..=5 (above the viewport)");
+                ids.set(v);
+            }
+            "upper" => {
+                eprintln!("[SMOKE] at bottom — scrolling back toward the top");
+                list_handle.scroll_to_position(0, true);
+            }
+            _ => {}
+        }
     };
 
     render! {
@@ -134,7 +208,18 @@ pub fn app() -> Element {
             list(
                 style: css!(flex_grow: 1.0, width: percent(100)),
                 lower_threshold_item_count: 2,
-                on_scrolltolower: append_on_scroll,
+                upper_threshold_item_count: 2,
+                sticky: scen == "sticky",
+                list_type: if scen == "waterfall" {
+                    whisker::attrs::ListType::Waterfall
+                } else {
+                    whisker::attrs::ListType::Single
+                },
+                span_count: if scen == "waterfall" { 2i32 } else { 1i32 },
+                initial_scroll_index: if scen == "initial" { 15i32 } else { -1i32 },
+                on_scrolltolower: on_lower,
+                on_scrolltoupper: on_upper,
+                on_scrollstatechange: on_state,
                 // Event-pipeline smoke signals: `layoutcomplete` fires on
                 // first layout (no interaction needed), `scroll` on every
                 // scroll frame. Both are core-originated — they only fire
@@ -142,22 +227,33 @@ pub fn app() -> Element {
                 ref: list_handle.r(),
                 on_layoutcomplete: move |e| {
                     eprintln!("[SMOKE] layoutcomplete fired: {e:?}");
-                    // `SIMCTL_CHILD_SMOKE_NO_AUTOSCROLL=1` (simctl launch env)
-                    // disables the auto-scroll so the "late data fills the
-                    // viewport WITHOUT any scroll" state can be observed.
-                    // Trigger on the SECOND layoutcomplete: the first is the
-                    // pre-data (header-only) layout — the signal already
-                    // holds 30 ids then, but the NATIVE list doesn't yet, so
-                    // scrolling on it would target an out-of-range index.
                     let seen = lc_seen.get() + 1;
                     lc_seen.set(seen);
-                    if seen == 2 && std::env::var("SMOKE_NO_AUTOSCROLL").is_err() {
-                        list_handle.scroll_to_position(ids.get().len() as i32, true);
+                    if seen == data_lc && step.get() == 0 {
+                        match scenario() {
+                            "" => {
+                                // Full default flow: ride to the bottom.
+                                list_handle.scroll_to_position(ids.get().len() as i32, true);
+                            }
+                            "prepend" | "remove" => {
+                                step.set(1);
+                                list_handle.scroll_to_position(15, true);
+                            }
+                            "upper" => {
+                                step.set(1);
+                                list_handle.scroll_to_position(ids.get().len() as i32, true);
+                            }
+                            "sticky" => {
+                                step.set(1);
+                                list_handle.scroll_to_position(20, true);
+                            }
+                            _ => {}
+                        }
                     }
-                    // An append's layout completed — scroll back to the TOP:
-                    // the first row was recycled off-screen during the trip
-                    // to the bottom, so this exercises re-materialization of
-                    // item 0 (regression: it stayed blank).
+                    // Default flow: an append's layout completed — scroll
+                    // back to the TOP: the first row was recycled off-screen
+                    // during the trip down, so this exercises item-0
+                    // re-materialization (regression: it stayed blank).
                     if chase_bottom.get() {
                         chase_bottom.set(false);
                         eprintln!("[SMOKE] append landed — scrolling back to top");
@@ -173,7 +269,12 @@ pub fn app() -> Element {
                 key: |r: &Row| r.key(),
                 children: |r: Row| match r {
                     Row::Header => render! {
-                        list_item(full_span: true, estimated_size: 160, reuse_identifier: "header") {
+                        list_item(
+                            full_span: true,
+                            sticky_top: scenario() == "sticky",
+                            estimated_size: 160,
+                            reuse_identifier: "header",
+                        ) {
                             view(style: css!(
                                 width: percent(100),
                                 height: px(160),
