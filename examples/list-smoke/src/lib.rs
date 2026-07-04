@@ -116,22 +116,23 @@ pub fn app() -> Element {
             return;
         }
         let mut v = ids.get();
-        if v.len() >= 60 {
-            if !back_to_top_done.get() {
-                back_to_top_done.set(true);
-                eprintln!("[SMOKE] cap reached — scrolling back to top");
-                list_handle.scroll_to_position(0, true);
-            }
-            return;
+        if v.len() >= 120 {
+            return; // cap the smoke run
         }
         let n = next.get();
         next.set(n + 10);
         v.extend(n..n + 10);
         ids.set(v);
-        // Chase via the NEXT layoutcomplete (scrolling now would target
-        // an index the NATIVE list doesn't have yet — the append flushes
-        // later this tick).
-        chase_bottom.set(true);
+        // ONCE, after the first (auto-scroll-driven) append: revisit the
+        // top on the next layoutcomplete to exercise item-0
+        // re-materialization. (Scrolling now would target an index the
+        // NATIVE list doesn't have yet — the append flushes later this
+        // tick.) Manual appends afterwards behave like a real infinite
+        // scroll: the position holds and nothing jumps.
+        if !back_to_top_done.get() {
+            back_to_top_done.set(true);
+            chase_bottom.set(true);
+        }
     };
 
     let on_upper = |e: whisker::event::ScrollEvent| {
