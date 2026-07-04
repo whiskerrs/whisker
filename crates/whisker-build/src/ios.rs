@@ -49,7 +49,7 @@ use std::process::Command;
 /// Keep in lockstep with the `Package.swift` at the repo root and the
 /// `v<version>` git tag published for SwiftPM to resolve.
 pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
-pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.1";
+pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.2";
 
 use crate::capture::{CaptureShims, capture_env_vars_for_triple};
 
