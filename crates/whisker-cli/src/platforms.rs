@@ -88,7 +88,17 @@ pub struct PlatformSync {
 /// (infinite scroll) instead of resetting to the top. Non-breaking:
 /// feature-detected; on 0.1.3's Lynx whisker falls back to the
 /// full-replace update (the pre-fix behaviour).
-const WHISKER_SDK_VERSION: &str = "0.1.4";
+///
+/// 0.1.5 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.10` →
+/// `v3.8.0-whisker.11`, which adds
+/// `lynx_element_update_list_actions_v2` (tail addition, ABI stays
+/// v2) — per-item metadata (estimated size / full-span / sticky /
+/// recyclable) on the diff actions plus in-place metadata updates.
+/// This is what makes sticky headers, waterfall full-span and item
+/// size estimates actually work (the `ItemMeta` API). Non-breaking:
+/// feature-detected; on 0.1.4's Lynx whisker degrades to keys-only
+/// actions (metadata stays dark, as before).
+const WHISKER_SDK_VERSION: &str = "0.1.5";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
