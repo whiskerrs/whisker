@@ -19,8 +19,8 @@ Whisker itself**.
 - [`reactivity-design.md`](reactivity-design.md) — the design and
   rationale of the fine-grained reactive runtime (signals, effects,
   the owner/scope tree, batching).
-- [`hot-reload-internals.md`](hot-reload-internals.md) — how the Tier 1
-  (subsecond) and Tier 2 (cold rebuild) hot-reload pipelines actually
+- [`hot-reload-internals.md`](hot-reload-internals.md) — how Hot Reload
+  (subsecond patching) and Full Reload (cold rebuild) actually
   work, end to end.
 - [`module-api-design.md`](module-api-design.md) — how to choose the
   user-facing surface shape for a new `whisker-*` module crate. Read

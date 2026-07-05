@@ -1,16 +1,16 @@
 //! Whisker build orchestration.
 //!
 //! Cross-platform cargo + gradle + xcodebuild invocation, shared by
-//! `whisker-dev-server`'s Tier 2 cold rebuild path, the cli, and the
+//! `whisker-dev-server`'s full reload path, the cli, and the
 //! `whisker-build` binary that gradle / xcodebuild call into during
 //! `whisker run`.
 //!
 //! ## Public surface
 //!
 //! - [`Profile`] — Debug / Release selector.
-//! - [`capture`] — Tier 1 hot-patch capture shim wiring (rustc /
+//! - [`capture`] — hot-reload patch capture shim wiring (rustc /
 //!   linker workspace wrappers + cache dirs + env-var assembly).
-//!   Consumed by the dev-server's Tier 2 fat build (capture: Some)
+//!   Consumed by the dev-server's full reload fat build (capture: Some)
 //!   and the xcodebuild Build Phase path (capture: None).
 //! - [`android`] — NDK toolchain resolution, `cargo rustc
 //!   --crate-type dylib`, jniLibs staging, `gradle assemble{Debug,Release}`.

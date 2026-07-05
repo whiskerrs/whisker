@@ -1,7 +1,7 @@
 //! File watcher + change classifier for the dev loop.
 //!
 //! Wraps `notify` so the rest of the dev server (the builder in I4e
-//! and the Tier 1 patcher in I4g) doesn't have to deal with raw
+//! and the hot-reload patcher in I4g) doesn't have to deal with raw
 //! filesystem events. Three things happen here:
 //!
 //! 1. **Recursive watch** of a package root.
@@ -9,7 +9,7 @@
 //!    can produce 3-5 notify events on macOS (atomic rename + chmod
 //!    + …); we coalesce them into one [`Change`].
 //! 3. **Classify** the affected paths into [`ChangeKind`] so callers
-//!    can pick a rebuild strategy (Tier 2 cold rebuild for
+//!    can pick a rebuild strategy (full reload for
 //!    `RustCode`, full restart for `CargoToml`, etc).
 
 use anyhow::{Context, Result};
@@ -25,8 +25,8 @@ use tokio::sync::mpsc;
 /// (Cargo.toml beats Rust code beats anything else).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeKind {
-    /// `.rs` files inside the watched tree. Tier 2 cold rebuild
-    /// today; Tier 1 subsecond patch once I4g lands.
+    /// `.rs` files inside the watched tree. full reload
+    /// today; hot reload subsecond patch once I4g lands.
     RustCode,
     /// `Cargo.toml` (or `Cargo.lock`) — needs a full
     /// `cargo build` and re-launch; subsecond can't reload deps.

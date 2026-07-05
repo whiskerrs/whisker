@@ -55,7 +55,7 @@ runs on iOS and Android by driving Lynx's element tree directly.
         │
         ▼
    whisker-dev-server  — the dev loop: file-watch → whisker-build →
-                         install/launch + Tier-1 subsecond patches +
+                         install/launch + subsecond hot-reload patches +
                          WebSocket push. Manifest-agnostic (flat Config).
         │
         ▼
@@ -82,7 +82,7 @@ runs on iOS and Android by driving Lynx's element tree directly.
 | `whisker-dev-runtime` | App-side WebSocket receiver + log capture for hot patches. **Compiled only with `hot-reload`** — release builds drop it entirely. | `whisker-driver` (feature-gated) |
 | `whisker-macros` | `#[whisker::main]`, `#[component]`, `#[module_component]`, and the `render!` DSL. | `whisker` |
 | `whisker-cli` | The `whisker` / `cargo-whisker` binary: `run`, `doctor`, `new`, `new-module`. Resolves Config via the `whisker.rs` probe; hands a flat Config to dev-server. | (binary) |
-| `whisker-dev-server` | Host dev loop, manifest-agnostic. Owns watch → build → install → Tier-1 patch → WebSocket push. | `whisker-cli` |
+| `whisker-dev-server` | Host dev loop, manifest-agnostic. Owns watch → build → install → hot-reload patch → WebSocket push. | `whisker-cli` |
 | `whisker-build` | Lynx artifact fetch, cargo cross-compile, AAR/xcframework packaging. | `whisker-dev-server` |
 | `whisker-cng` | Continuous Native Generation: pure renderer of `gen/{android,ios}/` from Config, fingerprint-gated. No CLI surface, no side effects. | `whisker-cli` |
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
@@ -177,12 +177,12 @@ materialise `gen/{android,ios}/`, then hands a flat `Config` to
         │
         ▼
   decide_action
-   ├── Tier 1 (RustCode, hot-patch on): build a thin patch dylib from
+   ├── Hot Reload (RustCode, on save): build a thin patch dylib from
    │   the changed user crate (captured rustc + linker args + a host-
    │   symbol jump stub), parse it into a subsecond JumpTable, push it
    │   over the WebSocket to connected devices. ~½–1 s on a small app.
    │
-   └── Tier 2 (Cargo.toml change, structural edit, or no hot-patch):
+   └── Full Reload (explicit `R` only; Cargo.toml changes prompt for it):
        full whisker-build (cargo cross-compile + per-platform package)
        → install/launch via adb / simctl.
 ```

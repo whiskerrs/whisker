@@ -37,10 +37,13 @@
 //! ## Subsecond hot reload
 //!
 //! On every tick we first try `apply_pending_hot_patch`. If a patch
-//! landed, we run the post-patch hook which (in Strategy C, A6) will
-//! remount affected components. For now Strategy C is not wired —
-//! the patch just swaps function pointers, and unrelated reactive
-//! state stays intact.
+//! landed, `remount_components_for` disposes and re-mounts every
+//! `#[component]` whose fn pointer was rewritten, and
+//! `maybe_full_remount` escalates to a complete `app()`
+//! re-run when the per-component path can't express the change —
+//! the `app()` body itself was edited (detected via the source hash
+//! the `#[whisker::main]` macro bakes in), or the patch matched no
+//! mounted component at all.
 
 use super::renderer::BridgeRenderer;
 use std::cell::Cell;
@@ -73,13 +76,15 @@ thread_local! {
 /// signal updates fire it so the host can unpause its `CADisplayLink`
 /// (or equivalent) to schedule the next tick. May be `None` if the
 /// host runs an unconditional render loop.
-pub fn run<F>(
+pub fn run<F, H>(
     engine_raw: *mut c_void,
     request_frame: Option<extern "C" fn(*mut c_void)>,
     request_frame_data: *mut c_void,
     app_fn: F,
+    app_hash_fn: H,
 ) where
-    F: FnOnce() -> Element + 'static,
+    F: FnMut() -> Element + 'static,
+    H: Fn() -> u64 + 'static,
 {
     if engine_raw.is_null() {
         return;
@@ -92,7 +97,8 @@ pub fn run<F>(
     // Boxed init context, handed across the C ABI via raw pointer.
     let ctx = Box::new(InitCtx {
         engine: engine_raw as *mut WhiskerEngine,
-        app_fn: Some(Box::new(app_fn) as Box<dyn FnOnce() -> Element + 'static>),
+        app_fn: Some(Box::new(app_fn) as Box<dyn FnMut() -> Element + 'static>),
+        app_hash_fn: Some(Box::new(app_hash_fn) as Box<dyn Fn() -> u64 + 'static>),
         request_frame,
         request_frame_data,
     });
@@ -103,10 +109,16 @@ pub fn run<F>(
 struct InitCtx {
     engine: *mut WhiskerEngine,
     /// `Option` because we move the closure out inside `init_callback`
-    /// to call it. `FnOnce` because the user fn is invoked once at
-    /// mount; subsequent re-renders happen incrementally through the
-    /// reactive runtime, not by re-calling this fn.
-    app_fn: Option<Box<dyn FnOnce() -> Element + 'static>>,
+    /// to call it. `FnMut` (not `FnOnce`): the initial mount invokes it
+    /// once, and the hot-reload full-remount path keeps it around to re-run
+    /// `app()` from scratch when a patch changes code no `#[component]`
+    /// remount can reflect (the `app()` body itself). Release builds
+    /// still call it exactly once.
+    app_fn: Option<Box<dyn FnMut() -> Element + 'static>>,
+    /// Reads the app fn's compile-time source hash *through subsecond
+    /// dispatch* (see the `#[whisker::main]` macro), so after a patch
+    /// it reports the patch dylib's value. The full-remount trigger.
+    app_hash_fn: Option<Box<dyn Fn() -> u64 + 'static>>,
     request_frame: Option<extern "C" fn(*mut c_void)>,
     request_frame_data: *mut c_void,
 }
@@ -193,7 +205,10 @@ extern "C" fn init_callback(user_data: *mut c_void) {
 
     // Run the user's app fn (already-`subsecond::call`-wrapped by
     // the macro when the `hot-reload` feature is on).
-    let Some(app_fn) = ctx.app_fn.take() else {
+    let Some(mut app_fn) = ctx.app_fn.take() else {
+        return;
+    };
+    let Some(app_hash_fn) = ctx.app_hash_fn.take() else {
         return;
     };
 
@@ -204,8 +219,10 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // `use_context::<T>().expect(...)` then panics across this `extern
     // "C"` boundary (aborting on Android, blank-screening on iOS). The
     // owner is a *detached root*: it lives for the process lifetime and
-    // is never disposed, so the contexts / signals / effects the app
-    // creates persist for the whole session.
+    // is never disposed. What the app run creates attaches to a child
+    // "run owner" instead — that one IS disposable, which is what lets
+    // the hot reload full remount tear down one app() run (contexts,
+    // signals, effects and all) and start another.
     let root_owner = whisker_runtime::reactive::Owner::detached_root();
     root_owner.with(|| {
         // Whisker owns the root `page`. Lynx requires the shell's root to
@@ -224,7 +241,12 @@ extern "C" fn init_callback(user_data: *mut c_void) {
             page,
             "display:flex;flex-direction:column;flex-grow:1;flex-shrink:1;",
         );
-        let content = app_fn();
+        // Per-run owner: everything one `app()` invocation creates
+        // (top-level contexts included) hangs off this, so a hot reload
+        // full remount can dispose it wholesale without touching the
+        // root owner or the page.
+        let run_owner = whisker_runtime::reactive::Owner::new(None);
+        let content = run_owner.with(&mut app_fn);
         append_child(page, content);
         // Commit the initial tree: mark the page as root and ask Lynx
         // to run the first layout+paint pass.
@@ -234,6 +256,9 @@ extern "C" fn init_callback(user_data: *mut c_void) {
         // to happen after the renderer flush so user-side code that asks
         // "is my view in the tree?" sees it.
         reactive_flush_mounts();
+        // Stash what the full-remount path needs. No-op
+        // without the hot-reload feature (the closures are dropped).
+        store_hot_app_state(app_fn, app_hash_fn, page, run_owner);
     });
 
     start_hot_reload_receiver();
@@ -323,6 +348,130 @@ fn apply_pending_hot_patch() -> Vec<*const ()> {
 fn apply_pending_hot_patch() -> Vec<*const ()> {
     Vec::new()
 }
+
+/// Everything the full-remount path needs to re-run `app()`
+/// from scratch. Lives in a TASM-thread-local because both writers
+/// (`init_callback`, `maybe_full_remount`) run on that thread only.
+#[cfg(feature = "hot-reload")]
+struct HotAppState {
+    app_fn: Box<dyn FnMut() -> Element + 'static>,
+    app_hash_fn: Box<dyn Fn() -> u64 + 'static>,
+    /// The stable root page — never recreated (Lynx keeps the shell
+    /// root fixed); full remount swaps its children only.
+    page: Element,
+    /// Owner of the current `app()` run. Disposed and replaced on
+    /// full remount, cascading cleanup through every context /
+    /// signal / component owner the run created.
+    run_owner: whisker_runtime::reactive::Owner,
+    /// App-body source hash as of the last (re)run, read through
+    /// subsecond dispatch. Compared after each patch.
+    last_hash: u64,
+}
+
+#[cfg(feature = "hot-reload")]
+thread_local! {
+    static HOT_APP: std::cell::RefCell<Option<HotAppState>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "hot-reload")]
+fn store_hot_app_state(
+    app_fn: Box<dyn FnMut() -> Element + 'static>,
+    app_hash_fn: Box<dyn Fn() -> u64 + 'static>,
+    page: Element,
+    run_owner: whisker_runtime::reactive::Owner,
+) {
+    let last_hash = app_hash_fn();
+    HOT_APP.with(|slot| {
+        *slot.borrow_mut() = Some(HotAppState {
+            app_fn,
+            app_hash_fn,
+            page,
+            run_owner,
+            last_hash,
+        });
+    });
+}
+
+#[cfg(not(feature = "hot-reload"))]
+fn store_hot_app_state(
+    _app_fn: Box<dyn FnMut() -> Element + 'static>,
+    _app_hash_fn: Box<dyn Fn() -> u64 + 'static>,
+    _page: Element,
+    _run_owner: whisker_runtime::reactive::Owner,
+) {
+}
+
+/// Full-remount escalation (still hot reload). Escalates a just-applied patch to a
+/// complete `app()` re-run when the per-component remount path can't
+/// express it:
+///
+/// - **`app()` body changed** — its source hash (read through
+///   subsecond dispatch, so this sees the patch's value) differs
+///   from the last run's. `#[component]` remounts re-run component
+///   bodies, never `app()` itself, so top-level wiring edits
+///   (`provide_context` values, which root component is mounted,
+///   page-level layout) would otherwise apply-but-not-render.
+/// - **Props layout changed** — `remount_components_for` refused one
+///   or more sites because their stored body closures were built
+///   against a different props signature than the patched code
+///   expects. Only a from-scratch rebuild (fresh `app()` run, all
+///   props constructed by patched code) is safe.
+/// - **Nothing remounted** — the patch matched no attached mount
+///   site. Happens when the app has no top-level `#[component]`
+///   (everything inline in `app()`) or when prior teardown left only
+///   orphaned sites; without escalation the patch is applied but
+///   invisible.
+///
+/// All state is lost by design — this is still sub-second and keeps
+/// the process (and the dev-session socket) alive, unlike a full reload
+/// reinstall.
+#[cfg(feature = "hot-reload")]
+fn maybe_full_remount(stats: whisker_runtime::reactive::RemountStats) {
+    HOT_APP.with(|slot| {
+        let mut guard = slot.borrow_mut();
+        let Some(state) = guard.as_mut() else {
+            return;
+        };
+        let new_hash = (state.app_hash_fn)();
+        let app_changed = new_hash != state.last_hash;
+        let reason = if app_changed {
+            "app() body changed"
+        } else if stats.layout_changed > 0 {
+            "props layout changed"
+        } else if stats.remounted == 0 {
+            "patch matched no mounted component"
+        } else {
+            return;
+        };
+        whisker_dev_runtime::devlog(&format!("full remount ({reason})"));
+        state.last_hash = new_hash;
+
+        // Detach the old content BEFORE disposing its owners.
+        // `Owner::dispose` invalidates element handles (renderer slot
+        // → `None`), and removing an already-invalidated child
+        // silently no-ops against Lynx — the stale subtree would stay
+        // on screen. Same ordering rule as the batched path in
+        // `remount_components_for`.
+        let old_children = whisker_runtime::view::children_of(state.page);
+        for child in &old_children {
+            whisker_runtime::view::remove_child(state.page, *child);
+        }
+        state.run_owner.dispose();
+
+        let run_owner = whisker_runtime::reactive::Owner::new(None);
+        let content = run_owner.with(|| (state.app_fn)());
+        append_child(state.page, content);
+        state.run_owner = run_owner;
+        // No flush here: the caller is `tick_frame`, whose tail
+        // (reactive_flush → flush_mounts → renderer_flush) paints the
+        // new tree and fires its on_mount callbacks in this same
+        // frame — identical to how per-component remounts land.
+    });
+}
+
+#[cfg(not(feature = "hot-reload"))]
+fn maybe_full_remount(_stats: whisker_runtime::reactive::RemountStats) {}
 
 /// Process one frame on demand. Returns `true` when the runtime is
 /// idle after this tick so the host can pause its render loop until the
@@ -442,8 +591,15 @@ fn tick_frame() {
         // changes (new elements, new signals) reflect in the
         // visible tree. State local to the remounted component is
         // lost; state held in context / above the remount point
-        // survives.
-        remount_components_for(&patched);
+        // survives. Sites whose props layout changed are refused
+        // here (re-running their stored closures would be UB) and
+        // reported through `stats.layout_changed`.
+        let stats = remount_components_for(&patched);
+        // Full-remount escalation: escalate to a full `app()` re-run when the
+        // per-component path can't express this patch (app() body
+        // edited, props layout changed, or no mounted component
+        // matched).
+        maybe_full_remount(stats);
     }
     // Dispatch core-originated events (`<list>` scroll family) queued
     // since the last frame — before the reactive flush, so handler

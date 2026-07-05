@@ -54,7 +54,7 @@ pub use arc_signal::{ArcReadSignal, ArcRwSignal, ArcWriteSignal, arc_signal};
 #[doc(hidden)]
 pub use component::__reset_pending_mount_for_tests;
 pub use component::{
-    MountId, flush_mounts, mount_component, mount_component_remountable,
+    MountId, RemountStats, flush_mounts, mount_component, mount_component_remountable,
     on_component_root_attached, on_mount, owners_for_fn, remount_components_for, unmount_component,
 };
 pub use computed::computed;

@@ -960,16 +960,109 @@ fn mount_component_remountable_body_runs_with_no_tracker_when_invoked_inside_eff
         let observed_inner = observed_clone.clone();
         // Component body must return an Element. A phantom element
         // is fine — we're not asserting on the tree shape here.
-        let _root = mount_component_remountable(0x2345_6789 as *const (), move || {
-            *observed_inner.borrow_mut() = Some(observed_tracker());
-            create_phantom_element()
-        });
+        let _root = mount_component_remountable(
+            0x2345_6789 as *const (),
+            move || {
+                *observed_inner.borrow_mut() = Some(observed_tracker());
+                create_phantom_element()
+            },
+            Box::new(|| 0),
+        );
     });
     assert_eq!(
         *observed.borrow(),
         Some(None),
         "mount_component_remountable body must run with no tracker"
     );
+}
+
+#[test]
+fn remount_components_for_reports_zero_when_nothing_can_reflect() {
+    // The return value is the full-remount trigger:
+    // `remounted == 0` must mean "this patch had no attached
+    // component to reflect through". Three shapes of zero:
+    use super::component::{RemountStats, mount_component_remountable, remount_components_for};
+    use crate::view::create_phantom_element;
+    fresh();
+
+    // (a) empty patch list — nothing to do.
+    assert_eq!(remount_components_for(&[]), RemountStats::default());
+
+    // (b) patched fns that match no registered mount site.
+    assert_eq!(
+        remount_components_for(&[0xdead_beef as *const ()]),
+        RemountStats::default(),
+    );
+
+    // (c) a matching site whose body_root was never attached to a
+    // parent (orphan) — the candidate is found but filtered out.
+    // Orphans don't count as layout_changed either: their stored
+    // closures never re-run, so there's nothing to protect.
+    let fn_ptr = 0x3456_789a as *const ();
+    let _root = mount_component_remountable(fn_ptr, create_phantom_element, Box::new(|| 0));
+    assert_eq!(remount_components_for(&[fn_ptr]), RemountStats::default());
+}
+
+#[test]
+fn remount_components_for_refuses_sites_whose_props_layout_changed() {
+    // A site's stored body closure was built against the props
+    // layout its hash getter reported at mount time. If the getter
+    // reports a different value at remount time (after a patch, it
+    // dispatches into the new dylib), re-running the stored closure
+    // would transmute mismatched capture layouts — the site must be
+    // counted in `layout_changed` and NOT remounted.
+    use super::component::{
+        RemountStats, mount_component_remountable, on_component_root_attached,
+        remount_components_for,
+    };
+    use crate::view::{append_child, create_phantom_element};
+    use std::cell::Cell;
+    fresh();
+
+    thread_local! {
+        static CURRENT_LAYOUT: Cell<u64> = const { Cell::new(1) };
+    }
+    CURRENT_LAYOUT.with(|c| c.set(1));
+
+    let fn_ptr = 0x4567_89ab as *const ();
+    let runs = Rc::new(Cell::new(0_usize));
+    let runs_clone = runs.clone();
+    let root = mount_component_remountable(
+        fn_ptr,
+        move || {
+            runs_clone.set(runs_clone.get() + 1);
+            create_phantom_element()
+        },
+        Box::new(|| CURRENT_LAYOUT.with(|c| c.get())),
+    );
+    assert_eq!(runs.get(), 1, "initial mount runs the body once");
+
+    // Attach the body root so the site has a parent (otherwise the
+    // orphan filter short-circuits before the layout gate).
+    let parent = create_phantom_element();
+    append_child(parent, root);
+    on_component_root_attached(parent, root);
+
+    // Same layout → normal in-place remount.
+    assert_eq!(
+        remount_components_for(&[fn_ptr]),
+        RemountStats {
+            remounted: 1,
+            layout_changed: 0,
+        },
+    );
+    assert_eq!(runs.get(), 2, "in-place remount re-ran the body");
+
+    // "Patch" changes the layout hash → the site must be refused.
+    CURRENT_LAYOUT.with(|c| c.set(2));
+    assert_eq!(
+        remount_components_for(&[fn_ptr]),
+        RemountStats {
+            remounted: 0,
+            layout_changed: 1,
+        },
+    );
+    assert_eq!(runs.get(), 2, "refused remount must NOT re-run the body");
 }
 
 // Note: `remount_components_for`'s body invocation reuses the

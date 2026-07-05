@@ -1,4 +1,4 @@
-//! Tier 1 (subsecond) hot-reload pipeline.
+//! Hot Reload (subsecond patching) pipeline.
 //!
 //! See `docs/hot-reload-plan.md` for the architecture. The modules
 //! land one per task ID:
@@ -27,7 +27,7 @@ pub use cache::HotpatchModuleCache;
 pub use jump_table::{DiffReport, PatchPlan, build_jump_table};
 pub use link_plan::{LinkPlan, LinkerOs, build_link_plan, linker_os_for_host};
 pub use patcher::Patcher;
-pub use runner::{run_link_plan, run_obj_plan, thin_rebuild_obj};
+pub use runner::{RustcRejectedCode, run_link_plan, run_obj_plan, thin_rebuild_obj};
 pub use shim_paths::{ShimPaths, expected_shim_paths, resolve_shim_paths};
 pub use stub_object::{
     build_stub_for_needed, compute_needed_symbols, compute_needed_symbols_multi,

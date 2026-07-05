@@ -1,4 +1,4 @@
-//! Tier 2 install + relaunch.
+//! full reload install + relaunch.
 //!
 //! After a successful cold-rebuild, the freshly-built artifact has to
 //! land on the target and start (re-bootstrapping the dev-runtime so
@@ -24,7 +24,7 @@ pub struct Installer {
     ios: Option<IosParams>,
     workspace_root: PathBuf,
     package: String,
-    /// Tier 1 capture shims for hot-reload. When `Some`, the
+    /// hot reload capture shims for hot-reload. When `Some`, the
     /// xcodebuild Command in [`ios_install_and_launch`] gets the
     /// `RUSTC_WORKSPACE_WRAPPER` + `CARGO_TARGET_*_LINKER` +
     /// `CARGO_TARGET_*_RUSTFLAGS` env vars set so the Step-7
@@ -40,7 +40,7 @@ pub struct Installer {
     /// with `["whisker/hot-reload"]` so the dev-runtime WebSocket
     /// client gets compiled into the user dylib — without it the app
     /// never sends its `aslr_reference` and every change falls back to
-    /// a Tier 2 cold rebuild.
+    /// a full reload.
     features: Vec<String>,
     /// Host port the dev-server's WebSocket is bound to (= the port of
     /// `Config::bind_addr`). The device must reach this exact port:
@@ -448,16 +448,16 @@ async fn ios_install_and_launch(
     // WHISKER_IOS_SPM_URL), so the old `WHISKER_IOS_RUNTIME` /
     // `WHISKER_IOS_MACROS` env injection that pointed module manifests at
     // `platforms/ios` is gone — modules no longer read it.
-    // Tier 1 capture wiring (hot-reload). Pre-Step-7 the dev-server
+    // hot reload capture wiring (hot-reload). Pre-Step-7 the dev-server
     // ran a separate `build_xcframework_with` call to prime the rustc
     // + linker capture caches before xcodebuild touched the framework.
     // Step 7's Build Phase produces the framework during xcodebuild
     // itself, so the capture envs need to ride along here — they
     // propagate xcodebuild → shell Build Phase → `whisker build-ios`
     // subprocess → cargo, where the shims actually intercept rustc +
-    // linker. Capture is opt-in (`HotPatchMode::Tier1Subsecond`); when
+    // linker. Capture is opt-in (`HotPatchMode::HotReload`); when
     // `None`, xcodebuild runs without the shims and the loop falls
-    // back to Tier 2 cold rebuilds.
+    // back to full reloads.
     if let Some(c) = capture {
         let sim_triple = "aarch64-apple-ios-sim";
         for (k, v) in whisker_build::capture_env_vars_for_triple(c, Some(sim_triple)) {
@@ -470,7 +470,7 @@ async fn ios_install_and_launch(
     // before invoking the binary. `whisker run` puts `whisker/hot-reload`
     // here so the user dylib carries the dev-runtime WebSocket client;
     // without that the app never reports `aslr_reference` and every
-    // patch falls through to a Tier 2 cold rebuild + relaunch.
+    // patch falls through to a full reload + relaunch.
     if !features.is_empty() {
         xc_cmd.env("WHISKER_FEATURES", features.join(" "));
     }

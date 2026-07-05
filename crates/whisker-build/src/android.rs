@@ -1,5 +1,5 @@
 //! Android cargo + gradle orchestration. Shared by `whisker-cli`'s
-//! the `whisker-build` binary (gradle plugin path) and `whisker-dev-server`'s Tier 2 cold rebuild
+//! the `whisker-build` binary (gradle plugin path) and `whisker-dev-server`'s full reload
 //! path.
 //!
 //! Three phases:
@@ -10,7 +10,7 @@
 //!    `-Wl,--exclude-libs,ALL` for `cdylib`, which strips every
 //!    mangled Rust symbol from `.dynsym`. The `dylib` flavour keeps
 //!    them — `System.loadLibrary` doesn't care which flavour, but
-//!    the symmetric Tier 1 hot-patch path (dev mode) does. Production
+//!    the symmetric hot-reload patch path (dev mode) does. Production
 //!    builds use the same shape for consistency.
 //!
 //! 2. [`stage_jni_libs`] — drop the `.so` plus the matching
@@ -23,8 +23,8 @@
 //!    against the generated project. Output is `app-{release,debug}.apk`
 //!    under `app/build/outputs/apk/<profile>/`.
 //!
-//! Tier 1 fat-build capture (see [`crate::capture`]) is opt-in via
-//! the `capture` field on [`CargoBuild`] — dev-server's Tier 2
+//! hot reload fat-build capture (see [`crate::capture`]) is opt-in via
+//! the `capture` field on [`CargoBuild`] — dev-server's full reload
 //! cold rebuild passes `Some(&shims)`; gradle-plugin and direct gradle invocations pass `None`.
 
 use anyhow::{Context, Result, anyhow};
@@ -161,10 +161,10 @@ pub struct CargoBuild<'a> {
     /// Cargo features to forward (`--features <each>`). Empty for prod.
     pub features: &'a [String],
     /// `Some` → fold rustc/linker shim env vars into the cargo
-    /// invocation, populating the Tier 1 capture caches. `None` →
+    /// invocation, populating the hot reload capture caches. `None` →
     /// plain build. Dev-server passes `Some(&shims)` for its initial
-    /// fat build and Tier 2 cold rebuilds; gradle-plugin invocations pass
-    /// `None` (no Tier 1 in prod).
+    /// fat build and full reloads; gradle-plugin invocations pass
+    /// `None` (no hot reload in prod).
     pub capture: Option<&'a CaptureShims>,
 }
 
@@ -217,7 +217,7 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     cmd.env("ANDROID_NDK_HOME", &b.toolchain.ndk);
     cmd.current_dir(b.workspace_root);
 
-    // Tier 1 capture shims (rustc-shim + linker-shim + cache dirs).
+    // hot reload capture shims (rustc-shim + linker-shim + cache dirs).
     // `CARGO_TARGET_<triple>_LINKER` set above is overridden here so
     // the linker shim wins for this triple — the shim forwards to
     // `WHISKER_REAL_LINKER` after writing its capture JSON. Host-only

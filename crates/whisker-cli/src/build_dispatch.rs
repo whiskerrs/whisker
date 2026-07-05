@@ -173,15 +173,15 @@ pub fn run_ios(args: IosArgs) -> Result<()> {
     })?;
 
     // `configuration` is currently informational — the iOS cargo build
-    // is always release-tier (subsecond's Tier 1 capture wants the same
+    // is always release-tier (subsecond's hot reload capture wants the same
     // optimised codegen prod ships). Logged so a Debug-mode Xcode build
     // surprised by release optimisation has the mismatch visible.
-    eprintln!(
-        "[whisker build-ios] published {} (configuration={}, archs=[{}])",
+    whisker_build::ui::info(format!(
+        "published {} (configuration={}, archs=[{}])",
         fw.display(),
         args.configuration,
         args.archs,
-    );
+    ));
     Ok(())
 }
 
@@ -222,10 +222,10 @@ pub fn run_android(args: AndroidArgs) -> Result<()> {
             )
         })?;
 
-    eprintln!(
-        "[whisker build-android] {} module(s) discovered (gradle-subproject wiring is the Gradle plugin's job)",
+    whisker_build::ui::info(format!(
+        "{} module(s) discovered (gradle-subproject wiring is the Gradle plugin's job)",
         modules.len(),
-    );
+    ));
     Ok(())
 }
 

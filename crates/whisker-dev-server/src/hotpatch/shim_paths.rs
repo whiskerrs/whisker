@@ -21,7 +21,7 @@
 //!      the workspace, then re-check. Only meaningful in-workspace
 //!      (where `whisker-cli` is a member); for external users step 1
 //!      already succeeded. A build failure surfaces as `Err(_)` and the
-//!      caller falls back to Tier 2.
+//!      caller falls back to full reload.
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -84,7 +84,7 @@ fn shim_paths_beside_current_exe() -> Option<ShimPaths> {
 pub fn resolve_shim_paths(workspace_root: &Path) -> Result<ShimPaths> {
     // 1. Beside the running `whisker` binary — the crates.io install
     //    location, and the in-workspace `target/debug` location once
-    //    built. Resolving here is what keeps Tier 1 hot reload working
+    //    built. Resolving here is what keeps hot reload working
     //    for `cargo install`-only users (no whisker-cli workspace member
     //    to `cargo build`).
     if let Some(paths) = shim_paths_beside_current_exe() {

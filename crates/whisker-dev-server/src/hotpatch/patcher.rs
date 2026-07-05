@@ -236,7 +236,7 @@ impl Patcher {
         // (Linux) satisfies the patch's references against the
         // already-loaded test process — same as before Option B. Real
         // device dispatch always goes through the stub branch since
-        // `lib.rs::run` skips Tier 1 entirely when no aslr_reference
+        // `lib.rs::run` skips hot reload entirely when no aslr_reference
         // has been reported.
         let extras: Vec<PathBuf> = if aslr_reference == 0 {
             // Test-fixture path: even without a stub we still need to

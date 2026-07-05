@@ -65,6 +65,17 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
     let fn_name = &func.sig.ident;
 
+    // Deterministic hash of the app fn's token stream. Baked into a
+    // generated fn below so the hot-reload runtime can ask "did the
+    // `app()` source change in this patch?" — the host binary and a
+    // patch dylib each carry the hash of the source they were built
+    // from, and the runtime reads the patch's value through the same
+    // subsecond dispatch as the app body itself. FNV-1a over the
+    // token string: stable across compilations of identical tokens
+    // (unlike `DefaultHasher`'s unspecified algorithm), and token-
+    // level means formatting-only edits don't shift it.
+    let body_hash = fnv1a64(&quote!(#func).to_string());
+
     let expanded = quote! {
         #func
 
@@ -72,12 +83,30 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // routes through `whisker::__main_runtime::call_user_app`, which
         // is `#[inline(always)]` so the wrapper body lands in the user
         // crate's compilation unit. Whether the wrapper actually
-        // dispatches through `subsecond::call` (Tier 1 / hot-reload
+        // dispatches through `subsecond::call` (hot reload / hot-reload
         // on) or just invokes `#fn_name()` directly (release) is
         // decided by `whisker`'s own `hot-reload` feature flag — the
         // user crate doesn't need a matching feature of its own.
         fn __whisker_app_dispatch() -> ::whisker::runtime::view::Element {
             ::whisker::__main_runtime::call_user_app(#fn_name)
+        }
+
+        // Source-hash pair for the full-remount trigger. The
+        // inner fn returns the compile-time hash of the `app` fn's
+        // tokens; the dispatch wrapper routes through
+        // `call_app_hash` (subsecond `call` when hot-reload is on),
+        // so after a patch the runtime reads the *patch dylib's*
+        // hash. A changed value means the user edited `app()` itself
+        // — something no `#[component]` remount can reflect — and
+        // the bootstrap re-runs `app()` from scratch.
+        #[doc(hidden)]
+        fn __whisker_app_body_hash() -> u64 {
+            #body_hash
+        }
+
+        #[doc(hidden)]
+        fn __whisker_app_hash_dispatch() -> u64 {
+            ::whisker::__main_runtime::call_app_hash(__whisker_app_body_hash)
         }
 
         // `#[unsafe(no_mangle)]` (not bare `#[no_mangle]`): in edition
@@ -99,6 +128,7 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 request_frame,
                 request_frame_data,
                 __whisker_app_dispatch,
+                __whisker_app_hash_dispatch,
             );
         }
 
@@ -132,6 +162,22 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     expanded.into()
+}
+
+/// FNV-1a 64-bit over a string. Used for the `#[whisker::main]`
+/// app-body hash and the `#[component]` props-layout hash: must
+/// produce the same value for the same token string in every rustc
+/// process (host fat build AND thin patch build), which rules out
+/// `DefaultHasher` (algorithm unspecified).
+pub(crate) fn fnv1a64(s: &str) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
+    let mut h = FNV_OFFSET;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h
 }
 
 /// Fine-grained renderer macro. Emits imperative element-creation

@@ -22,6 +22,28 @@ use super::link_plan::{LinkPlan, LinkerOs, build_link_plan};
 use super::thin_build::{ObjBuildPlan, build_obj_plan};
 use super::wrapper::CapturedRustcInvocation;
 
+/// Marker error: rustc was spawned fine and exited 1 — i.e. it
+/// *rejected the code* and printed its own diagnostics (stderr is
+/// inherited, so they're already on the dev terminal). The change
+/// loop downcasts to this to distinguish "the user's edit doesn't
+/// compile" (a full reload cargo build would fail identically after a
+/// much longer wait — don't bother) from infrastructure failures
+/// like a missing capture cache or a broken link line (where a cold
+/// rebuild genuinely can recover).
+///
+/// Exit codes other than 1 (ICE = 101, killed by signal) stay on the
+/// generic error path: they don't prove anything about the code.
+#[derive(Debug)]
+pub struct RustcRejectedCode;
+
+impl std::fmt::Display for RustcRejectedCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "rustc rejected the code (exit 1); diagnostics above")
+    }
+}
+
+impl std::error::Error for RustcRejectedCode {}
+
 /// Spawn rustc with `plan.args` from `cwd`. On success, returns
 /// the path of the emitted object (= `plan.expected_object`).
 ///
@@ -30,13 +52,21 @@ use super::wrapper::CapturedRustcInvocation;
 pub async fn run_obj_plan(plan: &ObjBuildPlan, rustc_path: &Path, cwd: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(&plan.output_dir)
         .with_context(|| format!("create out dir {}", plan.output_dir.display()))?;
+    // `plan.envs` replays the `CARGO_*` / `OUT_DIR` vars captured
+    // during the fat build — without them any `env!("CARGO_PKG_*")`
+    // in the user's code fails to compile under this raw (cargo-less)
+    // rustc spawn.
     let status = tokio::process::Command::new(rustc_path)
         .args(&plan.args)
+        .envs(&plan.envs)
         .current_dir(cwd)
         .status()
         .await
         .with_context(|| format!("spawn {}", rustc_path.display()))?;
     if !status.success() {
+        if status.code() == Some(1) {
+            return Err(anyhow::Error::new(RustcRejectedCode));
+        }
         anyhow::bail!(
             "rustc exited {} during obj rebuild (out_dir={})",
             status,
@@ -168,10 +198,15 @@ mod tests {
     // ----- run_obj_plan ------------------------------------------------
 
     #[tokio::test]
-    async fn run_obj_plan_surfaces_rustc_failure_with_path_context() {
-        // Plan that will fail because the source file doesn't exist.
+    async fn run_obj_plan_reports_rejected_code_when_rustc_exits_1() {
+        // Plan that will fail because the source file doesn't exist —
+        // rustc runs, prints a diagnostic, and exits 1, which is the
+        // same shape as a compile error in real user code. The change
+        // loop relies on downcasting to `RustcRejectedCode` here to
+        // skip the pointless full reload fallback.
         let dir = unique_tempdir();
         let plan = ObjBuildPlan {
+            envs: Default::default(),
             args: s(&[
                 "--edition=2021",
                 "--crate-name",
@@ -189,10 +224,46 @@ mod tests {
         };
         let res = run_obj_plan(&plan, Path::new("rustc"), &dir).await;
         let err = res.unwrap_err();
-        let msg = format!("{err:#}");
         assert!(
-            msg.contains("rustc exited") || msg.contains("spawn"),
-            "msg should mention rustc exit or spawn: {msg}",
+            err.downcast_ref::<RustcRejectedCode>().is_some(),
+            "exit 1 should downcast to RustcRejectedCode: {err:#}",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn run_obj_plan_compile_error_downcasts_through_context() {
+        // Same as above but with a real source file containing a type
+        // error, and with a `.context(...)` layer like the Patcher
+        // adds — downcast_ref must still find the marker through the
+        // context chain.
+        let dir = unique_tempdir();
+        let src = dir.join("bad.rs");
+        std::fs::write(&src, "pub fn broken() -> u32 { \"not a number\" }\n").unwrap();
+        let plan = ObjBuildPlan {
+            envs: Default::default(),
+            args: s(&[
+                "--edition=2021",
+                "--crate-name",
+                "bad",
+                "--crate-type",
+                "rlib",
+                "--out-dir",
+                dir.to_string_lossy().as_ref(),
+                src.to_string_lossy().as_ref(),
+                "--emit",
+                &format!("obj={}/bad.o", dir.display()),
+            ]),
+            output_dir: dir.clone(),
+            expected_object: dir.join("bad.o"),
+        };
+        let res = run_obj_plan(&plan, Path::new("rustc"), &dir)
+            .await
+            .context("rustc --emit=obj for thin patch");
+        let err = res.unwrap_err();
+        assert!(
+            err.downcast_ref::<RustcRejectedCode>().is_some(),
+            "compile error should downcast through context: {err:#}",
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -201,6 +272,7 @@ mod tests {
     async fn run_obj_plan_errors_when_rustc_binary_doesnt_exist() {
         let dir = unique_tempdir();
         let plan = ObjBuildPlan {
+            envs: Default::default(),
             args: vec![],
             output_dir: dir.clone(),
             expected_object: dir.join("demo.o"),

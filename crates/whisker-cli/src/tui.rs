@@ -29,7 +29,7 @@
 //!    whisker run · iOS Simulator · rs.example.bar · building · 4.1s
 //!    ⠋ xcodebuild …
 //!
-//!    q  quit
+//!    r  hot reload   R  full reload   q  quit
 //! ──────────────────────────────────────────────────────────────────
 //! ```
 //!
@@ -108,8 +108,8 @@ pub enum AppPhase {
     /// dev-server bound, initial build succeeded, watching for source
     /// changes.
     Idle,
-    /// Tier 1 hot-patch in flight. Phase exit is signalled by
-    /// `Event::PatchSent` or a Tier 2 fallback's `Event::BuildingFull`.
+    /// hot-reload patch in flight. Phase exit is signalled by
+    /// `Event::PatchSent` or a full reload fallback's `Event::BuildingFull`.
     Patching { started_at: Instant },
     /// Build failed. The live region surfaces the cause and the cli
     /// is about to exit non-zero.
@@ -159,6 +159,15 @@ pub struct LiveState {
     /// blocks forever, so without a hard exit `q` would tear down the
     /// TUI but leave the process running.
     pub user_initiated_quit: bool,
+    /// Persistent "press R to Full Reload" banner. Set by
+    /// `Event::FullReloadRequired` (the dev loop hit a change it
+    /// can't hot-reload), cleared when a Full Reload actually starts
+    /// (`Event::BuildingFull`).
+    pub full_reload_needed: Option<String>,
+    /// Channel into the dev loop for the `r` / `R` shortcuts. `None`
+    /// until the cli wires the dev-server up (early keypresses
+    /// during setup are dropped).
+    pub command_tx: Option<tokio::sync::mpsc::UnboundedSender<whisker_dev_server::DevCommand>>,
 }
 
 impl LiveState {
@@ -175,6 +184,8 @@ impl LiveState {
             last_patch: None,
             should_quit: false,
             user_initiated_quit: false,
+            full_reload_needed: None,
+            command_tx: None,
         }
     }
 }
@@ -239,6 +250,9 @@ pub fn apply_event(
             // ordering so we don't race the "▶ Initial build" entry.
         }
         Event::BuildingFull => {
+            // A Full Reload is running — the pending prompt (if any)
+            // is being acted on.
+            state.full_reload_needed = None;
             let kind = match state.phase {
                 AppPhase::Setup | AppPhase::Initializing => BuildKind::Initial,
                 _ => BuildKind::Rebuild,
@@ -308,8 +322,8 @@ pub fn apply_event(
             // assembling the hot patch (cargo + symbol-table diff
             // + ASLR rebase, the wall-clock-heavy bit of the loop).
             // `Event::PatchSent` flips back to Idle on completion;
-            // `Event::BuildingFull` covers the Tier 2 fallback case
-            // where Tier 1 errored out mid-build and the loop fell
+            // `Event::BuildingFull` covers the full reload fallback case
+            // where hot reload errored out mid-build and the loop fell
             // through to a cold rebuild — that event resets phase
             // to Building, overriding this Patching state.
             state.phase = AppPhase::Patching {
@@ -321,6 +335,20 @@ pub fn apply_event(
                 let elapsed = started_at.elapsed();
                 state.last_patch = Some(fmt_elapsed(elapsed));
             }
+            state.phase = AppPhase::Idle;
+            state.current_step = None;
+        }
+        Event::FullReloadRequired { reason } => {
+            // The dev loop declined to act on a change (or a hot
+            // reload failed) — nothing is running, the user decides
+            // when to pay for a Full Reload. Persistent banner in
+            // the live region; the dev-server's own `ui::warn` line
+            // already landed in scrollback via captured stderr.
+            state.full_reload_needed = Some(reason.clone());
+            // A `PatchBuilding` may have flipped the phase to
+            // Patching before the loop discovered it couldn't
+            // proceed — return to Idle so the spinner doesn't run
+            // forever.
             state.phase = AppPhase::Idle;
             state.current_step = None;
         }
@@ -418,6 +446,16 @@ impl TuiHandle {
 
     pub fn request_quit(&self) {
         self.with(|s| s.should_quit = true);
+    }
+
+    /// Wire the `r` / `R` shortcuts to the dev loop. Called by the
+    /// cli once the dev-server's command channel exists; presses
+    /// before that are dropped silently.
+    pub fn set_command_sender(
+        &self,
+        tx: tokio::sync::mpsc::UnboundedSender<whisker_dev_server::DevCommand>,
+    ) {
+        self.with(|s| s.command_tx = Some(tx));
     }
 
     /// Test-only: pull a snapshot of the live state. Avoid in
@@ -547,6 +585,16 @@ impl Tui {
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 self.user_quit()
                             }
+                            // Reloads are explicit, keyboard-driven
+                            // actions: `r` pushes a hot-reload patch,
+                            // `R` (shift) runs the Full Reload the
+                            // dev loop never triggers on its own.
+                            KeyCode::Char('r') => {
+                                self.send_command(whisker_dev_server::DevCommand::HotReload)
+                            }
+                            KeyCode::Char('R') => {
+                                self.send_command(whisker_dev_server::DevCommand::FullReload)
+                            }
                             _ => {}
                         }
                     }
@@ -592,6 +640,17 @@ impl Tui {
             }
         }
         Ok(())
+    }
+
+    /// Forward a reload shortcut to the dev loop. Dropped silently
+    /// when the dev-server hasn't wired its command channel yet
+    /// (setup phase) or has shut down.
+    fn send_command(&self, cmd: whisker_dev_server::DevCommand) {
+        if let Ok(s) = self.live.lock() {
+            if let Some(tx) = &s.command_tx {
+                let _ = tx.send(cmd);
+            }
+        }
     }
 
     /// User-initiated quit (q / Esc / Ctrl-C from the TUI).
@@ -947,22 +1006,54 @@ fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>>
         lines.push(Line::from(""));
     }
 
-    // Spacer + footer hint. The key chip uses `White` (not `Black`)
-    // on the dark-gray background so it stays legible in
-    // dark-themed terminals where ANSI color 0 (`Color::Black`)
-    // resolves to the terminal's *background* hue and visually
-    // disappears against the chip's fill.
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::raw(" "),
+    // Banner row: persistent "press R" prompt while the dev loop is
+    // waiting on the user for a Full Reload. Doubles as the spacer
+    // row when no prompt is pending so the layout doesn't jiggle.
+    match &state.full_reload_needed {
+        Some(reason) => {
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    format!("⚠ {reason} — press "),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::styled(
+                    " R ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" to Full Reload", Style::default().fg(Color::Yellow)),
+            ]));
+        }
+        None => lines.push(Line::from("")),
+    }
+
+    // Footer hint. The key chips use `White` (not `Black`) on the
+    // dark-gray background so they stay legible in dark-themed
+    // terminals where ANSI color 0 (`Color::Black`) resolves to the
+    // terminal's *background* hue and visually disappears against
+    // the chip's fill.
+    let key_chip = |label: &str| {
         Span::styled(
-            " q ",
+            format!(" {label} "),
             Style::default()
                 .fg(Color::White)
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  quit", Style::default().fg(Color::DarkGray)),
+        )
+    };
+    let key_desc =
+        |text: &str| Span::styled(text.to_string(), Style::default().fg(Color::DarkGray));
+    lines.push(Line::from(vec![
+        Span::raw(" "),
+        key_chip("r"),
+        key_desc("  hot reload   "),
+        key_chip("R"),
+        key_desc("  full reload   "),
+        key_chip("q"),
+        key_desc("  quit"),
     ]));
 
     // Truncate / pad to LIVE_HEIGHT so the viewport renders cleanly.
@@ -1201,7 +1292,7 @@ mod tests {
         assert!(matches!(st.phase, AppPhase::Idle));
         assert!(st.last_patch.is_some());
         // PhaseDone is no longer emitted on PatchSent — the dev-server
-        // already emits `✓ patch tier 1 …` via `ui::step` and a
+        // already emits `✓ patch hot reload …` via `ui::step` and a
         // duplicate "Hot patch" summary row would just clutter
         // scrollback.
         assert!(h.is_empty());
@@ -1226,6 +1317,90 @@ mod tests {
         let h = drain(&mut st, &Event::BuildFailed("link error".into()));
         assert!(matches!(st.phase, AppPhase::Failed { .. }));
         assert!(h.iter().any(|i| matches!(i, HistoryItem::Failure(_))));
+    }
+
+    #[test]
+    fn full_reload_required_sets_banner_and_returns_to_idle() {
+        let mut st = s();
+        // A hot-reload attempt flips into Patching first, then the
+        // dev loop discovers it can't proceed.
+        drain(&mut st, &Event::PatchBuilding);
+        let h = drain(
+            &mut st,
+            &Event::FullReloadRequired {
+                reason: "Cargo.toml changed".into(),
+            },
+        );
+        assert_eq!(st.full_reload_needed.as_deref(), Some("Cargo.toml changed"));
+        assert!(
+            matches!(st.phase, AppPhase::Idle),
+            "spinner must not keep running after a declined reload"
+        );
+        // The dev-server's own ui::warn line reaches scrollback via
+        // captured stderr — no duplicate history row from the event.
+        assert!(h.is_empty());
+    }
+
+    #[test]
+    fn building_full_clears_the_full_reload_banner() {
+        let mut st = s();
+        drain(
+            &mut st,
+            &Event::FullReloadRequired {
+                reason: "Cargo.toml changed".into(),
+            },
+        );
+        assert!(st.full_reload_needed.is_some());
+        drain(&mut st, &Event::BuildingFull);
+        assert!(
+            st.full_reload_needed.is_none(),
+            "starting a Full Reload acts on the prompt"
+        );
+    }
+
+    #[test]
+    fn patch_sent_keeps_the_full_reload_banner() {
+        // A successful hot reload does NOT satisfy a pending
+        // dependency-graph prompt — the new dep still isn't on the
+        // device until a Full Reload runs.
+        let mut st = s();
+        drain(
+            &mut st,
+            &Event::FullReloadRequired {
+                reason: "Cargo.toml changed".into(),
+            },
+        );
+        drain(&mut st, &Event::PatchBuilding);
+        drain(&mut st, &Event::PatchSent);
+        assert!(st.full_reload_needed.is_some());
+    }
+
+    #[test]
+    fn build_live_lines_renders_full_reload_banner() {
+        let mut st = s();
+        st.full_reload_needed = Some("Cargo.toml changed".into());
+        let lines = build_live_lines(&st, 0);
+        let rendered = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|sp| sp.content.to_string()))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(rendered.contains("Cargo.toml changed"));
+        assert!(rendered.contains("Full Reload"));
+    }
+
+    #[test]
+    fn build_live_lines_footer_lists_reload_shortcuts() {
+        let st = s();
+        let lines = build_live_lines(&st, 0);
+        let rendered = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|sp| sp.content.to_string()))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(rendered.contains("hot reload"));
+        assert!(rendered.contains("full reload"));
+        assert!(rendered.contains("quit"));
     }
 
     #[test]

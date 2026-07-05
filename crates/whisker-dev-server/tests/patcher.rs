@@ -8,7 +8,7 @@
 //!      `calculate` (a mangled function) on both sides and emit a
 //!      JumpTable entry for it?"
 //!
-//! If the answer is no, Tier 1 hot-patch is impossible for any Rust
+//! If the answer is no, hot-reload patch is impossible for any Rust
 //! function that isn't `#[no_mangle]` — which is approximately every
 //! Rust function in a real Whisker app. We need to prove yes here, in
 //! isolation, before wiring Patcher into the dev loop (I4g-7).
@@ -95,6 +95,7 @@ fn captured_rustc_for_fixture(lib_rs: &Path) -> CapturedRustcInvocation {
             "--emit=link".into(),
             lib_rs.to_string_lossy().into(),
         ],
+        envs: Default::default(),
         timestamp_micros: 0,
     }
 }
