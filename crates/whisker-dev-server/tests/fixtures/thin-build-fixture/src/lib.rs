@@ -13,7 +13,7 @@
 //!   enough that build → edit → build produces the same symbol
 //!   name on both sides so build_jump_table can match them?"
 //!   Used by the `patcher` integration test as the load-bearing
-//!   check that Tier 1 hot-patch is even possible for ordinary
+//!   check that hot-reload patch is even possible for ordinary
 //!   Rust functions.
 
 #[unsafe(no_mangle)]

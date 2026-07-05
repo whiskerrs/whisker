@@ -1,11 +1,11 @@
-//! Tier 2 cold rebuild: produce a fresh artifact + (re)install it on
+//! full reload: produce a fresh artifact + (re)install it on
 //! the active [`Target`].
 //!
 //! Delegates the cargo + gradle / xcodebuild orchestration to
 //! `whisker-build`, which is shared with `whisker-cli`'s `whisker
 //! build` subcommand. When `with_capture` is set, the cargo step
 //! doubles as a **fat build** that fills the rustc + linker capture
-//! caches the Tier 1 hot-patch pipeline replays later.
+//! caches the hot-reload patch pipeline replays later.
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -13,10 +13,10 @@ use std::path::PathBuf;
 use crate::Target;
 use whisker_build::CaptureShims;
 
-/// Builder for cold (Tier 2) rebuilds. Tier 1 hot-patches live in
+/// Builder for cold (full reload) rebuilds. hot-reload patches live in
 /// [`crate::hotpatch::Patcher`] — Builder is only invoked for
 /// dependency-shaped changes (Cargo.toml edits) and as a fallback
-/// when Tier 1 errors.
+/// when hot reload errors.
 pub struct Builder {
     workspace_root: PathBuf,
     /// User crate dir (= `Cargo.toml` parent). Needed to find
@@ -27,8 +27,8 @@ pub struct Builder {
     /// Cargo features forwarded to whichever step compiles the user
     /// crate. The dev loop turns on `whisker/hot-reload` here.
     features: Vec<String>,
-    /// `Some` → fat build (Tier 1 capture caches get populated).
-    /// `None` → plain Tier 2.
+    /// `Some` → fat build (hot reload capture caches get populated).
+    /// `None` → plain full reload.
     capture: Option<CaptureShims>,
 }
 
@@ -98,7 +98,7 @@ impl Builder {
         // Mirrors what iOS already does: cargo runs only inside
         // xcodebuild's Build Phase; the dev-server's `build_ios_simulator`
         // is module-source-staging only. Aligning Android to the same
-        // shape halves the wall-clock of every Tier 2 rebuild on a
+        // shape halves the wall-clock of every full reload on a
         // cache-warm cargo and removes one race against the TUI viewport.
         let ws = self.workspace_root.clone();
         let crate_dir = self.crate_dir.clone();
@@ -135,7 +135,7 @@ impl Builder {
         //
         // Pre-Step-7 this method also ran `build_xcframework_with` to
         // produce `target/whisker-driver/WhiskerDriver.xcframework`
-        // and to prime the Tier 1 capture shims. The xcframework is
+        // and to prime the hot reload capture shims. The xcframework is
         // no longer referenced by anything (Step 7 dropped the SPM
         // binaryTarget) so its output was wasted; the capture wiring
         // moved to `installer.rs` where it gets applied as env vars

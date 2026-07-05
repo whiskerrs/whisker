@@ -36,6 +36,13 @@ use crate::Target;
 pub struct CapturedRustcInvocation {
     pub crate_name: String,
     pub args: Vec<String>,
+    /// `CARGO_*` / `OUT_DIR` environment captured alongside the argv
+    /// (see the shim's `capture_envs_from`). Replayed on the thin
+    /// rebuild so `env!("CARGO_PKG_*")` still compiles without cargo.
+    /// `#[serde(default)]` keeps caches written by an older shim
+    /// loadable — they just replay nothing.
+    #[serde(default)]
+    pub envs: std::collections::BTreeMap<String, String>,
     pub timestamp_micros: u128,
 }
 
@@ -49,8 +56,8 @@ pub struct CapturedLinkerInvocation {
 }
 
 /// Optional linker-shim wiring for [`run_fat_build`]. Provide all
-/// three when you want the linker invocation captured (Tier 1 needs
-/// it); leave this `None` for plain Tier 2 / Tier 0 fat builds.
+/// three when you want the linker invocation captured (hot reload needs
+/// it); leave this `None` for plain non-capturing fat builds.
 #[derive(Debug, Clone)]
 pub struct LinkerCaptureConfig<'a> {
     /// Path to `whisker-linker-shim`. The shim is the value rustc sees
@@ -72,7 +79,7 @@ pub struct LinkerCaptureConfig<'a> {
 /// When `linker_capture` is `Some(_)`, the build *also* installs the
 /// linker shim by setting `RUSTFLAGS=-Clinker=<shim>` plus the
 /// shim's two env vars. The two captures (rustc-args and linker-args)
-/// then both fill up during the same fat build, and Tier 1's
+/// then both fill up during the same fat build, and hot reload's
 /// thin_rebuild_obj can replay them together.
 ///
 /// `target` is currently a hint only; the cargo command we run is the
@@ -375,6 +382,7 @@ mod tests {
                     "--target",
                     "aarch64-apple-ios-sim",
                 ]),
+                envs: Default::default(),
                 timestamp_micros: 100,
             },
         );
@@ -383,6 +391,7 @@ mod tests {
             &CapturedRustcInvocation {
                 crate_name: "podcast".into(),
                 args: s(&["--crate-name", "podcast", "--target", "x86_64-apple-ios"]),
+                envs: Default::default(),
                 timestamp_micros: 200,
             },
         );
@@ -402,6 +411,7 @@ mod tests {
             &CapturedRustcInvocation {
                 crate_name: "foo".into(),
                 args: s(&["--crate-name", "foo", "src/lib.rs"]),
+                envs: Default::default(),
                 timestamp_micros: 100,
             },
         );
@@ -410,6 +420,7 @@ mod tests {
             &CapturedRustcInvocation {
                 crate_name: "bar".into(),
                 args: s(&["--crate-name", "bar", "src/lib.rs"]),
+                envs: Default::default(),
                 timestamp_micros: 200,
             },
         );
@@ -431,6 +442,7 @@ mod tests {
             &CapturedRustcInvocation {
                 crate_name: "foo".into(),
                 args: s(&["--old-args"]),
+                envs: Default::default(),
                 timestamp_micros: 100,
             },
         );
@@ -440,6 +452,7 @@ mod tests {
             &CapturedRustcInvocation {
                 crate_name: "foo".into(),
                 args: s(&["--newer-args", "--more"]),
+                envs: Default::default(),
                 timestamp_micros: 200,
             },
         );
@@ -453,6 +466,46 @@ mod tests {
     }
 
     #[test]
+    fn load_captured_args_accepts_pre_envs_cache_files() {
+        // Cache files written by a shim from before env capture have
+        // no `envs` key — `#[serde(default)]` must let them load with
+        // an empty map instead of erroring the whole cache read.
+        let dir = unique_tempdir();
+        std::fs::write(
+            dir.join("old-1.json"),
+            r#"{ "crate_name": "old", "args": ["--crate-name", "old"], "timestamp_micros": 1 }"#,
+        )
+        .unwrap();
+
+        let map = load_captured_args(&dir, None).unwrap();
+        assert_eq!(map.len(), 1);
+        assert!(map["old"].envs.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_captured_args_round_trips_envs() {
+        let dir = unique_tempdir();
+        let mut envs = std::collections::BTreeMap::new();
+        envs.insert("CARGO_PKG_VERSION".to_string(), "0.1.0".to_string());
+        write_invocation(
+            &dir,
+            &CapturedRustcInvocation {
+                crate_name: "foo".into(),
+                args: vec![],
+                envs: envs.clone(),
+                timestamp_micros: 1,
+            },
+        );
+
+        let map = load_captured_args(&dir, None).unwrap();
+        assert_eq!(map["foo"].envs, envs);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn load_captured_args_skips_non_json_files() {
         let dir = unique_tempdir();
         std::fs::write(dir.join("README.md"), "not json").unwrap();
@@ -461,6 +514,7 @@ mod tests {
             &CapturedRustcInvocation {
                 crate_name: "foo".into(),
                 args: vec![],
+                envs: Default::default(),
                 timestamp_micros: 1,
             },
         );
@@ -481,6 +535,7 @@ mod tests {
             &CapturedRustcInvocation {
                 crate_name: "good".into(),
                 args: vec![],
+                envs: Default::default(),
                 timestamp_micros: 1,
             },
         );
@@ -502,6 +557,7 @@ mod tests {
             CapturedRustcInvocation {
                 crate_name: "x".into(),
                 args: vec![],
+                envs: Default::default(),
                 timestamp_micros: 1,
             },
         );
@@ -516,6 +572,7 @@ mod tests {
             CapturedRustcInvocation {
                 crate_name: "x".into(),
                 args: s(&["old"]),
+                envs: Default::default(),
                 timestamp_micros: 5,
             },
         );
@@ -524,6 +581,7 @@ mod tests {
             CapturedRustcInvocation {
                 crate_name: "x".into(),
                 args: s(&["new"]),
+                envs: Default::default(),
                 timestamp_micros: 10,
             },
         );
@@ -538,6 +596,7 @@ mod tests {
             CapturedRustcInvocation {
                 crate_name: "x".into(),
                 args: s(&["incumbent"]),
+                envs: Default::default(),
                 timestamp_micros: 10,
             },
         );
@@ -546,6 +605,7 @@ mod tests {
             CapturedRustcInvocation {
                 crate_name: "x".into(),
                 args: s(&["equal"]),
+                envs: Default::default(),
                 timestamp_micros: 10,
             },
         );
@@ -554,6 +614,7 @@ mod tests {
             CapturedRustcInvocation {
                 crate_name: "x".into(),
                 args: s(&["older"]),
+                envs: Default::default(),
                 timestamp_micros: 1,
             },
         );

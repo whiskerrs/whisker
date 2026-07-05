@@ -13,7 +13,7 @@
 //!   ⚠  simctl       target already booted
 //!
 //! ──── Patch ───────────────────────────────────
-//!   ✓  patch        tier 1                  730ms
+//!   ✓  patch        hot reload                  730ms
 //! ```
 //!
 //! ## Behaviour modes

@@ -169,6 +169,54 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         })
         .collect();
 
+    // Force the subsecond-dispatched inner closure to capture EVERY
+    // prop, not just the ones `#block` happens to reference. A `move`
+    // closure captures each path it mentions by value, so touching
+    // all props here pins the closure's environment layout to the
+    // props signature alone. Without this, an edit that merely
+    // *starts using* a previously-unused prop changes the capture
+    // set — and a hot-patched body would then read the old (smaller)
+    // environment through the new layout: garbage props / UB. With
+    // it, the layout moves only when the props signature moves,
+    // which is exactly what `__whisker_props_hash` below detects.
+    let force_capture = if prop_idents.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            #[allow(unused, clippy::no_effect_underscore_binding)]
+            let _ = ( #( &#prop_idents, )* );
+        }
+    };
+
+    // Layout hash: FNV-1a over the props signature tokens (ident +
+    // type, declaration order) — the compile-time part of what
+    // determines the inner closure's captured-environment layout
+    // given the forced capture above. The generated
+    // `__whisker_props_hash` fn additionally folds in each prop
+    // type's `size_of`/`align_of` AT ITS OWN BUILD's notion of the
+    // type, so a change to a prop type's *definition* (fields added
+    // to a struct the signature merely names) also shifts the value.
+    // Read through subsecond dispatch at remount time, so the
+    // runtime can compare "layout this site's stored closure was
+    // built for" against "layout the freshly patched code expects"
+    // and refuse the in-place remount on mismatch.
+    let props_sig = props
+        .iter()
+        .map(|p| {
+            let i = &p.ident;
+            let t = &p.ty;
+            quote!(#i : #t).to_string()
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let props_hash = crate::fnv1a64(&props_sig);
+    let prop_tys: Vec<syn::Type> = props.iter().map(|p| p.ty.clone()).collect();
+    let props_hash_fn_expr = if ty_generics_for_turbofish.is_empty() {
+        quote! { __whisker_props_hash }
+    } else {
+        quote! { __whisker_props_hash :: < #(#ty_generics_for_turbofish),* > }
+    };
+
     // `<fn>` for the `as *const ()` cast inside the body.
     //
     // Non-generic case: bare `fn_name as *const ()` works — there's
@@ -289,6 +337,27 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         #[doc(hidden)]
         mod #inner_mod {
             use super::*;
+
+            // Props-layout hash (see the macro-side comment on
+            // `props_sig`). Read through `__hot::call_hash` so a
+            // just-applied patch answers with ITS layout. The
+            // size_of/align_of folds evaluate in whichever build
+            // this fn was compiled into — that's what lets a
+            // prop-type *definition* change (same signature tokens,
+            // different struct fields) shift the patch's value.
+            #[doc(hidden)]
+            pub fn __whisker_props_hash #impl_generics () -> u64 #where_clause {
+                let mut __h: u64 = #props_hash;
+                #(
+                    __h = __h
+                        .wrapping_mul(0x0000_0100_0000_01B3)
+                        .wrapping_add(::std::mem::size_of::<#prop_tys>() as u64)
+                        .wrapping_mul(0x0000_0100_0000_01B3)
+                        .wrapping_add(::std::mem::align_of::<#prop_tys>() as u64);
+                )*
+                __h
+            }
+
             #[doc(hidden)]
             #(#attrs)*
             pub fn #fn_name #impl_generics (
@@ -306,12 +375,16 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
                 > = ::std::boxed::Box::new(move || {
                     #(#restores)*
                     ::whisker::__hot::call(move || {
+                        #force_capture
                         #block
                     })
                 });
                 ::whisker::runtime::reactive::mount_component_remountable(
                     #fn_ptr_expr,
                     __body,
+                    ::std::boxed::Box::new(|| {
+                        ::whisker::__hot::call_hash(#props_hash_fn_expr)
+                    }),
                 )
             }
         }

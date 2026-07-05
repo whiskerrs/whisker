@@ -12,7 +12,7 @@
 //!   - pick a host-tag for the toolchain bin dir
 //!   - locate `<prefix><api>-clang` for an ABI
 //!
-//! Tier 1's link step (build_link_plan + run_link_plan) uses the
+//! hot reload's link step (build_link_plan + run_link_plan) uses the
 //! returned clang as both `linker_path` (what we spawn) and
 //! `WHISKER_REAL_LINKER` (what the linker shim forwards to during the
 //! fat build). Same binary on both sides keeps SDK / sysroot

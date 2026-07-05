@@ -36,6 +36,14 @@ pub struct CapturedRustcInvocation {
     /// path itself (cargo prepends that, but the rest is what we
     /// need to replay).
     pub args: Vec<String>,
+    /// The `CARGO_*` / `OUT_DIR` environment cargo set for this
+    /// invocation (see [`capture_envs_from`] for the filter). The
+    /// thin rebuild spawns rustc *without* cargo, so any
+    /// `env!("CARGO_PKG_VERSION")` / `env!("OUT_DIR")` in the crate
+    /// fails to compile unless these are replayed. `#[serde(default)]`
+    /// so caches written by an older shim still deserialize.
+    #[serde(default)]
+    pub envs: std::collections::BTreeMap<String, String>,
     /// When the invocation happened, as microseconds since UNIX
     /// epoch. Used to disambiguate multiple invocations of the same
     /// crate within one fat build.
@@ -75,16 +83,38 @@ pub fn run() -> Result<()> {
 // ----- Pure helpers (testable) ----------------------------------------------
 
 /// Build a [`CapturedRustcInvocation`] from a rustc argv slice.
-/// Pure aside from reading the system clock for the timestamp.
+/// Pure aside from reading the system clock for the timestamp and
+/// the process environment for the `CARGO_*` capture.
 pub fn capture(rustc_args: &[String]) -> Result<CapturedRustcInvocation> {
     Ok(CapturedRustcInvocation {
         crate_name: extract_crate_name(rustc_args).unwrap_or_default(),
         args: rustc_args.to_vec(),
+        envs: capture_envs_from(std::env::vars()),
         timestamp_micros: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_micros())
             .unwrap_or(0),
     })
+}
+
+/// Filter a process environment down to the vars worth replaying on
+/// a thin rebuild: `CARGO` (path to cargo, read by `env!("CARGO")`),
+/// everything cargo namespaces under `CARGO_*` (`CARGO_PKG_*`,
+/// `CARGO_MANIFEST_DIR`, `CARGO_CRATE_NAME`, …), and `OUT_DIR` (the
+/// build-script output dir that `include!(concat!(env!("OUT_DIR"),
+/// …))` needs).
+///
+/// `CARGO_MAKEFLAGS` is excluded: it encodes jobserver file
+/// descriptors that are only open inside cargo's own process tree,
+/// and rustc warns about the dead jobserver on every spawn that
+/// replays it.
+pub fn capture_envs_from(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> std::collections::BTreeMap<String, String> {
+    vars.into_iter()
+        .filter(|(k, _)| k == "CARGO" || k == "OUT_DIR" || k.starts_with("CARGO_"))
+        .filter(|(k, _)| k != "CARGO_MAKEFLAGS")
+        .collect()
 }
 
 /// Find the value passed to `--crate-name` in a rustc argv slice.
@@ -212,6 +242,44 @@ mod tests {
         assert_eq!(inv.crate_name, "");
     }
 
+    // ----- capture_envs_from --------------------------------------------
+
+    #[test]
+    fn capture_envs_keeps_cargo_vars_and_out_dir_only() {
+        let vars = vec![
+            ("CARGO".to_string(), "/usr/bin/cargo".to_string()),
+            ("CARGO_PKG_VERSION".to_string(), "1.2.3".to_string()),
+            ("CARGO_MANIFEST_DIR".to_string(), "/ws/app".to_string()),
+            ("OUT_DIR".to_string(), "/ws/target/build/out".to_string()),
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("RUSTC_WORKSPACE_WRAPPER".to_string(), "/shim".to_string()),
+            ("HOME".to_string(), "/home/dev".to_string()),
+        ];
+        let envs = capture_envs_from(vars);
+        assert_eq!(envs.len(), 4);
+        assert_eq!(envs["CARGO_PKG_VERSION"], "1.2.3");
+        assert_eq!(envs["OUT_DIR"], "/ws/target/build/out");
+        assert!(!envs.contains_key("PATH"));
+        assert!(!envs.contains_key("RUSTC_WORKSPACE_WRAPPER"));
+    }
+
+    #[test]
+    fn capture_envs_excludes_cargo_makeflags() {
+        // CARGO_MAKEFLAGS carries jobserver fds that are dead outside
+        // cargo's process tree; replaying it makes rustc warn on
+        // every thin rebuild.
+        let vars = vec![
+            (
+                "CARGO_MAKEFLAGS".to_string(),
+                "-j --jobserver-fds=7,8".to_string(),
+            ),
+            ("CARGO_PKG_NAME".to_string(), "demo".to_string()),
+        ];
+        let envs = capture_envs_from(vars);
+        assert!(!envs.contains_key("CARGO_MAKEFLAGS"));
+        assert!(envs.contains_key("CARGO_PKG_NAME"));
+    }
+
     // ----- invocation_filename ----------------------------------------
 
     #[test]
@@ -219,6 +287,7 @@ mod tests {
         let inv = CapturedRustcInvocation {
             crate_name: "hello-world".into(),
             args: vec![],
+            envs: Default::default(),
             timestamp_micros: 1_000_000,
         };
         assert_eq!(invocation_filename(&inv), "hello_world-1000000.json");
@@ -229,6 +298,7 @@ mod tests {
         let inv = CapturedRustcInvocation {
             crate_name: "".into(),
             args: vec![],
+            envs: Default::default(),
             timestamp_micros: 42,
         };
         assert_eq!(invocation_filename(&inv), "_unknown-42.json");
@@ -241,6 +311,7 @@ mod tests {
         let inv = CapturedRustcInvocation {
             crate_name: "weird/name".into(),
             args: vec![],
+            envs: Default::default(),
             timestamp_micros: 7,
         };
         assert_eq!(invocation_filename(&inv), "weird_name-7.json");
@@ -254,6 +325,7 @@ mod tests {
         let inv = CapturedRustcInvocation {
             crate_name: "x".into(),
             args: s(&["--crate-name", "x", "src/lib.rs"]),
+            envs: Default::default(),
             timestamp_micros: 12345,
         };
         save_invocation(&dir, &inv).expect("save");
@@ -279,6 +351,7 @@ mod tests {
         let inv = CapturedRustcInvocation {
             crate_name: "x".into(),
             args: vec![],
+            envs: Default::default(),
             timestamp_micros: 1,
         };
         save_invocation(&dir, &inv).expect("save");

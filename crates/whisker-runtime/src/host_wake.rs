@@ -6,7 +6,7 @@
 //! - [`crate::reactive::scheduler`] calls [`wake_runtime`] on the
 //!   empty→non-empty edge of the pending queue so the host wakes
 //!   up to drain effects.
-//! - [`crate::whisker_dev_runtime`] (Tier 1 hot-reload receiver)
+//! - [`crate::whisker_dev_runtime`] (hot-reload receiver)
 //!   calls [`wake_runtime`] from its WebSocket thread after parking
 //!   a patch, so the host runs another tick that picks the patch
 //!   up.

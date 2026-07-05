@@ -101,6 +101,7 @@ mod tests {
         CapturedRustcInvocation {
             crate_name: "demo".into(),
             args,
+            envs: Default::default(),
             timestamp_micros: 0,
         }
     }

@@ -1722,7 +1722,7 @@ pub mod __main_runtime {
     /// The cfg flip happens here, at whisker's compile-time, on whisker's
     /// own `hot-reload` feature:
     ///
-    /// - **on** (`whisker run` / Tier 1): body is
+    /// - **on** (`whisker run` / hot reload): body is
     ///   `subsecond::call(|| f())`. The `#[inline(always)]` makes the
     ///   body land in the *user crate's* compilation unit at every
     ///   call site, so the wrapper closure's `<F as HotFunction<()>>::
@@ -1760,6 +1760,29 @@ pub mod __main_runtime {
     pub fn call_user_app(f: fn() -> Element) -> Element {
         f()
     }
+
+    /// Same dispatch shape as [`call_user_app`], for the
+    /// `__whisker_app_body_hash` fn the `#[whisker::main]` macro
+    /// emits. Routing the hash read through `subsecond::call` means
+    /// that after a patch is applied, this returns the hash baked
+    /// into the *patch dylib* — a changed value is the full-remount
+    /// signal that `app()` itself was edited and needs a full
+    /// re-run. The `move` and `#[inline(always)]` are load-bearing
+    /// for the same reasons documented on `call_user_app`.
+    #[cfg(feature = "hot-reload")]
+    #[inline(always)]
+    pub fn call_app_hash(f: fn() -> u64) -> u64 {
+        #[allow(clippy::redundant_closure)]
+        {
+            ::subsecond::call(move || f())
+        }
+    }
+
+    #[cfg(not(feature = "hot-reload"))]
+    #[inline(always)]
+    pub fn call_app_hash(f: fn() -> u64) -> u64 {
+        f()
+    }
 }
 
 /// Hot-reload dispatcher namespace exposed for the `#[component]`
@@ -1785,6 +1808,27 @@ pub mod __hot {
     #[cfg(not(feature = "hot-reload"))]
     #[inline(always)]
     pub fn call<O>(mut f: impl FnMut() -> O) -> O {
+        f()
+    }
+
+    /// Dispatch a `#[component]`-generated props-layout-hash fn
+    /// through subsecond, so after a patch the caller reads the
+    /// *patch dylib's* hash. Same 8-byte fn-pointer-capture shape as
+    /// `__main_runtime::call_user_app` — the `move` and
+    /// `#[inline(always)]` are load-bearing for the same reasons
+    /// documented there.
+    #[cfg(feature = "hot-reload")]
+    #[inline(always)]
+    pub fn call_hash(f: fn() -> u64) -> u64 {
+        #[allow(clippy::redundant_closure)]
+        {
+            ::subsecond::call(move || f())
+        }
+    }
+
+    #[cfg(not(feature = "hot-reload"))]
+    #[inline(always)]
+    pub fn call_hash(f: fn() -> u64) -> u64 {
         f()
     }
 }

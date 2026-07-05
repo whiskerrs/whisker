@@ -23,7 +23,7 @@
 //!
 //! In addition to the user-facing `whisker` binary, the package also
 //! produces two shim binaries used during the initial fat build to
-//! capture the rustc + linker invocations that Tier 1 hot-patch will
+//! capture the rustc + linker invocations that hot-reload patch will
 //! replay later:
 //!
 //! - `whisker-rustc-shim` (`-Cstrip=…` / `-Csave-temps=y` style

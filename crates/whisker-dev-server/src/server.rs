@@ -130,8 +130,8 @@ impl PatchSender {
     /// The runtime address of `main` (= `subsecond::aslr_reference()`)
     /// most recently reported by a connected client. `None` when no
     /// client has connected or sent its `hello` yet — the patcher
-    /// should withhold Tier 1 patches in that case (fall back to
-    /// Tier 2 cold rebuild).
+    /// should withhold hot-reload patches in that case (fall back to
+    /// full reload).
     pub fn latest_aslr_reference(&self) -> Option<u64> {
         self.aslr_reference.lock().ok().and_then(|g| *g)
     }
@@ -200,17 +200,23 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut tx_ws, mut rx_ws) = socket.split();
     let mut bcast_rx = state.tx.subscribe();
     whisker_build::ui::set_status(format!("{} client(s) connected", state.tx.receiver_count(),));
-    // `aslr_reference` is internal handshake plumbing; emit at debug
-    // grade so the steady-state UI stays clean.
-    if let Some(cb) = &state.on_event {
-        cb(Event::ClientConnected);
-    }
-
     // A client starts unauthenticated when a token is required, and is
     // promoted on a valid `hello`. While unauthenticated we never
     // forward a patch (the security gate). A token-less server (`None`)
     // is open by default — local loopback / tests.
     let mut authed = state.expected_token.is_none();
+
+    // Only announce clients that pass the token gate. During the
+    // initial build, a stale app from the previous session retries
+    // its (doomed) connection every few seconds — announcing each
+    // attempt makes the TUI's client count flap 0↔1 the whole build.
+    let mut announced = false;
+    if authed {
+        if let Some(cb) = &state.on_event {
+            cb(Event::ClientConnected);
+        }
+        announced = true;
+    }
 
     loop {
         tokio::select! {
@@ -254,12 +260,33 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             // the patch path for it.
                             if let Some(expected) = &state.expected_token {
                                 if hello.token.as_deref() != Some(expected.as_ref()) {
-                                    whisker_build::ui::warn(
-                                        "rejecting hot-reload client: missing/invalid dev token",
+                                    // Debug-only: usually an app left
+                                    // over from a previous dev session
+                                    // retrying with that session's
+                                    // token until a launch replaces
+                                    // it — expected noise, not a
+                                    // user-actionable event. The
+                                    // symptom that IS actionable (the
+                                    // *current* app being rejected)
+                                    // shows up as `0 connected` +
+                                    // "no device connected" prompts;
+                                    // WHISKER_VERBOSE=1 surfaces this
+                                    // line for that diagnosis.
+                                    whisker_build::ui::debug(
+                                        "rejected a hot-reload client (missing/invalid dev \
+                                         token) — usually an app left over from a previous \
+                                         dev session; it connects with the fresh token after \
+                                         the next launch / Full Reload (R)",
                                     );
                                     break;
                                 }
                                 authed = true;
+                                if !announced {
+                                    if let Some(cb) = &state.on_event {
+                                        cb(Event::ClientConnected);
+                                    }
+                                    announced = true;
+                                }
                             }
                             let aslr = hello.aslr_reference;
                             whisker_build::ui::debug(format!(
@@ -286,17 +313,29 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     // Clear the stored `aslr_reference` on disconnect. It's the ASLR
     // slide of the *now-dead* process; reusing it to build a patch for
-    // the next process (e.g. a Tier 2 rebuild relaunch) would stamp
+    // the next process (e.g. a full reload relaunch) would stamp
     // jump stubs against meaningless addresses and crash the device.
     // The replacement process re-sends its own `hello` with a fresh
     // slide; until then `latest_aslr_reference()` returns `None` and the
     // patch path skips rather than shipping a stale-based patch.
-    if let Ok(mut g) = state.aslr_reference.lock() {
-        *g = None;
+    //
+    // Only for AUTHED sockets: a rejected client never stored a slide,
+    // and clearing here would wipe the *live* app's reference every
+    // time a stale-token app's doomed reconnect attempt bounced off
+    // the gate — leaving hot reload stuck at "no device connected"
+    // while the device is, in fact, connected.
+    if authed {
+        if let Ok(mut g) = state.aslr_reference.lock() {
+            *g = None;
+        }
     }
 
-    if let Some(cb) = &state.on_event {
-        cb(Event::ClientDisconnected);
+    // Symmetric with the announce above: only sockets that were
+    // announced as connected report a disconnect.
+    if announced {
+        if let Some(cb) = &state.on_event {
+            cb(Event::ClientDisconnected);
+        }
     }
 }
 

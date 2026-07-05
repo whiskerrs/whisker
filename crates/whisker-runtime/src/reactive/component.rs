@@ -214,6 +214,18 @@ pub(crate) struct MountSite {
     /// was the first child of parent. Stable across remounts unless
     /// the anchor itself is removed by some other code path.
     pub anchor: Option<Element>,
+    /// Reads the component's props-layout hash *through subsecond
+    /// dispatch* (the `#[component]` macro bakes the hash of the
+    /// props signature into a generated fn). After a patch this
+    /// returns the patch dylib's value.
+    pub props_hash_fn: Rc<dyn Fn() -> u64 + 'static>,
+    /// The layout hash as of when this site's `body` closure was
+    /// created. If `props_hash_fn()` disagrees after a patch, the
+    /// stored closure's captured environment no longer matches what
+    /// the patched body code expects — re-running it would transmute
+    /// across mismatched layouts (garbage props / UB), so the site
+    /// must not be remounted in place.
+    pub props_hash: u64,
 }
 
 /// Called by `view::append_child` after every successful attach.
@@ -272,11 +284,23 @@ pub fn __reset_pending_mount_for_tests() {
 /// re-invokes `body` in a new owner, removes the old body_root
 /// from its parent, and inserts the new body_root at the same slot
 /// (using the recorded anchor).
-pub fn mount_component_remountable<F>(fn_ptr: *const (), body: F) -> Element
+///
+/// `props_hash_fn` reads the component's props-layout hash through
+/// subsecond dispatch (see [`MountSite::props_hash_fn`]); the value
+/// it returns *now* is recorded as the layout this site's `body`
+/// closure was built against. Non-hot-reload callers (tests) can
+/// pass `Box::new(|| 0)`.
+pub fn mount_component_remountable<F>(
+    fn_ptr: *const (),
+    body: F,
+    props_hash_fn: Box<dyn Fn() -> u64 + 'static>,
+) -> Element
 where
     F: Fn() -> Element + 'static,
 {
     let body: Rc<dyn Fn() -> Element + 'static> = Rc::new(body);
+    let props_hash_fn: Rc<dyn Fn() -> u64 + 'static> = Rc::from(props_hash_fn);
+    let props_hash = props_hash_fn();
 
     // Initial mount: fresh owner, run body, capture root.
     let body_for_first = body.clone();
@@ -306,6 +330,8 @@ where
                 body_root: Some(body_root),
                 parent: None,
                 anchor: None,
+                props_hash_fn,
+                props_hash,
             },
         );
         rt.fn_ptr_mounts.entry(fn_ptr).or_default().push(id);
@@ -338,9 +364,16 @@ where
 /// The wrapper element stays put in the parent's child list across
 /// the whole flow, so the user-visible navigation / scroll position
 /// / sibling order are preserved.
-pub fn remount_components_for(patched_fns: &[*const ()]) {
+///
+/// Returns [`RemountStats`]: how many sites were remounted, and how
+/// many were *refused* because their props layout changed. The
+/// bootstrap uses both as full-remount triggers (hot reload escalation) —
+/// `remounted == 0` means the patch had no attached component to
+/// reflect through, and `layout_changed > 0` means at least one
+/// stored body closure can no longer be re-run safely.
+pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
     if patched_fns.is_empty() {
-        return;
+        return RemountStats::default();
     }
     // Collect candidate mount sites, then filter out any whose
     // ancestor component is also in this patch batch. When a
@@ -389,7 +422,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
     });
 
     if ids.is_empty() {
-        return;
+        return RemountStats::default();
     }
 
     // ---- Batched remount that preserves sibling order ---------------------
@@ -423,6 +456,8 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
         old_body_root: Element,
         body: Rc<dyn Fn() -> Element + 'static>,
         fn_ptr: *const (),
+        props_hash_fn: Rc<dyn Fn() -> u64 + 'static>,
+        props_hash: u64,
     }
 
     let infos: Vec<RemountInfo> = with_runtime(|rt| {
@@ -435,13 +470,36 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
                     old_body_root: site.body_root?,
                     body: site.body.clone(),
                     fn_ptr: site.fn_ptr,
+                    props_hash_fn: site.props_hash_fn.clone(),
+                    props_hash: site.props_hash,
                 })
             })
             .collect()
     });
 
+    // Layout gate: refuse to re-run a stored body closure whose
+    // captured environment no longer matches what the patched body
+    // code expects. The site's `body` was created against
+    // `props_hash`; `props_hash_fn()` dispatches into the freshly
+    // applied patch and returns the layout the *new* code was
+    // compiled for. A mismatch means the patch changed the
+    // component's props signature — re-invoking the old closure
+    // would transmute mismatched capture layouts (garbage props /
+    // UB). The caller escalates these to a hot reload full remount,
+    // where fresh (patched) code rebuilds the props from scratch.
+    // Evaluated OUTSIDE `with_runtime`: the hash getter re-enters
+    // subsecond dispatch, which must not run under the runtime
+    // borrow.
+    let (infos, layout_changed): (Vec<RemountInfo>, Vec<RemountInfo>) = infos
+        .into_iter()
+        .partition(|info| (info.props_hash_fn)() == info.props_hash);
+    let layout_changed = layout_changed.len();
+
     if infos.is_empty() {
-        return;
+        return RemountStats {
+            remounted: 0,
+            layout_changed,
+        };
     }
 
     // 1. Snapshot each unique parent's child list.
@@ -577,4 +635,23 @@ pub fn remount_components_for(patched_fns: &[*const ()]) {
             }
         });
     }
+
+    RemountStats {
+        remounted: results.len(),
+        layout_changed,
+    }
+}
+
+/// What [`remount_components_for`] did with one patch — the
+/// bootstrap's full-remount escalation input.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RemountStats {
+    /// Mount sites disposed and re-mounted in place.
+    pub remounted: usize,
+    /// Mount sites *refused* because their props layout changed
+    /// between the stored body closure and the patched code (see
+    /// [`MountSite::props_hash`]). Non-zero means the on-screen
+    /// subtree for those sites is stale and only a full remount can
+    /// safely rebuild it.
+    pub layout_changed: usize,
 }

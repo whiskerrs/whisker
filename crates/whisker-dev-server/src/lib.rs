@@ -15,7 +15,7 @@
 //! - `builder` — translates [`Config`] into a `whisker-build`
 //!   invocation (cargo + per-platform packaging) and runs it.
 //!   Honours `RUSTC_WORKSPACE_WRAPPER` + linker shim env so the fat
-//!   build doubles as a capture pass for Tier 1.
+//!   build doubles as a capture pass for hot reload.
 //! - `installer` — for the cold-rebuild path: shells out to
 //!   `adb install` / `simctl install + launch`. Identity (bundle id,
 //!   applicationId, scheme, …) comes in flat via
@@ -28,12 +28,12 @@
 //!   `ws://<bind>/whisker-dev`. Devices dial in, send a `hello`
 //!   carrying their `subsecond::aslr_reference()`, then receive
 //!   patch envelopes.
-//! - `hotpatch` — Tier 1 implementation. Builds a thin `.o` from the
+//! - `hotpatch` — the Hot Reload implementation. Builds a thin `.o` from the
 //!   changed user crate via captured rustc args, links it into a
 //!   patch dylib with a stub-object of host-symbol jumps, ships the
 //!   resulting `subsecond_types::JumpTable` to connected clients.
 //! - `lib.rs::run` — the orchestrator: file event → `decide_action`
-//!   (Tier 1 patch vs Tier 2 rebuild) → builder/hotpatch/sender.
+//!   (hot-reload patch vs Full Reload prompt) → builder/hotpatch/sender.
 //!
 //! ## Layering
 //!
@@ -88,8 +88,11 @@ pub struct Config {
     pub package: String,
     /// Where the rebuilt artifact gets installed + launched.
     pub target: Target,
-    /// Directories to watch for source changes. Empty defaults to
-    /// `<crate_dir>/src`.
+    /// Extra paths (dirs or single files) to watch for changes, merged
+    /// with the auto-discovered roots (`<crate_dir>/src` + every
+    /// workspace path-dep's `src/`). The cli passes
+    /// `<crate_dir>/whisker.rs` here so config-script saves get a
+    /// "restart `whisker run`" hint instead of silence.
     pub watch_paths: Vec<PathBuf>,
     /// Address the WebSocket server binds.
     pub bind_addr: SocketAddr,
@@ -120,7 +123,7 @@ impl Config {
             watch_paths: Vec::new(),
             bind_addr: "127.0.0.1:9876".parse().expect("valid default addr"),
             dev_token: None,
-            hot_patch_mode: HotPatchMode::Tier2ColdRebuild,
+            hot_patch_mode: HotPatchMode::FullReloadOnly,
             android: None,
             ios: None,
         }
@@ -183,17 +186,22 @@ pub enum Target {
     IosSimulator,
 }
 
-/// How aggressive the dev loop is about reflecting edits.
+/// How the dev loop reflects edits. Note that no mode rebuilds or
+/// restarts the app automatically — a Full Reload only ever runs on
+/// an explicit [`DevCommand::FullReload`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotPatchMode {
     /// Don't even try — every change requires a manual `whisker run` rerun.
     /// Useful for CI smoke-tests of the dev server itself.
     Disabled,
-    /// Full cargo rebuild + reinstall + relaunch (5–30s). The default.
-    Tier2ColdRebuild,
-    /// `subsecond` JumpTable patches (sub-second). Requires the I4g
-    /// pipeline to be wired up; otherwise behaves as `Tier2ColdRebuild`.
-    Tier1Subsecond,
+    /// No hot reload: every save prompts for an explicit Full Reload
+    /// (cargo rebuild + reinstall + relaunch, 5–30s). The
+    /// `--no-hot-patch` escape hatch.
+    FullReloadOnly,
+    /// Hot Reload: `subsecond` JumpTable patches (sub-second, app
+    /// keeps running). Requires the capture/patcher pipeline; when
+    /// that's unavailable the loop prompts for a Full Reload instead.
+    HotReload,
 }
 
 // ----- Public events ---------------------------------------------------------
@@ -209,7 +217,7 @@ pub enum Event {
     BuildFailed(String),
     ClientConnected,
     ClientDisconnected,
-    /// A Tier 1 hot patch build kicked off. Fires *before* the
+    /// A hot-reload patch build kicked off. Fires *before* the
     /// `Patcher::build_patch` call so consumers (the cli TUI) can
     /// flip into "patching" state while the patch is still being
     /// compiled — without this paired event, `PatchSent` is the
@@ -217,6 +225,15 @@ pub enum Event {
     /// any UI keying off it never shows a patch-in-flight indicator.
     PatchBuilding,
     PatchSent,
+    /// The loop hit a change it cannot hot-reload (dependency-graph
+    /// edit, hot-reload infrastructure unavailable, patch build
+    /// failure). Nothing was rebuilt — the user decides when to pay
+    /// for the restart by pressing `R` (Full Reload). The UI should
+    /// surface `reason` persistently until a full reload starts
+    /// (`BuildingFull` clears it).
+    FullReloadRequired {
+        reason: String,
+    },
     /// A line captured from the device-side app's stdout / stderr (via
     /// the `whisker-dev-runtime::log_capture` `dup2` hook), forwarded
     /// over the WS connection. `whisker-cli` surfaces these in the
@@ -237,11 +254,28 @@ pub enum Event {
 
 // ----- Server ---------------------------------------------------------------
 
+/// Explicit user command delivered into the dev loop (keyboard
+/// shortcuts in `whisker run`'s TUI: `r` / `R`). Reloads are
+/// user-triggered by design — the loop never full-reloads on its own,
+/// because an unexpected app restart mid-interaction loses more time
+/// than it saves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DevCommand {
+    /// Build and push a hot-reload patch now, independent of any file
+    /// change (e.g. after fixing a compile error, or to force a
+    /// re-sync).
+    HotReload,
+    /// Full reload: cargo rebuild + reinstall + relaunch. The only
+    /// way dependency-graph changes (Cargo.toml) reach the device.
+    FullReload,
+}
+
 /// The dev loop. Construct with [`DevServer::new`], then drive with
 /// [`DevServer::run`] (which returns when the server shuts down).
 pub struct DevServer {
     config: Config,
     on_event: Option<Arc<dyn Fn(Event) + Send + Sync>>,
+    commands: Option<tokio::sync::mpsc::UnboundedReceiver<DevCommand>>,
 }
 
 impl DevServer {
@@ -249,7 +283,20 @@ impl DevServer {
         Ok(Self {
             config,
             on_event: None,
+            commands: None,
         })
+    }
+
+    /// Attach the channel that delivers explicit [`DevCommand`]s
+    /// (the CLI's `r` / `R` keys). Without one, the loop is driven
+    /// by file changes only and full reloads are unreachable — fine
+    /// for tests, limiting for interactive use.
+    pub fn with_command_receiver(
+        mut self,
+        rx: tokio::sync::mpsc::UnboundedReceiver<DevCommand>,
+    ) -> Self {
+        self.commands = Some(rx);
+        self
     }
 
     /// Attach an observer for `Event`s — connect / disconnect /
@@ -260,20 +307,21 @@ impl DevServer {
         self
     }
 
-    /// Bring the dev loop up. The Tier 2 cold rebuild loop:
+    /// Bring the dev loop up. The core loop:
     ///
     ///   notify → debounce → cargo build → adb install → relaunch
     ///   → broadcast "rebuilt" hint over WebSocket.
     ///
-    /// When `hot_patch_mode == Tier1Subsecond`, the initial build
+    /// When `hot_patch_mode == HotReload`, the initial build
     /// also captures rustc + linker invocations through the
     /// `whisker-{rustc,linker}-shim` binaries, and a `Patcher` is
     /// initialised from those captures + the original binary's
-    /// symbol table. The change loop then prefers Tier 1
-    /// `subsecond::JumpTable` patches over cold rebuilds for
-    /// `ChangeKind::RustCode` events. Patcher initialisation or
-    /// `build_patch` failure falls back to Tier 2 silently.
-    pub async fn run(self) -> Result<()> {
+    /// symbol table. The change loop then serves
+    /// `ChangeKind::RustCode` events with Hot Reload
+    /// (`subsecond::JumpTable` patches). Nothing rebuilds or
+    /// restarts the app automatically: changes a patch can't express
+    /// prompt for an explicit Full Reload (`DevCommand::FullReload`).
+    pub async fn run(mut self) -> Result<()> {
         // In TUI mode the live region's header already shows the
         // package + target + phase; the `──── whisker run ────` +
         // `· podcast · Android` rows above just duplicated that
@@ -299,10 +347,10 @@ impl DevServer {
         // succeeds we bind the WS, then `install_and_launch` so the
         // device app has somewhere to connect to.
         //
-        // For Tier 1 mode this build doubles as the fat build that
+        // For hot-reload mode this build doubles as the fat build that
         // fills the rustc / linker capture caches; the shims are
         // resolved (built if missing) and installed into the builder
-        // *before* the spawn. The same Builder is reused for Tier 2
+        // *before* the spawn. The same Builder is reused for Full
         // fallback rebuilds inside the change loop.
         let mut builder = Builder::new(
             self.config.workspace_root.clone(),
@@ -312,15 +360,16 @@ impl DevServer {
         )
         .with_features(vec!["whisker/hot-reload".into()]);
 
-        let tier1_init = if self.config.hot_patch_mode == HotPatchMode::Tier1Subsecond {
-            match prepare_tier1_capture(&self.config) {
+        let hot_reload_init = if self.config.hot_patch_mode == HotPatchMode::HotReload {
+            match prepare_hot_reload_capture(&self.config) {
                 Ok(prep) => {
                     builder = builder.with_capture(prep.capture.clone());
                     Some(prep)
                 }
                 Err(e) => {
                     whisker_build::ui::warn(format!(
-                        "Tier 1 capture setup failed ({e:#}); falling back to Tier 2 cold rebuilds",
+                        "hot-reload capture setup failed ({e:#}); hot reload unavailable — \
+                         use R (Full Reload) to reflect changes",
                     ));
                     None
                 }
@@ -335,7 +384,7 @@ impl DevServer {
             self.config.ios.clone(),
             self.config.workspace_root.clone(),
             self.config.package.clone(),
-            tier1_init.as_ref().map(|p| p.capture.clone()),
+            hot_reload_init.as_ref().map(|p| p.capture.clone()),
             builder.features().to_vec(),
             self.config.bind_addr.port(),
             self.config.dev_token.clone(),
@@ -402,8 +451,8 @@ impl DevServer {
         // the change loop uses the same list to map a changed file
         // back to its owning crate. Registry / git deps are excluded
         // — their sources live outside the workspace; Cargo.toml /
-        // Cargo.lock edits trigger a Tier 2 rebuild and pick them
-        // up that way.
+        // Cargo.lock edits prompt a Full Reload, which picks them
+        // up.
         let path_deps = workspace::discover_path_deps(
             &self.config.crate_dir.join("Cargo.toml"),
             &self.config.package,
@@ -432,6 +481,20 @@ impl DevServer {
             // error to the user.
             watch_roots.push(user_src.clone());
         }
+        // Caller-specified extras (the cli passes `<crate>/src` — already
+        // covered above — plus `<crate>/whisker.rs`). Files are fine:
+        // notify watches single files too.
+        for extra in &self.config.watch_paths {
+            if extra.exists() && !watch_roots.contains(extra) {
+                watch_roots.push(extra.clone());
+            }
+        }
+        // `whisker.rs` is the config script: it's evaluated once at
+        // `whisker run` startup (probe → Config), so neither a hot
+        // reload nor a Full Reload re-applies an edit to it. Detect
+        // saves and tell the user the only fix — restarting the dev
+        // loop — instead of reacting with a doomed patch attempt.
+        let whisker_config_file = self.config.crate_dir.join("whisker.rs");
         let (tx, mut rx) = tokio::sync::mpsc::channel::<watcher::Change>(8);
         let _watcher = watcher::spawn_watcher(
             watch_roots.clone(),
@@ -463,16 +526,20 @@ impl DevServer {
 
         // After the fat build has happened, Patcher::initialize can
         // read the now-populated caches. Failure here is non-fatal
-        // — log and proceed with Tier 2 only.
-        let patcher = match tier1_init {
-            Some(prep) => match init_patcher_for(&self.config, &prep) {
+        // — log, prompt Full Reloads meanwhile, and retry the init
+        // on later changes (each Full Reload runs with the capture shims
+        // wired, so the caches that were missing or stale here may
+        // have been repopulated by the time the user saves again).
+        let mut patcher = match hot_reload_init.as_ref() {
+            Some(prep) => match init_patcher_for(&self.config, prep) {
                 Ok(p) => {
-                    whisker_build::ui::debug("Tier 1 patcher ready");
+                    whisker_build::ui::debug("hot-reload patcher ready");
                     Some(p)
                 }
                 Err(e) => {
                     whisker_build::ui::warn(format!(
-                        "Tier 1 patcher init failed ({e:#}); falling back to Tier 2 cold rebuilds",
+                        "hot-reload patcher init failed ({e:#}); \
+                         will retry on the next save — use R (Full Reload) meanwhile",
                     ));
                     None
                 }
@@ -480,125 +547,129 @@ impl DevServer {
             None => None,
         };
 
-        // Change loop. For each debounced change, decide the
-        // action (Tier 1 patch / Tier 2 rebuild / ignore) using
-        // the kind + whether we have a Patcher, then execute it.
-        // Tier 1 failures silently fall through to Tier 2 — saves
-        // the dev loop from being killed by a transient build
-        // glitch.
-        while let Some(change) = rx.recv().await {
-            // `──── Change ────` only in non-TUI mode (live
-            // region's phase flip to `building` / `patching`
-            // already announces a save has been picked up).
-            if !whisker_build::ui::is_tui() {
-                whisker_build::ui::section("Change");
+        // Command channel: `r` / `R` from the CLI. When the caller
+        // didn't attach one, park a receiver whose sender is leaked
+        // so `recv()` pends forever (a *closed* channel would return
+        // `None` immediately and spin the select).
+        let mut commands = self.commands.take().unwrap_or_else(parked_command_receiver);
+
+        // Dev loop. Two input sources: debounced file changes and
+        // explicit DevCommands (`r` Hot Reload / `R` Full Reload).
+        //
+        // Saves only ever hot-reload. Anything a patch can't express
+        // — Cargo.toml edits, multi-crate batches, missing patcher,
+        // patch build failures — *prompts* for an explicit Full
+        // Reload instead of rebuilding + restarting the app behind
+        // the user's back (an unexpected restart mid-interaction
+        // costs more than it saves). The one non-prompt failure is a
+        // compile error in the user's code (`RustcRejectedCode`): a
+        // Full Reload would fail identically, so the loop reports
+        // and waits for the next save.
+        loop {
+            enum Input {
+                Change(watcher::Change),
+                Command(DevCommand),
             }
-            whisker_build::ui::debug(format!(
-                "{:?} — {} path(s)",
-                change.kind,
-                change.paths.len(),
-            ));
-            let action = decide_action(change.kind, patcher.is_some());
-            match action {
-                LoopAction::Ignore => {
-                    whisker_build::ui::debug(format!("ignored ({:?})", change.kind));
-                }
-                LoopAction::Tier1Patch => {
-                    let p = patcher.as_ref().expect("decide_action guarantees Some");
-                    // Open the step as soon as we know we're patching;
-                    // the spinner runs across both the build + the
-                    // wire-up so the user sees a single elapsed
-                    // duration for "edit → app updated".
-                    let patch_step = whisker_build::ui::step("patch", "tier 1");
-                    // Tell the cli to flip into "patching" right now —
-                    // the patcher work that follows (`build_patch` +
-                    // dylib read + send) is the wall-clock-heavy bit,
-                    // and the matching `PatchSent` flips back to Idle.
-                    emit(&self.on_event, Event::PatchBuilding);
-                    // Map the changed file paths to the owning crate.
-                    // None = batch spans multiple crates, or a path
-                    // outside every known src dir — fall back to a
-                    // cold rebuild since we can only patch one crate
-                    // per batch.
-                    let crate_key = workspace::identify_crate_for_paths(&change.paths, &path_deps);
-                    if !path_deps.is_empty() && crate_key.is_none() {
-                        patch_step.fail("multi-crate change batch; using Tier 2");
-                        run_build_cycle(
-                            &builder,
-                            &installer,
-                            &self.on_event,
-                            &sender,
-                            "rebuild (tier2 fallback, multi-crate batch)",
-                        )
-                        .await;
+            let input = tokio::select! {
+                c = rx.recv() => match c {
+                    Some(change) => Input::Change(change),
+                    None => break,
+                },
+                c = commands.recv() => match c {
+                    Some(cmd) => Input::Command(cmd),
+                    None => {
+                        // Command side hung up — park a fresh
+                        // never-yielding receiver and keep serving
+                        // file changes.
+                        commands = parked_command_receiver();
                         continue;
                     }
-                    let Some(aslr_reference) = sender.latest_aslr_reference() else {
-                        // No client has reported its `aslr_reference` yet
-                        // (handshake hasn't completed, or never connected).
-                        // Without that value we can't build a stub-asm-style
-                        // patch — fall back to Tier 2 cold rebuild.
-                        patch_step.fail("no client aslr_reference yet; using Tier 2");
-                        run_build_cycle(
-                            &builder,
-                            &installer,
-                            &self.on_event,
-                            &sender,
-                            "rebuild (tier2 fallback, no aslr_reference)",
-                        )
-                        .await;
-                        continue;
-                    };
-                    let started = std::time::Instant::now();
-                    match p.build_patch(aslr_reference, crate_key.as_deref()).await {
-                        Ok(plan) => {
-                            let built_in = started.elapsed();
-                            log_patch_diff(&plan.report);
-                            let dylib_bytes = match read_lib_bytes(&plan.table.lib) {
-                                Ok(b) => Arc::new(b),
-                                Err(e) => {
-                                    patch_step.fail(format!(
-                                        "could not read dylib bytes ({}): {e:#}; using Tier 2",
-                                        plan.table.lib.display(),
-                                    ));
-                                    run_build_cycle(
-                                        &builder,
-                                        &installer,
-                                        &self.on_event,
-                                        &sender,
-                                        "rebuild (tier2 fallback)",
-                                    )
-                                    .await;
-                                    continue;
+                },
+            };
+            match input {
+                Input::Change(mut change) => {
+                    // `──── Change ────` only in non-TUI mode (live
+                    // region's phase flip already announces a save
+                    // has been picked up).
+                    if !whisker_build::ui::is_tui() {
+                        whisker_build::ui::section("Change");
+                    }
+                    whisker_build::ui::debug(format!(
+                        "{:?} — {} path(s)",
+                        change.kind,
+                        change.paths.len(),
+                    ));
+                    // whisker.rs first: it classifies as RustCode by
+                    // extension, but no reload of any kind re-applies
+                    // it (see `whisker_config_file` above).
+                    if change.paths.iter().any(|p| p == &whisker_config_file) {
+                        whisker_build::ui::warn(
+                            "whisker.rs changed — configuration is applied at startup; \
+                             restart `whisker run` to pick it up",
+                        );
+                        change.paths.retain(|p| p != &whisker_config_file);
+                        if change.paths.is_empty() {
+                            continue;
+                        }
+                    }
+                    if change.kind == ChangeKind::RustCode {
+                        ensure_patcher(&self.config, &hot_reload_init, &mut patcher);
+                    }
+                    match decide_action(change.kind, patcher.is_some()) {
+                        LoopAction::Ignore => {
+                            whisker_build::ui::debug(format!("ignored ({:?})", change.kind));
+                        }
+                        LoopAction::HotReload => {
+                            let p = patcher.as_ref().expect("decide_action guarantees Some");
+                            // Map the changed file paths to the owning
+                            // crate. None = batch spans multiple crates
+                            // or a path outside every known src dir —
+                            // a patch covers one crate per batch, so
+                            // that needs a Full Reload.
+                            let crate_key =
+                                workspace::identify_crate_for_paths(&change.paths, &path_deps);
+                            if !path_deps.is_empty() && crate_key.is_none() {
+                                prompt_full_reload(
+                                    &self.on_event,
+                                    "change spans multiple crates (hot reload patches \
+                                     one crate per save)",
+                                );
+                                continue;
+                            }
+                            hot_reload_cycle(p, &sender, &self.on_event, crate_key.as_deref())
+                                .await;
+                        }
+                        LoopAction::PromptFullReload => {
+                            let reason = match change.kind {
+                                ChangeKind::CargoToml => {
+                                    "Cargo.toml / Cargo.lock changed — the dependency \
+                                     graph may have moved"
                                 }
+                                _ => "hot reload unavailable (patcher not initialized)",
                             };
-                            let send_started = std::time::Instant::now();
-                            let n = sender.send(Patch {
-                                table: plan.table,
-                                dylib_bytes,
-                            });
-                            whisker_build::ui::debug(format!(
-                                "built {built_in:?} · queued {:?}",
-                                send_started.elapsed()
-                            ));
-                            patch_step.done(format!("{n} client(s)"));
-                            emit(&self.on_event, Event::PatchSent);
-                        }
-                        Err(e) => {
-                            patch_step.fail(format!("{e:#}; using Tier 2 cold rebuild"));
-                            run_build_cycle(
-                                &builder,
-                                &installer,
-                                &self.on_event,
-                                &sender,
-                                "rebuild (tier2 fallback)",
-                            )
-                            .await;
+                            prompt_full_reload(&self.on_event, reason);
                         }
                     }
                 }
-                LoopAction::Tier2Rebuild => {
-                    run_build_cycle(&builder, &installer, &self.on_event, &sender, "rebuild").await;
+                Input::Command(DevCommand::HotReload) => {
+                    if !whisker_build::ui::is_tui() {
+                        whisker_build::ui::section("Hot Reload");
+                    }
+                    ensure_patcher(&self.config, &hot_reload_init, &mut patcher);
+                    match patcher.as_ref() {
+                        Some(p) => hot_reload_cycle(p, &sender, &self.on_event, None).await,
+                        None => prompt_full_reload(
+                            &self.on_event,
+                            "hot reload unavailable (patcher not initialized)",
+                        ),
+                    }
+                }
+                Input::Command(DevCommand::FullReload) => {
+                    if !whisker_build::ui::is_tui() {
+                        whisker_build::ui::section("Full Reload");
+                    }
+                    run_build_cycle(&builder, &installer, &self.on_event, &sender, "full reload")
+                        .await;
                 }
             }
         }
@@ -611,31 +682,158 @@ impl DevServer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoopAction {
     /// Drop on the floor — `ChangeKind::Other` doesn't warrant
-    /// either a patch or a rebuild.
+    /// either a patch or a prompt.
     Ignore,
-    /// Try a Tier 1 subsecond patch. Caller falls back to Tier 2
-    /// on Patcher error.
-    Tier1Patch,
-    /// Full cargo rebuild + reinstall + relaunch (Tier 2). Used
-    /// when the change is dependency-shaped (`Cargo.toml`) or
-    /// when no Patcher is configured.
-    Tier2Rebuild,
+    /// Build and push a hot-reload patch.
+    HotReload,
+    /// The change can't be hot-reloaded. Tell the user why and wait
+    /// for an explicit `R` (Full Reload) — never rebuild + restart
+    /// the app automatically.
+    PromptFullReload,
 }
 
-/// Pure decision helper for the change loop. Tier 1 only handles
+/// Pure decision helper for the change loop. Hot reload only handles
 /// `ChangeKind::RustCode` and only when a Patcher is available;
-/// `Cargo.toml` always needs a full rebuild because the dependency
+/// `Cargo.toml` always needs a Full Reload because the dependency
 /// graph may have shifted; everything else is ignored.
 pub fn decide_action(kind: ChangeKind, has_patcher: bool) -> LoopAction {
     match kind {
         ChangeKind::Other => LoopAction::Ignore,
-        ChangeKind::CargoToml => LoopAction::Tier2Rebuild,
-        ChangeKind::RustCode if has_patcher => LoopAction::Tier1Patch,
-        ChangeKind::RustCode => LoopAction::Tier2Rebuild,
+        ChangeKind::CargoToml => LoopAction::PromptFullReload,
+        ChangeKind::RustCode if has_patcher => LoopAction::HotReload,
+        ChangeKind::RustCode => LoopAction::PromptFullReload,
     }
 }
 
-/// Log added / removed symbols from a Tier 1 diff. Quiet when both
+/// A command receiver that never yields: fresh channel whose sender
+/// is leaked (a few bytes, once per `run`). Used when the caller
+/// attached no command channel, and after a real one hangs up —
+/// `tokio::select!` on a *closed* receiver would return `None`
+/// immediately in a hot loop.
+fn parked_command_receiver() -> tokio::sync::mpsc::UnboundedReceiver<DevCommand> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    std::mem::forget(tx);
+    rx
+}
+
+/// Report "this change needs a Full Reload" without running one.
+/// Prints the reason + the `R` hint to the terminal and emits
+/// [`Event::FullReloadRequired`] so the TUI can keep a persistent
+/// banner up until the user acts.
+fn prompt_full_reload(on_event: &Option<Arc<dyn Fn(Event) + Send + Sync>>, reason: &str) {
+    whisker_build::ui::warn(format!("{reason} — press R to Full Reload"));
+    emit(
+        on_event,
+        Event::FullReloadRequired {
+            reason: reason.to_string(),
+        },
+    );
+}
+
+/// Late patcher init. A failed init at startup shouldn't disable hot
+/// reload for the whole session: a Full Reload runs with the capture
+/// shims wired, so the caches `init_patcher_for` reads may have been
+/// repopulated since the failure. No-op when the patcher is already
+/// up or hot reload wasn't configured.
+fn ensure_patcher(
+    config: &Config,
+    hot_reload_init: &Option<HotReloadPrep>,
+    patcher: &mut Option<hotpatch::Patcher>,
+) {
+    if patcher.is_some() {
+        return;
+    }
+    let Some(prep) = hot_reload_init.as_ref() else {
+        return;
+    };
+    match init_patcher_for(config, prep) {
+        Ok(p) => {
+            whisker_build::ui::info("hot-reload patcher ready (recovered)");
+            *patcher = Some(p);
+        }
+        Err(e) => {
+            whisker_build::ui::debug(format!("hot-reload patcher init retry failed: {e:#}"));
+        }
+    }
+}
+
+/// One hot-reload attempt: build a patch for `crate_key` (`None` =
+/// the user crate) and broadcast it to connected clients. Never
+/// falls back to a rebuild — a compile error in the user's code
+/// waits for the next save, and every infrastructure failure prompts
+/// for an explicit Full Reload.
+async fn hot_reload_cycle(
+    patcher: &hotpatch::Patcher,
+    sender: &PatchSender,
+    on_event: &Option<Arc<dyn Fn(Event) + Send + Sync>>,
+    crate_key: Option<&str>,
+) {
+    // Open the step as soon as we know we're patching; the spinner
+    // runs across both the build + the wire-up so the user sees a
+    // single elapsed duration for "edit → app updated".
+    let step = whisker_build::ui::step("hot reload", "subsecond patch");
+    // Tell the cli to flip into "reloading" right now — the patcher
+    // work that follows (`build_patch` + dylib read + send) is the
+    // wall-clock-heavy bit, and the matching `PatchSent` flips back
+    // to Idle.
+    emit(on_event, Event::PatchBuilding);
+    let Some(aslr_reference) = sender.latest_aslr_reference() else {
+        // No client has reported its `aslr_reference` yet (handshake
+        // hasn't completed, or never connected). Without that value
+        // a stub-asm-style patch can't be built.
+        step.fail("no connected device yet");
+        prompt_full_reload(
+            on_event,
+            "no device connected — a Full Reload builds, installs and launches the app",
+        );
+        return;
+    };
+    let started = std::time::Instant::now();
+    match patcher.build_patch(aslr_reference, crate_key).await {
+        Ok(plan) => {
+            let built_in = started.elapsed();
+            log_patch_diff(&plan.report);
+            let dylib_bytes = match read_lib_bytes(&plan.table.lib) {
+                Ok(b) => Arc::new(b),
+                Err(e) => {
+                    step.fail(format!(
+                        "could not read patch dylib ({}): {e:#}",
+                        plan.table.lib.display(),
+                    ));
+                    prompt_full_reload(on_event, "hot reload failed (see log above)");
+                    return;
+                }
+            };
+            let send_started = std::time::Instant::now();
+            let n = sender.send(Patch {
+                table: plan.table,
+                dylib_bytes,
+            });
+            whisker_build::ui::debug(format!(
+                "built {built_in:?} · queued {:?}",
+                send_started.elapsed()
+            ));
+            step.done(format!("{n} client(s)"));
+            emit(on_event, Event::PatchSent);
+        }
+        Err(e) if e.downcast_ref::<hotpatch::RustcRejectedCode>().is_some() => {
+            // The user's code doesn't compile. A Full Reload would
+            // fail with the exact same diagnostics after a 10-30s
+            // wait, so don't prompt for one — rustc already printed
+            // them (stderr is inherited). Report and wait for the
+            // next save.
+            let msg = "compile error — fix the code and save again";
+            step.fail(msg);
+            emit(on_event, Event::BuildFailed(msg.to_string()));
+        }
+        Err(e) => {
+            step.fail(format!("{e:#}"));
+            prompt_full_reload(on_event, "hot reload failed (see log above)");
+        }
+    }
+}
+
+/// Log added / removed symbols from a hot-reload patch diff. Quiet when both
 /// lists are empty (the common case) so the dev terminal stays
 /// readable; loud when something interesting happens (`pub fn`
 /// added or removed) so the user notices.
@@ -663,30 +861,30 @@ fn log_patch_diff(report: &hotpatch::DiffReport) {
     }
 }
 
-/// State produced by [`prepare_tier1_capture`]: enough to make the
+/// State produced by [`prepare_hot_reload_capture`]: enough to make the
 /// initial build a fat build, and to construct the patcher after the
 /// build completes.
 #[derive(Debug, Clone)]
-struct Tier1Prep {
+struct HotReloadPrep {
     capture: CaptureShims,
     real_linker: PathBuf,
 }
 
 /// Resolve shim paths (building them if missing) and assemble the
 /// CaptureShims wiring. Returns `Err` if the shim binaries can't be
-/// produced, in which case the caller falls back to Tier 2.
+/// produced, in which case hot reload is unavailable for the session.
 ///
 /// `config` carries the workspace + target + android/ios params the
 /// linker/triple pickers need:
 ///   - Android → NDK clang for `config.android.abi`.
 ///   - others → host clang via [`hotpatch::wrapper::resolve_host_linker`].
-fn prepare_tier1_capture(config: &Config) -> Result<Tier1Prep> {
+fn prepare_hot_reload_capture(config: &Config) -> Result<HotReloadPrep> {
     let shims = hotpatch::resolve_shim_paths(&config.workspace_root)?;
     let rustc_cache_dir = hotpatch::wrapper::default_cache_dir(&config.workspace_root);
     let linker_cache_dir = hotpatch::wrapper::default_linker_cache_dir(&config.workspace_root);
     let real_linker = resolve_linker_for(config)?;
     let target_triple = target_triple_for(config);
-    Ok(Tier1Prep {
+    Ok(HotReloadPrep {
         capture: CaptureShims {
             rustc_shim: shims.rustc_shim,
             linker_shim: shims.linker_shim,
@@ -759,7 +957,7 @@ fn resolve_linker_for(config: &Config) -> Result<PathBuf> {
 
 /// Construct the patcher from the captures the fat build just wrote.
 /// Splits out so [`DevServer::run`] is easier to read.
-fn init_patcher_for(config: &Config, prep: &Tier1Prep) -> Result<hotpatch::Patcher> {
+fn init_patcher_for(config: &Config, prep: &HotReloadPrep) -> Result<hotpatch::Patcher> {
     let original_binary = original_binary_path(config)?;
     hotpatch::Patcher::initialize(
         &config.workspace_root,
@@ -955,7 +1153,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn config_defaults_pick_loopback_and_tier2() {
+    fn config_defaults_pick_loopback_and_full_reload_only() {
         let cfg = Config::defaults_for(
             PathBuf::from("/tmp/ws"),
             "hello-world".to_string(),
@@ -966,7 +1164,7 @@ mod tests {
         assert_eq!(cfg.target, Target::Android);
         assert_eq!(cfg.bind_addr.port(), 9876);
         assert!(cfg.bind_addr.ip().is_loopback());
-        assert_eq!(cfg.hot_patch_mode, HotPatchMode::Tier2ColdRebuild);
+        assert_eq!(cfg.hot_patch_mode, HotPatchMode::FullReloadOnly);
         assert!(cfg.watch_paths.is_empty());
     }
 
@@ -979,7 +1177,7 @@ mod tests {
     #[test]
     fn hot_patch_mode_variants_compare_by_value() {
         assert_eq!(HotPatchMode::Disabled, HotPatchMode::Disabled);
-        assert_ne!(HotPatchMode::Tier1Subsecond, HotPatchMode::Tier2ColdRebuild,);
+        assert_ne!(HotPatchMode::HotReload, HotPatchMode::FullReloadOnly,);
     }
 
     #[test]
@@ -1117,32 +1315,32 @@ mod tests {
     // ----- decide_action -----------------------------------------------
 
     #[test]
-    fn rust_code_with_patcher_chooses_tier1_patch() {
+    fn rust_code_with_patcher_chooses_hot_reload() {
         assert_eq!(
             decide_action(ChangeKind::RustCode, true),
-            LoopAction::Tier1Patch,
+            LoopAction::HotReload,
         );
     }
 
     #[test]
-    fn rust_code_without_patcher_falls_through_to_tier2_rebuild() {
+    fn rust_code_without_patcher_prompts_full_reload() {
         assert_eq!(
             decide_action(ChangeKind::RustCode, false),
-            LoopAction::Tier2Rebuild,
+            LoopAction::PromptFullReload,
         );
     }
 
     #[test]
-    fn cargo_toml_always_chooses_tier2_rebuild_even_with_patcher() {
+    fn cargo_toml_always_prompts_full_reload_even_with_patcher() {
         // Patcher can't reload deps — Cargo.toml needs a full
         // rebuild regardless of which mode we're in.
         assert_eq!(
             decide_action(ChangeKind::CargoToml, true),
-            LoopAction::Tier2Rebuild,
+            LoopAction::PromptFullReload,
         );
         assert_eq!(
             decide_action(ChangeKind::CargoToml, false),
-            LoopAction::Tier2Rebuild,
+            LoopAction::PromptFullReload,
         );
     }
 

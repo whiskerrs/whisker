@@ -1,6 +1,6 @@
 //! Build a `subsecond::JumpTable` from old vs new symbol tables.
 //!
-//! This is the diffing brain of Tier 1: given the original binary's
+//! This is the diffing brain of hot reload: given the original binary's
 //! symbols and the freshly-linked patch dylib's symbols, walk the
 //! ones that exist in both and produce the address-to-address map
 //! that `subsecond::apply_patch` will use to rewrite call sites.

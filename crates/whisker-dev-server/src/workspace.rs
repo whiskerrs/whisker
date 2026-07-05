@@ -44,7 +44,7 @@ pub struct PathDepCrate {
 /// "Path dep" = `Package.source.is_none()`. That covers workspace
 /// members and explicit `path = "..."` deps. Registry / git deps
 /// are skipped — their sources live outside the workspace and
-/// changes there would imply a `Cargo.lock` bump, which Tier 2
+/// changes there would imply a `Cargo.lock` bump, which full reload
 /// rebuild already covers.
 pub fn discover_path_deps(manifest_path: &Path, app_package: &str) -> Result<Vec<PathDepCrate>> {
     let metadata = MetadataCommand::new()
@@ -110,7 +110,7 @@ pub fn discover_path_deps(manifest_path: &Path, app_package: &str) -> Result<Vec
 /// crate name they all map to via longest-prefix match against
 /// `crates`. Returns `None` if the batch spans multiple crates or
 /// any path is outside every known src dir — the dev loop falls back
-/// to a Tier 2 cold rebuild in that case (we can patch one crate per
+/// to a full reload in that case (we can patch one crate per
 /// debounced batch, not two).
 pub fn identify_crate_for_paths(paths: &[PathBuf], crates: &[PathDepCrate]) -> Option<String> {
     let mut found: Option<&str> = None;

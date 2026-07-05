@@ -25,7 +25,7 @@
 //! against at runtime. Matches the Android side's choice. See
 //! `docs/hot-reload-plan.md` "Second Pivot".
 //!
-//! Tier 1 fat-build capture (see [`crate::capture`]) is opt-in via
+//! hot reload fat-build capture (see [`crate::capture`]) is opt-in via
 //! the `capture` parameter on the per-arch cargo helper. The
 //! dev-server wires it up by setting `RUSTC_WORKSPACE_WRAPPER` /
 //! `CARGO_TARGET_*_LINKER` / `CARGO_TARGET_*_RUSTFLAGS` env vars on
@@ -115,7 +115,7 @@ const BRIDGE_EXPORTS: &[&str] = &[
 /// boundary.
 ///
 /// `--release` is always set regardless of `capture` — iOS dev's
-/// Tier 1 capture wants the same optimised codegen prod ships. The
+/// hot reload capture wants the same optimised codegen prod ships. The
 /// only thing that changes when `capture` is `Some` is the env-var
 /// envelope (RUSTC_WORKSPACE_WRAPPER, the linker shim, save-temps,
 /// debug-assertions, export-dynamic) — see [`crate::capture_env_vars`].

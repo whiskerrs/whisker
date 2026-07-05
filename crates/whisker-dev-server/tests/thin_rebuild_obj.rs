@@ -1,7 +1,7 @@
 //! End-to-end check that the `--emit=obj` + own-linker pipeline
 //! actually preserves mangled `pub fn` symbols in the resulting
 //! patch dylib (I4g-X2c). This is the bit cdylib couldn't give us
-//! and the load-bearing prerequisite for Tier 1 hot-patch.
+//! and the load-bearing prerequisite for hot-reload patch.
 //!
 //! Flow:
 //!   1. Build the fixture's lib.rs into an "obj" via the new
@@ -112,6 +112,7 @@ fn captured_rustc_for_fixture(lib_rs: &Path) -> CapturedRustcInvocation {
             "--emit=link".into(),
             lib_rs.to_string_lossy().into(),
         ],
+        envs: Default::default(),
         timestamp_micros: 0,
     }
 }

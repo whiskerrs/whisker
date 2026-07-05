@@ -1,11 +1,11 @@
-//! Tier 1 fat-build capture shim wiring.
+//! hot reload fat-build capture shim wiring.
 //!
-//! When the dev-server runs a Tier 2 cold rebuild for hot-reload, it
+//! When the dev-server runs a full reload for hot-reload, it
 //! transparently elevates that build into a **fat build**: cargo
 //! still produces the same artifact, but the rustc and linker
 //! invocations get intercepted by [`whisker-rustc-shim`] and
 //! [`whisker-linker-shim`] respectively, which dump their argv to
-//! JSON files under the configured cache dirs. The Tier 1 thin
+//! JSON files under the configured cache dirs. The hot reload thin
 //! rebuild later replays those argvs to produce a patch dylib.
 //!
 //! The setup is just env vars (cargo's RUSTC_WORKSPACE_WRAPPER +
@@ -14,11 +14,11 @@
 //!
 //! Moved here from `whisker-dev-server::builder` so `whisker-cli`'s
 //! `whisker run` path (which lives outside dev-server in Phase 3+)
-//! can also drive fat builds when it wants Tier 1 ready.
+//! can also drive fat builds when it wants hot reload ready.
 
 use std::path::PathBuf;
 
-/// Shim wiring that turns a plain cargo invocation into a Tier 1
+/// Shim wiring that turns a plain cargo invocation into a hot reload
 /// fat build. All paths are absolute; the dev-server creates the
 /// cache dirs on demand. `real_linker` is what the linker shim
 /// forwards to (typically the same `cc`/`clang` cargo would have
@@ -29,7 +29,7 @@ use std::path::PathBuf;
 /// that triple via cargo's `CARGO_TARGET_<UPPER>_LINKER` env var —
 /// host-only artifacts (build scripts, proc-macros) keep their
 /// default linker. When `None`, the shim is installed globally via
-/// `RUSTFLAGS=-Clinker=…` (fine for host-only Tier 1 setups).
+/// `RUSTFLAGS=-Clinker=…` (fine for host-only hot reload setups).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureShims {
     pub rustc_shim: PathBuf,
@@ -64,7 +64,7 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
 /// to `triple_override` instead of `c.target_triple`. Used by
 /// multi-triple builds (e.g. iOS, which emits dylibs for
 /// device + intel-sim + arm64-sim) where every per-target slice
-/// needs the same Tier-1 capture envelope — the original
+/// needs the same hot-reload capture envelope — the original
 /// `CaptureShims::target_triple` only carries one slot, so a naive
 /// `capture_env_vars(c)` call would only set
 /// `CARGO_TARGET_<that-one-triple>_RUSTFLAGS` and silently leave
@@ -98,7 +98,7 @@ pub fn capture_env_vars_for_triple(
     ];
 
     let shim = c.linker_shim.to_string_lossy().to_string();
-    // Three flags every fat build needs for Tier 1 to work:
+    // Three flags every fat build needs for hot reload to work:
     //
     // `-Csave-temps=y` keeps rustc's temp dir (containing the
     // version script and bridge-static archive the linker args
@@ -122,7 +122,7 @@ pub fn capture_env_vars_for_triple(
     // branch in `subsecond::HotFn::try_call` — in release builds
     // without this, subsecond compiles to `self.inner.call_it(args)`
     // and skips the JumpTable entirely (apply_patch becomes a no-op
-    // from the caller's perspective). Tier 1 dev builds want the
+    // from the caller's perspective). hot reload dev builds want the
     // JumpTable lookup; this flag flips the cfg without dropping to the
     // dev profile. (We also force `-Copt-level=0` below so the host's
     // per-component dispatch closures match the patch's — see there.)

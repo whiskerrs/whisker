@@ -51,6 +51,12 @@ use super::wrapper::CapturedRustcInvocation;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjBuildPlan {
     pub args: Vec<String>,
+    /// Environment to overlay on the rustc spawn — the `CARGO_*` /
+    /// `OUT_DIR` vars captured during the fat build, so `env!()`
+    /// invocations in the user's code still resolve under the raw
+    /// (cargo-less) thin rebuild. Empty for captures written before
+    /// env capture existed.
+    pub envs: std::collections::BTreeMap<String, String>,
     pub output_dir: PathBuf,
     pub expected_object: PathBuf,
 }
@@ -115,8 +121,8 @@ pub fn build_obj_plan(captured: &CapturedRustcInvocation, output_dir: &Path) -> 
     // 50–100 ms warm. The cache lives under our patch dir so it's
     // wiped together with the thin object on a fresh `whisker run`.
     set_incremental(&mut args, &output_dir.join("incremental"));
-    // The fat (release) build captured `-Copt-level=3`. For Tier 1
-    // hot patches we strip the LLVM optimization pipeline entirely —
+    // The fat (release) build captured `-Copt-level=3`. For hot-reload
+    // patches we strip the LLVM optimization pipeline entirely —
     // `time-passes` confirms LLVM passes account for ~88% of rustc's
     // wall time on opt-level=3 user crates. The patched code only
     // has to *run*, not run fast: hot reload is a dev affordance, so
@@ -128,6 +134,7 @@ pub fn build_obj_plan(captured: &CapturedRustcInvocation, output_dir: &Path) -> 
     override_opt_level(&mut args, "0");
     ObjBuildPlan {
         args,
+        envs: captured.envs.clone(),
         output_dir: output_dir.to_path_buf(),
         expected_object: object_path,
     }
@@ -343,8 +350,19 @@ mod tests {
         CapturedRustcInvocation {
             crate_name: "demo".into(),
             args,
+            envs: Default::default(),
             timestamp_micros: 0,
         }
+    }
+
+    #[test]
+    fn build_obj_plan_carries_captured_envs_through() {
+        let mut captured = captured_with(s(&["--edition=2021", "src/lib.rs"]));
+        captured
+            .envs
+            .insert("CARGO_PKG_VERSION".to_string(), "0.7.0".to_string());
+        let plan = build_obj_plan(&captured, Path::new("/tmp/patches"));
+        assert_eq!(plan.envs, captured.envs);
     }
 
     // ----- set_crate_type ----------------------------------------------
@@ -520,6 +538,7 @@ mod tests {
         let captured = CapturedRustcInvocation {
             crate_name: "thin-build-fixture".into(),
             args: s(&["src/lib.rs"]),
+            envs: Default::default(),
             timestamp_micros: 0,
         };
         let plan = build_obj_plan(&captured, Path::new("/o"));
@@ -539,6 +558,7 @@ mod tests {
             &CapturedRustcInvocation {
                 crate_name: captured.crate_name.clone(),
                 args: plan1.args.clone(),
+                envs: Default::default(),
                 timestamp_micros: 0,
             },
             Path::new("/o"),

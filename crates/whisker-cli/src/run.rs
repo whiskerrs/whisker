@@ -36,9 +36,9 @@ pub struct Args {
     #[arg(long, default_value = "127.0.0.1:9876")]
     pub bind: SocketAddr,
 
-    /// Opt out of Tier 1 subsecond hot-patching and fall back to Tier 2
-    /// cold rebuilds. `whisker run` defaults to Tier 1; this flag is
-    /// for situations where the hot-patch path is misbehaving and you
+    /// Disable Hot Reload (subsecond patching). Every save then
+    /// prompts for an explicit Full Reload (`R`) instead. For
+    /// situations where the hot-patch path is misbehaving and you
     /// just want the slower-but-bulletproof path.
     #[arg(long)]
     pub no_hot_patch: bool,
@@ -221,15 +221,15 @@ fn run_inner(
         .map(|v| format!(" (template_version {v})"))
         .unwrap_or_default();
     if sync.regenerated {
-        eprintln!(
-            "[whisker run] regenerated gen/ at {}{tv}",
+        whisker_build::ui::info(format!(
+            "regenerated gen/ at {}{tv}",
             sync.gen_dir.display(),
-        );
+        ));
     } else {
-        eprintln!(
-            "[whisker run] reused cached gen/ at {}{tv}",
+        whisker_build::ui::info(format!(
+            "reused cached gen/ at {}{tv}",
             sync.gen_dir.display(),
-        );
+        ));
     }
 
     let android = match target {
@@ -257,9 +257,9 @@ fn run_inner(
         // also defends an accidental `--bind 0.0.0.0`.
         dev_token: Some(generate_dev_token()),
         hot_patch_mode: if args.no_hot_patch {
-            HotPatchMode::Tier2ColdRebuild
+            HotPatchMode::FullReloadOnly
         } else {
-            HotPatchMode::Tier1Subsecond
+            HotPatchMode::HotReload
         },
         android,
         ios,
@@ -281,21 +281,31 @@ fn run_inner(
     let show_native_logs = args.show_native_logs;
     let tui_for_events = tui.cloned();
 
-    let server = DevServer::new(config)?.on_event(move |e| {
-        if let Some(h) = &tui_for_events {
-            // TUI mode: the handle's `apply_event` already pushes
-            // `Event::DeviceLog` into scrollback via `insert_before`
-            // as a `[device]` / `[device:err]` row. Routing the
-            // same event through `forward_event_to_ui` would
-            // double-print every device log line (once raw, once
-            // wrapped in `whisker_build::ui::info`'s `· ` prefix
-            // and captured back through stderr). Skip the legacy
-            // path entirely when the TUI is on.
-            h.apply_event(&e);
-        } else {
-            forward_event_to_ui(e, show_native_logs);
-        }
-    });
+    // Reload shortcuts (`r` / `R` in the TUI) flow through this
+    // channel into the dev loop. Reloads are user-triggered only —
+    // the dev-server never full-reloads on its own.
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    if let Some(t) = tui {
+        t.set_command_sender(cmd_tx);
+    }
+
+    let server = DevServer::new(config)?
+        .with_command_receiver(cmd_rx)
+        .on_event(move |e| {
+            if let Some(h) = &tui_for_events {
+                // TUI mode: the handle's `apply_event` already pushes
+                // `Event::DeviceLog` into scrollback via `insert_before`
+                // as a `[device]` / `[device:err]` row. Routing the
+                // same event through `forward_event_to_ui` would
+                // double-print every device log line (once raw, once
+                // wrapped in `whisker_build::ui::info`'s `· ` prefix
+                // and captured back through stderr). Skip the legacy
+                // path entirely when the TUI is on.
+                h.apply_event(&e);
+            } else {
+                forward_event_to_ui(e, show_native_logs);
+            }
+        });
 
     rt.block_on(server.run())
 }
