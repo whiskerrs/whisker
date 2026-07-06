@@ -126,7 +126,8 @@ impl Engine {
             .register(crate::plugins::android_gradle_dependencies::GradleDependencies)
             .register(crate::plugins::ios_extra_files::IosExtraFiles)
             .register(crate::plugins::android_extra_files::AndroidExtraFiles)
-            .register(crate::plugins::ios_pbxproj_ops::IosPbxprojOps);
+            .register(crate::plugins::ios_pbxproj_ops::IosPbxprojOps)
+            .register(crate::plugins::app_icon::AppIcon);
         e
     }
 

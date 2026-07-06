@@ -28,9 +28,7 @@ serde_json = { workspace = true }
 # `PluginConfig` trait — `app.plugin::<T>()` is generic over it and
 # reads `T::NAME` to key the entry inside `plugins`.
 whisker-plugin = { workspace = true }
-
-[dev-dependencies]
-# Test-only — `Plugin::apply` returns `anyhow::Result<()>`, so the
-# in-file test Plugin impls need anyhow in scope. Stays out of the
-# probe-time dep graph because `[dev-dependencies]`.
+# `Plugin::apply` returns `anyhow::Result<()>` — needed by the
+# `AppIcon` marker's (no-op) Plugin impl. Already in the probe dep
+# graph transitively via whisker-plugin, so this adds no probe cost.
 anyhow = { workspace = true }

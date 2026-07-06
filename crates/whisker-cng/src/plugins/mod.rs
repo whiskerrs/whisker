@@ -30,6 +30,14 @@
 //!   App Links host declarations, and most other 1st-party Google
 //!   SDKs.
 //!
+//! - **[`app_icon`]** — generates the launcher/home-screen icon for
+//!   both platforms from one square source PNG. Store submission is
+//!   impossible without it, so it ships built-in rather than as an
+//!   external package. Unlike the other built-ins its user-facing
+//!   declaration types (`AppIcon` / `AppIconConfig`) live in
+//!   `whisker-config` — the config probe only depends on that crate,
+//!   so a type the user names in `app.plugin::<…>` must be there.
+//!
 //! Future built-ins land here additively. Each new entry needs a
 //! brief justification in this list and a registration line in
 //! [`crate::Engine::with_builtins`].
@@ -40,6 +48,7 @@ pub mod android_gradle_dependencies;
 pub mod android_gradle_plugins;
 pub mod android_meta_data;
 pub mod android_permissions;
+pub mod app_icon;
 pub mod info_plist_extra;
 pub mod ios_extra_files;
 pub mod ios_pbxproj_ops;

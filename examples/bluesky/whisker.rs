@@ -1,9 +1,10 @@
 // `whisker.rs` for the Bluesky example.
 //
-// Metadata only. The native modules this app uses (WebView, Input,
-// LocalStore, Image) auto-wire from their `[package.metadata.whisker]`
-// markers — no plugin registration needed. Networking + crypto run in
-// pure Rust on whisker's tokio feature, so there's no plugin to configure.
+// The native modules this app uses (WebView, Input, LocalStore,
+// Image) auto-wire from their `[package.metadata.whisker]` markers —
+// no plugin registration needed for those. Networking + crypto run in
+// pure Rust on whisker's tokio feature. The only declared plugin is
+// the built-in app-icon generator at the bottom.
 
 pub fn configure(app: &mut whisker_config::Config) {
     app.name("WhiskerBluesky")
@@ -23,5 +24,17 @@ pub fn configure(app: &mut whisker_config::Config) {
         i.bundle_id("rs.whisker.bluesky")
             .scheme("WhiskerBluesky")
             .deployment_target("13.0");
+    });
+
+    // Launcher / home-screen icon (built-in whisker-app-icon plugin).
+    // `source` feeds the iOS catalog + Android legacy mipmaps; the
+    // android_* options define the adaptive icon (API 26+): butterfly
+    // foreground inside the 66% safe zone, flat blue background, and
+    // the same silhouette as the Android 13+ themed (monochrome) icon.
+    app.plugin::<whisker_config::AppIcon>(|c| {
+        c.source("assets/icon.png")
+            .android_foreground("assets/icon-fg.png")
+            .android_background_color("#0087DC")
+            .android_monochrome("assets/icon-fg.png");
     });
 }

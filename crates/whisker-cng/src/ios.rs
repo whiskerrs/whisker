@@ -378,6 +378,11 @@ fn last_known_file_type(path: &Path) -> &'static str {
         Some("png") => "image.png",
         Some("jpg") | Some("jpeg") => "image.jpeg",
         Some("xcassets") => "folder.assetcatalog",
+        // Icon Composer bundle (Xcode 26+). The dedicated type is
+        // what makes xcodebuild hand the bundle to actool for
+        // Liquid Glass appearance generation instead of copying the
+        // directory verbatim.
+        Some("icon") => "folder.iconcomposer.icon",
         Some("storyboard") => "file.storyboard",
         Some("xib") => "file.xib",
         _ => "text",

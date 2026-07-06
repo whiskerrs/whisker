@@ -35,6 +35,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use whisker_plugin::{Plugin, PluginConfig};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -209,6 +210,145 @@ impl AndroidConfig {
     pub fn launcher_activity(&mut self, a: impl Into<String>) -> &mut Self {
         self.launcher_activity = Some(a.into());
         self
+    }
+}
+
+/// Typed config for the built-in `whisker-app-icon` plugin.
+///
+/// Declared from `whisker.rs` via:
+///
+/// ```ignore
+/// app.plugin::<AppIcon>(|c| {
+///     c.source("assets/icon.png"); // 1024×1024 PNG
+/// });
+/// ```
+///
+/// `source` is a path relative to the app crate root (the directory
+/// holding `Cargo.toml` / `whisker.rs`) pointing at a square PNG of
+/// at least 1024×1024. From that single image the generator produces
+/// the iOS asset catalog (`Assets.xcassets/AppIcon.appiconset`,
+/// single-size — actool derives every runtime size) and the Android
+/// launcher icons: legacy mipmaps (`res/mipmap-*/ic_launcher.png`,
+/// API ≤ 25) plus an adaptive icon (API 26+, `source` as the
+/// foreground over a white background by default) and the
+/// `android:icon` manifest attribute.
+///
+/// Beyond the single shared source there are two per-platform
+/// refinement layers, both optional:
+///
+/// ```ignore
+/// app.plugin::<AppIcon>(|c| {
+///     c.source("assets/icon.png")
+///         // iOS: Icon Composer bundle — Liquid Glass appearances
+///         // (default/dark/clear/tinted) on iOS 26+, auto-fallback
+///         // on older versions. Replaces the PNG-derived catalog.
+///         .ios_icon("assets/AppIcon.icon")
+///         // Android: adaptive-icon layers (API 26+).
+///         .android_foreground("assets/icon-fg.png") // 108dp layer; keep art
+///         .android_background_color("#1E90FF")      //   in the central 66%
+///         .android_monochrome("assets/icon-fg.png"); // Android 13+ themed icon
+/// });
+/// ```
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct AppIconConfig {
+    /// Source image path, relative to the app crate root. Square
+    /// PNG, 1024×1024 or larger.
+    pub source: Option<PathBuf>,
+    /// Icon Composer bundle (`.icon`) for iOS. When set it replaces
+    /// the PNG-derived asset catalog: actool renders every
+    /// appearance (default / dark / clear / tinted Liquid Glass
+    /// variants on iOS 26+, flattened fallbacks on older OS
+    /// versions) from the bundle's layered definition. Building
+    /// requires Xcode 26+. [`Self::source`] is still required — it
+    /// keeps feeding the Android icons.
+    #[serde(default)]
+    pub ios_icon: Option<PathBuf>,
+    /// Adaptive-icon foreground layer (Android 26+). Square PNG with
+    /// transparency; launchers mask to the central ~66%, so keep the
+    /// artwork inside that safe zone. Falls back to [`Self::source`]
+    /// when unset.
+    #[serde(default)]
+    pub android_foreground: Option<PathBuf>,
+    /// Adaptive-icon background layer as an image. Mutually
+    /// exclusive with [`Self::android_background_color`].
+    #[serde(default)]
+    pub android_background: Option<PathBuf>,
+    /// Adaptive-icon background layer as a flat color
+    /// (`#RRGGBB` / `#AARRGGBB`). Defaults to white when neither
+    /// background field is set.
+    #[serde(default)]
+    pub android_background_color: Option<String>,
+    /// Monochrome layer for Android 13+ themed icons. Square PNG;
+    /// launchers tint it, only its alpha/luminance matters.
+    #[serde(default)]
+    pub android_monochrome: Option<PathBuf>,
+}
+
+impl AppIconConfig {
+    /// Set the source image (path relative to the app crate root,
+    /// e.g. `c.source("assets/icon.png")`).
+    pub fn source(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.source = Some(path.into());
+        self
+    }
+
+    /// Set an Icon Composer bundle for iOS (path relative to the app
+    /// crate root, e.g. `c.ios_icon("assets/AppIcon.icon")`).
+    pub fn ios_icon(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.ios_icon = Some(path.into());
+        self
+    }
+
+    /// Set the adaptive-icon foreground image (Android 26+).
+    pub fn android_foreground(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.android_foreground = Some(path.into());
+        self
+    }
+
+    /// Set the adaptive-icon background image (Android 26+).
+    pub fn android_background(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.android_background = Some(path.into());
+        self
+    }
+
+    /// Set the adaptive-icon background color (`#RRGGBB` /
+    /// `#AARRGGBB`, Android 26+).
+    pub fn android_background_color(&mut self, color: impl Into<String>) -> &mut Self {
+        self.android_background_color = Some(color.into());
+        self
+    }
+
+    /// Set the monochrome layer for Android 13+ themed icons.
+    pub fn android_monochrome(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.android_monochrome = Some(path.into());
+        self
+    }
+}
+
+impl PluginConfig for AppIconConfig {
+    const NAME: &'static str = "whisker-app-icon";
+}
+
+/// Marker type for `app.plugin::<AppIcon>(|c| …)`.
+///
+/// This is only the *declaration* half: `whisker.rs` is compiled by
+/// a probe that depends solely on `whisker-config`, so the type the
+/// user names in the turbofish must live here. The icon generation
+/// itself (PNG decode, density resizing, asset-catalog emission)
+/// runs in `whisker-cng`'s built-in plugin registered under the same
+/// [`PluginConfig::NAME`]; this impl's `apply` is a no-op and the
+/// type must not be registered with an engine.
+pub struct AppIcon;
+
+impl Plugin for AppIcon {
+    type Config = AppIconConfig;
+
+    fn apply(
+        &self,
+        _: &mut whisker_plugin::GenerateContext,
+        _: &AppIconConfig,
+    ) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
