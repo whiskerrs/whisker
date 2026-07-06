@@ -43,6 +43,12 @@ cargo_metadata = "0.18"
 # `Config.plugins[name]` JSON entry back into the plugin's typed
 # Config via this crate's helpers.
 whisker-plugin = { workspace = true }
+# PNG decode/encode + Lanczos resize for the `whisker-app-icon`
+# built-in (Android mipmap densities, iOS 1024 normalization).
+# `png` codec only — the other format decoders would triple the
+# build cost for nothing. Runs in the CLI process, never in the
+# config probe, so probe builds stay cheap.
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Tiny stdin/stdout echo-style plugin binary the subprocess
 # integration test in `tests/subprocess.rs` spawns. Declared here
