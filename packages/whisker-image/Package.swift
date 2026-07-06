@@ -30,7 +30,7 @@ let package = Package(
         .library(name: "WhiskerImage", targets: ["WhiskerImage"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.1"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.2"),
         // Kingfisher 7.x — pure Swift image loader. PNG / JPEG / HEIC
         // via Core Image, animated GIF via `AnimatedImageView`, in-
         // memory `NSCache` + disk cache out of the box. WebP requires
