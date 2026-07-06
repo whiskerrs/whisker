@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.7.0...whisker-driver-sys-v0.8.0) - 2026-07-06
+
+### Added
+
+- *(list)* [**breaking**] ItemMeta — identity + per-item metadata unified; list_item removed ([#284](https://github.com/whiskerrs/whisker/pull/284))
+- *(list)* minimal-diff data-source updates — scroll position holds across appends ([#281](https://github.com/whiskerrs/whisker/pull/281))
+- *(list)* core-originated <list> events (scroll / scrolltolower / snap / layoutcomplete) now reach whisker ([#279](https://github.com/whiskerrs/whisker/pull/279))
+- *(list)* exhaustive Lynx <list> binding + on-demand virtualization ([#276](https://github.com/whiskerrs/whisker/pull/276))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.6.0...whisker-driver-sys-v0.7.0) - 2026-06-26
 
 ### Added

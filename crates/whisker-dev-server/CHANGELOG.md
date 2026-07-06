@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-dev-server-v0.7.0...whisker-dev-server-v0.8.0) - 2026-07-06
+
+### Added
+
+- *(build)* whisker build appbundle/apk/ipa + age-encrypted credential store ([#288](https://github.com/whiskerrs/whisker/pull/288))
+- *(hot-reload)* [**breaking**] saves only hot-reload — manual Full Reload (r/R), full-remount escalation, props-layout gate ([#287](https://github.com/whiskerrs/whisker/pull/287))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-dev-server-v0.6.0...whisker-dev-server-v0.7.0) - 2026-06-26
 
 ### Other
