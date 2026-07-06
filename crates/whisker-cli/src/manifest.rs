@@ -105,6 +105,19 @@ fn find_package_cargo_toml(start: &Path) -> Option<PathBuf> {
     }
 }
 
+/// The applicationId an Android build of this config uses — the
+/// explicit `android.application_id`, else the shared `bundle_id`.
+/// Single source of truth for `whisker run android`,
+/// `whisker credential android`, and `whisker build appbundle|apk`,
+/// so the credential lookup key always matches what gradle builds.
+pub fn android_application_id(config: &Config) -> Option<String> {
+    config
+        .android
+        .application_id
+        .clone()
+        .or_else(|| config.bundle_id.clone())
+}
+
 /// Cheap test for `[package]` without pulling in a full TOML parser
 /// just for the walk-up phase. We do a real `toml::from_str` once
 /// we've picked a winning candidate (see `parse_package_name`).

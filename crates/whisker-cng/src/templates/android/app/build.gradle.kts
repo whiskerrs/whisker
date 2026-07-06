@@ -47,6 +47,24 @@ android {
         jvmTarget = "17"
     }
 
+    // Release signing is injected by `whisker build appbundle|apk`
+    // through environment variables, materialized from the app's
+    // encrypted credentials/ store for the duration of one gradle
+    // invocation. No secret ever lands in this generated tree. When
+    // the vars are absent (plain ./gradlew runs), release builds
+    // stay unsigned — signing is whisker's job, not gradle's.
+    val whiskerKeystore = System.getenv("WHISKER_ANDROID_KEYSTORE")
+    if (whiskerKeystore != null) {
+        signingConfigs {
+            create("whiskerRelease") {
+                storeFile = file(whiskerKeystore)
+                storePassword = System.getenv("WHISKER_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("WHISKER_ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("WHISKER_ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         getByName("debug") {
             isMinifyEnabled = false
@@ -57,6 +75,9 @@ android {
         }
         getByName("release") {
             isMinifyEnabled = false
+            if (whiskerKeystore != null) {
+                signingConfig = signingConfigs.getByName("whiskerRelease")
+            }
         }
     }
 }

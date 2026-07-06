@@ -847,6 +847,203 @@ pub fn run_xcodebuild_app(args: &XcodebuildArgs<'_>) -> Result<PathBuf> {
     Ok(app)
 }
 
+// ============================================================================
+// Release (ipa) pipeline — `whisker build ipa`
+// ============================================================================
+
+/// ExportOptions.plist `method` values. Spelled exactly like Apple's
+/// plist values (and Flutter's `--export-method`), so the string the
+/// user typed matches what xcodebuild's own errors echo back —
+/// deliberately NOT fastlane's hyphen-less `adhoc`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportMethod {
+    /// App Store / TestFlight distribution.
+    AppStoreConnect,
+    /// Device-limited distribution (Firebase App Distribution etc.);
+    /// requires tester UDIDs registered on the developer portal.
+    AdHoc,
+}
+
+impl ExportMethod {
+    pub fn plist_value(self) -> &'static str {
+        match self {
+            ExportMethod::AppStoreConnect => "app-store-connect",
+            ExportMethod::AdHoc => "ad-hoc",
+        }
+    }
+}
+
+/// Signing inputs for the release pipeline. All auth flows through
+/// the App Store Connect API key (whisker's one true path — no
+/// Xcode-session dependence, identical local and CI), with the
+/// cloud-managed distribution certificate doing the actual signing
+/// at export time.
+pub struct ReleaseSigning<'a> {
+    pub team_id: &'a str,
+    /// Absolute path to `AuthKey_<key_id>.p8` — points into the
+    /// caller's credential staging dir.
+    pub key_path: &'a Path,
+    pub key_id: &'a str,
+    pub issuer_id: &'a str,
+}
+
+pub struct IosReleaseInputs<'a> {
+    /// `gen/ios/` — synced by cng before this runs.
+    pub gen_dir: &'a Path,
+    pub scheme: &'a str,
+    pub workspace_root: &'a Path,
+    /// User app crate name — namespaces the archive/export output dir.
+    pub package: &'a str,
+    pub method: ExportMethod,
+    pub signing: ReleaseSigning<'a>,
+}
+
+/// `xcodebuild archive` → `xcodebuild -exportArchive` → `.ipa`.
+///
+/// Signing setup is passed as command-line build settings
+/// (`DEVELOPMENT_TEAM` / `CODE_SIGN_STYLE=Automatic`), NOT baked
+/// into the generated pbxproj — the gen tree stays team-agnostic and
+/// `whisker run` (simulator) never sees signing at all.
+/// `-allowProvisioningUpdates` + the API-key flags let xcodebuild
+/// mint dev certificates, register the bundle id, and (re)generate
+/// profiles headlessly on both dev machines and CI.
+///
+/// The archive is kept on disk between runs: adding ad-hoc test
+/// devices only needs the export step re-run, and xcodebuild archive
+/// itself overwrites stale archives.
+pub fn archive_and_export(inputs: &IosReleaseInputs<'_>) -> Result<PathBuf> {
+    let IosReleaseInputs {
+        gen_dir,
+        scheme,
+        workspace_root,
+        package,
+        method,
+        signing,
+    } = inputs;
+    let xcode_project = gen_dir.join(format!("{scheme}.xcodeproj"));
+    if !xcode_project.is_dir() {
+        return Err(anyhow!(
+            "Xcode project missing at {} — has the gen tree been synced?",
+            xcode_project.display(),
+        ));
+    }
+    let out_root = workspace_root
+        .join("target/whisker/ios-release")
+        .join(package);
+    std::fs::create_dir_all(&out_root).with_context(|| format!("mkdir {}", out_root.display()))?;
+    let archive_path = out_root.join(format!("{scheme}.xcarchive"));
+
+    // ---- archive ---------------------------------------------------
+    let archive_step = crate::ui::step("xcodebuild", format!("archive {scheme}"));
+    let mut cmd = Command::new("xcodebuild");
+    cmd.arg("-project")
+        .arg(&xcode_project)
+        .args(["-scheme", scheme])
+        .args(["-configuration", "Release"])
+        .args(["-destination", "generic/platform=iOS"])
+        .arg("-archivePath")
+        .arg(&archive_path)
+        // SwiftPM build-tool plugins sit behind an interactive trust
+        // prompt headless builds can't answer.
+        .arg("-skipPackagePluginValidation")
+        .arg("-allowProvisioningUpdates")
+        .arg("-authenticationKeyPath")
+        .arg(signing.key_path)
+        .args(["-authenticationKeyID", signing.key_id])
+        .args(["-authenticationKeyIssuerID", signing.issuer_id])
+        .arg("archive")
+        // Command-line build settings override the pbxproj: the
+        // template's dev-loop identity stays untouched, release
+        // builds get automatic signing under the credential's team.
+        .arg(format!("DEVELOPMENT_TEAM={}", signing.team_id))
+        .arg("CODE_SIGN_STYLE=Automatic")
+        .arg("CODE_SIGN_IDENTITY=Apple Development")
+        .current_dir(gen_dir);
+    let status = archive_step
+        .pipe(&mut cmd)
+        .context("spawn xcodebuild archive")?;
+    if !status.success() {
+        archive_step.fail(format!("{status}"));
+        return Err(anyhow!("xcodebuild archive failed ({status})"));
+    }
+    archive_step.done("");
+
+    // ---- export ----------------------------------------------------
+    let options_path = out_root.join("ExportOptions.plist");
+    std::fs::write(
+        &options_path,
+        export_options_plist(*method, signing.team_id),
+    )
+    .with_context(|| format!("write {}", options_path.display()))?;
+    let export_dir = out_root.join("export");
+
+    let export_step = crate::ui::step("xcodebuild", format!("export {}", method.plist_value()));
+    let mut cmd = Command::new("xcodebuild");
+    cmd.arg("-exportArchive")
+        .arg("-archivePath")
+        .arg(&archive_path)
+        .arg("-exportOptionsPlist")
+        .arg(&options_path)
+        .arg("-exportPath")
+        .arg(&export_dir)
+        .arg("-allowProvisioningUpdates")
+        .arg("-authenticationKeyPath")
+        .arg(signing.key_path)
+        .args(["-authenticationKeyID", signing.key_id])
+        .args(["-authenticationKeyIssuerID", signing.issuer_id]);
+    let status = export_step
+        .pipe(&mut cmd)
+        .context("spawn xcodebuild -exportArchive")?;
+    if !status.success() {
+        export_step.fail(format!("{status}"));
+        return Err(anyhow!(
+            "xcodebuild -exportArchive failed ({status}) — if this is a signing error, \
+             re-check the stored key with `whisker credential ios`",
+        ));
+    }
+    export_step.done("");
+
+    // Export names the ipa after the app's product name; scan rather
+    // than guess.
+    let ipa = std::fs::read_dir(&export_dir)
+        .with_context(|| format!("read {}", export_dir.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|e| e == "ipa"))
+        .ok_or_else(|| {
+            anyhow!(
+                "export succeeded but no .ipa found under {}",
+                export_dir.display(),
+            )
+        })?;
+    Ok(ipa)
+}
+
+/// The ExportOptions.plist for one export. Nothing secret in here —
+/// it lands under `target/whisker/ios-release/` and is regenerated
+/// every run.
+fn export_options_plist(method: ExportMethod, team_id: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>{}</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>teamID</key>
+	<string>{}</string>
+	<key>destination</key>
+	<string>export</string>
+</dict>
+</plist>
+"#,
+        method.plist_value(),
+        team_id,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
