@@ -32,7 +32,7 @@ let package = Package(
         // it there, and the package identity (the crate's dir name)
         // is unique, so the app aggregator references it via
         // `.package(path: …)` without the `ios`-dir-name collision.
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.1"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.2"),
     ],
     targets: [
         .target(
