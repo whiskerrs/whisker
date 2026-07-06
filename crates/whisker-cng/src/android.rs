@@ -680,7 +680,14 @@ pub fn inputs_from_with_engine(
         // (`extra_application_attributes`): the template's
         // `<application` open tag grew a placeholder + the inputs/
         // fingerprint shape grew a field, so existing trees regenerate.
-        template_version: 10,
+        // Bumped 10 → 11 for release signing: app/build.gradle.kts
+        // grew the env-var-driven `whiskerRelease` signingConfig
+        // (`WHISKER_ANDROID_*`) that `whisker build appbundle|apk`
+        // injects. Without the bump, pre-existing gen trees keep the
+        // signing-less gradle script and release builds come out
+        // UNSIGNED (uninstallable) even though the build command
+        // exported the env vars.
+        template_version: 11,
     })
 }
 
@@ -723,7 +730,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 10,
+            template_version: 11,
         }
     }
 

@@ -529,7 +529,7 @@ fn ios_params_from(m: &manifest::ResolvedManifest, project_dir: &Path) -> Result
 /// Walk up from `start` looking for a `Cargo.toml` containing a
 /// `[workspace]` section. Returns the directory holding the matching
 /// Cargo.toml, or `None` if we walk off the top of the filesystem.
-fn find_workspace_root(start: &Path) -> Option<PathBuf> {
+pub(crate) fn find_workspace_root(start: &Path) -> Option<PathBuf> {
     // Canonicalize so the upward walk doesn't bottom out at an empty
     // PathBuf when `start` is relative and the workspace root happens
     // to be the process's cwd. An empty `workspace_root` later feeds

@@ -412,6 +412,46 @@ pub struct ModulesReport {
     pub modules: Vec<ModulesReportModule>,
 }
 
+/// Rewrite the Gradle plugins' on-disk module-report cache with a
+/// fresh discovery pass. Call this BEFORE every CLI-driven gradle
+/// invocation (`whisker build appbundle|apk`, the dev loop's
+/// assemble).
+///
+/// Why the cache can't be trusted without this: the Settings plugin
+/// validates its cache against the `Cargo.lock` hash alone, which
+/// goes stale in two realistic ways —
+///
+/// 1. **Cross-app poisoning**: the cache file lives in the
+///    workspace-level `target/whisker/`, so in a workspace holding
+///    several apps, app A's report (possibly zero modules) gets
+///    reused for app B (same lock hash). B's modules silently
+///    vanish from the APK and every custom element dies at render
+///    time with "No BehaviorController defined".
+/// 2. **Metadata edits**: `[package.metadata.whisker]` changes in a
+///    path-dep module's Cargo.toml don't touch `Cargo.lock`, so a
+///    module author's new declaration never reaches the build.
+///
+/// Since the CLI always runs before gradle, pre-writing a fresh
+/// report turns the plugin's cache read into "always valid, always
+/// current" regardless of plugin version. Both filenames are
+/// written: the shared legacy name published plugin ≤0.4.1 reads,
+/// and the per-package name 0.4.2+ reads.
+pub fn refresh_gradle_module_cache(workspace_root: &Path, user_package: &str) -> Result<()> {
+    let report = build_modules_report(workspace_root, user_package)
+        .with_context(|| format!("build modules report for `{user_package}`"))?;
+    let json = serde_json::to_string_pretty(&report).context("serialize modules report")?;
+    let dir = workspace_root.join("target/whisker");
+    std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
+    for name in [
+        format!("module-info-{user_package}.json"),
+        "module-info.json".to_string(),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(&path, &json).with_context(|| format!("write {}", path.display()))?;
+    }
+    Ok(())
+}
+
 /// Build a [`ModulesReport`] from a workspace + user package. Combines
 /// [`discover`], `Cargo.lock` hashing, and per-platform availability
 /// classification.

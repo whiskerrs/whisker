@@ -35,7 +35,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+pub mod build;
 pub mod build_dispatch;
+pub mod credential;
 pub mod doctor;
 pub mod fmt;
 pub mod linker_shim;
@@ -87,6 +89,18 @@ enum Command {
     /// `whisker run ios` from inside the new directory.
     New(new_app::NewAppArgs),
 
+    /// Produce distributable, signed artifacts — `appbundle` (.aab)
+    /// and `apk` today; `ipa` next. Signing material comes from the
+    /// encrypted `credentials/` store; missing pieces are set up
+    /// interactively on first use.
+    Build(build::BuildArgs),
+
+    /// Manage signing credentials — the age-encrypted `credentials/`
+    /// store committed to the repo. `whisker build` runs these
+    /// wizards automatically when something is missing; invoke them
+    /// directly to rotate or import.
+    Credential(credential::CredentialArgs),
+
     /// Format Rust source — a rustfmt drop-in that ALSO formats
     /// Whisker's `render!` / `css!` macro bodies (which rustfmt leaves
     /// untouched). Respects `rustfmt.toml` only; no whisker-specific
@@ -131,6 +145,8 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
         Command::Run(a) => run::run(a),
         Command::NewModule(a) => new_module::run(a),
         Command::New(a) => new_app::run(a),
+        Command::Build(a) => build::run(a),
+        Command::Credential(a) => credential::run(a),
         Command::Fmt(a) => fmt::run(a),
         Command::BuildIos(a) => build_dispatch::run_ios(a),
         Command::BuildAndroid(a) => build_dispatch::run_android(a),

@@ -1,0 +1,25 @@
+[package]
+name = "whisker-credentials"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["development-tools"]
+description = "Whisker credential store — age-encrypted signing credentials committed to the app repo."
+
+[dependencies]
+# X25519 file encryption (the `age` format). Chosen over a
+# passphrase/openssl scheme because the recipient model lets clones
+# WITHOUT the secret key still add credentials (encrypt-to-public-key),
+# and the format has a maintained pure-Rust implementation.
+age = "0.11"
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Session-scoped plaintext staging (deleted on drop) — decrypted
+# keystores / .p8 files exist on disk only while a build runs.
+tempfile = "3"

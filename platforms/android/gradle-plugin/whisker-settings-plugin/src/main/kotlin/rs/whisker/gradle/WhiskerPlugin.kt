@@ -32,9 +32,16 @@ import java.util.Properties
 //
 //   1. Spawns `whisker modules --workspace=... --package=...`
 //      and writes the JSON output to
-//      `<workspace>/target/whisker/module-info.json`. Cached by
-//      Cargo.lock SHA-256 so a warm Sync skips cargo metadata
-//      (mirrors Flutter's `.flutter-plugins-dependencies` model).
+//      `<workspace>/target/whisker/module-info-<package>.json`.
+//      Cached by Cargo.lock SHA-256 so a warm Sync skips cargo
+//      metadata (mirrors Flutter's `.flutter-plugins-dependencies`
+//      model). The filename carries the user package because the
+//      cache lives in the WORKSPACE-level target dir: in a monorepo
+//      with several apps (examples/*), a shared filename lets app
+//      A's report (possibly zero modules) poison app B's build —
+//      B's modules silently vanish from the APK and every custom
+//      element (`<input>`, `<svg>`, …) dies at render time with
+//      "No BehaviorController defined".
 //   2. Reads the JSON, `include()`s each Whisker module as a Gradle
 //      subproject, sets each one's `projectDir` to the module's
 //      package root.
@@ -92,7 +99,9 @@ class WhiskerPlugin : Plugin<Settings> {
     }
 
     private fun loadOrRefreshModulesReport(workspace: File, userPackage: String): ModulesReport {
-        val cachePath = File(workspace, "target/whisker/module-info.json")
+        // Per-package filename — see the header comment for the
+        // monorepo cache-poisoning failure a shared name causes.
+        val cachePath = File(workspace, "target/whisker/module-info-$userPackage.json")
         val expectedHash = sha256OfCargoLock(workspace)
 
         if (cachePath.isFile && expectedHash != null) {

@@ -49,7 +49,7 @@ class WhiskerProjectPlugin : Plugin<Project> {
                 )
 
         val (workspaceFile, userPackageStr) = readConfig(project.rootDir)
-        val report = readModulesReport(workspaceFile)
+        val report = readModulesReport(workspaceFile, userPackageStr)
 
         // Module deps onto this project (each android-capable Whisker
         // module is a Gradle subproject the Settings plugin `include`d).
@@ -152,8 +152,11 @@ class WhiskerProjectPlugin : Plugin<Project> {
         return File(ws) to pkg
     }
 
-    private fun readModulesReport(workspace: File): ModulesReport {
-        val path = File(workspace, "target/whisker/module-info.json")
+    private fun readModulesReport(workspace: File, userPackage: String): ModulesReport {
+        // Per-package filename, matching the Settings plugin's cache
+        // writer — a workspace-shared name lets one app's (possibly
+        // empty) module report poison sibling apps in a monorepo.
+        val path = File(workspace, "target/whisker/module-info-$userPackage.json")
         if (!path.isFile) {
             error(
                 "rs.whisker.gradle: missing ${path.absolutePath} — the Settings " +

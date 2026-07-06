@@ -43,6 +43,10 @@ pub fn run(args: Args) -> Result<()> {
         report.add_section("iOS", check_ios);
     }
 
+    // Signing-credential health — only meaningful inside an app
+    // directory; reports a single neutral line elsewhere.
+    report.add_section("Credentials", check_credentials);
+
     // No Lynx section: Android pulls the Lynx aar from gradle's
     // `whiskerrs.github.io/lynx/maven` repository, and iOS resolves
     // the four Lynx xcframeworks via SPM's `binaryTarget(url:checksum:)`
@@ -397,6 +401,95 @@ fn check_ios() -> Vec<Check> {
         )),
     }
 
+    out
+}
+
+/// Signing-credential health for the app the cwd sits in. Pure
+/// inspection like every other check: no network calls (ASC key
+/// validity is verified online by `whisker credential ios` at store
+/// time), no prompting (a missing env key is a warn — builds prompt
+/// interactively).
+fn check_credentials() -> Vec<Check> {
+    use whisker_credentials::{Identity, Store};
+
+    let mut out = Vec::new();
+    let Ok(m) = crate::manifest::resolve(None) else {
+        out.push(Check::ok(
+            "credentials",
+            "not inside a Whisker app (skipped)",
+        ));
+        return out;
+    };
+    if !Store::exists(&m.crate_dir) {
+        out.push(Check::warn(
+            "credentials store",
+            "none yet — created by the first `whisker credential ios|android`",
+        ));
+        return out;
+    }
+    let store = match Store::open(&m.crate_dir) {
+        Ok(s) => {
+            out.push(Check::ok(
+                "credentials store",
+                Store::dir_for(&m.crate_dir).display().to_string(),
+            ));
+            s
+        }
+        Err(e) => {
+            out.push(Check::err("credentials store", format!("{e:#}")));
+            return out;
+        }
+    };
+
+    match Identity::from_env() {
+        Ok(Some(identity)) if identity.matches(&store) => out.push(Check::ok(
+            format!("${}", whisker_credentials::IDENTITY_ENV),
+            "set — decrypts this store",
+        )),
+        Ok(Some(_)) => out.push(Check::err(
+            format!("${}", whisker_credentials::IDENTITY_ENV),
+            "set but does NOT match credentials/recipients.txt",
+        )),
+        Ok(None) => out.push(Check::warn(
+            format!("${}", whisker_credentials::IDENTITY_ENV),
+            "not set — builds will prompt for the key interactively",
+        )),
+        Err(e) => out.push(Check::err(
+            format!("${}", whisker_credentials::IDENTITY_ENV),
+            format!("{e:#}"),
+        )),
+    }
+
+    // Per-identifier coverage, using the same resolution the build
+    // commands use.
+    if let Some(bundle_id) = m
+        .config
+        .ios
+        .bundle_id
+        .clone()
+        .or_else(|| m.config.bundle_id.clone())
+    {
+        match store.resolve_ios_rel(&bundle_id) {
+            Some(rel) => out.push(Check::ok(format!("ios {bundle_id}"), rel)),
+            None => out.push(Check::warn(
+                format!("ios {bundle_id}"),
+                "no App Store Connect key — run `whisker credential ios`",
+            )),
+        }
+    }
+    if let Some(application_id) = crate::manifest::android_application_id(&m.config) {
+        if store.has(&whisker_credentials::android_keystore_rel(&application_id)) {
+            out.push(Check::ok(
+                format!("android {application_id}"),
+                whisker_credentials::android_keystore_rel(&application_id),
+            ));
+        } else {
+            out.push(Check::warn(
+                format!("android {application_id}"),
+                "no upload keystore — run `whisker credential android`",
+            ));
+        }
+    }
     out
 }
 

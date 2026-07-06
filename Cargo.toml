@@ -7,6 +7,7 @@ members = [
     "crates/whisker-build",
     "crates/whisker-cli",
     "crates/whisker-cng",
+    "crates/whisker-credentials",
     "crates/whisker-dev-runtime",
     "crates/whisker-dev-server",
     "crates/whisker-driver",
@@ -82,6 +83,7 @@ whisker-animation = { path = "crates/whisker-animation", version = "0.7.0" }
 whisker-config = { path = "crates/whisker-config", version = "0.7.0" }
 whisker-build = { path = "crates/whisker-build", version = "0.7.0" }
 whisker-cng = { path = "crates/whisker-cng", version = "0.7.0" }
+whisker-credentials = { path = "crates/whisker-credentials", version = "0.7.0" }
 whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.7.0" }
 whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.7.0" }
 whisker-driver = { path = "crates/whisker-driver", version = "0.7.0" }

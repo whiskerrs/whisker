@@ -551,43 +551,7 @@ pub fn run_gradle_assemble(
         Profile::Debug => ":app:assembleDebug",
     };
     let gradle_step = crate::ui::step("gradle", task.to_string());
-    let java_home = resolve_java_home()?;
-    let gradlew = gen_android.join("gradlew");
-    if !gradlew.is_file() {
-        return Err(anyhow!(
-            "gradlew missing at {} — has the gen tree been synced?",
-            gradlew.display(),
-        ));
-    }
-    let mut cmd = Command::new(&gradlew);
-    cmd.arg(task)
-        .arg("--no-daemon")
-        // `--console=plain` forces gradle to emit line-by-line output
-        // instead of its default `auto` heuristic, which on a TTY
-        // upgrades to ANSI-escape-driven in-place progress redraws.
-        // We pipe gradle through `Step::pipe` so the ANSI codes never
-        // reach a real terminal — but our line-based classifier
-        // doesn't know how to strip them, and the curated TUI's inline
-        // viewport gets corrupted by cursor-moving sequences leaking
-        // through. Plain console mode side-steps both.
-        .arg("--console=plain")
-        .current_dir(gen_android)
-        .env("JAVA_HOME", &java_home);
-    // Forward the TUI-mode + verbose env vars down to `whisker-build
-    // android`, which gradle invokes inside `WhiskerBuildTask` via
-    // `execOperations.exec`. `Command` *does* inherit env by default
-    // — but the gradle Plugin sits behind a published Maven artifact,
-    // so older plugin versions whose `exec {}` block doesn't
-    // explicitly forward env names won't propagate them to grandchild
-    // processes on every gradle version. Setting the vars on the
-    // outermost gradle invocation keeps the dev-loop UI consistent
-    // regardless of which plugin version a given gen tree pins.
-    if crate::ui::is_tui() {
-        cmd.env("WHISKER_TUI", "1");
-    }
-    if crate::ui::is_verbose() {
-        cmd.env("WHISKER_VERBOSE", "1");
-    }
+    let mut cmd = gradle_command(gen_android, task)?;
     if !features.is_empty() {
         cmd.env("WHISKER_FEATURES", features.join(" "));
     }
@@ -604,7 +568,7 @@ pub fn run_gradle_assemble(
     // `whisker run` shows one summary line per subprocess.
     let status = gradle_step
         .pipe(&mut cmd)
-        .with_context(|| format!("spawn {}", gradlew.display()))?;
+        .with_context(|| format!("spawn {}", gen_android.join("gradlew").display()))?;
     if !status.success() {
         gradle_step.fail(format!("{status}"));
         return Err(anyhow!("gradle {task} failed ({status})"));
@@ -629,9 +593,162 @@ pub fn run_gradle_assemble(
     ))
 }
 
+/// Shared skeleton for one `./gradlew <task>` invocation against a
+/// synced `gen/android/` tree: JDK resolution, gradlew existence,
+/// plain-console piping, and TUI/verbose env forwarding.
+///
+/// `--console=plain` forces gradle to emit line-by-line output
+/// instead of its default `auto` heuristic, which on a TTY upgrades
+/// to ANSI-escape-driven in-place progress redraws. We pipe gradle
+/// through `Step::pipe` so the ANSI codes never reach a real
+/// terminal — but our line-based classifier doesn't know how to
+/// strip them, and the curated TUI's inline viewport gets corrupted
+/// by cursor-moving sequences leaking through. Plain console mode
+/// side-steps both.
+///
+/// The TUI/verbose env vars are set on the outermost gradle
+/// invocation (not relied on via inheritance) because the gradle
+/// Plugin sits behind a published Maven artifact — older plugin
+/// versions whose `exec {}` block doesn't explicitly forward env
+/// names won't propagate them to grandchild processes on every
+/// gradle version.
+fn gradle_command(gen_android: &Path, task: &str) -> Result<Command> {
+    let java_home = resolve_java_home()?;
+    let gradlew = gen_android.join("gradlew");
+    if !gradlew.is_file() {
+        return Err(anyhow!(
+            "gradlew missing at {} — has the gen tree been synced?",
+            gradlew.display(),
+        ));
+    }
+    let mut cmd = Command::new(&gradlew);
+    cmd.arg(task)
+        .arg("--no-daemon")
+        .arg("--console=plain")
+        .current_dir(gen_android)
+        .env("JAVA_HOME", &java_home);
+    if crate::ui::is_tui() {
+        cmd.env("WHISKER_TUI", "1");
+    }
+    if crate::ui::is_verbose() {
+        cmd.env("WHISKER_VERBOSE", "1");
+    }
+    Ok(cmd)
+}
+
+/// Release artifact kinds `whisker build` produces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseArtifact {
+    /// `.aab` for Play Store upload (`:app:bundleRelease`).
+    AppBundle,
+    /// `.apk` for direct / internal distribution
+    /// (`:app:assembleRelease`).
+    Apk,
+}
+
+/// Run the release gradle task for `artifact`, with signing material
+/// injected through `signing_env` (the `WHISKER_ANDROID_*` variables
+/// the generated `app/build.gradle.kts` reads — see the template).
+/// The values point into a credential staging dir that outlives this
+/// call and vanishes after the build; nothing is written to the gen
+/// tree. Returns the produced artifact path.
+pub fn run_gradle_release(
+    gen_android: &Path,
+    artifact: ReleaseArtifact,
+    signing_env: &[(String, String)],
+) -> Result<PathBuf> {
+    let (task, out_dir, candidates): (&str, &str, &[&str]) = match artifact {
+        ReleaseArtifact::AppBundle => (
+            ":app:bundleRelease",
+            "app/build/outputs/bundle/release",
+            &["app-release.aab"],
+        ),
+        ReleaseArtifact::Apk => (
+            ":app:assembleRelease",
+            "app/build/outputs/apk/release",
+            // `-unsigned` shows up when signing env was absent; keep
+            // it discoverable so the error path can name what it found.
+            &["app-release.apk", "app-release-unsigned.apk"],
+        ),
+    };
+    let gradle_step = crate::ui::step("gradle", task.to_string());
+    let mut cmd = gradle_command(gen_android, task)?;
+    for (k, v) in signing_env {
+        cmd.env(k, v);
+    }
+    let status = gradle_step
+        .pipe(&mut cmd)
+        .with_context(|| format!("spawn {}", gen_android.join("gradlew").display()))?;
+    if !status.success() {
+        gradle_step.fail(format!("{status}"));
+        return Err(anyhow!("gradle {task} failed ({status})"));
+    }
+    gradle_step.done("");
+    let outputs = gen_android.join(out_dir);
+    let found = candidates
+        .iter()
+        .map(|name| outputs.join(name))
+        .find(|cand| cand.is_file())
+        .ok_or_else(|| {
+            anyhow!(
+                "gradle succeeded but no release artifact found under {}",
+                outputs.display(),
+            )
+        })?;
+    ensure_release_artifact_signed(artifact, &found)?;
+    Ok(found)
+}
+
+/// Refuse to hand back an UNSIGNED release artifact — Android
+/// rejects it at install time with an opaque "app can't be
+/// installed" dialog, so failing here with the real cause is
+/// strictly better. Unsigned output means the generated gradle
+/// script never saw the `WHISKER_ANDROID_*` signingConfig (a gen
+/// tree from before signing support, or a bypassed sync).
+///
+/// Detection is per-format: an unsigned APK announces itself via the
+/// `-unsigned` filename AGP gives it; an unsigned AAB keeps the same
+/// filename, so it's checked with `jarsigner -verify` (bundles are
+/// v1/jar-signed — unlike APKs, whose v2+ signatures jarsigner can't
+/// see).
+fn ensure_release_artifact_signed(artifact: ReleaseArtifact, path: &Path) -> Result<()> {
+    let unsigned = match artifact {
+        ReleaseArtifact::Apk => path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().contains("-unsigned")),
+        ReleaseArtifact::AppBundle => {
+            let jarsigner = resolve_java_home()?.join("bin/jarsigner");
+            let out = Command::new(&jarsigner)
+                .arg("-verify")
+                .arg(path)
+                .output()
+                .with_context(|| format!("spawn {}", jarsigner.display()))?;
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr),
+            );
+            text.contains("jar is unsigned")
+        }
+    };
+    if unsigned {
+        return Err(anyhow!(
+            "{} is UNSIGNED — the generated gradle project predates release-signing \
+             support. Re-run the build (the gen tree regenerates automatically); if \
+             this persists, delete gen/android/ and try again.",
+            path.display(),
+        ));
+    }
+    Ok(())
+}
+
 /// Java 17 home for AGP 8.x. Looks at JAVA_HOME first; otherwise tries
 /// `/usr/libexec/java_home -v 17` on macOS.
-fn resolve_java_home() -> Result<PathBuf> {
+///
+/// Public because the CLI's `whisker credential android` reuses it to
+/// locate `keytool` (`<java_home>/bin/keytool`) for upload-keystore
+/// generation — same JDK the gradle build will run under.
+pub fn resolve_java_home() -> Result<PathBuf> {
     if let Some(p) = std::env::var_os("JAVA_HOME").map(PathBuf::from) {
         if p.is_dir() {
             return Ok(p);
@@ -663,6 +780,22 @@ fn resolve_java_home() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsigned_apk_is_rejected() {
+        let tmp = std::env::temp_dir().join("whisker-build-unsigned-apk-test");
+        let _ = std::fs::create_dir_all(&tmp);
+        let unsigned = tmp.join("app-release-unsigned.apk");
+        std::fs::write(&unsigned, b"zip").unwrap();
+        let err = ensure_release_artifact_signed(ReleaseArtifact::Apk, &unsigned).unwrap_err();
+        assert!(err.to_string().contains("UNSIGNED"), "got: {err:#}");
+
+        // A properly named release APK passes the filename check.
+        let signed = tmp.join("app-release.apk");
+        std::fs::write(&signed, b"zip").unwrap();
+        assert!(ensure_release_artifact_signed(ReleaseArtifact::Apk, &signed).is_ok());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn abi_to_triple_maps_known_abis() {

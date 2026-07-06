@@ -65,6 +65,22 @@ whisker-build = { workspace = true }
 # TOML parser for reading `[package].name` from the user crate's
 # Cargo.toml. Lightweight, no async runtime.
 toml = "0.8"
+# `whisker credential` — the age-encrypted signing-credential store
+# committed to the user's repo (crates/whisker-credentials).
+whisker-credentials = { workspace = true }
+# Random upload-keystore passwords. The user never sees them (they
+# live encrypted next to the keystore), so entropy > memorability.
+rand = "0.8"
+# Hidden-input prompts (age secret key at build time, keystore
+# passwords on `whisker credential android --import`).
+rpassword = "7"
+# `whisker credential ios` validates the pasted App Store Connect API
+# key with one real request before storing it. ES256 JWT is built by
+# hand (header.payload signed with the .p8) — p256 is the pure-Rust
+# signer, ureq the tiny blocking HTTP client. No ring/openssl.
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+ureq = { version = "2", features = ["json"] }
+base64 = { workspace = true }
 # Inline TUI for `whisker run` — anchored status bar at the bottom of
 # the terminal, scrollback above for sections/steps/device logs.
 ratatui = { workspace = true }

@@ -113,6 +113,12 @@ impl Builder {
             // declares android.kotlin_sources.
             let modules = whisker_build::modules::discover(&ws.join("Cargo.toml"), &pkg)?;
             whisker_build::android::stage_module_kotlin_sources(&gen_android, &modules)?;
+            // The Settings plugin's module-report cache is keyed on
+            // Cargo.lock alone and can be stale (other apps in the
+            // workspace, metadata-only edits) — rewrite it fresh so
+            // gradle wires the module subprojects this app actually
+            // has. See refresh_gradle_module_cache docs.
+            whisker_build::modules::refresh_gradle_module_cache(&ws, &pkg)?;
             whisker_build::android::run_gradle_assemble(
                 &gen_android,
                 whisker_build::Profile::Debug,
