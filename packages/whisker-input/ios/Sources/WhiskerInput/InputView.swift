@@ -45,15 +45,42 @@ import UIKit
 import WhiskerModule
 
 @objc(WhiskerInputView)
+/// A container `UIView` that invokes `onDetach` when it leaves its
+/// window (a real unmount). Used by [`WhiskerInputView`] to resign the
+/// field's first responder on teardown so a removed input never lingers
+/// as the keyboard target.
+private final class DetachAwareView: UIView {
+    var onDetach: (() -> Void)?
+
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        // `nil` newWindow = the view is being removed from the hierarchy.
+        // (A single↔multiline control swap replaces the *inner* control,
+        // not this container, so it doesn't spuriously trigger here.)
+        if newWindow == nil {
+            onDetach?()
+        }
+    }
+}
+
 public final class WhiskerInputView: WhiskerUI<UIView> {
 
     // MARK: - Hosted controls
 
     /// Transparent container that fills the LynxUI frame; holds
     /// either the `textField` or `textView` as a subview.
+    ///
+    /// A [`DetachAwareView`] so it can resign focus on unmount. UIKit
+    /// already auto-resigns a first responder that's removed from its
+    /// window, but doing it explicitly also dismisses the IME promptly
+    /// and keeps parity with the Android `onViewDetachedFromWindow`
+    /// hook. Navigation-driven dismissal is handled up front by
+    /// whisker-router; this covers non-navigation unmounts (a
+    /// conditionally-rendered field removed while focused).
     private lazy var containerView: UIView = {
-        let v = UIView()
+        let v = DetachAwareView()
         v.backgroundColor = .clear
+        v.onDetach = { [weak self] in self?.blurField() }
         return v
     }()
 
