@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-config-v0.7.0...whisker-config-v0.8.0) - 2026-07-06
+
+### Added
+
+- *(cng)* whisker-app-icon builtin — source PNG + iOS .icon + Android adaptive ([#289](https://github.com/whiskerrs/whisker/pull/289))
+
 ## [0.2.0](https://github.com/whiskerrs/whisker/compare/whisker-config-v0.1.0...whisker-config-v0.2.0) - 2026-06-10
 
 ### Added

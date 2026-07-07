@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.7.0...whisker-cli-v0.8.0) - 2026-07-06
+
+### Added
+
+- *(build)* whisker build appbundle/apk/ipa + age-encrypted credential store ([#288](https://github.com/whiskerrs/whisker/pull/288))
+- *(hot-reload)* [**breaking**] saves only hot-reload — manual Full Reload (r/R), full-remount escalation, props-layout gate ([#287](https://github.com/whiskerrs/whisker/pull/287))
+- *(list)* [**breaking**] ItemMeta — identity + per-item metadata unified; list_item removed ([#284](https://github.com/whiskerrs/whisker/pull/284))
+- *(list)* minimal-diff data-source updates — scroll position holds across appends ([#281](https://github.com/whiskerrs/whisker/pull/281))
+- *(list)* core-originated <list> events (scroll / scrolltolower / snap / layoutcomplete) now reach whisker ([#279](https://github.com/whiskerrs/whisker/pull/279))
+- *(whisker-cli)* warn when the running CLI is older than crates/whisker-cng ([#260](https://github.com/whiskerrs/whisker/pull/260)) ([#269](https://github.com/whiskerrs/whisker/pull/269))
+- *(whisker-run)* surface build staleness — compile relinked/up-to-date + gen reused/regenerated ([#260](https://github.com/whiskerrs/whisker/pull/260)) ([#268](https://github.com/whiskerrs/whisker/pull/268))
+
+### Other
+
+- *(android)* SDK v0.1.2 — roll Lynx fork .7 → .8 (capi ABI v2) ([#277](https://github.com/whiskerrs/whisker/pull/277))
+- *(cli)* pin gradle-plugin 0.4.1 in generated projects (closes #159) ([#271](https://github.com/whiskerrs/whisker/pull/271))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.6.0...whisker-cli-v0.7.0) - 2026-06-26
 
 ### Other

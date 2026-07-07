@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-cng-v0.7.0...whisker-cng-v0.8.0) - 2026-07-06
+
+### Added
+
+- *(cng)* whisker-app-icon builtin — source PNG + iOS .icon + Android adaptive ([#289](https://github.com/whiskerrs/whisker/pull/289))
+- *(build)* whisker build appbundle/apk/ipa + age-encrypted credential store ([#288](https://github.com/whiskerrs/whisker/pull/288))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-cng-v0.6.0...whisker-cng-v0.7.0) - 2026-06-26
 
 ### Added
