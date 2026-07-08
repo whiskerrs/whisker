@@ -281,6 +281,10 @@ pub(crate) fn settle(
                 if let Some(d) = dim_drive {
                     d.set(None);
                 }
+                // Swipe-back commits like any other navigation — drop the
+                // keyboard + release focus (a search field on the popped
+                // screen must not keep a hardware-keyboard target).
+                crate::render::handle::dismiss_keyboard();
                 let _ = nav.back();
             }
         });
@@ -415,6 +419,7 @@ pub fn android_predictive_back() -> Element {
                 Some(bridge) => settle(nav, &bridge, /* commit = */ true, None),
                 // No preview (API < 34, or a discrete press): just pop.
                 None => {
+                    crate::render::handle::dismiss_keyboard();
                     let _ = nav.back();
                 }
             }

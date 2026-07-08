@@ -17,6 +17,10 @@ whisker-local-store = { path = "../../packages/whisker-local-store" }
 whisker-image = { path = "../../packages/whisker-image" }
 whisker-icons = { path = "../../packages/whisker-icons" }
 whisker-safe-area = { path = "../../packages/whisker-safe-area" }
+# Keyboard height (avoidance) + dismiss-on-navigation. Adding the dep
+# also links the native Keyboard module, which is what lets
+# whisker-router release focus on every navigation.
+whisker-keyboard = { path = "../../packages/whisker-keyboard" }
 bsky-domain = { path = "crates/bsky-domain" }
 bsky-auth = { path = "crates/bsky-auth" }
 # percent-encode at:// post URIs into a single route path segment

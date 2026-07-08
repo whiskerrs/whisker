@@ -143,7 +143,18 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
                     }
                 }
 
-                override fun onViewDetachedFromWindow(v: android.view.View) {}
+                override fun onViewDetachedFromWindow(v: android.view.View) {
+                    // Safety net for non-navigation unmounts (a
+                    // conditionally-rendered field being removed while
+                    // focused, a list row recycling): release focus and
+                    // hide the IME so a detached EditText never lingers as
+                    // the keyboard target. Navigation-driven dismissal is
+                    // handled up front by whisker-router; this covers the
+                    // cases that don't go through a route change. iOS gets
+                    // this for free (UIKit resigns first responder on
+                    // window removal); Android does not.
+                    blurField()
+                }
             },
         )
 

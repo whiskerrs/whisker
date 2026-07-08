@@ -20,6 +20,7 @@ use whisker::runtime::view::Element;
 use whisker_icons::{Icon, lucide};
 use whisker_image::{Image, ImageMode};
 use whisker_input::{AutoCapitalize, Input, KeyboardType, ReturnKey};
+use whisker_keyboard::keyboard_height;
 use whisker_router::render::{
     AndroidPredictiveBack, Outlet, Router, RouterHandle, SwipeBack, use_navigator, use_param,
     use_pathname,
@@ -1610,9 +1611,17 @@ fn login_screen() -> Element {
     // (status bar / notch / home indicator) so the title and CTA never sit
     // under system chrome. Reactive via `computed` — re-pads on rotation /
     // Dynamic Island / Android edge-to-edge toggle.
+    //
+    // Keyboard avoidance: add the keyboard's height to the bottom padding
+    // (taking the larger of it and the home-indicator inset, since the
+    // keyboard already covers that region). On a centered column this
+    // lifts the whole form clear of the keyboard when the handle field is
+    // focused; it settles back as the keyboard dismisses.
     let insets = safe_area_insets();
+    let kb = keyboard_height();
     let root_style = computed(move || {
         let i = insets.get();
+        let bottom = (i.bottom as f32).max(kb.get() as f32);
         css!(
             flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
@@ -1620,7 +1629,7 @@ fn login_screen() -> Element {
             align_items: AlignItems::Stretch,
             background_color: theme::BG,
             padding_top: px(24.0 + i.top as f32),
-            padding_bottom: px(24.0 + i.bottom as f32),
+            padding_bottom: px(24.0 + bottom),
             padding_left: px(24.0 + i.leading as f32),
             padding_right: px(24.0 + i.trailing as f32),
         )

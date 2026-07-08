@@ -450,6 +450,7 @@ dependencies = [
  "whisker-icons",
  "whisker-image",
  "whisker-input",
+ "whisker-keyboard",
  "whisker-local-store",
  "whisker-router",
  "whisker-safe-area",
@@ -4331,6 +4332,13 @@ version = "0.1.0"
 dependencies = [
  "whisker",
  "whisker-input",
+]
+
+[[package]]
+name = "whisker-keyboard"
+version = "0.8.0"
+dependencies = [
+ "whisker",
 ]
 
 [[package]]
