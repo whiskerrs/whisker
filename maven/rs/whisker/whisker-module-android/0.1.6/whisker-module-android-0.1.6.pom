@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <!-- This module was also published with a richer model, Gradle metadata,  -->
+  <!-- which should be used instead. Do not delete the following line which  -->
+  <!-- is to indicate to Gradle or any Gradle module metadata file consumer  -->
+  <!-- that they should prefer consuming it instead. -->
+  <!-- do_not_remove: published-with-gradle-metadata -->
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>rs.whisker</groupId>
+  <artifactId>whisker-module-android</artifactId>
+  <version>0.1.6</version>
+  <packaging>aar</packaging>
+  <name>Whisker module API (Android)</name>
+  <description>Minimal Android surface for third-party Whisker modules — WhiskerValue, Whisker* typealiases, WhiskerApplication.</description>
+  <url>https://github.com/whiskerrs/whisker</url>
+  <licenses>
+    <license>
+      <name>MIT</name>
+      <url>https://github.com/whiskerrs/whisker/blob/main/LICENSE</url>
+    </license>
+  </licenses>
+  <dependencies>
+    <dependency>
+      <groupId>rs.whisker</groupId>
+      <artifactId>lynx-android</artifactId>
+      <version>3.8.0-whisker.12</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>rs.whisker</groupId>
+      <artifactId>lynx-base-android</artifactId>
+      <version>3.8.0-whisker.12</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>rs.whisker</groupId>
+      <artifactId>lynx-trace-android</artifactId>
+      <version>3.8.0-whisker.12</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>rs.whisker</groupId>
+      <artifactId>lynx-service-api-android</artifactId>
+      <version>3.8.0-whisker.12</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.lynxsdk.lynx</groupId>
+      <artifactId>primjs</artifactId>
+      <version>3.7.0</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>androidx.core</groupId>
+      <artifactId>core-ktx</artifactId>
+      <version>1.13.1</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib</artifactId>
+      <version>2.0.21</version>
+      <scope>compile</scope>
+    </dependency>
+  </dependencies>
+</project>
