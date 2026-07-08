@@ -71,6 +71,13 @@ dependencies {
     }
     api("org.lynxsdk.lynx:primjs:3.7.0")
 
+    // `WhiskerInsetsDispatcher` exposes `WindowInsetsCompat` in its
+    // public API and calls `ViewCompat.setOnApplyWindowInsetsListener` /
+    // `getRootWindowInsets`. `api` (not `implementation`) so consuming
+    // modules see `WindowInsetsCompat` on their compile classpath when
+    // they write an inset callback.
+    api("androidx.core:core-ktx:1.13.1")
+
     // No annotation re-export needed (Phase M / Issue #59): a
     // module's `build.gradle.kts` depends on this AAR alone for
     // runtime types; the `ksp(...)` processor stays separate as a

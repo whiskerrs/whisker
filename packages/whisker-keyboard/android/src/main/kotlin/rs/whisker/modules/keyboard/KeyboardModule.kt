@@ -3,10 +3,10 @@
 // View-less module with two jobs:
 //
 //  * `keyboardChanged` event — while a Rust listener is registered,
-//    hook `ViewCompat.setOnApplyWindowInsetsListener` onto the host
-//    Activity's decor view and forward the IME inset height (dp) as
-//    `{ height }`. The Rust side (`packages/whisker-keyboard/src/lib.rs`)
-//    holds the `RwSignal<f64>` `keyboard_height()` returns.
+//    subscribe to `WhiskerInsetsDispatcher` and forward the IME inset
+//    height (dp) as `{ height }`. The Rust side
+//    (`packages/whisker-keyboard/src/lib.rs`) holds the `RwSignal<f64>`
+//    `keyboard_height()` returns.
 //
 //  * `dismiss` function — a **real global unfocus**. On Android,
 //    `hideSoftInputFromWindow` only hides the soft keyboard; the focused
@@ -25,47 +25,51 @@
 // inset themselves and apply it — which is exactly what this module
 // surfaces to Rust so the app can pad/scroll its content.
 //
-// ## Lifecycle + configuration-change handling
+// ## Why `WhiskerInsetsDispatcher` (not a private decor listener)
 //
-// Same approach as `whisker-safe-area`: the inset listener is
-// (re)installed inside a permanent `HostAttachedListener`, so a
-// config-change Activity recreation (rotation, multi-window resize)
-// transparently rewires onto the fresh decor view.
+// Android stores exactly one `OnApplyWindowInsetsListener` per view, so
+// this module and `whisker-safe-area` used to clobber each other's
+// listener on the shared decor view (last installer wins; the loser's
+// inset signal freezes). We subscribe through the runtime's shared
+// `WhiskerInsetsDispatcher` instead — it owns the single decor slot,
+// handles config-change re-installation, and fans the raw insets out to
+// every subscriber. See `WhiskerInsetsDispatcher` for the lifecycle.
 
 package rs.whisker.modules.keyboard
 
 import android.app.Activity
 import android.content.Context
 import android.view.inputmethod.InputMethodManager
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import rs.whisker.runtime.HostAttachedListener
 import rs.whisker.runtime.Module
 import rs.whisker.runtime.ModuleDefinition
+import rs.whisker.runtime.WhiskerInsetsDispatcher
 import rs.whisker.runtime.WhiskerValue
 
 public class KeyboardModule : Module() {
 
     /**
-     * Live host-attached listener. `null` between `OnStopObserving`
-     * tearing it down and the next `OnStartObserving` re-registering.
+     * Live inset-dispatcher subscription. `null` between
+     * `OnStopObserving` tearing it down and the next `OnStartObserving`
+     * re-subscribing.
      */
-    private var attachListener: HostAttachedListener? = null
+    private var insetsRegistration: WhiskerInsetsDispatcher.Registration? = null
 
     public override fun definition(): ModuleDefinition = ModuleDefinition {
         Name("Keyboard")
         Events("keyboardChanged")
 
         OnStartObserving("keyboardChanged") {
-            if (attachListener != null) return@OnStartObserving
-            val listener = HostAttachedListener { installOnCurrentHost() }
-            attachListener = listener
-            appContext.addOnHostAttachedListener(listener)
+            if (insetsRegistration != null) return@OnStartObserving
+            insetsRegistration = WhiskerInsetsDispatcher.addListener { insets ->
+                val activity = appContext.currentActivity ?: return@addListener
+                dispatch(activity, insets)
+            }
         }
 
         OnStopObserving("keyboardChanged") {
-            attachListener?.let { appContext.removeOnHostAttachedListener(it) }
-            attachListener = null
+            insetsRegistration?.let { WhiskerInsetsDispatcher.removeListener(it) }
+            insetsRegistration = null
         }
 
         // Real global unfocus. Marshalled to the UI thread because the
@@ -94,26 +98,6 @@ public class KeyboardModule : Module() {
             imm?.hideSoftInputFromWindow(token, 0)
         }
         focused?.clearFocus()
-    }
-
-    /**
-     * Install (or re-install) the IME-inset listener on the current
-     * host Activity's decor view, and seed the Rust signal with the
-     * current IME inset so a late subscriber doesn't sit at 0 until the
-     * next genuine change.
-     */
-    private fun installOnCurrentHost() {
-        val activity = appContext.currentActivity ?: return
-        val decor = activity.window?.decorView ?: return
-
-        ViewCompat.setOnApplyWindowInsetsListener(decor) { _, insetsCompat ->
-            dispatch(activity, insetsCompat)
-            // Pass through unmodified so Lynx's own listeners still see
-            // the same insets.
-            insetsCompat
-        }
-
-        ViewCompat.getRootWindowInsets(decor)?.let { dispatch(activity, it) }
     }
 
     /**
