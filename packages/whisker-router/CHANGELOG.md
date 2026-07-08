@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.8.0...whisker-router-v0.8.1) - 2026-07-08
+
+### Added
+
+- *(keyboard)* whisker-keyboard — keyboard avoidance + dismiss-on-navigation ([#293](https://github.com/whiskerrs/whisker/pull/293))
+
 ## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.7.0...whisker-router-v0.8.0) - 2026-07-06
 
 ### Fixed
