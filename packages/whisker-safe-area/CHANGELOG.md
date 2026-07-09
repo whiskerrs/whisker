@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/whiskerrs/whisker/compare/whisker-safe-area-v0.8.0...whisker-safe-area-v0.8.1) - 2026-07-08
+
+### Fixed
+
+- *(keyboard,safe-area)* share decor inset listener via WhiskerInsetsDispatcher ([#294](https://github.com/whiskerrs/whisker/pull/294))
+
 ## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-safe-area-v0.7.0...whisker-safe-area-v0.8.0) - 2026-07-06
 
 ### Added
