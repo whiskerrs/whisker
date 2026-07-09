@@ -238,10 +238,7 @@ fn extract_bodies(formatted_file: &str, count: usize) -> Option<Vec<Option<Strin
     // Require every expected wrapper to be present.
     let mut bodies = Vec::with_capacity(count);
     for i in 0..count {
-        match found.remove(&i) {
-            Some(b) => bodies.push(Some(b)),
-            None => return None,
-        }
+        bodies.push(Some(found.remove(&i)?));
     }
     Some(bodies)
 }
