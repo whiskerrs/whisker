@@ -171,3 +171,62 @@ fn tab_spaces_option_changes_output() {
     let two = format_source(src, &opts(2, 100)).unwrap();
     assert_ne!(four, two, "tab_spaces must change macro indentation");
 }
+
+#[test]
+fn full_pipeline_nested_css_in_render_reformats() {
+    if !rustfmt_available() {
+        return;
+    }
+    // The real rustfmt pass runs FIRST (normalizing the `fn` signature
+    // and the macro's own opening line), then our macro pass must still
+    // reach into the nested `css!(...)` kwarg value — exercising the
+    // full pipeline's embedded-expr batching (`ExprFormatter`) alongside
+    // the nested-macro recursion, not just the rustfmt-free core.
+    let messy = "fn   ui( )->Element{render!{view(style:css!(flex_grow:1.0,background_color:BG)){text(value:\"hi\")}}}\n";
+    let out = format_source(messy, &opts(4, 100)).unwrap();
+    assert!(out.contains("fn ui() -> Element {"), "rust pass:\n{out}");
+    assert!(
+        out.contains("style: css!(flex_grow: 1.0, background_color: BG)"),
+        "nested css! reformatted:\n{out}"
+    );
+}
+
+#[test]
+fn full_pipeline_nested_routes_in_render_idempotent() {
+    if !rustfmt_available() {
+        return;
+    }
+    let messy = "fn app()->Element{render!{view{Router(routes:routes!{Switch{Route(path:\"a\",component:A)Route(path:\"b\",component:B)}}){Outlet{}}}}}\n";
+    let once = format_source(messy, &opts(4, 100)).unwrap();
+    let twice = format_source(&once, &opts(4, 100)).unwrap();
+    assert_eq!(
+        once, twice,
+        "not idempotent:\n--once--\n{once}\n--twice--\n{twice}"
+    );
+    assert!(once.contains("Switch {\n"), "got:\n{once}");
+}
+
+#[test]
+fn full_pipeline_composite_podcast_like_tree() {
+    if !rustfmt_available() {
+        return;
+    }
+    // A shape close to the real `examples/podcast` app: a wide nested
+    // css!, a nested routes! with a Stack of Routes, and plain
+    // zero-kwarg user-component children — through the FULL pipeline
+    // (real rustfmt + our macro pass), checked for both idempotency and
+    // the max_width budget on every line.
+    let messy = "fn app()->Element{render!{view(style:css!(flex_grow:1.0,width:vw(100),height:vh(100),background_color:BG,display:Display::Flex)){Router(routes:routes!{Stack{Route(path:\"\",component:Home)Route(path:\"detail/:id\",component:Detail)}}){Outlet{}SwipeBack{}}}}}\n";
+    let once = format_source(messy, &opts(4, 100)).unwrap();
+    let twice = format_source(&once, &opts(4, 100)).unwrap();
+    assert_eq!(
+        once, twice,
+        "not idempotent:\n--once--\n{once}\n--twice--\n{twice}"
+    );
+    for line in once.lines() {
+        assert!(
+            line.chars().count() <= 100,
+            "line exceeds max_width:\n{line}\nfull output:\n{once}"
+        );
+    }
+}
