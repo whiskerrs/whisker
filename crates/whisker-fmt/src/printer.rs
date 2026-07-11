@@ -35,17 +35,16 @@
 
 use crate::comments::GrammarComment;
 use crate::expr_fmt::ExprMap;
+use crate::ir::{IrKwarg, IrNode, IrTag, IrValue};
 use crate::options::FmtOptions;
 use crate::source_map::SourceMap;
 use proc_macro2::Span;
 use quote::ToTokens;
 use std::cell::Cell;
-use syn::{Expr, Ident, LitStr};
-use whisker_macro_syntax::{
-    CssInput, ElementNode, Kwarg, Node, Root, RoutesInput, RoutesNode, UserComponentNode,
-};
+use syn::Expr;
+use whisker_macro_syntax::CssInput;
 
-/// Pretty-print a parsed `render!` body.
+/// Pretty-print an adapted `render!` root ([`crate::ir::adapt_render_root`]).
 ///
 /// `base_indent` is the indent level (in tab-units) at which the macro
 /// invocation sits in the rustfmt output; the body is indented one
@@ -61,7 +60,7 @@ use whisker_macro_syntax::{
 /// source (the top-level block's upper bound).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn print_render(
-    root: &Root,
+    root: &IrNode,
     map: &SourceMap,
     opts: &FmtOptions,
     base_indent: usize,
@@ -78,13 +77,12 @@ pub(crate) fn print_render(
     };
     let mut out = String::new();
     // Leading comments before the root node.
-    if let Some(start) = p.node_start_byte(&root.node) {
+    if let Some(start) = p.ir_node_start_byte(root) {
         p.flush(start, base_indent + 1, &mut out);
     }
-    p.node(&root.node, base_indent + 1, &mut out);
+    p.ir_node(root, base_indent + 1, &mut out);
     // A trailing comment on the root node's own last line attaches inline.
-    if let Some(start) = p.node_start_byte(&root.node) {
-        let (_, after) = p.map.node_extent(start);
+    if let Some((_, after)) = p.ir_node_extent(root) {
         if let Some(idx) = p.pending_trailing_on_line(after) {
             let before = p.comments[idx].start + 1;
             p.flush(before, base_indent + 1, &mut out);
@@ -124,10 +122,11 @@ pub(crate) fn print_css(
     p.css(input, base_indent + 1, body_len)
 }
 
-/// Pretty-print a parsed `routes!` body.
+/// Pretty-print an adapted `routes!` root list
+/// ([`crate::ir::adapt_routes_roots`]).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn print_routes(
-    input: &RoutesInput,
+    roots: &[IrNode],
     map: &SourceMap,
     opts: &FmtOptions,
     base_indent: usize,
@@ -144,18 +143,18 @@ pub(crate) fn print_routes(
     };
     let mut out = String::new();
     let level = base_indent + 1;
-    for (i, node) in input.roots.iter().enumerate() {
-        if let Some(start) = routes_node_start_byte(&p, node) {
+    for (i, node) in roots.iter().enumerate() {
+        if let Some(start) = p.ir_node_start_byte(node) {
             p.flush(start, level, &mut out);
         }
-        p.routes_node(node, level, &mut out);
-        if let Some(end) = routes_node_end_byte(&p, node) {
+        p.ir_node(node, level, &mut out);
+        if let Some((_, end)) = p.ir_node_extent(node) {
             if let Some(idx) = p.pending_trailing_on_line(end) {
                 let before = p.comments[idx].start + 1;
                 p.flush(before, level, &mut out);
             }
         }
-        if i + 1 < input.roots.len() || p.next.get() < comments.len() {
+        if i + 1 < roots.len() || p.next.get() < comments.len() {
             out.push('\n');
         }
     }
@@ -185,16 +184,29 @@ struct Printer<'a> {
 }
 
 impl Printer<'_> {
-    /// Render an embedded Rust expr. Resolution order:
+    /// Render an embedded Rust expr. `level` is the indent level of the
+    /// line the expr's value sits on — its ONLY use is as the width
+    /// reference for a nested `css!`/`routes!` macro call's own
+    /// inline-vs-wrap decision (see [`Printer::nested_macro_src`]); it
+    /// does not affect the returned fragment's own indentation (that is
+    /// always column-0-anchored, per the [`ExprMap`] contract below).
     ///
-    /// 1. A rustfmt-formatted entry in [`ExprMap`] (keyed by the expr's
+    /// Resolution order:
+    ///
+    /// 1. A nested `css!( … )` / `routes!{ … }` macro call: recursively
+    ///    printed with the grammar-aware printer instead of treated as an
+    ///    opaque expr.
+    /// 2. A rustfmt-formatted entry in [`ExprMap`] (keyed by the expr's
     ///    body-relative span), stored dedented to column 0. Continuation
     ///    lines are re-indented to the kwarg column by the [`reindent`]
     ///    calls at the call sites, so nothing extra is needed here.
-    /// 2. The verbatim source slice (rustfmt-free core / fallback).
-    /// 3. `proc_macro2` token printing when the span has no source
+    /// 3. The verbatim source slice (rustfmt-free core / fallback).
+    /// 4. `proc_macro2` token printing when the span has no source
     ///    position.
-    fn expr_src(&self, span: Span, tokens: &dyn ToTokens) -> String {
+    fn expr_src(&self, span: Span, expr: &Expr, level: usize) -> String {
+        if let Some(nested) = self.nested_macro_src(expr, level) {
+            return nested;
+        }
         if let Some(formatted) = self.expr_map.get(span) {
             return formatted.to_string();
         }
@@ -208,8 +220,170 @@ impl Printer<'_> {
             // indentation on every pass (non-idempotent).
             dedent_continuation(s.trim())
         } else {
-            tokens.to_token_stream().to_string()
+            expr.to_token_stream().to_string()
         }
+    }
+
+    /// If `expr` is a `css!( … )` / `render!{ … }` / `routes!{ … }` macro
+    /// call, recursively format its body with the grammar-aware printer
+    /// instead of treating it as an opaque expression — this is what
+    /// makes `render! { view(style: css!(…)) }` reformat the nested
+    /// `css!`/`routes!` call instead of passing it through verbatim.
+    ///
+    /// `level` is the caller's best estimate of the indent level the
+    /// nested macro's own line will actually sit at once the OUTER node's
+    /// inline-vs-wrap decision has been made — callers pass their own
+    /// `level` (+1 when the value would land one level deeper if the
+    /// surrounding kwargs end up wrapped, which is the common case for
+    /// anything wide enough to need this decision at all). It is used
+    /// ONLY as the width reference for the nested call's own
+    /// inline-vs-wrap fit check ([`Printer::delimited_list`]) so a
+    /// deeply-nested `css!`/`routes!` doesn't wrongly collapse onto one,
+    /// far-too-long line by measuring itself against a shallow assumed
+    /// depth. This is a best-effort estimate, not an exact final column
+    /// (the true depth isn't known until the OUTER node's own wrap
+    /// decision, which depends circularly on this one) — the same
+    /// approximation [`crate::expr_fmt`] already accepts for
+    /// rustfmt-formatted embedded exprs.
+    ///
+    /// Returns `None` (falling back to the normal [`ExprMap`] / verbatim
+    /// path in [`Printer::expr_src`]) when `expr` isn't a
+    /// `css!`/`render!`/`routes!` call, its body doesn't parse as that
+    /// grammar, is empty, or — the comment fail-safe — its source
+    /// contains `//` or `/*` anywhere. Comments inside a nested macro
+    /// aren't threaded through this recursive call (the grammar-comment
+    /// recovery pass that collects them runs once, over the OUTER body,
+    /// before this nested printer exists), so rather than risk dropping
+    /// one we leave the whole nested call untouched, matching the
+    /// fail-safe used everywhere else in this crate.
+    fn nested_macro_src(&self, expr: &Expr, level: usize) -> Option<String> {
+        let Expr::Macro(em) = expr else {
+            return None;
+        };
+        let name = em.mac.path.get_ident()?.to_string();
+        if name != "css" && name != "render" && name != "routes" {
+            return None;
+        }
+        // The delimiter token's own span covers everything BETWEEN AND
+        // INCLUDING the open/close delimiters — unlike `mac.tokens`'s
+        // (joined-from-real-tokens) span, which excludes any comment
+        // sitting in the gap right after `(`/`{` or right before `)`/`}`.
+        // We need the delimiter span, not the tokens' span, so the
+        // comment fail-safe below can't miss a leading/trailing comment.
+        let (open, close, delim_span) = match &em.mac.delimiter {
+            syn::MacroDelimiter::Paren(p) => ('(', ')', p.span),
+            syn::MacroDelimiter::Brace(b) => ('{', '}', b.span),
+            syn::MacroDelimiter::Bracket(bk) => ('[', ']', bk.span),
+        };
+        let full_src = self.map.slice(delim_span.join())?;
+        if full_src.contains("//") || full_src.contains("/*") {
+            return None;
+        }
+        // Rust/rustfmt convention: a space before a brace-delimited
+        // macro's `{` (`render!`/`routes! { … }`), none before `(`/`[`
+        // (`css!(…)`) — matches how the base rustfmt pass spaces the
+        // user's own top-level invocations.
+        let bang = if open == '{' { "! " } else { "!" };
+        match name.as_str() {
+            "css" => {
+                let input = whisker_macro_syntax::css::parse_input(em.mac.tokens.clone()).ok()?;
+                if input.kwargs.is_empty() {
+                    return None;
+                }
+                let parts: Vec<String> = input
+                    .kwargs
+                    .iter()
+                    .map(|kw| self.css_kwarg(kw, level))
+                    .collect();
+                // `output_level = 0`: a relative, column-0-anchored
+                // fragment — see `delimited_list`'s doc.
+                let list =
+                    self.delimited_list(level, 0, name.len() + bang.len(), &parts, open, close, 0);
+                Some(format!("{name}{bang}{list}"))
+            }
+            "render" => {
+                let root = whisker_macro_syntax::render::parse_root(em.mac.tokens.clone()).ok()?;
+                let ir_root = crate::ir::adapt_render_root(&root);
+                let body = print_render(&ir_root, self.map, self.opts, 0, self.expr_map, &[], 0);
+                Some(nested_wrap(&name, bang, open, close, &body))
+            }
+            "routes" => {
+                let input =
+                    whisker_macro_syntax::routes::parse_input(em.mac.tokens.clone()).ok()?;
+                if input.roots.is_empty() {
+                    return None;
+                }
+                let roots = crate::ir::adapt_routes_roots(&input);
+                let body = print_routes(&roots, self.map, self.opts, 0, self.expr_map, &[], 0);
+                Some(nested_wrap(&name, bang, open, close, &body))
+            }
+            _ => None,
+        }
+    }
+
+    /// Break `parts` one per line at `level`, each with a trailing
+    /// comma — the WRAP half of the width-aware "join or wrap" list
+    /// layout shared by [`Printer::delimited_list`] and
+    /// [`Printer::css`]'s own (delimiter-less) body. Multi-line parts are
+    /// [`reindent`]ed under `level`'s column.
+    fn wrap_one_per_line(&self, level: usize, parts: &[String]) -> String {
+        let indent = self.indent(level);
+        let mut out = String::new();
+        for part in parts {
+            out.push_str(&indent);
+            out.push_str(&reindent(part, &indent));
+            out.push_str(",\n");
+        }
+        out.pop();
+        out
+    }
+
+    /// The width-aware "join with `, ` if it fits `max_width`, else one
+    /// item per line with a trailing comma" layout used for every
+    /// delimited kwarg/arg list in this printer: tag/component `(...)`
+    /// kwargs, `Route(...)` kwargs, and a nested `css!`/`routes!` call.
+    /// Returns just the delimited chunk (`(a, b)` or
+    /// `(\n    a,\n    b,\n)`) — callers prepend their own tag/keyword
+    /// name (already written to `out`, or folded into `prefix_width`).
+    ///
+    /// `check_level` is the level the group ACTUALLY sits at once
+    /// printed — used ONLY for the width decision. This is what makes a
+    /// deeply-nested value wrap instead of measuring itself against a
+    /// shallow assumed depth; see [`Printer::nested_macro_src`].
+    /// `output_level` is the level the WRAPPED form is indented to in the
+    /// returned string: pass the same value as `check_level` for output
+    /// written directly into the current line (tag/component kwargs,
+    /// `Route(...)` kwargs), or `0` for a relative, column-0-anchored
+    /// fragment the caller will [`reindent`] itself (a nested macro's own
+    /// kwarg list, per the [`ExprMap`] contract). The two differ because
+    /// the real ambient depth used for the width check is often not yet
+    /// decided at output time — see [`Printer::kwarg`].
+    ///
+    /// `prefix_width`/`suffix_width` account for text sharing the
+    /// group's own line that isn't one of `parts` (e.g. a tag name
+    /// before the opening delimiter, or a trailing ` {` before a child
+    /// block).
+    #[allow(clippy::too_many_arguments)]
+    fn delimited_list(
+        &self,
+        check_level: usize,
+        output_level: usize,
+        prefix_width: usize,
+        parts: &[String],
+        open: char,
+        close: char,
+        suffix_width: usize,
+    ) -> String {
+        let inline = parts.join(", ");
+        let delimited = format!("{open}{inline}{close}");
+        let fits = !inline.contains('\n')
+            && self.opts.indent_width(check_level) + prefix_width + delimited.len() + suffix_width
+                <= self.opts.max_width;
+        if fits {
+            return delimited;
+        }
+        let body = self.wrap_one_per_line(output_level + 1, parts);
+        format!("{open}\n{body}\n{}{close}", self.indent(output_level))
     }
 
     fn indent(&self, level: usize) -> String {
@@ -272,106 +446,82 @@ impl Printer<'_> {
         if between { None } else { Some(idx) }
     }
 
-    /// First source byte of a node (its tag / alias ident).
-    fn node_start_byte(&self, node: &Node) -> Option<usize> {
+    /// First source byte of an [`IrNode`] (its tag ident / spread expr /
+    /// `children()` ident). Shared by `render!` and `routes!` printing —
+    /// both reduce to the same tag/kwargs/children shape.
+    fn ir_node_start_byte(&self, node: &IrNode) -> Option<usize> {
         let span = match node {
-            Node::Element(el) => el.tag.span(),
-            Node::UserComponent(uc) => uc.alias_ident.span(),
-            Node::ChildrenSlot { span } => *span,
+            IrNode::Tag(tag) => tag.tag_span?,
+            IrNode::ChildrenSlot(span) => *span,
+            IrNode::Spread(expr) => span_of(expr),
         };
         self.map.byte_range(span).map(|(s, _)| s)
     }
 
-    // ---- render! -------------------------------------------------------
+    /// Byte extent `(start, end)` of a node via [`Printer::ir_node_start_byte`]
+    /// + [`SourceMap::node_extent`]. `end` is the byte just past the node.
+    fn ir_node_extent(&self, node: &IrNode) -> Option<(usize, usize)> {
+        let start = self.ir_node_start_byte(node)?;
+        let (_, after) = self.map.node_extent(start);
+        Some((start, after))
+    }
 
-    fn node(&self, node: &Node, level: usize, out: &mut String) {
+    // ---- render! / routes! (shared tag/kwargs/children shape) ---------
+
+    fn ir_node(&self, node: &IrNode, level: usize, out: &mut String) {
         match node {
-            Node::Element(el) => self.element(el, level, out),
-            Node::UserComponent(uc) => self.user_component(uc, level, out),
-            Node::ChildrenSlot { .. } => {
+            IrNode::Tag(tag) => self.ir_tag(tag, level, out),
+            IrNode::ChildrenSlot(_) => {
                 out.push_str(&self.indent(level));
                 out.push_str("children()");
+            }
+            IrNode::Spread(expr) => {
+                let indent = self.indent(level);
+                let src = self.expr_src(span_of(expr), expr, level);
+                out.push_str(&indent);
+                out.push_str("..");
+                out.push_str(&src);
             }
         }
     }
 
-    fn element(&self, el: &ElementNode, level: usize, out: &mut String) {
-        let start = self.map.byte_range(el.tag.span()).map(|(s, _)| s);
-        self.tag_node(
-            &el.tag.to_string(),
-            &el.kwargs,
-            &el.children,
-            level,
-            start,
-            out,
-        );
-    }
-
-    fn user_component(&self, uc: &UserComponentNode, level: usize, out: &mut String) {
-        let start = self.map.byte_range(uc.alias_ident.span()).map(|(s, _)| s);
-        self.tag_node(
-            &uc.alias_ident.to_string(),
-            &uc.kwargs,
-            &uc.children,
-            level,
-            start,
-            out,
-        );
-    }
-
-    /// The shared `tag(kwargs) { children }` rendering used by both
-    /// element and user-component nodes. `node_start` is the byte offset
-    /// of this node's tag in the body source (used to locate its block
-    /// via [`SourceMap::node_extent`] so comments land at the right
-    /// indent / side of the closing `}`).
-    fn tag_node(
-        &self,
-        tag: &str,
-        kwargs: &[Kwarg],
-        children: &[Node],
-        level: usize,
-        node_start: Option<usize>,
-        out: &mut String,
-    ) {
+    /// The shared `tag(kwargs) { children }` rendering — covers a
+    /// render! element/user-component (`always_block: false`, so an
+    /// empty comment-free block is omitted) and a routes! `Switch`/
+    /// `Stack`/`Route`/unrecognized-ident node (`Switch`/`Stack` set
+    /// `always_block: true` since their `{ … }` is mandatory even when
+    /// empty).
+    fn ir_tag(&self, tag: &IrTag, level: usize, out: &mut String) {
         let indent = self.indent(level);
         out.push_str(&indent);
-        out.push_str(tag);
+        out.push_str(&tag.tag);
 
         // ---- kwargs ----
-        if !kwargs.is_empty() {
-            let parts: Vec<String> = kwargs.iter().map(|kw| self.kwarg(kw)).collect();
-            let inline = format!("({})", parts.join(", "));
-            let inline_width =
-                self.opts.indent_width(level) + tag.len() + inline.len() + brace_width(children);
-            let single_line = !inline.contains('\n');
-            if single_line && inline_width <= self.opts.max_width {
-                out.push_str(&inline);
-            } else {
-                // Break each kwarg onto its own line.
-                out.push_str("(\n");
-                let inner = self.indent(level + 1);
-                for (i, part) in parts.iter().enumerate() {
-                    out.push_str(&inner);
-                    // Re-indent any internal newlines of a multi-line
-                    // kwarg value so it stays under the kwarg's column.
-                    out.push_str(&reindent(part, &inner));
-                    if i + 1 < parts.len() {
-                        out.push(',');
-                    } else {
-                        // trailing comma on the last kwarg
-                        out.push(',');
-                    }
-                    out.push('\n');
-                }
-                out.push_str(&indent);
-                out.push(')');
-            }
+        if !tag.kwargs.is_empty() {
+            let parts: Vec<String> = tag
+                .kwargs
+                .iter()
+                .map(|kw| self.ir_kwarg(kw, level))
+                .collect();
+            let suffix = ir_brace_width(&tag.children, tag.always_block);
+            out.push_str(&self.delimited_list(
+                level,
+                level,
+                tag.tag.len(),
+                &parts,
+                '(',
+                ')',
+                suffix,
+            ));
         }
 
         // ---- children ----
         // Resolve this node's block byte bounds so comments are placed
         // relative to its `{ … }`.
-        let inner_close = node_start.and_then(|s| self.map.node_extent(s).0);
+        let inner_close = tag
+            .tag_span
+            .and_then(|s| self.map.byte_range(s))
+            .and_then(|(s, _)| self.map.node_extent(s).0);
 
         // If there are pending comments destined for this node's block
         // (i.e. starting before its closing brace) we must render the
@@ -387,18 +537,17 @@ impl Printer<'_> {
             })
             .unwrap_or(false);
 
-        if !children.is_empty() || has_block_comments {
+        if !tag.children.is_empty() || tag.always_block || has_block_comments {
             out.push_str(" {\n");
             let child_level = level + 1;
-            for child in children {
-                let child_start = self.node_start_byte(child);
+            for child in &tag.children {
                 // Leading own-line comments before this child.
-                if let Some(cs) = child_start {
+                if let Some(cs) = self.ir_node_start_byte(child) {
                     self.flush(cs, child_level, out);
                 }
-                self.node(child, child_level, out);
+                self.ir_node(child, child_level, out);
                 // Trailing same-line comment on the child.
-                if let Some((_, child_end)) = child_extent(self, child) {
+                if let Some((_, child_end)) = self.ir_node_extent(child) {
                     if let Some(idx) = self.pending_trailing_on_line(child_end) {
                         // Append trailing comment to the end of this line.
                         let before = self.comments[idx].start + 1;
@@ -416,15 +565,26 @@ impl Printer<'_> {
         }
     }
 
-    fn kwarg(&self, kw: &Kwarg) -> String {
-        let name = kw.name.to_string();
-        if kw.partial {
+    /// `level` is the tag's own indent level — if the value turns out to
+    /// need wrapping (e.g. a nested `css!` that doesn't fit), it lands
+    /// one level deeper (`level + 1`) once the kwargs break onto their
+    /// own lines, so that is what gets passed to [`Printer::expr_src`]
+    /// as the nested macro's width reference (`IrValue::Literal` values —
+    /// routes!'s `path`/`component` — never go through `expr_src` at all,
+    /// matching how they were always hand-formatted rather than treated
+    /// as embedded exprs). See [`Printer::nested_macro_src`] for why this
+    /// is a same-turn estimate rather than the exact final depth.
+    fn ir_kwarg(&self, kw: &IrKwarg, level: usize) -> String {
+        match &kw.value {
             // Partial kwarg: just the name (mid-typing). Preserve the
             // author's `name` with no value.
-            return name;
+            None => kw.name.clone(),
+            Some(IrValue::Literal(s)) => format!("{}: {s}", kw.name),
+            Some(IrValue::Expr(e)) => {
+                let value = self.expr_src(span_of(e), e, level + 1);
+                format!("{}: {value}", kw.name)
+            }
         }
-        let value = self.expr_src(span_of(&kw.value), &kw.value);
-        format!("{name}: {value}")
     }
 
     // ---- css! ----------------------------------------------------------
@@ -439,7 +599,11 @@ impl Printer<'_> {
         // Inline form only when there are NO comments to place (comments
         // imply line breaks).
         if !has_comments {
-            let parts: Vec<String> = input.kwargs.iter().map(|kw| self.css_kwarg(kw)).collect();
+            let parts: Vec<String> = input
+                .kwargs
+                .iter()
+                .map(|kw| self.css_kwarg(kw, level))
+                .collect();
             let inline = parts.join(", ");
             let inline_width = self.opts.indent_width(level) + inline.len();
             if !inline.contains('\n') && inline_width <= self.opts.max_width {
@@ -468,7 +632,7 @@ impl Printer<'_> {
                 self.flush(s, level, &mut out);
             }
             out.push_str(&indent);
-            out.push_str(&reindent(&self.css_kwarg(kw), &indent));
+            out.push_str(&reindent(&self.css_kwarg(kw, level), &indent));
             out.push(',');
             // Trailing same-line comment after this field.
             let field_end = self
@@ -498,195 +662,30 @@ impl Printer<'_> {
         out
     }
 
-    fn css_kwarg(&self, kw: &whisker_macro_syntax::CssKwarg) -> String {
+    fn css_kwarg(&self, kw: &whisker_macro_syntax::CssKwarg, level: usize) -> String {
         let name = kw.name.to_string();
         match &kw.value {
             Some(expr) => {
-                let v = self.expr_src(span_of(expr), expr);
+                let v = self.expr_src(span_of(expr), expr, level);
                 format!("{name}: {v}")
             }
             None => name,
         }
     }
-
-    // ---- routes! ----------------------------------------------------------
-
-    fn routes_node(&self, node: &RoutesNode, level: usize, out: &mut String) {
-        match node {
-            RoutesNode::Switch { kw, children } => {
-                self.routes_container(&kw.to_string(), children, level, out);
-            }
-            RoutesNode::Stack { kw, children } => {
-                self.routes_container(&kw.to_string(), children, level, out);
-            }
-            RoutesNode::Route {
-                kw,
-                path,
-                component,
-                transition,
-                children,
-            } => {
-                self.routes_route(
-                    &kw.to_string(),
-                    path.as_ref(),
-                    component.as_ref(),
-                    transition.as_ref(),
-                    children,
-                    level,
-                    out,
-                );
-            }
-            RoutesNode::Spread(expr) => {
-                let indent = self.indent(level);
-                let src = self.expr_src(span_of(expr), expr);
-                out.push_str(&indent);
-                out.push_str("..");
-                out.push_str(&src);
-            }
-            RoutesNode::Unknown(ident) => {
-                let indent = self.indent(level);
-                out.push_str(&indent);
-                out.push_str(&ident.to_string());
-            }
-        }
-    }
-
-    fn routes_container(
-        &self,
-        keyword: &str,
-        children: &[RoutesNode],
-        level: usize,
-        out: &mut String,
-    ) {
-        let indent = self.indent(level);
-        out.push_str(&indent);
-        out.push_str(keyword);
-        out.push_str(" {\n");
-        let child_level = level + 1;
-        for child in children {
-            if let Some(start) = routes_node_start_byte(self, child) {
-                self.flush(start, child_level, out);
-            }
-            self.routes_node(child, child_level, out);
-            if let Some(end) = routes_node_end_byte(self, child) {
-                if let Some(idx) = self.pending_trailing_on_line(end) {
-                    let before = self.comments[idx].start + 1;
-                    self.flush(before, child_level, out);
-                }
-            }
-            out.push('\n');
-        }
-        out.push_str(&indent);
-        out.push('}');
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn routes_route(
-        &self,
-        keyword: &str,
-        path: Option<&LitStr>,
-        component: Option<&Ident>,
-        transition: Option<&Expr>,
-        children: &[RoutesNode],
-        level: usize,
-        out: &mut String,
-    ) {
-        let indent = self.indent(level);
-        out.push_str(&indent);
-        out.push_str(keyword);
-
-        // Build kwargs
-        let mut kwargs: Vec<String> = Vec::new();
-        if let Some(p) = path {
-            kwargs.push(format!("path: {:?}", p.value()));
-        }
-        if let Some(c) = component {
-            kwargs.push(format!("component: {c}"));
-        }
-        if let Some(t) = transition {
-            let src = self.expr_src(span_of(t), t);
-            kwargs.push(format!(
-                "transition: {}",
-                reindent(&src, &self.indent(level + 1))
-            ));
-        }
-
-        if !kwargs.is_empty() {
-            let inline = format!("({})", kwargs.join(", "));
-            let inline_width = self.opts.indent_width(level)
-                + keyword.len()
-                + inline.len()
-                + if children.is_empty() { 0 } else { " {".len() };
-            if !inline.contains('\n') && inline_width <= self.opts.max_width {
-                out.push_str(&inline);
-            } else {
-                out.push_str("(\n");
-                let inner = self.indent(level + 1);
-                for (i, kw) in kwargs.iter().enumerate() {
-                    out.push_str(&inner);
-                    out.push_str(&reindent(kw, &inner));
-                    out.push(',');
-                    if i + 1 < kwargs.len() {
-                        out.push('\n');
-                    }
-                }
-                out.push('\n');
-                out.push_str(&indent);
-                out.push(')');
-            }
-        }
-
-        if !children.is_empty() {
-            out.push_str(" {\n");
-            let child_level = level + 1;
-            for child in children {
-                if let Some(start) = routes_node_start_byte(self, child) {
-                    self.flush(start, child_level, out);
-                }
-                self.routes_node(child, child_level, out);
-                if let Some(end) = routes_node_end_byte(self, child) {
-                    if let Some(idx) = self.pending_trailing_on_line(end) {
-                        let before = self.comments[idx].start + 1;
-                        self.flush(before, child_level, out);
-                    }
-                }
-                out.push('\n');
-            }
-            out.push_str(&indent);
-            out.push('}');
-        }
-    }
-}
-
-/// First source byte of a routes node (its keyword ident / spread expr).
-fn routes_node_start_byte(p: &Printer, node: &RoutesNode) -> Option<usize> {
-    let span = node.kw_span()?;
-    p.map.byte_range(span).map(|(s, _)| s)
-}
-
-/// End byte of a routes node (past its closing brace or last token).
-fn routes_node_end_byte(p: &Printer, node: &RoutesNode) -> Option<usize> {
-    let span = node.kw_span()?;
-    let start = p.map.byte_range(span).map(|(s, _)| s)?;
-    let (_, end) = p.map.node_extent(start);
-    Some(end)
-}
-
-/// Byte extent `(start, end)` of a child node via its tag span +
-/// [`SourceMap::node_extent`]. `end` is the byte just past the node.
-fn child_extent(p: &Printer, child: &Node) -> Option<(usize, usize)> {
-    let start = p.node_start_byte(child)?;
-    let (_, after) = p.map.node_extent(start);
-    Some((start, after))
 }
 
 /// Width contribution of a ` { … }` children block when deciding
-/// whether a node's kwargs fit inline. A non-empty children block
-/// always forces a multi-line body, so we only need the ` {` opener's
-/// width to be honest about the first line; the closing brace and the
-/// children sit on later lines.
-fn brace_width(children: &[Node]) -> usize {
-    if children.is_empty() { 0 } else { " {".len() }
+/// whether a node's kwargs fit inline. A non-empty children block, or a
+/// tag whose block is mandatory even when empty (`always_block` — routes!
+/// `Switch`/`Stack`), always forces a multi-line body, so we only need
+/// the ` {` opener's width to be honest about the first line; the
+/// closing brace and the children sit on later lines.
+fn ir_brace_width(children: &[IrNode], always_block: bool) -> usize {
+    if children.is_empty() && !always_block {
+        0
+    } else {
+        " {".len()
+    }
 }
 
 /// Dedent the continuation (2nd..=Nth) lines of a multi-line fragment by
@@ -750,6 +749,20 @@ fn reindent(fragment: &str, prefix: &str) -> String {
 fn span_of(expr: &syn::Expr) -> Span {
     use syn::spanned::Spanned;
     expr.span()
+}
+
+/// Wrap a nested `render!`/`routes!` macro's already-printed `body` with
+/// its `name!` prefix and delimiters: `name!open\nbody\nclose` if `body`
+/// is multi-line, else the fully collapsed `name!openbodyclose` inline
+/// form (stripping the leading indent `print_render`/`print_routes`
+/// bakes into a single-line body's first line, since a nested value
+/// isn't on its own line).
+fn nested_wrap(name: &str, bang: &str, open: char, close: char, body: &str) -> String {
+    if body.contains('\n') {
+        format!("{name}{bang}{open}\n{body}\n{close}")
+    } else {
+        format!("{name}{bang}{open}{}{close}", body.trim_start())
+    }
 }
 
 #[cfg(test)]
