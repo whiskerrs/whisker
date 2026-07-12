@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.8.1...whisker-fmt-v0.8.2) - 2026-07-12
+
+### Fixed
+
+- *(fmt)* reformat css!/routes! nested inside render! kwargs ([#298](https://github.com/whiskerrs/whisker/pull/298))
+- *(fmt)* use `?` instead of match for clippy::question-mark ([#296](https://github.com/whiskerrs/whisker/pull/296))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.6.0...whisker-fmt-v0.7.0) - 2026-06-26
 
 ### Added
