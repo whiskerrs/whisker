@@ -99,12 +99,13 @@ class WhiskerSvgDrawingView(context: Context) : View(context) {
 
 /**
  * Best-effort CSS colour parser. Supports `#RGB`, `#RRGGBB`,
- * `#RRGGBBAA`, plus the small named colours the Rust compiler
- * accepts. Returns the resolved ARGB int, or falls back to
- * opaque black on parse failure.
+ * `#RRGGBBAA`, `rgb(…)`, `rgba(…)`, plus the small named colours the
+ * Rust compiler accepts. Returns the resolved ARGB int, or falls back
+ * to opaque black on parse failure.
  */
 private fun parseCssColor(raw: String): Int {
     val s = raw.trim()
+    parseRgbFunction(s)?.let { return it }
     if (s.startsWith("#")) {
         val hex = s.substring(1)
         when (hex.length) {
@@ -140,4 +141,30 @@ private fun parseCssColor(raw: String): Int {
         "transparent" -> 0x00000000
         else -> 0xFF000000.toInt()
     }
+}
+
+/**
+ * Parses `rgb(r, g, b)` / `rgba(r, g, b, a)` — the format
+ * `whisker-css`'s `Color::to_css_string()` actually emits for any
+ * non-hex-literal, non-named color (e.g. every `Color::hex(...)`
+ * constant reactively interpolated into a string, as opposed to a
+ * hardcoded hex literal). Without this, those colors fell through to
+ * the opaque-black fallback below — silently discarding the app's
+ * intended color.
+ */
+private fun parseRgbFunction(s: String): Int? {
+    val isRgba = s.startsWith("rgba(")
+    if (!isRgba && !s.startsWith("rgb(")) return null
+    if (!s.endsWith(")")) return null
+    val inner = s.substring(if (isRgba) 5 else 4, s.length - 1)
+    val parts = inner.split(",").map { it.trim() }
+    if (parts.size != if (isRgba) 4 else 3) return null
+    val r = parts[0].toDoubleOrNull() ?: return null
+    val g = parts[1].toDoubleOrNull() ?: return null
+    val b = parts[2].toDoubleOrNull() ?: return null
+    val a = if (isRgba) (parts[3].toDoubleOrNull() ?: 1.0) else 1.0
+    return ((a * 255).toInt() and 0xFF shl 24) or
+        (r.toInt() and 0xFF shl 16) or
+        (g.toInt() and 0xFF shl 8) or
+        (b.toInt() and 0xFF)
 }

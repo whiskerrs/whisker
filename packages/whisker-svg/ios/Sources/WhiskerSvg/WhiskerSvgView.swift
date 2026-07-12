@@ -147,6 +147,9 @@ private func parseCssColor(_ raw: String) -> UIColor {
             }
         }
     }
+    if let c = parseRgbFunction(s) {
+        return c
+    }
     switch s.lowercased() {
     case "black": return .black
     case "white": return .white
@@ -156,4 +159,32 @@ private func parseCssColor(_ raw: String) -> UIColor {
     case "transparent": return .clear
     default: return .label
     }
+}
+
+/// Parses `rgb(r, g, b)` / `rgba(r, g, b, a)` — the format
+/// `whisker-css`'s `Color::to_css_string()` actually emits for any
+/// non-hex-literal, non-named color (e.g. every `Color::hex(...)`
+/// constant reactively interpolated into a string, as opposed to a
+/// `&'static str` hex literal written by hand). Without this, those
+/// colors fell through to the `default: return .label` case above —
+/// silently substituting the OS appearance's semantic label color
+/// for whatever the app's own color was.
+private func parseRgbFunction(_ s: String) -> UIColor? {
+    let isRgba = s.hasPrefix("rgba(")
+    guard isRgba || s.hasPrefix("rgb(") else { return nil }
+    guard s.hasSuffix(")") else { return nil }
+    let inner = s.dropFirst(isRgba ? 5 : 4).dropLast()
+    let parts = inner.split(separator: ",").map {
+        $0.trimmingCharacters(in: .whitespaces)
+    }
+    guard parts.count == (isRgba ? 4 : 3),
+        let r = Double(parts[0]), let g = Double(parts[1]), let b = Double(parts[2])
+    else { return nil }
+    let a = isRgba ? (Double(parts[3]) ?? 1.0) : 1.0
+    return UIColor(
+        red: CGFloat(r) / 255.0,
+        green: CGFloat(g) / 255.0,
+        blue: CGFloat(b) / 255.0,
+        alpha: CGFloat(a)
+    )
 }
