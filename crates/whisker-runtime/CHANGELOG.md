@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.8.1...whisker-runtime-v0.8.2) - 2026-07-12
+
+### Added
+
+- *(reactive)* add Callback<In, Out> — Copy event-handler-prop wrapper ([#299](https://github.com/whiskerrs/whisker/pull/299))
+
 ## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.7.0...whisker-runtime-v0.8.0) - 2026-07-06
 
 ### Added
