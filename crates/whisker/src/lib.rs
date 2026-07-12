@@ -134,9 +134,9 @@ macro_rules! module {
 }
 
 pub use whisker_runtime::reactive::{
-    ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource, ResourceState, RwSignal,
-    Signal, StoredValue, WriteSignal, arc_signal, computed, effect, flush, on_cleanup, on_mount,
-    provide_context, resource, resource_sync, signal, use_context, with_context,
+    ArcReadSignal, ArcRwSignal, ArcWriteSignal, Callback, ReadSignal, Resource, ResourceState,
+    RwSignal, Signal, StoredValue, WriteSignal, arc_signal, computed, effect, flush, on_cleanup,
+    on_mount, provide_context, resource, resource_sync, signal, use_context, with_context,
 };
 // Component mount/unmount + mount-queue machinery. Driven by the
 // `#[component]` expansion and the hot-reload remount path, not by app
@@ -1880,10 +1880,10 @@ pub mod prelude {
         Length, NamedColor, ToCss,
     };
     pub use crate::{
-        ArcReadSignal, ArcRwSignal, ArcWriteSignal, ReadSignal, Resource, ResourceState, RwSignal,
-        Signal, StoredValue, WriteSignal, arc_signal, computed, effect, on_cleanup, on_mount,
-        provide_context, resource, resource_sync, run_blocking, run_on_main_thread, signal,
-        spawn_local, use_context, with_context,
+        ArcReadSignal, ArcRwSignal, ArcWriteSignal, Callback, ReadSignal, Resource, ResourceState,
+        RwSignal, Signal, StoredValue, WriteSignal, arc_signal, computed, effect, on_cleanup,
+        on_mount, provide_context, resource, resource_sync, run_blocking, run_on_main_thread,
+        signal, spawn_local, use_context, with_context,
     };
     pub use crate::{
         BoundingClientRect, ElementHandle, ElementRef, RefError, ScrollInfo, ScrollViewHandle,
