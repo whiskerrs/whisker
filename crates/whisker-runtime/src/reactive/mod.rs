@@ -15,6 +15,11 @@
 //! - [`effect`] — [`effect`] + dependency tracking.
 //! - [`computed`] — [`computed`] (returns [`ReadSignal<T>`]).
 //! - [`scheduler`] — batching / flush.
+//! - [`prop`] — [`Signal<T>`](prop::Signal), the unified prop-value
+//!   type.
+//! - [`callback`] — [`Callback<In, Out>`](callback::Callback), a
+//!   `Copy` event-handler-prop wrapper (the `Signal<T>` idea applied
+//!   to closures instead of values).
 //!
 //! All operations are single-threaded — reactive UI runs on the Lynx
 //! TASM thread. The runtime lives in a `thread_local!`. Operations
@@ -31,6 +36,7 @@
 //! executes.
 
 pub mod arc_signal;
+pub mod callback;
 pub mod component;
 pub mod computed;
 pub mod context;
@@ -51,6 +57,7 @@ mod tests_loop_wedge;
 mod tests_resource;
 
 pub use arc_signal::{ArcReadSignal, ArcRwSignal, ArcWriteSignal, arc_signal};
+pub use callback::Callback;
 #[doc(hidden)]
 pub use component::__reset_pending_mount_for_tests;
 pub use component::{
