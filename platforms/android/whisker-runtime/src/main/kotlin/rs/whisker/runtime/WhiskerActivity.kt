@@ -1,5 +1,6 @@
 package rs.whisker.runtime
 
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
@@ -177,5 +178,11 @@ open class WhiskerActivity : ComponentActivity() {
         whiskerView?.destroy()
         whiskerView = null
         super.onDestroy()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.data?.toString()?.let { WhiskerAppContext.dispatchDeepLink(it) }
     }
 }

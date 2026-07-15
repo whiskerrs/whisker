@@ -518,10 +518,12 @@ extension WhiskerWebViewView: WKNavigationDelegate {
         // whitelist.
         if scheme == "http" || scheme == "https" {
             if !isAllowed(urlString) {
+                // Denied, but still observable — see the note on the
+                // "everything else" branch below.
+                emitNavigation(urlString)
                 decisionHandler(.cancel)
                 return
             }
-            // Emit `navigation` only for real web navigations.
             emitNavigation(urlString)
             decisionHandler(.allow)
             return
@@ -541,6 +543,16 @@ extension WhiskerWebViewView: WKNavigationDelegate {
         // plus `javascript:` and custom deep-link schemes — is denied.
         // The component exposes no file-access prop, so there is no
         // legitimate in-webview navigation to those schemes; fail closed.
+        //
+        // Still emit `navigation` before cancelling: a custom scheme is
+        // exactly how an in-app OAuth flow's redirect URI (e.g.
+        // `com.googleusercontent.apps.<id>:/oauth2redirect?code=...`)
+        // surfaces — WKWebView can never actually load it, so this
+        // denial is the only place Rust can observe the attempted URL
+        // (and thus the auth code in its query string) without a
+        // separate native module. `on_navigation` consumers that only
+        // care about real page loads can filter by scheme themselves.
+        emitNavigation(urlString)
         decisionHandler(.cancel)
     }
 

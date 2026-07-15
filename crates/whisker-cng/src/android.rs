@@ -119,6 +119,9 @@ pub struct AndroidInputs {
     /// post-pipeline IR. Dedup'd by attribute name (last writer wins).
     #[serde(default)]
     pub extra_application_attributes: Vec<ApplicationAttribute>,
+    /// `MainActivity` deep-link schemes. See `AndroidManifest::main_activity_url_schemes`.
+    #[serde(default)]
+    pub main_activity_url_schemes: Vec<String>,
     /// Extra entries the renderer drops into the app module's
     /// `plugins { … }` block, just after the baseline Whisker /
     /// AGP / Kotlin plugin ids. Bare ids (e.g.
@@ -217,6 +220,18 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
     v.insert(
         "extra_application_attributes",
         render_extra_application_attributes(&inputs.extra_application_attributes),
+    );
+    v.insert(
+        "main_activity_launch_mode",
+        if inputs.main_activity_url_schemes.is_empty() {
+            String::new()
+        } else {
+            "\n            android:launchMode=\"singleTask\"".to_string()
+        },
+    );
+    v.insert(
+        "extra_main_activity_intent_filter",
+        render_main_activity_intent_filter(&inputs.main_activity_url_schemes),
     );
     v.insert(
         "extra_gradle_plugins",
@@ -343,6 +358,25 @@ fn render_extra_application_attributes(attrs: &[ApplicationAttribute]) -> String
     if out.ends_with('\n') {
         out.pop();
     }
+    out
+}
+
+/// A second `<intent-filter>` for `MainActivity` catching each
+/// scheme's `VIEW` deep links. Empty input → empty string.
+fn render_main_activity_intent_filter(schemes: &[String]) -> String {
+    if schemes.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "\n            <intent-filter>\n                <action android:name=\"android.intent.action.VIEW\" />\n                <category android:name=\"android.intent.category.DEFAULT\" />\n                <category android:name=\"android.intent.category.BROWSABLE\" />\n",
+    );
+    for scheme in schemes {
+        out.push_str(&format!(
+            "                <data android:scheme=\"{}\" />\n",
+            escape_xml(scheme),
+        ));
+    }
+    out.push_str("            </intent-filter>");
     out
 }
 
@@ -652,6 +686,7 @@ pub fn inputs_from_with_engine(
     let extra_permissions = android_ir.manifest.permissions.clone();
     let extra_meta_data = android_ir.manifest.application_meta_data.clone();
     let extra_application_attributes = android_ir.manifest.application_attributes.clone();
+    let main_activity_url_schemes = android_ir.manifest.main_activity_url_schemes.clone();
     let extra_gradle_plugins = android_ir.gradle.apply_plugins.clone();
     let extra_gradle_dependencies = android_ir.gradle.dependencies.clone();
     let extra_files = android_ir.extra_files.clone();
@@ -673,21 +708,12 @@ pub fn inputs_from_with_engine(
         extra_permissions,
         extra_meta_data,
         extra_application_attributes,
+        main_activity_url_schemes,
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        // Bumped 9 → 10 for `<application>` attribute injection
-        // (`extra_application_attributes`): the template's
-        // `<application` open tag grew a placeholder + the inputs/
-        // fingerprint shape grew a field, so existing trees regenerate.
-        // Bumped 10 → 11 for release signing: app/build.gradle.kts
-        // grew the env-var-driven `whiskerRelease` signingConfig
-        // (`WHISKER_ANDROID_*`) that `whisker build appbundle|apk`
-        // injects. Without the bump, pre-existing gen trees keep the
-        // signing-less gradle script and release builds come out
-        // UNSIGNED (uninstallable) even though the build command
-        // exported the env vars.
-        template_version: 11,
+        // Bumped 11 → 12: MainActivity intent-filter/launchMode placeholders.
+        template_version: 12,
     })
 }
 
@@ -727,10 +753,11 @@ mod tests {
             extra_permissions: Vec::new(),
             extra_meta_data: Vec::new(),
             extra_application_attributes: Vec::new(),
+            main_activity_url_schemes: Vec::new(),
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 11,
+            template_version: 12,
         }
     }
 
@@ -930,6 +957,26 @@ mod tests {
         assert_eq!(std::fs::read(&dylib).unwrap(), b"FAKE_DYLIB");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn render_main_activity_intent_filter_empty_is_empty() {
+        assert_eq!(render_main_activity_intent_filter(&[]), "");
+    }
+
+    #[test]
+    fn render_main_activity_intent_filter_includes_scheme() {
+        let out = render_main_activity_intent_filter(&["giga".to_string()]);
+        assert!(out.contains("android:scheme=\"giga\""));
+        assert!(out.contains("android.intent.action.VIEW"));
+    }
+
+    #[test]
+    fn template_vars_set_launch_mode_only_when_scheme_present() {
+        let mut inputs = sample_inputs();
+        assert_eq!(template_vars(&inputs)["main_activity_launch_mode"], "");
+        inputs.main_activity_url_schemes = vec!["giga".to_string()];
+        assert!(template_vars(&inputs)["main_activity_launch_mode"].contains("singleTask"));
     }
 
     #[test]

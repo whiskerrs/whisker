@@ -44,6 +44,10 @@ pub struct Config {
     pub bundle_id: Option<String>,
     pub version: Option<String>,
     pub build_number: Option<u32>,
+    /// Custom URL scheme for incoming deep links (e.g. `"giga"`).
+    /// Currently only wired into Android's manifest; iOS's
+    /// `ASWebAuthenticationSession` doesn't need it registered.
+    pub url_scheme: Option<String>,
     pub ios: IosConfig,
     pub android: AndroidConfig,
     /// Per-plugin Config serialized as JSON, keyed by the Config
@@ -76,6 +80,13 @@ impl Config {
 
     pub fn build_number(&mut self, n: u32) -> &mut Self {
         self.build_number = Some(n);
+        self
+    }
+
+    /// Claim a custom URL scheme for incoming deep links. See
+    /// [`Self::url_scheme`]'s field doc.
+    pub fn url_scheme(&mut self, s: impl Into<String>) -> &mut Self {
+        self.url_scheme = Some(s.into());
         self
     }
 

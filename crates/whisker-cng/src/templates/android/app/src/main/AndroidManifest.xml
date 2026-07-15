@@ -17,11 +17,11 @@
 {{extra_application_meta_data}}
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"{{main_activity_launch_mode}}>
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+            </intent-filter>{{extra_main_activity_intent_filter}}
         </activity>
     </application>
 

@@ -90,7 +90,7 @@
 //! | `on_message`        | `Fn(String)`               | —                             | JS → Rust message (`window.whisker.postMessage`). |
 //! | `on_load_start`     | `Fn(String)`               | —                             | A navigation started; carries the URL. |
 //! | `on_load`           | `Fn(String)`               | —                             | A navigation finished; carries the URL. |
-//! | `on_navigation`     | `Fn(String)`               | —                             | An internal navigation was requested; carries the URL. |
+//! | `on_navigation`     | `Fn(String)`               | —                             | An internal navigation was requested; carries the URL. Fires for BOTH allowed and denied (off-whitelist / non-http(s), e.g. a custom-scheme OAuth redirect) attempts — filter by URL/scheme if you only care about one. |
 //! | `on_progress`       | `Fn(f32)`                  | —                             | Load progress `0.0..=1.0`. |
 //! | `on_error`          | `Fn(WebViewError)`         | —                             | Navigation failed (url / code / description). |
 //! | `style`             | `Signal<String>`           | `""`                          | Standard Whisker CSS style string. |
