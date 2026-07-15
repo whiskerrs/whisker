@@ -11,6 +11,7 @@ import com.lynx.tasm.LynxViewBuilder
 import com.lynx.tasm.event.LynxCustomEvent
 import com.lynx.tasm.event.LynxEvent
 import com.lynx.tasm.event.LynxInternalEvent
+import com.lynx.tasm.event.LynxTouchEvent
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -72,18 +73,71 @@ class WhiskerView @JvmOverloads constructor(
             // typed `detail` (and `target`) blank. `target`/`currentTarget`
             // are the integer sign (the Rust `Target` deserializes an
             // int → `uid`). `detail` is the params dict for
-            // `LynxCustomEvent` (scroll / layout / …), null otherwise
-            // (touch events carry no body on Android). The marshaller
+            // `LynxCustomEvent` (scroll / layout / …). The marshaller
             // turns this Java map into a `WhiskerValueRaw` tree (no JSON).
-            val detail: Map<String, Any?>? =
-                if (event is LynxCustomEvent) event.eventParams() else null
-            val body: Map<String, Any?> =
-                mapOf(
+            val body: MutableMap<String, Any?> =
+                mutableMapOf(
                     "type" to name,
                     "target" to event.tag,
                     "currentTarget" to event.tag,
-                    "detail" to detail,
+                    // Overwritten below for custom/touch events; stays
+                    // explicitly null (not just absent) for anything
+                    // else, matching this reporter's previous behavior.
+                    "detail" to null,
                 )
+            if (event is LynxCustomEvent) {
+                body["detail"] = event.eventParams()
+            } else if (event is LynxTouchEvent) {
+                // `LynxTouchEvent` doesn't carry coordinates through
+                // the generic params path above — only
+                // `getClientPoint`/`getPagePoint`/`getTouchMap` do.
+                // Splice touches/changedTouches/detail on here,
+                // mirroring the shape `whisker_bridge_ios.mm`'s
+                // reporter block builds from the same Lynx class on
+                // iOS, so `whisker_runtime::event::TouchEvent`
+                // deserializes identically on both platforms instead
+                // of every field silently defaulting to zero here.
+                if (!event.getIsMultiTouch()) {
+                    val page = event.getPagePoint()
+                    val client = event.getClientPoint()
+                    if (page != null && client != null) {
+                        val touch =
+                            mapOf(
+                                "identifier" to 0,
+                                "x" to page.x,
+                                "y" to page.y,
+                                "pageX" to page.x,
+                                "pageY" to page.y,
+                                "clientX" to client.x,
+                                "clientY" to client.y,
+                            )
+                        body["touches"] = listOf(touch)
+                        body["changedTouches"] = listOf(touch)
+                        body["detail"] = mapOf("x" to page.x, "y" to page.y)
+                    }
+                } else {
+                    val touchMap = event.getTouchMap()
+                    if (touchMap != null) {
+                        val touches =
+                            touchMap.entries.map { (identifier, point) ->
+                                mapOf(
+                                    "identifier" to identifier,
+                                    "x" to point.x,
+                                    "y" to point.y,
+                                    "pageX" to point.x,
+                                    "pageY" to point.y,
+                                    "clientX" to point.x,
+                                    "clientY" to point.y,
+                                )
+                            }
+                        body["touches"] = touches
+                        body["changedTouches"] = touches
+                        touches.firstOrNull()?.let { first ->
+                            body["detail"] = mapOf("x" to first["pageX"], "y" to first["pageY"])
+                        }
+                    }
+                }
+            }
             return nativeOnLynxEvent(engine, event.tag, name, body)
         }
         override fun onInternalEvent(event: LynxInternalEvent) {}

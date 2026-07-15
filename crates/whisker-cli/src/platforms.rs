@@ -117,7 +117,18 @@ pub struct PlatformSync {
 /// scroll containers use to start scrolling, so a finger drift big
 /// enough to visibly start a scroll could still fire a `tap` on
 /// release. Kotlin-only, no capi/Lynx ABI change.
-const WHISKER_SDK_VERSION: &str = "0.1.8";
+///
+/// 0.1.9 populates `touches`/`changedTouches`/`detail` for
+/// `LynxTouchEvent` in `WhiskerView`'s event reporter
+/// (`whisker-runtime-android`) — Android previously sent every touch
+/// event with an empty body (`detail: null`, no `touches`), so
+/// `whisker_runtime::event::TouchEvent`'s coordinate fields all
+/// silently defaulted to zero (`#[serde(default)]`), breaking any
+/// Rust-side drag-to-seek/gesture math that reads touch coordinates
+/// on Android specifically — iOS's `whisker_bridge_ios.mm` already
+/// populated this shape, this brings Android to parity with it.
+/// Kotlin-only, no capi/Lynx ABI change.
+const WHISKER_SDK_VERSION: &str = "0.1.9";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
