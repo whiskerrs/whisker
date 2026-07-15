@@ -33,7 +33,21 @@ import java.util.concurrent.atomic.AtomicBoolean
 class WhiskerView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-) : LynxView(context, LynxViewBuilder()), WhiskerModuleHost {
+) : LynxView(
+        context,
+        // Lynx's own tap-cancel threshold (`TouchEventDispatcher.mTapSlop`)
+        // defaults to 50px (~50dip-equivalent), far more generous than the
+        // ~8dp `ViewConfiguration.getScaledTouchSlop()` Android's own
+        // scroll containers (and Lynx's `NestedScrollContainerView`) use to
+        // start scrolling. That gap let a finger drift far enough to
+        // visibly start a scroll while still firing a `tap` on release.
+        // 18dp (not the scroll threshold's own 8dp) matches Flutter's
+        // `kTouchSlop` — Flutter shipped 8dp first and raised it to 18dp
+        // after complaints that deliberate taps were too easily cancelled
+        // by ordinary hand tremor; still far below the original 50dp gap.
+        LynxViewBuilder().setTapSlop("18px"),
+    ),
+    WhiskerModuleHost {
 
     private var engine: Long = 0
     private val scheduled = AtomicBoolean(false)
