@@ -98,7 +98,26 @@ pub struct PlatformSync {
 /// (the `ItemMeta` API). BREAKING at the capi layer (v2 embedders
 /// refuse to attach via the abi-version handshake) — accepted while
 /// whisker is the only consumer.
-const WHISKER_SDK_VERSION: &str = "0.1.5";
+///
+/// 0.1.7 adds `WhiskerAppContext.DeepLinkListener`/
+/// `addDeepLinkListener`/`removeDeepLinkListener`/`dispatchDeepLink`
+/// (`whisker-module-android`) and `WhiskerActivity.onNewIntent`
+/// forwarding into it (`whisker-runtime-android`) — the plumbing
+/// `whisker-web-browser`'s Android `openAuthSession` needs to observe
+/// an OAuth redirect delivered as a new Intent. Non-breaking, pure
+/// Kotlin/JVM API addition — no capi/Lynx ABI change. (0.1.6 was a
+/// Kotlin-only change too — `WhiskerInsetsDispatcher` — and didn't
+/// bump this constant; do not assume every `sdk-v*` tag necessarily
+/// needs one, but check the SDK diff each time.)
+///
+/// 0.1.8 sets `LynxViewBuilder.setTapSlop("18px")` in
+/// `WhiskerView`'s constructor (`whisker-runtime-android`) — Lynx's
+/// own tap-cancel threshold defaulted to ~50dp-equivalent, far more
+/// generous than the ~8dp `ViewConfiguration.getScaledTouchSlop()`
+/// scroll containers use to start scrolling, so a finger drift big
+/// enough to visibly start a scroll could still fire a `tap` on
+/// release. Kotlin-only, no capi/Lynx ABI change.
+const WHISKER_SDK_VERSION: &str = "0.1.8";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
