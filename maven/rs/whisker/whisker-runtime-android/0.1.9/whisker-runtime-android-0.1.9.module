@@ -1,0 +1,207 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "rs.whisker",
+    "module": "whisker-runtime-android",
+    "version": "0.1.9",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "rs.whisker",
+          "module": "whisker-module-android",
+          "version": {
+            "requires": "0.1.9"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "lynx-android",
+          "version": {
+            "requires": "3.8.0-whisker.12"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "lynx-base-android",
+          "version": {
+            "requires": "3.8.0-whisker.12"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "lynx-trace-android",
+          "version": {
+            "requires": "3.8.0-whisker.12"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "lynx-service-api-android",
+          "version": {
+            "requires": "3.8.0-whisker.12"
+          }
+        },
+        {
+          "group": "org.lynxsdk.lynx",
+          "module": "primjs",
+          "version": {
+            "requires": "3.7.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "whisker-runtime-android-0.1.9.aar",
+          "url": "whisker-runtime-android-0.1.9.aar",
+          "size": 10415,
+          "sha512": "614df7e98111c9ad65b30fdb7fb840dc4f2e16698f93225514968d6ebeab5621deaa9002a459fda08f310effb43b7855c76dff6b8889a42a316dc2d946239971",
+          "sha256": "869b052c35c107aa83fda861fe00845f1e6ee9025ae43afe5ac477dccb2ec3b1",
+          "sha1": "c4c58d62bb3898aebe6356f5efc70f2766312bc1",
+          "md5": "9340c619c42aebe39e81f3310e7df2d8"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.appcompat",
+          "module": "appcompat",
+          "version": {
+            "requires": "1.7.0"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "whisker-module-android",
+          "version": {
+            "requires": "0.1.9"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "lynx-android",
+          "version": {
+            "requires": "3.8.0-whisker.12"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "lynx-base-android",
+          "version": {
+            "requires": "3.8.0-whisker.12"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "lynx-trace-android",
+          "version": {
+            "requires": "3.8.0-whisker.12"
+          }
+        },
+        {
+          "group": "rs.whisker",
+          "module": "lynx-service-api-android",
+          "version": {
+            "requires": "3.8.0-whisker.12"
+          }
+        },
+        {
+          "group": "org.lynxsdk.lynx",
+          "module": "primjs",
+          "version": {
+            "requires": "3.7.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.0.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "whisker-runtime-android-0.1.9.aar",
+          "url": "whisker-runtime-android-0.1.9.aar",
+          "size": 10415,
+          "sha512": "614df7e98111c9ad65b30fdb7fb840dc4f2e16698f93225514968d6ebeab5621deaa9002a459fda08f310effb43b7855c76dff6b8889a42a316dc2d946239971",
+          "sha256": "869b052c35c107aa83fda861fe00845f1e6ee9025ae43afe5ac477dccb2ec3b1",
+          "sha1": "c4c58d62bb3898aebe6356f5efc70f2766312bc1",
+          "md5": "9340c619c42aebe39e81f3310e7df2d8"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "whisker-runtime-android-0.1.9-sources.jar",
+          "url": "whisker-runtime-android-0.1.9-sources.jar",
+          "size": 7747,
+          "sha512": "f7497e25357abea3d41bd31cf207721499f966ee5b359c97dd3425d811ba19c45cedf715ace167df65ff8152fae85b84eeeaf57f9604f0014fc6b53abf780c4e",
+          "sha256": "c6b2c2b1f3ebfad3fcbb8351925a9f500979ba2d41c1e1c4bb673f15e238eb80",
+          "sha1": "cad4d5968638ed9e7381954f31dc50b2be310b6d",
+          "md5": "d82a5b276a3a5b29e0b82b611b5a739f"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseJavaDocPublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "javadoc",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "whisker-runtime-android-0.1.9-javadoc.jar",
+          "url": "whisker-runtime-android-0.1.9-javadoc.jar",
+          "size": 345196,
+          "sha512": "cc4667ee1e38b6b05d0f241c22ab0e07c1a4d4a5ceb6ce3d60757c277db77d7b38d5b6d8c25be10c0841c3a8a8b52067b587d74a3353bda29310178fefe31668",
+          "sha256": "01b1d8baaf927cd43854c5e6ebea3b5505c3522e73a94c504191a4f23a3ac697",
+          "sha1": "2550c0f06349fbbd4f3e86654d463607f56427aa",
+          "md5": "37bc85d0598c49f7239ba2809ee59896"
+        }
+      ]
+    }
+  ]
+}
