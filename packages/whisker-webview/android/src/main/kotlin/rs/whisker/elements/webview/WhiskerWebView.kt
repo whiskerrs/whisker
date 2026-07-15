@@ -260,8 +260,16 @@ open class WhiskerWebView(context: WhiskerContext) :
              *
              * Returns true  (block, WebView won't load it) when the URL is NOT
              * in the whitelist.
-             * Returns false (allow) when the URL matches a whitelist pattern;
-             * also emits `navigation` so Rust can observe internal link clicks.
+             * Returns false (allow) when the URL matches a whitelist pattern.
+             *
+             * `navigation` is emitted in BOTH cases, not just when allowed: a
+             * custom scheme (e.g. an in-app OAuth flow's redirect URI,
+             * `com.googleusercontent.apps.<id>:/oauth2redirect?code=...`)
+             * never matches the whitelist and WebView could never load it
+             * anyway, so this denial is the only place Rust can observe the
+             * attempted URL (and thus an auth code in its query string)
+             * without a separate native module. Consumers that only care
+             * about real page loads can filter by scheme themselves.
              */
             private fun handleNavigation(
                 view: android.webkit.WebView,
@@ -269,14 +277,12 @@ open class WhiskerWebView(context: WhiskerContext) :
             ): Boolean {
                 val allowed = originWhitelist.isEmpty() ||
                     originWhitelist.any { pattern -> matchesGlob(pattern, url) }
-                if (!allowed) return true // block
-                // Allowed — let WebView load it and inform Rust.
                 WhiskerCustomEvent.dispatch(
                     ui = this@WhiskerWebView,
                     name = "navigation",
                     params = mapOf("url" to url),
                 )
-                return false // proceed with load
+                return !allowed // true = block, false = proceed with load
             }
         }
 

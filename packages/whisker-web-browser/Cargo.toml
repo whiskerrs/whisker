@@ -1,0 +1,31 @@
+[package]
+name = "whisker-web-browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Whisker module mirroring Expo's expo-web-browser: openBrowserAsync (SFSafariViewController / Custom Tabs) and openAuthSessionAsync (ASWebAuthenticationSession / Custom Tabs + deep link) for in-app OAuth flows."
+
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
+    "src/lib.rs",
+    "android/**/*.kt",
+    "ios/**/*.swift",
+    "README.md",
+]
+
+[lib]
+crate-type = ["rlib"]
+
+[package.metadata.whisker]
+
+[dependencies]
+whisker = { workspace = true }
+futures-channel = "0.3"

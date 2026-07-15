@@ -4557,6 +4557,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-web-browser"
+version = "0.8.2"
+dependencies = [
+ "futures-channel",
+ "whisker",
+]
+
+[[package]]
 name = "whisker-webview"
 version = "0.8.2"
 dependencies = [

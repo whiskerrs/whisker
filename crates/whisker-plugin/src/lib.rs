@@ -494,6 +494,11 @@ pub struct AndroidManifest {
     /// child elements.
     #[serde(default)]
     pub application_attributes: Vec<ApplicationAttribute>,
+
+    /// Extra `MainActivity` URL schemes (second `<intent-filter>`).
+    /// Non-empty also sets `launchMode="singleTask"`.
+    #[serde(default)]
+    pub main_activity_url_schemes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

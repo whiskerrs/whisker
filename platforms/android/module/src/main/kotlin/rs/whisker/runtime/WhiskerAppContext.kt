@@ -68,6 +68,11 @@ public fun interface HostAttachedListener {
     public fun onHostAttached()
 }
 
+/** Fires with the full URL when a deep link arrives via `onNewIntent`. */
+public fun interface DeepLinkListener {
+    public fun onDeepLink(url: String)
+}
+
 public interface WhiskerModuleHost {
     /**
      * The host's Android `Context`. [WhiskerAppContext.currentActivity]
@@ -134,6 +139,25 @@ public class WhiskerAppContext internal constructor() {
         CopyOnWriteArrayList()
 
     public companion object {
+        private val deepLinkListeners: CopyOnWriteArrayList<DeepLinkListener> =
+            CopyOnWriteArrayList()
+
+        /** Called by [rs.whisker.runtime.WhiskerActivity.onNewIntent]. */
+        @JvmStatic
+        public fun dispatchDeepLink(url: String) {
+            for (l in deepLinkListeners) l.onDeepLink(url)
+        }
+
+        @JvmStatic
+        public fun addDeepLinkListener(listener: DeepLinkListener) {
+            deepLinkListeners.add(listener)
+        }
+
+        @JvmStatic
+        public fun removeDeepLinkListener(listener: DeepLinkListener) {
+            deepLinkListeners.remove(listener)
+        }
+
         /** The single instance every [Module] reaches via `appContext`. */
         @JvmStatic
         public val shared: WhiskerAppContext = WhiskerAppContext()

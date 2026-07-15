@@ -37,8 +37,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use whisker_config::Config;
 use whisker_plugin::{
-    AndroidProjectIr, AppMeta, GenerateContext, IosProjectIr, MutationJournal, MutationRecord,
-    Operation, Plugin, PluginRequest, PluginResponse, Target,
+    AndroidManifest, AndroidProjectIr, AppMeta, GenerateContext, IosProjectIr, MutationJournal,
+    MutationRecord, Operation, Plugin, PluginRequest, PluginResponse, Target,
 };
 
 // ============================================================================
@@ -285,6 +285,10 @@ fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> Genera
         application_id: app_meta.android_application_id.clone(),
         min_sdk: app_config.android.min_sdk,
         target_sdk: app_config.android.target_sdk,
+        manifest: AndroidManifest {
+            main_activity_url_schemes: app_config.url_scheme.clone().into_iter().collect(),
+            ..Default::default()
+        },
         ..Default::default()
     });
 
