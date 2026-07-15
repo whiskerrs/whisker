@@ -11,7 +11,15 @@
 //  * cancel — detected via `Application.ActivityLifecycleCallbacks`:
 //    if the launching Activity resumes while a redirect is still
 //    pending (i.e. `onNewIntent` never fired), the user dismissed
-//    the Custom Tab without completing.
+//    the Custom Tab without completing. Android's documented order
+//    for a reused (singleTask) Activity is `onNewIntent()` then
+//    `onResume()`, but that ordering is not reliable in practice on
+//    every OEM/OS-version combination for a Custom Tabs redirect —
+//    the same race AppAuth-Android and others work around. The
+//    `onActivityResumed` check below is deferred a beat via
+//    `Handler.postDelayed` so a same-event `onNewIntent` gets a
+//    chance to resolve success (and null out `pendingRedirectPrefix`)
+//    before the cancel check runs.
 
 package rs.whisker.modules.webbrowser
 
@@ -19,6 +27,8 @@ import android.app.Activity
 import android.app.Application
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.browser.customtabs.CustomTabsIntent
 import rs.whisker.runtime.DeepLinkListener
 import rs.whisker.runtime.Module
@@ -26,11 +36,17 @@ import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerAppContext
 import rs.whisker.runtime.WhiskerValue
 
+/** How long to wait for a same-event `onNewIntent` before treating an
+ *  `onActivityResumed` as a genuine user cancel. See the header
+ *  comment above for why this exists. */
+private const val CANCEL_CHECK_DELAY_MS = 300L
+
 class WebBrowserModule : Module() {
     private var pendingRedirectPrefix: String? = null
     private var deepLinkListener: DeepLinkListener? = null
     private var lifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
     private var launchingActivity: Activity? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun definition() = ModuleDefinition {
         Name("WebBrowser")
@@ -86,9 +102,13 @@ class WebBrowserModule : Module() {
         val callbacks = object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(resumed: Activity) {
                 if (resumed !== launchingActivity) return
-                if (pendingRedirectPrefix != null) {
-                    resolveAuthSession(WhiskerValue.Map(mapOf("type" to WhiskerValue.Str("cancel"))))
-                }
+                mainHandler.postDelayed({
+                    if (pendingRedirectPrefix != null) {
+                        resolveAuthSession(
+                            WhiskerValue.Map(mapOf("type" to WhiskerValue.Str("cancel")))
+                        )
+                    }
+                }, CANCEL_CHECK_DELAY_MS)
             }
             override fun onActivityCreated(a: Activity, b: Bundle?) {}
             override fun onActivityStarted(a: Activity) {}
@@ -116,5 +136,10 @@ class WebBrowserModule : Module() {
         lifecycleCallbacks?.let { launchingActivity?.application?.unregisterActivityLifecycleCallbacks(it) }
         lifecycleCallbacks = null
         launchingActivity = null
+        // Drops a still-pending deferred cancel-check (see
+        // `onActivityResumed`) so it can't fire against a *later*
+        // session — its `pendingRedirectPrefix != null` guard alone
+        // isn't enough once a new session has set a new prefix.
+        mainHandler.removeCallbacksAndMessages(null)
     }
 }
