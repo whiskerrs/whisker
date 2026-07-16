@@ -72,6 +72,26 @@ where
     }
 }
 
+/// Same as [`apply_attr_int`] but for a signal whose element type
+/// isn't already `i32` — maps each read through `to_wire` first.
+/// Exists for typed attribute enums (e.g. `PanInterceptDirection`)
+/// whose Lynx-side prop setter is integer-typed but where the Rust
+/// API keeps the ergonomic enum type; see [`apply_attr_int`]'s doc
+/// comment for why the plain string [`apply_attr`] path silently
+/// no-ops for these.
+pub fn apply_attr_int_mapped<V, T>(h: Element, name: &'static str, v: V, to_wire: fn(T) -> i32)
+where
+    V: ::std::convert::Into<Signal<T>>,
+    T: ::std::marker::Copy + 'static,
+{
+    match v.into() {
+        Signal::Stored(sv) => sv.with(|t| set_attribute_int(h, name, i64::from(to_wire(*t)))),
+        Signal::Dynamic(sig) => {
+            effect(move || set_attribute_int(h, name, i64::from(to_wire(sig.get()))));
+        }
+    }
+}
+
 pub fn apply_attr_bool<V>(h: Element, name: &'static str, v: V)
 where
     V: ::std::convert::Into<Signal<bool>>,

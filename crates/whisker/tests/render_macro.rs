@@ -297,10 +297,11 @@ fn typed_attribute_methods_route_to_named_setters() {
         let ops = log.borrow();
         assert!(has(&ops, "flatten", "true"), "got {ops:?}");
         assert!(has(&ops, "hit-slop", "10px"), "got {ops:?}");
-        assert!(
-            has(&ops, "pan-intercept-direction", "horizontal"),
-            "got {ops:?}"
-        );
+        // Sent as the wire int (0 = Horizontal), not the enum's
+        // display string — Lynx's native prop setter for this
+        // attribute is integer-typed on both platforms; see
+        // `PanInterceptDirection::as_wire_int`'s doc comment.
+        assert!(has(&ops, "pan-intercept-direction", "0"), "got {ops:?}");
     });
 }
 
