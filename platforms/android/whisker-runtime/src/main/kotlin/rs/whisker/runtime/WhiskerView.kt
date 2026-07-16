@@ -101,33 +101,39 @@ class WhiskerView @JvmOverloads constructor(
                     val page = event.getPagePoint()
                     val client = event.getClientPoint()
                     if (page != null && client != null) {
+                        val x = pxToDip(page.x)
+                        val y = pxToDip(page.y)
+                        val clientX = pxToDip(client.x)
+                        val clientY = pxToDip(client.y)
                         val touch =
                             mapOf(
                                 "identifier" to 0,
-                                "x" to page.x,
-                                "y" to page.y,
-                                "pageX" to page.x,
-                                "pageY" to page.y,
-                                "clientX" to client.x,
-                                "clientY" to client.y,
+                                "x" to x,
+                                "y" to y,
+                                "pageX" to x,
+                                "pageY" to y,
+                                "clientX" to clientX,
+                                "clientY" to clientY,
                             )
                         body["touches"] = listOf(touch)
                         body["changedTouches"] = listOf(touch)
-                        body["detail"] = mapOf("x" to page.x, "y" to page.y)
+                        body["detail"] = mapOf("x" to x, "y" to y)
                     }
                 } else {
                     val touchMap = event.getTouchMap()
                     if (touchMap != null) {
                         val touches =
                             touchMap.entries.map { (identifier, point) ->
+                                val x = pxToDip(point.x)
+                                val y = pxToDip(point.y)
                                 mapOf(
                                     "identifier" to identifier,
-                                    "x" to point.x,
-                                    "y" to point.y,
-                                    "pageX" to point.x,
-                                    "pageY" to point.y,
-                                    "clientX" to point.x,
-                                    "clientY" to point.y,
+                                    "x" to x,
+                                    "y" to y,
+                                    "pageX" to x,
+                                    "pageY" to y,
+                                    "clientX" to x,
+                                    "clientY" to y,
                                 )
                             }
                         body["touches"] = touches
@@ -142,6 +148,19 @@ class WhiskerView @JvmOverloads constructor(
         }
         override fun onInternalEvent(event: LynxInternalEvent) {}
     }
+
+    // `LynxTouchEvent.getPagePoint()`/`getClientPoint()`/`getTouchMap()`
+    // hand back raw `MotionEvent` coordinates (device px, no density
+    // conversion) — confirmed against the Lynx fork's own
+    // `TouchEventDispatcher.dispatchEvent`. Every other geometry value
+    // reaching Rust (`boundingClientRect()`, layout `left`/`top`/…) is
+    // in dip, via `LynxBaseUI.boundingClientRectInner`'s explicit
+    // `/ density`. Forwarding touch points unconverted made drag
+    // gestures (e.g. the reader's progress-bar seek, which divides a
+    // touch delta by a dip-based measured width) scale with the
+    // device's density instead of the physical drag distance — up to
+    // ~3x too sensitive on a high-density phone.
+    private fun pxToDip(px: Float): Float = px / resources.displayMetrics.density
 
     init {
         engine = nativeEngineAttach(this)
