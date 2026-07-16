@@ -135,6 +135,16 @@ attr_enum! {
     /// Maps to Lynx's `pan-intercept-direction` attribute. Pair
     /// with [`PanInterceptScope`] to choose which elements in the
     /// hit-test chain the interception applies to.
+    ///
+    /// Sent as an **int** ([`Self::as_wire_int`]), not the
+    /// `as_str`/`Display` string above — unlike most attribute enums
+    /// in this file, Lynx's native prop setter for this one is
+    /// integer-typed on both platforms (`LynxBaseUI.setPanInterceptDirection(int)`
+    /// on Android, `setPanInterceptDirection(NSInteger)` on iOS via
+    /// `LYNX_PROP_DEFINE`). Sending the string form is a **silent
+    /// no-op** — confirmed on-device: the attribute never reached the
+    /// native element at all, so the value stayed at its class
+    /// default (`None`) regardless of what was set from Rust.
     PanInterceptDirection {
         /// `"horizontal"`.
         Horizontal => "horizontal",
@@ -142,6 +152,20 @@ attr_enum! {
         Vertical => "vertical",
         /// `"none"` — disable the intercept (default).
         None => "none",
+    }
+}
+
+impl PanInterceptDirection {
+    /// Wire ordinal — must match `LynxPanInterceptDirection` exactly
+    /// (`LynxEventTarget.h` on iOS, `EventTarget.java` on Android;
+    /// both declare the same order). See the type's own doc comment
+    /// for why this (not `as_str`) is what actually reaches Lynx.
+    pub const fn as_wire_int(self) -> i32 {
+        match self {
+            Self::Horizontal => 0,
+            Self::Vertical => 1,
+            Self::None => 2,
+        }
     }
 }
 
@@ -153,6 +177,10 @@ attr_enum! {
     /// names track the wire strings 1:1; `SelfElement` reads `"self"`
     /// (the variant rename dodges Rust's `Self` keyword without
     /// resorting to `r#Self`).
+    ///
+    /// Sent as an **int** ([`Self::as_wire_int`]) — see
+    /// [`PanInterceptDirection`]'s doc comment; the same
+    /// string-attribute-on-an-int-prop gap applies here.
     PanInterceptScope {
         /// `"self"` — intercept on this element only.
         SelfElement => "self",
@@ -168,6 +196,23 @@ attr_enum! {
         All => "all",
         /// `"none"`.
         None => "none",
+    }
+}
+
+impl PanInterceptScope {
+    /// Wire ordinal — must match `LynxPanInterceptScope` exactly
+    /// (`LynxEventTarget.h` on iOS, `EventTarget.java` on Android;
+    /// both declare the same order). See [`PanInterceptDirection::as_wire_int`].
+    pub const fn as_wire_int(self) -> i32 {
+        match self {
+            Self::SelfElement => 0,
+            Self::Ancestors => 1,
+            Self::Descendants => 2,
+            Self::SelfAndAncestors => 3,
+            Self::SelfAndDescendants => 4,
+            Self::All => 5,
+            Self::None => 6,
+        }
     }
 }
 
@@ -259,6 +304,29 @@ mod tests {
         );
         assert_eq!(PanInterceptScope::All.as_str(), "all");
         assert_eq!(PanInterceptScope::None.as_str(), "none");
+    }
+
+    #[test]
+    fn pan_intercept_direction_wire_ints() {
+        // Must match `LynxPanInterceptDirection`'s declared order
+        // exactly (`LynxEventTarget.h` on iOS, `EventTarget.java` on
+        // Android) — this is what actually reaches Lynx; the `as_str`
+        // form above is a silent no-op on-device (int-typed native
+        // prop setter on both platforms).
+        assert_eq!(PanInterceptDirection::Horizontal.as_wire_int(), 0);
+        assert_eq!(PanInterceptDirection::Vertical.as_wire_int(), 1);
+        assert_eq!(PanInterceptDirection::None.as_wire_int(), 2);
+    }
+
+    #[test]
+    fn pan_intercept_scope_wire_ints() {
+        assert_eq!(PanInterceptScope::SelfElement.as_wire_int(), 0);
+        assert_eq!(PanInterceptScope::Ancestors.as_wire_int(), 1);
+        assert_eq!(PanInterceptScope::Descendants.as_wire_int(), 2);
+        assert_eq!(PanInterceptScope::SelfAndAncestors.as_wire_int(), 3);
+        assert_eq!(PanInterceptScope::SelfAndDescendants.as_wire_int(), 4);
+        assert_eq!(PanInterceptScope::All.as_wire_int(), 5);
+        assert_eq!(PanInterceptScope::None.as_wire_int(), 6);
     }
 
     #[test]

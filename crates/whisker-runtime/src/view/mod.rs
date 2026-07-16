@@ -34,7 +34,8 @@ pub mod virtualizer;
 mod tests;
 
 pub use apply::{
-    apply_attr, apply_attr_bool, apply_attr_f64, apply_attr_int, apply_attr_owned, apply_styles,
+    apply_attr, apply_attr_bool, apply_attr_f64, apply_attr_int, apply_attr_int_mapped,
+    apply_attr_owned, apply_styles,
 };
 pub use handle::Element;
 pub use into_view::{

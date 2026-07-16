@@ -196,8 +196,8 @@ pub mod __tags {
     use whisker_runtime::value::WhiskerValue;
     use whisker_runtime::view::{
         BindType, Element, append_child, apply_attr, apply_attr_bool, apply_attr_int,
-        apply_attr_owned, create_element, create_element_by_name, create_phantom_element,
-        set_attribute_object, set_event_listener,
+        apply_attr_int_mapped, apply_attr_owned, create_element, create_element_by_name,
+        create_phantom_element, set_attribute_object, set_event_listener,
     };
 
     // Why a trait (and not `macro_rules!`): RA's method-completion
@@ -479,6 +479,13 @@ pub mod __tags {
         /// [`PanInterceptDirection`](crate::attrs::PanInterceptDirection)
         /// enum.
         ///
+        /// Sent as an int, not the enum's wire *string* — Lynx's
+        /// native prop setter for this attribute is integer-typed on
+        /// both platforms (confirmed on-device: the string form is a
+        /// silent no-op, the attribute never reaches the native
+        /// element). See `PanInterceptDirection::as_wire_int`'s doc
+        /// comment.
+        ///
         /// ```ignore
         /// view(pan_intercept_direction: PanInterceptDirection::Horizontal)
         /// ```
@@ -486,7 +493,12 @@ pub mod __tags {
         where
             V: Into<Signal<crate::attrs::PanInterceptDirection>>,
         {
-            apply_attr(self.__element(), "pan-intercept-direction", v);
+            apply_attr_int_mapped(
+                self.__element(),
+                "pan-intercept-direction",
+                v,
+                crate::attrs::PanInterceptDirection::as_wire_int,
+            );
             self
         }
 
@@ -495,6 +507,9 @@ pub mod __tags {
         /// [`PanInterceptScope`](crate::attrs::PanInterceptScope)
         /// enum.
         ///
+        /// Sent as an int — see [`Self::pan_intercept_direction`]'s
+        /// doc comment; the same gap applies to this attribute.
+        ///
         /// ```ignore
         /// view(pan_intercept_scope: PanInterceptScope::SelfAndAncestors)
         /// ```
@@ -502,7 +517,12 @@ pub mod __tags {
         where
             V: Into<Signal<crate::attrs::PanInterceptScope>>,
         {
-            apply_attr(self.__element(), "pan-intercept-scope", v);
+            apply_attr_int_mapped(
+                self.__element(),
+                "pan-intercept-scope",
+                v,
+                crate::attrs::PanInterceptScope::as_wire_int,
+            );
             self
         }
 
