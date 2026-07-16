@@ -128,7 +128,15 @@ pub struct PlatformSync {
 /// on Android specifically — iOS's `whisker_bridge_ios.mm` already
 /// populated this shape, this brings Android to parity with it.
 /// Kotlin-only, no capi/Lynx ABI change.
-const WHISKER_SDK_VERSION: &str = "0.1.9";
+///
+/// 0.1.10 fixes those same touch coordinates being forwarded in raw
+/// device px instead of dip — `LynxTouchEvent.getPagePoint()`/
+/// `getClientPoint()`/`getTouchMap()` hand back unconverted
+/// `MotionEvent` coordinates, while `boundingClientRect()` and all
+/// other layout geometry reaching Rust is in dip. Divides by
+/// `resources.displayMetrics.density` before packing the event body.
+/// Kotlin-only, no capi/Lynx ABI change.
+const WHISKER_SDK_VERSION: &str = "0.1.10";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
