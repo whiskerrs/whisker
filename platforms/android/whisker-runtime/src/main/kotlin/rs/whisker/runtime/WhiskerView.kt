@@ -16,6 +16,9 @@ import com.lynx.tasm.event.LynxInternalEvent
 import com.lynx.tasm.event.LynxTouchEvent
 import java.util.concurrent.atomic.AtomicBoolean
 
+/** See `WhiskerView.forceTapSlop`'s doc comment for why this can't just be `LynxViewBuilder`'s tapSlop. */
+private const val TAP_SLOP_DP = 18f
+
 /**
  * Hosts the Lynx engine and bridges it to the Rust runtime.
  *
@@ -48,6 +51,11 @@ class WhiskerView @JvmOverloads constructor(
         // `kTouchSlop` — Flutter shipped 8dp first and raised it to 18dp
         // after complaints that deliberate taps were too easily cancelled
         // by ordinary hand tremor; still far below the original 50dp gap.
+        //
+        // Kept even though it's confirmed dead for this app (see
+        // `forceTapSlop`'s doc comment below) — cheap, harmless, and
+        // becomes real again if a future Lynx version or code path
+        // starts honoring it.
         LynxViewBuilder().setTapSlop("18px"),
     ),
     WhiskerModuleHost {
@@ -173,46 +181,62 @@ class WhiskerView @JvmOverloads constructor(
         }
     }
 
-    // Temporary diagnostic — reports what tapSlop value actually ends
-    // up armed on `TouchEventDispatcher` (the value the engine really
-    // compares touch drift against), vs. what we asked for via the
-    // `LynxViewBuilder` constructor above. `TouchEventDispatcher`
-    // itself is lazily created (`LynxUIRenderer.EnsureEventDispatcher`)
-    // on the FIRST real touch event, not at construction time — a
-    // fixed post-construction delay logged `null` unconditionally
-    // (confirmed on-device) since no touch had happened yet. Logging
-    // after `ACTION_UP` instead guarantees the dispatcher already
-    // exists. Capped at 5 logs so this doesn't spam every tap forever.
-    // Remove once the tapSlop regression is root-caused. Filter with
-    // `adb logcat -s WhiskerTapSlop`.
-    private var tapSlopLogsRemaining = 5
+    // `LynxViewBuilder().setTapSlop(...)` above is a no-op for this
+    // app — confirmed on-device via reflection (`adb logcat -s
+    // WhiskerTapSlop`: `TouchEventDispatcher.mTapSlop` stayed at
+    // Lynx's built-in 50dip default no matter what the builder was
+    // given). Root cause, traced in the Lynx fork source
+    // (`LynxUIRenderer.java`): the builder's tapSlop string only ever
+    // reaches the live `TouchEventDispatcher` via
+    // `onPageConfigDecoded()` → `updateEventDispatcherConfig()`, both
+    // driven by Lynx's own template-loading pipeline — the one this
+    // class's own doc comment says whisker bypasses entirely (engine
+    // handed to Rust via JNI instead). `onPageConfigDecoded` never
+    // fires, `mIsUpdatedConfig` never flips true, so
+    // `EnsureEventDispatcher()` creates the dispatcher (lazily, on the
+    // first real touch — `LynxUIRenderer.onTouchEvent`/
+    // `onInterceptTouchEvent`) but never calls
+    // `updateEventDispatcherConfig()`, and the dispatcher is left on
+    // its own constructor default.
+    //
+    // Since nothing ever calls `LynxContext.setTouchEventDispatcher`
+    // either, `lynxContext.touchEventDispatcher` stays null forever
+    // too — there's no public path to the live dispatcher at all.
+    // Reflects through `LynxView.mLynxTemplateRender` (protected,
+    // direct field access) → `LynxTemplateRender.mLynxUIRender`
+    // (private, declared as the `ILynxUIRenderer` interface but always
+    // a `LynxUIRenderer` at runtime) → `LynxUIRenderer.mEventDispatcher`
+    // (private) to reach the actual instance and set its tapSlop
+    // directly, bypassing the page-config pipeline this app never
+    // drives. Tried on every touch (idempotent past the first success)
+    // since the dispatcher doesn't exist until the first one.
+    private var tapSlopForced = false
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         val result = super.dispatchTouchEvent(ev)
-        if (tapSlopLogsRemaining > 0 && ev.action == android.view.MotionEvent.ACTION_UP) {
-            tapSlopLogsRemaining--
-            logTapSlopDiagnostic()
-        }
+        if (!tapSlopForced) forceTapSlop()
         return result
     }
 
-    private fun logTapSlopDiagnostic() {
+    private fun forceTapSlop() {
         try {
-            val ctx = lynxContext
-            val builderValue = ctx?.tapSlop
-            val dispatcher = ctx?.touchEventDispatcher
-            val field = TouchEventDispatcher::class.java.getDeclaredField("mTapSlop")
-            field.isAccessible = true
-            val liveValue = dispatcher?.let { field.get(it) }
-            Log.d(
-                "WhiskerTapSlop",
-                "LynxContext.tapSlop=$builderValue " +
-                    "TouchEventDispatcher.mTapSlop(px)=$liveValue " +
-                    "dispatcher=$dispatcher " +
-                    "density=${resources.displayMetrics.density}",
-            )
+            val templateRenderField = LynxView::class.java.getDeclaredField("mLynxTemplateRender")
+            templateRenderField.isAccessible = true
+            val templateRender = templateRenderField.get(this) ?: return
+
+            val uiRenderField = templateRender.javaClass.getDeclaredField("mLynxUIRender")
+            uiRenderField.isAccessible = true
+            val uiRenderer = uiRenderField.get(templateRender) ?: return
+
+            val dispatcherField = uiRenderer.javaClass.getDeclaredField("mEventDispatcher")
+            dispatcherField.isAccessible = true
+            val dispatcher = dispatcherField.get(uiRenderer) as? TouchEventDispatcher ?: return
+
+            dispatcher.setTapSlop(TAP_SLOP_DP * resources.displayMetrics.density)
+            tapSlopForced = true
+            Log.d("WhiskerTapSlop", "forced tapSlop to ${TAP_SLOP_DP}dp on live dispatcher")
         } catch (e: Exception) {
-            Log.e("WhiskerTapSlop", "diagnostic failed", e)
+            Log.e("WhiskerTapSlop", "forceTapSlop failed — falling back to Lynx's 50dip default", e)
         }
     }
 
