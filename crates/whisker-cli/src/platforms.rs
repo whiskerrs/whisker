@@ -151,7 +151,20 @@ pub struct PlatformSync {
 /// `null` (confirmed on-device). Moved the read to fire after
 /// `ACTION_UP` instead, guaranteeing the dispatcher already exists.
 /// Kotlin-only, no capi/Lynx ABI change.
-const WHISKER_SDK_VERSION: &str = "0.1.12";
+///
+/// 0.1.13 fixes the actual regression 0.1.11/0.1.12 were diagnosing —
+/// confirmed on-device that `TouchEventDispatcher.mTapSlop` stayed at
+/// Lynx's built-in 50dip default regardless of
+/// `LynxViewBuilder().setTapSlop(...)`. Root cause: that value only
+/// reaches the live dispatcher via `onPageConfigDecoded` →
+/// `updateEventDispatcherConfig()`, both driven by Lynx's own
+/// template-loading pipeline, which this app bypasses entirely (see
+/// `WhiskerView`'s own class doc comment). Reflects through
+/// `LynxView.mLynxTemplateRender` → `LynxTemplateRender.mLynxUIRender`
+/// → `LynxUIRenderer.mEventDispatcher` to reach the live dispatcher
+/// directly and set its tapSlop, bypassing the page-config path this
+/// app never drives. Kotlin-only, no capi/Lynx ABI change.
+const WHISKER_SDK_VERSION: &str = "0.1.13";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
