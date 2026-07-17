@@ -3,11 +3,13 @@ package rs.whisker.runtime
 import android.content.Context
 import android.os.Looper
 import android.util.AttributeSet
+import android.util.Log
 import android.view.Choreographer
 import androidx.annotation.Keep
 import com.lynx.tasm.EventEmitter
 import com.lynx.tasm.LynxView
 import com.lynx.tasm.LynxViewBuilder
+import com.lynx.tasm.behavior.TouchEventDispatcher
 import com.lynx.tasm.event.LynxCustomEvent
 import com.lynx.tasm.event.LynxEvent
 import com.lynx.tasm.event.LynxInternalEvent
@@ -168,6 +170,36 @@ class WhiskerView @JvmOverloads constructor(
             nativeBindWhiskerView(engine)
             installEventReporter()
             nativeAppMain(engine)
+        }
+        // Temporary diagnostic — reports what tapSlop value actually
+        // ends up armed on `TouchEventDispatcher` (the value the
+        // engine really compares touch drift against), vs. what we
+        // asked for via the `LynxViewBuilder` constructor above.
+        // `TouchEventDispatcher.onPageConfigDecoded`'s own tapSlop
+        // resolution runs once the page/template config decodes,
+        // which can happen after this constructor returns, so read
+        // it on a short delay rather than inline here. Remove once
+        // the tapSlop regression is root-caused. Filter with
+        // `adb logcat -s WhiskerTapSlop`.
+        postDelayed({ logTapSlopDiagnostic() }, 1000)
+    }
+
+    private fun logTapSlopDiagnostic() {
+        try {
+            val ctx = lynxContext
+            val builderValue = ctx?.tapSlop
+            val dispatcher = ctx?.touchEventDispatcher
+            val field = TouchEventDispatcher::class.java.getDeclaredField("mTapSlop")
+            field.isAccessible = true
+            val liveValue = dispatcher?.let { field.get(it) }
+            Log.d(
+                "WhiskerTapSlop",
+                "LynxContext.tapSlop=$builderValue " +
+                    "TouchEventDispatcher.mTapSlop(px)=$liveValue " +
+                    "density=${resources.displayMetrics.density}",
+            )
+        } catch (e: Exception) {
+            Log.e("WhiskerTapSlop", "diagnostic failed", e)
         }
     }
 

@@ -136,7 +136,14 @@ pub struct PlatformSync {
 /// other layout geometry reaching Rust is in dip. Divides by
 /// `resources.displayMetrics.density` before packing the event body.
 /// Kotlin-only, no capi/Lynx ABI change.
-const WHISKER_SDK_VERSION: &str = "0.1.10";
+///
+/// 0.1.11 is a temporary diagnostic build — logs the tapSlop value
+/// `TouchEventDispatcher` actually ends up armed with (via reflection
+/// on its private `mTapSlop` field) 1s after each `WhiskerView`
+/// constructs, tagged `WhiskerTapSlop`. Investigating a report that
+/// 0.1.8's 18px tapSlop fix stopped taking effect. Remove once
+/// root-caused. Kotlin-only, no capi/Lynx ABI change.
+const WHISKER_SDK_VERSION: &str = "0.1.11";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
