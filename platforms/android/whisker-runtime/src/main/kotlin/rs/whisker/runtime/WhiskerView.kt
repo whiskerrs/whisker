@@ -171,17 +171,29 @@ class WhiskerView @JvmOverloads constructor(
             installEventReporter()
             nativeAppMain(engine)
         }
-        // Temporary diagnostic — reports what tapSlop value actually
-        // ends up armed on `TouchEventDispatcher` (the value the
-        // engine really compares touch drift against), vs. what we
-        // asked for via the `LynxViewBuilder` constructor above.
-        // `TouchEventDispatcher.onPageConfigDecoded`'s own tapSlop
-        // resolution runs once the page/template config decodes,
-        // which can happen after this constructor returns, so read
-        // it on a short delay rather than inline here. Remove once
-        // the tapSlop regression is root-caused. Filter with
-        // `adb logcat -s WhiskerTapSlop`.
-        postDelayed({ logTapSlopDiagnostic() }, 1000)
+    }
+
+    // Temporary diagnostic — reports what tapSlop value actually ends
+    // up armed on `TouchEventDispatcher` (the value the engine really
+    // compares touch drift against), vs. what we asked for via the
+    // `LynxViewBuilder` constructor above. `TouchEventDispatcher`
+    // itself is lazily created (`LynxUIRenderer.EnsureEventDispatcher`)
+    // on the FIRST real touch event, not at construction time — a
+    // fixed post-construction delay logged `null` unconditionally
+    // (confirmed on-device) since no touch had happened yet. Logging
+    // after `ACTION_UP` instead guarantees the dispatcher already
+    // exists. Capped at 5 logs so this doesn't spam every tap forever.
+    // Remove once the tapSlop regression is root-caused. Filter with
+    // `adb logcat -s WhiskerTapSlop`.
+    private var tapSlopLogsRemaining = 5
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        val result = super.dispatchTouchEvent(ev)
+        if (tapSlopLogsRemaining > 0 && ev.action == android.view.MotionEvent.ACTION_UP) {
+            tapSlopLogsRemaining--
+            logTapSlopDiagnostic()
+        }
+        return result
     }
 
     private fun logTapSlopDiagnostic() {
@@ -196,6 +208,7 @@ class WhiskerView @JvmOverloads constructor(
                 "WhiskerTapSlop",
                 "LynxContext.tapSlop=$builderValue " +
                     "TouchEventDispatcher.mTapSlop(px)=$liveValue " +
+                    "dispatcher=$dispatcher " +
                     "density=${resources.displayMetrics.density}",
             )
         } catch (e: Exception) {

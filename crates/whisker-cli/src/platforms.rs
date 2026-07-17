@@ -143,7 +143,15 @@ pub struct PlatformSync {
 /// constructs, tagged `WhiskerTapSlop`. Investigating a report that
 /// 0.1.8's 18px tapSlop fix stopped taking effect. Remove once
 /// root-caused. Kotlin-only, no capi/Lynx ABI change.
-const WHISKER_SDK_VERSION: &str = "0.1.11";
+///
+/// 0.1.12 fixes that diagnostic itself — `TouchEventDispatcher` is
+/// lazily created on the first real touch event
+/// (`LynxUIRenderer.EnsureEventDispatcher`), not at `WhiskerView`
+/// construction, so the fixed 1s-post-construction read always logged
+/// `null` (confirmed on-device). Moved the read to fire after
+/// `ACTION_UP` instead, guaranteeing the dispatcher already exists.
+/// Kotlin-only, no capi/Lynx ABI change.
+const WHISKER_SDK_VERSION: &str = "0.1.12";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
