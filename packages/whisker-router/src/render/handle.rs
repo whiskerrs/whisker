@@ -248,8 +248,11 @@ impl RouterHandle {
     fn with_navigator<T>(&self, op: impl FnOnce(&mut Navigator) -> T) -> T {
         // Release keyboard focus at the moment navigation is invoked —
         // before the transition animates — so the keyboard drops crisply
-        // as the user leaves the screen. See [`dismiss_keyboard`].
-        dismiss_keyboard();
+        // as the user leaves the screen. Blurs the *specific* field that
+        // was focused (never a blanket dismiss), so a late-landing blur
+        // can't resign a field the screen being entered has since
+        // auto-focused. See [`crate::render::keyboard`].
+        crate::render::keyboard::on_page_change_confirm(false);
         let mut state = self.inner.state.get();
         let out = {
             let mut nav = Navigator::new(&self.inner.tree, &mut state);
@@ -294,28 +297,6 @@ impl RouterHandle {
     pub fn reset(&self, url: &str) -> Result<(), NavError> {
         self.with_navigator(|nav| nav.reset(url))
     }
-}
-
-/// The `whisker-keyboard` native module, referenced by its
-/// fully-qualified name (`<crate>:<Name>`). The router ships in a
-/// different crate than `whisker-keyboard`, so `module!` — which
-/// prepends *this* crate's name — can't name it; we spell the qualified
-/// name directly.
-const KEYBOARD_MODULE: &str = "whisker-keyboard:Keyboard";
-
-/// Release keyboard focus globally on navigation.
-///
-/// Mirrors React Navigation's `keyboardHandlingEnabled`: when the user
-/// moves between screens, blur the focused field. This is a **real
-/// unfocus** on the native side (iOS `resignFirstResponder`, Android
-/// `clearFocus`), not merely a "hide the keyboard" — so an input that
-/// has navigated off screen can't keep receiving hardware-keyboard
-/// input. See the `whisker-keyboard` crate.
-///
-/// Fire-and-forget: if the app didn't add `whisker-keyboard`, the
-/// module is unregistered and the invoke degrades to a no-op.
-pub(crate) fn dismiss_keyboard() {
-    let _ = whisker::PlatformModule::named(KEYBOARD_MODULE).invoke("dismiss", vec![]);
 }
 
 /// Walk `state` to the subtree at `path` (positional descent mirroring

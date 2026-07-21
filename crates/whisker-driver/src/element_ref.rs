@@ -235,7 +235,7 @@ impl std::error::Error for RefError {}
 /// `Clone` produces a shared handle (same backing `RwSignal` arena
 /// slot), so any number of bridge `effect`s can hold their own
 /// `ElementRef` clone and observe the same mount / unmount events.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct ElementRef {
     /// Single source of truth: holds the currently-bound `Element`
     /// (or `None` while unmounted), and is the `Signal` that
