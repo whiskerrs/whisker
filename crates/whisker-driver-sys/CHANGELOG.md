@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.8.2...whisker-driver-sys-v0.9.0) - 2026-07-21
+
+### Added
+
+- *(renderer)* require Lynx insert_before; pin v3.8.0-whisker.13 (Phase C)
+- *(renderer)* positioned insert via Lynx insert_before (Phase A)
+
 ## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.7.0...whisker-driver-sys-v0.8.0) - 2026-07-06
 
 ### Added

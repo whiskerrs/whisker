@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.8.2...whisker-runtime-v0.9.0) - 2026-07-21
+
+### Added
+
+- *(renderer)* require Lynx insert_before; pin v3.8.0-whisker.13 (Phase C)
+- *(renderer)* positioned insert via Lynx insert_before (Phase A)
+
+### Fixed
+
+- *(pan-intercept)* encode direction/scope as wire ints, not strings ([#312](https://github.com/whiskerrs/whisker/pull/312))
+
+### Other
+
+- *(renderer)* insert_child_at via positioned insert, no rotate
+- Merge remote-tracking branch 'origin/main' into lynx-insert-before-phase-a
+
 ## [0.8.2](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.8.1...whisker-runtime-v0.8.2) - 2026-07-12
 
 ### Added

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.8.2...whisker-router-v0.9.0) - 2026-07-21
+
+### Added
+
+- *(router)* mirror React Navigation's Stack Navigator keyboard handling ([#316](https://github.com/whiskerrs/whisker/pull/316))
+
 ## [0.8.1](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.8.0...whisker-router-v0.8.1) - 2026-07-08
 
 ### Added

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.8.2...whisker-plugin-v0.9.0) - 2026-07-21
+
+### Added
+
+- *(web-browser)* add whisker-web-browser module for in-app OAuth ([#307](https://github.com/whiskerrs/whisker/pull/307))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.6.0...whisker-plugin-v0.7.0) - 2026-06-26
 
 ### Added

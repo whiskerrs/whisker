@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-input-v0.8.2...whisker-input-v0.9.0) - 2026-07-21
+
+### Added
+
+- *(router)* mirror React Navigation's Stack Navigator keyboard handling ([#316](https://github.com/whiskerrs/whisker/pull/316))
+
+### Other
+
+- *(ios)* bump module SwiftPM whisker pins 0.1.2 → 0.1.3
+
 ## [0.8.1](https://github.com/whiskerrs/whisker/compare/whisker-input-v0.8.0...whisker-input-v0.8.1) - 2026-07-08
 
 ### Added
