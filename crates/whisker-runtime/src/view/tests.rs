@@ -379,6 +379,45 @@ fn phantom_hoist_into_non_tail_position_uses_positioned_insert() {
     );
 }
 
+#[test]
+fn insert_child_at_non_tail_uses_positioned_insert_not_rotate() {
+    // `insert_child_at` (hot-reload remount) must place the child with a
+    // single `insert_before` and leave the following siblings attached —
+    // not detach + re-append them (the old rotate).
+    let (renderer, log) = RecordingRenderer::with_log_insert_support();
+    let (root, b, c, d) = with_installed_renderer(Box::new(renderer), || {
+        let root = create_element(ElementTag::View);
+        let a = create_element(ElementTag::View);
+        let b = create_element(ElementTag::View);
+        let c = create_element(ElementTag::View);
+        append_child(root, a);
+        append_child(root, b);
+        append_child(root, c); // root = [a, b, c]
+        // Insert `d` at index 1 → [a, d, b, c], i.e. before `b`.
+        let d = create_element(ElementTag::View);
+        insert_child_at(root, d, 1);
+        (root, b, c, d)
+    });
+
+    let ops = log.borrow();
+    assert!(
+        ops.iter().any(|o| matches!(
+            o,
+            Op::Insert { parent, child, reference }
+                if *parent == root.id() && *child == d.id() && *reference == Some(b.id())
+        )),
+        "insert_child_at must position `d` before `b`; ops={ops:?}"
+    );
+    // No sibling was detached: `b` / `c` are never removed.
+    assert!(
+        !ops.iter().any(|o| matches!(
+            o,
+            Op::Remove { child, .. } if *child == b.id() || *child == c.id()
+        )),
+        "insert_child_at must not rotate the following siblings; ops={ops:?}"
+    );
+}
+
 // ===========================================================================
 // Re-entrancy (whisker #3) — these tests pin the root-cause fix: a native
 // event that fires *synchronously during* a renderer operation must be able

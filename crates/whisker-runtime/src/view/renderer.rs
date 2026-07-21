@@ -719,13 +719,36 @@ pub fn append_child(parent: Element, child: Element) {
         map.insert(child, parent);
     });
 
-    // Lynx-side effect depends on phantom-ness of either end.
+    // Realize on the Lynx side. When both ends are real, this is the
+    // hot path — a direct O(1) tail append.
+    if !realize_hoisted_child(parent, child) {
+        with_renderer(|r| r.append_child(parent, child), ());
+    }
+
+    // Wrapper-less component mount handshake: if `child` is the body
+    // root of a freshly-mounted `#[component]`, its MountSite now
+    // learns where it landed (parent + previous sibling). Hot-reload
+    // remount uses this to keep mount sites anchored across patches.
+    crate::reactive::on_component_root_attached(parent, child);
+}
+
+/// Realize `child` — already placed in the mirror at its target
+/// position — into the real Lynx tree, hoisting/replaying real
+/// descendants when either end is a phantom. Reads `child`'s *current*
+/// mirror position, so it serves both a tail append ([`append_child`])
+/// and a positioned insert ([`insert_child_at`]) unchanged.
+///
+/// Returns `true` when a phantom was involved (and handled here);
+/// `false` when both ends are real, leaving the caller to do the direct
+/// real-to-real attach (`r.append_child` for a tail append, or a
+/// positioned [`bridge_insert_or_append`] for a mid-list insert).
+fn realize_hoisted_child(parent: Element, child: Element) -> bool {
     let parent_is_phantom = is_phantom(parent);
     let child_is_phantom = is_phantom(child);
     if parent_is_phantom {
         // Hoist into the nearest real ancestor. When no real ancestor
-        // exists yet (topmost phantom still detached), skip the
-        // bridge step — the next attach will replay things.
+        // exists yet (topmost phantom still detached), skip the bridge
+        // step — the next attach will replay things.
         if let Some(real_anc) = nearest_real_ancestor(parent) {
             let to_attach: Vec<Element> = if child_is_phantom {
                 collect_transparent_real_descendants(child)
@@ -737,22 +760,18 @@ pub fn append_child(parent: Element, child: Element) {
                 bridge_insert_or_append(real_anc, real, pos);
             }
         }
+        true
     } else if child_is_phantom {
-        // Phantom child carries a transparent subtree; replay any
-        // real descendants now in DFS pre-order.
+        // Phantom child carries a transparent subtree; replay any real
+        // descendants at their positions.
         for real in collect_transparent_real_descendants(child) {
             let pos = count_real_descendants_before(parent, real);
             bridge_insert_or_append(parent, real, pos);
         }
+        true
     } else {
-        with_renderer(|r| r.append_child(parent, child), ());
+        false
     }
-
-    // Wrapper-less component mount handshake: if `child` is the body
-    // root of a freshly-mounted `#[component]`, its MountSite now
-    // learns where it landed (parent + previous sibling). Hot-reload
-    // remount uses this to keep mount sites anchored across patches.
-    crate::reactive::on_component_root_attached(parent, child);
 }
 
 /// Detach `child` from `parent` in the mirror. Lynx-side: any real
@@ -835,35 +854,36 @@ fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: 
     }
 }
 
-/// Insert `child` into `parent`'s child list at position `index`.
-/// If `index >= current_len`, behaves like [`append_child`].
-///
-/// First-pass implementation: Lynx's C ABI doesn't yet expose
-/// `insert_before` / `insert_at`, so we simulate ordered insertion
-/// by detaching every sibling at or after `index`, appending the
-/// new child, then re-appending the detached siblings in order. The
-/// O(N) cost is fine for `<For>` reorders and #[component] remounts
-/// where N is the parent's current child count. Replace with a
-/// direct Lynx API once the bridge gains one.
+/// Places `child` at mirror `index` in `parent`'s child list (appends
+/// when `index >= len`). The following siblings are **not touched** on
+/// the Lynx side: `child` is realized with a positioned insert
+/// ([`bridge_insert_or_append`] → native `insert_before` on Lynx), so a
+/// stateful native sibling (a focused `<input>`, a scrolled list) keeps
+/// its state — unlike the old detach-siblings / append / re-append
+/// simulation this replaced.
 pub fn insert_child_at(parent: Element, child: Element, index: usize) {
-    let to_re_append: Vec<Element> = CHILDREN_OF.with_borrow(|map| {
-        map.get(&parent)
-            .map(|children| {
-                if index >= children.len() {
-                    Vec::new()
-                } else {
-                    children[index..].to_vec()
-                }
-            })
-            .unwrap_or_default()
+    // Mirror update — insert at `index` (append if out of range).
+    CHILDREN_OF.with_borrow_mut(|map| {
+        let children = map.entry(parent).or_default();
+        if index < children.len() {
+            children.insert(index, child);
+        } else {
+            children.push(child);
+        }
     });
-    for c in &to_re_append {
-        remove_child(parent, *c);
+    PARENT_OF.with_borrow_mut(|map| {
+        map.insert(child, parent);
+    });
+
+    // Realize at the mirror position. Both-real case: a positioned
+    // insert (native `insert_before`), not a tail append — so the child
+    // lands at `index` without moving its following siblings.
+    if !realize_hoisted_child(parent, child) {
+        let pos = count_real_descendants_before(parent, child);
+        bridge_insert_or_append(parent, child, pos);
     }
-    append_child(parent, child);
-    for c in to_re_append {
-        append_child(parent, c);
-    }
+
+    crate::reactive::on_component_root_attached(parent, child);
 }
 
 /// Return the element handle that appears immediately before `child`
