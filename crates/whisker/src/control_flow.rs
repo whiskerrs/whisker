@@ -39,7 +39,7 @@
 //! in the Lynx tree, so the on-screen DOM is wrapper-less while
 //! the user code keeps its hierarchical mental model.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -160,6 +160,18 @@ where
 /// mounted branch's owner is disposed before the other branch is
 /// instantiated, so reactive state from the previous branch can't
 /// leak.
+///
+/// The branch is rebuilt only when the condition **changes**, not on
+/// every dependency change of `when`. `WriteSignal::set` notifies
+/// unconditionally (even when the value is unchanged), so an effect
+/// keyed on a signal `when` reads would otherwise tear down and
+/// re-mount its branch for a no-op write — churning the DOM, disposing
+/// the branch's internal reactive state, re-firing its `on_mount`, and
+/// (through phantom hoisting) re-anchoring the *following siblings*,
+/// which resigns a sibling native input's focus. Tracking the last
+/// condition and skipping the rebuild avoids all of that. `when.call()`
+/// is still evaluated every run, so the effect's dependency
+/// subscription is preserved.
 #[component]
 pub fn show(
     when: WhenFn,
@@ -172,6 +184,8 @@ pub fn show(
     // can dispose + detach on every flip.
     type Mounted = Rc<RefCell<Option<(Owner, Vec<Element>)>>>;
     let mounted: Mounted = Rc::new(RefCell::new(None));
+    // The condition the mounted branch reflects; `None` until first run.
+    let last_cond: Rc<Cell<Option<bool>>> = Rc::new(Cell::new(None));
 
     // Clone props into the effect's capture set so the outer body
     // (a `FnMut` per `#[component]`'s hot-reload wrapper) never has
@@ -181,6 +195,14 @@ pub fn show(
     let fallback = fallback.clone();
 
     effect(move || {
+        // Evaluate every run (keeps the dependency subscription), but
+        // only rebuild when the condition actually changed.
+        let cond = when.call();
+        if last_cond.get() == Some(cond) {
+            return;
+        }
+        last_cond.set(Some(cond));
+
         // Tear down the previously-mounted branch.
         if let Some((owner, handles)) = mounted.borrow_mut().take() {
             for h in handles {
@@ -188,8 +210,6 @@ pub fn show(
             }
             owner.dispose();
         }
-
-        let cond = when.call();
 
         if cond {
             // Truthy branch: `children` is `Children` = `Fn() -> View`.
