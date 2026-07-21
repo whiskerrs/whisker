@@ -209,6 +209,16 @@ impl<T: 'static> Clone for RwSignal<T> {
 }
 impl<T: 'static> Copy for RwSignal<T> {}
 
+/// Identity equality: two handles are equal when they address the same
+/// reactive node, not when their *values* are equal (the value isn't even
+/// read). Lets a `Copy` handle be used as a map/registry key.
+impl<T: 'static> PartialEq for RwSignal<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl<T: 'static> Eq for RwSignal<T> {}
+
 impl<T: 'static> RwSignal<T> {
     /// Allocate a new combined-handle signal. Equivalent to
     /// [`signal`].

@@ -20,6 +20,7 @@
 //!   replay and list-provider trampolines.
 
 pub mod element_ref;
+pub mod focus;
 pub mod lynx;
 pub mod module;
 
