@@ -385,6 +385,30 @@ extern "C" void whisker_bridge_remove_child(WhiskerElement* parent,
     whisker_lynx_capi()->element_remove_child(parent->handle, child->handle);
 }
 
+// Whether the loaded Lynx exposes the positioned-insert symbol. The
+// renderer queries this once to choose the fast path
+// (`whisker_bridge_insert_child_before`) over append-then-rotate.
+extern "C" int32_t whisker_bridge_supports_insert_child_before(void) {
+    return whisker_lynx_capi()->element_insert_child_before != nullptr ? 1 : 0;
+}
+
+// Insert `child` into `parent` before `reference_child` (NULL = append).
+// Only call when `whisker_bridge_supports_insert_child_before()` is true.
+extern "C" void whisker_bridge_insert_child_before(WhiskerElement* parent,
+                                                  WhiskerElement* child,
+                                                  WhiskerElement* reference_child) {
+    if (parent == nullptr || child == nullptr) return;
+    auto* insert = whisker_lynx_capi()->element_insert_child_before;
+    if (insert == nullptr) {
+        // Defensive: should not be reached (the renderer feature-detects),
+        // but degrade to an append rather than crash on a NULL call.
+        whisker_lynx_capi()->element_append_child(parent->handle, child->handle);
+        return;
+    }
+    insert(parent->handle, child->handle,
+           reference_child != nullptr ? reference_child->handle : nullptr);
+}
+
 // Superseded by Rust-side propagation reconstruction: listeners now
 // live in the `whisker-driver` renderer (keyed by element sign, with
 // their bind/catch/capture type), and dispatch runs through the

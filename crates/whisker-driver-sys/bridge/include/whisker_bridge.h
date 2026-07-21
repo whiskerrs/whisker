@@ -187,6 +187,15 @@ WHISKER_BRIDGE_EXPORT void whisker_bridge_append_child(WhiskerElement* parent, W
 // Remove `child` from `parent`. No-op if not present.
 WHISKER_BRIDGE_EXPORT void whisker_bridge_remove_child(WhiskerElement* parent, WhiskerElement* child);
 
+// Whether the loaded Lynx exposes positioned insert (1) or not (0). When
+// 0, callers must use append + rotate instead.
+WHISKER_BRIDGE_EXPORT int32_t whisker_bridge_supports_insert_child_before(void);
+
+// Insert `child` into `parent` before `reference_child` (NULL = append).
+// Only valid when `whisker_bridge_supports_insert_child_before()` is 1.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_insert_child_before(
+    WhiskerElement* parent, WhiskerElement* child, WhiskerElement* reference_child);
+
 // Register a native event listener on `element`. When the event fires,
 // `callback(user_data)` is invoked from the Lynx TASM thread. The bridge
 // also wires the corresponding gesture/handler so the platform UI layer

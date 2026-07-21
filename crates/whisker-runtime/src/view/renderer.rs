@@ -209,6 +209,22 @@ pub trait DynRenderer {
     fn append_child(&self, parent: Element, child: Element);
     fn remove_child(&self, parent: Element, child: Element);
 
+    /// Whether this renderer can insert a child before a reference
+    /// sibling in one operation. When `false`, positioned insertion is
+    /// simulated by append + rotate (see [`bridge_insert_or_append`]).
+    /// Defaults to `false` so mock / host renderers opt in explicitly.
+    fn supports_insert_before(&self) -> bool {
+        false
+    }
+
+    /// Insert `child` into `parent` immediately before `reference`
+    /// (`None` = append at the tail). Only called when
+    /// [`supports_insert_before`](Self::supports_insert_before) is
+    /// `true`; the default panics to catch a mis-wired caller.
+    fn insert_child_before(&self, _parent: Element, _child: Element, _reference: Option<Element>) {
+        unreachable!("insert_child_before called on a renderer without support");
+    }
+
     /// Register `callback` for `event_name` on `handle`.
     ///
     /// The callback receives the event body Lynx hands the handler
@@ -775,26 +791,39 @@ pub fn remove_child(parent: Element, child: Element) {
     });
 }
 
-/// Internal helper: ask the bridge to place `real_child` at
-/// `position` inside `real_parent`'s Lynx child list. The C ABI
-/// doesn't expose `insert_at`, so we simulate by appending and
-/// rotating: every real sibling that should sit *after* the child
-/// (per the mirror's DFS pre-order of real-only descendants) is
-/// detached and re-appended, ending up to the right of the new
-/// child. O(siblings_to_move) bridge calls.
+/// Internal helper: place `real_child` at `position` inside
+/// `real_parent`'s Lynx child list.
+///
+/// The mirror already includes `real_child` at `position` in the
+/// parent's real-only DFS pre-order, so the element that should sit
+/// *after* it in Lynx is the next real descendant (`position + 1`), if
+/// any — that's the reference node for a positioned insert.
+///
+/// When the renderer supports `insert_before` (a native Lynx that
+/// exposes positioned insert) this is one bridge call with no sibling
+/// churn. Otherwise it degrades to the historical append + rotate:
+/// append to the tail, then detach every real sibling that must sit
+/// after `real_child` and re-append it past the child.
+/// O(siblings_to_move) bridge calls — and, crucially, that detach +
+/// reattach re-anchors stateful native siblings (an `<input>` loses
+/// focus). Removing the fallback once the native symbol ships is the
+/// point of the whole change.
 fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: usize) {
-    // Append lands the child at the tail in Lynx.
-    with_renderer(|r| r.append_child(real_parent, real_child), ());
-
-    // Mirror already includes the child at its target slot; compute
-    // the DFS real-only order to find the siblings that need to be
-    // rotated past it.
     let real_descendants = collect_transparent_real_descendants(real_parent);
+    let reference = real_descendants.get(position + 1).copied();
 
-    // Everything after `position` in mirror order must end up to the
-    // right of `real_child` in Lynx — detach and re-append in order.
-    // The "after" slice excludes `real_child` itself (at
-    // `real_descendants[position]`).
+    if with_renderer(|r| r.supports_insert_before(), false) {
+        with_renderer(
+            |r| r.insert_child_before(real_parent, real_child, reference),
+            (),
+        );
+        return;
+    }
+
+    // Fallback: append then rotate. `real_descendants` already includes
+    // `real_child` at `position`, so the "after" slice is everything
+    // past it.
+    with_renderer(|r| r.append_child(real_parent, real_child), ());
     if position + 1 < real_descendants.len() {
         let to_move: Vec<Element> = real_descendants[position + 1..].to_vec();
         for sib in &to_move {

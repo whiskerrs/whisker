@@ -332,6 +332,16 @@ unsafe extern "C" {
     pub fn whisker_bridge_append_child(parent: *mut WhiskerElement, child: *mut WhiskerElement);
     pub fn whisker_bridge_remove_child(parent: *mut WhiskerElement, child: *mut WhiskerElement);
 
+    // Positioned insert (optional Lynx symbol; see the loader). Query
+    // support first — `whisker_bridge_insert_child_before` is only valid
+    // when this returns 1.
+    pub fn whisker_bridge_supports_insert_child_before() -> i32;
+    pub fn whisker_bridge_insert_child_before(
+        parent: *mut WhiskerElement,
+        child: *mut WhiskerElement,
+        reference_child: *mut WhiskerElement,
+    );
+
     pub fn whisker_bridge_set_event_listener(
         element: *mut WhiskerElement,
         event_name: *const c_char,
