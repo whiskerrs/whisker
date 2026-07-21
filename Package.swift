@@ -74,23 +74,23 @@ let package = Package(
         // `swiftpm-manifest-<ver>.txt` published alongside each release.
         .binaryTarget(
             name: "Lynx",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.12/Lynx-3.8.0-whisker.12.xcframework.zip",
-            checksum: "4ce496517fa600d295213235ff33d914eba6f68957f88972699c1be90a0d986c"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.13/Lynx-3.8.0-whisker.13.xcframework.zip",
+            checksum: "13287093478b2b637a52028f795f22b3759fc2233bc11de55fc24fe92eb18594"
         ),
         .binaryTarget(
             name: "LynxBase",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.12/LynxBase-3.8.0-whisker.12.xcframework.zip",
-            checksum: "e581e5754cd3f2abe9eca11c372d2d18a0c0dae3cd726faeff2c6a6823adb656"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.13/LynxBase-3.8.0-whisker.13.xcframework.zip",
+            checksum: "8127acb7f472f170fd6734e57a0fe0028b27c6c2c184d8d859b2a703f2cc4393"
         ),
         .binaryTarget(
             name: "LynxServiceAPI",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.12/LynxServiceAPI-3.8.0-whisker.12.xcframework.zip",
-            checksum: "0059201634a27ca331c329f01c4eab1ff604c31a40628c5f8d3b02f91f5661e2"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.13/LynxServiceAPI-3.8.0-whisker.13.xcframework.zip",
+            checksum: "ecd61fd412faa5e35a3e35e2550f8d9225550eb613437a0234447147a2748861"
         ),
         .binaryTarget(
             name: "PrimJS",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.12/PrimJS-3.8.0-whisker.12.xcframework.zip",
-            checksum: "f095f00b22434823a33fbf7653a3e6ee609446f693a4fbb1f840e99ee65b70b5"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.13/PrimJS-3.8.0-whisker.13.xcframework.zip",
+            checksum: "0a82703ba212e61b56dfe63791b219f61517f8867fd64bd0b6ee23005f4e8e0f"
         ),
 
         // Header-only mirror of `WhiskerDriver`'s public C ABI. Source

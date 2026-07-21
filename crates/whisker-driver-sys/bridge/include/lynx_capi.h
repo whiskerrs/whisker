@@ -337,10 +337,8 @@ typedef struct WhiskerLynxCapi {
   // Explicit list diff actions (metadata-carrying, ABI v3+).
   lynx_element_update_list_actions_fn element_update_list_actions;
 
-  // Positioned insert. OPTIONAL: bound tail-additively — NULL when the
-  // loaded Lynx predates the symbol. Callers feature-detect (see
-  // `whisker_bridge_supports_insert_child_before`) and fall back to
-  // append-then-rotate on old engines.
+  // Positioned insert. Required (v3.8.0-whisker.13+); whisker pins a Lynx
+  // that exports it and the loader binds it strictly.
   lynx_element_insert_child_before_fn element_insert_child_before;
 } WhiskerLynxCapi;
 

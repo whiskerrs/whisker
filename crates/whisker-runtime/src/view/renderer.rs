@@ -799,15 +799,15 @@ pub fn remove_child(parent: Element, child: Element) {
 /// *after* it in Lynx is the next real descendant (`position + 1`), if
 /// any — that's the reference node for a positioned insert.
 ///
-/// When the renderer supports `insert_before` (a native Lynx that
-/// exposes positioned insert) this is one bridge call with no sibling
-/// churn. Otherwise it degrades to the historical append + rotate:
-/// append to the tail, then detach every real sibling that must sit
-/// after `real_child` and re-append it past the child.
-/// O(siblings_to_move) bridge calls — and, crucially, that detach +
-/// reattach re-anchors stateful native siblings (an `<input>` loses
-/// focus). Removing the fallback once the native symbol ships is the
-/// point of the whole change.
+/// The production `BridgeRenderer` (backed by Lynx v3.8.0-whisker.13+)
+/// reports `supports_insert_before`, so this is one native bridge call
+/// with no sibling churn. The append + rotate below is the generic
+/// algorithm for renderers *without* positioned insert (test mocks, a
+/// future non-Lynx backend): append to the tail, then detach every real
+/// sibling that must sit after `real_child` and re-append it past the
+/// child. That detach + reattach re-anchors stateful native siblings (an
+/// `<input>` loses focus) — which is exactly why the Lynx path never
+/// takes it.
 fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: usize) {
     let real_descendants = collect_transparent_real_descendants(real_parent);
     let reference = real_descendants.get(position + 1).copied();
@@ -820,9 +820,9 @@ fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: 
         return;
     }
 
-    // Fallback: append then rotate. `real_descendants` already includes
-    // `real_child` at `position`, so the "after" slice is everything
-    // past it.
+    // Generic path (no positioned insert): append then rotate.
+    // `real_descendants` already includes `real_child` at `position`, so
+    // the "after" slice is everything past it.
     with_renderer(|r| r.append_child(real_parent, real_child), ());
     if position + 1 < real_descendants.len() {
         let to_move: Vec<Element> = real_descendants[position + 1..].to_vec();

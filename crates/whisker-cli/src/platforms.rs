@@ -164,7 +164,18 @@ pub struct PlatformSync {
 /// → `LynxUIRenderer.mEventDispatcher` to reach the live dispatcher
 /// directly and set its tapSlop, bypassing the page-config path this
 /// app never drives. Kotlin-only, no capi/Lynx ABI change.
-const WHISKER_SDK_VERSION: &str = "0.1.13";
+///
+/// 0.1.14 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.12` →
+/// `v3.8.0-whisker.13`, which adds `lynx_element_insert_child_before`
+/// (positioned insert — tail addition, ABI stays v3). whisker's bridge
+/// now binds it strictly and always drives the native positioned-insert
+/// path, so a hoisted / reordered child no longer append+rotates its
+/// following siblings — which used to detach + reattach a stateful
+/// native sibling (a focused `<input>` lost focus). Apps must move to
+/// 0.1.14 to get the Lynx that exports the symbol; the per-app
+/// `WhiskerDriver` bridge built for this SDK refuses to attach to the
+/// older Lynx that lacks it (strict loader bind).
+const WHISKER_SDK_VERSION: &str = "0.1.14";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the

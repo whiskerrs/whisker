@@ -190,13 +190,11 @@ int DoLoad() {
     // strict bind like the rest.
     BindSymbol(handle, "lynx_element_update_list_actions", &g_capi.element_update_list_actions, &ok);
 
-    // Positioned insert — OPTIONAL (tail-added). A missing symbol is not
-    // an error: the field stays NULL and the renderer feature-detects,
-    // falling back to append-then-rotate on an older Lynx.
-    (void)dlerror();
-    g_capi.element_insert_child_before =
-        reinterpret_cast<lynx_element_insert_child_before_fn>(
-            dlsym(handle, "lynx_element_insert_child_before"));
+    // Positioned insert — required (v3.8.0-whisker.13+). whisker pins a
+    // Lynx that exports it, so bind it strictly: a missing symbol means
+    // the engine is too old and attach should fail loudly rather than
+    // silently degrading.
+    BindSymbol(handle, "lynx_element_insert_child_before", &g_capi.element_insert_child_before, &ok);
 
     if (!ok) return WHISKER_BRIDGE_LYNX_LOAD_ERR_MISSING_SYMBOL;
     return WHISKER_BRIDGE_LYNX_LOAD_OK;

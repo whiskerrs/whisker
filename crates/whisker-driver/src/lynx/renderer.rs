@@ -383,9 +383,10 @@ impl DynRenderer for BridgeRenderer {
     }
 
     fn supports_insert_before(&self) -> bool {
-        // Feature-detect the optional Lynx symbol (bound by the loader
-        // via dlsym; NULL on an engine that predates it).
-        unsafe { ffi::whisker_bridge_supports_insert_child_before() != 0 }
+        // Always: whisker pins a Lynx (v3.8.0-whisker.13+) that exports
+        // the positioned-insert symbol, and the loader binds it strictly,
+        // so the bridge always drives the native path.
+        true
     }
 
     fn insert_child_before(&self, parent: Element, child: Element, reference: Option<Element>) {
