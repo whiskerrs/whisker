@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.8.2...whisker-cli-v0.9.0) - 2026-07-21
+
+### Added
+
+- *(renderer)* require Lynx insert_before; pin v3.8.0-whisker.13 (Phase C)
+
+### Fixed
+
+- *(android)* actually apply tapSlop, bypassing the page-config path ([#315](https://github.com/whiskerrs/whisker/pull/315))
+- *(android)* convert touch coordinates to dip in event reporter ([#311](https://github.com/whiskerrs/whisker/pull/311))
+- *(runtime-android)* populate touch coordinates in event reporter ([#310](https://github.com/whiskerrs/whisker/pull/310))
+- *(runtime-android)* align Lynx tap-cancel slop with scroll threshold ([#309](https://github.com/whiskerrs/whisker/pull/309))
+
+### Other
+
+- *(android)* read live tapSlop after ACTION_UP, not a fixed delay ([#314](https://github.com/whiskerrs/whisker/pull/314))
+- *(android)* log live tapSlop value on WhiskerView init ([#313](https://github.com/whiskerrs/whisker/pull/313))
+
 ## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.7.0...whisker-cli-v0.8.0) - 2026-07-06
 
 ### Added

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.8.2...whisker-build-v0.9.0) - 2026-07-21
+
+### Other
+
+- *(ios)* whisker SPM pin 0.1.2 → 0.1.3 (Lynx v3.8.0-whisker.13)
+
 ## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.7.0...whisker-build-v0.8.0) - 2026-07-06
 
 ### Added
