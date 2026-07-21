@@ -1,0 +1,38 @@
+[package]
+name = "whisker-paths"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Whisker platform module — resolve the OS's per-app directories (cache, documents, application-support, temp). std::fs already does file I/O on-device; this crate only supplies the runtime paths std can't know. iOS: NSSearchPathForDirectoriesInDomains / NSTemporaryDirectory. Android: Context.getCacheDir / getFilesDir."
+
+# Explicit `include` list — mirrors `whisker-secure-store`. `cargo
+# publish` ships the Kotlin + Swift platform sources alongside
+# `src/lib.rs`, but never the local Gradle / Xcode build artifacts.
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
+    "src/lib.rs",
+    "android/**/*.kt",
+    "ios/**/*.swift",
+    "README.md",
+]
+
+# rlib only. The Whisker module system distributes the native sources
+# out-of-band via the `android/` + `ios/` package dirs — no cdylib here.
+[lib]
+crate-type = ["rlib"]
+
+# Module-system opt-in marker. Identifies this crate as a Whisker
+# module so `whisker-build` wires its Android Gradle subproject + iOS
+# SwiftPM package into any consuming app's build.
+[package.metadata.whisker]
+
+[dependencies]
+whisker = { workspace = true }

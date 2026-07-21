@@ -39,6 +39,8 @@ members = [
     "packages/whisker-input/example",
     "packages/whisker-keyboard",
     "packages/whisker-local-store",
+    "packages/whisker-paths",
+    "packages/whisker-paths/example",
     "packages/whisker-router",
     "packages/whisker-router/example",
     "packages/whisker-router-macros",

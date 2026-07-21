@@ -1,0 +1,13 @@
+[package]
+name = "whisker-paths-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Example app for `whisker-paths`. On launch it resolves all four per-app directories, writes and reads back a file under the cache dir, and shows each result, so on-device verification of the module wiring happens in one place."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-paths = { path = ".." }
