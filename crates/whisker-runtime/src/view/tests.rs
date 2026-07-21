@@ -9,14 +9,42 @@ use crate::element::ElementTag;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
-    Create { id: u32, tag: ElementTag },
-    Release { id: u32 },
-    SetAttr { id: u32, key: String, value: String },
-    SetStyles { id: u32, css: String },
-    Append { parent: u32, child: u32 },
-    Remove { parent: u32, child: u32 },
-    Event { id: u32, name: String },
-    SetRoot { id: u32 },
+    Create {
+        id: u32,
+        tag: ElementTag,
+    },
+    Release {
+        id: u32,
+    },
+    SetAttr {
+        id: u32,
+        key: String,
+        value: String,
+    },
+    SetStyles {
+        id: u32,
+        css: String,
+    },
+    Append {
+        parent: u32,
+        child: u32,
+    },
+    Remove {
+        parent: u32,
+        child: u32,
+    },
+    Insert {
+        parent: u32,
+        child: u32,
+        reference: Option<u32>,
+    },
+    Event {
+        id: u32,
+        name: String,
+    },
+    SetRoot {
+        id: u32,
+    },
     Flush,
 }
 
@@ -27,11 +55,23 @@ struct RecordingRenderer {
     // interior mutability instead of `&mut self`.
     next_id: std::cell::Cell<u32>,
     ops: std::rc::Rc<std::cell::RefCell<Vec<Op>>>,
+    /// When set, the renderer advertises positioned insert and records
+    /// [`Op::Insert`] instead of the append + rotate fallback.
+    supports_insert: bool,
 }
 
 impl RecordingRenderer {
     fn with_log() -> (Self, std::rc::Rc<std::cell::RefCell<Vec<Op>>>) {
         let renderer = Self::default();
+        let log = renderer.ops.clone();
+        (renderer, log)
+    }
+
+    fn with_log_insert_support() -> (Self, std::rc::Rc<std::cell::RefCell<Vec<Op>>>) {
+        let renderer = Self {
+            supports_insert: true,
+            ..Self::default()
+        };
         let log = renderer.ops.clone();
         (renderer, log)
     }
@@ -83,6 +123,16 @@ impl DynRenderer for RecordingRenderer {
         self.ops.borrow_mut().push(Op::Remove {
             parent: parent.id(),
             child: child.id(),
+        });
+    }
+    fn supports_insert_before(&self) -> bool {
+        self.supports_insert
+    }
+    fn insert_child_before(&self, parent: Element, child: Element, reference: Option<Element>) {
+        self.ops.borrow_mut().push(Op::Insert {
+            parent: parent.id(),
+            child: child.id(),
+            reference: reference.map(|r| r.id()),
         });
     }
     fn set_event_listener(
@@ -289,6 +339,44 @@ fn multi_child_fragment_through_phantom_slot_hoists_all_children() {
             root.id()
         );
     }
+}
+
+#[test]
+fn phantom_hoist_into_non_tail_position_uses_positioned_insert() {
+    // A renderer that supports positioned insert must place a
+    // hoisted child with a single `insert_before` and NOT rotate the
+    // following sibling (the append + rotate that detaches a stateful
+    // native sibling and drops its focus).
+    let (renderer, log) = RecordingRenderer::with_log_insert_support();
+    let (root, a, b) = with_installed_renderer(Box::new(renderer), || {
+        let root = create_element(ElementTag::View);
+        // A phantom slot, then a real sibling `b` after it — so the
+        // slot's future content hoists to a non-tail position.
+        let slot = create_phantom_element();
+        append_child(root, slot); // root mirror = [slot]
+        let b = create_element(ElementTag::View);
+        append_child(root, b); // root real children = [b]
+        // Now a real child `a` under the slot: it hoists to `root`
+        // *before* `b`.
+        let a = create_element(ElementTag::View);
+        append_child(slot, a);
+        (root, a, b)
+    });
+
+    let ops = log.borrow();
+    assert!(
+        ops.iter().any(|o| matches!(
+            o,
+            Op::Insert { parent, child, reference }
+                if *parent == root.id() && *child == a.id() && *reference == Some(b.id())
+        )),
+        "hoisted child must be inserted before its following sibling; ops={ops:?}"
+    );
+    assert!(
+        !ops.iter()
+            .any(|o| matches!(o, Op::Remove { child, .. } if *child == b.id())),
+        "positioned insert must not rotate (remove/re-append) the sibling; ops={ops:?}"
+    );
 }
 
 // ===========================================================================

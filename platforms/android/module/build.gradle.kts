@@ -55,7 +55,7 @@ android {
 }
 
 val whiskerSdkRelease = providers.gradleProperty("whiskerSdkRelease").orNull == "true"
-val lynxFork = providers.gradleProperty("lynxFork").getOrElse("v3.8.0-whisker.12").removePrefix("v")
+val lynxFork = providers.gradleProperty("lynxFork").getOrElse("v3.8.0-whisker.13").removePrefix("v")
 
 dependencies {
     if (whiskerSdkRelease) {

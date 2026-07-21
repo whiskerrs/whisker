@@ -382,6 +382,29 @@ impl DynRenderer for BridgeRenderer {
         }
     }
 
+    fn supports_insert_before(&self) -> bool {
+        // Always: whisker pins a Lynx (v3.8.0-whisker.13+) that exports
+        // the positioned-insert symbol, and the loader binds it strictly,
+        // so the bridge always drives the native path.
+        true
+    }
+
+    fn insert_child_before(&self, parent: Element, child: Element, reference: Option<Element>) {
+        // Same FFI-borrow discipline as `append_child`: do the FFI first
+        // (it can synchronously dispatch), then record the sign edge.
+        let Some(p) = self.lookup(parent) else { return };
+        let Some(c) = self.lookup(child) else { return };
+        // A `reference` that isn't currently mounted degrades to append
+        // (null reference), matching the mirror's intent.
+        let r_ptr = reference
+            .and_then(|r| self.lookup(r))
+            .map_or(std::ptr::null_mut(), |r| r.as_ptr());
+        unsafe { ffi::whisker_bridge_insert_child_before(p.as_ptr(), c.as_ptr(), r_ptr) };
+        if let (Some(cs), Some(ps)) = (self.sign_of(child), self.sign_of(parent)) {
+            self.parent_sign.borrow_mut().insert(cs, ps);
+        }
+    }
+
     fn set_event_listener(
         &self,
         handle: Element,

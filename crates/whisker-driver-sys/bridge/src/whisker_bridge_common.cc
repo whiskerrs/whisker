@@ -385,6 +385,17 @@ extern "C" void whisker_bridge_remove_child(WhiskerElement* parent,
     whisker_lynx_capi()->element_remove_child(parent->handle, child->handle);
 }
 
+// Insert `child` into `parent` before `reference_child` (NULL = append).
+// The symbol is a required bind (see the loader), so it's always present.
+extern "C" void whisker_bridge_insert_child_before(WhiskerElement* parent,
+                                                  WhiskerElement* child,
+                                                  WhiskerElement* reference_child) {
+    if (parent == nullptr || child == nullptr) return;
+    whisker_lynx_capi()->element_insert_child_before(
+        parent->handle, child->handle,
+        reference_child != nullptr ? reference_child->handle : nullptr);
+}
+
 // Superseded by Rust-side propagation reconstruction: listeners now
 // live in the `whisker-driver` renderer (keyed by element sign, with
 // their bind/catch/capture type), and dispatch runs through the

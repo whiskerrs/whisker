@@ -212,6 +212,15 @@ typedef void (*lynx_element_append_child_fn)(lynx_fiber_element_t* parent,
                                               lynx_fiber_element_t* child);
 typedef void (*lynx_element_remove_child_fn)(lynx_fiber_element_t* parent,
                                               lynx_fiber_element_t* child);
+// Insert `child` into `parent` immediately before `reference_child`; a
+// NULL `reference_child` appends at the tail. Maps to the fiber
+// element's positioned insert (the same primitive the `<list>` diff
+// stream already relies on). OPTIONAL: an older Lynx that predates this
+// symbol leaves the pointer NULL, and callers fall back to
+// append-then-rotate.
+typedef void (*lynx_element_insert_child_before_fn)(
+    lynx_fiber_element_t* parent, lynx_fiber_element_t* child,
+    lynx_fiber_element_t* reference_child);
 typedef void (*lynx_list_set_native_item_provider_fn)(
     lynx_fiber_element_t* element,
     lynx_list_component_at_index_fn component_at_index,
@@ -327,6 +336,10 @@ typedef struct WhiskerLynxCapi {
 
   // Explicit list diff actions (metadata-carrying, ABI v3+).
   lynx_element_update_list_actions_fn element_update_list_actions;
+
+  // Positioned insert. Required (v3.8.0-whisker.13+); whisker pins a Lynx
+  // that exports it and the loader binds it strictly.
+  lynx_element_insert_child_before_fn element_insert_child_before;
 } WhiskerLynxCapi;
 
 // ----- Loader API -----------------------------------------------------------
