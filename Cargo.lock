@@ -4453,6 +4453,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-paths"
+version = "0.9.0"
+dependencies = [
+ "whisker",
+]
+
+[[package]]
+name = "whisker-paths-example"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-paths",
+]
+
+[[package]]
 name = "whisker-plugin"
 version = "0.9.0"
 dependencies = [
