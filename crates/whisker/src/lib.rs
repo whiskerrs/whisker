@@ -94,6 +94,12 @@ pub use whisker_driver::{
 
 pub use whisker_driver::module::PlatformModule;
 
+/// The process-global focused-element registry (Whisker's analogue of
+/// React Native's `TextInput.State.currentlyFocusedInput()`). Focusable
+/// elements record themselves here; navigation code reads it to blur or
+/// restore the specific field that was focused.
+pub use whisker_driver::focus;
+
 /// The universal tagged-union value model. Crosses the native
 /// boundary as both module args/returns and event payloads, so it
 /// lives at the crate root rather than buried under

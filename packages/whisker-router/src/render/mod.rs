@@ -54,6 +54,7 @@
 pub mod components;
 pub mod gesture;
 pub mod handle;
+pub(crate) mod keyboard;
 pub mod node;
 pub mod registry;
 pub mod transition;

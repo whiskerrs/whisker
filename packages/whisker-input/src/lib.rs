@@ -652,9 +652,22 @@ pub fn input(
             }
         }
     };
+    // The element handle this field is bound to. If the caller passed an
+    // `input_ref`, reuse it; otherwise mint an internal one so the field
+    // still registers itself in the focused-element registry (below).
+    let element_ref = input_ref
+        .as_ref()
+        .map(|h| h.r())
+        .unwrap_or_else(ElementRef::new);
+
     let on_focus_cb = {
         let on_focus = on_focus.clone();
         move |_ev: InputEvent| {
+            // Publish ourselves as the currently-focused field — the
+            // signal `whisker-router` reads to blur/restore this exact
+            // input on navigation (mirrors RN's
+            // `TextInput.State.currentlyFocusedInput()`).
+            whisker::focus::note_focused(element_ref);
             if let Some(cb) = &on_focus {
                 cb.call();
             }
@@ -663,6 +676,7 @@ pub fn input(
     let on_blur_cb = {
         let on_blur = on_blur.clone();
         move |_ev: InputEvent| {
+            whisker::focus::note_blurred(element_ref);
             if let Some(cb) = &on_blur {
                 cb.call();
             }
@@ -698,8 +712,6 @@ pub fn input(
     let spell_check_attr = bool_attr(spell_check);
 
     // ----- Imperative handle: forward its ElementRef as `ref:` ---------
-    let element_ref = input_ref.as_ref().map(|h| h.r());
-
     let mut builder = NativeInput::builder()
         .value(value_prop)
         .placeholder(placeholder_prop)
@@ -724,9 +736,7 @@ pub fn input(
         .on_blur(on_blur_cb)
         .on_submit(on_submit_cb);
 
-    if let Some(r) = element_ref {
-        builder = builder.with_ref(r);
-    }
+    builder = builder.with_ref(element_ref);
 
     NativeInput(builder.build())
 }

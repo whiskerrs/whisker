@@ -231,6 +231,11 @@ pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> 
             }
         }
     }
+    // A back gesture is starting: blur and remember the focused field so
+    // a cancelled swipe can restore it (RN `onPageChangeStart`). Runs on
+    // the genuine start of both the iOS edge swipe and Android
+    // predictive back; the hook is idempotent for a replayed start.
+    crate::render::keyboard::on_page_change_start();
     Some(bridge)
 }
 
@@ -281,10 +286,11 @@ pub(crate) fn settle(
                 if let Some(d) = dim_drive {
                     d.set(None);
                 }
-                // Swipe-back commits like any other navigation — drop the
-                // keyboard + release focus (a search field on the popped
-                // screen must not keep a hardware-keyboard target).
-                crate::render::handle::dismiss_keyboard();
+                // Swipe-back commits like any other navigation — the
+                // field captured at gesture start stays blurred, so a
+                // search field on the popped screen can't keep a
+                // hardware-keyboard target (RN `onPageChangeConfirm`).
+                crate::render::keyboard::on_page_change_confirm(true);
                 let _ = nav.back();
             }
         });
@@ -297,6 +303,10 @@ pub(crate) fn settle(
         // pointed at the same controller as `Under`, slides back to covered
         // in lockstep. The dim fades to 0 reactively as the controller
         // returns to 1.0, then the drive is released on finish.
+        //
+        // Restore focus to the field blurred at gesture start (RN
+        // `onPageChangeCancel`), with the flash guard for a fast release.
+        crate::render::keyboard::on_page_change_cancel();
         let done = Rc::new(RefCell::new(false));
         ctrl.on_finish(move |finished| {
             if finished && !*done.borrow() {
@@ -418,8 +428,9 @@ pub fn android_predictive_back() -> Element {
                 // commit it (animate the top off, then `back()`).
                 Some(bridge) => settle(nav, &bridge, /* commit = */ true, None),
                 // No preview (API < 34, or a discrete press): just pop.
+                // `back()` routes through `with_navigator`, which handles
+                // the keyboard (targeted blur of the focused field).
                 None => {
-                    crate::render::handle::dismiss_keyboard();
                     let _ = nav.back();
                 }
             }
