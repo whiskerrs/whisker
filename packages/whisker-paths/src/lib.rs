@@ -5,8 +5,10 @@
 //! `rename`, `read_dir`, …) directly. The one thing `std` *can't* do is
 //! find the platform's per-app directories, whose absolute paths the OS
 //! only hands out at runtime — there is no portable "app cache dir" in
-//! `std`. This crate supplies exactly those paths and nothing else; you
-//! use ordinary `std::fs` against them.
+//! `std`. This crate supplies those paths; you use ordinary `std::fs`
+//! against them. It also exposes the one other genuinely-native
+//! filesystem operation `std` can't do — [`set_excluded_from_backup`]
+//! (iOS `NSURLIsExcludedFromBackupKey`).
 //!
 //! ```ignore
 //! let dir = whisker_paths::cache_dir().join("thumbnails");
@@ -42,10 +44,10 @@
 //! - Android: `packages/whisker-paths/android/src/main/kotlin/rs/whisker/modules/paths/PathsModule.kt`
 //!   (resolver: `Paths.kt`)
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use whisker::platform_module::WhiskerValue;
+use whisker::platform_module::{WhiskerModuleError, WhiskerValue};
 
 /// The four resolved directories. Populated once via the native module.
 struct Directories {
@@ -131,4 +133,36 @@ pub fn support_dir() -> PathBuf {
 /// `Context.getCacheDir()`.
 pub fn temp_dir() -> PathBuf {
     directories().temp.clone()
+}
+
+/// Exclude (or re-include) a file or directory from device backup.
+///
+/// On **iOS** this sets `NSURLIsExcludedFromBackupKey` — required for
+/// re-downloadable content kept under [`document_dir`], since Apple
+/// rejects apps that back up regenerable data to iCloud. The flag lives
+/// on the inode, so calling this once on a directory covers all its
+/// current and future children. On **Android** it is a no-op (backup
+/// exclusion is configured at the manifest level, not per-file) and
+/// returns `Ok(())`.
+///
+/// Best-effort: callers generally ignore the error (matching the
+/// platform behaviour of a directory that simply isn't excluded).
+pub fn set_excluded_from_backup(path: &Path, excluded: bool) -> Result<(), WhiskerModuleError> {
+    let result = whisker::module!("WhiskerPaths").invoke(
+        "setExcludedFromBackup",
+        vec![
+            WhiskerValue::String(path.to_string_lossy().into_owned()),
+            WhiskerValue::Bool(excluded),
+        ],
+    );
+    match result {
+        WhiskerValue::Bool(true) => Ok(()),
+        WhiskerValue::Bool(false) => Err(WhiskerModuleError(
+            "WhiskerPaths::set_excluded_from_backup returned false".to_string(),
+        )),
+        WhiskerValue::Error(msg) => Err(WhiskerModuleError(msg)),
+        other => Err(WhiskerModuleError(format!(
+            "WhiskerPaths::set_excluded_from_backup expected Bool, got {other:?}"
+        ))),
+    }
 }

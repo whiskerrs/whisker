@@ -22,5 +22,10 @@ class PathsModule : Module() {
         Function("directories") {
             WhiskerValue.Map(Paths.directories().mapValues { WhiskerValue.Str(it.value) })
         }
+
+        // setExcludedFromBackup(path, excluded) -> Bool. No-op on Android:
+        // backup exclusion is configured at the manifest level
+        // (android:allowBackup / fullBackupContent), not per-file.
+        Function("setExcludedFromBackup") { WhiskerValue.Bool(true) }
     }
 }

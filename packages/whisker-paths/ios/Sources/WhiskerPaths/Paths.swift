@@ -27,4 +27,16 @@ enum Paths {
         NSSearchPathForDirectoriesInDomains(directory, .userDomainMask, true).first
             ?? NSTemporaryDirectory()
     }
+
+    /// Set (or clear) `NSURLIsExcludedFromBackupKey` on a file or
+    /// directory. The flag is stored on the inode, so setting it once on
+    /// a directory excludes that directory and all current/future
+    /// children from iCloud / iTunes backups. `path` is a plain
+    /// filesystem path (as returned by `directories()` + std::fs).
+    static func setExcludedFromBackup(_ path: String, _ excluded: Bool) throws {
+        var url = URL(fileURLWithPath: path)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = excluded
+        try url.setResourceValues(values)
+    }
 }

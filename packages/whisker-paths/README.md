@@ -21,6 +21,14 @@ std::fs::write(dir.join("cover.jpg"), &bytes)?;
 
 Each returns a `PathBuf`. The directory is a valid path but **may not exist yet** — create it with `std::fs::create_dir_all` before writing. All four are resolved once from the native module and cached for the process lifetime.
 
+### Backup exclusion
+
+```rust
+whisker_paths::set_excluded_from_backup(&downloads_dir, true)?;
+```
+
+Excludes a file/directory from device backup — on iOS it sets `NSURLIsExcludedFromBackupKey` (required for re-downloadable content under `document_dir`, or Apple rejects the app); on Android it's a no-op (backup exclusion is manifest-level). The flag lives on the inode, so calling it once on a directory covers all its children.
+
 ## Choosing a directory
 
 - **`cache_dir()`** — regenerable data (downloaded thumbnails, HTTP caches). The OS may delete it under storage pressure.
