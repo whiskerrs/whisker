@@ -341,6 +341,65 @@ fn multi_child_fragment_through_phantom_slot_hoists_all_children() {
     }
 }
 
+/// Same multi-child phantom hoist, but against a renderer that supports
+/// positioned insert (the production Lynx path). Every `insert_before`
+/// reference must be a sibling that is ALREADY in the real tree at the
+/// time of the insert — Lynx's `InsertNodeBefore` needs the reference to
+/// be a live child of the parent. A reference pointing at a batch-mate
+/// that hasn't been inserted yet silently fails on-device, dropping all
+/// but one child (the "only the first history card renders" symptom).
+#[test]
+fn multi_child_hoist_insert_support_references_already_present() {
+    let (renderer, log) = RecordingRenderer::with_log_insert_support();
+    let (root, c1, c2, c3) = with_installed_renderer(Box::new(renderer), || {
+        let root = create_element(ElementTag::View);
+        let c1 = create_element(ElementTag::View);
+        let c2 = create_element(ElementTag::View);
+        let c3 = create_element(ElementTag::View);
+        let slot = create_phantom_element();
+        View::Fragment(vec![
+            View::Element(c1),
+            View::Element(c2),
+            View::Element(c3),
+        ])
+        .attach_to(slot);
+        append_child(root, slot);
+        (root, c1, c2, c3)
+    });
+
+    let ops = log.borrow();
+    // Replay the ops as Lynx would, tracking the real child list. Every
+    // insert reference must already be present, and the final order must
+    // be c1, c2, c3.
+    let mut present: Vec<u32> = Vec::new();
+    for o in ops.iter() {
+        match o {
+            Op::Insert {
+                parent,
+                child,
+                reference,
+            } if *parent == root.id() => match reference {
+                Some(r) => {
+                    let pos = present.iter().position(|x| x == r).unwrap_or_else(|| {
+                        panic!(
+                            "insert of {child} used reference {r} not yet in the real tree; ops={ops:?}"
+                        )
+                    });
+                    present.insert(pos, *child);
+                }
+                None => present.push(*child),
+            },
+            Op::Append { parent, child } if *parent == root.id() => present.push(*child),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        present,
+        vec![c1.id(), c2.id(), c3.id()],
+        "final real child order wrong; ops={ops:?}"
+    );
+}
+
 #[test]
 fn phantom_hoist_into_non_tail_position_uses_positioned_insert() {
     // A renderer that supports positioned insert must place a
