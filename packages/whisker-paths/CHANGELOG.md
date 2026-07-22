@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2](https://github.com/whiskerrs/whisker/compare/whisker-paths-v0.9.1...whisker-paths-v0.9.2) - 2026-07-22
+
+### Added
+
+- *(whisker-paths)* set_excluded_from_backup for iCloud backup exclusion
+
 ### Added
 
 - *(whisker-paths)* `set_excluded_from_backup` — exclude a file/dir from iCloud backup (iOS `NSURLIsExcludedFromBackupKey`; no-op on Android). Required for re-downloadable content under `document_dir`.
