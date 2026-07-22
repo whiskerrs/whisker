@@ -755,7 +755,14 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
             } else {
                 vec![child]
             };
-            for real in to_attach {
+            // Insert back-to-front: each child's positioned-insert
+            // reference is its next real sibling, which must already be
+            // in the Lynx tree. Attaching the last child first makes each
+            // subsequent (earlier) child's reference a node inserted a
+            // step ago — a forward pass would reference batch-mates that
+            // don't exist on-device yet, and Lynx would drop all but the
+            // final (append-with-null-reference) child.
+            for real in to_attach.into_iter().rev() {
                 let pos = count_real_descendants_before(real_anc, real);
                 bridge_insert_or_append(real_anc, real, pos);
             }
@@ -763,8 +770,14 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
         true
     } else if child_is_phantom {
         // Phantom child carries a transparent subtree; replay any real
-        // descendants at their positions.
-        for real in collect_transparent_real_descendants(child) {
+        // descendants at their positions. Back-to-front so each
+        // positioned-insert reference (the next real sibling) is already
+        // in the Lynx tree — see the reversed loop in the phantom-parent
+        // branch above for why a forward pass drops all but one child.
+        for real in collect_transparent_real_descendants(child)
+            .into_iter()
+            .rev()
+        {
             let pos = count_real_descendants_before(parent, real);
             bridge_insert_or_append(parent, real, pos);
         }
