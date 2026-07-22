@@ -41,10 +41,21 @@ pub fn app() -> Element {
             .and_then(|_| std::fs::read_to_string(&file))
         {
             Ok(s) if s == "hello from whisker-paths" => {
-                out.push_str("fs round-trip: ok (wrote + read back match)")
+                out.push_str("fs round-trip: ok (wrote + read back match)\n")
             }
-            Ok(s) => out.push_str(&format!("fs round-trip: MISMATCH {s}")),
-            Err(e) => out.push_str(&format!("fs round-trip: ERROR {e}")),
+            Ok(s) => out.push_str(&format!("fs round-trip: MISMATCH {s}\n")),
+            Err(e) => out.push_str(&format!("fs round-trip: ERROR {e}\n")),
+        }
+
+        let backup_dir = whisker_paths::document_dir().join("whisker-paths-example");
+        match std::fs::create_dir_all(&backup_dir)
+            .map_err(|e| e.to_string())
+            .and_then(|_| {
+                whisker_paths::set_excluded_from_backup(&backup_dir, true)
+                    .map_err(|e| e.to_string())
+            }) {
+            Ok(()) => out.push_str("backup-exclusion: ok"),
+            Err(e) => out.push_str(&format!("backup-exclusion: ERROR {e}")),
         }
         log.set(out);
     });

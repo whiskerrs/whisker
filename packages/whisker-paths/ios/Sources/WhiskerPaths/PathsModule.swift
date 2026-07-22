@@ -19,6 +19,18 @@ public final class PathsModule: Module {
             Function("directories") { (_: [WhiskerValue]) -> WhiskerValue in
                 .map(Paths.directories().mapValues { WhiskerValue.string($0) })
             }
+
+            // setExcludedFromBackup(path, excluded) -> Bool | Error
+            Function("setExcludedFromBackup") { (args: [WhiskerValue]) -> WhiskerValue in
+                let path = args.first?.asString ?? ""
+                let excluded = args.count > 1 ? (args[1].asBool ?? true) : true
+                do {
+                    try Paths.setExcludedFromBackup(path, excluded)
+                    return .bool(true)
+                } catch {
+                    return .error("setExcludedFromBackup failed: \(error.localizedDescription)")
+                }
+            }
         }
     }
 }
