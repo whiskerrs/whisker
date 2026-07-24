@@ -1,0 +1,70 @@
+[package]
+name = "whisker-haptics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Whisker platform module — haptic feedback (impact/selection/notification) via UIFeedbackGenerator (iOS) / Vibrator (Android), mirroring expo-haptics."
+
+# Explicit `include` list — mirrors `whisker-safe-area` / `whisker-image`.
+# `cargo publish` ships the Kotlin + Swift platform sources + the plugin
+# binary alongside `src/`, but never the local Gradle / Xcode artifacts.
+include = [
+    "Cargo.toml",
+    "Package.swift",
+    "build.gradle.kts",
+    "bin/**/*.rs",
+    "src/**/*.rs",
+    "android/**/*.kt",
+    "ios/**/*.swift",
+    "README.md",
+]
+
+# rlib only. The Whisker module system distributes native sources
+# out-of-band via the `android/` + `ios/` package dirs.
+[lib]
+crate-type = ["rlib"]
+
+# Module-system opt-in marker: identifies this cargo crate as a Whisker
+# module so `whisker-build` wires the Android Gradle subproject + iOS
+# SwiftPM package into the host build.
+[package.metadata.whisker]
+
+# Plugin registration — Whisker builds the `whisker-haptics-plugin`
+# binary below and runs it during every gen-tree sync. It appends the
+# Android `VIBRATE` permission (a "normal" permission — no runtime
+# dialog); haptics is meaningless without it, so opting into the plugin
+# opts into the permission. Enable via `app.plugin::<WhiskerHaptics>(|c| c)`.
+[package.metadata.whisker.plugins.whisker-haptics]
+bin = "whisker-haptics-plugin"
+
+# Subprocess binary entry point Whisker spawns.
+[[bin]]
+name = "whisker-haptics-plugin"
+path = "bin/whisker_haptics_plugin.rs"
+test = false
+bench = false
+doc = false
+
+[dependencies]
+# `whisker` (the umbrella runtime crate) is gated behind the `runtime`
+# feature so the config probe — which only needs the `plugin` module —
+# can pull this crate with `default-features = false` and skip the
+# multi-minute Lynx-bridge/driver build. Default-on so normal app deps
+# "just work".
+whisker = { workspace = true, optional = true }
+
+# Plugin support — always on (light deps: trait + IR types + JSON
+# envelope + subprocess runner).
+whisker-plugin = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+
+[features]
+default = ["runtime"]
+runtime = ["dep:whisker"]
