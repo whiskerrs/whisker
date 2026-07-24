@@ -306,6 +306,37 @@ fn on_cleanup_fires_lifo() {
 }
 
 #[test]
+fn on_cleanup_can_read_and_write_own_signal() {
+    // Regression: an `on_cleanup` must be able to read (and write) a signal
+    // that its owner allocated — cleanups run BEFORE the owner frees its
+    // nodes. Freeing first made `read_at_cleanup` panic with `signal
+    // disposed`; on-device that panic (fired mid-`tick_frame` when a router
+    // screen disposed on a transition's finish) unwound the whole frame and
+    // stranded unrelated reactive work.
+    fresh();
+    let owner = Owner::new(None);
+    let read_at_cleanup: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
+
+    owner.with(|| {
+        let sig = signal(0_i32);
+        sig.set(42);
+        let captured = read_at_cleanup.clone();
+        on_cleanup(move || {
+            // Must NOT panic: `sig`'s node is still alive at cleanup time.
+            sig.set(sig.get_untracked() + 1);
+            *captured.borrow_mut() = Some(sig.get_untracked());
+        });
+    });
+
+    owner.dispose();
+    assert_eq!(
+        *read_at_cleanup.borrow(),
+        Some(43),
+        "cleanup read/wrote its own signal (42 -> 43) instead of panicking"
+    );
+}
+
+#[test]
 fn disposing_owner_removes_its_effects_from_pending() {
     fresh();
     let owner = Owner::new(None);

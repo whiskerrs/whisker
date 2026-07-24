@@ -73,14 +73,16 @@ mod tests {
 
     #[test]
     fn guard_registers_then_unregisters() {
-        // Use a pid that won't collide with a real spawn in tests.
-        let snapshot_len = TRACKED.lock().unwrap().len();
+        // Assert only on THIS pid, never the registry's absolute length:
+        // `TRACKED` is a process-global shared with the sibling tests, which
+        // run in parallel (and one deliberately leaks a registration via
+        // `mem::forget`), so a length snapshot races them. A pid that won't
+        // collide with a real spawn keeps the check self-contained.
         {
             let _g = track(999_999_001);
             assert!(TRACKED.lock().unwrap().contains(&999_999_001));
         }
-        // Dropped → unregistered, back to the original length.
-        assert_eq!(TRACKED.lock().unwrap().len(), snapshot_len);
+        // Dropped → unregistered.
         assert!(!TRACKED.lock().unwrap().contains(&999_999_001));
     }
 
