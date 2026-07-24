@@ -1,4 +1,4 @@
-//! `whisker-haptics` — haptic feedback for the giga reader UI.
+//! `whisker-haptics` — haptic feedback.
 //!
 //! **API shape — 5 (Static methods).** See
 //! [`docs/module-api-design.md`](https://github.com/whiskerrs/whisker/blob/main/docs/module-api-design.md)
@@ -13,9 +13,7 @@
 //!   pattern communicating success/warning/error.
 //!
 //! Mirrors [`expo-haptics`](https://docs.expo.dev/versions/latest/sdk/haptics/)'s
-//! three functions exactly — this app's only RN precedent
-//! (`useReaderProgressBar.ts`) uses `selectionAsync()` +
-//! `impactAsync(Light)` and nothing else.
+//! three functions exactly.
 //!
 //! Deliberately **not async**: the native module DSL only supports
 //! synchronous `Function`s today (no `AsyncFunction` yet). Firing a
