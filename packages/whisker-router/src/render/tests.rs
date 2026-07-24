@@ -1404,3 +1404,277 @@ fn one_transition_poses_all_four_directional_slots() {
     assert_eq!(pose_for(&pop, Role::Top, 0.5).transform, "pop_exit");
     assert_eq!(pose_for(&pop, Role::Under, 0.5).transform, "pop_enter");
 }
+
+// =====================================================================
+// Renderer-level reproduction: `replace` content-attach (next-chapter)
+// =====================================================================
+//
+// The tests above run without a renderer, so they never exercise the
+// real Lynx op sequence. This block installs a recording renderer that
+// mints real element ids and models `insert_child_before` the way Lynx's
+// `FiberElement::InsertNodeBefore` behaves — a positioned insert whose
+// reference node MUST already be a live child of the parent, else the
+// insert is dropped. That drop is exactly the on-device "next chapter is
+// blank after a `replace`" symptom, so it lets us reproduce it in-process.
+mod replace_repro {
+    use super::*;
+    use std::collections::BTreeMap;
+    use whisker::ElementTag;
+    use whisker::runtime::value::WhiskerValue;
+    use whisker::runtime::view::{BindType, DynRenderer, Element, with_installed_renderer};
+
+    #[derive(Default)]
+    struct Inner {
+        next_id: u32,
+        children: HashMap<Element, Vec<Element>>,
+        attrs: HashMap<Element, BTreeMap<String, String>>,
+        ops: Vec<String>,
+        /// A positioned insert whose reference wasn't a live child — the
+        /// on-device silent drop. Non-empty = the bug is reproduced.
+        violations: Vec<String>,
+    }
+
+    #[derive(Clone, Default)]
+    struct Rec(Rc<RefCell<Inner>>);
+
+    impl Rec {
+        fn detach(inner: &mut Inner, child: Element) {
+            for kids in inner.children.values_mut() {
+                kids.retain(|c| *c != child);
+            }
+        }
+        /// Is `el` reachable from `root` through the recorded real tree?
+        fn reachable(&self, root: Element, el: Element) -> bool {
+            let inner = self.0.borrow();
+            let mut stack = vec![root];
+            while let Some(n) = stack.pop() {
+                if n == el {
+                    return true;
+                }
+                if let Some(kids) = inner.children.get(&n) {
+                    stack.extend(kids.iter().copied());
+                }
+            }
+            false
+        }
+        /// The real element whose recorded `cid` attribute equals `id`.
+        fn by_cid(&self, id: &str) -> Option<Element> {
+            let inner = self.0.borrow();
+            inner
+                .attrs
+                .iter()
+                .find(|(_, a)| a.get("cid").map(String::as_str) == Some(id))
+                .map(|(e, _)| *e)
+        }
+        /// How many live real elements currently carry `cid == id`.
+        fn count_cid(&self, id: &str) -> usize {
+            let inner = self.0.borrow();
+            inner
+                .attrs
+                .iter()
+                .filter(|(_, a)| a.get("cid").map(String::as_str) == Some(id))
+                .count()
+        }
+    }
+
+    impl DynRenderer for Rec {
+        fn create_element(&self, _tag: ElementTag) -> Element {
+            let mut inner = self.0.borrow_mut();
+            inner.next_id += 1;
+            Element::from_raw(inner.next_id)
+        }
+        fn create_element_by_name(&self, _tag: &str) -> Element {
+            self.create_element(ElementTag::View)
+        }
+        fn release_element(&self, handle: Element) {
+            let mut inner = self.0.borrow_mut();
+            Self::detach(&mut inner, handle);
+            inner.children.remove(&handle);
+            inner.attrs.remove(&handle);
+        }
+        fn set_attribute(&self, handle: Element, key: &str, value: &str) {
+            self.0
+                .borrow_mut()
+                .attrs
+                .entry(handle)
+                .or_default()
+                .insert(key.to_string(), value.to_string());
+        }
+        fn set_inline_styles(&self, _handle: Element, _css: &str) {}
+        fn append_child(&self, parent: Element, child: Element) {
+            let mut inner = self.0.borrow_mut();
+            inner
+                .ops
+                .push(format!("append {}->{}", parent.id(), child.id()));
+            Self::detach(&mut inner, child);
+            inner.children.entry(parent).or_default().push(child);
+        }
+        fn remove_child(&self, parent: Element, child: Element) {
+            let mut inner = self.0.borrow_mut();
+            inner
+                .ops
+                .push(format!("remove {}->{}", parent.id(), child.id()));
+            if let Some(kids) = inner.children.get_mut(&parent) {
+                kids.retain(|c| *c != child);
+            }
+        }
+        fn supports_insert_before(&self) -> bool {
+            true
+        }
+        fn insert_child_before(&self, parent: Element, child: Element, reference: Option<Element>) {
+            let mut inner = self.0.borrow_mut();
+            inner.ops.push(format!(
+                "insert {}->{} before {:?}",
+                parent.id(),
+                child.id(),
+                reference.map(|r| r.id())
+            ));
+            Self::detach(&mut inner, child);
+            match reference {
+                None => {
+                    inner.children.entry(parent).or_default().push(child);
+                }
+                Some(r) => {
+                    let kids = inner.children.entry(parent).or_default();
+                    match kids.iter().position(|c| *c == r) {
+                        Some(pos) => kids.insert(pos, child),
+                        None => {
+                            // Lynx drops an insert whose reference isn't a
+                            // live child — the child never enters the tree.
+                            inner.violations.push(format!(
+                                "insert {}->{} before dead ref {}",
+                                parent.id(),
+                                child.id(),
+                                r.id()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        fn set_event_listener(
+            &self,
+            _handle: Element,
+            _event_name: &str,
+            _bind_type: BindType,
+            _callback: Box<dyn Fn(WhiskerValue) + 'static>,
+        ) {
+        }
+        fn set_root(&self, _page: Element) {}
+        fn flush(&self) {}
+    }
+
+    /// Root Stack { Route("", home)  Route("detail/:id", detail) } whose
+    /// leaves render a REAL `view` tagged with the route param `id` as a
+    /// `cid` attribute, so the recorder can locate each screen's content.
+    fn real_leaf_handle() -> RouterHandle {
+        let tree = CompiledTree::new(RouteTree::stack(vec![
+            RouteTree::route("", "home"),
+            RouteTree::route("detail/:id", "detail"),
+        ]));
+        let mk = |id: &'static str| {
+            move |inst: &RouteInstance| {
+                let el = whisker::runtime::view::create_element(ElementTag::View);
+                let cid = inst
+                    .params
+                    .get("id")
+                    .cloned()
+                    .unwrap_or_else(|| id.to_string());
+                whisker::runtime::view::set_attribute(el, "cid", &cid);
+                el
+            }
+        };
+        let registry = RouteRegistry::new().route("home", mk("home")).route_with(
+            "detail",
+            RouteTransition::slide(),
+            mk("detail"),
+        );
+        RouterHandle::new((tree, registry))
+    }
+
+    #[test]
+    fn replace_attaches_new_leaf_content_to_the_real_tree() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle();
+                let slot = mount_node(&h, NodePath::root());
+                flush();
+
+                // Push detail/1 over home (group -> reader).
+                h.navigate("/detail/1").unwrap();
+                flush();
+                let c1 = rec.by_cid("1").expect("detail/1 content created");
+                assert!(
+                    rec.reachable(slot, c1),
+                    "detail/1 content must be attached after push"
+                );
+
+                // Replace detail/1 with detail/2 (reader chapter switch).
+                h.replace("/detail/2").unwrap();
+                flush();
+
+                let c2 = rec.by_cid("2").expect("detail/2 content created");
+                let inner = rec.0.borrow();
+                assert!(
+                    inner.violations.is_empty(),
+                    "positioned insert dropped a child (blank chapter): {:?}\nops:\n{}",
+                    inner.violations,
+                    inner.ops.join("\n")
+                );
+                drop(inner);
+                assert!(
+                    rec.reachable(slot, c2),
+                    "detail/2 content must be attached to the real tree after replace\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
+                );
+            });
+        });
+    }
+
+    /// Regression: on a `replace`, the OUTGOING screen (kept mounted as the
+    /// slide-out `Under`) must be FROZEN showing its own route. It shares the
+    /// leaf's static path with the incoming wrapper, so when `replace` swaps
+    /// the top instance the outgoing leaf's `instance` computed also flips to
+    /// the new route and re-mounts it — mounting the new screen TWICE (once in
+    /// the disposing under-wrapper, once in the incoming top). That double
+    /// mount is what blanks the next chapter on-device: the two instances
+    /// fight over shared reader state / native `<list>` handles, and disposing
+    /// the under-wrapper on finish tears down state the survivor still needs.
+    ///
+    /// A `pop` is immune (the popped entry leaves `history`, so its slice goes
+    /// `None` and the leaf no-ops); only `replace` hits the `Some(new)` path.
+    #[test]
+    fn replace_does_not_remount_outgoing_leaf_to_new_route() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = real_leaf_handle();
+                let _slot = mount_node(&h, NodePath::root());
+                flush();
+
+                h.navigate("/detail/1").unwrap();
+                flush();
+                assert_eq!(rec.count_cid("1"), 1, "detail/1 mounted once after push");
+
+                h.replace("/detail/2").unwrap();
+                flush();
+
+                // The incoming wrapper mounts detail/2 exactly once. The
+                // outgoing wrapper must KEEP detail/1 (frozen), not re-mount
+                // detail/2 into itself.
+                assert_eq!(
+                    rec.count_cid("2"),
+                    1,
+                    "detail/2 must mount exactly once, not also in the outgoing under-wrapper\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
+                );
+                assert_eq!(
+                    rec.count_cid("1"),
+                    1,
+                    "the outgoing under-wrapper stays frozen on detail/1 until disposed"
+                );
+            });
+        });
+    }
+}
