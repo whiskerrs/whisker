@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.9.2...whisker-plugin-v0.10.0) - 2026-07-24
+
+### Added
+
+- *(cng,plugin)* plugin-settable splash-screen enablers
+
+### Other
+
+- Merge pull request #329 from whiskerrs/feat/whisker-splash-screen
+
 ## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-plugin-v0.8.2...whisker-plugin-v0.9.0) - 2026-07-21
 
 ### Added

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/whiskerrs/whisker/compare/whisker-animation-v0.9.2...whisker-animation-v0.10.0) - 2026-07-24
+
+### Fixed
+
+- *(animation)* a disposed controller must not crash the animation step
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-animation-v0.6.0...whisker-animation-v0.7.0) - 2026-06-26
 
 ### Added
