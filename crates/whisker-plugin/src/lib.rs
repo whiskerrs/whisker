@@ -499,6 +499,33 @@ pub struct AndroidManifest {
     /// Non-empty also sets `launchMode="singleTask"`.
     #[serde(default)]
     pub main_activity_url_schemes: Vec<String>,
+
+    /// Overrides the `<application android:theme="…">` value. `None`
+    /// keeps the template default (`@style/Theme.AppCompat.NoActionBar`).
+    /// Set it to point the app at a plugin-generated theme — e.g. an
+    /// Android 12 splash theme (`Theme.SplashScreen` parent). Last
+    /// writer wins if several plugins set it.
+    #[serde(default)]
+    pub application_theme: Option<String>,
+
+    /// Extra `import …` lines for the generated `MainActivity.kt`
+    /// (fully-qualified, without the `import` keyword — e.g.
+    /// `"androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen"`).
+    #[serde(default)]
+    pub main_activity_imports: Vec<String>,
+
+    /// Statements injected into `MainActivity.onCreate` **before**
+    /// `super.onCreate(savedInstanceState)` — e.g. `installSplashScreen()`,
+    /// which must run before the content view is set. An `onCreate`
+    /// override is generated only when this or [`Self::main_activity_post_super`]
+    /// is non-empty; otherwise `MainActivity` stays empty.
+    #[serde(default)]
+    pub main_activity_pre_super: Vec<String>,
+
+    /// Statements injected into `MainActivity.onCreate` **after**
+    /// `super.onCreate(savedInstanceState)`.
+    #[serde(default)]
+    pub main_activity_post_super: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
