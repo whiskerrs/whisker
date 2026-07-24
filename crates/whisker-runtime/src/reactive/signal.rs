@@ -318,6 +318,18 @@ impl<T: 'static> RwSignal<T> {
     pub fn try_update(self, f: impl FnOnce(&mut T)) -> bool {
         try_write_and_notify(self.id, f, true)
     }
+
+    /// Whether this signal's backing node is still live in the arena.
+    /// `false` once the owner that allocated it has been disposed
+    /// (which frees the node). Non-panicking and non-notifying — a
+    /// cheap probe for callers that outlive their signal's owner and
+    /// must not touch a freed slot (e.g. the animation scheduler
+    /// advancing a controller whose owning wrapper was torn down
+    /// mid-run). Reading (`get`/`with`) such a signal panics; this does
+    /// not.
+    pub fn is_disposed(self) -> bool {
+        with_runtime(|rt| rt.nodes.get(self.id).is_none())
+    }
 }
 
 impl<T: 'static + Clone> RwSignal<T> {

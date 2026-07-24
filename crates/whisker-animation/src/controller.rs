@@ -116,6 +116,19 @@ impl ControllerState {
         if !self.active {
             return false;
         }
+        // The controller's owner can be torn down mid-run (e.g. a router
+        // wrapper disposed while its transition — or a still-active spring
+        // in its subtree — is animating). That frees the `value` node, and
+        // a subsequent read (`get_untracked` on the spring path) would
+        // panic — inside `step`, that panic bails the whole frame's
+        // animation pass, freezing EVERY controller (a stuck router
+        // transition strands the incoming screen off-screen). Self-
+        // terminate instead: there's nothing left to drive, so report
+        // finished and let the scheduler deregister us.
+        if self.value.is_disposed() {
+            self.active = false;
+            return false;
+        }
         match self.cfg.timing {
             Timing::Curved { duration_ms, curve } => {
                 self.advance_curved(now_ms, duration_ms, curve)
