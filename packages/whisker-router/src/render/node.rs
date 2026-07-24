@@ -464,12 +464,26 @@ fn reconcile_stack(
             // Detach the old top from `live` but keep it mounted — it is the
             // incoming screen's `Under` for the duration of the slide.
             let old = live.borrow_mut().remove(top_idx);
+
+            // FREEZE the outgoing screen. Its leaf shares the incoming
+            // wrapper's static path, so the top-instance swap this `replace`
+            // performs would otherwise flip the outgoing leaf's `instance`
+            // computed to the NEW route and re-mount it — mounting the new
+            // screen twice (once here in the disposing under-wrapper, once in
+            // the incoming top). The two instances then fight over shared
+            // reader state / native `<list>` handles, and disposing this
+            // wrapper on finish tears down state the survivor still needs,
+            // blanking the incoming screen. A `pop` is immune (the popped
+            // entry leaves `history`, so its slice goes `None` and the leaf
+            // no-ops); only `replace` hits the `Some(new)` path, so pause the
+            // outgoing subtree to hold it on its own route until disposed.
+            old.owner.pause();
+
             let w = mount_wrapper(handle, slot, top_idx, entry);
             let drive = w.ctrl.clone();
             let instant = w.transition.is_instant();
             w.ctrl.set_value(0.0);
             set_pose(&w, &drive, Role::Top, Direction::Push);
-            set_pose(&old, &drive, Role::Under, Direction::Push);
             live.borrow_mut().insert(top_idx, w);
 
             if instant {
