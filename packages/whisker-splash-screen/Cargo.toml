@@ -1,0 +1,43 @@
+[package]
+name = "whisker-splash-screen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Whisker config plugin — generates the native splash screen (Android 12 SplashScreen + iOS launch storyboard) from an image + background, mirroring expo-splash-screen."
+
+# Config-plugin only (no native module): a static splash auto-hides on
+# first frame. `cargo publish` ships `src/` + the plugin binary.
+include = [
+    "Cargo.toml",
+    "bin/**/*.rs",
+    "src/**/*.rs",
+    "README.md",
+]
+
+[lib]
+crate-type = ["rlib"]
+
+# Plugin registration — Whisker builds the `whisker-splash-screen-plugin`
+# binary below and runs it during every gen-tree sync. It generates the
+# native splash from the `whisker.rs` builder. Opt in via
+# `app.plugin::<WhiskerSplashScreen>(|c| c.image(..))`.
+[package.metadata.whisker.plugins.whisker-splash-screen]
+bin = "whisker-splash-screen-plugin"
+
+[[bin]]
+name = "whisker-splash-screen-plugin"
+path = "bin/whisker_splash_screen_plugin.rs"
+test = false
+bench = false
+doc = false
+
+[dependencies]
+whisker-plugin = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }

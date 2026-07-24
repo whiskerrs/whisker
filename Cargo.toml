@@ -48,6 +48,7 @@ members = [
     "packages/whisker-safe-area",
     "packages/whisker-secure-store",
     "packages/whisker-secure-store/example",
+    "packages/whisker-splash-screen",
     "packages/whisker-status-bar",
     "packages/whisker-web-browser",
     "packages/whisker-svg",
