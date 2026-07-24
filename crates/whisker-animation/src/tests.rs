@@ -895,3 +895,41 @@ fn owner_dispose_does_not_fire_on_finish() {
     );
     drop(ctrl);
 }
+
+// ----- Regression: disposed controller must not crash the step pass --------
+
+/// A controller whose backing `value` node is freed WHILE it is still active
+/// (owner torn down mid-run) must not panic the animation `step`. `advance`
+/// reads/writes `value`; reading a freed node panics, and inside `step` that
+/// unwinds the whole frame's animation pass — freezing EVERY controller. On
+/// device this stranded a router transition's incoming screen off-screen
+/// forever (a stuck "next chapter"). The controller must self-terminate.
+///
+/// Reproduced directly: forward a spring (spring `advance` reads `value` every
+/// frame — the panic path), then free the reactive arena out from under it
+/// (mirrors the wrapper owner's disposal) while leaving it registered in the
+/// animation scheduler, then step.
+#[test]
+fn step_survives_active_controller_with_freed_value_node() {
+    fresh();
+    let owner = Owner::new(None);
+    let ctrl = owner.with(|| {
+        let c = AnimationController::new(AnimConfig::spring());
+        c.forward();
+        c
+    });
+    assert_eq!(__active_count(), 1, "spring active after forward()");
+    // Free every reactive node (the controller's `value` among them) but do
+    // NOT touch the animation scheduler — so `ctrl` lingers in `active` with a
+    // dangling `value`, exactly the on-device shape.
+    whisker_runtime::reactive::__reset_for_tests();
+    assert_eq!(__active_count(), 1, "still registered after arena reset");
+
+    // Must NOT panic (pre-fix: `advance`'s `value` read panics, bailing step).
+    let still = __step_for_tests(16.0);
+    assert!(!still, "a controller with a freed value self-terminates");
+    assert_eq!(__active_count(), 0, "and is deregistered");
+
+    let _ = ctrl;
+    owner.dispose();
+}
