@@ -196,7 +196,25 @@ impl Owner {
             child.dispose();
         }
 
-        // Step 4: free every node this owner allocated. For effects
+        // Step 4: run THIS owner's cleanups BEFORE freeing its nodes, so an
+        // `on_cleanup` callback can still read/write the signals it closed
+        // over — the natural expectation (Solid / Leptos / React all allow
+        // it) and consistent with `set` on a freed signal already being a
+        // silent no-op (`try_write_and_notify`). Freeing first (the old
+        // order) made a same-owner `get` in a cleanup panic with `signal
+        // disposed`; worse, when the cleanup ran mid-`tick_frame` (a router
+        // screen disposed on a transition's finish), that panic unwound the
+        // whole frame and stranded unrelated reactive work (frozen
+        // animations, dead event handlers). Children are already disposed
+        // above, so a cleanup reading a *child's* signal still gets nothing —
+        // but that's the uncommon case; own-signal reads are what callers
+        // expect. LIFO order, no runtime borrow held (cleanups may touch the
+        // runtime).
+        for cleanup in cleanups.into_iter().rev() {
+            cleanup();
+        }
+
+        // Step 5: free every node this owner allocated. For effects
         // / computed values, also detach them from any subscriber
         // list they were on, so other live nodes don't try to
         // notify a freed slot later.
@@ -248,7 +266,7 @@ impl Owner {
             arc_src.unsubscribe(subscriber);
         }
 
-        // Step 5: release every element handle the disposed owner
+        // Step 6: release every element handle the disposed owner
         // created. We do this AFTER recursing into children so that
         // bottom-up disposal order matches what the renderer
         // expects (a child element's release before its parent's
@@ -259,13 +277,6 @@ impl Owner {
         // released") can do so.
         for handle in elements {
             crate::view::release_element(handle);
-        }
-
-        // Step 6: run cleanups in LIFO order, with no runtime
-        // borrow held (cleanups may legitimately touch other parts
-        // of the runtime).
-        for cleanup in cleanups.into_iter().rev() {
-            cleanup();
         }
     }
 
