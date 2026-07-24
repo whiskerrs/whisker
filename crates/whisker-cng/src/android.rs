@@ -122,6 +122,22 @@ pub struct AndroidInputs {
     /// `MainActivity` deep-link schemes. See `AndroidManifest::main_activity_url_schemes`.
     #[serde(default)]
     pub main_activity_url_schemes: Vec<String>,
+    /// Overrides `<application android:theme>`. `None` → the template
+    /// default. See `AndroidManifest::application_theme`.
+    #[serde(default)]
+    pub android_theme: Option<String>,
+    /// Extra `MainActivity.kt` imports. See
+    /// `AndroidManifest::main_activity_imports`.
+    #[serde(default)]
+    pub main_activity_imports: Vec<String>,
+    /// `MainActivity.onCreate` statements before `super.onCreate`. See
+    /// `AndroidManifest::main_activity_pre_super`.
+    #[serde(default)]
+    pub main_activity_pre_super: Vec<String>,
+    /// `MainActivity.onCreate` statements after `super.onCreate`. See
+    /// `AndroidManifest::main_activity_post_super`.
+    #[serde(default)]
+    pub main_activity_post_super: Vec<String>,
     /// Extra entries the renderer drops into the app module's
     /// `plugins { … }` block, just after the baseline Whisker /
     /// AGP / Kotlin plugin ids. Bare ids (e.g.
@@ -241,7 +257,71 @@ pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, Str
         "extra_gradle_dependencies",
         render_extra_gradle_dependencies(&inputs.extra_gradle_dependencies),
     );
+    v.insert(
+        "android_theme",
+        inputs
+            .android_theme
+            .clone()
+            .unwrap_or_else(|| "@style/Theme.AppCompat.NoActionBar".to_string()),
+    );
+    let (main_activity_imports, main_activity_body) = render_main_activity(
+        &inputs.main_activity_imports,
+        &inputs.main_activity_pre_super,
+        &inputs.main_activity_post_super,
+    );
+    v.insert("main_activity_imports", main_activity_imports);
+    v.insert("main_activity_body", main_activity_body);
     v
+}
+
+/// Render `MainActivity.kt`'s extra imports + `onCreate` override body.
+///
+/// Returns `(imports, body)`:
+/// - `imports` — extra `import` lines to append after the baseline
+///   `WhiskerActivity` import (each prefixed with a leading `\n`), or
+///   empty. When a body is generated, `android.os.Bundle` is added
+///   automatically.
+/// - `body` — either empty (`class MainActivity : WhiskerActivity()`
+///   stays a one-liner) or ` { override fun onCreate(…) { … } }` when
+///   `pre_super`/`post_super` inject statements. `pre_super` runs before
+///   `super.onCreate`, `post_super` after.
+fn render_main_activity(
+    imports: &[String],
+    pre_super: &[String],
+    post_super: &[String],
+) -> (String, String) {
+    let has_body = !pre_super.is_empty() || !post_super.is_empty();
+
+    let mut import_lines: Vec<String> = Vec::new();
+    if has_body {
+        import_lines.push("android.os.Bundle".to_string());
+    }
+    for i in imports {
+        if !import_lines.contains(i) {
+            import_lines.push(i.clone());
+        }
+    }
+    let imports_str = import_lines
+        .iter()
+        .map(|i| format!("\nimport {i}"))
+        .collect::<String>();
+
+    if !has_body {
+        return (imports_str, String::new());
+    }
+
+    let indent = |lines: &[String]| {
+        lines
+            .iter()
+            .map(|l| format!("        {l}\n"))
+            .collect::<String>()
+    };
+    let body = format!(
+        " {{\n    override fun onCreate(savedInstanceState: Bundle?) {{\n{pre}        super.onCreate(savedInstanceState)\n{post}    }}\n}}",
+        pre = indent(pre_super),
+        post = indent(post_super),
+    );
+    (imports_str, body)
 }
 
 /// Render `apply_plugins` entries as Kotlin DSL lines inside the
@@ -687,6 +767,10 @@ pub fn inputs_from_with_engine(
     let extra_meta_data = android_ir.manifest.application_meta_data.clone();
     let extra_application_attributes = android_ir.manifest.application_attributes.clone();
     let main_activity_url_schemes = android_ir.manifest.main_activity_url_schemes.clone();
+    let android_theme = android_ir.manifest.application_theme.clone();
+    let main_activity_imports = android_ir.manifest.main_activity_imports.clone();
+    let main_activity_pre_super = android_ir.manifest.main_activity_pre_super.clone();
+    let main_activity_post_super = android_ir.manifest.main_activity_post_super.clone();
     let extra_gradle_plugins = android_ir.gradle.apply_plugins.clone();
     let extra_gradle_dependencies = android_ir.gradle.dependencies.clone();
     let extra_files = android_ir.extra_files.clone();
@@ -709,11 +793,16 @@ pub fn inputs_from_with_engine(
         extra_meta_data,
         extra_application_attributes,
         main_activity_url_schemes,
+        android_theme,
+        main_activity_imports,
+        main_activity_pre_super,
+        main_activity_post_super,
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        // Bumped 11 → 12: MainActivity intent-filter/launchMode placeholders.
-        template_version: 12,
+        // Bumped 12 → 13: `{{android_theme}}` + MainActivity import/body
+        // placeholders (plugin-driven theme override + onCreate injection).
+        template_version: 13,
     })
 }
 
@@ -754,10 +843,14 @@ mod tests {
             extra_meta_data: Vec::new(),
             extra_application_attributes: Vec::new(),
             main_activity_url_schemes: Vec::new(),
+            android_theme: None,
+            main_activity_imports: Vec::new(),
+            main_activity_pre_super: Vec::new(),
+            main_activity_post_super: Vec::new(),
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 12,
+            template_version: 13,
         }
     }
 
@@ -794,6 +887,48 @@ mod tests {
         assert_eq!(vars["rust_lib_name"], "hello_world");
         assert_eq!(vars["build_number"], "1");
         assert_eq!(vars["version"], "0.1.0");
+    }
+
+    #[test]
+    fn android_theme_defaults_and_overrides() {
+        let mut inputs = sample_inputs();
+        // Default → the AppCompat NoActionBar theme (matches the manifest
+        // template's historical hardcoded value).
+        assert_eq!(
+            template_vars(&inputs)["android_theme"],
+            "@style/Theme.AppCompat.NoActionBar"
+        );
+        inputs.android_theme = Some("@style/Theme.App.Splash".into());
+        assert_eq!(
+            template_vars(&inputs)["android_theme"],
+            "@style/Theme.App.Splash"
+        );
+    }
+
+    #[test]
+    fn main_activity_stays_empty_without_injection() {
+        let (imports, body) = render_main_activity(&[], &[], &[]);
+        assert_eq!(imports, "");
+        assert_eq!(body, "");
+    }
+
+    #[test]
+    fn main_activity_injects_oncreate_with_pre_super() {
+        let (imports, body) = render_main_activity(
+            &["androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen".into()],
+            &["installSplashScreen()".into()],
+            &[],
+        );
+        // `Bundle` auto-added; the splash import follows.
+        assert!(imports.contains("\nimport android.os.Bundle"));
+        assert!(imports.contains(
+            "\nimport androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen"
+        ));
+        // The pre-super statement lands before `super.onCreate`.
+        let pre = body.find("installSplashScreen()").unwrap();
+        let sup = body.find("super.onCreate(savedInstanceState)").unwrap();
+        assert!(pre < sup, "installSplashScreen must precede super.onCreate");
+        assert!(body.starts_with(" {\n    override fun onCreate("));
     }
 
     #[test]

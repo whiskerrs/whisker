@@ -82,12 +82,12 @@ pub struct IosInputs {
     /// engine's post-pipeline IR (`ctx.ios.info_plist`). Emitted
     /// just before the closing `</dict>`.
     ///
-    /// Supported `PlistValue` variants: `String`, `Boolean`,
-    /// `Integer`, and `Array<String>`. Other shapes (nested Dict,
-    /// Array of non-strings, Real) are silently dropped; the
-    /// Info.plist template is hand-rolled XML rather than a real
-    /// plist serializer, and we extend the variant set on demand
-    /// as built-in or 3rd-party plugins require it.
+    /// Rendered by [`render_extra_info_plist`], which handles every
+    /// `PlistValue` variant — `String` / `Boolean` / `Integer` / `Real`
+    /// / nested `Dict` / `Array` — recursively. The only thing dropped
+    /// is a **mixed-type array** (an array whose items aren't all
+    /// strings), since the hand-rolled XML renderer has no meaningful
+    /// mapping for it.
     #[serde(default)]
     pub extra_info_plist: BTreeMap<String, PlistValue>,
     /// Plugin-supplied additional files dropped into `gen/ios/`.
@@ -160,10 +160,14 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         inputs.workspace_root.display().to_string(),
     );
     v.insert("whisker_user_package", inputs.user_package.clone());
-    v.insert(
-        "extra_info_plist_kvs",
-        render_extra_info_plist(&inputs.extra_info_plist),
-    );
+    // `UILaunchScreen` is no longer hardcoded in the template (so a
+    // plugin can supply the launch image/color); default it to an empty
+    // dict here, matching the old behavior, unless a plugin set it.
+    let mut info_plist = inputs.extra_info_plist.clone();
+    info_plist
+        .entry("UILaunchScreen".to_string())
+        .or_insert_with(|| PlistValue::Dict(BTreeMap::new()));
+    v.insert("extra_info_plist_kvs", render_extra_info_plist(&info_plist));
     let pbx = render_pbxproj_op_placeholders(&inputs.pbxproj_ops);
     v.insert("extra_pbxproj_build_file_entries", pbx.build_file_entries);
     v.insert(
@@ -424,44 +428,7 @@ fn render_extra_info_plist(entries: &BTreeMap<String, PlistValue>) -> String {
     }
     let mut out = String::new();
     for (key, value) in entries {
-        match value {
-            PlistValue::String(s) => {
-                out.push_str(&format!(
-                    "\t<key>{}</key>\n\t<string>{}</string>\n",
-                    escape_xml(key),
-                    escape_xml(s),
-                ));
-            }
-            PlistValue::Boolean(b) => {
-                out.push_str(&format!(
-                    "\t<key>{}</key>\n\t<{}/>\n",
-                    escape_xml(key),
-                    if *b { "true" } else { "false" },
-                ));
-            }
-            PlistValue::Integer(i) => {
-                out.push_str(&format!(
-                    "\t<key>{}</key>\n\t<integer>{i}</integer>\n",
-                    escape_xml(key),
-                ));
-            }
-            PlistValue::Array(items) => {
-                // Only String-of-string arrays land in the rendered
-                // plist; mixed arrays are dropped (see docs above).
-                if !items.iter().all(|v| matches!(v, PlistValue::String(_))) {
-                    continue;
-                }
-                out.push_str(&format!("\t<key>{}</key>\n\t<array>\n", escape_xml(key)));
-                for item in items {
-                    if let PlistValue::String(s) = item {
-                        out.push_str(&format!("\t\t<string>{}</string>\n", escape_xml(s)));
-                    }
-                }
-                out.push_str("\t</array>\n");
-            }
-            // Real / Dict / unsupported variants → drop.
-            _ => {}
-        }
+        push_plist_kv(&mut out, key, value, 1);
     }
     // Strip the trailing newline so the template's own newline
     // before `</dict>` isn't doubled up.
@@ -469,6 +436,61 @@ fn render_extra_info_plist(entries: &BTreeMap<String, PlistValue>) -> String {
         out.pop();
     }
     out
+}
+
+/// Push a `<key>…</key>` + its rendered value at `level` tabs of indent.
+fn push_plist_kv(out: &mut String, key: &str, value: &PlistValue, level: usize) {
+    // Arrays/dicts we can't render (a mixed-type array) drop the whole
+    // key rather than emit a dangling `<key>`.
+    if let PlistValue::Array(items) = value {
+        if !items.iter().all(|v| matches!(v, PlistValue::String(_))) {
+            return;
+        }
+    }
+    let ind = "\t".repeat(level);
+    out.push_str(&format!("{ind}<key>{}</key>\n", escape_xml(key)));
+    push_plist_value(out, value, level);
+}
+
+/// Render a `PlistValue` at `level` tabs of indent. Nested (dict/array)
+/// values recurse. Mirrors the plist XML the CoreFoundation serializer
+/// accepts.
+fn push_plist_value(out: &mut String, value: &PlistValue, level: usize) {
+    let ind = "\t".repeat(level);
+    match value {
+        PlistValue::String(s) => {
+            out.push_str(&format!("{ind}<string>{}</string>\n", escape_xml(s)));
+        }
+        PlistValue::Boolean(b) => {
+            out.push_str(&format!("{ind}<{}/>\n", if *b { "true" } else { "false" }));
+        }
+        PlistValue::Integer(i) => {
+            out.push_str(&format!("{ind}<integer>{i}</integer>\n"));
+        }
+        PlistValue::Real(r) => {
+            out.push_str(&format!("{ind}<real>{r}</real>\n"));
+        }
+        PlistValue::Array(items) => {
+            // String-of-string arrays only (mixed arrays are dropped by
+            // `push_plist_kv` before we get here).
+            out.push_str(&format!("{ind}<array>\n"));
+            for item in items {
+                push_plist_value(out, item, level + 1);
+            }
+            out.push_str(&format!("{ind}</array>\n"));
+        }
+        PlistValue::Dict(map) => {
+            if map.is_empty() {
+                out.push_str(&format!("{ind}<dict/>\n"));
+            } else {
+                out.push_str(&format!("{ind}<dict>\n"));
+                for (k, v) in map {
+                    push_plist_kv(out, k, v, level + 1);
+                }
+                out.push_str(&format!("{ind}</dict>\n"));
+            }
+        }
+    }
 }
 
 fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
@@ -709,7 +731,7 @@ pub fn inputs_from_with_engine(
         // The renderer handles String, Boolean, Integer, and
         // Array<String> variants; existing `gen/ios/` trees
         // regenerate so the new placeholder rendering takes effect.
-        template_version: 14,
+        template_version: 15,
     })
 }
 
@@ -746,7 +768,7 @@ mod tests {
             extra_info_plist: BTreeMap::new(),
             extra_files: BTreeMap::new(),
             pbxproj_ops: Vec::new(),
-            template_version: 14,
+            template_version: 15,
         }
     }
 
