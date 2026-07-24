@@ -4552,6 +4552,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-status-bar"
+version = "0.9.2"
+dependencies = [
+ "anyhow",
+ "serde",
+ "whisker",
+ "whisker-plugin",
+]
+
+[[package]]
 name = "whisker-subsecond"
 version = "0.7.11"
 dependencies = [
