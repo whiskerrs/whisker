@@ -19,6 +19,14 @@ public final class WhiskerSvgView: WhiskerUI<WhiskerSvgDrawingView> {
     @objc public override func createView() -> WhiskerSvgDrawingView {
         let v = WhiskerSvgDrawingView()
         v.backgroundColor = .clear
+        // Repaint on bounds change instead of scaling cached content.
+        // Without this the default `.scaleToFill` scales whatever was
+        // drawn at the view's *first* layout — and if that first layout
+        // happened at zero size (the view was mounted inside a
+        // `display:none` Switch branch, which whisker-router mounts every
+        // branch as before toggling visibility), the cached content is
+        // empty and stays empty forever once the branch is shown. See #306.
+        v.contentMode = .redraw
         return v
     }
 
@@ -73,6 +81,16 @@ public final class WhiskerSvgDrawingView: UIView {
     /// light, white on dark" expectation).
     var tintColorOverride: UIColor = .label {
         didSet { setNeedsDisplay() }
+    }
+
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        // Force a repaint whenever the view is (re)laid out. Crucial for
+        // the display:none-branch case (#306): the view is first laid out
+        // at zero size, draws nothing, then gets its real bounds only when
+        // the branch becomes visible — at which point we must re-run
+        // `draw(_:)` at the new size rather than reuse the empty raster.
+        setNeedsDisplay()
     }
 
     public override func draw(_ rect: CGRect) {
