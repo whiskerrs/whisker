@@ -62,14 +62,51 @@ pub fn run(whisker_rs: &Path, crate_dir: &Path, crate_name: &str) -> Result<Conf
     let plugins = discover_plugins(&user_manifest, crate_name)
         .with_context(|| format!("discover Whisker CNG plugins for `{crate_name}`"))?;
 
+    // Carry over the user crate's own `[patch.crates-io]` table, if
+    // any — see `read_patch_crates_io_table`'s doc comment for why.
+    let patch_table = read_patch_crates_io_table(&user_manifest)?;
+
     let probe_dir = crate_dir.join("target/.whisker/config-probe");
-    write_probe_project(&probe_dir, whisker_rs, crate_name, &plugins)?;
+    write_probe_project(
+        &probe_dir,
+        whisker_rs,
+        crate_name,
+        &plugins,
+        patch_table.as_deref(),
+    )?;
     let json = run_cargo_probe(&probe_dir, crate_name)?;
     if let Some(parent) = cache.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
     }
     std::fs::write(&cache, &json).with_context(|| format!("write cache {}", cache.display()))?;
     serde_json::from_str(&json).with_context(|| "parse probe stdout as Config JSON")
+}
+
+/// The user crate's own `[patch.crates-io]` table, if any, re-rendered
+/// as a standalone TOML snippet ready to append to the probe's
+/// `Cargo.toml`.
+///
+/// Without this, an app that patches every `whisker-*` dependency to
+/// a local, unreleased checkout (the standard way to develop against
+/// whiskerrs/whisker HEAD ahead of a crates.io release — see e.g.
+/// `whisker_config_dep_spec`'s own in-workspace-vs-published split)
+/// would still resolve the probe's OWN `whisker-config` dependency
+/// from whatever's published, silently drifting behind the app's
+/// actual dependency graph and breaking on any `whisker.rs` API
+/// surface added since the last release.
+fn read_patch_crates_io_table(user_manifest: &Path) -> Result<Option<String>> {
+    let contents = std::fs::read_to_string(user_manifest)
+        .with_context(|| format!("read {}", user_manifest.display()))?;
+    let doc: toml::Value = contents
+        .parse()
+        .with_context(|| format!("parse {} as TOML", user_manifest.display()))?;
+    let Some(patch) = doc.get("patch") else {
+        return Ok(None);
+    };
+    let mut table = toml::value::Table::new();
+    table.insert("patch".to_string(), patch.clone());
+    let rendered = toml::to_string(&table).context("serialize [patch] table")?;
+    Ok(Some(rendered))
 }
 
 fn cache_is_fresh(cache: &Path, sources: &[&Path]) -> bool {
@@ -103,6 +140,7 @@ fn write_probe_project(
     whisker_rs: &Path,
     crate_name: &str,
     plugins: &[DiscoveredPlugin],
+    patch_table: Option<&str>,
 ) -> Result<()> {
     let src_dir = probe_dir.join("src");
     std::fs::create_dir_all(&src_dir).with_context(|| format!("mkdir {}", src_dir.display()))?;
@@ -129,8 +167,11 @@ path = "src/main.rs"
 # the parent workspace sets (rust-version, license, …) would have to
 # match here. Stand-alone keeps the probe immune to workspace churn.
 [workspace]
+
+{patch_table}
 "#,
         whisker_config_dep = whisker_config_dep_spec(),
+        patch_table = patch_table.unwrap_or_default(),
     );
     std::fs::write(probe_dir.join("Cargo.toml"), cargo_toml)
         .with_context(|| format!("write {}/Cargo.toml", probe_dir.display()))?;
