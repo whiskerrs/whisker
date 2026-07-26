@@ -30,7 +30,7 @@ let package = Package(
         .library(name: "WhiskerWebview", targets: ["WhiskerWebview"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.3"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.4"),
     ],
     targets: [
         .target(

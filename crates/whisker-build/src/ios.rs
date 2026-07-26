@@ -49,7 +49,7 @@ use std::process::Command;
 /// Keep in lockstep with the `Package.swift` at the repo root and the
 /// `v<version>` git tag published for SwiftPM to resolve.
 pub const WHISKER_IOS_SPM_URL: &str = "https://github.com/whiskerrs/whisker.git";
-pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.3";
+pub const WHISKER_IOS_SPM_VERSION: &str = "0.1.4";
 
 use crate::capture::{CaptureShims, capture_env_vars_for_triple};
 
@@ -668,6 +668,37 @@ fn crate_to_spm_target(crate_name: &str) -> String {
     out
 }
 
+/// iOS floor for the aggregator when no module asks for more.
+const DEFAULT_IOS_PLATFORM_MAJOR: u32 = 13;
+
+/// `.iOS(.v15)` → `15`, read from the `platforms:` list. `None` for a
+/// manifest that declares no iOS floor or spells it some other way
+/// (e.g. the `.iOS("16.4")` string form) — such a module just doesn't
+/// raise the aggregator's floor.
+fn parse_ios_platform_major(manifest: &str) -> Option<u32> {
+    const NEEDLE: &str = ".iOS(.v";
+    let rest = &manifest[manifest.find(NEEDLE)? + NEEDLE.len()..];
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// The aggregator's iOS floor: the highest any module package declares.
+///
+/// SwiftPM refuses to resolve a dependency whose minimum platform is
+/// higher than its consumer's, so pinning one version here caps what a
+/// module may require — `whisker-revenuecat` needs iOS 15 (RevenueCatUI's
+/// Customer Center) and could never resolve against a hardcoded `.v13`.
+/// Reading it back off the modules keeps that a module-local decision.
+fn ios_platform_major(modules: &[&crate::modules::ResolvedModule]) -> u32 {
+    modules
+        .iter()
+        .filter_map(|m| std::fs::read_to_string(m.manifest_dir.join("Package.swift")).ok())
+        .filter_map(|manifest| parse_ios_platform_major(&manifest))
+        .chain(std::iter::once(DEFAULT_IOS_PLATFORM_MAJOR))
+        .max()
+        .unwrap_or(DEFAULT_IOS_PLATFORM_MAJOR)
+}
+
 /// Render `Package.swift` for the generated `WhiskerModules`
 /// aggregator. Depends on `WhiskerRuntime` + each discovered
 /// module package via local-path SwiftPM dependency.
@@ -693,7 +724,10 @@ fn render_modules_package_swift(modules: &[&crate::modules::ResolvedModule]) -> 
     out.push_str("import PackageDescription\n\n");
     out.push_str("let package = Package(\n");
     out.push_str("    name: \"WhiskerModules\",\n");
-    out.push_str("    platforms: [.iOS(.v13)],\n");
+    out.push_str(&format!(
+        "    platforms: [.iOS(.v{})],\n",
+        ios_platform_major(modules)
+    ));
     out.push_str("    products: [\n");
     out.push_str("        .library(name: \"WhiskerModules\", targets: [\"WhiskerModules\"]),\n");
     out.push_str("    ],\n");
@@ -1111,5 +1145,21 @@ mod tests {
         let err = run_xcodebuild_app(&args).unwrap_err();
         assert!(err.to_string().contains("unknown SDK"), "got: {err:#}");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn ios_platform_major_reads_the_declared_floor() {
+        assert_eq!(
+            parse_ios_platform_major("    platforms: [.iOS(.v15), .macOS(.v13)],"),
+            Some(15)
+        );
+    }
+
+    #[test]
+    fn ios_platform_major_ignores_a_manifest_without_an_ios_floor() {
+        assert_eq!(
+            parse_ios_platform_major("    platforms: [.macOS(.v13)],"),
+            None
+        );
     }
 }
