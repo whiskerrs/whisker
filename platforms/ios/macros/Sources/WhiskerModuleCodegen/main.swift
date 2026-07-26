@@ -213,6 +213,7 @@ func render(
     for hit in sortedDSLModules {
         let instance = "_whiskerDSLInstance_\(hit.className)"
         let shim = "_whiskerDSLDispatch_\(hit.className)"
+        let asyncShim = "_whiskerDSLDispatchAsync_\(hit.className)"
         out += """
                 do {
                     let module = \(instance)
@@ -234,6 +235,10 @@ func render(
                             // same-named function-only modules — matches
                             // the Rust `module!("Name")` prefix.
                             whisker_bridge_register_module_dispatch(qname, \(shim))
+                            // Async parallel: consulted first by
+                            // `invoke_async`, falls back to the sync
+                            // dispatch above for non-async methods.
+                            whisker_bridge_register_module_dispatch_async(qname, \(asyncShim))
                         }
                     }
                 }
@@ -256,6 +261,7 @@ func render(
     for hit in sortedDSLModules {
         let instance = "_whiskerDSLInstance_\(hit.className)"
         let shim = "_whiskerDSLDispatch_\(hit.className)"
+        let asyncShim = "_whiskerDSLDispatchAsync_\(hit.className)"
         out += """
             // Top-level instance + C-ABI dispatch shim for the DSL
             // module `\(hit.className)`. The `let` is lazily
@@ -269,6 +275,22 @@ func render(
                 _ argCount: Int
             ) -> WhiskerValueRaw {
                 return \(instance).dispatchModuleFunctionRaw(methodName, argsPtr, argCount)
+            }
+
+            // Async C-ABI shim (matches `WhiskerModuleAsyncDispatchFn`).
+            // Returns true if `\(hit.className)` has an `AsyncFunction`
+            // with the given name (it then owns `callback`); false lets
+            // the bridge sync-forward.
+            @_cdecl("\(asyncShim)")
+            public func \(asyncShim)(
+                _ methodName: UnsafePointer<CChar>?,
+                _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
+                _ argCount: Int,
+                _ callback: WhiskerModuleCallback?,
+                _ userData: UnsafeMutableRawPointer?
+            ) -> Bool {
+                return \(instance).dispatchModuleFunctionRawAsync(
+                    methodName, argsPtr, argCount, callback, userData)
             }
 
         """

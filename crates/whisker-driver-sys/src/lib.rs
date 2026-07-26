@@ -240,6 +240,19 @@ pub type WhiskerModuleDispatchFn = extern "C" fn(
     arg_count: usize,
 ) -> WhiskerValueRaw;
 
+/// Async per-module dispatch — the async parallel of
+/// [`WhiskerModuleDispatchFn`]. Takes the completion `callback` +
+/// `user_data` and returns `true` if it owns the method (will fire the
+/// callback later), `false` to let the bridge fall back to the sync
+/// dispatch. See `whisker_bridge.h`.
+pub type WhiskerModuleAsyncDispatchFn = extern "C" fn(
+    method_name: *const c_char,
+    args: *const WhiskerValueRaw,
+    arg_count: usize,
+    callback: WhiskerModuleCallback,
+    user_data: *mut c_void,
+) -> bool;
+
 unsafe extern "C" {
     pub fn whisker_bridge_engine_attach(lynx_view_ptr: *mut c_void) -> *mut WhiskerEngine;
     pub fn whisker_bridge_engine_release(engine: *mut WhiskerEngine);
@@ -422,6 +435,15 @@ unsafe extern "C" {
     pub fn whisker_bridge_register_module_dispatch(
         module_name: *const c_char,
         dispatch: WhiskerModuleDispatchFn,
+    );
+
+    /// Register an ASYNC dispatch function for `module_name` — the
+    /// parallel of [`whisker_bridge_register_module_dispatch`], consulted
+    /// first by [`whisker_bridge_invoke_module_async`]. Emitted by the
+    /// platform codegen when a module declares any `AsyncFunction`.
+    pub fn whisker_bridge_register_module_dispatch_async(
+        module_name: *const c_char,
+        dispatch: WhiskerModuleAsyncDispatchFn,
     );
 
     // ------------------------------------------------------------------

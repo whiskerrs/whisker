@@ -381,6 +381,26 @@ WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_module_async(
     WhiskerModuleCallback callback,
     void* user_data);
 
+// Per-module ASYNC dispatch function — the async parallel of
+// `WhiskerModuleDispatchFn`. Emitted by the codegen for a module that
+// declares any `AsyncFunction`. Takes the completion `callback` +
+// `user_data` and invokes `callback(user_data, &result)` exactly once
+// (inline or later, after resolving the module's `Promise`). Returns true
+// if it owns the method; false lets the bridge fall back to the sync path.
+typedef bool (*WhiskerModuleAsyncDispatchFn)(
+    const char* method_name,
+    const WhiskerValueRaw* args,
+    size_t arg_count,
+    WhiskerModuleCallback callback,
+    void* user_data);
+
+// Register `dispatch` as the per-method ASYNC router for `module_name`.
+// Parallel to `whisker_bridge_register_module_dispatch`; consulted first
+// by `whisker_bridge_invoke_module_async`. Last-write-wins; NULL unregisters.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_register_module_dispatch_async(
+    const char* module_name,
+    WhiskerModuleAsyncDispatchFn dispatch);
+
 // ============================================================================
 // Module event subscription (Phase L-2c)
 // ============================================================================

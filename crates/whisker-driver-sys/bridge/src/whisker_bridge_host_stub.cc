@@ -36,6 +36,10 @@ std::unordered_map<std::string, WhiskerModuleDispatchFn>& ModuleRegistry() {
     static std::unordered_map<std::string, WhiskerModuleDispatchFn> m;
     return m;
 }
+std::unordered_map<std::string, WhiskerModuleAsyncDispatchFn>& AsyncModuleRegistry() {
+    static std::unordered_map<std::string, WhiskerModuleAsyncDispatchFn> m;
+    return m;
+}
 
 WhiskerValueRaw MakeHostStubError(const char* message) {
     WhiskerValueRaw v;
@@ -62,6 +66,18 @@ extern "C" void whisker_bridge_register_module_dispatch(
         ModuleRegistry().erase(module_name);
     } else {
         ModuleRegistry()[module_name] = dispatch;
+    }
+}
+
+extern "C" void whisker_bridge_register_module_dispatch_async(
+    const char* module_name,
+    WhiskerModuleAsyncDispatchFn dispatch) {
+    if (module_name == nullptr) return;
+    std::lock_guard<std::mutex> g(ModuleRegistryMutex());
+    if (dispatch == nullptr) {
+        AsyncModuleRegistry().erase(module_name);
+    } else {
+        AsyncModuleRegistry()[module_name] = dispatch;
     }
 }
 
@@ -138,6 +154,23 @@ extern "C" bool whisker_bridge_invoke_module_async(
     WhiskerModuleCallback callback,
     void* user_data) {
     if (callback == nullptr) return false;
+    // Prefer a registered async dispatch (owns the callback, resolves
+    // later); else sync-forward. Mirrors the iOS/Android common bridge so
+    // host cargo tests exercise the same routing.
+    if (module_name != nullptr && method_name != nullptr) {
+        WhiskerModuleAsyncDispatchFn afn = nullptr;
+        {
+            std::lock_guard<std::mutex> g(ModuleRegistryMutex());
+            auto it = AsyncModuleRegistry().find(module_name);
+            if (it != AsyncModuleRegistry().end()) {
+                afn = it->second;
+            }
+        }
+        if (afn != nullptr &&
+            afn(method_name, args, arg_count, callback, user_data)) {
+            return true;
+        }
+    }
     WhiskerValueRaw result = whisker_bridge_invoke_module(
         module_name, method_name, args, arg_count);
     callback(user_data, &result);

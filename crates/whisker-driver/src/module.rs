@@ -728,4 +728,138 @@ mod tests {
         assert_eq!(WhiskerValue::Null.as_error(), None);
         assert_eq!(WhiskerValue::Int(5).as_error(), None);
     }
+
+    // ---- async dispatch routing (C bridge; host_stub in cargo test) ------
+    //
+    // These exercise `whisker_bridge_invoke_module_async`'s new routing:
+    // prefer a registered async dispatch (which owns the callback and may
+    // resolve later), and fall back to sync-forward otherwise.
+
+    use std::os::raw::c_char;
+    use std::sync::mpsc;
+
+    /// Test callback: `user_data` is a `*const mpsc::Sender<WhiskerValue>`;
+    /// decode the borrowed result and send it out.
+    extern "C" fn capture_cb(user_data: *mut c_void, result: *const ffi::WhiskerValueRaw) {
+        let tx = unsafe { &*(user_data as *const mpsc::Sender<WhiskerValue>) };
+        let v = unsafe { from_raw(&*result) };
+        let _ = tx.send(v);
+    }
+
+    /// Async dispatch that owns the method and resolves inline with 42.
+    extern "C" fn async_int42_inline(
+        _m: *const c_char,
+        _a: *const ffi::WhiskerValueRaw,
+        _c: usize,
+        cb: ffi::WhiskerModuleCallback,
+        ud: *mut c_void,
+    ) -> bool {
+        let mut b = RawBuilder::default();
+        let raw = b.encode(&WhiskerValue::Int(42));
+        cb(ud, &raw); // result borrowed only for this call
+        drop(b);
+        true
+    }
+
+    /// Async dispatch that resolves LATER, from another thread, with 7.
+    extern "C" fn async_int7_deferred(
+        _m: *const c_char,
+        _a: *const ffi::WhiskerValueRaw,
+        _c: usize,
+        cb: ffi::WhiskerModuleCallback,
+        ud: *mut c_void,
+    ) -> bool {
+        let ud = ud as usize; // raw ptr isn't Send; carry as usize
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let mut b = RawBuilder::default();
+            let raw = b.encode(&WhiskerValue::Int(7));
+            cb(ud as *mut c_void, &raw);
+            drop(b);
+        });
+        true
+    }
+
+    /// Async dispatch that disowns every method (→ bridge falls back).
+    extern "C" fn async_disown(
+        _m: *const c_char,
+        _a: *const ffi::WhiskerValueRaw,
+        _c: usize,
+        _cb: ffi::WhiskerModuleCallback,
+        _ud: *mut c_void,
+    ) -> bool {
+        false
+    }
+
+    /// Sync dispatch returning scalar 99 (no heap alloc → release no-op).
+    extern "C" fn sync_int99(
+        _m: *const c_char,
+        _a: *const ffi::WhiskerValueRaw,
+        _c: usize,
+    ) -> ffi::WhiskerValueRaw {
+        let mut raw: ffi::WhiskerValueRaw = unsafe { std::mem::zeroed() };
+        raw.type_ = ffi::WhiskerValueType::Int as u8;
+        raw.v.i = 99;
+        raw
+    }
+
+    fn call_async(module: &str, method: &str) -> WhiskerValue {
+        let (tx, rx) = mpsc::channel::<WhiskerValue>();
+        let module_c = CString::new(module).unwrap();
+        let method_c = CString::new(method).unwrap();
+        let ok = unsafe {
+            ffi::whisker_bridge_invoke_module_async(
+                module_c.as_ptr(),
+                method_c.as_ptr(),
+                std::ptr::null(),
+                0,
+                capture_cb,
+                &tx as *const _ as *mut c_void,
+            )
+        };
+        assert!(ok, "bridge accepted the async dispatch");
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .expect("async callback fired")
+    }
+
+    #[test]
+    fn async_dispatch_is_preferred_and_resolves_inline() {
+        let m = "test:async-inline";
+        let mc = CString::new(m).unwrap();
+        unsafe {
+            ffi::whisker_bridge_register_module_dispatch_async(mc.as_ptr(), async_int42_inline)
+        };
+        assert_eq!(call_async(m, "anything"), WhiskerValue::Int(42));
+    }
+
+    #[test]
+    fn async_dispatch_can_resolve_later_from_another_thread() {
+        let m = "test:async-deferred";
+        let mc = CString::new(m).unwrap();
+        unsafe {
+            ffi::whisker_bridge_register_module_dispatch_async(mc.as_ptr(), async_int7_deferred)
+        };
+        assert_eq!(call_async(m, "later"), WhiskerValue::Int(7));
+    }
+
+    #[test]
+    fn invoke_async_falls_back_to_sync_when_no_async_dispatch() {
+        let m = "test:sync-only";
+        let mc = CString::new(m).unwrap();
+        unsafe { ffi::whisker_bridge_register_module_dispatch(mc.as_ptr(), sync_int99) };
+        // No async dispatch registered → invoke_async sync-forwards.
+        assert_eq!(call_async(m, "m"), WhiskerValue::Int(99));
+    }
+
+    #[test]
+    fn invoke_async_falls_back_when_async_dispatch_disowns() {
+        let m = "test:async-disowns";
+        let mc = CString::new(m).unwrap();
+        unsafe {
+            ffi::whisker_bridge_register_module_dispatch(mc.as_ptr(), sync_int99);
+            ffi::whisker_bridge_register_module_dispatch_async(mc.as_ptr(), async_disown);
+        }
+        // Async dispatch returns false → bridge falls back to sync (99).
+        assert_eq!(call_async(m, "m"), WhiskerValue::Int(99));
+    }
 }

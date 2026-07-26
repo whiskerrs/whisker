@@ -111,6 +111,21 @@ public data class WhiskerFunctionComponent(
 ) : WhiskerDefinitionComponent
 
 /**
+ * Type-erased ASYNC function handler. Like [WhiskerFunctionHandlerFn]
+ * but instead of returning a value it resolves the given [promise] —
+ * now or later, e.g. from a purchase / network completion. `view` is
+ * `null` for module-level `AsyncFunction`s. Mirrors Expo's
+ * `AsyncFunction` + `Promise` (callback-resolved form).
+ */
+public typealias WhiskerAsyncFunctionHandlerFn =
+    (view: Any?, args: List<WhiskerValue>, promise: WhiskerPromise) -> Unit
+
+public data class WhiskerAsyncFunctionComponent(
+    public val name: String,
+    public val handler: WhiskerAsyncFunctionHandlerFn,
+) : WhiskerDefinitionComponent
+
+/**
  * `Events("a", "b", ...)` — declare event names this module emits.
  * Metadata only; dispatch goes through
  * [Module.sendEvent], which fans the payload out to every Rust
@@ -237,6 +252,18 @@ public class WhiskerModuleDefinitionBuilder {
         handler: (args: List<WhiskerValue>) -> WhiskerValue,
     ): WhiskerDefinitionComponent =
         WhiskerFunctionComponent(name) { _, args -> handler(args) }.also { components.add(it) }
+
+    /**
+     * `AsyncFunction("getOfferings") { args, promise -> ...; promise.resolve(x) }`
+     * — module-level async function. The author resolves/rejects the
+     * [promise], now or from a completion callback.
+     */
+    public fun AsyncFunction(
+        name: String,
+        handler: (args: List<WhiskerValue>, promise: WhiskerPromise) -> Unit,
+    ): WhiskerDefinitionComponent =
+        WhiskerAsyncFunctionComponent(name) { _, args, promise -> handler(args, promise) }
+            .also { components.add(it) }
 }
 
 /**
@@ -283,6 +310,16 @@ public class WhiskerViewDefinitionBuilder {
             @Suppress("UNCHECKED_CAST")
             handler(viewAny as V, args)
         }.also { components.add(it) }
+
+    /** View-bound `AsyncFunction` — view + raw args + a [WhiskerPromise]. */
+    public fun <V : Any> AsyncFunction(
+        name: String,
+        handler: (view: V, args: List<WhiskerValue>, promise: WhiskerPromise) -> Unit,
+    ): WhiskerDefinitionComponent =
+        WhiskerAsyncFunctionComponent(name) { viewAny, args, promise ->
+            @Suppress("UNCHECKED_CAST")
+            handler(viewAny as V, args, promise)
+        }.also { components.add(it) }
 }
 
 // ----- ModuleDefinition value -----------------------------------------------
@@ -313,6 +350,10 @@ public data class ModuleDefinition(public val components: List<WhiskerDefinition
     /** Module-level (view-less) [Function] declarations. */
     public val functions: List<WhiskerFunctionComponent>
         get() = components.filterIsInstance<WhiskerFunctionComponent>()
+
+    /** Module-level (view-less) [AsyncFunction] declarations. */
+    public val asyncFunctions: List<WhiskerAsyncFunctionComponent>
+        get() = components.filterIsInstance<WhiskerAsyncFunctionComponent>()
 
     /** Module-level [OnStartObserving] hooks. */
     public val onStartObservingHooks: List<WhiskerOnStartObservingComponent>

@@ -7,6 +7,14 @@ import java.util.concurrent.ConcurrentHashMap
 /// Kotlin disallows nested `typealias` declarations.
 public typealias WhiskerModuleDispatchFn = (String, Array<WhiskerValue>) -> WhiskerValue
 
+/// Signature of a module's ASYNC dispatch closure. Given a method,
+/// its args, and a [WhiskerPromise] to resolve. Returns true if an
+/// `AsyncFunction` with that name exists (it was invoked and owns the
+/// promise); false if not — the C bridge then falls back to the sync
+/// dispatch.
+public typealias WhiskerModuleAsyncDispatchFn =
+    (String, Array<WhiskerValue>, WhiskerPromise) -> Boolean
+
 /**
  * Whisker native-module dispatch registry — Kotlin side.
  *
@@ -29,6 +37,7 @@ public typealias WhiskerModuleDispatchFn = (String, Array<WhiskerValue>) -> Whis
  */
 public object WhiskerModuleRegistry {
     private val dispatchers = ConcurrentHashMap<String, WhiskerModuleDispatchFn>()
+    private val asyncDispatchers = ConcurrentHashMap<String, WhiskerModuleAsyncDispatchFn>()
 
     /**
      * Register a dispatch closure under [name]. Subsequent
@@ -42,6 +51,13 @@ public object WhiskerModuleRegistry {
     @JvmStatic
     public fun registerDispatch(name: String, dispatch: WhiskerModuleDispatchFn) {
         dispatchers[name] = dispatch
+    }
+
+    /** Register the ASYNC dispatch closure for [name]. Parallel to
+     *  [registerDispatch]; consulted first by [invokeDispatchAsync]. */
+    @JvmStatic
+    public fun registerDispatchAsync(name: String, dispatch: WhiskerModuleAsyncDispatchFn) {
+        asyncDispatchers[name] = dispatch
     }
 
     /**
@@ -69,4 +85,43 @@ public object WhiskerModuleRegistry {
             WhiskerValue.Err("module $moduleName.$method threw: ${t.message ?: t.javaClass.simpleName}")
         }
     }
+
+    /**
+     * Async parallel of [invokeDispatch], called from the C bridge's
+     * `whisker_bridge_invoke_module_async`. Constructs a [WhiskerPromise]
+     * wrapping the bridge callback (passed as raw pointers) and hands it
+     * to the module's async dispatcher.
+     *
+     * Returns true if an async dispatcher owned the method (it will fire
+     * the callback later, via [nativeResolveAsync]); false if not — the C
+     * side then falls back to the sync path, so it must NOT have touched
+     * the callback.
+     */
+    @JvmStatic
+    public fun invokeDispatchAsync(
+        moduleName: String,
+        method: String,
+        args: Array<WhiskerValue>,
+        callbackPtr: Long,
+        userDataPtr: Long,
+    ): Boolean {
+        val fn = asyncDispatchers[moduleName] ?: return false
+        val promise = WhiskerPromise(callbackPtr, userDataPtr)
+        return try {
+            fn(method, args, promise)
+        } catch (t: Throwable) {
+            // An async method existed but threw before/at invocation:
+            // reject (resolving the awaiting future) and report as owned.
+            promise.reject("module $moduleName.$method threw: ${t.message ?: t.javaClass.simpleName}")
+            true
+        }
+    }
+
+    /**
+     * JNI: invoke the C bridge callback `callbackPtr(userDataPtr, value)`
+     * exactly once, from [WhiskerPromise.resolve]/`reject`. Implemented in
+     * `whisker_bridge_android.cc`.
+     */
+    @JvmStatic
+    public external fun nativeResolveAsync(callbackPtr: Long, userDataPtr: Long, value: WhiskerValue)
 }
