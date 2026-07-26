@@ -73,6 +73,16 @@ class WhiskerSvgDrawingView(context: Context) : View(context) {
     var tintArgb: Int = 0xFF000000.toInt()
         set(v) { field = v; invalidate() }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // Repaint when the view gets its real size after being laid out at
+        // 0×0 — e.g. mounted inside a `display:none` Switch branch (which
+        // whisker-router mounts every branch as before toggling visibility)
+        // and only sized once the branch is shown. Without this the glyph
+        // set while hidden is never painted at the real size. See #306.
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val bytes = displayListBytes ?: return

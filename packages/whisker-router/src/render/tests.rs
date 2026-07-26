@@ -1428,10 +1428,25 @@ mod replace_repro {
         next_id: u32,
         children: HashMap<Element, Vec<Element>>,
         attrs: HashMap<Element, BTreeMap<String, String>>,
+        /// Last `display` value set on each element (for #306 — asserting
+        /// which Switch branch wrappers are hidden and when).
+        display: HashMap<Element, String>,
         ops: Vec<String>,
         /// A positioned insert whose reference wasn't a live child — the
         /// on-device silent drop. Non-empty = the bug is reproduced.
         violations: Vec<String>,
+    }
+
+    /// Pull the `display` value out of an inline-style string, if present.
+    fn parse_display(css: &str) -> Option<String> {
+        for decl in css.split(';') {
+            let mut it = decl.splitn(2, ':');
+            let k = it.next()?.trim();
+            if k == "display" {
+                return it.next().map(|v| v.trim().to_string());
+            }
+        }
+        None
     }
 
     #[derive(Clone, Default)]
@@ -1475,6 +1490,32 @@ mod replace_repro {
                 .filter(|(_, a)| a.get("cid").map(String::as_str) == Some(id))
                 .count()
         }
+        /// The `display` values recorded along the path `root..=el`, or
+        /// `None` if `el` isn't reachable from `root`. Used to assert
+        /// whether a leaf mounted under a `display:none` ancestor (#306).
+        fn path_displays(&self, root: Element, el: Element) -> Option<Vec<Option<String>>> {
+            let inner = self.0.borrow();
+            fn dfs(inner: &Inner, node: Element, target: Element, acc: &mut Vec<Element>) -> bool {
+                acc.push(node);
+                if node == target {
+                    return true;
+                }
+                if let Some(kids) = inner.children.get(&node) {
+                    for k in kids {
+                        if dfs(inner, *k, target, acc) {
+                            return true;
+                        }
+                    }
+                }
+                acc.pop();
+                false
+            }
+            let mut path = Vec::new();
+            if !dfs(&inner, root, el, &mut path) {
+                return None;
+            }
+            Some(path.iter().map(|e| inner.display.get(e).cloned()).collect())
+        }
     }
 
     impl DynRenderer for Rec {
@@ -1493,14 +1534,27 @@ mod replace_repro {
             inner.attrs.remove(&handle);
         }
         fn set_attribute(&self, handle: Element, key: &str, value: &str) {
-            self.0
-                .borrow_mut()
+            let mut inner = self.0.borrow_mut();
+            inner
+                .ops
+                .push(format!("attr {} {}={}", handle.id(), key, value));
+            inner
                 .attrs
                 .entry(handle)
                 .or_default()
                 .insert(key.to_string(), value.to_string());
         }
-        fn set_inline_styles(&self, _handle: Element, _css: &str) {}
+        fn set_inline_styles(&self, handle: Element, css: &str) {
+            // Record `display` transitions so tests can assert Switch
+            // branch visibility + mount ordering (#306).
+            if let Some(d) = parse_display(css) {
+                let mut inner = self.0.borrow_mut();
+                inner
+                    .ops
+                    .push(format!("style {} display={}", handle.id(), d));
+                inner.display.insert(handle, d);
+            }
+        }
         fn append_child(&self, parent: Element, child: Element) {
             let mut inner = self.0.borrow_mut();
             inner
@@ -1673,6 +1727,107 @@ mod replace_repro {
                     rec.count_cid("1"),
                     1,
                     "the outgoing under-wrapper stays frozen on detail/1 until disposed"
+                );
+            });
+        });
+    }
+
+    /// Two-tab `Switch`; the NON-first branch's leaf renders a
+    /// `create_element_by_name` element (standing in for a
+    /// `module_component` / `whisker-svg` `SvgRenderer`, i.e. what
+    /// `whisker-icons::Icon` mounts), tagged `cid=native-b` and given a
+    /// `display-list` attr (a stand-in for the native prop).
+    fn switch_with_native_second_branch() -> RouterHandle {
+        let tree = CompiledTree::new(RouteTree::switch(
+            SwitchDef::new("tabs", 0),
+            vec![
+                RouteTree::stack(vec![RouteTree::route("", "a")]),
+                RouteTree::stack(vec![RouteTree::route("b", "b")]),
+            ],
+        ));
+        let mk_a = move |_: &RouteInstance| {
+            let el = whisker::runtime::view::create_element(ElementTag::View);
+            whisker::runtime::view::set_attribute(el, "cid", "native-a");
+            el
+        };
+        let mk_b = move |_: &RouteInstance| {
+            // A named (module_component) element, like `whisker-svg:Svg`.
+            let el = whisker::runtime::view::create_element_by_name("whisker-svg:Svg");
+            whisker::runtime::view::set_attribute(el, "cid", "native-b");
+            // The prop the native view needs to paint — dispatched here,
+            // at mount, exactly as `apply_attr` does for a real Svg.
+            whisker::runtime::view::set_attribute(el, "display-list", "AAAA");
+            el
+        };
+        let registry = RouteRegistry::new().route("a", mk_a).route("b", mk_b);
+        RouterHandle::new((tree, registry))
+    }
+
+    /// #306: a `module_component` (native) leaf in a Switch branch OTHER
+    /// than the first-declared one is eager-mounted — and has its props
+    /// dispatched — while its branch wrapper is `display: none`, because
+    /// `mount_switch` sets the wrapper hidden BEFORE mounting descendants
+    /// and only the default-selected (first) branch is flipped visible.
+    ///
+    /// This locks in the two facts that place the historical blank-icon
+    /// bug in the NATIVE layer, not here: (1) the Rust side DOES create the
+    /// element and dispatch its props at mount (so the element exists and
+    /// is attributed), and (2) it does so under a `display:none` ancestor
+    /// (so a native view that only paints once, at its first — zero-size —
+    /// layout, renders blank until it repaints on the later resize; fixed
+    /// in `whisker-svg` via `contentMode = .redraw` / `onSizeChanged`).
+    #[test]
+    fn nonfirst_switch_branch_native_leaf_mounts_hidden_with_props() {
+        with_runtime(|| {
+            let rec = Rec::default();
+            with_installed_renderer(Box::new(rec.clone()), || {
+                let h = switch_with_native_second_branch();
+                let root = mount_node(&h, NodePath::root());
+                flush();
+
+                // (1) The non-first branch's native leaf is created AND
+                // attributed at mount — props are dispatched, Rust-side.
+                let native_b = rec
+                    .by_cid("native-b")
+                    .expect("non-first branch's native leaf must be created at mount");
+                {
+                    let inner = rec.0.borrow();
+                    let attrs = inner.attrs.get(&native_b).expect("has attrs");
+                    assert_eq!(
+                        attrs.get("display-list").map(String::as_str),
+                        Some("AAAA"),
+                        "the native leaf's prop must be dispatched at mount, even hidden"
+                    );
+                }
+                assert!(
+                    rec.reachable(root, native_b),
+                    "native leaf must be attached to the real tree"
+                );
+
+                // (2) …but it mounted under a `display: none` ancestor (its
+                // branch wrapper), i.e. at zero size.
+                let displays = rec
+                    .path_displays(root, native_b)
+                    .expect("native leaf reachable from root");
+                assert!(
+                    displays.iter().any(|d| d.as_deref() == Some("none")),
+                    "non-first branch's leaf must mount under a display:none wrapper\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
+                );
+
+                // After selecting the branch, its wrapper flips visible —
+                // nothing on the path to the leaf stays hidden. (A native
+                // view must repaint on this 0→real resize; that's the
+                // whisker-svg fix, not observable through this renderer.)
+                h.select("/b").unwrap();
+                flush();
+                let displays = rec
+                    .path_displays(root, native_b)
+                    .expect("native leaf still reachable after select");
+                assert!(
+                    displays.iter().all(|d| d.as_deref() != Some("none")),
+                    "after selecting branch b, no ancestor of its leaf stays display:none\nops:\n{}",
+                    rec.0.borrow().ops.join("\n")
                 );
             });
         });
