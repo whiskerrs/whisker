@@ -321,42 +321,58 @@ fn build_engine_with_discovered_plugins(
     Ok(engine)
 }
 
-/// Run a single `cargo build` that builds every discovered
-/// plugin's `[[bin]]` target. We use the workspace's existing
-/// `target/debug` so subsequent runs are no-op when the plugin
-/// crates haven't changed (cargo's own incremental cache).
+/// Build every discovered plugin's `[[bin]]` target, one `cargo
+/// build` per plugin. We use the workspace's existing `target/debug`
+/// so subsequent runs are no-op when a plugin crate hasn't changed
+/// (cargo's own incremental cache).
+///
+/// One invocation per plugin, not a single batched `-p A -p B --bin
+/// X --bin Y` command: cargo's package-id-spec resolution for a
+/// bare-name `-p` spec only reliably searches the *current* build's
+/// package selection, and mixing a workspace member (e.g. an app's
+/// own local module crate) with a non-member patched path dependency
+/// (e.g. `whisker-router`) in one `-p`/`-p` invocation intermittently
+/// fails with "package ID specification `<name>` did not match any
+/// packages" even though each package resolves fine on its own
+/// (confirmed via `cargo pkgid`). Building separately sidesteps the
+/// ambiguity entirely and gives cleaner per-plugin error attribution
+/// as a side benefit.
 ///
 /// Output streams through the curated `Step::pipe` machinery so the
 /// cargo progress (`    Compiling …` / `    Finished …` lines) folds
-/// into a single spinner row instead of leaking unfiltered ahead of
-/// the dev loop's `── whisker run ──` section header — and, with
-/// the TUI on, ahead of the inline status bar where stray
+/// into a single spinner row per plugin instead of leaking unfiltered
+/// ahead of the dev loop's `── whisker run ──` section header — and,
+/// with the TUI on, ahead of the inline status bar where stray
 /// `eprintln!`s race the viewport redraw.
 fn build_discovered_plugins(workspace_root: &Path, discovered: &[DiscoveredPlugin]) -> Result<()> {
-    let bins: Vec<&str> = discovered
-        .iter()
-        .map(|p| p.bin_target_name.as_str())
-        .collect();
-    let step = whisker_build::ui::step("compile", format!("plugins ({})", bins.join(", ")));
-    let mut cmd = Command::new("cargo");
-    cmd.arg("build").current_dir(workspace_root);
     for plugin in discovered {
-        cmd.arg("--bin")
+        let step = whisker_build::ui::step("compile", format!("plugin ({})", plugin.name));
+        let mut cmd = Command::new("cargo");
+        cmd.arg("build")
+            .arg("--bin")
             .arg(&plugin.bin_target_name)
             .arg("--package")
-            .arg(&plugin.source_crate);
+            .arg(&plugin.source_crate)
+            .current_dir(workspace_root);
+        let status = step.pipe(&mut cmd).with_context(|| {
+            format!(
+                "spawn `cargo build` for discovered Whisker CNG plugin `{}`",
+                plugin.name,
+            )
+        })?;
+        if !status.success() {
+            step.fail(format!("{status}"));
+            return Err(anyhow!(
+                "`cargo build` for discovered Whisker CNG plugin `{}` (crate `{}`) exited with \
+                 {status}. Re-run with `RUST_BACKTRACE=1 cargo build --bin {} --package {}` to \
+                 see the underlying compile error.",
+                plugin.name,
+                plugin.source_crate,
+                plugin.bin_target_name,
+                plugin.source_crate,
+            ));
+        }
+        step.done("");
     }
-    let status = step
-        .pipe(&mut cmd)
-        .with_context(|| "spawn `cargo build` for discovered Whisker CNG plugin binaries")?;
-    if !status.success() {
-        step.fail(format!("{status}"));
-        return Err(anyhow!(
-            "`cargo build` for discovered Whisker CNG plugin binaries exited with {status}. \
-             Re-run with `RUST_BACKTRACE=1 cargo build --bin <bin> --package <crate>` to see \
-             the underlying compile error."
-        ));
-    }
-    step.done("");
     Ok(())
 }
