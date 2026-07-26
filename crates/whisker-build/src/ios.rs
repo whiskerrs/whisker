@@ -95,6 +95,11 @@ const BRIDGE_EXPORTS: &[&str] = &[
     // previous `_OBJC_CLASS_$_WhiskerModuleRegistry` export (the
     // Obj-C class is gone — pure C function pointer table now).
     "_whisker_bridge_register_module_dispatch",
+    // The `AsyncFunction` half of the same table. The codegen plugin
+    // emits a call to this in EVERY module's register fn — including
+    // modules that declare no async function — so leaving it out fails
+    // the link for any app with any module at all, not just async ones.
+    "_whisker_bridge_register_module_dispatch_async",
     // whisker-module event system (Phase L-2c). `add/remove_event_listener`
     // is consumed by Rust subscribers (e.g. AndroidPredictiveBack);
     // `send_event` is the native module → Rust fan-out;
