@@ -45,5 +45,47 @@ extension Module {
         let args = WhiskerValue.decodeArray(argsPtr, count: argCount)
         return dispatchModuleFunction(method, args).toRaw()
     }
+
+    /// Dispatch a module-level `AsyncFunction` by name, handing it a
+    /// `WhiskerPromise` to resolve. Returns true if such an async function
+    /// exists (it was invoked and owns the promise); false if not — the
+    /// bridge then falls back to the sync path. Public for unit-testing
+    /// against `[WhiskerValue]` without the C ABI.
+    public func dispatchModuleFunctionAsync(
+        _ method: String,
+        _ args: [WhiskerValue],
+        _ promise: WhiskerPromise
+    ) -> Bool {
+        guard
+            let fn = self.definitionLazy.asyncFunctions.first(where: { $0.name == method })
+        else {
+            return false
+        }
+        fn.handler(nil, args, promise)
+        return true
+    }
+
+    /// C-ABI async bridge the codegen-emitted `@_cdecl` async shim calls
+    /// (matches `WhiskerModuleAsyncDispatchFn`). Returns true if an async
+    /// function with that name owned the call. On unknown method it returns
+    /// false WITHOUT touching the callback, so the bridge sync-forwards.
+    public func dispatchModuleFunctionRawAsync(
+        _ methodName: UnsafePointer<CChar>?,
+        _ argsPtr: UnsafePointer<WhiskerValueRaw>?,
+        _ argCount: Int,
+        _ callback: WhiskerModuleCallback?,
+        _ userData: UnsafeMutableRawPointer?
+    ) -> Bool {
+        guard let callback = callback else { return false }
+        let method = methodName == nil ? "" : String(cString: methodName!)
+        // Look up before constructing the promise so a non-async method
+        // leaves the callback untouched for the bridge's sync fallback.
+        guard self.definitionLazy.asyncFunctions.contains(where: { $0.name == method }) else {
+            return false
+        }
+        let args = WhiskerValue.decodeArray(argsPtr, count: argCount)
+        let promise = WhiskerPromise(callback: callback, userData: userData)
+        return dispatchModuleFunctionAsync(method, args, promise)
+    }
 }
 

@@ -96,22 +96,37 @@ private fun registerViewBearing(viewBlock: WhiskerViewComponent) {
 private fun registerViewLess(def: ModuleDefinition, crateName: String?) {
     val name = def.name ?: return
     val functions = def.functions
-    if (functions.isEmpty()) return
+    val asyncFunctions = def.asyncFunctions
+    if (functions.isEmpty() && asyncFunctions.isEmpty()) return
 
     // `<crate>:<Name>` so the Rust side's `module!("Name")` (which
     // prepends its own crate name) resolves to the same key.
     val qualifiedName = if (crateName.isNullOrEmpty()) name else "$crateName:$name"
 
-    val byName = functions.associateBy { it.name }
-    WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
-        val fn = byName[method]
-            ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
-        // Case ②: hand the raw `List<WhiskerValue>` straight to the
-        // handler, which returns a `WhiskerValue`.
-        try {
-            fn.handler(null, args.asList())
-        } catch (t: Throwable) {
-            WhiskerValue.Err("exception in module `$name` method `$method`: ${t.message}")
+    if (functions.isNotEmpty()) {
+        val byName = functions.associateBy { it.name }
+        WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
+            val fn = byName[method]
+                ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
+            // Case ②: hand the raw `List<WhiskerValue>` straight to the
+            // handler, which returns a `WhiskerValue`.
+            try {
+                fn.handler(null, args.asList())
+            } catch (t: Throwable) {
+                WhiskerValue.Err("exception in module `$name` method `$method`: ${t.message}")
+            }
+        }
+    }
+
+    if (asyncFunctions.isNotEmpty()) {
+        val asyncByName = asyncFunctions.associateBy { it.name }
+        WhiskerModuleRegistry.registerDispatchAsync(qualifiedName) { method, args, promise ->
+            val fn = asyncByName[method] ?: return@registerDispatchAsync false
+            // Owned: invoke the handler with the promise; it resolves now
+            // or later. Exceptions surface via `invokeDispatchAsync`'s
+            // catch (→ promise.reject).
+            fn.handler(null, args.asList(), promise)
+            true
         }
     }
 }

@@ -445,6 +445,35 @@ WHISKER_BRIDGE_EXPORT bool whisker_bridge_invoke_module_async(
     WhiskerModuleCallback callback,
     void* user_data);
 
+// Per-module ASYNC dispatch function — the async parallel of
+// `WhiskerModuleDispatchFn`. Emitted by the platform-side codegen for a
+// module that declares any `AsyncFunction`. Unlike the sync variant it
+// does not return the result: it takes the `callback` + `user_data` and
+// is responsible for invoking `callback(user_data, &result)` exactly once
+// — either inline or later (e.g. from a StoreKit / coroutine completion),
+// after resolving the module's `Promise`.
+//
+// Returns true if the async dispatch OWNED the method (an `AsyncFunction`
+// with that name exists; it will fire the callback). Returns false if the
+// method is not an async method here — the bridge then falls back to the
+// sync path (sync-forwarded through `whisker_bridge_invoke_module`), so a
+// sync-only module, or a sync method on a mixed module, keeps working when
+// reached via `invoke_async`.
+typedef bool (*WhiskerModuleAsyncDispatchFn)(
+    const char* method_name,
+    const WhiskerValueRaw* args,
+    size_t arg_count,
+    WhiskerModuleCallback callback,
+    void* user_data);
+
+// Register `dispatch` as the per-method ASYNC router for `module_name`.
+// Parallel to `whisker_bridge_register_module_dispatch`; the codegen
+// registers this in addition when the module has `AsyncFunction`s.
+// Last-write-wins; `dispatch=NULL` unregisters.
+WHISKER_BRIDGE_EXPORT void whisker_bridge_register_module_dispatch_async(
+    const char* module_name,
+    WhiskerModuleAsyncDispatchFn dispatch);
+
 // ============================================================================
 // Module event subscription (Phase L-2c)
 // ============================================================================

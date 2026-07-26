@@ -409,6 +409,7 @@ struct WhiskerValueJni {
 
     jclass registry_cls = nullptr;
     jmethodID registry_dispatch = nullptr;
+    jmethodID registry_dispatch_async = nullptr;
 
     // Phase L-2c — event subscription routing. The C++ trampolines
     // call back into Kotlin via these handles so the per-Module
@@ -511,6 +512,16 @@ bool init_wvjni(JNIEnv* env) {
         "(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;)"
         "Lrs/whisker/runtime/WhiskerValue;");
     if (h.registry_dispatch == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return false;
+    }
+
+    // Async parallel: invokeDispatchAsync(String, String,
+    // WhiskerValue[], long callbackPtr, long userDataPtr) -> boolean.
+    h.registry_dispatch_async = env->GetStaticMethodID(
+        h.registry_cls, "invokeDispatchAsync",
+        "(Ljava/lang/String;Ljava/lang/String;[Lrs/whisker/runtime/WhiskerValue;JJ)Z");
+    if (h.registry_dispatch_async == nullptr) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         return false;
     }
@@ -889,10 +900,64 @@ extern "C" bool whisker_bridge_invoke_module_async(
     WhiskerModuleCallback callback, void* user_data
 ) {
     if (callback == nullptr) return false;
+
+    // Try the Kotlin async dispatch first: it constructs a WhiskerPromise
+    // over (callback, user_data) and resolves it later (via
+    // nativeResolveAsync). If no AsyncFunction owns the method it returns
+    // false and we fall back to sync-forward — matching the iOS/host common
+    // bridge, so a sync-only or mixed module keeps working via invoke_async.
+    if (module_name != nullptr && method_name != nullptr) {
+        ScopedJNIEnv_M guard;
+        JNIEnv* env = guard.get();
+        if (env != nullptr && init_wvjni(env)) {
+            auto& h = wvjni();
+            jobjectArray jargs = env->NewObjectArray((jsize)arg_count, h.base, nullptr);
+            for (size_t i = 0; i < arg_count; i++) {
+                jobject jv = value_to_jvalue(env, &args[i]);
+                env->SetObjectArrayElement(jargs, (jsize)i, jv);
+                if (jv != nullptr) env->DeleteLocalRef(jv);
+            }
+            jstring jmod = env->NewStringUTF(module_name);
+            jstring jmtd = env->NewStringUTF(method_name);
+            jboolean owned = env->CallStaticBooleanMethod(
+                h.registry_cls, h.registry_dispatch_async, jmod, jmtd, jargs,
+                (jlong)(uintptr_t)callback, (jlong)(uintptr_t)user_data);
+            env->DeleteLocalRef(jmod);
+            env->DeleteLocalRef(jmtd);
+            env->DeleteLocalRef(jargs);
+            if (env->ExceptionCheck()) {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+            } else if (owned) {
+                // Kotlin owns the callback; it fires later via
+                // nativeResolveAsync. Do NOT fire it here.
+                return true;
+            }
+        }
+    }
+
     WhiskerValueRaw r = whisker_bridge_invoke_module(module_name, method_name, args, arg_count);
     callback(user_data, &r);
     whisker_bridge_value_release(&r);
     return true;
+}
+
+// JNI: WhiskerModuleRegistry.nativeResolveAsync(long callbackPtr,
+// long userDataPtr, WhiskerValue value). Called from WhiskerPromise's
+// resolve/reject — invokes the C bridge callback exactly once with the
+// encoded value, then releases the heap allocations. Runs on whatever
+// thread resolved the promise (already JVM-attached: it's a Kotlin call);
+// the callback (a Rust oneshot sender via async_trampoline) is Send.
+extern "C" JNIEXPORT void JNICALL
+Java_rs_whisker_runtime_WhiskerModuleRegistry_nativeResolveAsync(
+    JNIEnv* env, jclass /*self*/,
+    jlong callback_ptr, jlong user_data_ptr, jobject value_obj) {
+    if (callback_ptr == 0) return;
+    if (!init_wvjni(env)) return;
+    WhiskerValueRaw raw = jvalue_to_value(env, value_obj);
+    auto callback = reinterpret_cast<WhiskerModuleCallback>((uintptr_t)callback_ptr);
+    callback(reinterpret_cast<void*>((uintptr_t)user_data_ptr), &raw);
+    whisker_bridge_value_release(&raw);
 }
 
 // ============================================================================

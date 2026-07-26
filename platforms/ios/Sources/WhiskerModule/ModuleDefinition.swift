@@ -143,6 +143,27 @@ public struct WhiskerFunctionComponent: WhiskerDefinitionComponent {
     }
 }
 
+/// Type-erased ASYNC function handler. Like `WhiskerFunctionHandler`
+/// but instead of returning a value it resolves the given `promise`
+/// — now or later, e.g. from a StoreKit / URLSession completion.
+/// `view` is `nil` for module-level `AsyncFunction`s. Mirrors Expo's
+/// `AsyncFunction` + `Promise` (the callback-resolved form).
+public typealias WhiskerAsyncFunctionHandler =
+    (_ view: AnyObject?, _ args: [WhiskerValue], _ promise: WhiskerPromise) -> Void
+
+/// Async function component — the async parallel of
+/// `WhiskerFunctionComponent`. Dispatched through the C bridge's
+/// async path (`whisker_bridge_invoke_module_async`), which hands the
+/// handler a `WhiskerPromise` wrapping the completion callback.
+public struct WhiskerAsyncFunctionComponent: WhiskerDefinitionComponent {
+    public let name: String
+    public let handler: WhiskerAsyncFunctionHandler
+    public init(name: String, handler: @escaping WhiskerAsyncFunctionHandler) {
+        self.name = name
+        self.handler = handler
+    }
+}
+
 /// Event-name declaration component. Authors declare event names
 /// they intend to emit; the runtime uses the list for type-checking
 /// + future docs generation. Dispatch from inside the module body
@@ -304,6 +325,12 @@ public struct ModuleDefinition {
         components.compactMap { $0 as? WhiskerFunctionComponent }
     }
 
+    /// Module-level (view-less) async functions — `AsyncFunction(...)`
+    /// declared OUTSIDE a `View(...)` block.
+    public var asyncFunctions: [WhiskerAsyncFunctionComponent] {
+        components.compactMap { $0 as? WhiskerAsyncFunctionComponent }
+    }
+
     /// All `OnStartObserving(...)` hooks declared at module-level.
     public var onStartObservingHooks: [WhiskerOnStartObservingComponent] {
         components.compactMap { $0 as? WhiskerOnStartObservingComponent }
@@ -419,4 +446,30 @@ public func Function(
     _ handler: @escaping ([WhiskerValue]) -> WhiskerValue
 ) -> WhiskerDefinitionComponent {
     WhiskerFunctionComponent(name: name) { _, args in handler(args) }
+}
+
+// MARK: - AsyncFunction factories (Expo-style `AsyncFunction` + `Promise`)
+
+/// `AsyncFunction("purchase") { (view: RCView, args, promise) in
+/// ...; promise.resolve(info) }` — view-bound async function. The
+/// author resolves/rejects the `promise`, now or from a completion.
+public func AsyncFunction<V: AnyObject>(
+    _ name: String,
+    _ handler: @escaping (V, [WhiskerValue], WhiskerPromise) -> Void
+) -> WhiskerDefinitionComponent {
+    WhiskerAsyncFunctionComponent(name: name) { viewAny, args, promise in
+        guard let view = viewAny as? V else {
+            return promise.reject("AsyncFunction(\"\(name)\") view type mismatch")
+        }
+        handler(view, args, promise)
+    }
+}
+
+/// `AsyncFunction("getOfferings") { (args, promise) in ... }` —
+/// module-level (view-less) async function for a function-only module.
+public func AsyncFunction(
+    _ name: String,
+    _ handler: @escaping ([WhiskerValue], WhiskerPromise) -> Void
+) -> WhiskerDefinitionComponent {
+    WhiskerAsyncFunctionComponent(name: name) { _, args, promise in handler(args, promise) }
 }
