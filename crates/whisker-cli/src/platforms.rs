@@ -175,7 +175,15 @@ pub struct PlatformSync {
 /// 0.1.14 to get the Lynx that exports the symbol; the per-app
 /// `WhiskerDriver` bridge built for this SDK refuses to attach to the
 /// older Lynx that lacks it (strict loader bind).
-const WHISKER_SDK_VERSION: &str = "0.1.14";
+///
+/// 0.1.15 ships `AsyncFunction` + `WhiskerPromise`
+/// (`whisker-module-android`, plus the registrar/registry plumbing that
+/// resolves an async function and the KSP codegen that emits it) — the
+/// Kotlin half of real async module functions. A module whose native
+/// half declares an `AsyncFunction` doesn't compile against 0.1.14, so
+/// apps shipping one must move to 0.1.15. Kotlin-only, no capi/Lynx ABI
+/// change.
+const WHISKER_SDK_VERSION: &str = "0.1.15";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
