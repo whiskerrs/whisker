@@ -286,7 +286,7 @@ fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> Genera
         min_sdk: app_config.android.min_sdk,
         target_sdk: app_config.android.target_sdk,
         manifest: AndroidManifest {
-            main_activity_url_schemes: app_config.url_scheme.clone().into_iter().collect(),
+            main_activity_url_schemes: app_config.url_schemes.clone(),
             ..Default::default()
         },
         ..Default::default()

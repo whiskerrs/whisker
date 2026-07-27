@@ -44,10 +44,17 @@ pub struct Config {
     pub bundle_id: Option<String>,
     pub version: Option<String>,
     pub build_number: Option<u32>,
-    /// Custom URL scheme for incoming deep links (e.g. `"giga"`).
+    /// Custom URL schemes for incoming deep links (e.g. `"giga"`).
     /// Currently only wired into Android's manifest; iOS's
-    /// `ASWebAuthenticationSession` doesn't need it registered.
-    pub url_scheme: Option<String>,
+    /// `ASWebAuthenticationSession` doesn't need one registered.
+    ///
+    /// A list, not one scheme: an app that signs into several OAuth
+    /// providers routinely needs one per provider, because some issuers
+    /// dictate the redirect's scheme (Google's "iOS" client type
+    /// requires the reversed-client-ID form) while others take the
+    /// app's own.
+    #[serde(default)]
+    pub url_schemes: Vec<String>,
     pub ios: IosConfig,
     pub android: AndroidConfig,
     /// Per-plugin Config serialized as JSON, keyed by the Config
@@ -83,10 +90,14 @@ impl Config {
         self
     }
 
-    /// Claim a custom URL scheme for incoming deep links. See
-    /// [`Self::url_scheme`]'s field doc.
+    /// Claim a custom URL scheme for incoming deep links. Call it once
+    /// per scheme — each call adds one. See [`Self::url_schemes`]'s
+    /// field doc for why an app may need several.
     pub fn url_scheme(&mut self, s: impl Into<String>) -> &mut Self {
-        self.url_scheme = Some(s.into());
+        let scheme = s.into();
+        if !self.url_schemes.contains(&scheme) {
+            self.url_schemes.push(scheme);
+        }
         self
     }
 
@@ -518,5 +529,20 @@ mod tests {
         let back: Config = serde_json::from_str(json).unwrap();
         assert_eq!(back.name.as_deref(), Some("OldApp"));
         assert!(back.plugins.is_empty());
+    }
+
+    #[test]
+    fn url_scheme_accumulates_and_dedupes() {
+        let mut c = Config::default();
+        c.url_scheme("giga")
+            .url_scheme("com.googleusercontent.apps.123")
+            .url_scheme("giga");
+        assert_eq!(
+            c.url_schemes,
+            vec![
+                "giga".to_string(),
+                "com.googleusercontent.apps.123".to_string()
+            ]
+        );
     }
 }
