@@ -95,6 +95,11 @@ const BRIDGE_EXPORTS: &[&str] = &[
     // previous `_OBJC_CLASS_$_WhiskerModuleRegistry` export (the
     // Obj-C class is gone — pure C function pointer table now).
     "_whisker_bridge_register_module_dispatch",
+    // The `AsyncFunction` half of the same table. The codegen plugin
+    // emits a call to this in EVERY module's register fn — including
+    // modules that declare no async function — so leaving it out fails
+    // the link for any app with any module at all, not just async ones.
+    "_whisker_bridge_register_module_dispatch_async",
     // whisker-module event system (Phase L-2c). `add/remove_event_listener`
     // is consumed by Rust subscribers (e.g. AndroidPredictiveBack);
     // `send_event` is the native module → Rust fan-out;
@@ -1160,6 +1165,72 @@ mod tests {
         assert_eq!(
             parse_ios_platform_major("    platforms: [.macOS(.v13)],"),
             None
+        );
+    }
+
+    /// Every bridge function Swift *calls* has to be in
+    /// [`BRIDGE_EXPORTS`], or it never lands in the dylib's `.dynsym`
+    /// and the app fails to link. The list is hand-maintained and the
+    /// comment asking for that was not enough — #338 added
+    /// `whisker_bridge_register_module_dispatch_async` and every
+    /// module-using iOS app stopped linking.
+    #[test]
+    fn swift_call_sites_are_all_exported() {
+        fn swift_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    swift_files(&path, out);
+                } else if path.extension().is_some_and(|e| e == "swift") {
+                    out.push(path);
+                }
+            }
+        }
+
+        // Monorepo layout only — a published crate has no `platforms/`.
+        let ios = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../platforms/ios");
+        if !ios.is_dir() {
+            return;
+        }
+        let mut files = Vec::new();
+        swift_files(&ios, &mut files);
+        assert!(!files.is_empty(), "no .swift files under {}", ios.display());
+
+        let mut missing: Vec<String> = Vec::new();
+        for file in &files {
+            let Ok(contents) = std::fs::read_to_string(file) else {
+                continue;
+            };
+            for line in contents.lines() {
+                let code = line.split("//").next().unwrap_or("");
+                let mut rest = code;
+                while let Some(at) = rest.find("whisker_bridge_") {
+                    let tail = &rest[at..];
+                    let name: String = tail
+                        .chars()
+                        .take_while(|c| c.is_ascii_lowercase() || *c == '_' || c.is_ascii_digit())
+                        .collect();
+                    // Only call sites — a bare mention in a type
+                    // signature or a string isn't a link dependency.
+                    if tail[name.len()..].starts_with('(') {
+                        let exported = format!("_{name}");
+                        if !BRIDGE_EXPORTS.contains(&exported.as_str())
+                            && !missing.contains(&exported)
+                        {
+                            missing.push(exported);
+                        }
+                    }
+                    rest = &tail[name.len().max(1)..];
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "Swift calls these bridge functions but BRIDGE_EXPORTS omits them, \
+             so the dylib won't export them and the app won't link: {missing:?}",
         );
     }
 }
