@@ -159,6 +159,40 @@ impl Config {
     }
 }
 
+/// A screen orientation an iOS app declares support for
+/// (`UISupportedInterfaceOrientations`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Orientation {
+    Portrait,
+    PortraitUpsideDown,
+    LandscapeLeft,
+    LandscapeRight,
+}
+
+impl Orientation {
+    /// The `UIInterfaceOrientation*` string the plist key expects.
+    pub fn plist_value(self) -> &'static str {
+        match self {
+            Orientation::Portrait => "UIInterfaceOrientationPortrait",
+            Orientation::PortraitUpsideDown => "UIInterfaceOrientationPortraitUpsideDown",
+            Orientation::LandscapeLeft => "UIInterfaceOrientationLandscapeLeft",
+            Orientation::LandscapeRight => "UIInterfaceOrientationLandscapeRight",
+        }
+    }
+
+    /// Every orientation — the default, and the only set App Store
+    /// validation accepts from an iPad-capable app that doesn't also
+    /// declare `UIRequiresFullScreen`.
+    pub fn all() -> Vec<Orientation> {
+        vec![
+            Orientation::Portrait,
+            Orientation::PortraitUpsideDown,
+            Orientation::LandscapeLeft,
+            Orientation::LandscapeRight,
+        ]
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct IosConfig {
     /// CFBundleIdentifier of the iOS app. Used by `xcrun simctl
@@ -172,6 +206,10 @@ pub struct IosConfig {
     /// match the project name.
     pub scheme: Option<String>,
     pub deployment_target: Option<String>,
+    /// Orientations the app supports. Empty (the default) means all
+    /// four — see [`IosConfig::orientations`].
+    #[serde(default)]
+    pub orientations: Vec<Orientation>,
 }
 
 impl IosConfig {
@@ -187,6 +225,16 @@ impl IosConfig {
 
     pub fn deployment_target(&mut self, t: impl Into<String>) -> &mut Self {
         self.deployment_target = Some(t.into());
+        self
+    }
+
+    /// Restrict the orientations the app supports. All four by default,
+    /// which is what App Store validation demands from an iPad-capable
+    /// app — restricting them makes the generated project declare
+    /// `UIRequiresFullScreen` as well, since an app that opts out of
+    /// iPad multitasking is the only kind Apple lets support fewer.
+    pub fn orientations(&mut self, o: impl IntoIterator<Item = Orientation>) -> &mut Self {
+        self.orientations = o.into_iter().collect();
         self
     }
 }
