@@ -38,7 +38,7 @@ use std::process::{Command, Stdio};
 use whisker_config::Config;
 use whisker_plugin::{
     AndroidManifest, AndroidProjectIr, AppMeta, GenerateContext, IosProjectIr, MutationJournal,
-    MutationRecord, Operation, Plugin, PluginRequest, PluginResponse, Target,
+    MutationRecord, Operation, PlistValue, Plugin, PluginRequest, PluginResponse, Target,
 };
 
 // ============================================================================
@@ -276,6 +276,7 @@ fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> Genera
         bundle_id: app_meta.ios_bundle_id.clone(),
         scheme: app_config.ios.scheme.clone(),
         deployment_target: app_config.ios.deployment_target.clone(),
+        info_plist: seed_orientation_plist(&app_config.ios.orientations),
         ..Default::default()
     });
     let android = enabled.android.then(|| AndroidProjectIr {
@@ -286,7 +287,7 @@ fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> Genera
         min_sdk: app_config.android.min_sdk,
         target_sdk: app_config.android.target_sdk,
         manifest: AndroidManifest {
-            main_activity_url_schemes: app_config.url_scheme.clone().into_iter().collect(),
+            main_activity_url_schemes: app_config.url_schemes.clone(),
             ..Default::default()
         },
         ..Default::default()
@@ -619,6 +620,52 @@ fn decode_response_bytes(plugin_name: &str, bytes: &[u8]) -> Result<PluginRespon
         .with_context(|| format!("decode PluginResponse JSON from plugin `{plugin_name}`'s stdout"))
 }
 
+/// Seed `UISupportedInterfaceOrientations` (and its `~ipad` variant).
+///
+/// Not optional the way most plist keys are: App Store validation
+/// rejects a bundle that declares no orientations at all ("No
+/// orientations were specified… To support iPad multitasking, specify
+/// …"), so every generated app needs them whether or not its author
+/// thought about it. Hence all four by default.
+///
+/// Restricting them — a portrait-locked phone app, say — is only legal
+/// for a bundle that also opts out of iPad multitasking, so that case
+/// sets `UIRequiresFullScreen` too rather than producing another
+/// bundle that fails upload.
+///
+/// Seeded into the IR, not written straight into the template, so a
+/// plugin can still override either key (the engine-seeds /
+/// plugins-override layering this module documents above).
+fn seed_orientation_plist(
+    orientations: &[whisker_config::Orientation],
+) -> std::collections::BTreeMap<String, PlistValue> {
+    let restricted = !orientations.is_empty();
+    let list = if restricted {
+        orientations.to_vec()
+    } else {
+        whisker_config::Orientation::all()
+    };
+    let value = PlistValue::Array(
+        list.iter()
+            .map(|o| PlistValue::String(o.plist_value().to_string()))
+            .collect(),
+    );
+
+    let mut seeded = std::collections::BTreeMap::new();
+    seeded.insert(
+        "UISupportedInterfaceOrientations".to_string(),
+        value.clone(),
+    );
+    seeded.insert("UISupportedInterfaceOrientations~ipad".to_string(), value);
+    if restricted {
+        seeded.insert(
+            "UIRequiresFullScreen".to_string(),
+            PlistValue::Boolean(true),
+        );
+    }
+    seeded
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -628,6 +675,37 @@ mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
     use whisker_plugin::{PlistValue, PluginConfig};
+
+    #[test]
+    fn every_app_gets_orientations_because_the_store_rejects_a_bundle_without_them() {
+        let seeded = seed_orientation_plist(&[]);
+        let PlistValue::Array(phone) = &seeded["UISupportedInterfaceOrientations"] else {
+            panic!("expected an array");
+        };
+        assert_eq!(phone.len(), 4);
+        assert_eq!(
+            seeded["UISupportedInterfaceOrientations"],
+            seeded["UISupportedInterfaceOrientations~ipad"]
+        );
+        // Unrestricted apps support iPad multitasking, so no opt-out.
+        assert!(!seeded.contains_key("UIRequiresFullScreen"));
+    }
+
+    #[test]
+    fn restricting_orientations_opts_out_of_ipad_multitasking() {
+        let seeded = seed_orientation_plist(&[whisker_config::Orientation::Portrait]);
+        assert_eq!(
+            seeded["UISupportedInterfaceOrientations"],
+            PlistValue::Array(vec![PlistValue::String(
+                "UIInterfaceOrientationPortrait".to_string()
+            )])
+        );
+        assert_eq!(
+            seeded["UIRequiresFullScreen"],
+            PlistValue::Boolean(true),
+            "Apple only allows fewer than four orientations when the app opts out"
+        );
+    }
 
     // ----- Test plugins ----------------------------------------------------
 

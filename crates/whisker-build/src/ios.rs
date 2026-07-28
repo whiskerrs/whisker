@@ -258,7 +258,10 @@ fn build_framework_dir(
     // Info.plist — Apple's mandatory bundle metadata. Without this,
     // codesign on the embedded framework fails with "bundle format
     // unrecognized, invalid, or unsuitable".
-    std::fs::write(fw_dir.join("Info.plist"), framework_info_plist())?;
+    std::fs::write(
+        fw_dir.join("Info.plist"),
+        framework_info_plist(&min_os_version()),
+    )?;
 
     Ok(fw_dir)
 }
@@ -492,10 +495,27 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The app's iOS deployment target, straight from the environment
+/// xcodebuild runs the Build Phase with — the same value the app
+/// target itself compiles against, and the value cargo hands the Rust
+/// dylib. Falls back to whisker's own floor outside xcodebuild.
+fn min_os_version() -> String {
+    std::env::var("IPHONEOS_DEPLOYMENT_TARGET").unwrap_or_else(|_| DEFAULT_MIN_OS.to_string())
+}
+
+const DEFAULT_MIN_OS: &str = "13.0";
+
 /// Minimal Info.plist that satisfies codesign + dyld for an embedded
 /// iOS framework. CFBundleExecutable must match the binary filename
 /// (= `FRAMEWORK_NAME`).
-fn framework_info_plist() -> String {
+///
+/// `MinimumOSVersion` tracks the app's deployment target rather than a
+/// constant: App Store validation rejects the upload when an embedded
+/// framework disagrees with the app about its minimum
+/// ("The bundle …/WhiskerDriver.framework does not support the minimum
+/// OS Version specified in the Info.plist", 90208), and the dylib
+/// inside really is built for whatever xcodebuild passed down.
+fn framework_info_plist(min_os: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -518,7 +538,7 @@ fn framework_info_plist() -> String {
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>MinimumOSVersion</key>
-    <string>13.0</string>
+    <string>{min_os}</string>
 </dict>
 </plist>
 "#,
@@ -1102,9 +1122,16 @@ mod tests {
 
     #[test]
     fn framework_info_plist_contains_executable_name() {
-        let plist = framework_info_plist();
+        let plist = framework_info_plist(DEFAULT_MIN_OS);
         assert!(plist.contains("<string>WhiskerDriver</string>"));
         assert!(plist.contains("FMWK"));
+    }
+
+    /// The app and its embedded framework have to agree on the minimum,
+    /// or App Store validation rejects the upload (90208).
+    #[test]
+    fn framework_minimum_os_follows_the_apps_deployment_target() {
+        assert!(framework_info_plist("15.0").contains("<string>15.0</string>"));
     }
 
     #[test]

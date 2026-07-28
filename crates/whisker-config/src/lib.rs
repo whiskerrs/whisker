@@ -44,10 +44,17 @@ pub struct Config {
     pub bundle_id: Option<String>,
     pub version: Option<String>,
     pub build_number: Option<u32>,
-    /// Custom URL scheme for incoming deep links (e.g. `"giga"`).
+    /// Custom URL schemes for incoming deep links (e.g. `"giga"`).
     /// Currently only wired into Android's manifest; iOS's
-    /// `ASWebAuthenticationSession` doesn't need it registered.
-    pub url_scheme: Option<String>,
+    /// `ASWebAuthenticationSession` doesn't need one registered.
+    ///
+    /// A list, not one scheme: an app that signs into several OAuth
+    /// providers routinely needs one per provider, because some issuers
+    /// dictate the redirect's scheme (Google's "iOS" client type
+    /// requires the reversed-client-ID form) while others take the
+    /// app's own.
+    #[serde(default)]
+    pub url_schemes: Vec<String>,
     pub ios: IosConfig,
     pub android: AndroidConfig,
     /// Per-plugin Config serialized as JSON, keyed by the Config
@@ -83,10 +90,14 @@ impl Config {
         self
     }
 
-    /// Claim a custom URL scheme for incoming deep links. See
-    /// [`Self::url_scheme`]'s field doc.
+    /// Claim a custom URL scheme for incoming deep links. Call it once
+    /// per scheme — each call adds one. See [`Self::url_schemes`]'s
+    /// field doc for why an app may need several.
     pub fn url_scheme(&mut self, s: impl Into<String>) -> &mut Self {
-        self.url_scheme = Some(s.into());
+        let scheme = s.into();
+        if !self.url_schemes.contains(&scheme) {
+            self.url_schemes.push(scheme);
+        }
         self
     }
 
@@ -148,6 +159,40 @@ impl Config {
     }
 }
 
+/// A screen orientation an iOS app declares support for
+/// (`UISupportedInterfaceOrientations`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Orientation {
+    Portrait,
+    PortraitUpsideDown,
+    LandscapeLeft,
+    LandscapeRight,
+}
+
+impl Orientation {
+    /// The `UIInterfaceOrientation*` string the plist key expects.
+    pub fn plist_value(self) -> &'static str {
+        match self {
+            Orientation::Portrait => "UIInterfaceOrientationPortrait",
+            Orientation::PortraitUpsideDown => "UIInterfaceOrientationPortraitUpsideDown",
+            Orientation::LandscapeLeft => "UIInterfaceOrientationLandscapeLeft",
+            Orientation::LandscapeRight => "UIInterfaceOrientationLandscapeRight",
+        }
+    }
+
+    /// Every orientation — the default, and the only set App Store
+    /// validation accepts from an iPad-capable app that doesn't also
+    /// declare `UIRequiresFullScreen`.
+    pub fn all() -> Vec<Orientation> {
+        vec![
+            Orientation::Portrait,
+            Orientation::PortraitUpsideDown,
+            Orientation::LandscapeLeft,
+            Orientation::LandscapeRight,
+        ]
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct IosConfig {
     /// CFBundleIdentifier of the iOS app. Used by `xcrun simctl
@@ -161,6 +206,10 @@ pub struct IosConfig {
     /// match the project name.
     pub scheme: Option<String>,
     pub deployment_target: Option<String>,
+    /// Orientations the app supports. Empty (the default) means all
+    /// four — see [`IosConfig::orientations`].
+    #[serde(default)]
+    pub orientations: Vec<Orientation>,
 }
 
 impl IosConfig {
@@ -176,6 +225,16 @@ impl IosConfig {
 
     pub fn deployment_target(&mut self, t: impl Into<String>) -> &mut Self {
         self.deployment_target = Some(t.into());
+        self
+    }
+
+    /// Restrict the orientations the app supports. All four by default,
+    /// which is what App Store validation demands from an iPad-capable
+    /// app — restricting them makes the generated project declare
+    /// `UIRequiresFullScreen` as well, since an app that opts out of
+    /// iPad multitasking is the only kind Apple lets support fewer.
+    pub fn orientations(&mut self, o: impl IntoIterator<Item = Orientation>) -> &mut Self {
+        self.orientations = o.into_iter().collect();
         self
     }
 }
@@ -518,5 +577,20 @@ mod tests {
         let back: Config = serde_json::from_str(json).unwrap();
         assert_eq!(back.name.as_deref(), Some("OldApp"));
         assert!(back.plugins.is_empty());
+    }
+
+    #[test]
+    fn url_scheme_accumulates_and_dedupes() {
+        let mut c = Config::default();
+        c.url_scheme("giga")
+            .url_scheme("com.googleusercontent.apps.123")
+            .url_scheme("giga");
+        assert_eq!(
+            c.url_schemes,
+            vec![
+                "giga".to_string(),
+                "com.googleusercontent.apps.123".to_string()
+            ]
+        );
     }
 }
