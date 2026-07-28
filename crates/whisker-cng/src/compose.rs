@@ -620,6 +620,52 @@ fn decode_response_bytes(plugin_name: &str, bytes: &[u8]) -> Result<PluginRespon
         .with_context(|| format!("decode PluginResponse JSON from plugin `{plugin_name}`'s stdout"))
 }
 
+/// Seed `UISupportedInterfaceOrientations` (and its `~ipad` variant).
+///
+/// Not optional the way most plist keys are: App Store validation
+/// rejects a bundle that declares no orientations at all ("No
+/// orientations were specified… To support iPad multitasking, specify
+/// …"), so every generated app needs them whether or not its author
+/// thought about it. Hence all four by default.
+///
+/// Restricting them — a portrait-locked phone app, say — is only legal
+/// for a bundle that also opts out of iPad multitasking, so that case
+/// sets `UIRequiresFullScreen` too rather than producing another
+/// bundle that fails upload.
+///
+/// Seeded into the IR, not written straight into the template, so a
+/// plugin can still override either key (the engine-seeds /
+/// plugins-override layering this module documents above).
+fn seed_orientation_plist(
+    orientations: &[whisker_config::Orientation],
+) -> std::collections::BTreeMap<String, PlistValue> {
+    let restricted = !orientations.is_empty();
+    let list = if restricted {
+        orientations.to_vec()
+    } else {
+        whisker_config::Orientation::all()
+    };
+    let value = PlistValue::Array(
+        list.iter()
+            .map(|o| PlistValue::String(o.plist_value().to_string()))
+            .collect(),
+    );
+
+    let mut seeded = std::collections::BTreeMap::new();
+    seeded.insert(
+        "UISupportedInterfaceOrientations".to_string(),
+        value.clone(),
+    );
+    seeded.insert("UISupportedInterfaceOrientations~ipad".to_string(), value);
+    if restricted {
+        seeded.insert(
+            "UIRequiresFullScreen".to_string(),
+            PlistValue::Boolean(true),
+        );
+    }
+    seeded
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1207,50 +1253,4 @@ mod tests {
         let resp = decode_response_bytes("p", &envelope).unwrap();
         assert_eq!(resp.context.journal.records.len(), 0);
     }
-}
-
-/// Seed `UISupportedInterfaceOrientations` (and its `~ipad` variant).
-///
-/// Not optional the way most plist keys are: App Store validation
-/// rejects a bundle that declares no orientations at all ("No
-/// orientations were specified… To support iPad multitasking, specify
-/// …"), so every generated app needs them whether or not its author
-/// thought about it. Hence all four by default.
-///
-/// Restricting them — a portrait-locked phone app, say — is only legal
-/// for a bundle that also opts out of iPad multitasking, so that case
-/// sets `UIRequiresFullScreen` too rather than producing another
-/// bundle that fails upload.
-///
-/// Seeded into the IR, not written straight into the template, so a
-/// plugin can still override either key (the engine-seeds /
-/// plugins-override layering this module documents above).
-fn seed_orientation_plist(
-    orientations: &[whisker_config::Orientation],
-) -> std::collections::BTreeMap<String, PlistValue> {
-    let restricted = !orientations.is_empty();
-    let list = if restricted {
-        orientations.to_vec()
-    } else {
-        whisker_config::Orientation::all()
-    };
-    let value = PlistValue::Array(
-        list.iter()
-            .map(|o| PlistValue::String(o.plist_value().to_string()))
-            .collect(),
-    );
-
-    let mut seeded = std::collections::BTreeMap::new();
-    seeded.insert(
-        "UISupportedInterfaceOrientations".to_string(),
-        value.clone(),
-    );
-    seeded.insert("UISupportedInterfaceOrientations~ipad".to_string(), value);
-    if restricted {
-        seeded.insert(
-            "UIRequiresFullScreen".to_string(),
-            PlistValue::Boolean(true),
-        );
-    }
-    seeded
 }
