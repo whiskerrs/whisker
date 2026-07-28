@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.9.2...whisker-cli-v0.10.0) - 2026-07-28
+
+### Fixed
+
+- *(cli)* build discovered CNG plugins one cargo invocation per plugin
+- *(cli)* propagate the app's [patch.crates-io] into the config-probe
+
+### Other
+
+- *(release)* SDK pins for AsyncFunction + module-driven iOS floor
+
 ## [0.9.1](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.9.0...whisker-cli-v0.9.1) - 2026-07-22
 
 ### Other

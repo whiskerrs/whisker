@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.9.2...whisker-driver-sys-v0.10.0) - 2026-07-28
+
+### Added
+
+- *(modules)* real async module functions — AsyncFunction + Promise
+
+### Fixed
+
+- *(android)* keep arm64 codegen on the Armv8.0 baseline
+
 ## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.8.2...whisker-driver-sys-v0.9.0) - 2026-07-21
 
 ### Added
