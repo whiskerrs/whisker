@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.9.2...whisker-build-v0.10.0) - 2026-07-28
+
+### Fixed
+
+- *(ios)* stamp the framework's MinimumOSVersion from the build
+- *(ios)* export whisker_bridge_register_module_dispatch_async
+
+### Other
+
+- *(ios)* guard the bridge export whitelist against Swift call sites
+- *(release)* SDK pins for AsyncFunction + module-driven iOS floor
+- *(build)* de-flake guard_registers_then_unregisters (parallel-safe)
+
 ## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.8.2...whisker-build-v0.9.0) - 2026-07-21
 
 ### Other

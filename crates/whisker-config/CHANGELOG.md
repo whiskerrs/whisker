@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/whiskerrs/whisker/compare/whisker-config-v0.9.2...whisker-config-v0.10.0) - 2026-07-28
+
+### Added
+
+- *(config)* allow more than one custom URL scheme
+
+### Fixed
+
+- *(ios)* declare supported orientations in the generated Info.plist
+
 ## [0.9.0](https://github.com/whiskerrs/whisker/compare/whisker-config-v0.8.2...whisker-config-v0.9.0) - 2026-07-21
 
 ### Added

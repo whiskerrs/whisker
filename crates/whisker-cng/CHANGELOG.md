@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/whiskerrs/whisker/compare/whisker-cng-v0.9.2...whisker-cng-v0.10.0) - 2026-07-28
+
+### Added
+
+- *(config)* allow more than one custom URL scheme
+- *(cng,plugin)* plugin-settable splash-screen enablers
+
+### Fixed
+
+- *(ios)* declare supported orientations in the generated Info.plist
+
+### Other
+
+- *(cng)* move seed_orientation_plist above the test module
+- Merge pull request #329 from whiskerrs/feat/whisker-splash-screen
+
 ## [0.9.1](https://github.com/whiskerrs/whisker/compare/whisker-cng-v0.9.0...whisker-cng-v0.9.1) - 2026-07-22
 
 ### Other
