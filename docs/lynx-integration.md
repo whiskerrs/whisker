@@ -118,9 +118,13 @@ What `build.rs` still does:
   iOS: `Foundation`, `UIKit`, `CoreFoundation`, `QuartzCore`, `c++`,
   `objc`.
 
-On Android the bridge forces inline LSE atomics (`-march=armv8.1-a`,
-`-mno-outline-atomics`) so it never reaches for compiler-rt's
-outline-atomics dispatcher. Android support is arm64-v8a only.
+On Android the bridge compiles with `-mno-outline-atomics` so it never
+reaches for compiler-rt's outline-atomics dispatcher; clang then inlines
+Armv8.0 `ldaxr`/`stlxr` loops, which the whole `arm64-v8a` ABI can run.
+Never pair that with `-march=armv8.1-a` — the resulting LSE
+instructions (`ldadd`, `cas`) are undefined on pre-8.1 hardware and the
+app takes a SIGILL on its first atomic. Android support is arm64-v8a
+only.
 
 Forcing the bridge entry points into the iOS dylib's `.dynsym` is **not**
 done here — `cargo:rustc-link-arg` from an rlib's build.rs doesn't reach

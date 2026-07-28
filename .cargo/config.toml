@@ -10,14 +10,18 @@ coverage-text = "llvm-cov --workspace"
 coverage-lcov = "llvm-cov --workspace --lcov --output-path lcov.info"
 
 [target.aarch64-linux-android]
-# `+lse` makes the compiler emit Armv8.1-A LSE atomic instructions
-# inline. That sidesteps the compiler-rt outline-atomics dispatcher
-# entirely — both its `init_have_lse_atomics` ELF initializer (which
+# `-outline-atomics` keeps us clear of the compiler-rt outline-atomics
+# dispatcher — both its `init_have_lse_atomics` ELF initializer (which
 # crashes inside a local `getauxval` stub when the bionic build
 # differs) and the `__aarch64_cas*` helpers (which end up unresolved
-# at .so load time when we strip compiler-rt out).
-# `-outline-atomics` then guarantees no code path falls back to the
-# dispatcher. Targets Pixel 5+ / API 30+ emulator (= Armv8.2+).
+# at .so load time when we strip compiler-rt out). With the dispatcher
+# off and no `+lse`, LLVM emits classic Armv8.0 `ldaxr`/`stlxr` loops,
+# which every `arm64-v8a` device can execute.
+#
+# Do NOT add `+lse` here (nor `-march=armv8.1-a` on the C++ side): it
+# inlines Armv8.1 `ldadd`/`cas`, and `arm64-v8a` is an Armv8.0
+# baseline, so pre-8.1 devices hit an undefined instruction and die
+# with SIGILL on the first atomic.
 #
 # `max-page-size=16384` aligns ELF LOAD segments to 16 KB pages so
 # the `.so` works on devices that boot with 16 KB pages. Pixel
@@ -27,6 +31,6 @@ coverage-lcov = "llvm-cov --workspace --lcov --output-path lcov.info"
 # becomes redundant — remove this line once we drop NDK r26
 # support.
 rustflags = [
-    "-C", "target-feature=+lse,-outline-atomics",
+    "-C", "target-feature=-outline-atomics",
     "-C", "link-arg=-Wl,-z,max-page-size=16384",
 ]
