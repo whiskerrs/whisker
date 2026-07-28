@@ -592,3 +592,23 @@ unsafe extern "C" {
         user_data: *mut c_void,
     ) -> bool;
 }
+
+#[cfg(test)]
+mod tests {
+    /// The bridge must stay executable on every `arm64-v8a` device.
+    /// That ABI's baseline is Armv8.0, so an `-march=armv8.1-a` (or
+    /// `+lse`) flag turns C++ atomics into `ldadd`/`cas` — undefined
+    /// instructions that kill the app with SIGILL on older hardware,
+    /// which no emulator or recent phone ever reproduces. Guard the
+    /// flag list rather than wait for the next e-reader bug report.
+    #[test]
+    fn bridge_targets_the_armv8_0_baseline() {
+        // Any `-march` at all, since every form that would compile
+        // here (`armv8.1-a`, `armv8-a+lse`, …) raises the floor.
+        let build_rs = include_str!("../build.rs");
+        assert!(
+            !build_rs.contains("flag(\"-march="),
+            "build.rs sets -march on the bridge, raising it above the arm64-v8a baseline",
+        );
+    }
+}

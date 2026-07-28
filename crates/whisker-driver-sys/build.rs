@@ -121,11 +121,20 @@ fn compile_android() -> Result<()> {
         .file(bridge_src.join("whisker_bridge_lynx_loader.cc"))
         .include(bridge_root().join("include"))
         .include(&bridge_src);
-    // Force inline LSE atomics so the C++ side never reaches for
-    // compiler-rt's outline-atomics dispatcher (`__aarch64_cas*`,
-    // `init_have_lse_atomics`). The Rust side gets the same treatment
-    // via `.cargo/config.toml` target-feature flags.
-    build.flag("-march=armv8.1-a");
+    // Keep the C++ side away from compiler-rt's outline-atomics
+    // dispatcher (`__aarch64_cas*`, `init_have_lse_atomics`) — its ELF
+    // initializer crashes inside a local `getauxval` stub on some
+    // bionic builds, and the helpers go unresolved at load time once
+    // compiler-rt is stripped out.
+    //
+    // Disabling the dispatcher is enough on its own: clang then emits
+    // classic Armv8.0 `ldaxr`/`stlxr` loops inline. It must NOT be
+    // paired with `-march=armv8.1-a`, which emits LSE (`ldadd`) —
+    // `arm64-v8a` is an Armv8.0 baseline, so those are undefined
+    // instructions on a real Armv8.0 device and the app dies with
+    // SIGILL the first time it touches an atomic. Device-confirmed on
+    // a Snapdragon 636 e-reader, where every `on_event` call site
+    // crashed at `NextListenerId`'s `fetch_add`.
     build.flag("-mno-outline-atomics");
     silence_unused_parameter_warnings(&mut build);
     build.compile("whisker_bridge_static");

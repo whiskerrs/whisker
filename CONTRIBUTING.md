@@ -15,7 +15,7 @@ source, run an example on a device, and get a change merged.
 | **Rust** | Pinned by [`rust-toolchain.toml`](rust-toolchain.toml) (stable + `rustfmt` + `clippy`); `rustup` installs it automatically on first build. MSRV is **1.85** (edition 2024). |
 | **Targets** | `rustup target add aarch64-apple-ios-sim aarch64-apple-ios` (iOS) and `rustup target add aarch64-linux-android` (Android — only `arm64-v8a` is built). |
 | **iOS** | Xcode + an iOS Simulator. |
-| **Android** | Android SDK + an **NDK** (one of: `23.1.7779620`, `25.1.8937393`, `26.1.10909125`, `26.3.11579264`, `27.0.12077973`, `27.1.12297006` — `sdkmanager --install "ndk;<version>"`). Set `ANDROID_HOME` (or have `~/Library/Android/sdk`). An **arm64 emulator, API 30+** (Pixel 5 or newer) — the Android build uses `-Ctarget-feature=+lse` and 16 KB page alignment, which need Armv8.2+. |
+| **Android** | Android SDK + an **NDK** (one of: `23.1.7779620`, `25.1.8937393`, `26.1.10909125`, `26.3.11579264`, `27.0.12077973`, `27.1.12297006` — `sdkmanager --install "ndk;<version>"`). Set `ANDROID_HOME` (or have `~/Library/Android/sdk`). An **arm64 emulator, API 30+** (Pixel 5 or newer) — the Android build aligns to 16 KB pages. |
 
 You only need the toolchain for the platform(s) you're touching. Pure-Rust
 work (runtime, router, macros, …) needs no device tooling at all.
