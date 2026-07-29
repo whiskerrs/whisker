@@ -800,9 +800,10 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        // Bumped 12 → 13: `{{android_theme}}` + MainActivity import/body
-        // placeholders (plugin-driven theme override + onCreate injection).
-        template_version: 13,
+        // Bumped 13 → 14: the MainActivity carries
+        // `windowSoftInputMode="adjustResize"` (app-owned keyboard
+        // avoidance — see the manifest template).
+        template_version: 14,
     })
 }
 
@@ -850,7 +851,7 @@ mod tests {
             extra_gradle_plugins: Vec::new(),
             extra_gradle_dependencies: Vec::new(),
             extra_files: BTreeMap::new(),
-            template_version: 13,
+            template_version: 14,
         }
     }
 
@@ -991,6 +992,9 @@ mod tests {
         assert!(manifest.contains("android:name=\".HelloWorldApplication\""));
         assert!(manifest.contains("android:label=\"HelloWorld\""));
         assert!(!manifest.contains("{{"));
+        // The activity opts out of system keyboard avoidance — the app
+        // lays out around the IME inset itself.
+        assert!(manifest.contains("android:windowSoftInputMode=\"adjustResize\""));
 
         let main_activity = std::fs::read_to_string(
             out.join("app/src/main/kotlin/rs/whisker/examples/helloworld/MainActivity.kt"),

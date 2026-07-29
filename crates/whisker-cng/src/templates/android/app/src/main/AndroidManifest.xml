@@ -15,9 +15,22 @@
         android:theme="{{android_theme}}"
 {{extra_application_attributes}}        >
 {{extra_application_meta_data}}
+        <!-- Keyboard avoidance is the app's job here: `WhiskerActivity`
+             forces edge-to-edge and `whisker-keyboard` surfaces the IME
+             inset to Rust for the content to lay out around. Left
+             unspecified, the system ALSO pans the window whenever the
+             focused field would be covered — the content jumps past the
+             app's own avoidance and eases back down, a full-screen slide
+             iOS has no counterpart for. `adjustResize` stops the pan
+             without resizing anything (an edge-to-edge window keeps its
+             size and just receives the inset); `adjustNothing` would
+             stop it too, but it would also leave pre-API-30 devices —
+             where `WindowInsetsCompat.Type.ime()` reports nothing —
+             with no keyboard avoidance at all. -->
         <activity
             android:name=".MainActivity"
-            android:exported="true"{{main_activity_launch_mode}}>
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"{{main_activity_launch_mode}}>
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
