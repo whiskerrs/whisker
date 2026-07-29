@@ -11,6 +11,12 @@
 // guard suppresses `afterTextChanged` during external writes so the
 // Rust signal doesn't double-fire.
 //
+// The other half of that filter is `userEdit`: the editor also gets
+// written by the framework itself (prop application, state restore as
+// the InputConnection is established), and those writes must not reach
+// the bound signal either. `WhiskerEditText` tags the entry points a
+// user's edits arrive through so the watcher can tell the two apart.
+//
 // ## CSS text-style interception
 //
 // `color`, `font-size`, `font-weight`, and `text-align` arrive through
@@ -32,7 +38,12 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
+import android.view.autofill.AutofillValue
+import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
 import com.lynx.tasm.behavior.StylesDiffMap
 import rs.whisker.runtime.WhiskerContext
@@ -51,19 +62,38 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     /// event so the two-way round-trip doesn't double-fire.
     private var programmaticWrite: Boolean = false
 
-    /// True once the user has actually interacted with the field (a tap
-    /// or a hardware key press). Until then we suppress `input` emission.
+    /// True when the edit `afterTextChanged` is about to report came from
+    /// the user rather than from the framework. Set at the edit's entry
+    /// point (see [WhiskerEditText]) and consumed — always — by the
+    /// watcher.
     ///
     /// Android fires a storm of `afterTextChanged('')` callbacks at mount
     /// / IME-attach time that are NOT user edits and NOT covered by
     /// `programmaticWrite` (they come from the system clearing/restoring
-    /// the editor as the InputConnection is established). Without this
-    /// gate, those spurious empty events flow through the two-way
-    /// writeback and clobber the bound signal to "". A genuine edit can
-    /// only happen after the user taps to focus (or presses a key), so
-    /// gating on real interaction drops the spurious mount-time events
-    /// while still emitting every real keystroke.
-    private var userInteracted: Boolean = false
+    /// the editor as the InputConnection is established). Without a gate,
+    /// those spurious empty events flow through the two-way writeback and
+    /// clobber the bound signal to "".
+    ///
+    /// Why not gate on "has the user ever touched this field" instead:
+    /// a field the app focused itself (`InputRef::focus`, `auto-focus`)
+    /// never receives a touch, and soft-keyboard text — every IME
+    /// composition, and every commit on a keyboard that doesn't inject
+    /// key events — arrives through the `InputConnection`, not through
+    /// `View.onKeyDown`. Under a sticky interaction gate a whole word
+    /// could land in the field while the bound signal stayed empty, until
+    /// some later keystroke happened to be delivered as a real key event.
+    /// Tagging each edit where it enters the editor has no such blind
+    /// spot.
+    private var userEdit: Boolean = false
+
+    /// Last text the two sides agreed on — what we last emitted upward, or
+    /// last accepted from a `value` prop / `setValue` / `clear`. A change
+    /// that leaves the text at this value carries no information for the
+    /// Rust signal, so it is not emitted: that both collapses the
+    /// mount-time `afterTextChanged('')` storm on an empty field and keeps
+    /// a `userEdit` tag set by a non-editing key (arrows, enter) from
+    /// leaking a later framework write upward.
+    private var lastEmitted: String = ""
 
     /// Pending `auto-focus` request. Stored until the view attaches to a
     /// window (EditText must be attached before requesting focus works).
@@ -109,7 +139,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     // -------------------------------------------------------------------------
 
     override fun createView(context: Context): android.widget.EditText {
-        val et = android.widget.EditText(context)
+        val et = WhiskerEditText(context)
         // Replace the EditText's default underline background with a
         // GradientDrawable WE own, so the CSS `background-color` /
         // `border-radius` from the style cascade render here. We must NOT
@@ -158,19 +188,11 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             },
         )
 
-        // Mark genuine user interaction so the spurious mount/IME
-        // `afterTextChanged('')` storm doesn't get emitted as `input`.
-        // A tap (to focus) or a hardware key press both count. Neither
-        // listener consumes the event (returns false) — the EditText
-        // handles it normally.
-        et.setOnTouchListener { _, ev ->
-            if (ev.action == android.view.MotionEvent.ACTION_UP) {
-                userInteracted = true
-            }
-            false
-        }
+        // Hardware-keyboard edits bypass the InputConnection entirely, so
+        // tag them here. The listener doesn't consume the event (returns
+        // false) — the EditText handles it normally.
         et.setOnKeyListener { _, _, _ ->
-            userInteracted = true
+            userEdit = true
             false
         }
 
@@ -179,14 +201,20 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
+                // Consume the tag unconditionally: one tagged entry point
+                // authorizes exactly one text change, so a tag left over
+                // from a key that edited nothing can't authorize a later
+                // framework write.
+                val fromUser = userEdit
+                userEdit = false
                 // Suppress events that originated from our own programmatic
                 // write — only user typing should emit `input`.
                 if (programmaticWrite) return
-                // Suppress the spurious mount/IME-attach empty-text storm
-                // (see `userInteracted`): only emit once the user has
-                // actually touched/typed in the field.
-                if (!userInteracted) return
-                emitInput(s?.toString() ?: "")
+                if (!fromUser) return
+                val text = s?.toString() ?: ""
+                if (text == lastEmitted) return
+                lastEmitted = text
+                emitInput(text)
             }
         })
 
@@ -215,6 +243,81 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         }
 
         return et
+    }
+
+    /// EditText that tags every edit the user makes, for [userEdit].
+    ///
+    /// An `Editable` carries no record of where a change came from, and by
+    /// the time `afterTextChanged` runs the originating call is off the
+    /// stack — so the distinction has to be captured at the entry points
+    /// the user's edits actually arrive through:
+    ///
+    /// * the IME's `InputConnection` — committed text, composition
+    ///   updates (a Japanese conversion updates the composing region on
+    ///   every keystroke; iOS's `UITextField` reports marked text through
+    ///   `editingChanged` the same way, so both platforms see the
+    ///   in-progress reading), surrounding-text deletes, autocorrect
+    ///   replacements, and the key events soft keyboards inject;
+    /// * the text-selection toolbar (paste / cut / autofill from the
+    ///   context menu), which writes to the `Editable` directly;
+    /// * the autofill framework.
+    ///
+    /// Everything else that mutates the editor — Lynx applying props, the
+    /// system restoring state as the InputConnection is (re)established —
+    /// is left untagged and stays out of the two-way binding.
+    private inner class WhiskerEditText(context: Context) : android.widget.EditText(context) {
+        override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+            val base = super.onCreateInputConnection(outAttrs) ?: return null
+            return object : InputConnectionWrapper(base, false) {
+                override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                    userEdit = true
+                    return super.commitText(text, newCursorPosition)
+                }
+
+                override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                    userEdit = true
+                    return super.setComposingText(text, newCursorPosition)
+                }
+
+                override fun finishComposingText(): Boolean {
+                    userEdit = true
+                    return super.finishComposingText()
+                }
+
+                override fun commitCorrection(correctionInfo: CorrectionInfo?): Boolean {
+                    userEdit = true
+                    return super.commitCorrection(correctionInfo)
+                }
+
+                override fun deleteSurroundingText(before: Int, after: Int): Boolean {
+                    userEdit = true
+                    return super.deleteSurroundingText(before, after)
+                }
+
+                override fun deleteSurroundingTextInCodePoints(before: Int, after: Int): Boolean {
+                    userEdit = true
+                    return super.deleteSurroundingTextInCodePoints(before, after)
+                }
+
+                override fun sendKeyEvent(event: KeyEvent?): Boolean {
+                    userEdit = true
+                    return super.sendKeyEvent(event)
+                }
+            }
+        }
+
+        override fun onTextContextMenuItem(id: Int): Boolean {
+            userEdit = true
+            return super.onTextContextMenuItem(id)
+        }
+
+        // Overriding an API-26 method on a minSdk-21 class: the framework
+        // only ever calls it on 26+, and the signature is resolved lazily.
+        @Suppress("NewApi")
+        override fun autofill(value: AutofillValue) {
+            userEdit = true
+            super.autofill(value)
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -444,15 +547,22 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     /** Clear the text and emit `input` so the bound signal updates. */
     fun clearField() {
         val et = view ?: return
-        // Do NOT set `programmaticWrite = true` here — we WANT the
-        // `input` event to fire so the Rust signal sees the empty value.
-        // `clear()` is an explicit, app-initiated content change, so let
-        // its emit through the `userInteracted` gate (and treat the field
-        // as active from here on).
-        userInteracted = true
-        et.setText("")
-        // Move the cursor to position 0 (end of empty string).
-        et.setSelection(0)
+        // `clear()` is an explicit, app-initiated content change, so the
+        // `input` event has to fire — but it is not a *user* edit, so it
+        // can't reach the watcher's gate. Write under `programmaticWrite`
+        // and emit here instead, which also makes the emit unconditional
+        // (a clear of an already-empty field still tells the Rust side the
+        // field is empty).
+        programmaticWrite = true
+        try {
+            et.setText("")
+            // Move the cursor to position 0 (end of empty string).
+            et.setSelection(0)
+        } finally {
+            programmaticWrite = false
+        }
+        lastEmitted = ""
+        emitInput("")
     }
 
     /** Return the EditText's current text — used by `getValue`. */
@@ -658,6 +768,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
      */
     private fun applyTextIfChanged(incoming: String) {
         val et = view ?: return
+        lastEmitted = incoming
         val current = et.text?.toString() ?: ""
         if (current == incoming) return
         programmaticWrite = true
