@@ -1,0 +1,20 @@
+{
+  "skill_name": "build-whisker-apps",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Build a Whisker todo app in this existing Rust repository without replacing its README or unrelated workspace members. It needs native text input, stable keyed rows, and local persistence.",
+      "expected_output": "A Whisker app integrated into the existing repository with reactive input, stable item identity, serialized local persistence, pure Rust state tests, and platform validation that preserves unrelated files."
+    },
+    {
+      "id": 2,
+      "prompt": "A Whisker ForEach list reorders correctly, but toggling a retained row does not update its label. Diagnose and fix it without recreating every row.",
+      "expected_output": "A diagnosis of retained keyed children using their mount-time item snapshot, followed by a fix that keeps the stable key and derives mutable row fields reactively from shared state by ID."
+    },
+    {
+      "id": 3,
+      "prompt": "whisker doctor passes on macOS, but whisker run ios cannot find a simulator destination. Investigate the failure and prepare a minimal upstream report if it is a Whisker defect.",
+      "expected_output": "A version-aware diagnosis covering the CLI, resolved crates, Xcode, iOS SDK, installed simulator runtimes, and build destination, with application and framework causes separated before drafting a concise reproduction."
+    }
+  ]
+}
