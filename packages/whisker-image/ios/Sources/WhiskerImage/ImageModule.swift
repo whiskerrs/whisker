@@ -20,6 +20,21 @@ public final class ImageModule: Module {
     public override func definition() -> ModuleDefinition {
         ModuleDefinition {
             Name("Image")
+
+            AsyncFunction("prefetch") { (args: [WhiskerValue], promise: WhiskerPromise) in
+                let urls: [String] = {
+                    guard case .array(let items)? = args.first else { return [] }
+                    return items.compactMap { $0.asString }
+                }()
+                let headers = args.count > 1 ? (args[1].asString ?? "") : ""
+                DispatchQueue.main.async {
+                    WhiskerImageView.prefetch(
+                        urls: urls,
+                        headers: WhiskerImageView.headers(from: headers)
+                    )
+                    promise.resolve(.null)
+                }
+            }
             View(WhiskerImageView.self) {
                 Prop("src") { (view: WhiskerImageView, value: WhiskerValue) in
                     view.setSrc(value.asString ?? "")
@@ -27,6 +42,10 @@ public final class ImageModule: Module {
                 Prop("mode") { (view: WhiskerImageView, value: WhiskerValue) in
                     view.setMode(value.asString ?? "aspectFill")
                 }
+                Prop("headers") { (view: WhiskerImageView, value: WhiskerValue) in
+                    view.setHeaders(value.asString ?? "")
+                }
+                Events("load", "error")
             }
         }
     }

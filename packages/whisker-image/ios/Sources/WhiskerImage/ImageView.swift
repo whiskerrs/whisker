@@ -33,6 +33,7 @@ import WhiskerModule
 public final class WhiskerImageView: WhiskerUI<UIImageView> {
 
     private var currentSrc: String?
+    private var currentHeaders: [String: String] = [:]
 
     @objc public override func createView() -> UIImageView {
         let v = UIImageView()
@@ -57,6 +58,31 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
         // the request is non-zero.
         if currentSrc == value { return }
         currentSrc = value
+        load()
+    }
+
+    /// Backing of the `headers` prop: a JSON object of request
+    /// headers. Re-fetches, because a host that answers differently
+    /// per header answers differently per change.
+    public func setHeaders(_ json: String) {
+        let parsed = Self.parseHeaders(json)
+        if parsed == currentHeaders { return }
+        currentHeaders = parsed
+        load()
+    }
+
+    private static func parseHeaders(_ json: String) -> [String: String] {
+        guard !json.isEmpty,
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return [:]
+        }
+        return object.compactMapValues { $0 as? String }
+    }
+
+    private func load() {
+        guard let value = currentSrc else { return }
 
         let imageView: UIImageView = self.view()
         guard let url = URL(string: value) else {
@@ -77,11 +103,25 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
         //     to redecode from disk.
         //   - `.scaleFactor(UIScreen.main.scale)` — request 2x / 3x
         //     bitmaps on Retina so the rendered image is sharp.
-        let options: KingfisherOptionsInfo = [
+        var options: KingfisherOptionsInfo = [
             .transition(.fade(0.2)),
             .cacheOriginalImage,
             .scaleFactor(UIScreen.main.scale),
         ]
+
+        // Hot-link protection is the reason: those hosts answer 403
+        // unless the request carries the `Referer` their own pages
+        // send.
+        if !currentHeaders.isEmpty {
+            let headers = currentHeaders
+            options.append(.requestModifier(AnyModifier { request in
+                var request = request
+                for (name, value) in headers {
+                    request.setValue(value, forHTTPHeaderField: name)
+                }
+                return request
+            }))
+        }
 
         // `whisker-asset` resolves bundled assets to a
         // `file://<bundle>/whisker_assets/<rel>` URL (the iOS base is
@@ -93,12 +133,74 @@ public final class WhiskerImageView: WhiskerUI<UIImageView> {
         // `LocalFileImageDataProvider` explicitly so on-disk bundle
         // assets load via the documented local path; http(s) URLs
         // keep the normal network source.
+        // The outcome is reported either way: a page that 403s is
+        // otherwise a blank the app never hears about.
+        let done: (Result<RetrieveImageResult, KingfisherError>) -> Void = { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let loaded):
+                WhiskerCustomEvent.dispatch(
+                    from: self,
+                    name: "load",
+                    params: [
+                        "width": loaded.image.size.width * loaded.image.scale,
+                        "height": loaded.image.size.height * loaded.image.scale,
+                    ]
+                )
+            case .failure(let error):
+                WhiskerCustomEvent.dispatch(
+                    from: self,
+                    name: "error",
+                    params: ["error": error.localizedDescription]
+                )
+            }
+        }
+
         if url.isFileURL {
             let provider = LocalFileImageDataProvider(fileURL: url)
-            imageView.kf.setImage(with: .provider(provider), options: options)
+            imageView.kf.setImage(with: .provider(provider), options: options, completionHandler: done)
         } else {
-            imageView.kf.setImage(with: url, options: options)
+            // Two requests that differ only by header are two different
+            // resources: Kingfisher keys its cache by URL alone, so
+            // without a composed key a header change hands back the
+            // answer to the old one.
+            let resource = KF.ImageResource(downloadURL: url, cacheKey: cacheKey(for: url))
+            imageView.kf.setImage(with: resource, options: options, completionHandler: done)
         }
+    }
+
+    /// URL plus the headers that shape the answer.
+    private func cacheKey(for url: URL) -> String {
+        guard !currentHeaders.isEmpty else { return url.absoluteString }
+        let headers = currentHeaders
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: ";")
+        return "\(url.absoluteString)|\(headers)"
+    }
+
+    /// Warms Kingfisher's cache. Static because prefetching belongs to
+    /// no particular view — the pages after the one on screen have no
+    /// element yet.
+    static func prefetch(urls: [String], headers: [String: String]) {
+        let targets = urls.compactMap(URL.init(string:)).filter { !$0.isFileURL }
+        guard !targets.isEmpty else { return }
+        var options: KingfisherOptionsInfo = [.cacheOriginalImage]
+        if !headers.isEmpty {
+            options.append(.requestModifier(AnyModifier { request in
+                var request = request
+                for (name, value) in headers {
+                    request.setValue(value, forHTTPHeaderField: name)
+                }
+                return request
+            }))
+        }
+        ImagePrefetcher(urls: targets, options: options).start()
+    }
+
+    /// Shared with the module's `prefetch`, which has no view to ask.
+    static func headers(from json: String) -> [String: String] {
+        parseHeaders(json)
     }
 
     /// Backing of the `mode` prop. Maps the Lynx-convention mode

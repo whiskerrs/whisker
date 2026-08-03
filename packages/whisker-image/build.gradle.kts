@@ -46,7 +46,9 @@ ksp {
 }
 
 dependencies {
-    implementation("rs.whisker:whisker-module-android:0.1.0")
+    // 0.1.15 for the module-level `AsyncFunction` the `prefetch`
+    // entry point needs; the view-only packages still build on 0.1.0.
+    implementation("rs.whisker:whisker-module-android:0.1.15")
     ksp("rs.whisker:ksp:0.1.0")
 
     // Coil 2.7 — Kotlin-first, coroutine-native image loader. Base
