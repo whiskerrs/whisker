@@ -36,6 +36,7 @@ members = [
     "packages/whisker-icons",
     "packages/whisker-icons/example",
     "packages/whisker-image",
+    "packages/whisker-image/example",
     "packages/whisker-input",
     "packages/whisker-input/example",
     "packages/whisker-keyboard",

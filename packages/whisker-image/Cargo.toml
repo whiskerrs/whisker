@@ -36,3 +36,5 @@ crate-type = ["rlib"]
 
 [dependencies]
 whisker = { workspace = true }
+# Event payloads cross as JSON bodies; `bind_typed` deserialises them.
+serde = { workspace = true, features = ["derive"] }

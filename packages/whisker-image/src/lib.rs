@@ -114,8 +114,97 @@ impl std::fmt::Display for ImageMode {
 /// `clipsToBounds`; Android extracts the parsed radius from Lynx's
 /// `onBorderRadiusUpdated` callback and feeds it to Coil's
 /// `RoundedCornersTransformation`).
+/// What a finished or failed load reports.
+///
+/// The body of a custom event, whose payload lands under `detail` on
+/// both platforms (the iOS bridge normalises `params` to `detail`, and
+/// the Android reporter nests it there). Every field defaults, so a
+/// partial body still calls the handler — the event firing is the
+/// signal; its contents are the detail.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ImageEvent {
+    #[serde(default)]
+    pub detail: ImageDetail,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ImageDetail {
+    /// Pixel size of the loaded bitmap. Zero on failure.
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
+    /// Why the load failed, as the platform described it. Empty on
+    /// success.
+    #[serde(default)]
+    pub error: String,
+}
+
+impl ImageEvent {
+    /// Why the load failed — shorthand for `self.detail.error`.
+    pub fn error(&self) -> &str {
+        &self.detail.error
+    }
+}
+
 #[whisker::module_component("Image")]
-pub fn image(src: Signal<String>, mode: Signal<ImageMode>, style: whisker::Style) {}
+pub fn image(
+    src: Signal<String>,
+    mode: Signal<ImageMode>,
+    /// Extra request headers for remote sources, as a JSON object.
+    ///
+    /// ```ignore
+    /// Image(src: url, headers: r#"{"Referer": "https://example.com/"}"#)
+    /// // built from data:
+    /// Image(src: url, headers: json!({ "Referer": origin }).to_string())
+    /// ```
+    ///
+    /// A string rather than a map because element attributes cross to
+    /// the platform as strings, and JSON is what every caller already
+    /// has a way to write. Changing it re-fetches: a host that answers
+    /// differently per header answers differently per change.
+    ///
+    /// Sites that block hot-linking are the reason this exists — their
+    /// images 403 without the `Referer` their own pages send. A value
+    /// that isn't a JSON object of strings is ignored.
+    headers: Signal<String>,
+    style: whisker::Style,
+    /// The bitmap arrived and is on screen; `detail` carries its size.
+    on_load: ImageEvent,
+    /// The load failed; `detail.error` says how. A reader that shows a
+    /// site's own images needs this — a page that 403s is otherwise a
+    /// blank the app never hears about.
+    on_error: ImageEvent,
+) {
+}
+
+/// Warm the cache for `urls` without showing them.
+///
+/// The next [`image`] pointing at one of these paints from cache
+/// instead of the network — what a reader does with the pages after
+/// the one being read. Fire-and-forget: failures are the next real
+/// load's problem, not this call's.
+pub fn prefetch(urls: &[String], headers: &str) {
+    let list = urls.to_vec();
+    let headers = headers.to_string();
+    whisker::spawn_local(async move {
+        let _ = whisker::module!("Image")
+            .invoke_async(
+                "prefetch",
+                vec![
+                    whisker::platform_module::WhiskerValue::Array(
+                        list.into_iter()
+                            .map(whisker::platform_module::WhiskerValue::String)
+                            .collect(),
+                    ),
+                    whisker::platform_module::WhiskerValue::String(headers),
+                ],
+            )
+            .await;
+    });
+}
 
 #[cfg(test)]
 mod tests {

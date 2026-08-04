@@ -4398,7 +4398,16 @@ dependencies = [
 name = "whisker-image"
 version = "0.10.1"
 dependencies = [
+ "serde",
  "whisker",
+]
+
+[[package]]
+name = "whisker-image-example"
+version = "0.1.0"
+dependencies = [
+ "whisker",
+ "whisker-image",
 ]
 
 [[package]]

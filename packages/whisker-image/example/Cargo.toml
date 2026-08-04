@@ -1,0 +1,13 @@
+[package]
+name = "whisker-image-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Example app for `whisker-image`. Loads a public image, a URL that fails, and a host that only answers with the right `Referer` — so `headers`, `on_load`, `on_error` and `prefetch` are verified against a real device rather than a mock."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+whisker = { workspace = true }
+whisker-image = { path = ".." }

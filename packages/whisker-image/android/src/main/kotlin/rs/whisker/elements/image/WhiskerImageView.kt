@@ -13,11 +13,13 @@ import coil.request.Disposable
 import coil.transform.RoundedCornersTransformation
 import com.lynx.tasm.behavior.StylesDiffMap
 import rs.whisker.runtime.WhiskerContext
+import rs.whisker.runtime.WhiskerCustomEvent
 import rs.whisker.runtime.WhiskerUI
 
 open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(context) {
 
     private var currentSrc: String? = null
+    private var currentHeaders: Map<String, String> = emptyMap()
     private var currentRequest: Disposable? = null
     /// Active corner radius in **device pixels** — the value Lynx's
     /// CSS pipeline has already converted from the `8px` source. Fed
@@ -87,6 +89,24 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
      * strings onto `ImageView.ScaleType`. Unknown values fall back
      * to `aspectFill` (CENTER_CROP).
      */
+    /// Backing of the `headers` prop: a JSON object of request
+    /// headers. Re-fetches, because a host that answers differently
+    /// per header answers differently per change.
+    fun setHeaders(json: String) {
+        val parsed = parseHeaders(json)
+        if (parsed == currentHeaders) return
+        currentHeaders = parsed
+        reload()
+    }
+
+    private fun parseHeaders(json: String): Map<String, String> {
+        if (json.isBlank()) return emptyMap()
+        return runCatching {
+            val object_ = org.json.JSONObject(json)
+            object_.keys().asSequence().associateWith { object_.optString(it) }
+        }.getOrDefault(emptyMap())
+    }
+
     fun setMode(value: String) {
         val imageView = view ?: return
         imageView.scaleType = when (value) {
@@ -120,6 +140,43 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
 
         currentRequest = imageView.load(src) {
             crossfade(200)
+            // Two requests that differ only by header are two different
+            // resources: the cache is keyed by URL alone, so without
+            // this a header change hands back the answer to the old one.
+            if (currentHeaders.isNotEmpty()) {
+                val key = src + "|" + currentHeaders.entries
+                    .sortedBy { it.key }
+                    .joinToString(";") { "${it.key}=${it.value}" }
+                memoryCacheKey(key)
+                diskCacheKey(key)
+            }
+            // The outcome is reported either way: a page that 403s is
+            // otherwise a blank the app never hears about.
+            listener(
+                onSuccess = { _, result ->
+                    WhiskerCustomEvent.dispatch(
+                        this@WhiskerImageView,
+                        "load",
+                        mapOf(
+                            "width" to result.drawable.intrinsicWidth,
+                            "height" to result.drawable.intrinsicHeight,
+                        ),
+                    )
+                },
+                onError = { _, result ->
+                    WhiskerCustomEvent.dispatch(
+                        this@WhiskerImageView,
+                        "error",
+                        mapOf("error" to (result.throwable.message ?: "load failed")),
+                    )
+                },
+            )
+            // Hot-link protection is the reason: those hosts answer 403
+            // unless the request carries the `Referer` their own pages
+            // send.
+            for ((name, value) in currentHeaders) {
+                addHeader(name, value)
+            }
             memoryCachePolicy(CachePolicy.ENABLED)
             diskCachePolicy(CachePolicy.ENABLED)
             if (cornerRadiusPx > 0f) {
