@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3](https://github.com/whiskerrs/whisker/compare/whisker-image-v0.10.2...whisker-image-v0.10.3) - 2026-08-05
+
+### Other
+
+- whisker SDK 0.1.16 / iOS SwiftPM v0.1.5 for Lynx 4.0.1
+
 ## [0.10.2](https://github.com/whiskerrs/whisker/compare/whisker-image-v0.10.1...whisker-image-v0.10.2) - 2026-08-04
 
 ### Added
