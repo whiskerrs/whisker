@@ -148,10 +148,11 @@ impl Css {
         self.push("outline-offset", v)
     }
 
-    /// Sets `caret-width`. Lynx accepts a length controlling the
-    /// rendered caret thickness.
+    /// Sets `-x-caret-width`. Lynx accepts a length controlling the
+    /// rendered caret thickness. Lynx 4.0 renamed the unprefixed
+    /// `caret-width` (unlike `caret-color`, which kept its name).
     pub fn caret_width(self, v: Length) -> Self {
-        self.push("caret-width", v)
+        self.push("-x-caret-width", v)
     }
 
     /// Sets `-x-handle-color` — Lynx-only selection-handle color.
@@ -292,7 +293,7 @@ mod tests {
             .caret_width(2.px());
         assert_eq!(
             s.to_string(),
-            "caret-color: rgb(255, 0, 255); caret-width: 2px;"
+            "caret-color: rgb(255, 0, 255); -x-caret-width: 2px;"
         );
     }
 

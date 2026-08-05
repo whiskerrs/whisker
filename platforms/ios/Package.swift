@@ -99,23 +99,23 @@ let package = Package(
         // until the matching module-side refactor lands).
         .binaryTarget(
             name: "Lynx",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.13/Lynx-3.8.0-whisker.13.xcframework.zip",
-            checksum: "13287093478b2b637a52028f795f22b3759fc2233bc11de55fc24fe92eb18594"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.1/Lynx-4.0.1-whisker.1.xcframework.zip",
+            checksum: "e5161bf110a1d22869412689b89362798fd35e53dad9467980e9390918261c1d"
         ),
         .binaryTarget(
             name: "LynxBase",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.13/LynxBase-3.8.0-whisker.13.xcframework.zip",
-            checksum: "8127acb7f472f170fd6734e57a0fe0028b27c6c2c184d8d859b2a703f2cc4393"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.1/LynxBase-4.0.1-whisker.1.xcframework.zip",
+            checksum: "875c389e2a33ad846ae43a29bcb1dad131d8b1e75ab36a2d41f39355e68cd25e"
         ),
         .binaryTarget(
             name: "LynxServiceAPI",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.13/LynxServiceAPI-3.8.0-whisker.13.xcframework.zip",
-            checksum: "ecd61fd412faa5e35a3e35e2550f8d9225550eb613437a0234447147a2748861"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.1/LynxServiceAPI-4.0.1-whisker.1.xcframework.zip",
+            checksum: "9347769f21d9c41e0274cdb555698d7489f67ab9ed26fe2146688061f55a9b24"
         ),
         .binaryTarget(
             name: "PrimJS",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v3.8.0-whisker.13/PrimJS-3.8.0-whisker.13.xcframework.zip",
-            checksum: "0a82703ba212e61b56dfe63791b219f61517f8867fd64bd0b6ee23005f4e8e0f"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.1/PrimJS-4.0.1-whisker.1.xcframework.zip",
+            checksum: "76502d535310b42d7c15d9dcb8e802622d17f8541bcee5a8dcf8863b59d8f45b"
         ),
 
         // Phase J — minimal module-author surface. Carved out of the

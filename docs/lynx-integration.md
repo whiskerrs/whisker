@@ -16,7 +16,7 @@ Audience: contributors bumping Lynx or debugging the C++ bridge build.
 ## How the dependency is wired
 
 The fork publishes pre-built Lynx artifacts per `v<ver>` tag (currently
-`v3.8.0-whisker.7`). Whisker consumes them per platform:
+`v4.0.1-whisker.1`). Whisker consumes them per platform:
 
 ### iOS — SwiftPM binary targets
 
@@ -59,7 +59,7 @@ modes toggled by the `whiskerSdkRelease` Gradle property:
   against `target/lynx-android/` — harmless when empty.
 
 PrimJS comes from Maven Central in both modes:
-`org.lynxsdk.lynx:primjs:3.7.0`.
+`org.lynxsdk.lynx:primjs:4.0.0`.
 
 ## Version pinning points — move these in lockstep
 
