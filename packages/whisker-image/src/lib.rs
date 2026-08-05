@@ -47,10 +47,15 @@
 //!   host app's network security config allows cleartext).
 //! - `mode` — content fit. Takes the typed [`ImageMode`] enum;
 //!   defaults to [`ImageMode::AspectFill`].
+//! - `headers` — extra request headers for remote sources, as a JSON
+//!   object. Hot-link protection is what this is for: those hosts 403
+//!   without the `Referer` their own pages send.
 //! - `style` — standard Whisker style string. Width / height must be
 //!   set on the element (or via flex sizing) — Kingfisher / Coil
 //!   target-size the fetched bitmap against the rendered size, so an
 //!   element with `width: 0; height: 0;` would never paint.
+//! - `on_load` / `on_error` — optional; the load finished, with the
+//!   decoded size, or failed, with the reason.
 //!
 //! ## Native source
 //!
@@ -61,7 +66,8 @@
 //! - Android: `packages/whisker-image/android/src/main/kotlin/rs/whisker/elements/image/ImageModule.kt`
 //!   (view: `WhiskerImageView.kt`)
 
-use whisker::Signal;
+use whisker::prelude::*;
+use whisker::runtime::view::Element;
 
 /// Content-fit mode for an [`Image`]. The variant names mirror the
 /// camelCase wire strings the iOS and Android image-view modules
@@ -106,14 +112,6 @@ impl std::fmt::Display for ImageMode {
     }
 }
 
-/// `whisker-image:Image` element. All props are reactive — the
-/// platform-side setters re-apply whenever the bound signals change,
-/// so a `src` swap re-fetches and a `mode` swap re-lays-out without
-/// remount. Corners follow the standard CSS `border-radius` in the
-/// `style:` cascade (iOS clips via `UIView.layer.cornerRadius` +
-/// `clipsToBounds`; Android extracts the parsed radius from Lynx's
-/// `onBorderRadiusUpdated` callback and feeds it to Coil's
-/// `RoundedCornersTransformation`).
 /// What a finished or failed load reports.
 ///
 /// The body of a custom event, whose payload lands under `detail` on
@@ -149,9 +147,62 @@ impl ImageEvent {
     }
 }
 
+/// Wraps `Rc<dyn Fn(ImageEvent)>` so it's `Clone` (required:
+/// `#[component]` re-clones every prop for the hot-reload remount path)
+/// and so a bare closure coerces into it via `Into` at the call site
+/// (`on_load: move |event| …`). Same reasoning as `whisker-input`'s
+/// `InputCallback`: a `Box<dyn Fn>` has neither property.
+#[derive(Clone)]
+pub struct ImageCallback(std::rc::Rc<dyn Fn(ImageEvent) + 'static>);
+
+impl ImageCallback {
+    /// Invoke the wrapped callback.
+    pub fn call(&self, event: ImageEvent) {
+        (self.0)(event)
+    }
+}
+
+impl<F: Fn(ImageEvent) + 'static> From<F> for ImageCallback {
+    fn from(f: F) -> Self {
+        ImageCallback(std::rc::Rc::new(f))
+    }
+}
+
+// The `whisker-image:Image` element itself. Crate-internal — only the
+// outer `image` component mounts it, because a `module_component`'s
+// event props are all required and these two must not be.
+#[doc(hidden)]
 #[whisker::module_component("Image")]
-pub fn image(
+pub fn native_image(
     src: Signal<String>,
+    mode: Signal<ImageMode>,
+    headers: Signal<String>,
+    style: whisker::Style,
+    on_load: ImageEvent,
+    on_error: ImageEvent,
+) {
+}
+
+/// `whisker-image:Image` — a networked image.
+///
+/// All props are reactive: the platform-side setters re-apply whenever
+/// the bound signals change, so a `src` swap re-fetches and a `mode`
+/// swap re-lays-out without a remount. Corners follow the standard CSS
+/// `border-radius` in the `style:` cascade (iOS clips via
+/// `UIView.layer.cornerRadius` + `clipsToBounds`; Android extracts the
+/// parsed radius from Lynx's `onBorderRadiusUpdated` callback and feeds
+/// it to Coil's `RoundedCornersTransformation`).
+///
+/// A wrapper around the element rather than the element itself so that
+/// `on_load` / `on_error` can be optional: a `module_component`'s event
+/// props are required, and most callers just want a picture.
+#[component]
+pub fn image(
+    /// Image URL. `file://` loads from disk; `http(s)://` from the
+    /// network.
+    src: Signal<String>,
+    /// Content fit. Defaults to [`ImageMode::AspectFill`].
+    #[prop(default = ImageMode::default().into())]
     mode: Signal<ImageMode>,
     /// Extra request headers for remote sources, as a JSON object.
     ///
@@ -169,15 +220,40 @@ pub fn image(
     /// Sites that block hot-linking are the reason this exists — their
     /// images 403 without the `Referer` their own pages send. A value
     /// that isn't a JSON object of strings is ignored.
+    #[prop(default = String::new().into())]
     headers: Signal<String>,
-    style: whisker::Style,
+    /// Standard Whisker style string. Width / height must be set on the
+    /// element (or via flex sizing) — the platform image loaders
+    /// target-size the fetched bitmap against the rendered size.
+    style: Option<whisker::Style>,
     /// The bitmap arrived and is on screen; `detail` carries its size.
-    on_load: ImageEvent,
+    on_load: Option<ImageCallback>,
     /// The load failed; `detail.error` says how. A reader that shows a
     /// site's own images needs this — a page that 403s is otherwise a
     /// blank the app never hears about.
-    on_error: ImageEvent,
-) {
+    on_error: Option<ImageCallback>,
+) -> Element {
+    let style_prop: whisker::Style = style.clone().unwrap_or_default();
+    let load = on_load.clone();
+    let error = on_error.clone();
+    NativeImage(
+        NativeImageProps::builder()
+            .src(src)
+            .mode(mode)
+            .headers(headers)
+            .style(style_prop)
+            .on_load(move |event: ImageEvent| {
+                if let Some(cb) = &load {
+                    cb.call(event);
+                }
+            })
+            .on_error(move |event: ImageEvent| {
+                if let Some(cb) = &error {
+                    cb.call(event);
+                }
+            })
+            .build(),
+    )
 }
 
 /// Warm the cache for `urls` without showing them.
@@ -209,6 +285,18 @@ pub fn prefetch(urls: &[String], headers: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_image_needs_only_a_src() {
+        // That this builds at all is most of the assertion: on the
+        // element, the event props were required, and every caller who
+        // only wanted a picture got a panic at mount.
+        let props = ImageProps::builder()
+            .src("https://example.com/a.png")
+            .build();
+        assert!(props.on_load.is_none());
+        assert!(props.on_error.is_none());
+    }
 
     #[test]
     fn image_mode_wire_strings() {
