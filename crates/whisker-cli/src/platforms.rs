@@ -183,7 +183,14 @@ pub struct PlatformSync {
 /// half declares an `AsyncFunction` doesn't compile against 0.1.14, so
 /// apps shipping one must move to 0.1.15. Kotlin-only, no capi/Lynx ABI
 /// change.
-const WHISKER_SDK_VERSION: &str = "0.1.15";
+///
+/// 0.1.16 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.13` →
+/// `v4.0.1-whisker.1` — the fork rebased onto upstream Lynx 4.0.1. The
+/// capi is untouched (ABI stays v3), so this is a pure engine bump;
+/// what forces the move is the `org.lynxsdk.lynx:primjs` coordinate
+/// going 3.7.0 → 4.0.0 alongside it, since 0.1.15's POM would resolve
+/// a Lynx 4.0 AAR against a PrimJS the engine wasn't built for.
+const WHISKER_SDK_VERSION: &str = "0.1.16";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
