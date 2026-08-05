@@ -188,11 +188,11 @@
         {
           "name": "whisker-module-android-0.1.16-javadoc.jar",
           "url": "whisker-module-android-0.1.16-javadoc.jar",
-          "size": 437007,
-          "sha512": "d96c366a8c26d879ce1a79c853720d6b290c1971f2e5e3bc56afa51d2966cf272275c0f241acef910773d448d0bc385bd83f143c52fcacfa7660060c97d5c8e2",
-          "sha256": "d8103db6e1416ce679381b5235fa64e5a719adf6ab71de76120429867749588f",
-          "sha1": "5731ffbaf51899f0ec52a301a14ab3bfe2d3069f",
-          "md5": "023aaf2a3942764adf2ce90e8f678aff"
+          "size": 437003,
+          "sha512": "bcebbe55b3bb0402ef63f5cead2aa935ff5c84281f8958bed7c883730b388488c6d6aa950e8375a53ec0a3a71241c4f57fbc0cd179c6930ba5cb3361a1b52c6e",
+          "sha256": "13bc8ab5e113ced478c52aa12d986e284ce3254c45a9428a154f419f3f8eff3b",
+          "sha1": "fa4fa477ddfb2343f6e41a636b3654e6a1ccc206",
+          "md5": "817a21a9ef8f35ab4a7198dceef96e95"
         }
       ]
     }
