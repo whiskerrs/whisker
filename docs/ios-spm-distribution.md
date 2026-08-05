@@ -98,6 +98,8 @@ Keep these aligned per release:
 |---|---|---|---|---|
 | `0.1.0` | `v0.1.0` | `0.1.1` | `0.4.0` | `3.8.0-whisker.7` |
 | `0.1.1` | `v0.1.1` | `0.1.2` | `0.4.0` | `3.8.0-whisker.8` |
+| `0.10.2` | `v0.1.4` | `0.1.15` | `0.4.1` | `3.8.0-whisker.13` |
+| `0.10.3` | `v0.1.5` | `0.1.16` | `0.4.1` | `4.0.1-whisker.1` |
 
 The `3.8.0-whisker.8` row bumps the Lynx fork on both platforms, raising
 the capi ABI to **v2** (list data source driven by real item-keys +
@@ -111,6 +113,13 @@ must move to the new pins:
   `sdk-v0.1.2` tag. Its POM rolls the transitive `lynx-android` pin
   `3.8.0-whisker.7` → `.8` via the `lynxFork` default in
   `platforms/android/{whisker-runtime,module}/build.gradle.kts`.
+
+The `4.0.1-whisker.1` row rebases the fork onto upstream Lynx 4.0.1 (898
+commits since 3.8.0). The capi is untouched, so the ABI stays **v3** and
+the engine handshake is not what forces the move — the PrimJS coordinate
+shipping in the same POM does (`org.lynxsdk.lynx:primjs` 3.7.0 → 4.0.0).
+On the Rust side the same release renames `Css::caret_width`'s output to
+`-x-caret-width`, which Lynx 4.0 requires and 3.8 does not accept.
 
 The iOS SwiftPM tag and the Android `sdk-v*` tag are independent version
 streams (hence `v0.1.1` vs `0.1.2`), aligned here only by the Lynx fork.
