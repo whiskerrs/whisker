@@ -190,7 +190,14 @@ pub struct PlatformSync {
 /// what forces the move is the `org.lynxsdk.lynx:primjs` coordinate
 /// going 3.7.0 → 4.0.0 alongside it, since 0.1.15's POM would resolve
 /// a Lynx 4.0 AAR against a PrimJS the engine wasn't built for.
-const WHISKER_SDK_VERSION: &str = "0.1.16";
+///
+/// 0.1.17 carries the Android half of multi-touch: the runtime turns
+/// Lynx's multi-touch switch on and implements the channel it moves
+/// touch events onto. Apps on 0.1.16 see `TouchEvent.touches` hold one
+/// finger at most — a pinch is indistinguishable from a drag — so
+/// anything reading a second finger must move to 0.1.17. Kotlin-only,
+/// no capi/Lynx ABI change.
+const WHISKER_SDK_VERSION: &str = "0.1.17";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
