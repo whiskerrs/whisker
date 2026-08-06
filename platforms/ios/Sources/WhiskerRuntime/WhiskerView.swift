@@ -121,6 +121,37 @@ public final class WhiskerView: LynxView {
         }
     }
 
+    // MARK: - Multi-touch
+
+    private var multiTouchEnabled = false
+
+    /// Lynx drops every finger but the first unless its touch handler
+    /// is told otherwise, so `TouchEvent.touches` can never hold more
+    /// than one point and a pinch is indistinguishable from a drag.
+    ///
+    /// The switch is meant to arrive through the page config, which is
+    /// the template-loading pipeline this runtime bypasses (the engine
+    /// goes straight to Rust over the bridge), so it is set on the live
+    /// handler instead — the same shape the Android runtime uses for
+    /// `tapSlop`. Attempted per touch dispatch, because the handler
+    /// does not exist until the tree has mounted; once it takes, the
+    /// flag stops the retry.
+    private func enableMultiTouch() {
+        guard let owner = getLynxContext().uiOwner,
+              let handler = owner.eventHandler?.touchRecognizer
+        else { return }
+        // `setEnableMultiTouch:` lives in `LynxTouchHandler+Internal.h`,
+        // which the shipped framework does not expose — KVC reaches the
+        // same setter without the header.
+        handler.setValue(true, forKey: "enableMultiTouch")
+        multiTouchEnabled = true
+    }
+
+    public override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if !multiTouchEnabled { enableMultiTouch() }
+        return super.hitTest(point, with: event)
+    }
+
     public override func onEnterForeground() {
         super.onEnterForeground()
     }

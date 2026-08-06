@@ -91,14 +91,18 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setEventReporterBlock:(BOOL (^)(LynxEvent* event))block;
 @end
 
-// LynxTouchEvent — touch coordinate carrier. Multi-touch path goes
-// through `touchMap` keyed by identifier; single-touch path reads
-// `pagePoint` / `clientPoint` directly.
+// LynxTouchEvent — touch coordinate carrier. The single-touch path
+// reads `pagePoint` / `clientPoint` directly; once multi-touch is on
+// (see `WhiskerView.enableMultiTouch`) every touch event instead
+// carries its fingers in `uiTouchMap`, keyed by the tag of the element
+// each finger is over, with values `@[@[identifier, clientX, clientY,
+// pageX, pageY, x, y], …]` — the shape
+// `TouchEventHandler::GetTouchEventParam` parses engine-side.
 @interface LynxTouchEvent : LynxEvent
 @property (nonatomic, readonly) BOOL isMultiTouch;
 @property (nonatomic, readonly) CGPoint pagePoint;
 @property (nonatomic, readonly) CGPoint clientPoint;
-@property (nonatomic, readonly, nullable) NSDictionary* touchMap;
+@property (nonatomic, readonly, nullable) NSDictionary* uiTouchMap;
 @end
 
 NS_ASSUME_NONNULL_END

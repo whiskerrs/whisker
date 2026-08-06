@@ -16,8 +16,11 @@ import com.lynx.tasm.event.LynxInternalEvent
 import com.lynx.tasm.event.LynxTouchEvent
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** See `WhiskerView.forceTapSlop`'s doc comment for why this can't just be `LynxViewBuilder`'s tapSlop. */
+/** See `WhiskerView.configureEventDispatcher`'s doc comment for why this can't just be `LynxViewBuilder`'s tapSlop. */
 private const val TAP_SLOP_DP = 18f
+
+/** `[identifier, clientX, clientY, pageX, pageY, x, y]` — the per-finger record `uiTouchMap` carries. */
+private const val FINGER_FIELDS = 7
 
 /**
  * Hosts the Lynx engine and bridges it to the Rust runtime.
@@ -53,7 +56,7 @@ class WhiskerView @JvmOverloads constructor(
         // by ordinary hand tremor; still far below the original 50dp gap.
         //
         // Kept even though it's confirmed dead for this app (see
-        // `forceTapSlop`'s doc comment below) — cheap, harmless, and
+        // `configureEventDispatcher`'s doc comment below) — cheap, harmless, and
         // becomes real again if a future Lynx version or code path
         // starts honoring it.
         LynxViewBuilder().setTapSlop("18px"),
@@ -71,6 +74,9 @@ class WhiskerView @JvmOverloads constructor(
     private val eventReporter = object : EventEmitter.LynxEventReporter {
         override fun onLynxEvent(event: LynxEvent): Boolean {
             val name = event.name ?: return false
+            if (event is LynxTouchEvent && event.getIsMultiTouch()) {
+                return dispatchMultiTouch(name, event)
+            }
             // Normalize the body to the same shape iOS's
             // `LynxEvent.generateEventBody` produces —
             // `{type, target, currentTarget, detail}` — so the typed
@@ -100,63 +106,123 @@ class WhiskerView @JvmOverloads constructor(
             } else if (event is LynxTouchEvent) {
                 // `LynxTouchEvent` doesn't carry coordinates through
                 // the generic params path above — only
-                // `getClientPoint`/`getPagePoint`/`getTouchMap` do.
+                // `getClientPoint`/`getPagePoint` do.
                 // Splice touches/changedTouches/detail on here,
                 // mirroring the shape `whisker_bridge_ios.mm`'s
                 // reporter block builds from the same Lynx class on
                 // iOS, so `whisker_runtime::event::TouchEvent`
                 // deserializes identically on both platforms instead
                 // of every field silently defaulting to zero here.
-                if (!event.getIsMultiTouch()) {
-                    val page = event.getPagePoint()
-                    val client = event.getClientPoint()
-                    if (page != null && client != null) {
-                        val x = pxToDip(page.x)
-                        val y = pxToDip(page.y)
-                        val clientX = pxToDip(client.x)
-                        val clientY = pxToDip(client.y)
-                        val touch =
-                            mapOf(
-                                "identifier" to 0,
-                                "x" to x,
-                                "y" to y,
-                                "pageX" to x,
-                                "pageY" to y,
-                                "clientX" to clientX,
-                                "clientY" to clientY,
-                            )
-                        body["touches"] = listOf(touch)
-                        body["changedTouches"] = listOf(touch)
-                        body["detail"] = mapOf("x" to x, "y" to y)
-                    }
-                } else {
-                    val touchMap = event.getTouchMap()
-                    if (touchMap != null) {
-                        val touches =
-                            touchMap.entries.map { (identifier, point) ->
-                                val x = pxToDip(point.x)
-                                val y = pxToDip(point.y)
-                                mapOf(
-                                    "identifier" to identifier,
-                                    "x" to x,
-                                    "y" to y,
-                                    "pageX" to x,
-                                    "pageY" to y,
-                                    "clientX" to x,
-                                    "clientY" to y,
-                                )
-                            }
-                        body["touches"] = touches
-                        body["changedTouches"] = touches
-                        touches.firstOrNull()?.let { first ->
-                            body["detail"] = mapOf("x" to first["pageX"], "y" to first["pageY"])
-                        }
-                    }
+                val page = event.getPagePoint()
+                val client = event.getClientPoint()
+                if (page != null && client != null) {
+                    val x = pxToDip(page.x)
+                    val y = pxToDip(page.y)
+                    val clientX = pxToDip(client.x)
+                    val clientY = pxToDip(client.y)
+                    val touch =
+                        mapOf(
+                            "identifier" to 0,
+                            "x" to x,
+                            "y" to y,
+                            "pageX" to x,
+                            "pageY" to y,
+                            "clientX" to clientX,
+                            "clientY" to clientY,
+                        )
+                    body["touches"] = listOf(touch)
+                    body["changedTouches"] = listOf(touch)
+                    body["detail"] = mapOf("x" to x, "y" to y)
                 }
             }
             return nativeOnLynxEvent(engine, event.tag, name, body)
         }
         override fun onInternalEvent(event: LynxInternalEvent) {}
+    }
+
+    /**
+     * Fingers currently on the screen, keyed by touch identifier, in
+     * the order they landed. Lynx reports only the fingers that changed
+     * in a given event, so `touches` — every finger currently down,
+     * which is what the DOM contract and
+     * `whisker_runtime::event::TouchEvent` both promise — has to be
+     * accumulated here.
+     */
+    private val currentTouches = LinkedHashMap<Int, Map<String, Any?>>()
+
+    /**
+     * Deliver one multi-touch event.
+     *
+     * Turning multi-touch on (see `configureEventDispatcher`) moves
+     * every `touchstart`/`touchmove`/`touchend`/`touchcancel` onto
+     * `EventEmitter.sendMultiTouchEvent`, which reports the fingers in
+     * `uiTouchMap` and leaves `event.tag` at -1 — no single element
+     * owns a gesture that can span several. `tap` / `longpress` /
+     * `click` are unaffected and still arrive with a real tag.
+     *
+     * `uiTouchMap` is `{ elementTag: [[identifier, clientX, clientY,
+     * pageX, pageY, x, y], …] }` — the same shape
+     * `TouchEventHandler::GetTouchEventParam` parses in the engine.
+     * Coordinates are raw device px, like every other point Lynx hands
+     * the platform (see `pxToDip`).
+     *
+     * Fans back out to one dispatch per element, because a native
+     * callback is registered against exactly one tag: two fingers on
+     * two elements is two events, each carrying its own fingers as
+     * `changedTouches` and every finger down as `touches`.
+     */
+    private fun dispatchMultiTouch(name: String, event: LynxTouchEvent): Boolean {
+        val uiTouchMap = event.getUITouchMap() ?: return false
+
+        val changedByTag = LinkedHashMap<Int, MutableList<Map<String, Any?>>>()
+        for ((tagKey, fingers) in uiTouchMap) {
+            val tag = tagKey.toIntOrNull() ?: continue
+            if (fingers !is List<*>) continue
+            for (finger in fingers) {
+                val values = finger as? List<*> ?: continue
+                if (values.size < FINGER_FIELDS) continue
+                val numbers = values.map { (it as? Number)?.toFloat() ?: return@map 0f }
+                val identifier = numbers[0].toInt()
+                val touch =
+                    mapOf<String, Any?>(
+                        "identifier" to identifier,
+                        "clientX" to pxToDip(numbers[1]),
+                        "clientY" to pxToDip(numbers[2]),
+                        "pageX" to pxToDip(numbers[3]),
+                        "pageY" to pxToDip(numbers[4]),
+                        "x" to pxToDip(numbers[5]),
+                        "y" to pxToDip(numbers[6]),
+                    )
+                changedByTag.getOrPut(tag) { mutableListOf() }.add(touch)
+                when (name) {
+                    LynxTouchEvent.EVENT_TOUCH_END -> currentTouches.remove(identifier)
+                    LynxTouchEvent.EVENT_TOUCH_CANCEL -> currentTouches.clear()
+                    else -> currentTouches[identifier] = touch
+                }
+            }
+        }
+        if (changedByTag.isEmpty()) return false
+
+        val touches = currentTouches.values.toList()
+        var handled = false
+        for ((tag, changed) in changedByTag) {
+            // The engine reports the primary finger's position as the
+            // event's own `detail`; anything watching a single point
+            // (a tap fraction, a drag delta) reads that and stays
+            // oblivious to the extra fingers.
+            val primary = changed.firstOrNull { it["identifier"] == 0 } ?: changed.first()
+            val body: MutableMap<String, Any?> =
+                mutableMapOf(
+                    "type" to name,
+                    "target" to tag,
+                    "currentTarget" to tag,
+                    "detail" to mapOf("x" to primary["pageX"], "y" to primary["pageY"]),
+                    "touches" to touches,
+                    "changedTouches" to changed,
+                )
+            handled = nativeOnLynxEvent(engine, tag, name, body) || handled
+        }
+        return handled
     }
 
     // `LynxTouchEvent.getPagePoint()`/`getClientPoint()`/`getTouchMap()`
@@ -210,15 +276,15 @@ class WhiskerView @JvmOverloads constructor(
     // directly, bypassing the page-config pipeline this app never
     // drives. Tried on every touch (idempotent past the first success)
     // since the dispatcher doesn't exist until the first one.
-    private var tapSlopForced = false
+    private var dispatcherConfigured = false
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         val result = super.dispatchTouchEvent(ev)
-        if (!tapSlopForced) forceTapSlop()
+        if (!dispatcherConfigured) configureEventDispatcher()
         return result
     }
 
-    private fun forceTapSlop() {
+    private fun configureEventDispatcher() {
         try {
             val templateRenderField = LynxView::class.java.getDeclaredField("mLynxTemplateRender")
             templateRenderField.isAccessible = true
@@ -233,10 +299,24 @@ class WhiskerView @JvmOverloads constructor(
             val dispatcher = dispatcherField.get(uiRenderer) as? TouchEventDispatcher ?: return
 
             dispatcher.setTapSlop(TAP_SLOP_DP * resources.displayMetrics.density)
-            tapSlopForced = true
-            Log.d("WhiskerTapSlop", "forced tapSlop to ${TAP_SLOP_DP}dp on live dispatcher")
+            // Off by default, and reachable only from the same
+            // page-config pipeline as tapSlop. While off, a second
+            // finger is dropped before any handler sees it, so
+            // `TouchEvent.touches` can never hold more than one point
+            // and a pinch is indistinguishable from a drag.
+            dispatcher.setEnableMultiTouch(true)
+            dispatcherConfigured = true
+            Log.d(
+                "WhiskerTouch",
+                "forced tapSlop to ${TAP_SLOP_DP}dp and enabled multi-touch on live dispatcher",
+            )
         } catch (e: Exception) {
-            Log.e("WhiskerTapSlop", "forceTapSlop failed — falling back to Lynx's 50dip default", e)
+            Log.e(
+                "WhiskerTouch",
+                "configureEventDispatcher failed — tapSlop stays at Lynx's 50dip default " +
+                    "and touches stay single-finger",
+                e,
+            )
         }
     }
 
