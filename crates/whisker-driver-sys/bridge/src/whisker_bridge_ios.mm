@@ -143,6 +143,95 @@ void* GetShellPtr(LynxTemplateRender* render) {
     return *reinterpret_cast<void* const*>(base + offset);
 }
 
+// Fingers currently on the screen, keyed by touch identifier, in the
+// order they landed. Lynx reports only the fingers that changed in a
+// given event, so `touches` — every finger currently down, which is
+// what `whisker_runtime::event::TouchEvent` promises — is accumulated
+// here.
+NSMutableDictionary<NSNumber*, NSDictionary*>* CurrentTouches() {
+    static NSMutableDictionary<NSNumber*, NSDictionary*>* touches = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        touches = [NSMutableDictionary dictionary];
+    });
+    return touches;
+}
+
+// `[identifier, clientX, clientY, pageX, pageY, x, y]` — the per-finger
+// record `uiTouchMap` carries.
+const NSUInteger kFingerFields = 7;
+
+// Deliver one multi-touch event, one dispatch per element the fingers
+// are over. See `LynxTouchEvent`'s stub declaration for the payload.
+void DispatchMultiTouch(LynxTouchEvent* touch, NSMutableDictionary* body) {
+    NSString* name = touch.eventName;
+    NSMutableDictionary<NSNumber*, NSMutableArray*>* changed_by_tag =
+        [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber*, NSDictionary*>* current = CurrentTouches();
+
+    [touch.uiTouchMap enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL* stop) {
+        if (![obj isKindOfClass:[NSArray class]]) return;
+        NSNumber* tag = @([[key description] intValue]);
+        for (id entry in (NSArray*)obj) {
+            if (![entry isKindOfClass:[NSArray class]]) continue;
+            NSArray* values = (NSArray*)entry;
+            if (values.count < kFingerFields) continue;
+            NSNumber* identifier = values[0];
+            NSDictionary* finger = @{
+                @"identifier": identifier,
+                @"clientX": values[1],
+                @"clientY": values[2],
+                @"pageX": values[3],
+                @"pageY": values[4],
+                @"x": values[5],
+                @"y": values[6],
+            };
+            NSMutableArray* changed = changed_by_tag[tag];
+            if (changed == nil) {
+                changed = [NSMutableArray array];
+                changed_by_tag[tag] = changed;
+            }
+            [changed addObject:finger];
+            if ([name isEqualToString:@"touchend"]) {
+                [current removeObjectForKey:identifier];
+            } else if ([name isEqualToString:@"touchcancel"]) {
+                [current removeAllObjects];
+            } else {
+                current[identifier] = finger;
+            }
+        }
+    }];
+    if (changed_by_tag.count == 0) return;
+
+    NSArray* touches = current.allValues;
+    [changed_by_tag enumerateKeysAndObjectsUsingBlock:^(NSNumber* tag,
+                                                        NSMutableArray* changed,
+                                                        BOOL* stop) {
+        // The engine reports the primary finger's position as the
+        // event's own `detail`; anything watching a single point (a tap
+        // fraction, a drag delta) reads that and stays oblivious to the
+        // extra fingers.
+        NSDictionary* primary = changed.firstObject;
+        for (NSDictionary* finger in changed) {
+            if ([finger[@"identifier"] intValue] == 0) {
+                primary = finger;
+                break;
+            }
+        }
+        NSMutableDictionary* per_tag = [body mutableCopy];
+        per_tag[@"target"] = tag;
+        per_tag[@"currentTarget"] = tag;
+        per_tag[@"detail"] = @{@"x": primary[@"pageX"], @"y": primary[@"pageY"]};
+        per_tag[@"touches"] = touches;
+        per_tag[@"changedTouches"] = changed;
+
+        WhiskerValueRaw value = WhiskerValueFromNSObject(per_tag);
+        whisker_bridge_internal_dispatch_event((int32_t)[tag intValue],
+                                               [name UTF8String], &value);
+        whisker_bridge_value_release(&value);
+    }];
+}
+
 // Install our hook on the LynxEventEmitter so physical taps land in our
 // native callback registry instead of being dropped on the way to a
 // non-existent JS handler. Safe to call repeatedly — only installs once
@@ -229,41 +318,17 @@ void InstallEventReporterIfNeeded(WhiskerEngine* engine, LynxView* view) {
                             @"x": @(touch.pagePoint.x),
                             @"y": @(touch.pagePoint.y),
                         };
-                    } else if (touch.touchMap != nil) {
-                        // Multi-touch shape — touchMap is keyed by
-                        // touch identifier with values `@[clientX,
-                        // clientY, pageX, pageY, viewX, viewY]`.
-                        NSMutableArray* touches = [NSMutableArray array];
-                        [touch.touchMap enumerateKeysAndObjectsUsingBlock:
-                            ^(id key, id obj, BOOL* stop) {
-                                if (![obj isKindOfClass:[NSArray class]]) return;
-                                NSArray* arr = (NSArray*)obj;
-                                if (arr.count < 6) return;
-                                NSNumber* identifier = nil;
-                                if ([key isKindOfClass:[NSNumber class]]) {
-                                    identifier = (NSNumber*)key;
-                                } else {
-                                    identifier = @([[key description] integerValue]);
-                                }
-                                [touches addObject:@{
-                                    @"identifier": identifier,
-                                    @"x": arr[2],
-                                    @"y": arr[3],
-                                    @"pageX": arr[2],
-                                    @"pageY": arr[3],
-                                    @"clientX": arr[0],
-                                    @"clientY": arr[1],
-                                }];
-                            }];
-                        body[@"touches"] = touches;
-                        body[@"changedTouches"] = touches;
-                        if (touches.count > 0) {
-                            NSDictionary* first = touches.firstObject;
-                            body[@"detail"] = @{
-                                @"x": first[@"pageX"],
-                                @"y": first[@"pageY"],
-                            };
-                        }
+                    } else if (touch.uiTouchMap != nil) {
+                        // Multi-touch: the fingers arrive keyed by the
+                        // element each is over, and the event's own
+                        // target is -1 — no single element owns a
+                        // gesture that can span several. Fan out to one
+                        // dispatch per element (a native callback is
+                        // registered against exactly one tag), each
+                        // carrying its own fingers as `changedTouches`
+                        // and every finger down as `touches`.
+                        DispatchMultiTouch(touch, body);
+                        return NO;
                     }
                 }
                 value = WhiskerValueFromNSObject(body);
