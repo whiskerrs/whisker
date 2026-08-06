@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.5](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.10.4...whisker-cli-v0.10.5) - 2026-08-06
+
+### Other
+
+- Point the CLI at SDK 0.1.17 ([#357](https://github.com/whiskerrs/whisker/pull/357))
+
 ## [0.10.3](https://github.com/whiskerrs/whisker/compare/whisker-cli-v0.10.2...whisker-cli-v0.10.3) - 2026-08-05
 
 ### Other
