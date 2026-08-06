@@ -28,7 +28,7 @@ let package = Package(
         .library(name: "WhiskerLocalStore", targets: ["WhiskerLocalStore"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.5"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.6"),
         // PoC — an external SwiftPM dependency. swift-collections is
         // Apple-maintained, header-only Swift, small enough that
         // resolving it is fast even on a cold cache. Use is minimal
