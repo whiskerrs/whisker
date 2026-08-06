@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.6](https://github.com/whiskerrs/whisker/compare/whisker-icons-v0.10.4...whisker-icons-v0.10.6) - 2026-08-06
+
+### Other
+
+- release v0.10.5 ([#356](https://github.com/whiskerrs/whisker/pull/356))
+
 ## [0.3.0](https://github.com/whiskerrs/whisker/compare/whisker-icons-v0.2.5...whisker-icons-v0.3.0) - 2026-06-15
 
 ### Added

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.6](https://github.com/whiskerrs/whisker/compare/whisker-status-bar-v0.10.5...whisker-status-bar-v0.10.6) - 2026-08-06
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.10.4](https://github.com/whiskerrs/whisker/compare/whisker-status-bar-v0.10.2...whisker-status-bar-v0.10.4) - 2026-08-06
 
 ### Other
