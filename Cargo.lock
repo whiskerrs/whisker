@@ -683,9 +683,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.5"
+version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "301b56658598e48f3648647ac6fc887be7e7108eddfa4e9b63fcf3ec58c0cadf"
+checksum = "473c7e07f409a8d772161724aa8db6a765a2532a70f9667eeb7b49d3d02fbdca"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -693,9 +693,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.5"
+version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94a65403d1a1bd28f7dc68eb8506e8874808ee5eecb59298de588e2e1407a078"
+checksum = "7b48fea5a88e9ae728a2dcbedbfc0e730f7d60da42e1cb049a83c9fb8b789889"
 dependencies = [
  "anstream",
  "anstyle",
@@ -4158,7 +4158,7 @@ dependencies = [
 
 [[package]]
 name = "whisker"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker-animation",
  "whisker-config",
@@ -4171,7 +4171,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-animation"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker-css",
  "whisker-runtime",
@@ -4179,7 +4179,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-asset"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -4191,7 +4191,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-asset-macros"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4200,7 +4200,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-audio"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -4219,7 +4219,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-build"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -4232,7 +4232,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-cli"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4260,7 +4260,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-cng"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -4274,7 +4274,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-config"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -4284,7 +4284,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-credentials"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "age",
  "anyhow",
@@ -4295,14 +4295,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-css"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker-macros",
 ]
 
 [[package]]
 name = "whisker-dev-runtime"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "futures-util",
  "libc",
@@ -4317,7 +4317,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-dev-server"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -4335,7 +4335,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-driver"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "futures-channel",
  "serde",
@@ -4348,7 +4348,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-driver-sys"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "cc",
@@ -4356,7 +4356,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-fmt"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "proc-macro2",
@@ -4369,7 +4369,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-haptics"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -4379,7 +4379,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-icons"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker",
  "whisker-svg",
@@ -4396,7 +4396,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-image"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "serde",
  "whisker",
@@ -4412,7 +4412,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-input"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "serde",
  "whisker",
@@ -4428,21 +4428,21 @@ dependencies = [
 
 [[package]]
 name = "whisker-keyboard"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-local-store"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-macro-syntax"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4451,7 +4451,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-macros"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4463,7 +4463,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-paths"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker",
 ]
@@ -4478,7 +4478,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-plugin"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -4487,7 +4487,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-router"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -4509,7 +4509,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-router-macros"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4518,7 +4518,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-runtime"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "futures-channel",
  "futures-executor",
@@ -4530,14 +4530,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-safe-area"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-secure-store"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker",
 ]
@@ -4552,7 +4552,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-splash-screen"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -4561,7 +4561,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-status-bar"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -4588,7 +4588,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-svg"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "base64 0.22.1",
  "roxmltree",
@@ -4605,14 +4605,14 @@ dependencies = [
 
 [[package]]
 name = "whisker-video"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "whisker",
 ]
 
 [[package]]
 name = "whisker-web-browser"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "futures-channel",
  "whisker",
@@ -4620,7 +4620,7 @@ dependencies = [
 
 [[package]]
 name = "whisker-webview"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "serde",
  "whisker",
@@ -4947,18 +4947,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.55"
+version = "0.8.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5a105cd7b140f6eeec8acff2ea38135d3cab283ada58540f629fe51e46696eb"
+checksum = "556764e583adb45a9f8d413c2a147fa7e8d821e48e12b14fd560b607998b75eb"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.55"
+version = "0.8.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fe976fb70c78cd64cccfe3a6fc142244e8a77b70959b30faf9d0ac37ee228eb"
+checksum = "f2ab42fc20575779bd240faa45f94a74256f755c0fa9e89f0ede20d91d0cdfc1"
 dependencies = [
  "proc-macro2",
  "quote",
