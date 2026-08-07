@@ -89,6 +89,17 @@ pub fn swipe_back() -> Element {
     // published by `router()` BEFORE the children mount, so it is visible here.
     let container = use_context::<RouterRoot>().map(|r| r.0);
     on_mount(move || {
+        // Android's back gesture belongs to the platform: it arrives
+        // through `AndroidPredictiveBack`, and the two mounted together
+        // is the documented setup. Installing here as well would let a
+        // left-edge swipe drive both — and the platform cancels the
+        // touch stream once it takes the gesture over, so this half
+        // reads that as a cancelled swipe and *restores* the focus the
+        // gesture had just dismissed. The keyboard drops and springs
+        // back, on the left edge only.
+        if cfg!(target_os = "android") {
+            return;
+        }
         if let Some(container) = container {
             install(container, nav.clone());
         }
