@@ -251,6 +251,12 @@ void InstallEventReporterIfNeeded(WhiskerEngine* engine, LynxView* view) {
     if (handler == nil) return;
     LynxEventEmitter* emitter = handler.eventEmitter;
     if (emitter == nil) return;
+    // Lynx keeps multi-touch behind a switch that arrives through the
+    // page config — the template pipeline this runtime bypasses. Set it
+    // on the live recognizer instead, from the walk that already
+    // reaches the handler, so `TouchEvent.touches` can hold more than
+    // one finger and `DispatchMultiTouch` above has something to read.
+    [handler.touchRecognizer setEnableMultiTouch:YES];
     [emitter setEventReporterBlock:^BOOL(LynxEvent* event) {
         if (event == nil || event.eventName == nil) return NO;
         // `generateEventBody` is the public seam on `LynxEvent` (the
