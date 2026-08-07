@@ -72,8 +72,11 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 // LynxEventHandler — owns the emitter the bridge hooks into.
+@class LynxTouchHandler;
+
 @interface LynxEventHandler : NSObject
 @property (nonatomic, readonly, nullable) LynxEventEmitter* eventEmitter;
+@property (nonatomic, readonly, nullable) LynxTouchHandler* touchRecognizer;
 @end
 
 // LynxEvent — base class. The bridge reads `eventName` / `targetSign`,
@@ -103,6 +106,14 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) CGPoint pagePoint;
 @property (nonatomic, readonly) CGPoint clientPoint;
 @property (nonatomic, readonly, nullable) NSDictionary* uiTouchMap;
+@end
+
+// LynxTouchHandler — Lynx's own gesture recognizer.
+// `setEnableMultiTouch:` is declared in `LynxTouchHandler+Internal.h`,
+// which the shipped framework does not surface; without it Lynx drops
+// every finger but the first before any handler sees it.
+@interface LynxTouchHandler : NSObject
+- (void)setEnableMultiTouch:(BOOL)enable;
 @end
 
 NS_ASSUME_NONNULL_END

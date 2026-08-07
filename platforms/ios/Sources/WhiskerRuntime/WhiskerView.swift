@@ -121,46 +121,6 @@ public final class WhiskerView: LynxView {
         }
     }
 
-    // MARK: - Multi-touch
-
-    private var multiTouchEnabled = false
-
-    /// Lynx drops every finger but the first unless its touch handler
-    /// is told otherwise, so `TouchEvent.touches` can never hold more
-    /// than one point and a pinch is indistinguishable from a drag.
-    ///
-    /// The switch is meant to arrive through the page config, which is
-    /// the template-loading pipeline this runtime bypasses (the engine
-    /// goes straight to Rust over the bridge), so it is set on the live
-    /// handler instead — the same shape the Android runtime uses for
-    /// `tapSlop`. Attempted per touch dispatch, because the handler
-    /// does not exist until the tree has mounted; once it takes, the
-    /// flag stops the retry.
-    private func enableMultiTouch() {
-        // Walked by key rather than by property: `uiOwner` and
-        // `setEnableMultiTouch:` are declared in headers the shipped
-        // framework does not surface to Swift, and `responds(to:)`
-        // before each hop keeps a renamed key a no-op instead of the
-        // uncatchable `NSUndefinedKeyException` a bare KVC read raises.
-        func child(_ object: NSObject, _ key: String) -> NSObject? {
-            guard object.responds(to: Selector((key))) else { return nil }
-            return object.value(forKey: key) as? NSObject
-        }
-        guard let context = getLynxContext() as NSObject?,
-              let owner = child(context, "uiOwner"),
-              let handler = child(owner, "eventHandler"),
-              let recognizer = child(handler, "touchRecognizer"),
-              recognizer.responds(to: Selector(("setEnableMultiTouch:")))
-        else { return }
-        recognizer.setValue(true, forKey: "enableMultiTouch")
-        multiTouchEnabled = true
-    }
-
-    public override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if !multiTouchEnabled { enableMultiTouch() }
-        return super.hitTest(point, with: event)
-    }
-
     public override func onEnterForeground() {
         super.onEnterForeground()
     }
