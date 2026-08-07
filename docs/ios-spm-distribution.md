@@ -40,7 +40,11 @@ These drive the generated app's `XCRemoteSwiftPackageReference`
 (`whisker-cng`) and the generated module aggregator (`whisker-build`).
 **Every module's `Package.swift`** hardcodes the same URL + `exact:`
 version as a Swift literal — keep all of these, the constants, the root
-`Package.swift`, and the published git tag in lockstep.
+`Package.swift`, and the published git tag in lockstep. A unit test in
+`whisker-build` fails when a manifest falls behind the constant, and the
+`publish-ios` workflow re-checks them before it creates the tag; cut the
+tag with that workflow rather than by hand (see
+[the release skill](../.agents/skills/release-whisker/SKILL.md)).
 
 ## ⚠️ Caveat for monorepo developers
 
