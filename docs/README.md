@@ -41,6 +41,9 @@ Whisker itself**.
   and the monorepo-dev caveat.
 - [`comment-style.md`](comment-style.md) — the comment/doc convention.
   Cite it in code review.
+- [`../.agents/skills/release-whisker/SKILL.md`](../.agents/skills/release-whisker/SKILL.md)
+  — cutting a release: which of the four artifact streams a change
+  needs, in what order, and how to recover one that stalled.
 
 ## Conventions
 
