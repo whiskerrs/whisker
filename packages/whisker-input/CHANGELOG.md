@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.7](https://github.com/whiskerrs/whisker/compare/whisker-input-v0.10.5...whisker-input-v0.10.7) - 2026-08-07
+
+### Other
+
+- Move the iOS SwiftPM pin to 0.1.6 ([#359](https://github.com/whiskerrs/whisker/pull/359))
+
 ## [0.10.3](https://github.com/whiskerrs/whisker/compare/whisker-input-v0.10.2...whisker-input-v0.10.3) - 2026-08-05
 
 ### Other
