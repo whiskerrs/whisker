@@ -1107,6 +1107,45 @@ fn export_options_plist(method: ExportMethod, team_id: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Every module package pins the runtime `exact:`, and all of them
+    /// are resolved by path alongside the app, which pins
+    /// [`WHISKER_IOS_SPM_VERSION`]. One manifest left on the old
+    /// version makes the whole graph unresolvable for every consumer
+    /// ("root depends on 0.1.4 and X depends on 0.1.5"), and nothing
+    /// else in the workspace notices — the manifests are data to Rust.
+    #[test]
+    fn module_packages_pin_the_runtime_version_the_cli_generates() {
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("crates/<name> sits two levels under the workspace root")
+            .to_path_buf();
+        let packages = workspace.join("packages");
+        // Absent when this crate is built from its published .crate,
+        // which carries no sibling packages to check.
+        let Ok(entries) = std::fs::read_dir(&packages) else {
+            return;
+        };
+
+        let expected = format!(
+            "\"https://github.com/whiskerrs/whisker.git\", exact: \"{WHISKER_IOS_SPM_VERSION}\""
+        );
+        let mut stale = Vec::new();
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("Package.swift");
+            let Ok(source) = std::fs::read_to_string(&manifest) else {
+                continue;
+            };
+            if source.contains("whiskerrs/whisker.git") && !source.contains(&expected) {
+                stale.push(manifest.display().to_string());
+            }
+        }
+        assert!(
+            stale.is_empty(),
+            "these manifests do not pin {WHISKER_IOS_SPM_VERSION}: {stale:#?}"
+        );
+    }
+
     #[test]
     fn bridge_exports_have_leading_underscore() {
         // ld64's `-exported_symbol` expects the Mach-O C symbol form.

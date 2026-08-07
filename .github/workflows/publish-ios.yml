@@ -1,0 +1,98 @@
+name: publish-ios
+
+# Cuts the `whisker` Swift package release — the `v0.1.*` tag stream the
+# iOS runtime resolves from.
+#
+# Inverted from `publish-sdk`, and it has to be. Android's tag triggers a
+# build that uploads an AAR: the tag is the input, the artifact is the
+# output. SwiftPM has no artifact — it resolves the git tag directly, so
+# the tag IS the release. A tag-triggered workflow could only verify
+# after the fact, with the broken tag already public (`v0.1.6` shipped a
+# runtime no app could compile, exactly that way).
+#
+# So this runs on `workflow_dispatch`, verifies, and only then creates
+# the tag.
+#
+# The `v0.1.*` stream is independent from the crates' own versions and
+# from `sdk-v*`: an iOS-only change doesn't need a crate release, and a
+# Rust-only change doesn't need a Swift tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Swift package version to tag, e.g. 0.1.8 (no leading v)'
+        required: true
+      dry_run:
+        description: 'Verify only — do not create the tag'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-ios
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags are needed to reject a version that already exists.
+          fetch-depth: 0
+
+      - name: Reject an existing tag
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::v$VERSION already exists. SwiftPM caches by revision, so a moved tag reaches consumers as a stale checkout — pick the next version."
+            exit 1
+          fi
+
+      # Every module package resolves by path alongside the app, so one
+      # pin left behind makes the whole graph unresolvable for every
+      # consumer ("root depends on 0.1.4 and X depends on 0.1.5"). The
+      # crate-side constant and the 15 module manifests have to name the
+      # version being tagged, in the commit being tagged.
+      - name: Check the pins name this version
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          fail=0
+          if ! grep -q "WHISKER_IOS_SPM_VERSION: &str = \"$VERSION\"" \
+               crates/whisker-build/src/ios.rs; then
+            echo "::error file=crates/whisker-build/src/ios.rs::WHISKER_IOS_SPM_VERSION is not $VERSION"
+            fail=1
+          fi
+          for manifest in packages/*/Package.swift; do
+            grep -q 'whiskerrs/whisker.git' "$manifest" || continue
+            if ! grep -q "whiskerrs/whisker.git\", exact: \"$VERSION\"" "$manifest"; then
+              echo "::error file=$manifest::pin is not $VERSION"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      # The runtime is Swift, and a Swift-only break is invisible to
+      # every Rust job in `ci`. This scheme pulls the Lynx binary target
+      # the same way an app does.
+      - name: Build the runtime
+        working-directory: platforms/ios
+        run: |
+          xcodebuild -scheme WhiskerRuntime \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            build
+
+      - name: Tag
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          echo "### Tagged \`v$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
