@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.7](https://github.com/whiskerrs/whisker/compare/whisker-audio-v0.10.5...whisker-audio-v0.10.7) - 2026-08-07
+
+### Other
+
+- release v0.10.6 ([#358](https://github.com/whiskerrs/whisker/pull/358))
+- Move the iOS SwiftPM pin to 0.1.6 ([#359](https://github.com/whiskerrs/whisker/pull/359))
+
 ## [0.10.6](https://github.com/whiskerrs/whisker/compare/whisker-audio-v0.10.5...whisker-audio-v0.10.6) - 2026-08-06
 
 ### Other
