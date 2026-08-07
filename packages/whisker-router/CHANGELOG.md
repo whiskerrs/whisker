@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.12](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.10.11...whisker-router-v0.10.12) - 2026-08-07
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.10.10](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.10.9...whisker-router-v0.10.10) - 2026-08-07
 
 ### Other
