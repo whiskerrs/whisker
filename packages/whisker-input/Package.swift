@@ -33,7 +33,7 @@ let package = Package(
         .library(name: "WhiskerInput", targets: ["WhiskerInput"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.6"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.7"),
     ],
     targets: [
         .target(
