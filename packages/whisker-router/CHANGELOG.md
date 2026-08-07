@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.10](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.10.9...whisker-router-v0.10.10) - 2026-08-07
+
+### Other
+
+- Leave Android's back gesture to Android ([#368](https://github.com/whiskerrs/whisker/pull/368))
+
 ## [0.10.7](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.10.6...whisker-router-v0.10.7) - 2026-08-07
 
 ### Other
