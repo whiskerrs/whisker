@@ -93,6 +93,26 @@ jobs:
       # Add it via `cargo-ndk` / an NDK setup step when wiring Android CI.
       - run: cargo check -p whisker --target aarch64-apple-ios-sim
 
+  build-ios-runtime:
+    name: swift build (WhiskerRuntime)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The iOS runtime is Swift, and nothing else in this workflow
+      # compiles Swift: `cross build` above builds the Rust half for an
+      # iOS target and stops there. A Swift-only break therefore reached
+      # a tagged SwiftPM release and only surfaced when an app built
+      # against it (a property read against a Lynx header the shipped
+      # framework doesn't surface). This scheme pulls the Lynx binary
+      # target the same way an app does, so it catches that class of
+      # break here instead.
+      - run: |
+          xcodebuild -scheme WhiskerRuntime \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            build
+        working-directory: platforms/ios
+
   coverage:
     name: coverage (cargo-llvm-cov)
     runs-on: ubuntu-latest

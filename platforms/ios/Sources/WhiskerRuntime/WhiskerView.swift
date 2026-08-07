@@ -137,13 +137,22 @@ public final class WhiskerView: LynxView {
     /// does not exist until the tree has mounted; once it takes, the
     /// flag stops the retry.
     private func enableMultiTouch() {
-        guard let owner = getLynxContext().uiOwner,
-              let handler = owner.eventHandler?.touchRecognizer
+        // Walked by key rather than by property: `uiOwner` and
+        // `setEnableMultiTouch:` are declared in headers the shipped
+        // framework does not surface to Swift, and `responds(to:)`
+        // before each hop keeps a renamed key a no-op instead of the
+        // uncatchable `NSUndefinedKeyException` a bare KVC read raises.
+        func child(_ object: NSObject, _ key: String) -> NSObject? {
+            guard object.responds(to: Selector((key))) else { return nil }
+            return object.value(forKey: key) as? NSObject
+        }
+        guard let context = getLynxContext() as NSObject?,
+              let owner = child(context, "uiOwner"),
+              let handler = child(owner, "eventHandler"),
+              let recognizer = child(handler, "touchRecognizer"),
+              recognizer.responds(to: Selector(("setEnableMultiTouch:")))
         else { return }
-        // `setEnableMultiTouch:` lives in `LynxTouchHandler+Internal.h`,
-        // which the shipped framework does not expose — KVC reaches the
-        // same setter without the header.
-        handler.setValue(true, forKey: "enableMultiTouch")
+        recognizer.setValue(true, forKey: "enableMultiTouch")
         multiTouchEnabled = true
     }
 
