@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.10](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.10.9...whisker-build-v0.10.10) - 2026-08-07
+
+### Other
+
+- Put the iOS release behind CI ([#366](https://github.com/whiskerrs/whisker/pull/366))
+
 ## [0.10.8](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.10.7...whisker-build-v0.10.8) - 2026-08-07
 
 ### Other
