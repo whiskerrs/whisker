@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.9](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.10.8...whisker-driver-sys-v0.10.9) - 2026-08-07
+
+### Other
+
+- Enable Lynx multi-touch from the bridge, not from Swift ([#364](https://github.com/whiskerrs/whisker/pull/364))
+
 ## [0.10.4](https://github.com/whiskerrs/whisker/compare/whisker-driver-sys-v0.10.3...whisker-driver-sys-v0.10.4) - 2026-08-06
 
 ### Other
