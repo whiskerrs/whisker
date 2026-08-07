@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.8](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.10.7...whisker-build-v0.10.8) - 2026-08-07
+
+### Other
+
+- Reach Lynx's touch handler without its private headers ([#362](https://github.com/whiskerrs/whisker/pull/362))
+
 ## [0.10.7](https://github.com/whiskerrs/whisker/compare/whisker-build-v0.10.5...whisker-build-v0.10.7) - 2026-08-07
 
 ### Other
