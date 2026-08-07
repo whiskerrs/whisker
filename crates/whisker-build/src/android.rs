@@ -36,14 +36,21 @@ use crate::capture::{CaptureShims, capture_env_vars};
 
 // ----- NDK toolchain resolution --------------------------------------------
 
-/// NDK versions Whisker is known to link against. Preferred first.
+/// NDK versions Whisker is known to link against, newest first.
+///
+/// Newest wins because `libc++_shared.so` is copied out of whichever
+/// NDK this resolves to, and the copy shipped before r27 is laid out
+/// for 4 KB pages — unloadable on a 16 KB-page device, and rejected by
+/// Play. The older entries stay as a fallback for machines that have
+/// nothing newer installed; such a build still runs, but only on 4 KB
+/// devices.
 const PREFERRED_NDKS: &[&str] = &[
-    "23.1.7779620",
-    "25.1.8937393",
-    "26.1.10909125",
-    "26.3.11579264",
-    "27.0.12077973",
     "27.1.12297006",
+    "27.0.12077973",
+    "26.3.11579264",
+    "26.1.10909125",
+    "25.1.8937393",
+    "23.1.7779620",
 ];
 
 /// Toolchain paths for a given (ABI, API level) pair.
@@ -205,6 +212,16 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
     cmd.arg("--").args([
         "-C".to_string(),
         format!("link-arg=-Wl,--version-script={}", vs_path.display()),
+        // 16 KB page alignment. Android 15 runs on devices with a 16 KB
+        // page size, where a library laid out for 4 KB pages fails to
+        // load, and Play rejects an upload that contains one. The NDK
+        // links this way by default from r27 — but only through its own
+        // build systems, not through the bare clang driver cargo calls,
+        // so the flag has to be explicit. Passed here rather than in
+        // `RUSTFLAGS` because that reaches host build scripts too,
+        // where the macOS linker rejects it outright.
+        "-C".to_string(),
+        "link-arg=-Wl,-z,max-page-size=16384".to_string(),
     ]);
 
     cmd.env(format!("CC_{triple_env}"), &b.toolchain.clang);
@@ -296,11 +313,87 @@ pub fn stage_so_files(abi_dir: &Path, so: &Path, tc: &AndroidToolchain, abi: &st
     std::fs::copy(&libcxx, &dst_libcxx)
         .with_context(|| format!("copy {} → {}", libcxx.display(), dst_libcxx.display()))?;
 
+    for staged in [&dst_so, &dst_libcxx] {
+        warn_if_not_16k_aligned(staged);
+    }
+
     crate::ui::info(format!(
         "stage jniLibs ({} + libc++_shared.so)",
         so_name.to_string_lossy(),
     ));
     Ok(())
+}
+
+/// Page size a 16 KB-page device needs every loadable segment aligned
+/// to. Android 15 ships such devices, `dlopen` fails on a library laid
+/// out for 4 KB pages, and Play rejects an upload containing one.
+const REQUIRED_PAGE_ALIGN: u64 = 16 * 1024;
+
+/// Say so when a staged library would not load on a 16 KB-page device.
+///
+/// A warning rather than an error: a machine whose newest NDK predates
+/// r27 can still build and run on 4 KB devices, and failing there would
+/// block development outright. The message names the library, because
+/// the two this stages come from different places — one is linked here,
+/// the other copied out of the NDK.
+fn warn_if_not_16k_aligned(so: &Path) {
+    let Some(align) = max_load_align(so) else {
+        return;
+    };
+    if align >= REQUIRED_PAGE_ALIGN {
+        return;
+    }
+    crate::ui::warn(format!(
+        "{} is aligned to {} bytes, not {REQUIRED_PAGE_ALIGN} — it will not load on a \
+         16 KB-page device, and Play rejects uploads containing it. Install NDK r27 or \
+         newer (`sdkmanager 'ndk;{}'`).",
+        so.file_name().unwrap_or(so.as_os_str()).to_string_lossy(),
+        align,
+        PREFERRED_NDKS[0],
+    ));
+}
+
+/// The largest `p_align` across an ELF64 shared object's loadable
+/// segments, or `None` when the file isn't one this can read.
+///
+/// Hand-parsed rather than pulled from a crate: the two fields needed
+/// sit at fixed offsets, and a build tool that only ever reads its own
+/// freshly linked output does not need a general ELF reader.
+fn max_load_align(so: &Path) -> Option<u64> {
+    const PT_LOAD: u32 = 1;
+    const E_PHOFF: usize = 0x20;
+    const E_PHENTSIZE: usize = 0x36;
+    const E_PHNUM: usize = 0x38;
+    const P_ALIGN: usize = 0x30;
+
+    let bytes = std::fs::read(so).ok()?;
+    // ELF64, little-endian — every Android ABI Whisker targets.
+    if bytes.get(..5)? != b"\x7fELF\x02" || bytes.get(5)? != &1u8 {
+        return None;
+    }
+    let u16_at = |off: usize| -> Option<usize> {
+        Some(u16::from_le_bytes(bytes.get(off..off + 2)?.try_into().ok()?) as usize)
+    };
+    let u32_at = |off: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(
+            bytes.get(off..off + 4)?.try_into().ok()?,
+        ))
+    };
+    let u64_at = |off: usize| -> Option<u64> {
+        Some(u64::from_le_bytes(
+            bytes.get(off..off + 8)?.try_into().ok()?,
+        ))
+    };
+
+    let phoff = u64_at(E_PHOFF)? as usize;
+    let phentsize = u16_at(E_PHENTSIZE)?;
+    let phnum = u16_at(E_PHNUM)?;
+    (0..phnum)
+        .filter_map(|i| {
+            let ph = phoff.checked_add(i.checked_mul(phentsize)?)?;
+            (u32_at(ph)? == PT_LOAD).then(|| u64_at(ph + P_ALIGN))?
+        })
+        .max()
 }
 
 /// Copy `so` plus the NDK-shipped `libc++_shared.so` into
@@ -780,6 +873,35 @@ pub fn resolve_java_home() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reads the alignment out of a real library rather than a
+    /// fixture: the point of the check is what the NDK's linker
+    /// actually emitted, and a hand-built ELF would only prove the
+    /// parser agrees with itself. Skipped when no NDK is installed.
+    #[test]
+    fn load_alignment_is_read_from_a_real_library() {
+        let Ok(ndk) = ndk_home() else { return };
+        let Ok(libcxx) = find_libcxx_shared(&ndk, "arm64-v8a") else {
+            return;
+        };
+        let align = max_load_align(&libcxx).expect("libc++_shared.so is an ELF64 shared object");
+        assert!(
+            align.is_power_of_two(),
+            "p_align must be a power of two, got {align}"
+        );
+        assert!(
+            align >= 4096,
+            "no Android ABI pages smaller than 4 KB, got {align}"
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_elf_reads_as_unknown() {
+        let path = std::env::temp_dir().join("whisker-build-not-an-elf");
+        std::fs::write(&path, b"MZ not an elf at all").unwrap();
+        assert_eq!(max_load_align(&path), None);
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn unsigned_apk_is_rejected() {
