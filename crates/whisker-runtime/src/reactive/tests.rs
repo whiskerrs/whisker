@@ -1096,20 +1096,63 @@ fn remount_components_for_refuses_sites_whose_props_layout_changed() {
     assert_eq!(runs.get(), 2, "refused remount must NOT re-run the body");
 }
 
+#[test]
+fn remounted_component_still_resolves_root_context() {
+    // Hot-reload remounts run from the tick callback with an empty
+    // owner stack; the fresh owner must inherit the old owner's
+    // parent or `use_context` loses everything the app root provided
+    // (giga: "provide_theme() must run at the app root" panic).
+    use super::component::{
+        mount_component_remountable, on_component_root_attached, remount_components_for,
+    };
+    use crate::view::{append_child, create_phantom_element};
+    fresh();
+
+    #[derive(Clone, PartialEq, Debug)]
+    struct Theme(u32);
+
+    let root_owner = Owner::new(None);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let seen_clone = seen.clone();
+    let fn_ptr = 0x5678_9abc as *const ();
+    let root = root_owner.with(|| {
+        provide_context(Theme(7));
+        mount_component_remountable(
+            fn_ptr,
+            move || {
+                seen_clone.borrow_mut().push(use_context::<Theme>());
+                create_phantom_element()
+            },
+            Box::new(|| 0),
+        )
+    });
+    let parent = create_phantom_element();
+    append_child(parent, root);
+    on_component_root_attached(parent, root);
+    assert_eq!(seen.borrow().as_slice(), &[Some(Theme(7))]);
+
+    remount_components_for(&[fn_ptr]);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        &[Some(Theme(7)), Some(Theme(7))],
+        "remounted body must still resolve the root-provided context"
+    );
+
+    // Disposing the provider now cascades into the remounted owner —
+    // a second remount would find the site's owner gone, and the
+    // context must not outlive its provider.
+    root_owner.dispose();
+    assert_eq!(
+        remount_components_for(&[fn_ptr]),
+        super::component::RemountStats::default(),
+    );
+}
+
 // Note: `remount_components_for`'s body invocation reuses the
 // exact same `untrack(|| new_owner.with(|| (*info.body)()))`
-// bracket the initial mount uses. Driving the remount path through
-// a unit test requires a full renderer install + an attached parent
-// element (otherwise `info.parent` is `None` and the path
-// short-circuits), which sits at the integration-test layer.
-// Coverage relies on:
-//   1. `mount_component_remountable_body_runs_with_no_tracker_...`
-//      below, which exercises the identical `untrack` pattern, and
-//   2. inspection of `component.rs::remount_components_for` to
-//      confirm the bracket is in place.
-// If a future contributor removes the bracket from the remount
-// path, the corresponding StackLayout / hot-reload integration
-// scenario will regress visibly.
+// bracket the initial mount uses; the no-tracker half of that
+// contract is pinned by
+// `mount_component_remountable_body_runs_with_no_tracker_...` below.
 
 #[test]
 fn flush_mounts_callback_runs_with_no_tracker_when_called_inside_effect() {

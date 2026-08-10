@@ -538,11 +538,15 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
             site.body_root.take();
             site.owner.take()
         });
+        // Remount runs with an empty owner stack; inherit the old
+        // owner's parent or app-root contexts are lost.
+        let parent_owner =
+            old_owner.and_then(|o| with_runtime(|rt| rt.owners.get(o).and_then(|s| s.parent)));
         if let Some(o) = old_owner {
             o.dispose();
         }
 
-        let new_owner = Owner::new(None);
+        let new_owner = Owner::new(parent_owner);
         with_runtime(|rt| {
             if let Some(o) = rt.owners.get_mut(new_owner) {
                 o.mount_fn = Some(info.fn_ptr);
