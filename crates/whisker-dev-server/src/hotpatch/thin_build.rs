@@ -7,13 +7,13 @@
 //! Whisker does **not** want to re-derive linker / sysroot / SDK args
 //! itself — those are the parts most likely to break across OS
 //! versions, NDK upgrades, Xcode releases, glibc CSU layout
-//! changes, and so on. Instead we capture cargo+rustc's full
-//! invocation in I4g-4 and replay it here, **changing only the
+//! changes, and so on. Instead the shims capture cargo+rustc's full
+//! invocation and this module replays it, **changing only the
 //! handful of args that have to differ for a hot-patch dylib**:
 //!
 //!   - `--crate-type` is forced to `rlib` so rustc emits an object
-//!     file containing every `pub fn`'s mangled symbol (cdylib
-//!     would strip them — see I4g-6 pivot).
+//!     file containing every `pub fn`'s mangled symbol, which a
+//!     cdylib would strip.
 //!   - `--emit` is forced to `obj` so we get a single `.o` we can
 //!     hand to the linker ourselves.
 //!   - `--out-dir` is redirected to a session-local cache so the
@@ -26,7 +26,7 @@
 //! already know how to make the linker happy on this OS / SDK
 //! combo, and we lean on that.
 //!
-//! After rustc emits the `.o`, [`build_link_plan`] (X2b) takes the
+//! After rustc emits the `.o`, [`build_link_plan`] takes the
 //! captured **linker** invocation, drops its object inputs (we have
 //! a fresh one), substitutes our `.o` and `-o`, and adds
 //! `-undefined dynamic_lookup` (macOS) /
@@ -54,8 +54,7 @@ pub struct ObjBuildPlan {
     /// Environment to overlay on the rustc spawn — the `CARGO_*` /
     /// `OUT_DIR` vars captured during the fat build, so `env!()`
     /// invocations in the user's code still resolve under the raw
-    /// (cargo-less) thin rebuild. Empty for captures written before
-    /// env capture existed.
+    /// (cargo-less) thin rebuild.
     pub envs: std::collections::BTreeMap<String, String>,
     pub output_dir: PathBuf,
     pub expected_object: PathBuf,
@@ -104,33 +103,21 @@ pub fn build_obj_plan(captured: &CapturedRustcInvocation, output_dir: &Path) -> 
     set_out_dir(&mut args, output_dir);
     let object_path = output_dir.join(object_filename(&captured.crate_name));
     set_emit_obj(&mut args, &object_path);
-    // cargo's captured args include `--json=artifacts,…` +
-    // `--error-format=json` so its build pipeline can parse rustc's
-    // structured output. We just spawn rustc and inspect exit status;
-    // leaving the JSON flags in produces a noisy
-    // `{"$message_type":"artifact",…}` line on stdout for every
-    // patch, which clutters the dev terminal. Strip them so rustc
-    // falls back to human-readable output (errors still surface on
-    // stderr in plain text).
+    // cargo's captured args carry `--json=artifacts,…` /
+    // `--error-format=json` for its own parsing. Nothing reads them
+    // here, and left in they print a `{"$message_type":"artifact",…}`
+    // line into the dev terminal per patch.
     strip_json_flags(&mut args);
-    // Reuse rustc's incremental cache across thin rebuilds. rustc
-    // fingerprints source files + query results into this dir; the
-    // next invocation skips re-typechecking + re-codegenning anything
-    // the fingerprints prove unchanged. For a single-function edit
-    // in a small user crate this can cut Stage 1 (~200 ms cold) to
-    // 50–100 ms warm. The cache lives under our patch dir so it's
-    // wiped together with the thin object on a fresh `whisker run`.
+    // Reuse rustc's incremental cache across thin rebuilds; it lives
+    // under the patch dir so a fresh `whisker run` wipes it along with
+    // the thin object.
     set_incremental(&mut args, &output_dir.join("incremental"));
-    // The fat (release) build captured `-Copt-level=3`. For hot-reload
-    // patches we strip the LLVM optimization pipeline entirely —
-    // `time-passes` confirms LLVM passes account for ~88% of rustc's
-    // wall time on opt-level=3 user crates. The patched code only
-    // has to *run*, not run fast: hot reload is a dev affordance, so
-    // a 3-4x runtime slowdown of just the patched function bodies is
-    // an excellent trade for a 3× compile-time win. opt-level=0 also
-    // disables intra-crate inlining, which keeps the patch dylib's
-    // call graph well-aligned with the host's exported symbols (no
-    // mystery UND references from functions the host inlined away).
+    // The fat build captured `-Copt-level=3`, where LLVM passes are
+    // ~88% of rustc's wall time. Patched code only has to run, not run
+    // fast, so opt-level=0 trades a slower function body for a much
+    // faster compile. It also disables intra-crate inlining, keeping
+    // the patch's call graph aligned with the host's exported symbols
+    // instead of emitting UND references to inlined-away functions.
     override_opt_level(&mut args, "0");
     ObjBuildPlan {
         args,
@@ -245,8 +232,8 @@ pub fn set_emit_obj(args: &mut Vec<String>, object_path: &Path) {
 
 /// Force every `--crate-type` arg to a single value (`new_kind`).
 /// rustc allows the flag to repeat (one binary can be multiple
-/// crate-types in one invocation); for a hot-patch we always want
-/// exactly one — `cdylib`. The fold-and-add behaviour is:
+/// crate-types in one invocation); a hot-patch always wants exactly
+/// one. The fold-and-add behaviour is:
 ///
 ///   - every existing `--crate-type X` (separate or `=` form) is
 ///     stripped;
@@ -333,10 +320,6 @@ pub fn set_out_dir(args: &mut Vec<String>, dir: &Path) {
     args.push("--out-dir".into());
     args.push(dir_str);
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

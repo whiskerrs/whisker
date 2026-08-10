@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// What we keep about each symbol — enough to drive subsecond's
-/// JumpTable construction (I4g-2) and no more.
+/// JumpTable construction and no more.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolInfo {
     /// Address relative to the binary's base (= the value we
@@ -106,10 +106,6 @@ fn normalize_symbol_name(name: &str) -> String {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,9 +141,8 @@ mod tests {
         let bin = ensure_whisker_binary();
         let table = parse_symbol_table(&bin).expect("parse");
 
-        // The symbol table from a debug build of whisker has hundreds
-        // of entries; we just need to confirm we loaded SOMETHING
-        // reasonable.
+        // A debug build has hundreds of entries; this only confirms
+        // something plausible loaded.
         assert!(
             !table.by_name.is_empty(),
             "expected symbols in {}",

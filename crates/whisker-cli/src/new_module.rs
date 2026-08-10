@@ -16,11 +16,9 @@
 //!
 //! Modules are authored with the ModuleDefinition DSL: a class
 //! subclasses `Module` and overrides `definition()`. Subclassing
-//! the base IS the registration trigger — the per-platform
-//! codegen (SwiftPM build plugin / KSP) finds every concrete
-//! `Module` subclass and emits the Lynx registration. Phase M
-//! (Issue #59) dropped the previously-companion `@WhiskerModule`
-//! marker annotation.
+//! the base IS the registration trigger — no marker annotation. The
+//! per-platform codegen (SwiftPM build plugin / KSP) finds every
+//! concrete `Module` subclass and emits the Lynx registration.
 //!
 //! This is a minimal scaffolder — it copies a small set of inline
 //! templates and substitutes a handful of variables. For a richer

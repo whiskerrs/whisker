@@ -9,8 +9,7 @@
 //!   - Resolve undefined symbols. Those have address 0 in either
 //!     side; including them would lie to the runtime.
 //!   - Touch data symbols. Hot-patching globals would race the
-//!     program, which is harder than function hot-patching and
-//!     not on the I4g critical path.
+//!     program, which is harder than function hot-patching.
 //!   - Touch zero-sized symbols. These are typically PLT stubs and
 //!     compiler-introduced markers; no actual code to swap.
 //!   - Special-case weak symbols. They get a warning so the dev
@@ -122,10 +121,6 @@ pub fn build_jump_table(
 fn is_patchable(kind: SymbolKind) -> bool {
     matches!(kind, SymbolKind::Text)
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

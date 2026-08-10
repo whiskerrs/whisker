@@ -3,10 +3,9 @@
 //! into the platform artifact (iOS `WhiskerDriver.framework` /
 //! Android `lib*.so`) and to discover Whisker modules.
 //!
-//! These used to be a separate `whisker-build` binary. Folding them
-//! into the `whisker` CLI (which already links `whisker-build` as a
-//! library) means **`cargo install whisker-cli` is the only install
-//! needed** — there is no second binary to put on `PATH`.
+//! They live in the `whisker` CLI (which already links
+//! `whisker-build` as a library) rather than a second binary, so
+//! **`cargo install whisker-cli` is the only install needed**.
 //!
 //! Invocation shape (hidden subcommands, not for humans):
 //!
@@ -140,8 +139,7 @@ pub fn run_modules(args: ModulesArgs) -> Result<()> {
                 workspace.display(),
             )
         })?;
-    // Pretty-print so a human inspecting the cache file can read it;
-    // the Gradle plugin parses either form fine.
+    // Pretty-printed for humans; the Gradle plugin parses either form.
     let json = serde_json::to_string_pretty(&report).context("serialize modules report")?;
     println!("{json}");
     Ok(())
@@ -149,9 +147,9 @@ pub fn run_modules(args: ModulesArgs) -> Result<()> {
 
 pub fn run_ios(args: IosArgs) -> Result<()> {
     let workspace = canonicalize_workspace(&args.workspace)?;
-    // No Lynx pre-fetch here. The bridge cc build no longer touches
-    // any Lynx header path, and the host xcodebuild invocation
-    // resolves Lynx xcframeworks via SPM's `binaryTarget(url:checksum:)`.
+    // No Lynx pre-fetch: the bridge cc build touches no Lynx header,
+    // and xcodebuild resolves the xcframeworks through SPM's
+    // `binaryTarget(url:checksum:)`.
     let archs: Vec<&str> = args.archs.split_whitespace().collect();
     let fw = whisker_build::ios::build_framework_for_xcode_run_script(
         &whisker_build::ios::XcodeRunScriptInputs {

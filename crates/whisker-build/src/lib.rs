@@ -21,11 +21,12 @@
 //!   `cargo metadata` and resolve per-platform source contributions
 //!   the host build needs to stage.
 //!
-//! No Lynx fetcher anymore. iOS resolves the four Lynx xcframeworks
-//! via SPM `binaryTarget(url:checksum:)` in `platforms/ios/Package.
-//! swift`; Android pulls `rs.whisker:lynx-android:<ver>` from the
+//! Lynx itself is never fetched here: iOS resolves the four
+//! xcframeworks via SPM `binaryTarget(url:checksum:)` in
+//! `platforms/ios/Package.swift`, Android pulls
+//! `rs.whisker:lynx-android:<ver>` from the
 //! `whiskerrs.github.io/lynx/maven` repository transitively via the
-//! SDK pom. No `~/.cache/whisker/lynx/` directory is ever written.
+//! SDK pom.
 //!
 //! Sync-only API. Dev-server callers wrap invocations in
 //! `tokio::task::spawn_blocking`; the cli runs them directly.
@@ -45,10 +46,8 @@ pub use capture::{
 /// Build profile. Maps to `cargo --release` and to the
 /// gradle assemble{Debug,Release} task.
 ///
-/// Why an enum (and not just `release: bool`): keeping the
-/// semantics explicit at the API boundary stops the wrong literal
-/// from sneaking through (`true` for "I want debug" because the
-/// caller misread the field name). The cost is two characters.
+/// An enum rather than `release: bool` so a call site can't pass the
+/// wrong literal while reading as if it were right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Profile {
     Debug,
