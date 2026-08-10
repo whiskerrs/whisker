@@ -18,10 +18,6 @@
 //! `subsecond::apply_patch` while **no** `subsecond::call` is on the
 //! stack — the only safe window.
 //!
-//! Connection address is taken from the `WHISKER_DEV_ADDR` env var. If
-//! unset, [`start_receiver`] no-ops, so a stray `hot-reload`-built
-//! binary running without a dev server stays inert.
-//!
 //! The receiver retries on disconnect with a small backoff so a
 //! `whisker run` restart on the host doesn't require restarting the
 //! app on the device.
@@ -31,20 +27,16 @@ use std::time::Duration;
 
 use subsecond::JumpTable;
 
-/// Log a one-line message tagged `whisker-dev`. On Android, writes to
-/// logcat via `__android_log_write` (Rust's `eprintln!` doesn't go
-/// anywhere useful on Android — stderr is dropped). On other
-/// platforms it's a plain `eprintln!` so dev sessions on host /
-/// macOS / Linux still get readable output.
+/// Log a one-line message tagged `whisker-dev`. On Android this goes
+/// to logcat and on iOS to `syslog(3)` — plain `eprintln!` reaches
+/// neither platform's log surface. Elsewhere it is an `eprintln!`.
 ///
-/// Public so whisker-driver's `apply_pending_hot_patch` can log under
-/// the same `whisker-dev` tag without duplicating the helper.
+/// Public so whisker-driver's patch-apply path can log under the same
+/// tag.
 pub fn devlog(line: &str) {
     #[cfg(target_os = "android")]
     {
-        // bionic exports __android_log_write(prio, tag, text) → int.
-        // ANDROID_LOG_INFO = 4. Both tag and text must be
-        // NUL-terminated.
+        // Both tag and text must be NUL-terminated.
         unsafe extern "C" {
             fn __android_log_write(
                 prio: std::os::raw::c_int,
@@ -67,15 +59,11 @@ pub fn devlog(line: &str) {
     }
     #[cfg(target_os = "ios")]
     {
-        // iOS app stderr from `eprintln!` doesn't reach the unified
-        // log, so use `syslog(3)` which does. `simctl spawn booted log
-        // stream` then picks it up — the simplest device-side
-        // observability for dev builds.
         unsafe extern "C" {
             fn syslog(priority: std::os::raw::c_int, fmt: *const std::os::raw::c_char, ...);
         }
-        // LOG_INFO = 6 — surfaces in `log stream` without being
-        // filtered as noisy debug output by default.
+        // LOG_INFO surfaces in `log stream` without being filtered as
+        // debug noise.
         const LOG_INFO: std::os::raw::c_int = 6;
         let mut buf: Vec<u8> = Vec::with_capacity(line.len() + 16);
         buf.extend_from_slice(b"[whisker-dev] ");
@@ -94,7 +82,6 @@ pub fn devlog(line: &str) {
 }
 
 /// Most-recent-wins: an older queued patch is silently superseded.
-/// `whisker run` should be sending fully-replaced JumpTables anyway.
 static PENDING: Mutex<Option<JumpTable>> = Mutex::new(None);
 
 /// TASM-thread entry — pop the queued patch, if any. Safe to call
@@ -105,10 +92,10 @@ pub fn take_pending_patch() -> Option<JumpTable> {
 
 /// Spawn the receiver thread. Reads `WHISKER_DEV_ADDR` from the env;
 /// if unset, falls back to `127.0.0.1:9876` (the dev-server's
-/// default), which works on Android once `adb reverse` is in
-/// place. Safe to call unconditionally from app bootstrap — the
-/// loop retries on connection failure so a dev server starting
-/// later still gets picked up.
+/// default), which works on Android once `adb reverse` is in place.
+/// Safe to call unconditionally from app bootstrap — the loop retries
+/// on connection failure so a dev server starting later still gets
+/// picked up.
 pub fn start_receiver() {
     let addr = std::env::var("WHISKER_DEV_ADDR")
         .ok()
@@ -160,36 +147,24 @@ async fn client_loop(addr: String) {
     }
 }
 
-/// `dlsym(RTLD_DEFAULT, "whisker_aslr_anchor")` on the device,
-/// computed once at app startup by the vendored subsecond fork. We
-/// hand this value to the dev server on connect so it can build
-/// patches with the host's runtime base address baked in via
-/// stub-asm objects (Option B / Dioxus-style symbol resolution).
-///
-/// Falls back to `0` when `subsecond` isn't linked in (release builds
-/// without the `hot-reload` feature) — those builds never reach this
-/// code path anyway, the constant is just here so the cfg gating
-/// stays local to one line.
+/// Runtime address of `whisker_aslr_anchor` on the device, handed to
+/// the dev server on connect so it can bake the ASLR slide into the
+/// patches it builds.
 fn device_aslr_reference() -> u64 {
     subsecond::aslr_reference() as u64
 }
 
 /// The shared dev-session token, if `whisker run` provisioned one.
 ///
-/// `whisker run` generates a random token per session and hands it to
-/// the device so the dev-server can reject any other client that
-/// connects to its WebSocket (the patch channel `dlopen`s whatever it
-/// receives, so an unauthenticated connection on a LAN-exposed bind is
-/// a remote-code-execution surface). Delivery is per-platform:
-///   * iOS Simulator / host: the `WHISKER_DEV_TOKEN` env var (set via
-///     `SIMCTL_CHILD_WHISKER_DEV_TOKEN`).
-///   * Android: the `debug.whisker_dev_token` system property (the app
-///     process doesn't inherit adb-set env vars), set with
-///     `adb shell setprop`.
+/// The server rejects clients whose `hello` doesn't carry the
+/// session's token (the patch channel `dlopen`s whatever it receives,
+/// so an unauthenticated connection on a LAN-exposed bind is a
+/// remote-code-execution surface). Delivery is per-platform:
+///   * iOS Simulator / host: the `WHISKER_DEV_TOKEN` env var.
+///   * Android: the `debug.whisker_dev_token` system property — the
+///     app process doesn't inherit adb-set env vars.
 ///
-/// `None` when no token was provisioned — older `whisker run`s, or a
-/// token-less local setup; the server then runs unauthenticated as
-/// before.
+/// `None` = token-less setup; the server then runs unauthenticated.
 fn dev_token() -> Option<String> {
     if let Ok(t) = std::env::var("WHISKER_DEV_TOKEN") {
         if !t.is_empty() {
@@ -208,15 +183,12 @@ fn dev_token() -> Option<String> {
 }
 
 /// Read an Android system property by name via bionic's
-/// `__system_property_get`. The value buffer is `PROP_VALUE_MAX` (92)
-/// bytes including the NUL, per the platform contract.
+/// `__system_property_get`.
 #[cfg(target_os = "android")]
 fn android_system_property(name: &str) -> Option<String> {
     let cname = std::ffi::CString::new(name).ok()?;
-    // PROP_VALUE_MAX = 92. Use `c_char` for the buffer so its pointer matches
-    // bionic's `__system_property_get` signature regardless of `c_char`
-    // signedness (it is unsigned on Android — `libc` 0.2.186 made this a hard
-    // type mismatch against a plain `i8` buffer).
+    // PROP_VALUE_MAX = 92. `c_char` (unsigned on Android) so the
+    // buffer pointer matches bionic's signature.
     let mut buf = [0 as libc::c_char; 92];
     // SAFETY: `cname` is a valid NUL-terminated C string; `buf` is a
     // 92-byte buffer matching PROP_VALUE_MAX, which is the size bionic
@@ -239,10 +211,8 @@ where
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
 
-    // Send the hello envelope first — the server needs our
-    // `aslr_reference` (= runtime address of `whisker_aslr_anchor`
-    // here) to compute the ASLR slide when building patches under
-    // the stub-asm scheme.
+    // The hello goes first — the server needs our `aslr_reference` to
+    // build patches at all.
     let hello = serde_json::json!({
         "kind": "hello",
         "aslr_reference": device_aslr_reference(),
@@ -257,10 +227,8 @@ where
 
     loop {
         tokio::select! {
-            // device → host: forward any captured stdout/stderr lines
-            // accumulated by `log_capture`. Drains in batches so a
-            // burst of `println!`s sends one frame per round-trip
-            // rather than one frame per line.
+            // device → host: forward captured stdout/stderr lines,
+            // batched so a burst of `println!`s is one frame.
             lines = crate::log_capture::drain_pending_logs() => {
                 for line in lines {
                     let frame = serde_json::json!({
@@ -273,14 +241,12 @@ where
                     ws.send(Message::Text(frame)).await?;
                 }
             }
-            // host → device: receive patches + close.
+            // host → device: patches + close.
             msg = ws.next() => {
                 let Some(msg) = msg else { return Ok(()); };
                 match msg? {
                     Message::Binary(bytes) => handle_patch_frame(&bytes),
                     Message::Close(_) => return Ok(()),
-                    // Ignore Ping/Pong (auto-handled) and Text (no
-                    // server→client text frames defined today).
                     _ => {}
                 }
             }
@@ -289,9 +255,7 @@ where
 }
 
 /// Decode one patch frame from the dev-server and park it in
-/// [`PENDING`] for the TASM thread to apply on the next tick. Pulled
-/// out so [`handle_session`]'s `select!` arm stays readable; the
-/// match-arm depth was 7 levels otherwise.
+/// [`PENDING`] for the TASM thread to apply on the next tick.
 fn handle_patch_frame(bytes: &[u8]) {
     devlog(&format!("patch frame received ({} bytes)", bytes.len()));
     let (mut table, dylib_bytes) = match parse_patch_frame(bytes) {
@@ -320,20 +284,18 @@ fn handle_patch_frame(bytes: &[u8]) {
         devlog("patch queued");
     }
     // Wake the host so a frame is scheduled — `take_pending_patch`
-    // only runs inside `tick_callback` and the TASM thread is idle
-    // when nothing else is happening.
+    // only runs inside the tick and the TASM thread may be idle.
     whisker_runtime::host_wake::wake_runtime();
 }
 
-/// Write the patch dylib payload to a local file under the app's
-/// cache dir, and return the local path. The returned path is what
-/// `table.lib` gets overwritten with, so `subsecond::apply_patch`'s
-/// `dlopen` sees a real on-device file.
+/// Write the patch dylib payload to a file under the app's cache dir
+/// and return the local path — what `table.lib` gets overwritten
+/// with, so `subsecond::apply_patch`'s `dlopen` sees a real on-device
+/// file.
 ///
 /// File naming uses a monotonic counter + timestamp so multiple
-/// patches in one session don't collide; old files are left around
-/// (cleaned up when the OS reclaims the cache dir). Total disk use
-/// per session is tiny — each patch is ~tens of KB.
+/// patches in one session don't collide; old files are left for the
+/// OS to reclaim with the cache dir.
 fn materialise_patch_dylib(
     bytes: &[u8],
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error + Send + Sync>> {
@@ -354,13 +316,9 @@ fn materialise_patch_dylib(
     Ok(path)
 }
 
-/// Resolve a writable, dlopen-able directory for patch dylibs.
-///
-/// On Android, `/data/data/<package>/cache/whisker-patches/` is the
-/// canonical "owned by this app process" location. The package
-/// name comes from `/proc/self/cmdline` (the Linux process-init
-/// name Android writes there). On other platforms (host POC builds),
-/// `$TMPDIR/whisker-patches/` is enough.
+/// Resolve a writable, dlopen-able directory for patch dylibs: on
+/// Android `/data/data/<package>/cache/whisker-patches/` (package
+/// name from `/proc/self/cmdline`), elsewhere `$TMPDIR/whisker-patches/`.
 fn patch_cache_dir() -> Option<std::path::PathBuf> {
     #[cfg(target_os = "android")]
     {
@@ -392,8 +350,8 @@ enum Header {
 
 /// Counterpart of `whisker-dev-server::server::wire_jump_table::serialize`.
 /// Reads the address map as a JSON array of `[old, new]` pairs and
-/// reconstructs the `subsecond_types::JumpTable`. See the server
-/// side for the JSON-object-vs-array rationale.
+/// reconstructs the `subsecond_types::JumpTable`. See the server side
+/// for the JSON-object-vs-array rationale.
 fn deserialize_jump_table<'de, D>(d: D) -> Result<JumpTable, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -473,8 +431,6 @@ mod tests {
 
     #[test]
     fn parses_a_minimal_patch_frame() {
-        // The wire format encodes `map` as an array of [old, new]
-        // pairs — see deserialize_jump_table for the rationale.
         let json = r#"{
             "kind": "patch",
             "table": {
@@ -522,7 +478,6 @@ mod tests {
         let path = materialise_patch_dylib(payload).expect("write");
         let read_back = std::fs::read(&path).unwrap();
         assert_eq!(read_back, payload);
-        // Cleanup so repeated runs don't accumulate.
         let _ = std::fs::remove_file(&path);
     }
 
