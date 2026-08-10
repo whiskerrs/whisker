@@ -329,6 +329,33 @@ impl SimctlNoise {
     }
 }
 
+/// Write the dev token property and verify it landed by reading it
+/// back, retrying on mismatch. Only the `getprop` round-trip proves
+/// the write: `adb shell` exit codes are historically unreliable, and
+/// emulator quick-boot snapshots restore a previous session's value —
+/// a silently-failed `setprop` then leaves that stale token in place
+/// and the server rejects every hello for the whole session.
+async fn deliver_android_dev_token(token: &str) -> bool {
+    for attempt in 0..5 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+        let mut setprop_cmd = Command::new("adb");
+        setprop_cmd.args(["shell", "setprop", "debug.whisker_dev_token", token]);
+        let _ = run_filtered(setprop_cmd, SimctlNoise::Other).await;
+        let read_back = Command::new("adb")
+            .args(["shell", "getprop", "debug.whisker_dev_token"])
+            .output()
+            .await;
+        if let Ok(out) = read_back {
+            if String::from_utf8_lossy(&out.stdout).trim() == token {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 async fn android_install_and_launch(
     p: &AndroidParams,
     dev_port: u16,
@@ -362,9 +389,13 @@ async fn android_install_and_launch(
     // reads via `__system_property_get`. Without a matching token the
     // dev-server refuses to ship patches to the app.
     if let Some(token) = dev_token {
-        let mut setprop_cmd = Command::new("adb");
-        setprop_cmd.args(["shell", "setprop", "debug.whisker_dev_token", token]);
-        let _ = run_filtered(setprop_cmd, SimctlNoise::Other).await;
+        if !deliver_android_dev_token(token).await {
+            whisker_build::ui::warn(format!(
+                "dev token did not land on the device — the app will keep being \
+                 rejected by the hot-reload server (0 clients). Fix manually: \
+                 adb shell setprop debug.whisker_dev_token {token}"
+            ));
+        }
     }
 
     let install_step = whisker_build::ui::step(
