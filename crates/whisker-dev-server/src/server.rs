@@ -522,6 +522,74 @@ mod tests {
         assert_eq!(dylib, b"FAKE_DYLIB_BYTES");
     }
 
+    #[tokio::test]
+    async fn a_patch_larger_than_the_default_frame_limit_reaches_an_unlimited_client() {
+        use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+
+        let (sender, addr) = spawn_test_server(None).await;
+        // Mirror the device receiver's lifted read limits
+        // (whisker-dev-runtime::hot_reload::client_loop).
+        let config = WebSocketConfig {
+            max_frame_size: None,
+            max_message_size: None,
+            ..Default::default()
+        };
+        let url = format!("ws://{addr}/whisker-dev");
+        let (mut unlimited, _) =
+            tokio_tungstenite::connect_async_with_config(&url, Some(config), false)
+                .await
+                .expect("connect");
+        let mut default_limits = connect(addr).await;
+
+        for _ in 0..100 {
+            if sender.client_count() == 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(sender.client_count(), 2);
+
+        // 17 MiB — over tungstenite's 16 MiB default max_frame_size,
+        // the size class a large app's subsecond patch lands in.
+        let dylib = vec![0xABu8; 17 * 1024 * 1024];
+        let n = sender.send(Patch {
+            table: make_dummy_jump_table(),
+            dylib_bytes: Arc::new(dylib.clone()),
+        });
+        assert_eq!(n, 2);
+
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(10), unlimited.next())
+            .await
+            .expect("recv timed out")
+            .expect("stream ended")
+            .expect("ws error");
+        let bytes = match msg {
+            tokio_tungstenite::tungstenite::Message::Binary(b) => b,
+            other => panic!("expected binary, got a {other:?} frame"),
+        };
+        let (header, got) = decode_patch_frame(&bytes);
+        assert_eq!(header["kind"], "patch");
+        assert_eq!(got, dylib);
+
+        // A client with tungstenite's default read limits (the old
+        // device behavior) rejects the same frame as too long.
+        let rejected = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                match default_limits.next().await {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(_))) => return false,
+                    Some(Err(_)) | None => return true,
+                    _ => continue,
+                }
+            }
+        })
+        .await
+        .expect("default-limit client neither errored nor received");
+        assert!(
+            rejected,
+            "a 17 MiB frame must exceed the default 16 MiB read limit"
+        );
+    }
+
     async fn spawn_test_server_with_token(token: Option<String>) -> (PatchSender, SocketAddr) {
         let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let (sender, addr, _handle) = serve(any, None, token).await.expect("serve");
