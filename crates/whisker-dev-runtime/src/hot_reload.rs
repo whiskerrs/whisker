@@ -136,9 +136,18 @@ pub fn start_receiver() {
 }
 
 async fn client_loop(addr: String) {
+    use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+
     let url = format!("ws://{addr}/whisker-dev");
+    // Patch dylibs for large apps exceed tungstenite's 16 MiB read
+    // default; dev-only loopback channel, so lift the limits entirely.
+    let ws_config = WebSocketConfig {
+        max_frame_size: None,
+        max_message_size: None,
+        ..Default::default()
+    };
     loop {
-        match tokio_tungstenite::connect_async(&url).await {
+        match tokio_tungstenite::connect_async_with_config(&url, Some(ws_config), false).await {
             Ok((ws, _)) => {
                 devlog(&format!("connected: {url}"));
                 if let Err(e) = handle_session(ws).await {

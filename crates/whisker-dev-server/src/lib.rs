@@ -804,6 +804,7 @@ async fn hot_reload_cycle(
                     return;
                 }
             };
+            let patch_mib = dylib_bytes.len() as f64 / (1024.0 * 1024.0);
             let send_started = std::time::Instant::now();
             let n = sender.send(Patch {
                 table: plan.table,
@@ -813,7 +814,7 @@ async fn hot_reload_cycle(
                 "built {built_in:?} · queued {:?}",
                 send_started.elapsed()
             ));
-            step.done(format!("{n} client(s)"));
+            step.done(format!("{n} client(s) · {patch_mib:.1} MiB patch"));
             emit(on_event, Event::PatchSent);
         }
         Err(e) if e.downcast_ref::<hotpatch::RustcRejectedCode>().is_some() => {
