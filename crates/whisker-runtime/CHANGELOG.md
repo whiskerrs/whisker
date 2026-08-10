@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.12](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.10.11...whisker-runtime-v0.10.12) - 2026-08-10
+
+### Other
+
+- Keep app-root contexts resolvable after a hot-reload remount ([#373](https://github.com/whiskerrs/whisker/pull/373))
+
 ## [0.10.0](https://github.com/whiskerrs/whisker/compare/whisker-runtime-v0.9.2...whisker-runtime-v0.10.0) - 2026-07-28
 
 ### Fixed

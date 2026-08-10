@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.12](https://github.com/whiskerrs/whisker/compare/whisker-dev-runtime-v0.10.11...whisker-dev-runtime-v0.10.12) - 2026-08-10
+
+### Other
+
+- Let hot-reload patches larger than 16 MiB reach the device ([#372](https://github.com/whiskerrs/whisker/pull/372))
+
 ## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-dev-runtime-v0.7.0...whisker-dev-runtime-v0.8.0) - 2026-07-06
 
 ### Fixed
