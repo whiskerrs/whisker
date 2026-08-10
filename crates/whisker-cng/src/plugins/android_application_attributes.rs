@@ -10,14 +10,12 @@
 //!     .set("android:largeHeap", "true"));
 //! ```
 //!
-//! The most common reason apps reach for this is opting into the
-//! Android 13+ predictive-back API
-//! (`android:enableOnBackInvokedCallback="true"`), without which the
-//! OS won't deliver the `handleOnBackStarted` / `handleOnBackProgressed`
-//! preview callbacks. Distinct from
-//! [`android_meta_data`](super::android_meta_data): that adds
-//! `<meta-data>` *children*; this sets *attributes* on the
-//! `<application>` element.
+//! Distinct from [`android_meta_data`](super::android_meta_data),
+//! which adds `<meta-data>` *children*. The common case is opting into
+//! the Android 13+ predictive-back API
+//! (`android:enableOnBackInvokedCallback="true"`), without which the OS
+//! never delivers the `handleOnBackStarted` /
+//! `handleOnBackProgressed` preview callbacks.
 
 use serde::{Deserialize, Serialize};
 use whisker_plugin::{
@@ -27,8 +25,8 @@ use whisker_plugin::{
 #[derive(Default, Serialize, Deserialize)]
 pub struct AndroidApplicationAttributesConfig {
     /// `(name, value)` pairs rendered as `android:name="value"` on the
-    /// `<application>` tag. Dedup'd by name at render time (last writer
-    /// wins). Stored ordered for a deterministic manifest.
+    /// `<application>` tag, dedup'd by name at render time (last writer
+    /// wins). Ordered for a deterministic manifest.
     #[serde(default)]
     pub attributes: Vec<ApplicationAttribute>,
 }

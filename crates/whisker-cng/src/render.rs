@@ -1,21 +1,16 @@
 //! `{{placeholder}}` substitution.
 //!
 //! Deliberately minimal — no conditionals, no escaping, no nested
-//! constructs. Templates are project scaffolding; if a value needs
-//! escaping (quote-heavy XML attributes, etc.) the renderer caller is
-//! responsible — see [`escape_xml`]. Errors are returned for unknown
-//! placeholders so a typo'd `{{`-block fails loudly at sync time
-//! instead of writing a broken file the user has to debug.
+//! constructs. Callers escape their own values (see [`escape_xml`]).
+//! An unknown placeholder is an error so a typo'd `{{`-block fails at
+//! sync time instead of shipping a broken generated file.
 
 use anyhow::{Result, bail};
 use std::collections::HashMap;
 
-/// Escape the five XML special characters (`&`, `<`, `>`, `"`,
-/// `'`). Used by the per-platform `template_vars` builders when
-/// they emit plugin-supplied strings into hand-rolled XML
-/// (Info.plist, AndroidManifest.xml). Keys generally come from
-/// Rust string constants in plugin Configs and don't need
-/// escaping; values are user-supplied and do.
+/// Escape the five XML special characters (`&`, `<`, `>`, `"`, `'`),
+/// for plugin-supplied strings the `template_vars` builders emit into
+/// hand-rolled XML (Info.plist, AndroidManifest.xml).
 pub(crate) fn escape_xml(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -31,13 +26,11 @@ pub(crate) fn escape_xml(s: &str) -> String {
     out
 }
 
-/// Reject plugin-supplied `extra_files` paths that would escape
-/// the gen root: absolute paths, `..` traversal, and Windows
-/// drive prefixes (caught by `is_absolute` on Windows hosts).
-///
-/// Called by [`crate::ios`] / [`crate::android`] before writing
-/// any `extra_files` entry — a malicious or buggy plugin can't
-/// drop a file into the user's home dir / out of the workspace.
+/// Reject plugin-supplied `extra_files` paths that would escape the
+/// gen root: absolute paths, `..` traversal, and Windows drive
+/// prefixes (caught by `is_absolute` on Windows hosts). Called before
+/// writing any `extra_files` entry, so a buggy plugin can't drop a
+/// file outside the workspace.
 pub(crate) fn validate_extra_file_path(path: &std::path::Path) -> anyhow::Result<()> {
     if path.is_absolute() {
         anyhow::bail!(
@@ -56,11 +49,9 @@ pub(crate) fn validate_extra_file_path(path: &std::path::Path) -> anyhow::Result
     Ok(())
 }
 
-/// Replace every `{{key}}` in `template` with `vars[key]`. Returns
-/// `Err` if a placeholder doesn't have a corresponding entry — that
-/// almost always means a template was edited without updating the
-/// renderer and we'd rather surface it now than ship a literal
-/// `{{xyz}}` into the generated project.
+/// Replace every `{{key}}` in `template` with `vars[key]`. A
+/// placeholder with no entry is an `Err` — it almost always means a
+/// template was edited without updating the renderer.
 pub fn render(template: &str, vars: &HashMap<&'static str, String>) -> Result<String> {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;

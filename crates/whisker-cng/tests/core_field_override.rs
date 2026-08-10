@@ -1,12 +1,6 @@
-//! Demonstrates that core fields (bundle_id, application_id, etc.)
-//! now flow through the engine's IR and can be overridden by a
-//! custom plugin. Counterpart to `tests/builtins_e2e.rs` (which
-//! covers the additive case).
-//!
-//! The override path used to require forking `whisker-cng` itself
-//! before the RFC #164 B-direction refactor — core fields were
-//! read straight out of `Config` in `inputs_from` and never
-//! touched the IR.
+//! Core fields (bundle_id, application_id, …) flow through the
+//! engine's IR and can be overridden by a custom plugin. Counterpart
+//! to `tests/builtins_e2e.rs`, which covers the additive case.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -24,10 +18,6 @@ fn unique_tempdir() -> PathBuf {
     std::fs::create_dir_all(&p).unwrap();
     p
 }
-
-// ============================================================================
-// Demo plugin: append a flavor suffix to bundle_id / application_id
-// ============================================================================
 
 #[derive(Default, Serialize, Deserialize)]
 struct FlavorSuffixConfig {
@@ -86,10 +76,6 @@ fn base_app() -> Config {
     a
 }
 
-// ============================================================================
-// IR-level: confirm the seed values reach the IR
-// ============================================================================
-
 #[test]
 fn build_initial_context_seeds_core_ios_fields_from_app_config() {
     let mut app = base_app();
@@ -134,8 +120,6 @@ fn build_initial_context_seeds_core_android_fields_from_app_config() {
 #[test]
 fn ios_bundle_id_falls_back_to_top_level_when_ios_section_unset() {
     // `Config.bundle_id` is set; `Config.ios.bundle_id` is not.
-    // The fallback already existed in inputs_from pre-refactor; this
-    // verifies it survives via the engine's seeding step.
     let mut app = Config::default();
     app.name("X").bundle_id("rs.fallback");
     let engine = Engine::new();
@@ -147,10 +131,6 @@ fn ios_bundle_id_falls_back_to_top_level_when_ios_section_unset() {
     );
 }
 
-// ============================================================================
-// End-to-end: a custom plugin can override a core field
-// ============================================================================
-
 #[test]
 fn custom_plugin_can_override_ios_bundle_id_in_the_rendered_pbxproj() {
     let mut app = base_app();
@@ -158,13 +138,8 @@ fn custom_plugin_can_override_ios_bundle_id_in_the_rendered_pbxproj() {
         c.set(".staging");
     });
 
-    // Construct an Engine that includes built-ins PLUS our flavor
-    // override plugin. We have to use the lower-level
-    // `Engine::with_builtins().register(...)` because the public
-    // `ios::inputs_from` uses with_builtins() internally. So we
-    // demonstrate the override at the IR level here; the
-    // `inputs_from` happy-path E2E test below uses an interface
-    // that lets the flavor plugin in.
+    // `ios::inputs_from` builds its own `with_builtins()` engine, so
+    // the override has to be demonstrated at the IR level here.
     let mut engine = Engine::with_builtins();
     engine.register(FlavorSuffix);
     let ctx = engine.compose(&app, EnabledTargets::ios_only()).unwrap();
@@ -174,7 +149,6 @@ fn custom_plugin_can_override_ios_bundle_id_in_the_rendered_pbxproj() {
         Some("rs.whisker.examples.hello.staging"),
         "FlavorSuffix should have appended `.staging`",
     );
-    // Journal records the Override.
     assert!(ctx.journal.records.iter().any(|r| {
         r.plugin == "demo-flavor-suffix"
             && r.path == "bundle_id"
@@ -199,15 +173,8 @@ fn custom_plugin_can_override_android_application_id() {
     );
 }
 
-// ============================================================================
-// Regression: existing inputs_from happy path still produces the right output
-// ============================================================================
-
 #[test]
 fn inputs_from_ios_still_produces_correct_pbxproj_after_ir_refactor() {
-    // Just verify the default path (no override) renders the
-    // bundle_id from Config into the pbxproj exactly as
-    // pre-refactor.
     let app = base_app();
     let inputs = whisker_cng::ios::inputs_from(
         &app,

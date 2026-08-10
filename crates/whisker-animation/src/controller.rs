@@ -116,15 +116,11 @@ impl ControllerState {
         if !self.active {
             return false;
         }
-        // The controller's owner can be torn down mid-run (e.g. a router
-        // wrapper disposed while its transition — or a still-active spring
-        // in its subtree — is animating). That frees the `value` node, and
-        // a subsequent read (`get_untracked` on the spring path) would
-        // panic — inside `step`, that panic bails the whole frame's
-        // animation pass, freezing EVERY controller (a stuck router
-        // transition strands the incoming screen off-screen). Self-
-        // terminate instead: there's nothing left to drive, so report
-        // finished and let the scheduler deregister us.
+        // The owner can be torn down mid-run (a router wrapper disposed
+        // while its transition animates), freeing the `value` node. A
+        // read would then panic inside `step` and bail the whole frame's
+        // animation pass, freezing EVERY controller. Nothing is left to
+        // drive, so report finished and let the scheduler deregister us.
         if self.value.is_disposed() {
             self.active = false;
             return false;
@@ -140,17 +136,14 @@ impl ControllerState {
     /// Curved (time-driven) advance — the original math, unchanged:
     /// `progress = curve(elapsed / duration)`, finished at `elapsed ≥ dur`.
     fn advance_curved(&mut self, now_ms: f64, duration_ms: f32, curve: crate::Curve) -> bool {
-        // Lazy time anchor: the first frame of a run defines its start, so
-        // an idle gap before the run can't inflate the elapsed time. This
-        // frame is therefore progress 0 (raw_t == 0) — the run advances
-        // from the *next* frame onward.
+        // The first frame of a run defines its start, so an idle gap
+        // before it can't inflate the elapsed time. That makes this frame
+        // progress 0; the run advances from the next one onward.
         let start_ms = *self.start_ms.get_or_insert(now_ms);
         let dur = self.run_duration_ms(duration_ms);
-        // A tiny epsilon (in ms) absorbs the f32→f64 rounding in
-        // `run_duration_ms` (e.g. a 0.6 span yields dur ≈ 60.0000023,
-        // so a frame at exactly 60ms would otherwise read t = 0.99999996
-        // and never finish). Treat "within a hundredth of a ms of done"
-        // as done.
+        // Absorbs the f32→f64 rounding in `run_duration_ms`: a 0.6 span
+        // yields dur ≈ 60.0000023, so a frame at exactly 60ms would read
+        // t = 0.99999996 and never finish.
         let finished = dur <= 0.0 || (now_ms - start_ms) >= dur - 1e-2;
         let raw_t = if finished {
             1.0
@@ -172,24 +165,22 @@ impl ControllerState {
     /// fixed duration and progress is not a pure function of elapsed
     /// time (it carries hidden velocity across frames).
     fn advance_spring(&mut self, now_ms: f64, spring: SpringConfig) -> bool {
-        // First frame of the run: no previous timestamp yet, so there is
-        // no `dt` to integrate. Anchor the clock and hold at the start
-        // value — same "first frame is the start" behaviour as the
-        // curved lazy anchor. (We seed both `start_ms` and the
-        // per-frame clock here.)
+        // No previous timestamp yet, so there is no `dt` to integrate:
+        // anchor the clock and hold at the start value, the same
+        // "first frame is the start" rule the curved path uses.
         let Some(last_ms) = self.last_frame_ms else {
             self.start_ms.get_or_insert(now_ms);
             self.last_frame_ms = Some(now_ms);
             // Emit the current position so the first frame paints the
-            // start, exactly like the curved path's raw_t == 0 frame.
+            // start.
             let x = self.value.get_untracked();
             self.value.set(x);
             return true;
         };
 
-        // Clamp dt so a stale gap (idle, backgrounded tab) can't explode
-        // the integration; substep it into small fixed steps for stable
-        // semi-implicit Euler at our stiffnesses.
+        // Clamp dt so a stale gap (idle, backgrounded app) can't explode
+        // the integration, then substep for a stable semi-implicit Euler
+        // at our stiffnesses.
         let dt = ((now_ms - last_ms) / 1000.0).clamp(0.0, MAX_DT);
         self.last_frame_ms = Some(now_ms);
 
@@ -213,11 +204,8 @@ impl ControllerState {
             remaining -= SPRING_SUBSTEP;
         }
 
-        // Overshoot clamping: if enabled and the position has crossed the
-        // target (it now sits on the opposite side from where the run
-        // started), snap to the target and settle with no bounce. The
-        // "side it started on" is the sign of `start_value - target`; once
-        // `x - target` flips to the other sign, we've passed it.
+        // Crossing the target means `x - target` has flipped away from
+        // the sign of `start_value - target`; snap and settle, no bounce.
         if spring.overshoot_clamping {
             let started_below = self.start_value <= target;
             let crossed = if started_below {
@@ -232,7 +220,7 @@ impl ControllerState {
             }
         }
 
-        // Settled? Position close to target AND velocity near zero.
+        // Settled means close to target AND velocity near zero.
         if (x - target).abs() < SPRING_POS_EPS && v.abs() < SPRING_VEL_EPS {
             self.velocity = 0.0;
             self.value.set(target);
@@ -355,10 +343,10 @@ fn ensure_hook_installed() {
 /// `true` if any controller is still animating afterward. This is the
 /// callback the runtime's `anim_hook` invokes each `tick_frame`.
 fn step(now_ms: f64) -> bool {
-    // Snapshot the active list outside the scheduler borrow: a
-    // controller's `advance` writes its value signal, which schedules
-    // reactive subscribers — none of which re-enter the scheduler, but
-    // keeping the borrow window tight matches the runtime's discipline.
+    // Snapshot outside the scheduler borrow: `advance` writes a value
+    // signal, scheduling reactive subscribers. None re-enter the
+    // scheduler, but the tight borrow window matches the runtime's
+    // discipline.
     let snapshot: Vec<Rc<RefCell<ControllerState>>> = SCHEDULER.with(|s| {
         let mut s = s.borrow_mut();
         s.last_ms = now_ms;
@@ -406,8 +394,7 @@ fn register(state: &Rc<RefCell<ControllerState>>) {
     if !already {
         SCHEDULER.with(|s| s.borrow_mut().active.push(state.clone()));
     }
-    // Report busy immediately (before the next `step`) and nudge the
-    // host to schedule a frame.
+    // Report busy before the next `step`, and nudge the host for a frame.
     anim_hook::mark_animating(true);
     whisker_runtime::host_wake::wake_runtime();
 }
@@ -490,8 +477,8 @@ impl AnimationController {
             on_finish: Vec::new(),
         }));
 
-        // Deregister on owner dispose so a controller created inside a
-        // component never leaves a dangling frame request behind.
+        // Deregister on owner dispose, or a controller created inside a
+        // component leaves a dangling frame request behind.
         let weak = Rc::downgrade(&state);
         on_cleanup(move || {
             if let Some(st) = weak.upgrade() {
@@ -620,7 +607,7 @@ impl AnimationController {
 
         if (target - start_value).abs() <= f32::EPSILON {
             // Already there: settle synchronously, fire on_finish(true),
-            // and don't register (nothing to animate).
+            // and don't register.
             let mut st = self.state.borrow_mut();
             st.value.set(target);
             st.active = false;

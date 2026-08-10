@@ -9,10 +9,10 @@
 //!     .add_raw("id(\"com.android.dynamic-feature\") version \"8.5.0\""));
 //! ```
 //!
-//! The plugin appends each entry to `ctx.android.gradle.apply_plugins`.
-//! The renderer wraps simple `id`-only strings in `id("...")`; raw
-//! `id(...)` lines pass through verbatim so users can attach
-//! `version "X"` / `apply false` / etc.
+//! Entries are appended to `ctx.android.gradle.apply_plugins`. The
+//! renderer wraps bare ids in `id("...")` and passes raw `id(...)`
+//! lines through verbatim, so `version "X"` / `apply false` qualifiers
+//! stay expressible.
 
 use serde::{Deserialize, Serialize};
 use whisker_plugin::{GenerateContext, Operation, Plugin, PluginConfig, Target};

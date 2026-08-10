@@ -21,8 +21,6 @@ fn approx(a: f32, b: f32) -> bool {
     (a - b).abs() < 1e-3
 }
 
-// ----- 1. Animatable::lerp -------------------------------------------------
-
 #[test]
 fn lerp_f32_endpoints_and_midpoint() {
     fresh();
@@ -39,7 +37,6 @@ fn lerp_color_rgba_endpoints_and_midpoint() {
     let to = Color::rgb(255, 100, 50);
     assert_eq!(Color::lerp(&from, &to, 0.0), from);
     assert_eq!(Color::lerp(&from, &to, 1.0), to);
-    // Midpoint: each channel halves (with rounding).
     match Color::lerp(&from, &to, 0.5) {
         Color::Rgba(r, g, b, a) => {
             assert_eq!((r, g, b), (128, 50, 25));
@@ -59,8 +56,6 @@ fn lerp_color_alpha_interpolates() {
         other => panic!("expected Rgba, got {other:?}"),
     }
 }
-
-// ----- 2. Curves -----------------------------------------------------------
 
 #[test]
 fn curves_pin_endpoints() {
@@ -116,8 +111,6 @@ fn curve_clamps_out_of_range() {
     assert!(approx(Curve::Linear.ease(2.0), 1.0));
 }
 
-// ----- 3. forward / reverse ------------------------------------------------
-
 #[test]
 fn forward_reaches_one_then_reverse_returns_to_zero() {
     fresh();
@@ -126,7 +119,7 @@ fn forward_reaches_one_then_reverse_returns_to_zero() {
     assert!(approx(v.get_untracked(), 0.0));
 
     ctrl.forward();
-    // Step in 25ms increments; t=0 at first registered start (last_ms=0).
+    // 25ms increments; t=0 at the first registered start (last_ms=0).
     __step_for_tests(0.0);
     __step_for_tests(50.0);
     assert!(
@@ -136,7 +129,6 @@ fn forward_reaches_one_then_reverse_returns_to_zero() {
     );
     __step_for_tests(100.0);
     assert!(approx(v.get_untracked(), 1.0), "end {}", v.get_untracked());
-    // Finished → deregistered.
     assert_eq!(__active_count(), 0);
 
     ctrl.reverse();
@@ -156,13 +148,10 @@ fn forward_reaches_one_then_reverse_returns_to_zero() {
     assert_eq!(__active_count(), 0);
 }
 
-// ----- 4. idle when stopped ------------------------------------------------
-
 #[test]
 fn idle_when_no_controllers_active() {
     fresh();
     let ctrl = AnimationController::new(AnimConfig::linear(100));
-    // Constructed but not driven: nothing active, not animating.
     assert_eq!(__active_count(), 0);
     assert!(!whisker_runtime::anim_hook::is_animating());
 
@@ -170,7 +159,6 @@ fn idle_when_no_controllers_active() {
     assert_eq!(__active_count(), 1);
     assert!(whisker_runtime::anim_hook::is_animating());
 
-    // Run to completion; it must deregister and report idle.
     __step_for_tests(0.0);
     __step_for_tests(100.0);
     assert_eq!(__active_count(), 0);
@@ -190,12 +178,9 @@ fn stop_deregisters_at_current_value() {
     let held = v.get_untracked();
     ctrl.stop();
     assert_eq!(__active_count(), 0);
-    // Further frames don't move it.
     __step_for_tests(200.0);
     assert!(approx(v.get_untracked(), held), "stop should hold value");
 }
-
-// ----- 5. set_value is one-shot --------------------------------------------
 
 #[test]
 fn set_value_does_not_self_drive() {
@@ -206,7 +191,6 @@ fn set_value_does_not_self_drive() {
     assert!(approx(v.get_untracked(), 0.42));
     assert_eq!(__active_count(), 0);
     assert!(!whisker_runtime::anim_hook::is_animating());
-    // Next frame must not change it.
     __step_for_tests(16.0);
     __step_for_tests(32.0);
     assert!(
@@ -215,8 +199,6 @@ fn set_value_does_not_self_drive() {
         v.get_untracked()
     );
 }
-
-// ----- 6. one controller drives multiple tweens ----------------------------
 
 #[test]
 fn one_controller_drives_f32_and_color_tweens() {
@@ -249,21 +231,17 @@ fn one_controller_drives_f32_and_color_tweens() {
     }
 }
 
-// ----- 7. interactive: scrub then settle -----------------------------------
-
 #[test]
 fn interactive_scrub_then_commit_settles_to_one() {
     fresh();
     let ctrl = AnimationController::new(AnimConfig::linear(100));
     let v = ctrl.value();
-    // Finger drags across several frames.
     for p in [0.1_f32, 0.25, 0.4, 0.55] {
         ctrl.set_value(p);
         __step_for_tests(0.0); // a frame in which nothing self-drives
         assert!(approx(v.get_untracked(), p));
         assert_eq!(__active_count(), 0);
     }
-    // Release → commit: drive to 1.0.
     ctrl.forward();
     __step_for_tests(0.0);
     // Remaining span is 0.45 → 0.45*100ms = 45ms to finish.
@@ -294,8 +272,6 @@ fn interactive_scrub_then_cancel_settles_to_zero() {
     assert_eq!(__active_count(), 0);
 }
 
-// ----- 8. cleanup deregisters on owner dispose -----------------------------
-
 #[test]
 fn controller_deregisters_on_owner_dispose() {
     fresh();
@@ -305,19 +281,15 @@ fn controller_deregisters_on_owner_dispose() {
         c.forward();
         c
     });
-    // Mid-flight: active.
     __step_for_tests(0.0);
     __step_for_tests(20.0);
     assert_eq!(__active_count(), 1);
 
-    // Dispose the owner: the controller's on_cleanup must deregister.
     owner.dispose();
     assert_eq!(__active_count(), 0, "controller leaked after owner dispose");
     assert!(!whisker_runtime::anim_hook::is_animating());
     drop(ctrl);
 }
-
-// ----- 9. determinism: exact progress at exact frames ----------------------
 
 #[test]
 fn deterministic_linear_progress_values() {
@@ -325,7 +297,6 @@ fn deterministic_linear_progress_values() {
     let ctrl = AnimationController::new(AnimConfig::linear(100));
     let v = ctrl.value();
     ctrl.forward();
-    // Anchor the run at t=0.
     __step_for_tests(0.0);
     // Linear, 100ms duration: progress == elapsed/100.
     __step_for_tests(10.0);
@@ -368,8 +339,6 @@ fn deterministic_ease_in_progress_values() {
     assert!(approx(v.get_untracked(), 1.0));
 }
 
-// ----- on_finish + animated() sugar ----------------------------------------
-
 #[test]
 fn on_finish_fires_once_at_target() {
     fresh();
@@ -386,7 +355,6 @@ fn on_finish_fires_once_at_target() {
     __step_for_tests(0.0);
     __step_for_tests(100.0);
     assert_eq!(*count.borrow(), 1);
-    // No extra frames re-fire it.
     __step_for_tests(200.0);
     assert_eq!(*count.borrow(), 1);
 }
@@ -430,23 +398,17 @@ fn animate_to_already_at_target_finishes_without_registering() {
     assert!(approx(v.get_untracked(), 0.0));
 }
 
-// ----- 10. regression: idle gap must not teleport on the first frame -------
-
 #[test]
 fn forward_after_idle_gap_starts_from_zero_not_teleport() {
-    // The run's start time is anchored on its FIRST advance, not on the
-    // scheduler's last-seen timestamp. Otherwise, after a long idle gap
-    // (the scheduler's `last_ms` is stale), the first `forward()` frame
-    // would compute a huge elapsed and jump straight to the target — the
-    // "single tap teleports, mashing animates" bug. Here we let the clock
-    // advance to 5000ms while idle, then forward() and assert the very
-    // first frame is ~0, and the animation then progresses smoothly.
+    // The run anchors its start on its FIRST advance, not on the
+    // scheduler's last-seen timestamp — otherwise a long idle gap leaves
+    // `last_ms` stale and the first `forward()` frame computes a huge
+    // elapsed and jumps straight to the target.
     fresh();
     let ctrl = AnimationController::new(AnimConfig::linear(100));
     let v = ctrl.value();
 
-    // Simulate a long idle gap: the engine's clock has moved far ahead
-    // (e.g. earlier animations / app uptime) with this controller idle.
+    // A long idle gap: the engine clock has moved far ahead.
     __step_for_tests(5000.0);
     assert_eq!(__active_count(), 0, "nothing should be animating yet");
 
@@ -469,8 +431,6 @@ fn forward_after_idle_gap_starts_from_zero_not_teleport() {
     assert!(approx(v.get_untracked(), 1.0), "end {}", v.get_untracked());
     assert_eq!(__active_count(), 0);
 }
-
-// ----- 11. springs ---------------------------------------------------------
 
 /// Drive a spring controller through frames `frame_ms` apart, starting at
 /// `start_ms`, for up to `max_frames`. Returns the number of frames run
@@ -514,7 +474,6 @@ fn spring_reverse_settles_to_zero() {
     fresh();
     let ctrl = AnimationController::new(AnimConfig::spring());
     let v = ctrl.value();
-    // Park it at 1.0 first (one-shot set, no self-drive).
     ctrl.set_value(1.0);
     assert!(approx(v.get_untracked(), 1.0));
 
@@ -579,7 +538,6 @@ fn spring_is_monotonic_or_overshoots_per_config() {
         peak_bouncy > 1.05,
         "bouncy() spring should visibly overshoot, peak {peak_bouncy}"
     );
-    // …and still settle back to exactly 1.0.
     assert!(
         approx(v.get_untracked(), 1.0),
         "bouncy end {}",
@@ -637,8 +595,6 @@ fn spring_finishes_and_goes_idle() {
     assert!(!whisker_runtime::anim_hook::is_animating());
     assert!(!whisker_runtime::reactive::has_pending_work());
 }
-
-// ----- 12. spring velocity: configured initial, hand-off, injection -------
 
 #[test]
 fn spring_initial_velocity_speeds_first_frames() {
@@ -765,8 +721,6 @@ fn forward_with_velocity_injects_release_velocity() {
     );
 }
 
-// ----- 13. overshoot clamping ---------------------------------------------
-
 #[test]
 fn overshoot_clamping_stops_at_target() {
     // bouncy() WOULD overshoot above 1.0 (asserted elsewhere); with
@@ -797,8 +751,6 @@ fn overshoot_clamping_stops_at_target() {
     );
     assert_eq!(__active_count(), 0, "clamped spring must settle/deregister");
 }
-
-// ----- 14. on_finish carries finished/cancelled bool ----------------------
 
 #[test]
 fn on_finish_true_on_natural_completion() {
@@ -833,7 +785,6 @@ fn on_finish_false_on_stop() {
         vec![false],
         "stop mid-flight must report false"
     );
-    // A stop while idle fires nothing more.
     ctrl.stop();
     assert_eq!(*got.borrow(), vec![false]);
 }
@@ -851,7 +802,6 @@ fn on_finish_false_on_interrupt() {
     ctrl.forward();
     __step_for_tests(0.0);
     __step_for_tests(40.0);
-    // Interrupt the in-flight run: the callback fires false for it.
     ctrl.reverse();
     assert_eq!(
         *got.borrow(),
@@ -896,8 +846,6 @@ fn owner_dispose_does_not_fire_on_finish() {
     drop(ctrl);
 }
 
-// ----- Regression: disposed controller must not crash the step pass --------
-
 /// A controller whose backing `value` node is freed WHILE it is still active
 /// (owner torn down mid-run) must not panic the animation `step`. `advance`
 /// reads/writes `value`; reading a freed node panics, and inside `step` that
@@ -919,13 +867,13 @@ fn step_survives_active_controller_with_freed_value_node() {
         c
     });
     assert_eq!(__active_count(), 1, "spring active after forward()");
-    // Free every reactive node (the controller's `value` among them) but do
-    // NOT touch the animation scheduler — so `ctrl` lingers in `active` with a
-    // dangling `value`, exactly the on-device shape.
+    // Free every reactive node (the controller's `value` among them)
+    // without touching the animation scheduler, so `ctrl` lingers in
+    // `active` with a dangling `value` — the on-device shape.
     whisker_runtime::reactive::__reset_for_tests();
     assert_eq!(__active_count(), 1, "still registered after arena reset");
 
-    // Must NOT panic (pre-fix: `advance`'s `value` read panics, bailing step).
+    // Must NOT panic: a panicking `value` read would bail the step.
     let still = __step_for_tests(16.0);
     assert!(!still, "a controller with a freed value self-terminates");
     assert_eq!(__active_count(), 0, "and is deregistered");

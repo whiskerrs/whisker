@@ -19,37 +19,21 @@
 //! through `cargo build`, and registers a
 //! [`crate::SubprocessPlugin`] pointing at the resulting binary.
 //!
-//! ## Why discovery instead of explicit registration
+//! Discovery, rather than explicit registration, is what makes "which
+//! plugins run" a function of the app's dep graph alone: a plugin's
+//! `PluginConfig::NAME` matches the table key, so the CLI never needs
+//! an `Engine::register(...)` call site for a 3rd-party plugin.
 //!
-//! In Phase 2+ the user's `whisker.rs` declares typed plugins via
-//! `app.plugin::<MyPlugin>(|c| ...)`. The plugin's
-//! `Plugin::Config::NAME` matches the discovery table's key, so
-//! "what plugin runs" is decided entirely by what crates the app
-//! depends on plus how the user spelled `app.plugin::<…>(…)`. The
-//! CLI never needs an `Engine::register(...)` call site for
-//! 3rd-party plugins.
-//!
-//! ## Scope (Phase 1 PR 3c)
-//!
-//! This module is metadata-only: it discovers the *declarations*,
-//! not the binaries. Building each plugin's bin target + wiring it
-//! into [`crate::Engine`] happens in a downstream PR (likely as
-//! part of `whisker-build` once it gets a plugin-build step).
-//!
-//! Shared with [`whisker_build::modules::discover`] in spirit: both
-//! walk the same cargo metadata. Kept here rather than there to
-//! avoid a circular dep — `whisker-build` already depends on
-//! `whisker-cng` via the transitive sync calls.
+//! This module resolves declarations only, never binaries. It parallels
+//! [`whisker_build::modules::discover`] over the same cargo metadata,
+//! but lives here because `whisker-build` already depends on
+//! `whisker-cng` and the reverse would cycle.
 
 use anyhow::{Context, Result, anyhow};
 use cargo_metadata::MetadataCommand;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-// ============================================================================
-// Public types
-// ============================================================================
 
 /// A plugin declared by a dep of the user app, after the dep's
 /// `[package.metadata.whisker.plugins.<name>]` table has been
@@ -59,49 +43,32 @@ pub struct DiscoveredPlugin {
     /// The plugin's stable name. Matches `Plugin::name()` /
     /// `PluginConfig::NAME` and the `Config.plugins` map key.
     pub name: String,
-    /// The cargo package that declared this plugin. Used for
-    /// diagnostic messages and to anchor `bin_target_name` to a
-    /// specific `cargo build --bin <target> --package <source_crate>`
-    /// invocation.
+    /// The cargo package that declared this plugin — anchors
+    /// `bin_target_name` to a specific `cargo build --bin <target>
+    /// --package <source_crate>` invocation.
     pub source_crate: String,
     /// The directory containing the source crate's `Cargo.toml`.
-    /// Mirrors `whisker_build::modules::ResolvedModule::manifest_dir`.
     pub source_manifest_dir: PathBuf,
     /// `[[bin]]` target name inside the source crate that, when
     /// compiled, produces the plugin binary the engine spawns.
-    /// Resolution to an actual file path is the caller's job (it
-    /// needs cargo build + target-dir lookup).
+    /// Resolving it to a file path is the caller's job.
     pub bin_target_name: String,
     pub after: Vec<String>,
     pub before: Vec<String>,
 }
-
-// ============================================================================
-// Public API
-// ============================================================================
 
 /// Walk the cargo dep graph rooted at `app_package` (resolved via
 /// `manifest_path`) and return every plugin declared in the
 /// transitive deps' `[package.metadata.whisker.plugins.<name>]`
 /// tables.
 ///
-/// The iteration order is deterministic for a given dep tree
-/// (DFS over `cargo metadata`'s resolution graph + alphabetical
-/// within each crate's plugin table), but not part of the
-/// stability contract — downstream consumers that need a
-/// specific ordering should sort by `name` themselves.
+/// The iteration order is deterministic for a given dep tree but not
+/// part of the stability contract — callers that need a specific
+/// ordering should sort by `name` themselves.
 ///
-/// Two plugins with the same `name` across different deps is a
-/// hard error — there's no way to disambiguate them at dispatch
-/// time.
-///
-/// Errors:
-/// - `cargo metadata` failure (workspace broken, manifest_path
-///   invalid).
-/// - Plugin metadata parse error (unknown / typoed field under
-///   `plugins.<name>`) — `deny_unknown_fields` is on for the
-///   per-plugin entry so typos surface immediately.
-/// - Duplicate plugin name across two crates.
+/// Errors on a `cargo metadata` failure, a parse error in a plugin
+/// entry, or the same plugin `name` declared by two different crates
+/// (which has no disambiguation at dispatch time).
 pub fn discover_plugins(manifest_path: &Path, app_package: &str) -> Result<Vec<DiscoveredPlugin>> {
     let metadata = MetadataCommand::new()
         .manifest_path(manifest_path)
@@ -136,9 +103,8 @@ pub fn discover_plugins(manifest_path: &Path, app_package: &str) -> Result<Vec<D
         })
         .ok_or_else(|| anyhow!("cargo package `{app_package}` not found in the workspace"))?;
 
-    // DFS the resolve graph collecting dep package ids. Skip the
-    // root app itself — a CNG plugin lives in a dep, not in the
-    // consuming app.
+    // Skip the root app itself — a CNG plugin lives in a dep, not in
+    // the consuming app.
     let mut visit: Vec<&cargo_metadata::PackageId> = vec![&root_id];
     let mut seen: std::collections::HashSet<&cargo_metadata::PackageId> = Default::default();
     let mut dep_ids: Vec<cargo_metadata::PackageId> = Vec::new();
@@ -164,11 +130,10 @@ pub fn discover_plugins(manifest_path: &Path, app_package: &str) -> Result<Vec<D
             .find(|p| p.id == id)
             .expect("dep id came from resolve.nodes, must exist in metadata.packages");
 
-        // The `whisker` table may also carry `[ios]` / `[android]`
-        // module sections that `whisker_build::modules::discover`
-        // consumes. We only care about the `plugins` sub-table here
-        // and read it as a serde_json::Value so the module schema
-        // can evolve independently.
+        // Read only the `plugins` sub-table, untyped, so the sibling
+        // `[ios]` / `[android]` module schema that
+        // `whisker_build::modules::discover` owns can evolve
+        // independently.
         let Some(whisker_meta) = pkg.metadata.get("whisker") else {
             continue;
         };
@@ -212,14 +177,9 @@ pub fn discover_plugins(manifest_path: &Path, app_package: &str) -> Result<Vec<D
     Ok(discovered)
 }
 
-// ============================================================================
-// Internal
-// ============================================================================
-
 /// Shape of one `[package.metadata.whisker.plugins.<name>]` entry.
-/// `deny_unknown_fields` so a typoed key (e.g. `after`s plural
-/// confusion) surfaces immediately rather than getting silently
-/// dropped.
+/// `deny_unknown_fields` so a typoed key surfaces instead of getting
+/// silently dropped.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PluginEntryRaw {
@@ -248,18 +208,9 @@ fn check_no_duplicate_names(plugins: &[DiscoveredPlugin]) -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Most discovery testing happens end-to-end against a tempdir
-    // workspace fixture (`tests/discovery.rs`). The unit tests here
-    // cover the pure pieces — duplicate detection + the typed-shape
-    // deserializer.
 
     fn p(
         name: &str,

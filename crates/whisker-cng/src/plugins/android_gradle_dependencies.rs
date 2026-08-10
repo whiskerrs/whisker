@@ -9,10 +9,9 @@
 //!     .add("kapt(\"androidx.room:room-compiler:2.6.0\")"));
 //! ```
 //!
-//! Each entry is a raw DSL line. The renderer emits it verbatim
-//! inside `dependencies { }`. Letting users pass the full line
-//! keeps `implementation` / `api` / `kapt` / `runtimeOnly` / etc.
-//! distinctions expressible without modelling Gradle's full
+//! Each entry is a raw DSL line emitted verbatim inside
+//! `dependencies { }` — that keeps `implementation` / `api` / `kapt` /
+//! `runtimeOnly` distinctions expressible without modelling Gradle's
 //! configuration grammar.
 
 use serde::{Deserialize, Serialize};

@@ -5,9 +5,8 @@
 //! `whiskerrs/lynx#9`. The framework normally registers lepus closures
 //! for these; Whisker has no JS runtime, so we wire a pair of Rust
 //! closures through a C trampoline instead. This module hides the
-//! `Box<dyn FnMut>` ↔ `*mut c_void` round-trip and the
-//! `extern "C"` trampoline plumbing so the consumer (the future
-//! `ListMount`) only sees a typed Rust API.
+//! `Box<dyn FnMut>` ↔ `*mut c_void` round-trip and the `extern "C"`
+//! trampoline plumbing so the consumer sees a typed Rust API.
 //!
 //! # Lifetime
 //!
@@ -17,16 +16,6 @@
 //! `ListElement` is destroyed (or another provider replaces this
 //! one), the deleter fires and Rust's `Box::from_raw(...)` reclaims
 //! the closures.
-//!
-//! # Stub disclosure
-//!
-//! Until the Lynx fork release `v3.7.0-whisker.9` ships, the bridge
-//! C side of this is a no-op that frees the boxed closures
-//! immediately — so installing a provider today is observable in
-//! Rust (closures are dropped) but has no effect on the list. The
-//! Rust contract here is final; the body of
-//! `whisker_bridge_list_set_native_item_provider` is what changes
-//! after the version bump.
 
 use std::os::raw::{c_int, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -40,25 +29,20 @@ use whisker_runtime::view::list_provider::NativeItemProvider;
 use crate::lynx::renderer::BridgeRenderer;
 
 // `NativeItemProvider` lives in `whisker-runtime` so view-layer code
-// (`ListMount` etc.) can build one without depending on the FFI layer.
-// The FFI-specific machinery — trampolines, `Box<dyn FnMut>` <-> raw
-// pointer, lifetime via `trampoline_free` — stays here.
+// can build one without depending on the FFI layer; the trampolines
+// and `Box<dyn FnMut>` ↔ raw pointer plumbing stay here.
 
-/// Sanity check: our two crates agree on what "no element produced"
-/// means at the Rust layer. The FFI value is asserted at use-site via
-/// the same constant from `whisker-driver-sys`.
+/// Both crates must agree on what "no element produced" means; the
+/// FFI value comes from the same `whisker-driver-sys` constant.
 const _: () = assert!(
     whisker_runtime::view::list_provider::INVALID_ITEM_INDEX == ffi::LYNX_LIST_INVALID_INDEX
 );
 
-// ---- Trampoline ---------------------------------------------------------
-//
 // The bridge passes our `Box<NativeItemProvider>` back as `*mut
-// c_void` on every callback. The trampolines reconstruct a `&mut`
-// reference and dispatch to the appropriate closure. Panics inside
-// the closures are caught so they don't unwind across the FFI
-// boundary (which is UB) — they become `ffi::LYNX_LIST_INVALID_INDEX` returns or
-// silent no-ops, with a `tracing::error!` for diagnosis.
+// c_void` on every callback; the trampolines reconstruct a `&mut` and
+// dispatch. Closure panics are caught — unwinding across the FFI
+// boundary is UB — degrading to `ffi::LYNX_LIST_INVALID_INDEX` or a
+// silent no-op, with a `tracing::error!` for diagnosis.
 
 extern "C" fn trampoline_component_at_index(
     index: u32,
@@ -111,8 +95,6 @@ extern "C" fn trampoline_free(user_data: *mut c_void) {
     }
 }
 
-// ---- install ------------------------------------------------------------
-
 impl BridgeRenderer {
     /// Hand `provider` to the bridge so it drives the C++ `<list>`'s
     /// item lifecycle. Replaces any previously installed provider on
@@ -129,13 +111,12 @@ impl BridgeRenderer {
         provider: NativeItemProvider,
     ) -> bool {
         let Some(ptr) = self.lookup(list_element) else {
-            // No live handle — drop the provider immediately so we
-            // don't leak the boxed closures.
+            // Drop the provider now, or the boxed closures leak.
             drop(provider);
             return false;
         };
-        // Forfeit ownership of the box into the bridge. The bridge
-        // hands it back to `trampoline_free` when the element dies.
+        // Ownership passes to the bridge, which hands the box back to
+        // `trampoline_free` when the element dies.
         let raw = Box::into_raw(Box::new(provider)) as *mut c_void;
         unsafe {
             ffi::whisker_bridge_list_set_native_item_provider(
@@ -154,10 +135,8 @@ impl BridgeRenderer {
 mod tests {
     use super::*;
 
-    /// The trampoline must not unwind on closure panic — verifies the
-    /// `catch_unwind` guards in `trampoline_component_at_index` /
-    /// `trampoline_enqueue_component`. Important: an unwind across
-    /// an `extern "C"` boundary is UB; this test pins the contract.
+    /// An unwind across an `extern "C"` boundary is UB, so this pins
+    /// the `catch_unwind` guards in both trampolines.
     #[test]
     fn trampoline_catches_panic_in_component_at_index() {
         let provider = Box::into_raw(Box::new(NativeItemProvider {
@@ -175,7 +154,6 @@ mod tests {
             component_at_index: Box::new(|_, _, _| 0),
             enqueue_component: Some(Box::new(|_| panic!("boom"))),
         })) as *mut c_void;
-        // Should not unwind / abort.
         trampoline_enqueue_component(42, provider);
         trampoline_free(provider);
     }

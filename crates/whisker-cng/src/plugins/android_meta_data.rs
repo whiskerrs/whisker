@@ -10,19 +10,17 @@
 //!     .add("com.google.android.geo.API_KEY", "AIza..."));
 //! ```
 //!
-//! Required by Firebase, Google Maps, App Links host declarations
-//! and most other 1st-party Google SDKs that need to surface a
-//! manifest-time value to the runtime.
+//! Required by Firebase, Google Maps, App Links host declarations and
+//! most other 1st-party Google SDKs.
 
 use serde::{Deserialize, Serialize};
 use whisker_plugin::{GenerateContext, MetaDataEntry, Operation, Plugin, PluginConfig, Target};
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct AndroidMetaDataConfig {
-    /// `(name, value)` pairs the renderer emits as
-    /// `<meta-data android:name="…" android:value="…"/>` inside
-    /// `<application>`. Stored ordered so multiple plugins
-    /// contributing entries produce a deterministic manifest.
+    /// `(name, value)` pairs the renderer emits as `<meta-data
+    /// android:name="…" android:value="…"/>` inside `<application>`.
+    /// Ordered for a deterministic manifest.
     #[serde(default)]
     pub entries: Vec<MetaDataEntry>,
 }

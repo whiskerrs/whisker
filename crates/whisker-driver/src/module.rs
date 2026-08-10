@@ -42,16 +42,11 @@ use std::os::raw::c_void;
 
 use whisker_driver_sys as ffi;
 
-// `WhiskerValue` / `WhiskerModuleError` moved down to
-// `whisker-runtime` (the value model the renderer's event-listener
-// trait must name; `whisker-driver` depends on the runtime, not the
-// reverse). Re-exported here so existing
-// `whisker_driver::module::WhiskerValue` paths keep resolving — the
-// FFI marshalling (`RawBuilder` / `from_raw` / `invoke`) stays in
-// this module.
+// `WhiskerValue` / `WhiskerModuleError` are defined in
+// `whisker-runtime` because the renderer's event-listener trait must
+// name them and the dependency runs driver → runtime, not the reverse.
+// Only the FFI marshalling stays here.
 pub use whisker_runtime::value::{WhiskerModuleError, WhiskerValue};
-
-// ----- Sync invoke --------------------------------------------------------
 
 /// Call the registered platform module's method, synchronously.
 ///
@@ -71,9 +66,8 @@ pub fn invoke(name: &str, method: &str, args: Vec<WhiskerValue>) -> WhiskerValue
         Err(_) => return WhiskerValue::Error("method name contained NUL byte".into()),
     };
 
-    // Build a flat array of `WhiskerValueRaw` whose heap-owned
-    // allocations stay rooted in the `RawBuilder` until the FFI
-    // call returns.
+    // The `RawBuilder` roots every heap allocation these raws point
+    // at until the FFI call returns.
     let mut builder = RawBuilder::default();
     let raw_args: Vec<ffi::WhiskerValueRaw> = args.iter().map(|v| builder.encode(v)).collect();
 
@@ -91,9 +85,8 @@ pub fn invoke(name: &str, method: &str, args: Vec<WhiskerValue>) -> WhiskerValue
     };
 
     let result = unsafe { from_raw(&raw_result) };
-    // The bridge owns any heap allocations attached to the
-    // returned value — release them now that we've copied the
-    // data out into Rust-owned storage.
+    // The bridge owns the returned value's heap allocations; the copy
+    // out is done, so release them.
     unsafe {
         let mut mutable = raw_result;
         ffi::whisker_bridge_value_release(&mut mutable as *mut _);
@@ -188,9 +181,9 @@ impl PlatformModule {
             Ok(c) => c,
             Err(_) => return ModuleSubscription::failed("event name contained NUL byte"),
         };
-        // `Box<EventCallback>` gives a stable thin pointer we can
-        // stuff into `user_data`. The inner box carries the fat
-        // trait-object pointer; the outer box is just for the address.
+        // The outer box exists purely for a stable thin pointer to put
+        // in `user_data`; the inner one carries the fat trait-object
+        // pointer.
         let callback: EventCallback = Box::new(callback);
         let user_data = Box::into_raw(Box::new(callback)) as *mut c_void;
         let id = unsafe {
@@ -215,8 +208,6 @@ impl PlatformModule {
         }
     }
 }
-
-// ----- Event subscription -------------------------------------------------
 
 /// Heap-allocated Rust callback the C trampoline dispatches into.
 /// `Send + Sync` because the bridge may fire from any thread.
@@ -276,9 +267,8 @@ impl ModuleSubscription {
 }
 
 // The `user_data` pointer references a `Box<EventCallback>` whose
-// inner closure is `Send + Sync`. The wrapper itself never reads the
-// pointer except to free it on drop, so it's safe to move across
-// threads.
+// inner closure is `Send + Sync`, and the wrapper only ever reads the
+// pointer to free it on drop.
 unsafe impl Send for ModuleSubscription {}
 unsafe impl Sync for ModuleSubscription {}
 
@@ -289,8 +279,7 @@ impl Drop for ModuleSubscription {
         }
         unsafe {
             ffi::whisker_bridge_module_remove_event_listener(self.id);
-            // Reclaim and drop the boxed closure now that the bridge
-            // can no longer call into it.
+            // The bridge can no longer call in, so reclaim the box.
             let _ = Box::from_raw(self.user_data as *mut EventCallback);
         }
     }
@@ -316,8 +305,8 @@ pub async fn invoke_async(name: &str, method: &str, args: Vec<WhiskerValue>) -> 
     let raw_args: Vec<ffi::WhiskerValueRaw> = args.iter().map(|v| builder.encode(v)).collect();
 
     let (tx, rx) = futures_channel::oneshot::channel::<WhiskerValue>();
-    // Box the sender so we can pass a stable pointer to the C
-    // callback. The callback drops the box after firing tx.
+    // Boxed for a stable pointer into the C callback, which drops the
+    // box after firing tx.
     let tx_box: Box<Option<futures_channel::oneshot::Sender<WhiskerValue>>> = Box::new(Some(tx));
     let tx_ptr = Box::into_raw(tx_box) as *mut c_void;
 
@@ -337,9 +326,8 @@ pub async fn invoke_async(name: &str, method: &str, args: Vec<WhiskerValue>) -> 
     };
     drop(builder);
     if !ok {
-        // Bridge refused to dispatch — recover the sender so the
-        // box doesn't leak, then resolve immediately with an
-        // error.
+        // Bridge refused to dispatch — recover the sender so the box
+        // doesn't leak, then resolve with an error.
         let mut sender_box = unsafe {
             Box::from_raw(tx_ptr as *mut Option<futures_channel::oneshot::Sender<WhiskerValue>>)
         };
@@ -372,8 +360,6 @@ pub(crate) extern "C" fn async_trampoline(
         let _ = sender.send(value);
     }
 }
-
-// ----- Raw conversion plumbing -------------------------------------------
 
 /// Pinned storage for the heap allocations referenced by a flat
 /// `WhiskerValueRaw[]` handed to the C bridge.
@@ -502,8 +488,8 @@ impl RawBuilder {
 }
 
 fn empty_raw(ty: ffi::WhiskerValueType) -> ffi::WhiskerValueRaw {
-    // Zero-init the union — the discriminator is what readers
-    // consult to decide which variant is live.
+    // Zero-init the union; the discriminator decides which variant
+    // readers treat as live.
     ffi::WhiskerValueRaw {
         type_: ty as u8,
         _pad: [0; 7],
@@ -561,9 +547,8 @@ pub unsafe fn from_raw(raw: &ffi::WhiskerValueRaw) -> WhiskerValue {
             x if x == ffi::WhiskerValueType::Error as u8 => {
                 WhiskerValue::Error(read_string(raw.v.s))
             }
-            // Bridge produced an unknown discriminant — surface as
-            // an error rather than panicking. Indicates the bridge
-            // and the Rust mirror have drifted out of sync.
+            // An unknown discriminant means the bridge and this Rust
+            // mirror have drifted apart; surface it rather than panic.
             other => WhiskerValue::Error(format!(
                 "WhiskerValueRaw carries unknown type discriminant {other}"
             )),
@@ -580,8 +565,8 @@ unsafe fn read_string(r: ffi::WhiskerStringRef) -> String {
         let bytes = std::slice::from_raw_parts(r.ptr as *const u8, r.len);
         std::str::from_utf8(bytes)
             .map(|s| s.to_string())
-            // If the bridge produced non-UTF8, fall through to a
-            // lossy conversion so we never panic at the FFI seam.
+            // Non-UTF8 degrades to a lossy conversion — never panic at
+            // the FFI seam.
             .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
     }
 }
@@ -594,8 +579,6 @@ unsafe fn read_bytes(r: ffi::WhiskerBytesRef) -> Vec<u8> {
         std::slice::from_raw_parts(r.ptr, r.len).to_vec()
     }
 }
-
-// ----- Tests --------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -678,8 +661,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<ffi::WhiskerBytesRef>(), 16);
         assert_eq!(std::mem::size_of::<ffi::WhiskerValueArray>(), 16);
         assert_eq!(std::mem::size_of::<ffi::WhiskerValueMap>(), 16);
-        // WhiskerKeyValueRaw = 16 (key WhiskerStringRef) + 24
-        // (value WhiskerValueRaw) = 40.
+        // 16 (key WhiskerStringRef) + 24 (value WhiskerValueRaw).
         assert_eq!(std::mem::size_of::<ffi::WhiskerKeyValueRaw>(), 40);
     }
 
@@ -696,7 +678,7 @@ mod tests {
         let assert_consistent = |value: &WhiskerValue| {
             let mut builder = RawBuilder::default();
             let raw = builder.encode(value);
-            // The owned CString backing this ref is the last one pushed.
+            // The owned CString backing this ref is the last pushed.
             let buf = builder.strings.last().expect("string was pushed");
             let advertised = unsafe { raw.v.s.len };
             assert_eq!(
@@ -711,8 +693,8 @@ mod tests {
         assert_consistent(&WhiskerValue::String("a\0b".into()));
         assert_consistent(&WhiskerValue::Error("x\0y".into()));
 
-        // Map key with an interior NUL: encode must not panic and the
-        // key ref len must match its buffer.
+        // Encode must not panic, and the key ref len must match its
+        // buffer.
         let mut builder = RawBuilder::default();
         let raw = builder.encode(&WhiskerValue::map([("k\0ey", WhiskerValue::Int(1))]));
         let key_buf = builder.strings.last().expect("key string was pushed");
@@ -729,11 +711,9 @@ mod tests {
         assert_eq!(WhiskerValue::Int(5).as_error(), None);
     }
 
-    // ---- async dispatch routing (C bridge; host_stub in cargo test) ------
-    //
-    // These exercise `whisker_bridge_invoke_module_async`'s new routing:
-    // prefer a registered async dispatch (which owns the callback and may
-    // resolve later), and fall back to sync-forward otherwise.
+    // `whisker_bridge_invoke_module_async` prefers a registered async
+    // dispatch (which owns the callback and may resolve later) and falls
+    // back to sync-forward. Runs against host_stub under `cargo test`.
 
     use std::os::raw::c_char;
     use std::sync::mpsc;
@@ -847,7 +827,6 @@ mod tests {
         let m = "test:sync-only";
         let mc = CString::new(m).unwrap();
         unsafe { ffi::whisker_bridge_register_module_dispatch(mc.as_ptr(), sync_int99) };
-        // No async dispatch registered → invoke_async sync-forwards.
         assert_eq!(call_async(m, "m"), WhiskerValue::Int(99));
     }
 
@@ -859,7 +838,6 @@ mod tests {
             ffi::whisker_bridge_register_module_dispatch(mc.as_ptr(), sync_int99);
             ffi::whisker_bridge_register_module_dispatch_async(mc.as_ptr(), async_disown);
         }
-        // Async dispatch returns false → bridge falls back to sync (99).
         assert_eq!(call_async(m, "m"), WhiskerValue::Int(99));
     }
 }

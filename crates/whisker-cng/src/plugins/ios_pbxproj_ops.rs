@@ -10,12 +10,10 @@
 //!     .set_build_setting("OTHER_LDFLAGS", "-ObjC"));
 //! ```
 //!
-//! Each op is appended to `ctx.ios.pbxproj_ops`; the renderer
-//! produces the matching pbxproj entries (PBXFileReference,
-//! PBXBuildFile, PBXGroup membership, build-phase files list,
-//! buildSettings dict) at sync time. The plugin doesn't touch the
-//! pbxproj text directly — that work happens in
-//! `crate::ios::template_vars`.
+//! Each op is appended to `ctx.ios.pbxproj_ops`. The pbxproj text
+//! itself is never touched here; `crate::ios::template_vars` turns the
+//! ops into PBXFileReference / PBXBuildFile / group / build-phase /
+//! buildSettings entries at sync time.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -28,9 +26,8 @@ pub struct IosPbxprojOpsConfig {
 }
 
 impl IosPbxprojOpsConfig {
-    /// Register a file as a Resource (bundled into the `.app`).
-    /// Use for `GoogleService-Info.plist` etc. The file itself
-    /// should already exist on disk — drop it via
+    /// Register a file as a Resource (bundled into the `.app`). The
+    /// file must already exist on disk — drop it via
     /// `whisker-ios-extra-files` first.
     pub fn add_resource(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.ops.push(PbxprojOp::AddResource { path: path.into() });

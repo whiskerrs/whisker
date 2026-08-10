@@ -10,11 +10,10 @@
 //!     .add_with_mode("Scripts/run.sh", SCRIPT, 0o755));
 //! ```
 //!
-//! The plugin writes each `(relative_path, contents)` pair into
-//! `ctx.ios.extra_files`. The renderer copies them into
-//! `gen/ios/<relative_path>` after the template-driven files have
-//! been written. Paths are validated to be relative and free of
-//! `..` traversal — a plugin can't escape the gen tree.
+//! Each `(relative_path, contents)` pair goes into
+//! `ctx.ios.extra_files` and is copied to `gen/ios/<relative_path>`
+//! after the template-driven files. Paths are validated relative and
+//! `..`-free, so a plugin can't escape the gen tree.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -23,9 +22,9 @@ use whisker_plugin::{FileEntry, GenerateContext, Operation, Plugin, PluginConfig
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct IosExtraFilesConfig {
-    /// Path → file. Path is relative to `gen/ios/`. `BTreeMap` for
-    /// deterministic iteration order — the fingerprint hashes the
-    /// IR and `HashMap` random ordering would break the skip path.
+    /// Path → file, relative to `gen/ios/`. `BTreeMap` because the
+    /// fingerprint hashes the IR, and `HashMap` ordering would break
+    /// the skip path.
     #[serde(default)]
     pub files: BTreeMap<PathBuf, FileEntry>,
 }
