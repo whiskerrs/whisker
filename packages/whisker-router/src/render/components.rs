@@ -67,19 +67,16 @@ pub fn router(routes: RouteSet, children: Children) -> Element {
     // container (wrappers are `position: absolute`) and the swipe-back
     // gesture has something to bind to.
     //
-    // The `children()` slot is bundled behind a phantom; appending that
-    // phantom directly would hoist the children with NO column container,
-    // and Lynx defaults a style-less container to `flex-direction: row`
-    // (see memory `lynx_view_flex_direction_default`) — collapsing the
-    // children horizontally (the tab content eats the row, side-effect
-    // gesture/marker views shrink to 0). So `root` itself is the real
-    // `flex-direction: column` container the children mount into directly.
-    // Build the root view EMPTY first, then publish the `RouterRoot`
-    // context, and only THEN mount the children into it. Ordering matters:
-    // `children()` (e.g. a `SwipeBack` that reads `RouterRoot` to bind its
-    // gesture) mounts at the point it is rendered, so it must run *after*
-    // `provide_context(RouterRoot(root))` — otherwise it sees `None` and the
-    // gesture is silently never installed (the iOS swipe-back bug).
+    // The `children()` slot is bundled behind a phantom, and appending that
+    // phantom directly would hoist the children into a style-less container,
+    // which Lynx defaults to `flex-direction: row` (memory
+    // `lynx_view_flex_direction_default`) — collapsing them horizontally. So
+    // `root` itself is the `flex-direction: column` container they mount into.
+    //
+    // Build `root` EMPTY, publish the `RouterRoot` context, and only THEN
+    // mount the children: `children()` mounts where it is rendered, so a
+    // `SwipeBack` reading `RouterRoot` must run after the context exists or
+    // it silently never installs its gesture.
     let root = render! {
         view(style: css!(
             flex_grow: 1.0,
@@ -88,12 +85,9 @@ pub fn router(routes: RouteSet, children: Children) -> Element {
         ).raw("position", "relative")) {}
     };
     provide_context(RouterRoot(root));
-    // Mount the children now that `RouterRoot` is in context. The tree is
-    // drawn by `children` (an Outlet / Tabs / Stack), NOT here — drawing
-    // root ourselves *and* letting a child draw the same subtree would
-    // double-mount it. Appending them under the column `root` keeps the
-    // `flex-direction: column` container (a style-less phantom would hoist
-    // them into Lynx's default `row`).
+    // The tree is drawn by `children` (an Outlet / Tabs / Stack), NOT here —
+    // drawing root ourselves *and* letting a child draw the same subtree
+    // would double-mount it.
     whisker::runtime::view::append_child(root, whisker::runtime::view::mount_children(&children));
 
     // Prime the device screen corner radius at router init (it feeds the

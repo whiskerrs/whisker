@@ -1,25 +1,21 @@
-//! # New router core — `RouteTree` + `RouteState` (phase 1)
+//! # Router core — `RouteTree` + `RouteState`
 //!
-//! This module is the **pure-logic** model of the redesigned router
-//! described in [`docs/router-design.md`]. It is deliberately free of
-//! the macro, of rendering (`Outlet` / `Stack` components), of signals
-//! and `Element` wiring, and of any device/gesture concern. It is just
-//! the in-memory navigation graph and the operations over it, so the
-//! model can be exhaustively unit-tested without a reactive runtime.
-//!
-//! The old `whisker-router` files (the signal-backed stack) are
-//! untouched and still compile; this `core` module is the new system
-//! and will grow the macro / rendering / device layers in later phases.
+//! The **pure-logic** model of the router described in
+//! [`docs/router-design.md`]. It is deliberately free of the macro, of
+//! rendering (`Outlet` / `Stack` components), of signals and `Element`
+//! wiring, and of any device/gesture concern. It is just the in-memory
+//! navigation graph and the operations over it, so the model can be
+//! exhaustively unit-tested without a reactive runtime.
 //!
 //! ## The two graphs
 //!
 //! - [`RouteTree`] — the **static** structure: a tree of [`RouteTree`]
 //!   nodes ([`RouteTree::Route`] leaves, [`RouteTree::Stack`] ordered
 //!   containers, [`RouteTree::Switch`] parallel containers). It
-//!   determines URLs and the set of legal targets. Built by hand here
-//!   via the constructor helpers ([`RouteTree::route`],
-//!   [`RouteTree::stack`], [`RouteTree::switch`]) since there is no
-//!   `routes!` macro yet.
+//!   determines URLs and the set of legal targets. Built by the
+//!   `routes!` macro, or by hand via the constructor helpers
+//!   ([`RouteTree::route`], [`RouteTree::stack`],
+//!   [`RouteTree::switch`]).
 //! - [`RouteState`] — the **dynamic** state: the tree *instantiated*
 //!   with `Stack.history` and `Switch.selected`. The shown screen
 //!   ([`RouteState::current`]) is **derived** by walking the tree — it

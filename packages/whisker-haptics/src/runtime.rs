@@ -50,9 +50,9 @@ impl NotificationType {
     }
 }
 
-/// Typed Rust API for the `WhiskerHaptics` platform module. The
-/// struct itself lives in `plugin.rs` (see its doc comment for why);
-/// this `impl` block just adds the runtime methods.
+/// Typed Rust API for the `WhiskerHaptics` platform module. The struct
+/// itself lives in `plugin.rs` — one unit struct serves as both the
+/// plugin and this namespace.
 impl WhiskerHaptics {
     /// Fire a physical "bump", scaled by `style`. Use when a tap
     /// resolves (e.g. inside an `on_tap` handler) — not on every

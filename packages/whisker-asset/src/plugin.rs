@@ -271,7 +271,6 @@ impl Plugin for WhiskerAsset {
             return Ok(());
         }
 
-        // ----- Android: drop each file under app/src/main/assets/whisker/ ----
         if let Some(android) = ctx.android.as_mut() {
             let mut count = 0usize;
             for asset in &assets {
@@ -291,7 +290,6 @@ impl Plugin for WhiskerAsset {
             );
         }
 
-        // ----- iOS: drop under whisker_assets/ + one folder reference --------
         if let Some(ios) = ctx.ios.as_mut() {
             let mut count = 0usize;
             for asset in &assets {
@@ -307,10 +305,8 @@ impl Plugin for WhiskerAsset {
                 Operation::ArrayPush { count },
             );
 
-            // Register the whole `whisker_assets` directory as a single
-            // folder reference so Xcode copies the tree into the bundle
-            // preserving subdirectories (one op regardless of file
-            // count — the folder ref covers everything beneath it).
+            // One folder reference (not per-file) so Xcode copies the tree
+            // into the bundle with its subdirectories preserved.
             ios.pbxproj_ops.push(PbxprojOp::AddResourceFolder {
                 path: PathBuf::from(IOS_NAMESPACE),
             });
@@ -331,8 +327,6 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     use whisker_plugin::{AndroidProjectIr, IosProjectIr};
-
-    // ----- Temp-dir + fixture helpers --------------------------------------
 
     fn unique_tempdir(label: &str) -> PathBuf {
         static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -359,8 +353,6 @@ mod tests {
         }
     }
 
-    // ----- Builder ---------------------------------------------------------
-
     #[test]
     fn dir_and_file_accumulate() {
         let mut cfg = WhiskerAssetConfig::default();
@@ -372,8 +364,6 @@ mod tests {
         assert_eq!(cfg.files, vec![PathBuf::from("branding/logo.png")]);
     }
 
-    // ----- validate --------------------------------------------------------
-
     #[test]
     fn validate_rejects_missing_dir() {
         let root = unique_tempdir("vmissing-dir");
@@ -382,8 +372,8 @@ mod tests {
             c.dir("assets");
             c
         };
-        // validate itself doesn't touch disk; apply does. Verify the
-        // missing-path error surfaces via apply (the real pipeline path).
+        // validate itself doesn't touch disk; apply does, so the
+        // missing-path error only surfaces there.
         let mut ctx = ctx_both(&root);
         let err = WhiskerAsset.apply(&mut ctx, &cfg).unwrap_err();
         assert!(err.to_string().contains("does not exist"), "{err}");
@@ -437,8 +427,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // ----- apply -----------------------------------------------------------
-
     #[test]
     fn apply_bundles_dir_into_both_platforms() {
         let root = unique_tempdir("apply-dir");
@@ -449,7 +437,6 @@ mod tests {
         let mut ctx = ctx_both(&root);
         WhiskerAsset.apply(&mut ctx, &cfg).unwrap();
 
-        // Android: app/src/main/assets/whisker/<rel>
         let android = ctx.android.as_ref().unwrap();
         let a_logo = PathBuf::from("app/src/main/assets/whisker/images/logo.png");
         assert!(
@@ -464,7 +451,6 @@ mod tests {
             "app/src/main/assets/whisker/data/config.json"
         )));
 
-        // iOS: whisker_assets/<rel>
         let ios = ctx.ios.as_ref().unwrap();
         let i_logo = PathBuf::from("whisker_assets/images/logo.png");
         assert!(ios.extra_files.contains_key(&i_logo), "ios logo missing");
@@ -473,7 +459,6 @@ mod tests {
             vec![0x89, 0x50, 0x4e, 0x47],
         );
 
-        // iOS folder reference registered exactly once.
         let folder_refs: Vec<_> = ios
             .pbxproj_ops
             .iter()
@@ -499,7 +484,6 @@ mod tests {
         let mut ctx = ctx_both(&root);
         WhiskerAsset.apply(&mut ctx, &cfg).unwrap();
 
-        // Bundles under basename, not the source subpath.
         assert!(
             ctx.ios
                 .as_ref()

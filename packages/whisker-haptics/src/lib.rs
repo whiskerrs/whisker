@@ -36,8 +36,8 @@
 //!
 //! ## Native source
 //!
-//! - iOS: `crates/whisker-haptics/ios/Sources/WhiskerHaptics/HapticsModule.swift`
-//! - Android: `crates/whisker-haptics/android/src/main/kotlin/rs/whisker/modules/haptics/HapticsModule.kt`
+//! - iOS: `packages/whisker-haptics/ios/Sources/WhiskerHaptics/HapticsModule.swift`
+//! - Android: `packages/whisker-haptics/android/src/main/kotlin/rs/whisker/modules/haptics/HapticsModule.kt`
 
 /// Plugin (`Android VIBRATE` manifest injection). Always compiles —
 /// independent of the `runtime` feature so the `whisker.rs` config

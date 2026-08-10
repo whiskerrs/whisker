@@ -208,8 +208,6 @@ impl<'a> Cursor<'a> {
     }
 }
 
-// ---- helpers ---------------------------------------------------------------
-
 /// `Visitor` that records every dispatched call as a text line —
 /// the primary tool for golden-file tests in `tests/`. Trace
 /// lines mirror the human-readable opcode names in SPEC.md so a

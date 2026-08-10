@@ -259,11 +259,9 @@ impl RouteState {
                 if r.children.is_empty() {
                     r
                 } else {
-                    // A Route with children: descend through each child's
-                    // active path to find the deepest current leaf. The
-                    // first child that carries a non-trivial active path wins.
-                    // (In practice a Route has one container child —
-                    // Stack or Switch — that determines the active leaf.)
+                    // The first child carrying a non-trivial active path wins.
+                    // In practice a Route has one container child — a Stack
+                    // or Switch — and that determines the active leaf.
                     for child in &r.children {
                         let c = child.current();
                         if c.path != r.path {

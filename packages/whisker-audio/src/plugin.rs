@@ -92,7 +92,6 @@ pub struct WhiskerAudio;
 impl Plugin for WhiskerAudio {
     type Config = WhiskerAudioConfig;
     fn apply(&self, ctx: &mut GenerateContext, cfg: &WhiskerAudioConfig) -> anyhow::Result<()> {
-        // ----- iOS Info.plist contributions ------------------------------
         if let Some(ios) = ctx.ios.as_mut() {
             if let Some(desc) = cfg.microphone_permission.as_ref() {
                 ios.info_plist.insert(
@@ -107,10 +106,8 @@ impl Plugin for WhiskerAudio {
                 );
             }
 
-            // Both flags map to the SAME `UIBackgroundModes` entry
-            // (just `"audio"`). Set it once if either is on; dedup
-            // is internal to this plugin so the rendered plist
-            // doesn't show duplicates.
+            // Both flags map to the SAME `UIBackgroundModes` entry, so set it
+            // once if either is on — otherwise the plist shows duplicates.
             if cfg.enable_background_recording || cfg.enable_background_playback {
                 ios.info_plist.insert(
                     "UIBackgroundModes".into(),
@@ -125,7 +122,6 @@ impl Plugin for WhiskerAudio {
             }
         }
 
-        // ----- Android manifest contributions --------------------------
         if let Some(android) = ctx.android.as_mut() {
             if cfg.record_audio_android {
                 android
@@ -258,7 +254,6 @@ mod tests {
 
     #[test]
     fn no_ios_target_skips_ios_entries() {
-        // Single-target compose run for Android only.
         let mut cfg = WhiskerAudioConfig::default();
         cfg.microphone_permission("…").record_audio_android(true);
         let mut ctx = GenerateContext {
@@ -266,7 +261,6 @@ mod tests {
             ..Default::default()
         };
         WhiskerAudio.apply(&mut ctx, &cfg).unwrap();
-        // Android permission landed.
         assert_eq!(
             ctx.android.unwrap().manifest.permissions,
             vec!["android.permission.RECORD_AUDIO".to_string()],

@@ -11,15 +11,10 @@
 //! drops the bytes of any icon the consumer doesn't reference, so a
 //! binary that uses 5 icons only pays for those 5.
 //!
-//! ## Why bake the wrapper into every const
-//!
-//! An earlier draft stripped the common Lucide `<svg …>` wrapper
-//! and re-synthesised it at runtime in the `Icon` component. That
-//! cut generated source ~10x, but coupled `Icon` to Lucide's exact
-//! attribute set — meaning a future Heroicons / Phosphor backend
-//! would need its own component. Keeping the wrapper per-const
-//! makes `Icon` a pure `Svg` forwarder and lets new icon sets
-//! plug in by emitting their own constants in their own module.
+//! Each const carries the full `<svg …>` wrapper rather than just the
+//! inner shapes: ~10x more generated source, but it keeps `Icon` a pure
+//! `Svg` forwarder instead of coupling it to Lucide's attribute set, so
+//! another icon set can plug in by emitting its own constants.
 
 use std::env;
 use std::fs;
@@ -90,23 +85,10 @@ fn pascal_case(kebab: &str) -> String {
     s
 }
 
-/// Lucide ships SVGs with each attribute on its own line:
-///
-/// ```svg
-/// <svg
-///   xmlns="..."
-///   viewBox="0 0 24 24"
-/// >
-///   <path d="m9 18 6-6-6-6" />
-/// </svg>
-/// ```
-///
-/// Whisker-svg's `roxmltree`-based parser accepts that as-is, but
-/// the multi-line form bloats the resulting `pub const` strings
-/// with newlines + per-line indentation. Trim each line and join
-/// with a single space — preserves valid XML (the space between
-/// `>` `<` is just an inter-tag text node, which roxmltree
-/// ignores) and shrinks each icon string by ~60%.
+/// Collapse Lucide's one-attribute-per-line SVGs onto a single line,
+/// shrinking each generated `pub const` by ~60%. Joining with a space
+/// keeps the XML valid — the space between `>` and `<` is an inter-tag
+/// text node roxmltree ignores.
 fn normalise(svg: &str) -> String {
     svg.lines()
         .map(str::trim)

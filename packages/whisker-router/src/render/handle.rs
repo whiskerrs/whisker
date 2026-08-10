@@ -239,8 +239,6 @@ impl RouterHandle {
         })
     }
 
-    // ----- the five verbs (clone → core op → write back) ------------
-
     /// Mutate the state via a Phase-1 [`Navigator`] op, writing the
     /// result back into the signal. The closure receives a `Navigator`
     /// bound to a *clone* of the current state; whatever it returns is

@@ -110,7 +110,6 @@ pub fn swipe_back() -> Element {
 fn install(container: Element, nav: RouterHandle) {
     let gesture: Rc<RefCell<Option<Gesture>>> = Rc::new(RefCell::new(None));
 
-    // touchstart — qualify the edge swipe and grab the active bridge.
     {
         let gesture = gesture.clone();
         let nav = nav.clone();
@@ -146,7 +145,6 @@ fn install(container: Element, nav: RouterHandle) {
         });
     }
 
-    // touchmove — finger delta → back-progress, scrub both wrappers.
     {
         let gesture = gesture.clone();
         bind_typed::<TouchEvent, _>(container, "touchmove", BindType::Bind, move |e| {
@@ -174,7 +172,6 @@ fn install(container: Element, nav: RouterHandle) {
         });
     }
 
-    // touchend / touchcancel — hand off to the controller with velocity.
     for end_name in ["touchend", "touchcancel"] {
         let gesture = gesture.clone();
         let nav = nav.clone();
@@ -191,10 +188,6 @@ fn install(container: Element, nav: RouterHandle) {
         });
     }
 }
-
-// =====================================================================
-// Shared coordinated-scrub helpers (iOS + Android)
-// =====================================================================
 
 /// Start a back gesture (from `edge`) on the deepest active stack:
 /// validate it can pop and supports an edge gesture, point **both**
@@ -341,10 +334,6 @@ fn point(binding: &PoseBinding, c: &AnimationController, role: Role, mode: PoseM
     binding.role.set(role);
     binding.mode.set(mode);
 }
-
-// =====================================================================
-// Android predictive-back
-// =====================================================================
 
 /// Android 13+ predictive-back gesture component — the platform-back twin
 /// of [`SwipeBack`], driving the identical coordinated scrub.
@@ -539,6 +528,6 @@ fn back_edge(payload: &WhiskerValue) -> SwipeEdge {
 struct MainThreadOnly<T> {
     inner: T,
 }
-// Safety: see the type-level comment.
+// SAFETY: see the type-level comment.
 unsafe impl<T> Send for MainThreadOnly<T> {}
 unsafe impl<T> Sync for MainThreadOnly<T> {}

@@ -100,9 +100,6 @@ use whisker::runtime::view::Element;
 ///   `preserveAspectRatio="xMidYMid meet"` semantics.
 #[component]
 pub fn svg(content: Signal<String>, color: Signal<String>, style: Style) -> Element {
-    // `Signal<T>` is `Copy`, so `content` is freely moved into the
-    // closure and `color` into the builder below even though the
-    // `#[component]` body re-fires as a `FnMut` (whisker #8).
     let display_list = computed(move || encode(&content.get()));
 
     render! {
