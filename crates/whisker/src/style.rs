@@ -8,11 +8,10 @@
 //! 2. A raw CSS string (`String` or `&str` / `&String`).
 //! 3. A reactive [`ReadSignal<T>`] / [`RwSignal<T>`] of either form.
 //!
-//! Having one wrapper lets the same `view(style: ...)` keyword
-//! accept all three shapes without callers having to call
-//! `.to_css_string()` themselves. Reactive paths re-fire the
-//! attribute apply inside the element's `effect`, matching the
-//! semantics every other `Signal<T>`-driven prop already has.
+//! One wrapper lets the same `view(style: ...)` keyword accept every
+//! shape without callers calling `.to_css_string()` themselves.
+//! Reactive paths re-fire the attribute apply inside the element's
+//! `effect`, matching every other `Signal<T>`-driven prop.
 //!
 //! `Style` is defined in the `whisker` umbrella crate (rather than
 //! in `whisker-css`) so the `Css` crate stays `whisker-runtime`-free
@@ -88,9 +87,8 @@ impl From<&String> for Style {
 // ---- Reactive sources -------------------------------------------------------
 //
 // One impl per (`ReadSignal` × `RwSignal`) × (`Css` × `String`) pair.
-// Hand-written rather than blanket so coherence has no chance of
-// complaining and the user-facing type-inference error pointing at
-// an unsupported `T` stays sharp.
+// Hand-written rather than blanket to keep coherence out of it and the
+// type-inference error on an unsupported `T` sharp.
 
 impl From<ReadSignal<Css>> for Style {
     fn from(sig: ReadSignal<Css>) -> Self {
@@ -154,7 +152,6 @@ mod tests {
         let style: Style = (&s).into();
         let out = css(style);
         assert!(out.contains("padding-top: 8px"));
-        // `s` still usable after the conversion.
         assert!(!s.is_empty());
     }
 
@@ -178,9 +175,7 @@ mod tests {
         assert_eq!(owner, "color: green;");
     }
 
-    // Reactive From impls rely on the reactive runtime arena; the
-    // standalone test environment doesn't bootstrap one, so the
-    // dynamic-branch tests are exercised by the end-to-end runs in
-    // `examples/podcast`. The static cases above already cover
-    // the discriminant + serialization paths.
+    // The reactive `From` impls need the runtime arena, which this
+    // standalone test environment doesn't bootstrap; the static cases
+    // above cover the discriminant + serialization paths.
 }

@@ -1,8 +1,8 @@
 //! Typed enums for built-in element attributes whose Lynx-side
 //! contract is a closed set of strings.
 //!
-//! The element-builder setters take a typed enum directly —
-//! raw strings no longer compile:
+//! The element-builder setters take a typed enum directly; raw strings
+//! do not compile:
 //!
 //! ```ignore
 //! use whisker::prelude::*;
@@ -10,18 +10,16 @@
 //! scroll_view(scroll_orientation: ScrollOrientation::Vertical)
 //! ```
 //!
-//! Reactivity still works the same way: anything implementing
+//! Reactivity is unaffected: anything implementing
 //! `Into<Signal<EnumType>>` is accepted, so passing a
 //! `RwSignal<ScrollOrientation>` flips the attribute live.
 //!
 //! ## Why typed enums
 //!
-//! Previously these props took `Signal<String>` and pumped whatever
-//! string the caller wrote straight through `apply_attr` to Lynx.
-//! A typo (`"verticle"`, `"List-Single"`, …) parsed fine on the Rust
-//! side and was silently ignored on the Lynx side, so the failure
-//! surfaced as a render glitch with no compile-time hint. Typed
-//! enums turn those typos into compile errors.
+//! A misspelled attribute string (`"verticle"`, `"List-Single"`, …)
+//! reaches Lynx fine and is then silently ignored, surfacing as a
+//! render glitch with no compile-time hint. Typed enums turn those
+//! typos into compile errors.
 //!
 //! Each enum is `#[non_exhaustive]` so a future Lynx-side addition
 //! (a new `pan-intercept-scope` keyword, an additional `list-type`,
@@ -37,16 +35,10 @@
 // ---------------------------------------------------------------------------
 // Macro: stamp out an enum + `as_str` + `Display`.
 //
-// Centralising the boilerplate keeps every attribute enum identical
-// in shape (Copy, Clone, Debug, PartialEq, Eq, Hash, non_exhaustive)
-// and removes the temptation to hand-roll the Display impl per
-// variant. Adding a new attribute is a single `attr_enum!`
-// invocation.
-//
-// The setter sends the enum through `apply_attr`'s `T: ToString`
-// bound (which `Display` satisfies via the standard blanket impl),
-// so no explicit `From<EnumType>` is needed — the wire string
-// emerges naturally on each reactive read.
+// Every attribute enum shares one shape (Copy, Clone, Debug,
+// PartialEq, Eq, Hash, non_exhaustive), so adding an attribute is a
+// single `attr_enum!` invocation. `Display` satisfies `apply_attr`'s
+// `T: ToString` bound, so no explicit `From<EnumType>` is needed.
 // ---------------------------------------------------------------------------
 
 macro_rules! attr_enum {
@@ -347,8 +339,7 @@ mod tests {
 
     #[test]
     fn display_is_wire_string() {
-        // `Display` is the standard "render as the canonical
-        // string" path — should never diverge from `as_str`.
+        // `Display` must never diverge from `as_str`.
         assert_eq!(ScrollOrientation::Vertical.to_string(), "vertical");
         assert_eq!(PanInterceptScope::SelfElement.to_string(), "self");
     }

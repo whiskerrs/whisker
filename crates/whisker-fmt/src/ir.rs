@@ -4,15 +4,10 @@
 //! printer walks with a single recursive function.
 //!
 //! This is deliberately a `whisker-fmt`-internal type, NOT something
-//! added to `whisker-macro-syntax`. `whisker-macro-syntax::render`'s
-//! `Node`/`ElementNode`/`UserComponentNode`/`Kwarg` and
-//! `whisker-macro-syntax::css`'s `CssInput`/`CssKwarg` are consumed
-//! directly by the real `render!`/`css!` codegen in `whisker-macros` (see
-//! that crate's doc comment) — changing their shape would change what
-//! real apps compile to. `routes!`'s mirror type has no such consumer
-//! (the real `routes!` proc-macro in `whisker-router-macros` has its own,
-//! separate parser), but is adapted here too for consistency and because
-//! its printer is what this refactor is actually simplifying.
+//! added to `whisker-macro-syntax`: that crate's `render` and `css`
+//! parse types are consumed directly by the real codegen in
+//! `whisker-macros`, so changing their shape would change what real apps
+//! compile to.
 //!
 //! `css!`'s body doesn't fit this shape at all (it's a flat kwarg list
 //! with no tag and no children — see `Printer::css`), so it is NOT
@@ -25,8 +20,8 @@ use syn::Expr;
 pub(crate) enum IrNode {
     /// A tag with optional kwargs and optional children — covers
     /// render!'s `Element`/`UserComponent` (indistinguishable to the
-    /// printer, which never treated them differently) and routes!'s
-    /// `Switch`/`Stack`/`Route`/unrecognized-ident nodes.
+    /// printer) and routes!'s `Switch`/`Stack`/`Route`/unknown-ident
+    /// nodes.
     Tag(IrTag),
     /// render!'s `children()` slot — always prints literally as
     /// `children()`, never subject to the "omit `()` with no kwargs"
@@ -39,26 +34,20 @@ pub(crate) enum IrNode {
 pub(crate) struct IrTag {
     /// Text to print for this tag. For render! this is ALREADY the
     /// classified/derived name (`ElementNode.tag` or
-    /// `UserComponentNode.alias_ident`, post `snake_to_pascal`) — this
-    /// module does no classification of its own, it just carries
-    /// whatever `whisker-macro-syntax::render` already decided. For
-    /// routes! this is the literal `Switch`/`Stack`/`Route`/unknown-ident
-    /// keyword.
+    /// `UserComponentNode.alias_ident`, post `snake_to_pascal`); this
+    /// module classifies nothing of its own. For routes! it is the
+    /// literal `Switch`/`Stack`/`Route`/unknown-ident keyword.
     pub tag: String,
     /// Span of the source ident this tag was built from, used to locate
-    /// the node's `(kwargs)? {children}?` extent (for comment
-    /// placement). Reused even for a render! `UserComponent`'s derived
-    /// `alias_ident` — that ident's span still points at the ORIGINAL
-    /// tag text in source (`Ident::new` there just swaps the text, not
-    /// the span).
+    /// the node's `(kwargs)? {children}?` extent for comment placement.
+    /// Safe even for a `UserComponent`'s derived `alias_ident`: `Ident::new`
+    /// swaps the text but keeps the original source span.
     pub tag_span: Option<Span>,
     pub kwargs: Vec<IrKwarg>,
     pub children: Vec<IrNode>,
     /// `true` only for routes!'s `Switch`/`Stack`, whose `{ … }` is
-    /// mandatory in the grammar even when empty (`braced!` requires the
-    /// braces to be present at parse time) — never omit the block for
-    /// these, even with zero children. Every other tag omits an empty,
-    /// comment-free block, per the shared "optional block" rule.
+    /// mandatory in the grammar even when empty. Every other tag omits
+    /// an empty, comment-free block.
     pub always_block: bool,
 }
 
@@ -76,13 +65,10 @@ pub(crate) enum IrValue {
     /// [`IrValue::Literal`]'s `String`, and this enum lives inside every
     /// [`IrKwarg`] in a tree.
     Expr(Box<Expr>),
-    /// Pre-rendered text, printed as-is with no `expr_src` machinery —
-    /// used for routes!'s `Route(path: "…", component: Foo)`, whose
-    /// `path`/`component` aren't full exprs in
-    /// `whisker-macro-syntax::routes` (`LitStr`/`Ident` respectively) and
-    /// are reconstructed the same way `Printer::routes_route` always
-    /// has: a debug-quoted string for `path`, a bare ident for
-    /// `component`.
+    /// Pre-rendered text, printed as-is with no `expr_src` machinery.
+    /// Used for routes!'s `Route(path: "…", component: Foo)`, whose
+    /// `path`/`component` are a `LitStr`/`Ident` rather than full exprs:
+    /// a debug-quoted string and a bare ident respectively.
     Literal(String),
 }
 
@@ -195,12 +181,10 @@ fn adapt_routes_node(node: &whisker_macro_syntax::routes::RoutesNode) -> IrNode 
     }
 }
 
-/// Walk an adapted tree collecting the span of every embedded `Expr` —
-/// mirrors what `collect_render_expr_spans` / `collect_routes_expr_spans`
-/// used to do separately, now over the shared shape. `IrValue::Literal`
-/// values (routes!'s `path`/`component`) contribute no span — they were
-/// never batch-rustfmt'd or excluded from comment recovery, matching
-/// today's behavior.
+/// Walk an adapted tree collecting the span of every embedded `Expr`.
+/// `IrValue::Literal` values (routes!'s `path`/`component`) contribute
+/// no span: they are neither batch-rustfmt'd nor excluded from comment
+/// recovery.
 pub(crate) fn collect_ir_expr_spans(node: &IrNode, out: &mut Vec<Span>) {
     use syn::spanned::Spanned;
     match node {

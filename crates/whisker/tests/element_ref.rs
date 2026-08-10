@@ -1,4 +1,4 @@
-//! Phase N — `ElementRef` end-to-end tests.
+//! `ElementRef` end-to-end tests.
 //!
 //! Covers:
 //! - `ElementRef::new()` allocates an unbound ref.
@@ -103,8 +103,6 @@ fn passing_ref_at_call_site_binds_on_mount() {
         let r = ElementRef::new();
         assert!(!r.is_bound());
 
-        // Mount the element. The macro emits __bind on the returned
-        // handle.
         let _h = render! {
             XRefTarget(ref: r, value: "hello")
         };
@@ -123,21 +121,15 @@ fn disposing_owner_unbinds_ref() {
     let (rec, _log) = Recorder::with_log();
     let prev = install_renderer(Box::new(rec));
 
-    // Allocate the ref in an outer owner so the bind/unbind cycle
-    // doesn't take the ref's storage with it.
     let outer = Owner::new(None);
     let r = outer.with(ElementRef::new);
 
-    // Mount inside an inner owner — the macro emits on_cleanup
-    // against the inner owner.
     let inner = Owner::new(None);
     inner.with(|| {
         let _h = render! { XRefTarget(ref: r, value: "x") };
     });
     assert!(r.is_bound(), "ref should bind on mount");
 
-    // Disposing the inner owner triggers the on_cleanup that
-    // __unbinds the ref.
     inner.dispose();
     assert!(!r.is_bound(), "ref should unbind on inner-owner disposal");
 
@@ -157,7 +149,6 @@ fn bound_signal_is_reactive() {
     let observed = Rc::new(RefCell::new(Vec::<bool>::new()));
     let observed_clone = observed.clone();
 
-    // Effect must run in *some* owner; the outer one is fine.
     outer.with(|| {
         let bound = r.bound();
         effect(move || {
@@ -211,9 +202,9 @@ fn invoke_on_unbound_ref_returns_error_variant() {
 #[test]
 fn try_from_whisker_value_f64_rejects_string() {
     use whisker::platform_module::WhiskerValue;
-    // `invoke_typed::<T>` now deserializes results via serde, but the
-    // `TryFrom<WhiskerValue>` primitive conversions remain a public
-    // surface — a String must not silently coerce to f64.
+    // `TryFrom<WhiskerValue>`'s primitive conversions are a public
+    // surface even though `invoke_typed::<T>` goes through serde: a
+    // String must not silently coerce to f64.
     let bad_payload = WhiskerValue::String("not-a-number".into());
     let result: Result<f64, _> = f64::try_from(bad_payload);
     let msg = result.expect_err("String can't convert to f64");
@@ -233,7 +224,6 @@ fn try_from_whisker_value_primitives_roundtrip() {
     assert_eq!(i32::try_from(WhiskerValue::Int(42)), Ok(42));
     assert!(i32::try_from(WhiskerValue::Int(i64::MAX)).is_err());
     assert_eq!(f64::try_from(WhiskerValue::Float(2.5)), Ok(2.5));
-    // Int widens to f64
     assert_eq!(f64::try_from(WhiskerValue::Int(3)), Ok(3.0));
     assert_eq!(
         String::try_from(WhiskerValue::String("hi".into())),
@@ -244,7 +234,6 @@ fn try_from_whisker_value_primitives_roundtrip() {
         Ok(vec![1, 2, 3])
     );
 
-    // Type mismatch surfaces a String error.
     let err = bool::try_from(WhiskerValue::Int(1)).unwrap_err();
     assert!(err.contains("expected Bool"), "got {err:?}");
 }

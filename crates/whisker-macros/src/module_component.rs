@@ -26,11 +26,10 @@
 //! //  empty body — the macro replaces it.
 //! ```
 //!
-//! Rust's grammar requires a body for top-level `fn` items (no
-//! `extern fn ...;` outside an `extern {}` block), so the
-//! placeholder `{}` is unavoidable. The macro discards whatever
-//! return type and body the user supplies — the auto-generated
-//! body always returns `whisker::runtime::view::Element`.
+//! Rust's grammar requires a body for top-level `fn` items, so the
+//! placeholder `{}` is unavoidable. The macro discards whatever return
+//! type and body the user supplies — the generated body always returns
+//! `whisker::runtime::view::Element`.
 //!
 //! ## Prop classification
 //!
@@ -101,8 +100,6 @@ use syn::{
 };
 
 pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
-    // Attribute payload: a single string literal — the tag name
-    // `lynx_create_fiber_element_by_name` will register against.
     let tag_name: LitStr = match parse2(attr.clone()) {
         Ok(s) => s,
         Err(_) => {
@@ -170,8 +167,6 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     let builder_name = format_ident!("{}Builder", props_name);
     let internal_mod = format_ident!("__{}_props_internal", fn_name);
 
-    // ----- Per-prop tokens -------------------------------------------
-
     let props_fields: Vec<TokenStream2> = props.iter().map(prop_struct_field).collect();
 
     let builder_fields: Vec<TokenStream2> = props.iter().map(prop_builder_field).collect();
@@ -193,8 +188,6 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 
     let apply_calls: Vec<TokenStream2> = props.iter().map(prop_apply_call).collect();
 
-    // ----- Drop-unused guard for prop-less elements ------------------
-
     let drop_unused = if props.is_empty() {
         quote! { let _ = props; }
     } else {
@@ -203,15 +196,12 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
 
     let inner_mod = format_ident!("__{}_inner", fn_name);
 
-    // PascalCase alias — same scheme as `#[component]`.
     let pascal_alias_ident = format_ident!("{}", to_pascal_case(&fn_name.to_string()));
     let fn_name_str = fn_name.to_string();
-    // Alongside the value-namespace `pub use` we emit a type alias of
-    // the same name pointing at the Props struct. Rust keeps value and
-    // type namespaces separate, so `XZeroProps` resolves to the fn in
-    // call position and to `XZeroPropsProps` in type position — letting
-    // `render!` write `Alias::builder()` with only the alias imported,
-    // no separate `…Props` import. See `#[component]` for the twin.
+    // The alias name is emitted into both namespaces — a `pub use` for
+    // the fn and a type alias for Props — so `render!` can write
+    // `Alias::builder()` with only the alias imported. Same scheme as
+    // `#[component]`.
     let alias_emission = if pascal_alias_ident == fn_name_str.as_str() {
         quote! {
             #[doc(hidden)]
@@ -230,12 +220,9 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
     };
 
     // Every platform component implicitly carries a `__ref:
-    // Option<ElementRef>` Props field. `render!` recognises
-    // `ref: <expr>` at the call site and routes it to the
-    // `.with_ref(expr)` setter the macro emits below. Inside the
-    // body we `bind(__handle)` the ref after creating the element,
-    // so the `ElementRef` reaches a live `Element` handle as soon
-    // as the call site hits this code path.
+    // Option<ElementRef>` Props field. `render!` routes a call-site
+    // `ref: <expr>` to the `.with_ref(expr)` setter emitted below; the
+    // generated body then binds it to the freshly-created handle.
 
     quote! {
         #[doc(hidden)]
@@ -299,27 +286,20 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
             #(#attrs)*
             pub fn #fn_name(props: #props_name) -> ::whisker::runtime::view::Element {
                 #drop_unused
-                // Tag string is namespaced by the cargo crate name to
-                // avoid collisions between elements from independent
-                // module packages. Two unrelated crates that both
-                // declare `#[whisker::module_component("Video")]` end up
-                // with distinct platform-side registrations
-                // (`crate-a:Video` vs `crate-b:Video`). The platform
-                // SwiftPM plugin / KSP processor prepends the same
-                // namespace when emitting the matching
-                // `LynxComponentRegistry.registerUI` / `addBehavior`
-                // call, so the lookup matches end-to-end.
+                // Namespacing the tag by cargo crate name keeps two
+                // unrelated crates declaring the same tag from
+                // colliding. The SwiftPM plugin / KSP processor
+                // prepends the same namespace when emitting the
+                // matching registration, so the lookup matches
+                // end-to-end.
                 let __handle = ::whisker::runtime::view::create_element_by_name(
                     concat!(env!("CARGO_PKG_NAME"), ":", #tag_name)
                 );
                 #(#apply_calls)*
-                // Bind the user-supplied `ElementRef` (if any) to the
-                // freshly-created handle so `ref.invoke("play", ...)`
-                // calls route through the C bridge. The matching
-                // `on_cleanup(...)` clears the binding on unmount so
-                // post-unmount calls surface as `RefError::NotBound`
-                // rather than dispatching against a recycled
-                // `Element` ID.
+                // The matching `on_cleanup` clears the binding on
+                // unmount so post-unmount calls surface as
+                // `RefError::NotBound` rather than dispatching against
+                // a recycled `Element` ID.
                 if let ::std::option::Option::Some(__r) = props.__ref {
                     __r.__bind(__handle);
                     ::whisker::on_cleanup(move || __r.__unbind());
@@ -331,8 +311,6 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> TokenStream2 {
         #alias_emission
     }
 }
-
-// ----- Prop classification ------------------------------------------------
 
 struct Prop {
     ident: Ident,
@@ -369,22 +347,18 @@ enum PropKind {
 }
 
 /// Event names Lynx's native gesture / animation pipeline claims for
-/// itself. A `#[whisker::module_component]` that dispatches a custom
-/// event under one of these names is **silently swallowed** — Lynx's
-/// built-in gesture recognition consumes the name before it reaches the
-/// custom-event path, so the `on_<event>` handler never fires (no
-/// error, no log). It cost an evaluation project hours to find, so the
-/// macro now rejects it at compile time.
+/// itself, rejected at compile time. A custom event dispatched under
+/// one of these is **silently swallowed** — Lynx's built-in gesture
+/// recognition consumes the name before it reaches the custom-event
+/// path, so the `on_<event>` handler never fires, with no error or log.
 ///
 /// The list mirrors Lynx's touch + animation event families (see
 /// `whisker_runtime::event` and <https://lynxjs.org/api/lynx-api/event/event.html>).
 /// Both the canonical spelling (`longpress`) and the snake_case form an
-/// `on_<event>` prop would naturally produce (`long_press`) are
-/// reserved, since authors hit the collision either way. Component-level
-/// custom events Lynx does NOT intercept (`scroll`, `change`, …) are
-/// fine — only the gesture/animation names below collide.
+/// `on_<event>` prop produces (`long_press`) are reserved, since
+/// authors hit the collision either way. Component-level custom events
+/// Lynx does NOT intercept (`scroll`, `change`, …) are fine.
 const RESERVED_EVENT_NAMES: &[&str] = &[
-    // TouchEvent family (canonical + snake_case variants).
     "tap",
     "click",
     "longpress",
@@ -397,7 +371,6 @@ const RESERVED_EVENT_NAMES: &[&str] = &[
     "touch_end",
     "touchcancel",
     "touch_cancel",
-    // AnimationEvent family (canonical + snake_case variants).
     "animationstart",
     "animation_start",
     "animationend",
@@ -409,15 +382,13 @@ const RESERVED_EVENT_NAMES: &[&str] = &[
 fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
     let name = ident.to_string();
 
-    // Children always wins, regardless of type.
     if name == "children" {
         return Ok(PropKind::Children);
     }
 
-    // Event handler? The `on_<event>` naming convention picks these out.
-    // Payload classification comes from the declared TYPE — `()` means
-    // the payload is ignored; any other type is deserialized from the
-    // event body via `bind_typed` (must be `serde::Deserialize`).
+    // The `on_<event>` naming convention picks out handlers; the
+    // declared TYPE then decides the payload — `()` ignores it, any
+    // other type is deserialized from the event body via `bind_typed`.
     if let Some(event) = name.strip_prefix("on_") {
         if event.is_empty() {
             return Err(syn::Error::new(
@@ -443,26 +414,22 @@ fn classify(ident: &Ident, ty: &Type) -> syn::Result<PropKind> {
         if is_unit_type(ty) {
             return Ok(PropKind::EventNoPayload { event });
         }
-        // Any other type → typed-payload handler. `E` must be
-        // `serde::Deserialize` (enforced at the `bind_typed` call
-        // site); the typed event structs in `whisker::event` and
-        // `WhiskerValue` (raw body) all qualify.
+        // `E` must be `serde::Deserialize`, enforced at the
+        // `bind_typed` call site.
         return Ok(PropKind::EventTyped {
             event,
             payload: ty.clone(),
         });
     }
 
-    // Style prop → `::whisker::Style`. The authored type is ignored
-    // (the macro always emits a `::whisker::Style` field + an
-    // `apply_style` call), so no inner-type extraction is needed.
+    // The authored type of a `style` prop is ignored — always a
+    // `::whisker::Style` field plus an `apply_style` call.
     if name == "style" {
         return Ok(PropKind::Style);
     }
 
-    // Otherwise: an attribute prop. Strip the `Signal<…>` wrapper if
-    // present so the apply_attr turbofish picks the right T (= the
-    // value's ToString-able payload, not the wrapped Signal).
+    // Strip any `Signal<…>` wrapper so the `apply_attr` turbofish picks
+    // the ToString-able payload rather than the wrapped Signal.
     Ok(PropKind::Attr {
         inner: signal_inner(ty).unwrap_or_else(|| ty.clone()),
     })
@@ -491,15 +458,9 @@ fn is_unit_type(ty: &Type) -> bool {
     matches!(ty, Type::Tuple(TypeTuple { elems, .. }) if elems.is_empty())
 }
 
-// ----- Codegen helpers ----------------------------------------------------
-
 fn prop_struct_field(p: &Prop) -> TokenStream2 {
     let i = &p.ident;
     match &p.kind {
-        // The style prop is ALWAYS typed `::whisker::Style` (the same
-        // wrapper built-in elements accept), regardless of the
-        // authored param type — so callers can pass a `Css` builder,
-        // a raw string, or a reactive signal of either directly.
         PropKind::Style => {
             quote! { pub #i: ::whisker::Style }
         }
@@ -544,9 +505,6 @@ fn prop_builder_field(p: &Prop) -> TokenStream2 {
 fn prop_setter(p: &Prop) -> TokenStream2 {
     let i = &p.ident;
     match &p.kind {
-        // Style setter accepts anything `Into<::whisker::Style>` —
-        // `Css`, `&Css`, `String`, `&str`, and reactive signals of
-        // either, exactly like a built-in element's `style(...)`.
         PropKind::Style => {
             quote! {
                 #[allow(unused_mut)]
@@ -567,8 +525,6 @@ fn prop_setter(p: &Prop) -> TokenStream2 {
             }
         }
         PropKind::Children => {
-            // Match the render! macro's UserComponent emission shape:
-            //   .children(::std::rc::Rc::new(move || { … }))
             // So the setter accepts a `Children` directly.
             quote! {
                 #[allow(unused_mut)]

@@ -8,10 +8,10 @@
 //! body, swap element subtree under the same parent slot — is fully
 //! exercised.
 //!
-//! The wrapper-less model (issue #17): `#[component]` returns its
-//! body root directly. The runtime captures `(parent, anchor)` from
-//! the next `view::append_child` after the component fn returns, so
-//! tests need to attach the result to some parent before invoking
+//! `#[component]` returns its body root directly (no wrapper). The
+//! runtime captures `(parent, anchor)` from the next
+//! `view::append_child` after the component fn returns, so tests must
+//! attach the result to a parent before invoking
 //! `remount_components_for`.
 
 use std::cell::RefCell;
@@ -145,10 +145,9 @@ fn leaf(label: &'static str) -> Element {
 
 // ----------------------------------------------------------------------------
 // Module-level components for tests that exercise mount-site behaviour.
-// `#[component]` emits a `mod __<name>_inner` + `pub use` pair which is
-// only legal at module level (not inside fn bodies), so test fixtures
-// that used to be nested are pulled up here and given prefixed names
-// to avoid collisions.
+// `#[component]` emits a `mod __<name>_inner` + `pub use` pair, only
+// legal at module level, so these fixtures can't be nested inside the
+// test fns; the name prefixes keep them from colliding.
 // ----------------------------------------------------------------------------
 
 #[component]
@@ -237,9 +236,6 @@ fn component_returns_body_root_directly() {
                 _ => None,
             })
             .collect();
-        // First created element should be the body's outer `view`
-        // (id 0), not a separate wrapper. The text and raw_text
-        // follow.
         assert!(!creates.is_empty(), "leaf must create at least one element");
         assert_eq!(
             creates[0],
@@ -255,11 +251,9 @@ fn remount_replaces_root_at_same_parent_slot() {
         let (parent, root_initial) = mount_under_test_parent(|| render! { Leaf(label: "v1") });
         log.borrow_mut().clear();
 
-        // Simulate a subsecond patch on `leaf`'s fn pointer.
         remount_components_for(&[Leaf as *const ()]);
 
         let ops = log.borrow();
-        // The old body root was removed from the test parent.
         assert!(
             ops.iter().any(|op| matches!(
                 op,
@@ -268,14 +262,13 @@ fn remount_replaces_root_at_same_parent_slot() {
             )),
             "old body root removed from parent; ops were {ops:?}"
         );
-        // A fresh `view` was created for the new body.
         assert!(
             ops.iter()
                 .any(|op| matches!(op, Op::Create { tag, .. } if *tag == ElementTag::View)),
             "new body's view created; ops were {ops:?}"
         );
-        // The label re-renders to the same value (subsecond didn't
-        // actually swap the body; we just re-invoke it).
+        // The label re-renders to the same value — the body isn't
+        // actually swapped here, just re-invoked.
         assert!(
             ops.iter().any(|op| matches!(
                 op,
@@ -284,7 +277,6 @@ fn remount_replaces_root_at_same_parent_slot() {
             )),
             "new body re-rendered the same label; ops were {ops:?}"
         );
-        // The new root was attached under the *same* parent.
         assert!(
             ops.iter().any(|op| matches!(
                 op,
@@ -322,16 +314,11 @@ fn remount_disposes_old_owner_and_registers_new() {
 fn remount_releases_old_body_elements() {
     with_recorder_and_owner(|log| {
         let (_parent, _root) = mount_under_test_parent(|| render! { Leaf(label: "v1") });
-        // Count elements created by the component itself (everything
-        // the test parent's setup added is also in the log; we just
-        // count Creates from after our parent's creation).
         let creates_initial_total = log
             .borrow()
             .iter()
             .filter(|op| matches!(op, Op::Create { .. }))
             .count();
-        // The test parent is the first Create; the rest belong to
-        // the component.
         let component_elements = creates_initial_total - 1;
 
         log.borrow_mut().clear();
@@ -352,17 +339,14 @@ fn remount_releases_old_body_elements() {
 
 #[test]
 fn dispose_owner_releases_owned_elements() {
-    // A leaf component mount creates several elements through
-    // `view::*` while the component's owner is live. Disposing the
-    // outer owner (e.g. when `<Show>` flips false, `<For>` removes
-    // an item) cascades through the component owner and must
-    // release every element it tracked.
+    // Disposing the outer owner (a `<Show>` flipping false, a `<For>`
+    // dropping an item) cascades through the component owner, which
+    // must release every element it tracked.
     reset_state();
     let (rec, log) = Recorder::new();
     let _prev = install_renderer(Box::new(rec));
 
     let root_owner = Owner::new(None);
-    // Mount the component inside the root owner.
     let _root = root_owner.with(|| render! { Leaf(label: "hi") });
 
     let creates_initial = log
@@ -390,24 +374,17 @@ fn dispose_owner_releases_owned_elements() {
 
 #[test]
 fn nested_component_mount_sites_cleared_on_parent_remount() {
-    // Regression test for the iOS-side breakage when `scroll_body`
-    // (a parent #[component]) was remounted after a string-literal
-    // edit: child `#[component]` MountSites from the disposed
-    // subtree were left in the runtime registry, and the next
-    // `remount_components_for` call processed them too — touching
-    // freed parent / body_root handles and corrupting the screen.
-    //
-    // The fix in `Owner::dispose` scrubs `mount_sites` /
-    // `fn_ptr_mounts` for any orphaned child. This test pins that
-    // behaviour: after a parent remount, the child fn pointer's
-    // MountSite list should equal the count of live child
-    // invocations, not double up with the pre-remount entries.
+    // `Owner::dispose` must scrub `mount_sites` / `fn_ptr_mounts` for
+    // orphaned children: a MountSite left behind by a disposed subtree
+    // gets processed by the next `remount_components_for`, touching
+    // freed parent / body_root handles. After a parent remount the
+    // child fn pointer's MountSite list must equal the count of LIVE
+    // child invocations, not double up with pre-remount entries.
     use whisker::runtime::reactive::owners_for_fn;
 
     with_recorder_and_owner(|_log| {
         let (_parent, _root) = mount_under_test_parent(|| render! { NestedOuter() });
 
-        // After initial mount: 1 outer + 3 inner owners.
         assert_eq!(owners_for_fn(NestedOuter as *const ()).len(), 1);
         assert_eq!(
             owners_for_fn(NestedInner as *const ()).len(),
@@ -415,9 +392,8 @@ fn nested_component_mount_sites_cleared_on_parent_remount() {
             "three inner invocations expected after initial mount",
         );
 
-        // Remount outer (simulates subsecond patching outer's body).
-        // This should dispose the 3 old inner owners + their
-        // MountSites, then create 3 fresh inner invocations.
+        // Remounting outer must dispose the 3 old inner owners and
+        // their MountSites, then create 3 fresh inner invocations.
         remount_components_for(&[NestedOuter as *const ()]);
 
         // The count must stay at 3 — not balloon to 6.

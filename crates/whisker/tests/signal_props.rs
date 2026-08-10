@@ -1,9 +1,8 @@
-//! Phase 7-Φ.C end-to-end test: a `#[component]` declared with a
-//! `Signal<T>` prop receives a parent's reactive value and tracks
-//! it through to the underlying element's attribute.
+//! End-to-end test: a `#[component]` declared with a `Signal<T>` prop
+//! receives a parent's reactive value and tracks it through to the
+//! underlying element's attribute.
 //!
-//! This is the user-facing assertion of the unified reactivity
-//! model:
+//! The user-facing assertion of the unified reactivity model:
 //!
 //! - Parent passes a `ReadSignal<String>` (or `RwSignal<String>`,
 //!   or a `String`, or a `&str`) to a child component prop typed
@@ -11,9 +10,9 @@
 //! - The child's body reads the prop inside a `computed` /
 //!   `effect`, so the underlying signal is registered as a
 //!   dependency.
-//! - When the parent updates its signal, the child's element
-//!   updates via the effect chain — same fine-grained reactivity
-//!   that built-in tags already enjoy.
+//! - When the parent updates its signal, the child's element updates
+//!   via the effect chain — the same fine-grained reactivity built-in
+//!   tags get.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -131,9 +130,9 @@ fn with_recorder_and_owner<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 /// inside a `computed` to drive a reactive `style` attribute.
 #[component]
 fn colored_tile(color: Signal<String>) -> Element {
-    // `Signal<T>` is `Copy` (whisker #8), so `color` moves freely into
-    // the `computed` closure even though the `#[component]` body is the
-    // `FnMut` the macro wraps for hot-patch dispatch — no `.clone()`.
+    // `Signal<T>` is `Copy`, so `color` moves into the `computed`
+    // closure without a `.clone()` even though the `#[component]` body
+    // is the `FnMut` the macro wraps for hot-patch dispatch.
     let style = computed(move || format!("background: {};", color.get()));
     render! {
         view(style: style)
@@ -217,15 +216,13 @@ fn rw_signal_prop_tracks_underlying_signal() {
     });
 }
 
-// ----- Show + Resource-like state flip (the hn-reader pattern) ----------
+// ----- Show + Resource-like state flip --------------------------------
 
 #[test]
 fn show_flips_when_signal_holding_option_transitions() {
-    // Reproduces the hn-reader pattern: a `Show` whose `when` reads
-    // a signal that goes from `None` (fallback shown) to `Some(_)`
-    // (children shown). Catches any reactivity regression in the
-    // Show + signal-read chain that the simpler `text(value: …)`
-    // tests don't exercise.
+    // A `Show` whose `when` reads a signal going from `None` (fallback)
+    // to `Some(_)` (children) — the Show + signal-read chain the
+    // simpler `text(value: …)` tests don't reach.
     with_recorder_and_owner(|log| {
         let (state, set_state) = signal::<Option<&'static str>>(None).split();
         let _h = render! {
@@ -236,7 +233,6 @@ fn show_flips_when_signal_holding_option_transitions() {
                 ColoredTile(color: "loaded")
             }
         };
-        // Initial: fallback mounted → "loading" attribute set.
         let initial_styles: Vec<_> = log
             .borrow()
             .iter()
@@ -250,8 +246,6 @@ fn show_flips_when_signal_holding_option_transitions() {
             "initial render must mount the fallback branch (got styles {initial_styles:?})"
         );
 
-        // Flip the signal — Show effect should re-run and swap to
-        // the children branch.
         set_state.set(Some("done"));
         flush();
         let after_styles: Vec<_> = log
@@ -275,9 +269,6 @@ fn show_flips_when_signal_holding_option_transitions() {
 fn computed_prop_tracks_chain_of_signals() {
     with_recorder_and_owner(|log| {
         let (count, set_count) = signal(0_i32).split();
-        // Caller-side computed → ReadSignal<String> → flows into
-        // ColoredTile as Signal::Dynamic. Updates to `count`
-        // propagate end-to-end.
         let color_label = computed(move || {
             if count.get() % 2 == 0 {
                 "even".to_string()

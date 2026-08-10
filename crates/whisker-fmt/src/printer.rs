@@ -76,7 +76,6 @@ pub(crate) fn print_render(
         next: Cell::new(0),
     };
     let mut out = String::new();
-    // Leading comments before the root node.
     if let Some(start) = p.ir_node_start_byte(root) {
         p.flush(start, base_indent + 1, &mut out);
     }
@@ -88,8 +87,6 @@ pub(crate) fn print_render(
             p.flush(before, base_indent + 1, &mut out);
         }
     }
-    // Any remaining (own-line) comments after the root node, on their own
-    // lines at the body indent.
     let idx = p.next.get();
     if idx < comments.len() {
         let mut tail = String::new();
@@ -211,13 +208,9 @@ impl Printer<'_> {
             return formatted.to_string();
         }
         if let Some(s) = self.map.slice(span) {
-            // Trim surrounding whitespace; internal formatting is kept.
-            // For multi-line values, dedent continuation lines to column 0
-            // (matching the [`ExprMap`] contract) so the surrounding
-            // [`reindent`] call adds exactly the kwarg-column prefix and
-            // re-formatting is a fixed point. Without this, slicing an
-            // already-indented value and re-indenting it compounds the
-            // indentation on every pass (non-idempotent).
+            // Continuation lines must be dedented to column 0 (the
+            // [`ExprMap`] contract) or the later [`reindent`] compounds
+            // the indentation on every pass.
             dedent_continuation(s.trim())
         } else {
             expr.to_token_stream().to_string()
@@ -226,36 +219,24 @@ impl Printer<'_> {
 
     /// If `expr` is a `css!( … )` / `render!{ … }` / `routes!{ … }` macro
     /// call, recursively format its body with the grammar-aware printer
-    /// instead of treating it as an opaque expression — this is what
-    /// makes `render! { view(style: css!(…)) }` reformat the nested
-    /// `css!`/`routes!` call instead of passing it through verbatim.
+    /// instead of treating it as an opaque expression.
     ///
     /// `level` is the caller's best estimate of the indent level the
-    /// nested macro's own line will actually sit at once the OUTER node's
-    /// inline-vs-wrap decision has been made — callers pass their own
-    /// `level` (+1 when the value would land one level deeper if the
-    /// surrounding kwargs end up wrapped, which is the common case for
-    /// anything wide enough to need this decision at all). It is used
-    /// ONLY as the width reference for the nested call's own
-    /// inline-vs-wrap fit check ([`Printer::delimited_list`]) so a
-    /// deeply-nested `css!`/`routes!` doesn't wrongly collapse onto one,
-    /// far-too-long line by measuring itself against a shallow assumed
-    /// depth. This is a best-effort estimate, not an exact final column
-    /// (the true depth isn't known until the OUTER node's own wrap
-    /// decision, which depends circularly on this one) — the same
-    /// approximation [`crate::expr_fmt`] already accepts for
-    /// rustfmt-formatted embedded exprs.
+    /// nested macro's line will sit at once the OUTER node's
+    /// inline-vs-wrap decision is made (callers pass their own `level`,
+    /// +1 when a wrap would push the value one level deeper). It is used
+    /// ONLY as the width reference for the nested call's own fit check
+    /// ([`Printer::delimited_list`]), so a deeply-nested value doesn't
+    /// measure itself against a shallow assumed depth. It cannot be
+    /// exact: the true depth depends on the outer wrap decision, which
+    /// depends circularly on this one.
     ///
-    /// Returns `None` (falling back to the normal [`ExprMap`] / verbatim
-    /// path in [`Printer::expr_src`]) when `expr` isn't a
-    /// `css!`/`render!`/`routes!` call, its body doesn't parse as that
-    /// grammar, is empty, or — the comment fail-safe — its source
-    /// contains `//` or `/*` anywhere. Comments inside a nested macro
-    /// aren't threaded through this recursive call (the grammar-comment
-    /// recovery pass that collects them runs once, over the OUTER body,
-    /// before this nested printer exists), so rather than risk dropping
-    /// one we leave the whole nested call untouched, matching the
-    /// fail-safe used everywhere else in this crate.
+    /// Returns `None` — falling back to the [`ExprMap`] / verbatim path
+    /// in [`Printer::expr_src`] — when `expr` isn't one of those macros,
+    /// its body doesn't parse or is empty, or its source contains `//`
+    /// or `/*`. Grammar-comment recovery runs once over the OUTER body,
+    /// before this nested printer exists, so a nested call carrying a
+    /// comment is left untouched rather than risk dropping it.
     fn nested_macro_src(&self, expr: &Expr, level: usize) -> Option<String> {
         let Expr::Macro(em) = expr else {
             return None;
@@ -264,12 +245,9 @@ impl Printer<'_> {
         if name != "css" && name != "render" && name != "routes" {
             return None;
         }
-        // The delimiter token's own span covers everything BETWEEN AND
-        // INCLUDING the open/close delimiters — unlike `mac.tokens`'s
-        // (joined-from-real-tokens) span, which excludes any comment
-        // sitting in the gap right after `(`/`{` or right before `)`/`}`.
-        // We need the delimiter span, not the tokens' span, so the
-        // comment fail-safe below can't miss a leading/trailing comment.
+        // The delimiter span, not `mac.tokens`'s: the latter excludes a
+        // comment sitting right inside `(`/`{` or right before `)`/`}`,
+        // which the fail-safe below must see.
         let (open, close, delim_span) = match &em.mac.delimiter {
             syn::MacroDelimiter::Paren(p) => ('(', ')', p.span),
             syn::MacroDelimiter::Brace(b) => ('{', '}', b.span),
@@ -279,10 +257,7 @@ impl Printer<'_> {
         if full_src.contains("//") || full_src.contains("/*") {
             return None;
         }
-        // Rust/rustfmt convention: a space before a brace-delimited
-        // macro's `{` (`render!`/`routes! { … }`), none before `(`/`[`
-        // (`css!(…)`) — matches how the base rustfmt pass spaces the
-        // user's own top-level invocations.
+        // rustfmt spaces a brace-delimited macro's `{` but not `(`/`[`.
         let bang = if open == '{' { "! " } else { "!" };
         match name.as_str() {
             "css" => {
@@ -347,17 +322,13 @@ impl Printer<'_> {
     /// name (already written to `out`, or folded into `prefix_width`).
     ///
     /// `check_level` is the level the group ACTUALLY sits at once
-    /// printed — used ONLY for the width decision. This is what makes a
-    /// deeply-nested value wrap instead of measuring itself against a
-    /// shallow assumed depth; see [`Printer::nested_macro_src`].
-    /// `output_level` is the level the WRAPPED form is indented to in the
-    /// returned string: pass the same value as `check_level` for output
-    /// written directly into the current line (tag/component kwargs,
-    /// `Route(...)` kwargs), or `0` for a relative, column-0-anchored
-    /// fragment the caller will [`reindent`] itself (a nested macro's own
-    /// kwarg list, per the [`ExprMap`] contract). The two differ because
-    /// the real ambient depth used for the width check is often not yet
-    /// decided at output time — see [`Printer::kwarg`].
+    /// printed, used ONLY for the width decision; see
+    /// [`Printer::nested_macro_src`]. `output_level` is the level the
+    /// WRAPPED form is indented to: the same value as `check_level` for
+    /// output written straight into the current line, or `0` for a
+    /// column-0-anchored fragment the caller [`reindent`]s itself (per
+    /// the [`ExprMap`] contract). They differ because the real ambient
+    /// depth is often not yet decided at output time.
     ///
     /// `prefix_width`/`suffix_width` account for text sharing the
     /// group's own line that isn't one of `parts` (e.g. a tag name
@@ -409,9 +380,8 @@ impl Printer<'_> {
                 out.push_str(&reindent(&c.text, &indent));
                 out.push('\n');
             } else {
-                // Trailing: append to the end of the current output. Strip
-                // a single trailing newline the caller may have already
-                // pushed, append ` text`, then restore the newline.
+                // Strip a trailing newline the caller may already have
+                // pushed, append ` text`, then restore it.
                 let had_nl = out.ends_with('\n');
                 if had_nl {
                     out.pop();
@@ -496,7 +466,6 @@ impl Printer<'_> {
         out.push_str(&indent);
         out.push_str(&tag.tag);
 
-        // ---- kwargs ----
         if !tag.kwargs.is_empty() {
             let parts: Vec<String> = tag
                 .kwargs
@@ -515,7 +484,6 @@ impl Printer<'_> {
             ));
         }
 
-        // ---- children ----
         // Resolve this node's block byte bounds so comments are placed
         // relative to its `{ … }`.
         let inner_close = tag
@@ -541,22 +509,18 @@ impl Printer<'_> {
             out.push_str(" {\n");
             let child_level = level + 1;
             for child in &tag.children {
-                // Leading own-line comments before this child.
                 if let Some(cs) = self.ir_node_start_byte(child) {
                     self.flush(cs, child_level, out);
                 }
                 self.ir_node(child, child_level, out);
-                // Trailing same-line comment on the child.
                 if let Some((_, child_end)) = self.ir_node_extent(child) {
                     if let Some(idx) = self.pending_trailing_on_line(child_end) {
-                        // Append trailing comment to the end of this line.
                         let before = self.comments[idx].start + 1;
                         self.flush(before, child_level, out);
                     }
                 }
                 out.push('\n');
             }
-            // Comments sitting before the closing `}`.
             if let Some(close) = inner_close {
                 self.flush(close, child_level, out);
             }
@@ -565,15 +529,11 @@ impl Printer<'_> {
         }
     }
 
-    /// `level` is the tag's own indent level — if the value turns out to
-    /// need wrapping (e.g. a nested `css!` that doesn't fit), it lands
-    /// one level deeper (`level + 1`) once the kwargs break onto their
-    /// own lines, so that is what gets passed to [`Printer::expr_src`]
-    /// as the nested macro's width reference (`IrValue::Literal` values —
-    /// routes!'s `path`/`component` — never go through `expr_src` at all,
-    /// matching how they were always hand-formatted rather than treated
-    /// as embedded exprs). See [`Printer::nested_macro_src`] for why this
-    /// is a same-turn estimate rather than the exact final depth.
+    /// `level` is the tag's own indent level; a value that needs wrapping
+    /// lands at `level + 1`, so that is what reaches
+    /// [`Printer::expr_src`] as the nested macro's width reference.
+    /// `IrValue::Literal` values (routes!'s `path`/`component`) are
+    /// hand-formatted and never go through `expr_src` at all.
     fn ir_kwarg(&self, kw: &IrKwarg, level: usize) -> String {
         match &kw.value {
             // Partial kwarg: just the name (mid-typing). Preserve the
@@ -610,7 +570,6 @@ impl Printer<'_> {
                 let indent = self.indent(level);
                 return format!("{indent}{inline}");
             }
-            // Otherwise one kwarg per line, trailing comma.
             let indent = self.indent(level);
             let mut out = String::new();
             for part in &parts {
@@ -634,7 +593,6 @@ impl Printer<'_> {
             out.push_str(&indent);
             out.push_str(&reindent(&self.css_kwarg(kw, level), &indent));
             out.push(',');
-            // Trailing same-line comment after this field.
             let field_end = self
                 .map
                 .byte_range(kw.name.span())
@@ -653,7 +611,6 @@ impl Printer<'_> {
             }
             out.push('\n');
         }
-        // Any comments after the last field, before the body end.
         self.flush(body_len, level, &mut out);
         // strip trailing newline (caller adds delimiters)
         while out.ends_with('\n') {
@@ -690,14 +647,11 @@ fn ir_brace_width(children: &[IrNode], always_block: bool) -> usize {
 
 /// Dedent the continuation (2nd..=Nth) lines of a multi-line fragment by
 /// their common leading-whitespace amount, so they sit at column 0
-/// relative to the first line. The first line is already at column 0 (the
-/// caller trimmed it). This makes the later [`reindent`] idempotent: a
-/// value re-sliced from already-formatted output has its kwarg-column
-/// indentation stripped back off before being re-indented.
+/// relative to the first line (which the caller already trimmed). This is
+/// what makes the later [`reindent`] idempotent.
 ///
-/// Lines that are entirely whitespace are ignored when computing the
-/// common indent (and emitted empty) so they don't force the common
-/// dedent to zero.
+/// All-whitespace lines are ignored when computing the common indent, so
+/// they can't force it to zero.
 fn dedent_continuation(fragment: &str) -> String {
     if !fragment.contains('\n') {
         return fragment.to_string();
@@ -705,7 +659,6 @@ fn dedent_continuation(fragment: &str) -> String {
     let mut lines = fragment.split('\n');
     let first = lines.next().unwrap_or("");
     let rest: Vec<&str> = lines.collect();
-    // Common leading-whitespace width across non-blank continuation lines.
     let common = rest
         .iter()
         .filter(|l| !l.trim().is_empty())

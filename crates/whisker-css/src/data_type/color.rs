@@ -164,14 +164,12 @@ mod tests {
 
     #[test]
     fn hex_constructor() {
-        // 0x1A1A2E → rgb(26, 26, 46)
         assert_eq!(Color::hex(0x1A1A2E).to_css_string(), "rgb(26, 26, 46)");
     }
 
     #[test]
     fn hex_alpha_constructor() {
         let c = Color::hex_alpha(0xFF000080);
-        // 0x80 / 255 ≈ 0.5019608 — alpha drops it to rgba.
         let s = c.to_css_string();
         assert!(s.starts_with("rgba(255, 0, 0,"), "got {s}");
     }

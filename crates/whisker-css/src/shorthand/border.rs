@@ -174,8 +174,6 @@ mod tests {
                     .color(Color::hex(0x000000)),
             )
             .border_bottom(Border::new().width(px(3)).color(Color::hex(0xFF0000)));
-        // Last-write-wins keeps the first 3 sides at width 1px and
-        // overrides bottom to 3px / red.
         let css = s.to_string();
         assert!(css.contains("border-bottom-width: 3px"));
         assert!(css.contains("border-bottom-color: rgb(255, 0, 0)"));

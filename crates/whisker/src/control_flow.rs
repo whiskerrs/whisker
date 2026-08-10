@@ -1,15 +1,14 @@
 //! Built-in control-flow components — `for_each` (keyed list) and
 //! `show` (conditional).
 //!
-//! Both are written exactly as a user-defined control flow would
-//! be: regular `#[component]` functions that allocate a *fragment*
+//! Both are written exactly as a user-defined control flow would be:
+//! regular `#[component]` functions that allocate a *fragment*
 //! ([`create_phantom_element`](whisker_runtime::view::create_phantom_element)),
 //! install a reactive [`effect`](whisker_runtime::reactive::effect) to
-//! diff their input source, and return the fragment. There's no
-//! `ControlFlow` trait, no `View::ControlFlow` enum variant, no
-//! special path through the surrounding container builder — the
-//! `render!` macro treats `ForEach(...)` / `Show(...)` like any
-//! other user component (`PropsBuilder` pattern).
+//! diff their input source, and return the fragment. There is no
+//! `ControlFlow` trait and no special path through the surrounding
+//! builder — `render!` treats `ForEach(...)` / `Show(...)` like any
+//! other user component.
 //!
 //! A user implementing their own control flow follows the same
 //! outline:
@@ -87,9 +86,9 @@ where
     }
     let entries: Rc<RefCell<HashMap<K, Entry>>> = Rc::new(RefCell::new(HashMap::new()));
 
-    // Clone the closure props into the effect's capture set so the
-    // outer body (a `FnMut` per `#[component]`'s hot-reload wrapper)
-    // never gets them moved out of.
+    // The outer body is a `FnMut` (per `#[component]`'s hot-reload
+    // wrapper), so the closure props must be cloned in rather than
+    // moved out of it.
     let each = each.clone();
     let key = key.clone();
     let children = children.clone();
@@ -123,16 +122,14 @@ where
             new_keys_in_order.push(k);
         }
 
-        // Disappeared items: detach + dispose.
         for (_, entry) in old.drain() {
             remove_child(frag, entry.handle);
             entry.owner.dispose();
         }
 
-        // Reorder: detach every surviving handle, then re-attach in
-        // the new order. The fragment's phantom-hoisting routes each
-        // detach + re-attach pair to the real ancestor on the Lynx
-        // side, one element at a time.
+        // Reorder by detaching every surviving handle and re-attaching
+        // in the new order; phantom-hoisting routes each pair to the
+        // real Lynx ancestor one element at a time.
         for k in &new_keys_in_order {
             if let Some(entry) = new_entries.get(k) {
                 remove_child(frag, entry.handle);
@@ -180,30 +177,26 @@ pub fn show(
 ) -> Element {
     let frag = create_phantom_element();
 
-    // Track the currently-mounted (owner, leaf handles) pair so we
-    // can dispose + detach on every flip.
     type Mounted = Rc<RefCell<Option<(Owner, Vec<Element>)>>>;
     let mounted: Mounted = Rc::new(RefCell::new(None));
     // The condition the mounted branch reflects; `None` until first run.
     let last_cond: Rc<Cell<Option<bool>>> = Rc::new(Cell::new(None));
 
-    // Clone props into the effect's capture set so the outer body
-    // (a `FnMut` per `#[component]`'s hot-reload wrapper) never has
-    // them moved out of. `Rc<dyn Fn>` clones are cheap.
+    // The outer body is a `FnMut`, so props are cloned in rather than
+    // moved out of it. `Rc<dyn Fn>` clones are cheap.
     let when = when.clone();
     let children = children.clone();
     let fallback = fallback.clone();
 
     effect(move || {
-        // Evaluate every run (keeps the dependency subscription), but
-        // only rebuild when the condition actually changed.
+        // Evaluate on every run to keep the dependency subscription,
+        // but only rebuild when the condition actually changed.
         let cond = when.call();
         if last_cond.get() == Some(cond) {
             return;
         }
         last_cond.set(Some(cond));
 
-        // Tear down the previously-mounted branch.
         if let Some((owner, handles)) = mounted.borrow_mut().take() {
             for h in handles {
                 remove_child(frag, h);
@@ -212,7 +205,6 @@ pub fn show(
         }
 
         if cond {
-            // Truthy branch: `children` is `Children` = `Fn() -> View`.
             let owner = Owner::new(None);
             let handles = owner.with(|| {
                 let view = children();
@@ -220,8 +212,6 @@ pub fn show(
             });
             *mounted.borrow_mut() = Some((owner, handles));
         } else if let Some(fb) = &fallback.0 {
-            // Falsy branch: `fallback` is `Fn() -> Element` (single
-            // element). Mount it directly under the fragment.
             let owner = Owner::new(None);
             let handle = owner.with(|| {
                 let h = fb();

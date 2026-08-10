@@ -46,8 +46,6 @@ fn realistic_card_layout() {
 fn padding_shorthand_then_longhand_wins() {
     let s = Css::new().padding(px(16)).padding_top(px(4));
     let css = s.to_string();
-    // padding_top is overridden by the explicit setter; the other
-    // three sides remain at 16px.
     assert!(css.contains("padding-top: 4px"));
     assert!(css.contains("padding-right: 16px"));
     assert!(css.contains("padding-bottom: 16px"));
@@ -57,7 +55,6 @@ fn padding_shorthand_then_longhand_wins() {
 #[test]
 fn padding_longhand_then_shorthand_resets() {
     let s = Css::new().padding_top(px(4)).padding(px(16));
-    // Shorthand follows longhand → all four sides should be 16px.
     assert_eq!(
         s.to_string(),
         "padding-top: 16px; padding-right: 16px; padding-bottom: 16px; padding-left: 16px;"
@@ -93,11 +90,9 @@ fn border_full_then_per_side_override() {
                 .color(Color::hex(0xFF0000)),
         );
     let css = s.to_string();
-    // The bottom side should win for all three dimensions.
     assert!(css.contains("border-bottom-width: 3px"));
     assert!(css.contains("border-bottom-style: solid"));
     assert!(css.contains("border-bottom-color: rgb(255, 0, 0)"));
-    // Other sides retain the 1px / #CCC.
     assert!(css.contains("border-top-width: 1px"));
     assert!(css.contains("border-right-color: rgb(204, 204, 204)"));
 }
@@ -151,7 +146,6 @@ fn gap_then_row_gap_override_keeps_column() {
 
 #[test]
 fn last_write_wins_over_many_repeats() {
-    // 5 rewrites of the same property; only the last appears.
     let s = Css::new()
         .color(Color::hex(0x111111))
         .color(Color::hex(0x222222))
@@ -184,7 +178,6 @@ fn merge_overlays_other_onto_self() {
     let overlay = Css::new().color(Color::hex(0xFFFFFF));
     let merged = base.merge(overlay);
     let css = merged.to_string();
-    // Color from overlay wins; padding from base remains.
     assert!(css.contains("color: rgb(255, 255, 255)"));
     assert!(css.contains("padding-top: 4px"));
 }
@@ -334,9 +327,8 @@ fn into_string_yields_full_css() {
 
 #[test]
 fn duplicate_then_late_repeat_keeps_late_position() {
-    // `color` is declared at index 0, then again at index 2; in the
-    // resolved order it appears where the last write occurred (after
-    // background-color).
+    // A property re-declared later resolves at the position of its
+    // LAST write, not its first.
     let s = Css::new()
         .color(Color::hex(0xFF0000))
         .background_color(Color::hex(0x00FF00))
@@ -394,8 +386,7 @@ fn color_conversion_named_to_hex_round_trip_shape() {
         .color(Color::Named(NamedColor::Red))
         .background_color(Color::hex(0xFF0000));
     let css = s.to_string();
-    // Both forms appear distinctly — Whisker preserves the form
-    // chosen by the caller rather than normalizing internally.
+    // The caller's chosen form is preserved rather than normalized.
     assert!(css.contains("color: red"));
     assert!(css.contains("background-color: rgb(255, 0, 0)"));
 }
@@ -405,7 +396,6 @@ fn transform_then_secondary_transform_replaces() {
     let s = Css::new()
         .transform([TransformFn::TranslateX(px(10).into())])
         .transform([TransformFn::Rotate(45.deg())]);
-    // Last `transform` wins entirely; the first sequence is discarded.
     assert_eq!(s.to_string(), "transform: rotate(45deg);");
 }
 
@@ -422,7 +412,6 @@ fn entries_iteration_preserves_duplicates() {
 
 #[test]
 fn style_to_css_via_trait_object() {
-    // Verify ToCss can be exercised through a trait object.
     let s = Css::new().padding(px(4));
     let mut buf = String::new();
     let dyn_to_css: &dyn ToCss = &s;

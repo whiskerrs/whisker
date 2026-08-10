@@ -89,12 +89,9 @@ mod tests {
     #[test]
     fn write_number_handles_non_finite_safely() {
         let mut buf = String::new();
-        // Non-finite values fall through to `{n}` formatting; the
-        // helper just needs to not panic and to keep something on
-        // the buffer.
+        // Non-finite values fall through to `{n}` formatting.
         let _ = write_number(&mut buf, f32::NAN);
         let _ = write_number(&mut buf, f32::INFINITY);
-        // Smoke check — output is non-empty.
         assert!(!buf.is_empty());
     }
 
@@ -116,7 +113,6 @@ mod tests {
 
     #[test]
     fn to_css_blanket_reference_impl() {
-        // Verify `&T: ToCss` where `T: ToCss` works.
         let t = Token("ident");
         let r: &Token = &t;
         let s = r.to_css_string();
