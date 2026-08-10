@@ -49,10 +49,9 @@ pub use crate::view::BindType;
 /// happened" is the primary signal; the typed payload is
 /// supplementary. So if the body is absent (a bodyless event arrives
 /// as [`WhiskerValue::Null`]) or its shape doesn't match `E`, the
-/// handler is still called with `E::default()` — and the mismatch is
-/// logged with the raw value so it stays diagnosable (the Case ②
-/// philosophy: conversion mistakes are loggable, not invisible)
-/// rather than silently swallowing the whole event.
+/// handler is still called with `E::default()`, and the mismatch is
+/// logged with the raw value rather than silently swallowing the whole
+/// event.
 pub fn bind_typed<E, F>(handle: Element, event_name: &'static str, bind_type: BindType, handler: F)
 where
     E: DeserializeOwned + Default + 'static,
@@ -107,15 +106,13 @@ pub struct Target {
     pub dataset: BTreeMap<String, WhiskerValue>,
 }
 
-// The platform reporter hands us the *raw* event body, where `target`
+// The platform reporter hands over the *raw* event body, where `target`
 // and `currentTarget` are plain integer signs (Lynx
-// `LynxEvent.generateEventBody`: `body["target"] = targetSign`). The
-// richer `{id, dataset, uid}` object is only synthesized downstream in
-// the JS layer, which Whisker bypasses. So `Target` must deserialize
-// from EITHER an integer (→ `uid`, with empty `id`/`dataset`) or a
-// `{id, uid, dataset}` object — a hard "expected struct, got number"
-// error here would otherwise fail the *whole* event struct and blank
-// every field (including `detail`).
+// `LynxEvent.generateEventBody`); the richer `{id, dataset, uid}`
+// object is synthesized downstream in the JS layer, which Whisker
+// bypasses. `Target` must therefore accept EITHER form — a hard
+// "expected struct, got number" here fails the *whole* event struct and
+// blanks every field, `detail` included.
 impl<'de> Deserialize<'de> for Target {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -579,8 +576,6 @@ mod tests {
 
     #[test]
     fn missing_fields_default_rather_than_fail() {
-        // A body with only some keys (e.g. an event Lynx fills
-        // partially) must still deserialize — every field defaults.
         let e: TouchEvent = WhiskerValue::map([("type", WhiskerValue::String("touchend".into()))])
             .deserialize_into()
             .expect("partial body deserializes");
@@ -625,7 +620,6 @@ mod tests {
         assert_eq!(e.detail.scroll_height, 2000.0);
         assert_eq!(e.detail.delta_y, 12.0);
         assert!(e.detail.is_dragging);
-        // Absent key degrades to default rather than failing.
         assert_eq!(e.detail.delta_x, 0.0);
     }
 
@@ -672,11 +666,9 @@ mod tests {
 
     #[test]
     fn integer_target_signs_dont_blank_the_event() {
-        // The REAL reporter body: `target` / `currentTarget` are plain
-        // integer signs (LynxEvent.generateEventBody), not objects.
-        // Target's int-or-object deserialize must accept that so the
-        // sibling `detail` still populates (a type mismatch here used
-        // to fail the whole struct → all-zero payload).
+        // The real reporter body carries integer signs, not objects; a
+        // type mismatch there fails the whole struct and zeroes the
+        // sibling `detail`.
         let v = WhiskerValue::map([
             ("type", WhiskerValue::String("scroll".into())),
             ("target", WhiskerValue::Int(33)),
@@ -696,7 +688,6 @@ mod tests {
         assert_eq!(e.target.uid, 33); // sign mapped to uid
         assert_eq!(e.target.id, ""); // raw body carries no id
         assert_eq!(e.current_target.uid, 33);
-        // The sibling detail must survive the integer target.
         assert_eq!(e.detail.scroll_left, 640.0);
         assert_eq!(e.detail.scroll_width, 832.0);
         assert!(e.detail.is_dragging);

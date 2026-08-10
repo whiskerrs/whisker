@@ -1,12 +1,12 @@
-//! (Removed in the wrapper-less control-flow refactor.)
+//! Where control flow lives.
 //!
-//! Built-in `for_each` / `show` now live as `#[component]` functions
-//! in the `whisker` crate (the user-facing layer) so they share the
-//! exact same author surface as user-defined control flow. They use
-//! the primitives exposed from this crate
-//! ([`create_phantom_element`](super::create_phantom_element),
-//! [`effect`](crate::reactive::effect), the per-control-flow function
-//! types in [`super::into_view`]).
+//! Built-in `for_each` / `show` are `#[component]` functions in the
+//! `whisker` crate (the user-facing layer), so they share the exact
+//! same author surface as user-defined control flow. They build on the
+//! primitives this crate exposes:
+//! [`create_phantom_element`](super::create_phantom_element),
+//! [`effect`](crate::reactive::effect), and the per-control-flow
+//! function types in [`super::into_view`].
 //!
 //! Custom control flow follows the same outline:
 //!

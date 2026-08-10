@@ -75,9 +75,8 @@ pub struct Resource<T: Clone + 'static> {
     state: RwSignal<ResourceState<T>>,
 }
 
-// Hand-written Copy/Clone — `derive(Copy)` would require `T: Copy`
-// which is unnecessarily strict (the resource only holds a u32-ish
-// signal handle, not the T itself).
+// Hand-written Copy/Clone — `derive(Copy)` would demand `T: Copy`,
+// though the resource holds only a signal handle, not the `T`.
 impl<T: Clone + 'static> Copy for Resource<T> {}
 impl<T: Clone + 'static> Clone for Resource<T> {
     fn clone(&self) -> Self {
@@ -192,24 +191,20 @@ where
     let fetcher = Rc::new(fetcher);
 
     super::effect::effect(move || {
-        // Inside an effect run the runtime's `current_tracker` IS this
-        // effect's node. Capture it so the spawned future can re-install
-        // it as the observer around each poll (so post-`.await` reads
-        // register as deps of this node too).
+        // Captured so the spawned future can re-install it as the
+        // observer around each poll, making post-`.await` reads deps of
+        // this node too.
         let node = super::current_tracker().expect("resource effect must run under a tracker");
 
         let my_gen = generation.get().wrapping_add(1);
         generation.set(my_gen);
 
-        // Build the future. The fetcher's SYNCHRONOUS prefix runs here,
-        // and because we're inside the effect run, its signal reads
-        // register as dependencies of `node`.
+        // The fetcher's synchronous prefix runs here, inside the effect
+        // run, so its signal reads register as deps of `node`.
         let fut = (fetcher)();
 
-        // Return to Loading on every (re)fetch. Write untracked so this
-        // never creates a dependency edge — the effect must not depend
-        // on `state` (the signal it writes) or it would re-trigger
-        // itself in an infinite loop.
+        // Untracked: the effect must not depend on the signal it writes
+        // or it re-triggers itself forever.
         state.update_untracked(|s| *s = ResourceState::Loading);
 
         spawn_local(ScopedFetch {
@@ -251,23 +246,21 @@ impl<T: Clone + 'static> Future for ScopedFetch<T> {
         // other fields.
         let this = self.get_mut();
 
-        // A newer run superseded us: abandon WITHOUT installing the
-        // observer (add no stale dependency edges) and WITHOUT writing
-        // state. The inner future is dropped with this `ScopedFetch`.
+        // Superseded: abandon without installing the observer (no stale
+        // dependency edges) and without writing state.
         if this.generation.get() != this.my_gen {
             return Poll::Ready(());
         }
 
         let node = this.node;
         let fut = &mut this.fut;
-        // Re-install the resource's effect node as the current observer
-        // for THIS poll so reads after `.await` register as deps of it.
+        // Observer installed per-poll so reads after `.await` still
+        // register as deps of the resource's effect node.
         let poll = super::with_observer(node, || fut.as_mut().poll(cx));
 
         match poll {
             Poll::Pending => Poll::Pending,
             Poll::Ready(result) => {
-                // Commit only if we're still the latest run.
                 if this.generation.get() == this.my_gen {
                     this.state.set(match result {
                         Ok(v) => ResourceState::Ready(v),
@@ -293,12 +286,9 @@ where
     T: Clone + 'static,
     F: FnOnce() -> Result<T, String>,
 {
-    // `fetcher` is a one-shot seed for the resource's RwSignal —
-    // its signal reads are meant to compute an initial value, not to
-    // re-fire the resource when those signals change. Run it under
-    // `untrack` so the reads don't leak into whatever outer effect
-    // / computed / component body happens to be calling
-    // `resource_sync`. Same principle as the computed seed guard.
+    // `fetcher` is a one-shot seed, so its signal reads must not leak
+    // into whatever outer effect / computed / component body is calling
+    // `resource_sync` and re-fire it later.
     let state = RwSignal::new(match super::untrack(fetcher) {
         Ok(v) => ResourceState::Ready(v),
         Err(e) => ResourceState::Error(e),

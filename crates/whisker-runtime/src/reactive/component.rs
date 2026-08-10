@@ -10,15 +10,14 @@
 //!    keeps the handle; disposing the parent will cascade).
 //!
 //! The macro also passes its own fn pointer to
-//! [`register_component`] so the Strategy C hot-reload path (A6) can
-//! map subsecond-patched fn pointers back to live owners.
+//! [`register_component`] so the hot-reload path can map
+//! subsecond-patched fn pointers back to live owners.
 //!
 //! Lifecycle hooks:
 //!
 //! - [`on_mount`] — registered against the current owner; fires once
-//!   on the next [`flush_mounts`]. The renderer (A3) calls
-//!   `flush_mounts` after appending the component's view to its
-//!   parent.
+//!   on the next [`flush_mounts`], which runs after the component's
+//!   view has been appended to its parent.
 //! - `on_cleanup` lives in `owner.rs` — symmetric LIFO callback that
 //!   fires when the owner is disposed.
 
@@ -46,15 +45,10 @@ pub fn mount_component<R>(fn_ptr: *const (), body: impl FnOnce() -> R) -> (Owner
         }
         rt.component_owners.entry(fn_ptr).or_default().push(owner);
     });
-    // Component bodies build a static Element tree; the reactive
-    // dependencies they declare must come from explicit
-    // `effect` / `computed` calls *inside* the body, not from
-    // ambient signal reads contaminating whatever outer reactive
-    // node we happened to be constructed inside (a parent
-    // component's `Show` effect, `StackLayout`'s route mount, etc.).
-    // Clear the tracker around the body call so a direct
-    // `signal.get()` in user code doesn't silently subscribe the
-    // outer node.
+    // A component's reactive dependencies must come from the explicit
+    // `effect` / `computed` calls inside its body. Without `untrack`, a
+    // bare `signal.get()` in the body subscribes whatever outer node is
+    // constructing us (a parent's `Show` effect, a route mount).
     let result = untrack(|| owner.with(body));
     (owner, result)
 }
@@ -78,8 +72,8 @@ pub fn unmount_component(owner: Owner) {
 }
 
 /// Register `f` as a post-mount callback for the current owner. Fires
-/// once on the next [`flush_mounts`] call (driven by the renderer
-/// after the component's view is appended to its parent).
+/// once on the next [`flush_mounts`] call, which runs after the
+/// component's view is appended to its parent.
 ///
 /// No-op (with debug-build warning) if there is no current owner.
 pub fn on_mount(f: impl FnOnce() + 'static) {
@@ -95,32 +89,26 @@ pub fn on_mount(f: impl FnOnce() + 'static) {
     }
 }
 
-/// Run all queued on_mount callbacks in registration order. Called by
-/// the renderer (A3) after a batch of component views has been
-/// appended to the tree. Safe to call when the queue is empty
-/// (no-op).
+/// Run all queued on_mount callbacks in registration order. Called
+/// after a batch of component views has been appended to the tree.
+/// Safe to call when the queue is empty (no-op).
 pub fn flush_mounts() {
-    // Drain the queue under a short borrow so callback bodies (which
-    // may themselves register new on_mount) land in a fresh queue.
+    // Drained under a short borrow so callbacks that register their own
+    // `on_mount` land in a fresh queue.
     let queue: Vec<Box<dyn FnOnce()>> = with_runtime(|rt| std::mem::take(&mut rt.pending_mounts));
     for cb in queue {
-        // `on_mount` callbacks are fire-once side effects that may
-        // read signals to inspect post-mount state but should never
-        // subscribe whatever node happens to be on the call stack
-        // when the queue gets drained. In production `flush_mounts`
-        // runs after `reactive_flush` returns (tracker already
-        // cleared by the scheduler), but other integrations may
-        // call it from inside a reactive scope — wrap each `cb` in
-        // `untrack` so the invariant is enforced by the queue itself.
+        // An `on_mount` may read signals to inspect post-mount state
+        // but must never subscribe whatever node is on the stack at
+        // drain time — an integration is free to call `flush_mounts`
+        // from inside a reactive scope, so the queue enforces it.
         untrack(cb);
     }
 }
 
-/// Look up the owners currently associated with `fn_ptr`. Used by the
-/// A6 hot-reload path to find which live owners need disposal +
-/// remount when subsecond patches a component function body. Returns
-/// a snapshot — modifying the runtime's `component_owners` after
-/// this call won't affect the returned `Vec`.
+/// Look up the owners currently associated with `fn_ptr` — which live
+/// owners need disposal + remount when subsecond patches a component
+/// function body. Returns a snapshot; later mutations of the runtime's
+/// `component_owners` don't affect the returned `Vec`.
 #[doc(hidden)]
 pub fn owners_for_fn(fn_ptr: *const ()) -> Vec<Owner> {
     with_runtime(|rt| {
@@ -131,44 +119,25 @@ pub fn owners_for_fn(fn_ptr: *const ()) -> Vec<Owner> {
     })
 }
 
-// ===========================================================================
-// True per-component remount — wrapper-less (issue #17 / Y-2 P1)
-// ===========================================================================
+// Per-component remount. `mount_component_remountable` returns the
+// body's root element directly — no wrapper element sits between a
+// component body and its parent, so the Whisker component tree maps
+// 1:1 onto the Lynx element tree.
 //
-// `mount_component_remountable` runs the user's body inside a fresh
-// owner and **returns the body's root element directly** — no wrapper
-// `view` is inserted between the body and its parent. The Whisker
-// component tree maps 1:1 with the Lynx element tree.
+// With no wrapper to serve as a stable placeholder, each mount's
+// `(parent, previous_sibling)` is captured lazily: the mount stashes
+// its `MountId` + body_root in `PENDING_MOUNT`, and `view::append_child`
+// calls back through [`on_component_root_attached`] once that root is
+// attached.
 //
-// To make remount still work without a wrapper as a stable
-// placeholder, we capture each mount's `(parent, previous_sibling)`
-// lazily: `mount_component_remountable` stashes the freshly-created
-// `MountId` + body_root in a thread-local `PENDING_MOUNT` slot,
-// and `view::append_child` (when it sees that body_root being
-// attached) calls back via [`on_component_root_attached`] to
-// populate `MountSite.parent` / `MountSite.anchor`.
-//
-// On a subsecond patch:
-// 1. Look up the MountSite by patched fn_ptr.
-// 2. Detach old body_root from parent (Whisker-side child mirror
-//    keeps the position information so we know where to re-insert).
-// 3. Dispose old owner — cascading reactive cleanup, on_cleanup,
-//    nested component disposal.
-// 4. Re-invoke body inside a fresh owner → new body_root.
-// 5. Insert new body_root at the same slot (after the same
-//    previous-sibling anchor, or at the start if no anchor).
-//
-// Trade-offs / known limitations:
-// - The "previous sibling" anchor must remain alive across remounts.
-//   If a sibling-managed component disposed itself between mount
-//   and patch, the anchor is stale and remount falls back to
-//   inserting at the previous numeric position (best effort).
-//   For/Show interactions don't normally cause this because their
-//   wrappers are themselves stable elements.
+// Known limitations:
+// - The anchor must outlive the remount. A sibling-managed component
+//   that disposed itself between mount and patch leaves a stale anchor,
+//   and remount falls back to the previous numeric position.
 // - Component-local signal state is lost on remount; context-stored
-//   state survives because its owners live above the disposed scope.
-// - Props must implement `Clone` so the body closure can hand the
-//   user code fresh owned values on each invocation.
+//   state survives, its owners being above the disposed scope.
+// - Props must implement `Clone` so the body closure can hand user code
+//   fresh owned values on each invocation.
 
 use std::cell::Cell;
 
@@ -242,9 +211,8 @@ pub fn on_component_root_attached(parent: Element, child: Element) {
         return;
     };
     if root != child {
-        // The attach was for some other element. Put the pending
-        // entry back so the body_root's eventual `append_child`
-        // can still pick it up.
+        // Some other element; put the entry back so the body_root's
+        // eventual `append_child` can still claim it.
         PENDING_MOUNT.with(|cell| cell.set(Some((mount_id, root))));
         return;
     }
@@ -267,9 +235,8 @@ pub fn __reset_pending_mount_for_tests() {
 /// Mount a component with full remount support — wrapper-less.
 ///
 /// Runs `body` inside a fresh owner and returns the body's root
-/// element directly to the caller. No wrapper element is created,
-/// so the Whisker component tree maps 1:1 with the Lynx element
-/// tree (issue #17).
+/// element directly to the caller. No wrapper element is created, so
+/// the Whisker component tree maps 1:1 with the Lynx element tree.
 ///
 /// To make remount work without a stable wrapper handle in the
 /// parent's child list, the function stashes a pending-mount entry
@@ -302,7 +269,6 @@ where
     let props_hash_fn: Rc<dyn Fn() -> u64 + 'static> = Rc::from(props_hash_fn);
     let props_hash = props_hash_fn();
 
-    // Initial mount: fresh owner, run body, capture root.
     let body_for_first = body.clone();
     let owner = Owner::new(None);
     with_runtime(|rt| {
@@ -311,13 +277,12 @@ where
         }
         rt.component_owners.entry(fn_ptr).or_default().push(owner);
     });
-    // See `mount_component` for the rationale on the `untrack`
-    // bracket. Same invariant applies to the remountable variant.
+    // See `mount_component` for why the body runs untracked.
     let body_root = untrack(|| owner.with(|| (*body_for_first)()));
 
-    // Register the MountSite with parent / anchor as `None` for now
-    // — the next `view::append_child` that attaches `body_root`
-    // will populate them via `on_component_root_attached`.
+    // `parent` / `anchor` stay `None` until the next
+    // `view::append_child` attaches `body_root` and calls back through
+    // `on_component_root_attached`.
     let mount_id = with_runtime(|rt| {
         rt.mount_id_counter += 1;
         let id = MountId(rt.mount_id_counter);
@@ -338,13 +303,10 @@ where
         id
     });
 
-    // Hand the (MountId, body_root) pair to the pending slot. The
-    // caller's `view::append_child(parent, body_root)` consumes it
-    // and binds parent + anchor. Any previously-stashed pending
-    // mount that *wasn't* consumed (orphaned — body returned a root
-    // that was never attached) gets dropped here; the orphan's
-    // MountSite stays in the registry without a parent and will
-    // simply be skipped by remount lookups.
+    // The caller's `view::append_child(parent, body_root)` consumes
+    // this and binds parent + anchor. An unconsumed predecessor (a body
+    // whose root was never attached) is dropped here; its MountSite
+    // stays parentless in the registry and remount lookups skip it.
     PENDING_MOUNT.with(|cell| cell.set(Some((mount_id, body_root))));
 
     body_root
@@ -352,37 +314,28 @@ where
 
 /// Re-mount every remountable site whose `fn_ptr` is in the given
 /// list. Called by the bootstrap's tick callback after a successful
-/// subsecond patch. Internally:
+/// subsecond patch.
 ///
-/// 1. Collect the set of `MountId`s to remount (deduplicated, even
-///    if the patch list contains the same fn pointer multiple times).
-/// 2. For each: detach the previous body root from its wrapper,
-///    dispose the previous owner (cascading reactive cleanup), then
-///    create a fresh owner, re-invoke the body, append the new root
-///    to the same wrapper, and update the site's `owner` / `body_root`.
-///
-/// The wrapper element stays put in the parent's child list across
-/// the whole flow, so the user-visible navigation / scroll position
-/// / sibling order are preserved.
+/// The whole list is remounted as one batch: every old body root is
+/// detached first, then each site's owner is disposed and its body
+/// re-run, and finally the new roots are inserted at the indices their
+/// old roots held. Non-remounted siblings never move, so sibling order
+/// and their native state survive the patch.
 ///
 /// Returns [`RemountStats`]: how many sites were remounted, and how
 /// many were *refused* because their props layout changed. The
-/// bootstrap uses both as full-remount triggers (hot reload escalation) —
-/// `remounted == 0` means the patch had no attached component to
-/// reflect through, and `layout_changed > 0` means at least one
-/// stored body closure can no longer be re-run safely.
+/// bootstrap escalates on either — `remounted == 0` means the patch had
+/// no attached component to reflect through, and `layout_changed > 0`
+/// means at least one stored body closure can no longer be re-run
+/// safely.
 pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
     if patched_fns.is_empty() {
         return RemountStats::default();
     }
-    // Collect candidate mount sites, then filter out any whose
-    // ancestor component is also in this patch batch. When a
-    // parent component's body is patched, remounting it
-    // re-creates the whole subtree from scratch — separately
-    // remounting children would either operate on stale parent
-    // state (if processed first) or no-op (if scrubbed by the
-    // cascading dispose). Both outcomes are wrong; skipping the
-    // descendant entirely is the correct semantics.
+    // A site whose ancestor component is in the same batch is skipped:
+    // remounting the ancestor rebuilds the whole subtree, so handling
+    // the descendant separately either works on stale parent state or
+    // no-ops against a cascade-disposed owner.
     let patched_set: std::collections::HashSet<*const ()> = patched_fns.iter().copied().collect();
     let ids: Vec<MountId> = with_runtime(|rt| {
         let mut candidates: Vec<MountId> = Vec::new();
@@ -398,8 +351,6 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         candidates
             .into_iter()
             .filter(|mount_id| {
-                // Walk the owner chain upward; if any ancestor
-                // owner's mount_fn is in `patched_set`, skip.
                 let site = match rt.mount_sites.get(mount_id) {
                     Some(s) => s,
                     None => return false,
@@ -425,30 +376,11 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         return RemountStats::default();
     }
 
-    // ---- Batched remount that preserves sibling order ---------------------
-    //
-    // The naive "one-at-a-time" version (`remount_one` per site) suffers
-    // anchor staleness when sibling components are remounted together:
-    // each site's `anchor` is a sibling's body_root, and once that
-    // sibling has been remounted earlier in the loop, the anchor points
-    // at an element that has already been detached → fallback to
-    // index 0 → siblings clump at the top of the parent in
-    // hash-iteration order, visibly scrambling the layout.
-    //
-    // Instead we do the whole batch as one operation:
-    //   1. Snapshot each unique parent's current child list before
-    //      anything mutates.
-    //   2. For every site, dispose old owner + run new body to get the
-    //      new body_root. The new body runs against a fresh owner so
-    //      reactive state is isolated. None of this touches the parent's
-    //      child list.
-    //   3. For each parent, build the desired final child list by
-    //      replacing each old body_root with its new body_root, leaving
-    //      non-replaced siblings untouched.
-    //   4. Remove every old body_root from the parent, then re-insert
-    //      each new body_root at its desired index (ascending order).
-    //   5. Refresh anchors from the post-mutation child list so future
-    //      individual remounts also see a coherent state.
+    // The batch must be one operation rather than a per-site loop:
+    // a site's `anchor` is a sibling's body_root, so remounting siblings
+    // one at a time detaches the anchors the later ones depend on and
+    // they all fall back to index 0, clumping at the top of the parent
+    // in hash-iteration order.
 
     struct RemountInfo {
         mount_id: MountId,
@@ -477,19 +409,13 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
             .collect()
     });
 
-    // Layout gate: refuse to re-run a stored body closure whose
-    // captured environment no longer matches what the patched body
-    // code expects. The site's `body` was created against
-    // `props_hash`; `props_hash_fn()` dispatches into the freshly
-    // applied patch and returns the layout the *new* code was
-    // compiled for. A mismatch means the patch changed the
-    // component's props signature — re-invoking the old closure
-    // would transmute mismatched capture layouts (garbage props /
-    // UB). The caller escalates these to a hot reload full remount,
-    // where fresh (patched) code rebuilds the props from scratch.
-    // Evaluated OUTSIDE `with_runtime`: the hash getter re-enters
-    // subsecond dispatch, which must not run under the runtime
-    // borrow.
+    // `props_hash_fn()` dispatches into the freshly applied patch and
+    // returns the layout the *new* code was compiled for. A mismatch
+    // against the site's stored hash means the patch changed the props
+    // signature, and re-invoking the old closure would transmute across
+    // mismatched capture layouts (garbage props / UB); the caller
+    // escalates those to a full remount instead. Evaluated OUTSIDE
+    // `with_runtime` — the hash getter re-enters subsecond dispatch.
     let (infos, layout_changed): (Vec<RemountInfo>, Vec<RemountInfo>) = infos
         .into_iter()
         .partition(|info| (info.props_hash_fn)() == info.props_hash);
@@ -502,7 +428,7 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         };
     }
 
-    // 1. Snapshot each unique parent's child list.
+    // Snapshot each unique parent's child list before anything mutates.
     let mut parent_snapshot: std::collections::HashMap<Element, Vec<Element>> =
         std::collections::HashMap::new();
     for info in &infos {
@@ -511,13 +437,10 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
             .or_insert_with(|| crate::view::children_of(info.parent));
     }
 
-    // 2. Detach every old body_root from its parent *before* any
-    //    dispose runs. Element handles get invalidated by
-    //    `Owner::dispose` (renderer slot becomes `None`), so once
-    //    disposed, subsequent `remove_child` calls would silently
-    //    no-op against Lynx — visible as "stale subtree still on
-    //    screen" after hot reload. Doing the remove first keeps the
-    //    handle live.
+    // Detach every old body_root *before* any dispose runs.
+    // `Owner::dispose` invalidates element handles, after which
+    // `remove_child` silently no-ops against Lynx and the stale subtree
+    // stays on screen.
     let mut by_parent: std::collections::HashMap<Element, Vec<(Element, Option<Element>)>> =
         std::collections::HashMap::new();
     for info in &infos {
@@ -528,8 +451,6 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
             .push((info.old_body_root, None));
     }
 
-    // 3. Dispose old owners + run new bodies, collecting (mount_id,
-    //    parent, old_root, new_root, new_owner).
     let mut results: Vec<(MountId, Element, Element, Element, Owner)> =
         Vec::with_capacity(infos.len());
     for info in infos {
@@ -556,19 +477,16 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
                 .or_default()
                 .push(new_owner);
         });
-        // `untrack` so the remounted body's signal reads register
-        // against its own nested `effect`/`computed`s, not against
-        // whatever scheduler context happens to be active when
-        // `tick_callback` calls into us.
+        // `untrack` so the body's signal reads register against its own
+        // nested `effect`/`computed`s, not against whatever scheduler
+        // context was active when the tick called into us.
         let new_body_root = untrack(|| new_owner.with(|| (*info.body)()));
-        // The body's `mount_component_remountable` calls leave a
-        // PENDING_MOUNT entry behind; we drain it here because the
-        // batched path attaches the new root via `insert_child_at`
-        // directly, not via the caller's `append_child`.
+        // The body's own `mount_component_remountable` calls leave a
+        // PENDING_MOUNT entry behind, and nothing will consume it — the
+        // batched path attaches roots via `insert_child_at`, not the
+        // caller's `append_child`.
         PENDING_MOUNT.with(|cell| cell.set(None));
 
-        // Backfill the new_root into by_parent so step 4 can map
-        // old → new when computing the desired final order.
         if let Some(list) = by_parent.get_mut(&info.parent) {
             if let Some(entry) = list
                 .iter_mut()
@@ -587,9 +505,6 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         ));
     }
 
-    // 4. Per-parent: compute desired final order, insert new roots
-    //    at their target indices. (Removes already happened in
-    //    step 2 — the live-handle requirement.)
     for (parent, pairs) in &by_parent {
         let snapshot = parent_snapshot.get(parent).cloned().unwrap_or_default();
         let old_to_new: std::collections::HashMap<Element, Element> = pairs
@@ -597,17 +512,15 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
             .filter_map(|(o, n)| n.map(|new_root| (*o, new_root)))
             .collect();
 
-        // Desired final list = snapshot with each old replaced by its
-        // matching new (leaving non-replaced siblings untouched).
+        // Snapshot with each old root replaced by its matching new one,
+        // leaving non-replaced siblings untouched.
         let desired: Vec<Element> = snapshot
             .iter()
             .map(|c| old_to_new.get(c).copied().unwrap_or(*c))
             .collect();
 
-        // Insert new body_roots at their desired indices in ascending
-        // order. Non-replaced siblings remain in place; inserting at
-        // index `i` only shifts elements from `i` onwards by one slot,
-        // which is exactly the semantics we want.
+        // Ascending order matters: inserting at index `i` shifts only
+        // the elements from `i` onwards, so earlier placements stay put.
         let new_set: std::collections::HashSet<Element> =
             pairs.iter().filter_map(|(_, n)| *n).collect();
         for (idx, child) in desired.iter().enumerate() {
@@ -617,7 +530,6 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         }
     }
 
-    // 4. Update each MountSite to point at its new owner + new root.
     for (mount_id, _, _, new_root, new_owner) in &results {
         with_runtime(|rt| {
             if let Some(site) = rt.mount_sites.get_mut(mount_id) {
@@ -627,10 +539,9 @@ pub fn remount_components_for(patched_fns: &[*const ()]) -> RemountStats {
         });
     }
 
-    // 5. Refresh anchors based on the now-final parent children
-    //    layout — otherwise a *future* solo patch of one of these
-    //    siblings would inherit a stale anchor and fall back to
-    //    index 0 again.
+    // Refresh anchors from the now-final child order, or a future solo
+    // patch of one of these siblings inherits a stale anchor and falls
+    // back to index 0.
     for (mount_id, parent, _, new_root, _) in &results {
         let new_anchor = crate::view::previous_sibling(*parent, *new_root);
         with_runtime(|rt| {

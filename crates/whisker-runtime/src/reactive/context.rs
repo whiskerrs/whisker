@@ -54,23 +54,13 @@ pub fn use_context<T: 'static + Clone>() -> Option<T> {
 /// call back into the runtime (signals, effects, nested context
 /// lookups all work).
 pub fn with_context<T: 'static, R>(f: impl FnOnce(&T) -> R) -> Option<R> {
-    // First locate the owner that holds the context. We can't return
-    // a reference into the arena (borrow-checker, plus we want `f` to
-    // re-enter the runtime), so we instead do a two-step: find +
-    // dispatch. The downside is two borrows per lookup, but contexts
-    // are not on a hot path.
+    // Two borrows rather than one reference into the arena: `f` must be
+    // able to re-enter the runtime, so no borrow may span the call.
     let owner_id = with_runtime(|rt| find_owner_with::<T>(rt, rt.current_owner()))?;
 
-    // Clone the `Rc` handle out under a short borrow, then DROP the
-    // runtime borrow before invoking `f`. This is what makes `f` free
-    // to re-enter the runtime (read signals, create effects, nested
-    // `use_context`) — calling `f` while the thread-local runtime was
-    // still borrowed would double-borrow its `RefCell` and panic.
-    //
-    // Holding our own `Rc` clone also means the value stays alive for
-    // the whole call even if `f` re-provides the same `T` on this owner
-    // (which would replace the map entry); `f` simply observes the
-    // value that was current at lookup time.
+    // Owning an `Rc` clone also keeps the value alive for the whole
+    // call if `f` re-provides the same `T` on this owner — `f` then
+    // observes the value that was current at lookup time.
     let any_rc: std::rc::Rc<dyn Any> = with_runtime(|rt| {
         let owner = rt.owners.get(owner_id)?;
         owner.contexts.get(&TypeId::of::<T>()).cloned()

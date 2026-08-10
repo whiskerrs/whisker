@@ -52,13 +52,14 @@ pub(crate) fn schedule(node: NodeId) {
 
 /// True if there is undrained reactive work (scheduled effects/computeds
 /// or pending on_mount callbacks) that a frame would make progress on.
-/// Used by the driver's `tick()` to report busy so the host keeps its
-/// render loop running until the queue genuinely drains — closing the
-/// edge-triggered lost-wakeup that wedged the loop when a node was
-/// scheduled during the final `renderer_flush` (native-view layout
-/// re-entry). NOTE: deliberately does NOT count `deferred` (paused-owner
-/// nodes are intentionally frozen) nor outstanding async tasks (those
-/// resume via the main-loop drive, not vsync).
+/// The driver's `tick()` reports busy from this, so the host keeps its
+/// render loop running until the queue genuinely drains — a
+/// level-triggered check, since work can be scheduled during the final
+/// `renderer_flush` and an edge-triggered wake would be lost.
+///
+/// Deliberately counts neither `deferred` (paused-owner nodes are meant
+/// to stay frozen) nor outstanding async tasks (those resume from the
+/// main-loop drive, not vsync).
 pub fn has_pending_work() -> bool {
     with_runtime(|rt| !rt.pending.is_empty() || !rt.pending_mounts.is_empty())
         || crate::anim_hook::is_animating()
@@ -86,14 +87,11 @@ pub fn flush() {
         return;
     }
 
-    // RAII reset of the `flushing` flag. A re-running effect runs
-    // arbitrary user code (step 3 of `run_node_if_alive`) which may
-    // panic. Without this guard the trailing `rt.flushing = false`
-    // would be skipped on unwind, latching the flag true — every
-    // subsequent `flush` would then early-return as a no-op and the UI
-    // would freeze permanently. The guard restores the flag on both the
-    // normal return and the unwind path. (Safe to touch the runtime in
-    // `drop`: user code only ever runs while the runtime is unborrowed.)
+    // A re-running effect is arbitrary user code and may panic. The
+    // flag must be reset on the unwind path too, or it latches true and
+    // every later `flush` early-returns — a permanently frozen UI.
+    // (Safe to touch the runtime in `drop`: user code only ever runs
+    // while the runtime is unborrowed.)
     struct FlushGuard;
     impl Drop for FlushGuard {
         fn drop(&mut self) {
@@ -102,9 +100,8 @@ pub fn flush() {
     }
     let _flush_guard = FlushGuard;
 
-    // Drain loop. We `take` the current queue so signals written
-    // during a re-run land in a fresh queue and don't perturb the
-    // ordering of the current wave.
+    // `take` the queue each round so signals written during a re-run
+    // land in a fresh one and can't perturb the current wave's order.
     let mut iterations = 0;
     loop {
         let batch: Vec<NodeId> = with_runtime(|rt| std::mem::take(&mut rt.pending));
@@ -113,9 +110,6 @@ pub fn flush() {
         }
         iterations += 1;
         if iterations > FLUSH_ITERATION_CAP {
-            // Drop the residual queue so we don't keep spinning, and
-            // warn loudly — this almost always indicates an effect
-            // that writes a signal it reads (a feedback loop).
             eprintln!(
                 "whisker-reactive: flush exceeded {FLUSH_ITERATION_CAP} iterations; \
                  likely an effect with a self-feedback loop. Dropping {} pending nodes.",
@@ -128,7 +122,6 @@ pub fn flush() {
             run_node_if_alive(node);
         }
     }
-    // `_flush_guard` resets `rt.flushing = false` on drop here.
 }
 
 /// Re-run the compute closure for an effect or computed, if it's still
@@ -148,23 +141,11 @@ pub fn flush() {
 /// initial run — instead of leaking into whatever owner happened to
 /// be current at flush time.
 fn run_node_if_alive(node: NodeId) {
-    // Step 1: grab the compute handle, clear old sources, set the
-    // tracker. Short borrow.
-    //
-    // `arc_sources` is taken out of the runtime borrow first because
-    // its `unsubscribe` callees re-enter the runtime via Arc-signal
-    // internals (and even if they don't today, they're free user
-    // code that may grow that way). Drop the runtime borrow before
-    // iterating.
     let prep = with_runtime(|rt| {
         let n = rt.nodes.get(node)?;
         let owner = n.owner;
-        // Paused-owner gate: defer the run and skip. The node lands
-        // on `rt.deferred`; `Owner::resume` moves it back into
-        // `pending` so the effect catches up once its scope is
-        // active again. We snapshot the kind early — pure Signal
-        // nodes never need the gate (they have no compute), so we
-        // only check the flag for Effect / Computed.
+        // Signal nodes have no compute, so the paused-owner gate below
+        // only concerns Effect / Computed.
         let compute = match &n.data {
             NodeData::Effect { compute } => compute.clone(),
             NodeData::Computed { compute, .. } => compute.clone(),
@@ -187,8 +168,8 @@ fn run_node_if_alive(node: NodeId) {
         if let Some(n) = rt.nodes.get_mut(node) {
             n.sources.clear();
         }
-        // Take the arc_sources out — we'll call unsubscribe on each
-        // outside the runtime borrow.
+        // Taken out here so `unsubscribe` runs below with the runtime
+        // borrow dropped — those callees re-enter it.
         let arc_sources = rt
             .nodes
             .get_mut(node)
@@ -203,22 +184,16 @@ fn run_node_if_alive(node: NodeId) {
         return;
     };
 
-    // Step 2: tell each Arc-backed signal "drop me from your subscriber
-    // list" so a stale subscription doesn't outlast our last
-    // dependency on it. The compute body below will re-register a
-    // fresh subscription against every Arc signal it reads.
+    // Drop the old Arc subscriptions so a stale one can't outlast the
+    // dependency; the compute body re-registers whatever it still reads.
     for arc_src in arc_sources {
         arc_src.unsubscribe(node);
     }
 
-    // Step 4 as an RAII guard so the tracker/owner-stack book-keeping
-    // is restored even if the compute body panics. Without this, a
-    // panicking effect would leave `current_tracker` pointing at a
-    // disposed node and a stale owner pushed on `owner_stack` —
-    // corrupting dependency tracking and owner scoping for every later
-    // reactive operation (only observable if the panic is caught at the
-    // FFI boundary; otherwise the process aborts). Mirrors the
-    // pre-existing `untrack` Drop guard.
+    // A panicking compute body must not leave `current_tracker` on a
+    // disposed node and a stale owner on `owner_stack` — that corrupts
+    // dependency tracking and owner scoping for every later reactive
+    // operation.
     struct RunGuard;
     impl Drop for RunGuard {
         fn drop(&mut self) {
@@ -230,11 +205,10 @@ fn run_node_if_alive(node: NodeId) {
     }
     let _run_guard = RunGuard;
 
-    // Step 3: invoke compute. The runtime is unborrowed at this
-    // point, so user code inside is free to enter `with_runtime`.
+    // The runtime is unborrowed here, so the compute body is free to
+    // enter `with_runtime`.
     {
         let mut borrow = compute.borrow_mut();
         (*borrow)();
     }
-    // `_run_guard` restores the tracker + owner stack on drop here.
 }

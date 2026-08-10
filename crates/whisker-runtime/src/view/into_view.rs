@@ -6,9 +6,8 @@
 //! components nested inside `render!`).
 //!
 //! The trait is intentionally minimal: every implementor produces a
-//! `View`. A `View` is either a single element, a fragment of
-//! children, or a "marker" view (used by `Show`/`For` to mark
-//! reactive boundaries — Phase 6.5a A3 Step 4).
+//! [`View`], which is a single element, a text snippet, a fragment of
+//! children, or empty.
 
 use super::handle::Element;
 
@@ -26,14 +25,9 @@ pub trait IntoView {
 /// the component body invokes it to materialise the children at the
 /// point in the tree where they should appear.
 ///
-/// Two design points:
-///
-/// - `Fn` (not `FnOnce`) so the closure can be re-invoked across
-///   hot-reload remounts and similar "re-run the body" paths.
-/// - `Rc` (not `Box`) so `Children` itself implements `Clone`. The
-///   `#[component]` macro re-clones every prop on every body
-///   invocation, so a `Children` prop has to be a cheaply-cloneable
-///   handle — `Rc<dyn Fn>` is one machine word.
+/// `Fn` (not `FnOnce`) so the closure survives being re-invoked across
+/// hot-reload remounts, and `Rc` (not `Box`) so `Children` is `Clone` —
+/// `#[component]` re-clones every prop on every body invocation.
 pub type Children = ::std::rc::Rc<dyn ::std::ops::Fn() -> View + 'static>;
 
 /// Mount a `Children` prop at the current position in the tree.
@@ -44,15 +38,11 @@ pub type Children = ::std::rc::Rc<dyn ::std::ops::Fn() -> View + 'static>;
 /// hands this back to the parent's `.child(...)` chain so the parent
 /// sees a single Element handle, exactly like any other child node.
 ///
-/// `&Children` (not `Children`) on purpose — `Rc::clone` would also
-/// work, but a borrow makes the FnMut re-invocation case unambiguous:
-/// nothing here moves out of the surrounding `#[component]` body,
-/// so the hot-reload outer can re-call without `cannot move out of`.
-///
-/// Calling the children closure here is a `Fn::call(&self, ())`,
-/// which only takes `&Rc<…>` — the children Rc itself is left
-/// untouched and can be passed to additional `mount_children` calls
-/// at other positions (multi-projection a la Leptos `ChildrenFn`).
+/// Takes `&Children` so nothing moves out of the surrounding
+/// `#[component]` body and the hot-reload outer can re-call it without
+/// `cannot move out of`. The children `Rc` is left untouched, so it can
+/// be handed to further `mount_children` calls at other positions
+/// (multi-projection a la Leptos `ChildrenFn`).
 pub fn mount_children(children: &Children) -> Element {
     let ph = super::create_phantom_element();
     let view = children();
@@ -60,13 +50,10 @@ pub fn mount_children(children: &Children) -> Element {
     ph
 }
 
-// Function-shaped prop types for control-flow components.
-//
-// These newtypes let `#[component]`-annotated control-flow functions
-// (`For`, `Show`, user-defined ones) accept closure literals via
-// `Into` in the typed-builder `Props`. Each wraps `Rc<dyn Fn>` (not
-// `Box`) so the newtype is `Clone` — `#[component]` re-clones every
-// prop on each body invocation, matching what [`Children`] does.
+// Function-shaped prop types for control-flow components. These
+// newtypes let `#[component]`-annotated control-flow functions accept
+// closure literals via `Into` in the typed-builder `Props`, and wrap
+// `Rc<dyn Fn>` for the same `Clone` reason as [`Children`].
 
 /// `Fn() -> Vec<T>` — the "what items to render" closure for a
 /// keyed-list control flow. Wrapping in a newtype gives typed-builder
@@ -179,13 +166,10 @@ impl WhenFn {
 /// `fallback: || …`.
 ///
 /// `From<F: Fn() -> Element + 'static>` lets a closure literal flow
-/// through typed-builder's `Into<Fallback>` path; `Default` (used
-/// via `#[prop(default)]`) is `None`. (`Fallback` uses an
-/// element-returning closure rather than `Children`'s
-/// view-returning shape because the typical fallback is a single
-/// component invocation like `|| render! { status_banner(...) }`,
-/// which evaluates to `Element`. The implementation re-wraps it
-/// into a `View::Element` before attaching.)
+/// through typed-builder's `Into<Fallback>` path; `Default` (used via
+/// `#[prop(default)]`) is `None`. The closure returns an `Element`
+/// rather than `Children`'s `View` because the typical fallback is a
+/// single component invocation like `|| render! { status_banner(...) }`.
 #[derive(Clone, Default)]
 pub struct Fallback(pub Option<::std::rc::Rc<dyn ::std::ops::Fn() -> Element + 'static>>);
 
@@ -300,17 +284,11 @@ impl<T: IntoView> IntoView for Option<T> {
     }
 }
 
-// Text-shaped `IntoView` impls.
-//
-// Inside `render!`, any `{expr}` that evaluates to a string- or
-// number-shaped value is routed through one of these into a
-// `View::Text`, which becomes a `raw_text` element when the surrounding
-// effect's `attach_to` runs. This is what lets the user write
-// `text { {count.get()} }` and `text { {label} }` interchangeably.
-//
-// We intentionally avoid a blanket `impl<T: Display>` to keep the
-// surface predictable and the orphan rules tractable — primitives
-// list explicitly, custom types implement `IntoView` themselves.
+// Text-shaped `IntoView` impls. These are what let a `{expr}` inside
+// `render!` interpolate a scalar directly. No blanket
+// `impl<T: Display>`: an explicit list keeps the surface predictable
+// and the orphan rules tractable, and custom types implement
+// `IntoView` themselves.
 
 impl IntoView for String {
     fn into_view(self) -> View {

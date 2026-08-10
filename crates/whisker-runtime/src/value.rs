@@ -5,7 +5,7 @@
 //! Rust ⇄ native boundary as data rather than a handle:
 //!
 //!   - **module function args / returns** (`ElementRef::invoke`,
-//!     `PlatformModule::invoke`) — Case ② raw values, no typed-arg
+//!     `PlatformModule::invoke`) — raw values, with no typed-arg
 //!     deserialization at the boundary, and
 //!   - **event payloads** — the body Lynx hands a tap / touch /
 //!     animation handler, delivered to the Rust closure as a
@@ -26,9 +26,8 @@
 //! `serde::Deserialize` type (the typed event structs in
 //! [`crate::event`] use this). The conversion goes through
 //! `serde_json::Value` as a mature, well-tested `Deserializer`
-//! rather than hand-rolling one over `WhiskerValue` — the
-//! intermediate is in-memory (no string parse), so the binary-wire
-//! win over the old JSON-string event payload is preserved.
+//! rather than hand-rolling one over `WhiskerValue`. The intermediate
+//! is in-memory, with no string parse on the path.
 
 use std::collections::BTreeMap;
 use std::fmt;

@@ -1,6 +1,6 @@
 //! Core runtime for Whisker.
 //!
-//! Public surface, after the Phase 6.5a A3 cleanup:
+//! Public surface:
 //!
 //! - [`element`] — the [`ElementTag`](element::ElementTag) enum that
 //!   the macro emit and the C bridge agree on.
@@ -15,10 +15,6 @@
 //! - [`main_thread`] — `run_on_main_thread`, the worker-thread →
 //!   TASM-thread marshaling primitive used to update signals from
 //!   background work (HTTP fetch, channels, etc.).
-//!
-//! Pre-A3 the crate also exposed an `Element` value tree + diff/patch
-//! pipeline; that retired when the macro switched to emitting
-//! imperative `view::*` calls driven by reactive effects.
 
 pub mod anim_hook;
 pub mod element;

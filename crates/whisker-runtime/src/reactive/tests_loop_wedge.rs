@@ -1,7 +1,6 @@
-//! Regression tests for the reactive-loop wedge (edge-triggered lost
-//! wakeup).
+//! Tests pinning the loop's level-triggered idle rule.
 //!
-//! ## The bug being guarded
+//! ## The wedge these guard against
 //!
 //! The render loop is wake-driven: `signal.set()` → `schedule()` pushes
 //! a node onto `rt.pending` and calls `host_wake::wake_runtime()` ONLY on
@@ -9,24 +8,20 @@
 //! whenever a frame reports idle. A native-view layout/measure callback
 //! can re-enter Rust DURING the final `renderer_flush` of a frame and
 //! `schedule()` a signal write; that node lands in `rt.pending` but is
-//! past the frame's drain. If idle were judged purely on "dispatch
-//! completed", the host would pause with work still queued — and because
-//! the queue is now non-empty, no later `set()` fires a wake → permanent
-//! wedge (values change, screen never repaints).
+//! past the frame's drain. Judging idle purely on "dispatch completed"
+//! would pause the host with work still queued — and since the queue is
+//! now non-empty, no later `set()` fires a wake, so values change and
+//! the screen never repaints again.
 //!
-//! The fix is two-fold and these two tests **contrast the wedge**:
+//! The two tests contrast the outcomes:
 //!
-//! - [`fixed_loop_drains_settle_and_tap_renders`] runs the loop with the
-//!   PRODUCTION idle rule — idle == `!has_pending_work()`. A commit-time
-//!   re-entry that schedules a settle node keeps the loop busy until the
-//!   queue drains, so a subsequent "tap" re-renders. The loop makes
-//!   progress.
-//! - [`unfixed_loop_wedges_when_pending_left_dirty`] runs the SAME
-//!   scenario with the PRE-FIX idle rule — idle is hard-coded `true` (the
-//!   frame "always completed"). The commit-time re-entry leaves a node in
-//!   `rt.pending`, the host pauses, and because `schedule()` only wakes on
-//!   the empty→non-empty edge the later "tap" fires no wake. The render
-//!   counter never advances → the wedge is reproduced.
+//! - [`fixed_loop_drains_settle_and_tap_renders`] uses the production
+//!   idle rule, `!has_pending_work()`. A commit-time re-entry keeps the
+//!   loop busy until the queue drains, and a subsequent "tap"
+//!   re-renders.
+//! - [`unfixed_loop_wedges_when_pending_left_dirty`] runs the same
+//!   scenario with idle hard-coded `true`, reproducing the wedge: the
+//!   render counter never advances again.
 
 use std::cell::Cell;
 use std::ffi::c_void;
@@ -120,14 +115,10 @@ fn tick_fixed(settle_signal: RwSignal<i32>, reentry: &Cell<u32>) -> bool {
     !has_pending_work()
 }
 
-/// One host vsync `tick()` using the PRE-FIX idle rule: the frame
-/// "always completed", so it reports idle unconditionally — IGNORING any
-/// node a commit-time re-entry left in `rt.pending`. This is the buggy
-/// `!dispatch_pending` (with no `has_pending_work` term) and no
-/// same-frame settle loop.
+/// One host vsync `tick()` under the rejected idle rule: the frame
+/// "always completed", so it reports idle unconditionally, ignoring any
+/// node a commit-time re-entry left in `rt.pending`.
 fn tick_unfixed(settle_signal: RwSignal<i32>, reentry: &Cell<u32>) {
-    // No settle loop: drain only what the in-frame flush sees, then leave
-    // any commit-time re-entry node dirty in the queue.
     flush();
     tasks::run_until_stalled();
     flush();
@@ -135,17 +126,16 @@ fn tick_unfixed(settle_signal: RwSignal<i32>, reentry: &Cell<u32>) {
     for _ in 0..pending_reentry {
         settle_signal.set(settle_signal.get_untracked() + 1);
     }
-    // NOTE: deliberately NO settle loop and the caller treats idle as a
+    // Deliberately no settle loop, and the caller treats idle as a
     // hard-coded `true` — the node scheduled above is left undrained.
 }
 
 // ----- Tests ----------------------------------------------------------------
 
-/// FIXED loop: with the production level-triggered idle + same-frame
-/// settle loop, a commit-time re-entry never wedges the loop and a later
-/// "tap" re-renders. Contrast with
-/// [`unfixed_loop_wedges_when_pending_left_dirty`], which runs the same
-/// scenario under the pre-fix idle rule and stays frozen.
+/// With the production level-triggered idle plus the same-frame settle
+/// loop, a commit-time re-entry never wedges the loop and a later "tap"
+/// re-renders. Contrast with
+/// [`unfixed_loop_wedges_when_pending_left_dirty`].
 #[test]
 fn fixed_loop_drains_settle_and_tap_renders() {
     let _g = lock();
@@ -167,7 +157,6 @@ fn fixed_loop_drains_settle_and_tap_renders() {
             settle_signal.get();
             rc.set(rc.get() + 1);
         });
-        // Initial effect run.
         flush();
         let baseline = render_count.get();
 
@@ -175,9 +164,8 @@ fn fixed_loop_drains_settle_and_tap_renders() {
         // `settle_signal` ONCE during the next frame's commit.
         let reentry = Cell::new(1u32);
 
-        // ----- Drive the host loop (bounded iterations) -----
-        // The vsync loop ticks while running; on idle it pauses and only a
-        // wake (from a `set()` empty→non-empty edge) resumes it.
+        // The vsync loop ticks while running; on idle it pauses, and only
+        // a wake (a `set()` on the empty→non-empty edge) resumes it.
         let mut vsync_idle = false;
         for _ in 0..50 {
             if VSYNC_RUNNING.with(|v| v.get()) {
@@ -186,9 +174,6 @@ fn fixed_loop_drains_settle_and_tap_renders() {
                     VSYNC_RUNNING.with(|v| v.set(false));
                 }
             } else {
-                // Vsync paused. The settle re-entry must already have been
-                // drained in-frame, so pausing here is correct. Fire the
-                // "tap" exactly once: a user write that must wake the loop.
                 break;
             }
         }
@@ -196,7 +181,6 @@ fn fixed_loop_drains_settle_and_tap_renders() {
             vsync_idle,
             "fixed loop should reach idle after draining settle"
         );
-        // The commit-time re-entry rendered in the same frame.
         assert!(
             render_count.get() > baseline,
             "settle re-entry must have re-rendered (render_count advanced past baseline)"
@@ -204,8 +188,8 @@ fn fixed_loop_drains_settle_and_tap_renders() {
 
         let after_settle = render_count.get();
 
-        // ----- Tap while paused ----- a single user `set()` must wake the
-        // host (empty→non-empty edge) and the resumed loop must re-render.
+        // Tapping while paused: a single user `set()` must wake the host
+        // on the empty→non-empty edge, and the resumed loop re-render.
         let wakes_before = WAKE_COUNT.with(|c| c.get());
         count.set(1);
         assert!(
@@ -217,7 +201,6 @@ fn fixed_loop_drains_settle_and_tap_renders() {
             "wake must unpause the vsync loop"
         );
 
-        // Drain the resumed loop.
         let mut settled = false;
         for _ in 0..50 {
             if VSYNC_RUNNING.with(|v| v.get()) {
@@ -241,13 +224,12 @@ fn fixed_loop_drains_settle_and_tap_renders() {
     reset_all();
 }
 
-/// UNFIXED loop: with the pre-fix idle rule (frame always reports idle,
-/// no same-frame settle), a commit-time re-entry leaves a node dirty in
-/// `rt.pending`. The host pauses; because `schedule()` only wakes on the
-/// empty→non-empty edge and the queue is already non-empty, a later "tap"
-/// `set()` fires NO wake — the loop stays frozen and never re-renders.
-/// This reproduces the wedge that
-/// [`fixed_loop_drains_settle_and_tap_renders`] proves the fix closes.
+/// With the rejected idle rule (frame always reports idle, no same-frame
+/// settle), a commit-time re-entry leaves a node dirty in `rt.pending`.
+/// The host pauses; because `schedule()` only wakes on the empty→non-empty
+/// edge and the queue is already non-empty, a later "tap" `set()` fires no
+/// wake and the loop stays frozen. The counterpart to
+/// [`fixed_loop_drains_settle_and_tap_renders`].
 #[test]
 fn unfixed_loop_wedges_when_pending_left_dirty() {
     let _g = lock();
@@ -272,15 +254,15 @@ fn unfixed_loop_wedges_when_pending_left_dirty() {
         // frame's commit, leaving its subscriber node dirty in `pending`.
         let reentry = Cell::new(1u32);
 
-        // Drive the host loop with the PRE-FIX idle (hard-coded true: the
-        // frame "always completed"). After one tick the re-entry node sits
-        // undrained in `pending`, and the host pauses.
+        // Drive the host loop with the rejected idle rule (hard-coded
+        // true: the frame "always completed"). After one tick the re-entry
+        // node sits undrained in `pending`, and the host pauses.
         let mut vsync_idle = false;
         for _ in 0..50 {
             if VSYNC_RUNNING.with(|v| v.get()) {
                 tick_unfixed(settle_signal, &reentry);
-                // PRE-FIX: idle is unconditionally true (no
-                // `has_pending_work` term, no settle loop).
+                // Idle unconditionally: no `has_pending_work` term and
+                // no settle loop.
                 vsync_idle = true;
                 VSYNC_RUNNING.with(|v| v.set(false));
             } else {
@@ -297,9 +279,9 @@ fn unfixed_loop_wedges_when_pending_left_dirty() {
 
         let render_before_tap = render_count.get();
 
-        // ----- Tap while wedged ----- the queue is already non-empty, so
-        // `schedule()` takes the was_empty == false branch and fires NO
-        // wake. The vsync loop stays paused.
+        // Tapping while wedged: the queue is already non-empty, so
+        // `schedule()` takes the `was_empty == false` branch and fires no
+        // wake at all.
         let wakes_before = WAKE_COUNT.with(|c| c.get());
         count.set(1);
         assert_eq!(

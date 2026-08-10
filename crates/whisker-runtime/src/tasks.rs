@@ -55,25 +55,19 @@ thread_local! {
 ///
 /// # Why this exists
 ///
-/// `LocalPool`'s built-in waker, when woken, only re-queues the task
-/// into the pool's internal ready-queue — it does NOT poke the native
-/// main loop. The pool is re-polled only from the driver's
-/// `tick_frame` → [`run_until_stalled`], which fires on a host vsync
-/// `tick()` or on a `run_on_main_thread` DRIVE post. So a task awaiting
-/// a future that completes on a FOREIGN thread (e.g. a tokio runtime
-/// thread, or a `std::thread` worker) gets re-queued by the wake but
-/// never re-polled — it hangs forever while vsync is parked (issue #7).
+/// `LocalPool`'s built-in waker only re-queues the task into the pool's
+/// ready-queue; it does not poke the native main loop. The pool is
+/// re-polled only from the driver's `tick_frame` →
+/// [`run_until_stalled`], so a task awaiting a future that completes on
+/// a FOREIGN thread (a tokio runtime thread, a `std::thread` worker)
+/// would be re-queued and never re-polled — hanging for as long as
+/// vsync stays parked. Every spawned future is therefore polled through
+/// a [`DriveWaker`] that forwards to the pool's inner waker AND calls
+/// this hook.
 ///
-/// We fix this by polling each spawned future through a [`DriveWaker`]
-/// that, on `wake`/`wake_by_ref`, forwards to the pool's inner waker
-/// (to re-queue the task) AND calls this hook (to poke the main loop).
-///
-/// In production the hook is [`request_main_loop_drive`], which routes
-/// through [`crate::main_thread::run_on_main_thread`] — documented as
-/// safe to call from any thread — so the registered DRIVE callback
-/// (`tick_frame` → `run_until_stalled`) runs and re-polls the pool.
-/// Tests can override it via [`set_drive_hook`] to observe wakes
-/// without a full main-loop harness.
+/// In production the hook is [`request_main_loop_drive`]. Tests can
+/// override it via [`set_drive_hook`] to observe wakes without a full
+/// main-loop harness.
 type DriveHook = fn();
 
 static DRIVE_HOOK: std::sync::Mutex<DriveHook> = std::sync::Mutex::new(request_main_loop_drive);
@@ -81,21 +75,16 @@ static DRIVE_HOOK: std::sync::Mutex<DriveHook> = std::sync::Mutex::new(request_m
 /// Production drive hook: ask the host to run another drive of the
 /// runtime (which calls [`run_until_stalled`]).
 ///
-/// Routed through `run_on_main_thread(|| {})`: posting an empty
-/// closure to the host's main-thread dispatcher makes the trampoline
-/// fire the registered DRIVE callback on the main thread, which runs
+/// Posting an empty closure to the host's main-thread dispatcher makes
+/// the trampoline fire the registered DRIVE callback, which runs
 /// `tick_frame` → `run_until_stalled` and re-polls the ready task.
-/// `run_on_main_thread` is any-thread-safe (it snapshots a global
-/// dispatcher behind a `Mutex`), so this is sound to call from a
-/// foreign thread's wake.
+/// `run_on_main_thread` is any-thread-safe, so this is sound to call
+/// from a foreign thread's wake.
 ///
-/// Re-entrancy: if the wake happens on the MAIN thread while a drive
-/// is already in progress (e.g. a task self-wakes during
-/// `run_until_stalled`), the trampoline consults
-/// `main_work_in_progress()` and defers to a vsync frame instead of
-/// re-entering `tick_frame`. The re-queued task is then picked up by
-/// the in-flight `run_until_stalled` loop (it drains to a stall) or by
-/// the next frame. See `main_thread::trampoline`.
+/// A wake on the MAIN thread while a drive is already in progress (a
+/// task self-waking during `run_until_stalled`) defers to a vsync
+/// frame — see `main_thread::trampoline`. The re-queued task is picked
+/// up by the in-flight drain or by the next frame.
 fn request_main_loop_drive() {
     crate::main_thread::run_on_main_thread(|| {});
 }
@@ -116,26 +105,19 @@ fn invoke_drive_hook() {
 /// A `Waker` that bridges a foreign-thread wake to Whisker's main
 /// loop.
 ///
-/// Holds the pool's own inner `Waker` for the task (so waking still
-/// re-queues the task into `LocalPool`'s ready-queue, preserving the
-/// stock same-thread / self-wake behavior). On `wake`, it:
-///
-/// 1. forwards to the inner waker → the task is marked ready; then
-/// 2. calls the drive hook → the main loop is poked so
-///    `run_until_stalled` actually re-polls.
-///
-/// Step 2 is the missing link the bare `LocalPool` lacked. It is safe
-/// from any thread: the inner waker is `Send + Sync` and the drive
-/// hook funnels through the any-thread-safe `run_on_main_thread`.
+/// Holds the pool's own inner `Waker` for the task, so waking still
+/// re-queues it into `LocalPool`'s ready-queue and the stock
+/// same-thread / self-wake behaviour is preserved; then calls the drive
+/// hook so the main loop actually re-polls. Safe from any thread — the
+/// inner waker is `Send + Sync` and the hook funnels through the
+/// any-thread-safe `run_on_main_thread`.
 struct DriveWaker {
     inner: std::task::Waker,
 }
 
 impl ArcWake for DriveWaker {
     fn wake_by_ref(arc_self: &Arc<Self>) {
-        // (a) mark the task ready in the pool's ready-queue.
         arc_self.inner.wake_by_ref();
-        // (b) ensure the main loop will re-poll the pool.
         invoke_drive_hook();
     }
 }
@@ -143,13 +125,11 @@ impl ArcWake for DriveWaker {
 /// Wraps a spawned future so that it is always polled with a
 /// [`DriveWaker`]-composed `Context`.
 ///
-/// `LocalPool` polls this wrapper with ITS waker (`cx.waker()`). We
-/// build a `DriveWaker` around that inner waker and poll the user
-/// future with it, so whatever waker the user future stashes (and
-/// later wakes, possibly from a foreign thread) is the drive-bridging
-/// one — not the bare pool waker. The pool's own scheduling is
-/// preserved (the inner waker is still forwarded on every wake); we
-/// only ADD the main-loop poke.
+/// `LocalPool` polls this wrapper with ITS waker (`cx.waker()`); the
+/// user future is polled with a `DriveWaker` built around that one, so
+/// whatever waker the user future stashes — and later wakes, possibly
+/// from a foreign thread — is the drive-bridging one rather than the
+/// bare pool waker.
 struct DriveBridged<F> {
     future: F,
 }
@@ -196,17 +176,11 @@ where
 {
     SPAWNER.with(|s| {
         s.borrow()
-            // Wrap so the future is polled with a `DriveWaker`-composed
-            // context: a wake from ANY thread re-queues the task in the
-            // pool AND pokes the main loop (see `DriveBridged` /
-            // `DRIVE_HOOK`). This is what lets a future awaited here
-            // resume when woken from a foreign (e.g. tokio) thread.
             .spawn_local(DriveBridged { future })
             .expect("whisker tasks: local pool is shut down");
     });
-    // Nudge the host so the next frame's tick callback actually
-    // runs and drains the queue. Without this, a freshly spawned
-    // task would sit dormant until something else woke the runtime.
+    // Without this nudge a freshly spawned task sits dormant until
+    // something else happens to wake the runtime.
     crate::host_wake::wake_runtime();
 }
 
@@ -253,26 +227,15 @@ where
     let (tx, rx) = futures_channel::oneshot::channel::<T>();
     std::thread::spawn(move || {
         let value = closure();
-        // Hop back to the main thread before sending so the receiver
-        // wakes up on the TASM thread (same thread the awaiting task
-        // polls on). Without this, the receiver would wake from the
-        // worker — fine for futures-channel's own internal locking
-        // but pessimistic for the runtime: the wake would still go
-        // through `host_wake::wake_runtime`, which posts to the main
-        // thread, but the order of operations is cleaner this way.
+        // Hop to the main thread before sending so the receiver wakes
+        // on the TASM thread, the same one the awaiting task polls on.
         crate::main_thread::run_on_main_thread(move || {
-            // `send` fails only if the awaiting half was dropped
-            // (its owner was disposed mid-fetch). In that case the
-            // result is simply discarded; no panic, no warning —
-            // this is the documented `resource` cancel-on-dispose
-            // semantics.
+            // `send` fails only when the awaiting half was dropped
+            // because its owner was disposed mid-fetch — the documented
+            // `resource` cancel-on-dispose semantics, so drop silently.
             let _ = tx.send(value);
         });
     });
-    // Wrap the receiver so user code awaits `T`. Cancellation (sender
-    // dropped because the awaiting owner was disposed) parks the
-    // future forever — the task will be GC'd when its owner cascade
-    // fires.
     BlockingResult { rx }
 }
 
@@ -306,7 +269,6 @@ impl<T> Future for BlockingResult<T> {
 /// doesn't bleed across.
 #[doc(hidden)]
 pub fn __reset_for_tests() {
-    // Replacing the pool drops every queued task.
     POOL.with(|p| *p.borrow_mut() = LocalPool::new());
     SPAWNER.with(|s| {
         POOL.with(|p| {
@@ -324,10 +286,6 @@ mod tests {
     use std::rc::Rc;
     use std::sync::MutexGuard;
 
-    /// Tests in this module reach into thread-local state (executor)
-    /// AND process-global state (dispatcher / frame callback). Use the
-    /// shared [`crate::main_thread::host_test_lock`] so they don't race
-    /// the host-global tests in sibling modules.
     fn lock<'a>() -> MutexGuard<'a, ()> {
         crate::main_thread::host_test_lock()
     }
@@ -337,9 +295,8 @@ mod tests {
         crate::main_thread::__reset_for_tests();
     }
 
-    /// Synchronous in-test dispatcher: invokes the callback inline
-    /// (on the caller's thread). Good enough to verify run_blocking
-    /// without spinning up a real event loop.
+    /// Synchronous in-test dispatcher: invokes the callback inline on
+    /// the caller's thread.
     extern "C" fn sync_invoke(
         _engine: *mut c_void,
         callback: extern "C" fn(*mut c_void),
@@ -420,8 +377,6 @@ mod tests {
             .await;
         });
         run_until_stalled();
-        // First poll → Pending + self-wake → second poll → Ready,
-        // all inside the same `run_until_stalled` invocation.
         assert_eq!(phase.get(), 2);
     }
 
@@ -438,10 +393,8 @@ mod tests {
             *got_for_task.borrow_mut() = Some(v);
         });
 
-        // The worker thread + sync dispatcher + receiver poll cycle
-        // is not synchronous from the spawning thread's POV (the
-        // worker may not have scheduled yet). Poll-loop with a cap
-        // until the value lands.
+        // The worker may not have scheduled yet, so poll-loop with a
+        // cap until the value lands.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while got.borrow().is_none() && std::time::Instant::now() < deadline {
             run_until_stalled();
@@ -453,23 +406,15 @@ mod tests {
 
     #[test]
     fn run_on_main_thread_trampoline_wakes_runtime() {
-        // Regression for the hn-reader "Loading top stories stuck"
-        // bug: a worker thread that calls
-        // `run_on_main_thread(|| tx.send(value))` must wake the
-        // runtime after the closure runs, so the host re-enters
-        // `tick` and `run_until_stalled` polls the awaiting future.
-        //
-        // Without the wake, the receiver's Waker re-queues the task
-        // in `LocalPool`, but `LocalPool` is only polled from `tick`
-        // — which doesn't fire if `CADisplayLink` is paused. Result:
-        // future sleeps forever, `Resource::state` stays at
-        // `Loading`, screen stuck on the loading banner.
+        // The trampoline must wake the runtime after the closure runs,
+        // or the awaiting future is never re-polled: `LocalPool` is
+        // only drained from `tick`, which doesn't fire while the host's
+        // vsync loop is paused.
         use std::sync::atomic::{AtomicBool, Ordering};
         let _g = lock();
         reset_all();
         install_sync_dispatcher();
 
-        // Install a wake callback that flips a flag.
         static WOKE: AtomicBool = AtomicBool::new(false);
         WOKE.store(false, Ordering::SeqCst);
         extern "C" fn wake_cb(_: *mut c_void) {
@@ -477,9 +422,6 @@ mod tests {
         }
         crate::host_wake::set_request_frame_callback(Some(wake_cb), std::ptr::null_mut());
 
-        // Schedule a no-op closure through `run_on_main_thread`.
-        // The sync dispatcher runs it inline; the trampoline must
-        // then call `wake_runtime`.
         crate::main_thread::run_on_main_thread(|| {});
 
         assert!(
@@ -497,18 +439,14 @@ mod tests {
     fn run_blocking_future_parks_when_no_dispatcher_registered() {
         let _g = lock();
         reset_all();
-        // No dispatcher installed → run_on_main_thread drops the
-        // closure, sender never fires, receiver stays Pending
-        // forever. The awaiting task body never advances past the
-        // .await.
-
+        // No dispatcher installed → `run_on_main_thread` drops the
+        // closure, so the sender never fires.
         let polled = Rc::new(Cell::new(false));
         let polled_for_task = polled.clone();
         spawn_local(async move {
             let _v: () = run_blocking(|| {}).await;
             polled_for_task.set(true);
         });
-        // Generous wait so worker definitely runs.
         for _ in 0..20 {
             run_until_stalled();
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -551,11 +489,8 @@ mod tests {
         let _g = lock();
         reset_all();
 
-        // Inject a test drive hook that records that it was poked. In
-        // production this hook routes through `run_on_main_thread`,
-        // poking the host main loop; here we just count the pokes and
-        // (crucially) re-poll the pool, the way the real DRIVE callback
-        // (`tick_frame` → `run_until_stalled`) would.
+        // The test hook counts pokes; the re-poll the real DRIVE
+        // callback would do is done explicitly below.
         static DRIVE_POKES: AtomicUsize = AtomicUsize::new(0);
         DRIVE_POKES.store(0, Ordering::SeqCst);
         fn test_hook() {
@@ -580,7 +515,6 @@ mod tests {
             completed_for_task.set(true);
         });
 
-        // First drive: polls the task to Pending, stashing its waker.
         run_until_stalled();
         assert!(!completed.get(), "task should be parked awaiting signal");
         assert!(
@@ -588,31 +522,24 @@ mod tests {
             "task must have stashed its waker on the first poll"
         );
 
-        // Now complete the future from a SEPARATE std::thread — exactly
-        // the foreign-thread wake the bug is about. The thread flips the
-        // done flag and wakes the stored (drive-bridging) waker.
+        // Complete the future from a SEPARATE std::thread — the
+        // foreign-thread wake this test exists for.
         let done_for_thread = done.clone();
         let slot_for_thread = waker_slot.clone();
         let handle = std::thread::spawn(move || {
             done_for_thread.store(true, Ordering::SeqCst);
             let waker = slot_for_thread.lock().unwrap().take().unwrap();
-            // Wake from the foreign thread. This must (a) re-queue the
-            // task in the pool and (b) invoke the drive hook so the main
-            // loop knows to re-poll.
             waker.wake();
         });
         handle.join().unwrap();
 
-        // The drive hook MUST have been invoked by the foreign-thread
-        // wake — this is the link the bare LocalPool lacked.
         assert!(
             DRIVE_POKES.load(Ordering::SeqCst) >= 1,
             "foreign-thread wake must invoke the drive hook so the main \
              loop re-polls the pool (issue #7)"
         );
 
-        // Simulate the DRIVE callback the hook would have triggered: a
-        // re-poll of the pool. The task is now ready and resolves.
+        // Stand in for the DRIVE callback the hook would have triggered.
         run_until_stalled();
         assert!(
             completed.get(),
@@ -632,7 +559,6 @@ mod tests {
         spawn_local(async move {
             c.set(c.get() + 1);
         });
-        // Reset without running — task should be discarded.
         __reset_for_tests();
         run_until_stalled();
         assert_eq!(counter.get(), 0, "reset should drop pending tasks");
@@ -640,10 +566,8 @@ mod tests {
 
     #[test]
     fn spawn_local_after_reset_uses_fresh_spawner() {
-        // Regression: __reset_for_tests must rebuild SPAWNER from
-        // the fresh POOL. If we accidentally kept the old spawner,
-        // subsequent spawn_local calls would fail to enqueue on the
-        // new pool.
+        // `__reset_for_tests` must rebuild SPAWNER from the fresh POOL,
+        // or later `spawn_local` calls enqueue onto the dead one.
         let _g = lock();
         reset_all();
         __reset_for_tests();

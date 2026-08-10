@@ -108,12 +108,9 @@ impl Owner {
     /// Recursive — disposes children first, then this owner. Safe
     /// to call even if the owner has already been disposed (no-op).
     pub fn dispose(self) {
-        // Step 1: collect what needs cleaning. We pull data out of
-        // the runtime in a short borrow rather than holding it
-        // through the recursion, because each level may itself need
-        // to mutate the runtime (running cleanup callbacks does not,
-        // but symmetrically we keep the pattern simple by avoiding
-        // nested borrows).
+        // Everything is pulled out under a short borrow rather than
+        // held across the recursion — deeper levels re-enter the
+        // runtime.
         let children;
         let nodes;
         let cleanups;
@@ -131,10 +128,8 @@ impl Owner {
             elements = o.elements;
         }
 
-        // Step 1b: if this was a component owner, scrub the hot-
-        // reload registry so the fn pointer doesn't list a freed
-        // slot. Without this, A6's `owners_for_fn` would return a
-        // dangling Owner and remount logic would fault.
+        // A component owner must leave the hot-reload registry, or
+        // `owners_for_fn` hands remount logic a dangling Owner.
         if let Some(fp) = mount_fn {
             with_runtime(|rt| {
                 if let Some(list) = rt.component_owners.get_mut(&fp) {
@@ -145,19 +140,14 @@ impl Owner {
                 }
             });
 
-            // Step 1c: also clean up any remountable MountSite whose
-            // owner is this one. Without this scrub, cascading
-            // disposal (e.g. parent component re-mounts and discards
-            // its sub-tree) leaves orphan MountSites behind, and
-            // the next `remount_components_for` call processes
-            // them — operating on freed parent / body_root handles,
-            // with visible corruption (issue #17 follow-up).
+            // Likewise its remountable MountSites: an orphan site
+            // survives cascading disposal and the next
+            // `remount_components_for` then operates on freed parent /
+            // body_root handles.
             //
             // `site.owner` is `None` *during* a remount (the
-            // takes-then-reinstalls window in `remount_one`), so
-            // this scan won't accidentally evict the site that's
-            // mid-flight. It only matches MountSites whose
-            // component owner is the one actually being disposed.
+            // take-then-reinstall window in `remount_one`), so this
+            // scan can't evict a site that is mid-flight.
             with_runtime(|rt| {
                 let stale: Vec<super::component::MountId> = rt
                     .mount_sites
@@ -182,7 +172,6 @@ impl Owner {
             });
         }
 
-        // Step 2: detach from parent's children list.
         if let Some(p) = parent {
             with_runtime(|rt| {
                 if let Some(parent_scope) = rt.owners.get_mut(p) {
@@ -191,37 +180,25 @@ impl Owner {
             });
         }
 
-        // Step 3: dispose descendants (post-order — bottom up).
         for child in children {
             child.dispose();
         }
 
-        // Step 4: run THIS owner's cleanups BEFORE freeing its nodes, so an
-        // `on_cleanup` callback can still read/write the signals it closed
-        // over — the natural expectation (Solid / Leptos / React all allow
-        // it) and consistent with `set` on a freed signal already being a
-        // silent no-op (`try_write_and_notify`). Freeing first (the old
-        // order) made a same-owner `get` in a cleanup panic with `signal
-        // disposed`; worse, when the cleanup ran mid-`tick_frame` (a router
-        // screen disposed on a transition's finish), that panic unwound the
-        // whole frame and stranded unrelated reactive work (frozen
-        // animations, dead event handlers). Children are already disposed
-        // above, so a cleanup reading a *child's* signal still gets nothing —
-        // but that's the uncommon case; own-signal reads are what callers
-        // expect. LIFO order, no runtime borrow held (cleanups may touch the
-        // runtime).
+        // Cleanups run before this owner's nodes are freed, so an
+        // `on_cleanup` can still read and write the signals it closed
+        // over (what Solid / Leptos / React all allow). Children are
+        // already disposed above, so a *child's* signal still reads as
+        // gone. LIFO, and with no runtime borrow held — a cleanup may
+        // re-enter the runtime.
         for cleanup in cleanups.into_iter().rev() {
             cleanup();
         }
 
-        // Step 5: free every node this owner allocated. For effects
-        // / computed values, also detach them from any subscriber
-        // list they were on, so other live nodes don't try to
-        // notify a freed slot later.
-        //
-        // Arc-signal back-references (`arc_sources`) get collected
-        // here and unsubscribed below, outside the runtime borrow —
-        // the unsubscribe callees may re-enter the runtime.
+        // Freeing a node also detaches it from every subscriber list
+        // it was on, so no live node notifies a freed slot later.
+        // Arc-signal back-refs are collected here and unsubscribed
+        // below, outside the borrow — those callees re-enter the
+        // runtime.
         let arc_unsubscribes: Vec<(Rc<dyn super::runtime::ArcSubscription>, NodeId)> =
             with_runtime(|rt| {
                 let mut out: Vec<(Rc<dyn super::runtime::ArcSubscription>, NodeId)> = Vec::new();
@@ -229,52 +206,40 @@ impl Owner {
                     let Some(node) = rt.nodes.remove(*node_id) else {
                         continue;
                     };
-                    // Remove ourselves from every source's subscriber list.
                     for source in node.sources {
                         if let Some(src_node) = rt.nodes.get_mut(source) {
                             src_node.subscribers.remove(node_id);
                         }
                     }
-                    // Remove ourselves from every subscriber's source list —
-                    // a signal we owned may have been read by an outer effect.
+                    // A signal this owner held may have been read by an
+                    // outer effect, so clear the reverse edge too.
                     for sub in node.subscribers {
                         if let Some(sub_node) = rt.nodes.get_mut(sub) {
                             sub_node.sources.remove(node_id);
                         }
                     }
-                    // Collect arc-signal back-refs so we can call
-                    // `unsubscribe` outside the runtime borrow.
                     for arc_src in node.arc_sources {
                         out.push((arc_src, *node_id));
                     }
                 }
-                // Strip these nodes from the pending and deferred queues
-                // if any were scheduled — otherwise a later flush /
-                // resume would try to re-run a freed slot.
+                // A scheduled node left in these queues would be re-run
+                // from its freed slot on the next flush / resume.
                 rt.pending.retain(|n| !nodes.contains(n));
                 rt.deferred.retain(|n| !nodes.contains(n));
                 out
             });
 
-        // Tell every Arc-backed signal that one of our disposed
-        // nodes used to be on its subscriber list. The signal itself
-        // stays alive (Arc refcount), but pruning here keeps its
-        // list bounded so a long-lived signal doesn't accumulate
-        // dead `NodeId`s from every transient subscriber that came
-        // and went.
+        // An Arc-backed signal outlives its subscribers, so pruning
+        // here is what keeps its list from accumulating dead
+        // `NodeId`s across transient subscribers.
         for (arc_src, subscriber) in arc_unsubscribes {
             arc_src.unsubscribe(subscriber);
         }
 
-        // Step 6: release every element handle the disposed owner
-        // created. We do this AFTER recursing into children so that
-        // bottom-up disposal order matches what the renderer
-        // expects (a child element's release before its parent's
-        // is fine; the bridge only complains if a parent is missing
-        // when a child reaches up). Done with the runtime borrow
-        // released so a future renderer that wants to call back
-        // into the reactive system (e.g. to notify "element
-        // released") can do so.
+        // Element release comes after the child recursion so the
+        // renderer sees children released before their parents, and
+        // runs with no runtime borrow held so a renderer may call back
+        // into the reactive system.
         for handle in elements {
             crate::view::release_element(handle);
         }
@@ -338,9 +303,8 @@ impl Owner {
             if !any {
                 return false;
             }
-            // Drain deferred → pending for every node whose owner
-            // is no longer paused. Stale entries (node disposed
-            // under a paused owner) are dropped here.
+            // Nodes disposed while their owner was paused are still
+            // listed here; they get dropped rather than re-queued.
             let deferred = std::mem::take(&mut rt.deferred);
             for node in deferred {
                 let still_paused = rt

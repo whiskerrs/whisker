@@ -2,11 +2,10 @@
 //! item provider (Lynx's `componentAtIndex` / `enqueueComponent`
 //! contract) on demand.
 //!
-//! Per whisker#83 the reusable core is split from the element it drives:
-//! `ListMount = Virtualizer + <list> element`; a future `PagerMount`
-//! would be `Virtualizer + <module element>`. This module is that
-//! `Virtualizer` — it knows nothing about `<list>` specifically, only
-//! that `handle` carries a native item provider and a count broadcast.
+//! The core is deliberately split from the element it drives —
+//! `ListMount = Virtualizer + <list> element` — so it knows nothing
+//! about `<list>` specifically, only that `handle` carries a native
+//! item provider and a count broadcast.
 //!
 //! # Model (pull, on-demand)
 //!
@@ -30,17 +29,16 @@
 //! On owner disposal every live slot is disposed and the provider is
 //! released through `whisker-driver`'s `trampoline_free`.
 //!
-//! # Provider contract (verified on device)
+//! # Provider contract
 //!
 //! Lynx `ListElement::ComponentAtIndex` requires the embedder callback
 //! to **attach the item to the list** (`append_child(list, item)`) and
 //! return its `impl_id`; it then runs `OnComponentFinished` → layout
 //! over that freshly-appended subtree. Returning the sign *without*
 //! appending leaves the item unparented and the native list crashes in
-//! `OnListItemWillAppear` (null `element_container`) — found on device,
-//! fixed by the `append_child` here. Re-entrant element creation during
-//! the callback is safe (the bridge renderer holds no field borrow
-//! across an FFI call, #214).
+//! `OnListItemWillAppear` (null `element_container`). Re-entrant
+//! element creation during the callback is safe — the bridge renderer
+//! holds no field borrow across an FFI call.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -89,8 +87,8 @@ pub struct ItemMeta<K> {
 
 impl<K> ItemMeta<K> {
     /// Stable logical identity — the same key must identify the same
-    /// item across data updates (it drives the native reorder /
-    /// insert / remove diff, exactly like the former `key:` prop).
+    /// item across data updates, since it drives the native reorder /
+    /// insert / remove diff.
     pub fn key(key: K) -> Self {
         Self {
             key,
@@ -185,10 +183,9 @@ impl MetaFields {
 /// remove → insert → update in that order).
 ///
 /// A reorder that survives neither prefix nor suffix degrades to a
-/// full-window remove+insert — same identity loss as the legacy full
-/// replace, no worse. When the renderer can't deliver explicit actions
-/// (a Lynx build predating the capi, or a test renderer), falls back
-/// to the full-replace [`set_update_list_info`].
+/// full-window remove+insert. When the renderer can't deliver explicit
+/// actions (a Lynx build predating the capi, or a test renderer), falls
+/// back to the full-replace [`set_update_list_info`].
 fn send_data_source_update(
     handle: Element,
     prev: &[String],
@@ -217,7 +214,6 @@ fn send_data_source_update(
     }
 
     if removals.is_empty() && inserts.is_empty() && updates.is_empty() {
-        // Identical key list + metadata — nothing to send.
         return;
     }
     if !update_list_actions(handle, &removals, &inserts, &updates) {
@@ -288,21 +284,17 @@ pub fn virtualize<T, K, ItemsFn, MetaFn, BuildFn>(
     let next_id: Rc<Cell<u64>> = Rc::new(Cell::new(0));
     let layout_id: Rc<Cell<i64>> = Rc::new(Cell::new(0));
     // Item-key list + per-key metadata from the previous data-source
-    // update — the minimal diff (common prefix/suffix splice) is
-    // computed against the keys, so untouched items keep their native
-    // identity and the list can hold its scroll position across
-    // appends; metadata changes on surviving keys become in-place
-    // update actions.
+    // update — the prefix/suffix splice diffs against these, so
+    // untouched items keep their native identity and the list holds its
+    // scroll position across appends.
     let prev_keys: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let prev_meta: Rc<RefCell<HashMap<String, MetaFields>>> = Rc::new(RefCell::new(HashMap::new()));
     let meta = Rc::new(meta);
     let build = Rc::new(build);
-    // Anchor slot owners to the owner active at SETUP (the list component's
-    // scope) so items built on demand in the native callback still inherit
-    // context — `use_context` / `use_navigator` walk the owner chain.
-    // `component_at_index` fires outside any reactive scope, so a detached
-    // slot owner would sever the chain (on-device: `use_navigator() outside
-    // a Router`).
+    // Anchored to the owner active at SETUP so items built on demand
+    // inherit context — `use_context` / `use_navigator` walk the owner
+    // chain, and `component_at_index` fires outside any reactive scope,
+    // where a detached slot owner would sever it.
     let parent_owner = Owner::new(None);
 
     // Dispose the deferred batch. Safe to call whenever control is back in a
@@ -318,8 +310,6 @@ pub fn virtualize<T, K, ItemsFn, MetaFn, BuildFn>(
         }
     };
 
-    // Effect: items() -> snapshot + stable item-key list + layout-id bump +
-    // data-source update (drives the native diff).
     {
         let current_items = current_items.clone();
         let layout_id = layout_id.clone();
@@ -332,11 +322,9 @@ pub fn virtualize<T, K, ItemsFn, MetaFn, BuildFn>(
         effect(move || {
             flush_pending();
             let new_items = items();
-            // Stable item-key + metadata for every item in current order
-            // (assign an id to first-seen keys). `component_at_index`
-            // stamps the matching `item-key="w_{id}"` on each built
-            // wrapper, so the native list reconciles them and can diff a
-            // reorder.
+            // `component_at_index` stamps the matching
+            // `item-key="w_{id}"` on each wrapper it builds, which is
+            // how the native list reconciles a reorder.
             let mut keys: Vec<String> = Vec::with_capacity(new_items.len());
             let mut metas: Vec<MetaFields> = Vec::with_capacity(new_items.len());
             {
@@ -389,14 +377,12 @@ pub fn virtualize<T, K, ItemsFn, MetaFn, BuildFn>(
             let build = build.clone();
             let flush_pending = flush_pending.clone();
             Box::new(move |index, _op_id, _reuse| {
-                // Dispose the previous batch of enqueued-and-detached elements.
                 flush_pending();
                 let item = match current_items.borrow().get(index as usize) {
                     Some(t) => t.clone(),
                     None => return INVALID_ITEM_INDEX,
                 };
                 let m = meta(&item);
-                // Stable id for the `item-key` (assign on first sight).
                 let id = {
                     let mut ids = key_ids.borrow_mut();
                     match ids.get(&m.key) {
@@ -409,17 +395,12 @@ pub fn virtualize<T, K, ItemsFn, MetaFn, BuildFn>(
                         }
                     }
                 };
-                // Build the slot: the virtualizer OWNS the native
-                // `list-item` wrapper (the user's `build` returns plain
-                // content). Both are created under a per-item owner
-                // (context inherited via `parent_owner`), the wrapper is
-                // stamped with the stable item-key + recycle-pool id, and
-                // ATTACHED — Lynx `ComponentAtIndex` then runs
-                // `OnComponentFinished` → layout over the appended
-                // subtree. Returning a sign without appending crashes the
-                // native list. `full-span` is stamped AFTER the append:
-                // its element-side half (the LayoutNode list-component
-                // type) only applies when the parent is already the list.
+                // The virtualizer owns the native `list-item` wrapper;
+                // the user's `build` returns plain content. The wrapper
+                // must be ATTACHED before the sign is returned (see the
+                // provider contract in the module doc), and `full-span`
+                // stamped AFTER that append — its element-side half only
+                // applies once the parent is already the list.
                 let owner = Owner::new(Some(parent_owner));
                 let (wrapper, content) = owner.with(|| {
                     let wrapper = create_element_by_name("list-item");
@@ -448,9 +429,8 @@ pub fn virtualize<T, K, ItemsFn, MetaFn, BuildFn>(
             let live = live.clone();
             let pending = pending.clone();
             Box::new(move |sign| {
-                // Move the slot to the deferred-disposal queue. Do NOT destroy
-                // it here — the native still detaches the element after this
-                // callback returns (use-after-free otherwise).
+                // Deferred, never destroyed here — the native detaches
+                // the element after this callback returns.
                 if let Some(slot) = live.borrow_mut().remove(&sign) {
                     pending.borrow_mut().push(slot);
                 }
@@ -781,7 +761,8 @@ mod tests {
         );
     }
 
-    /// One recorded `update_list_actions` call: `(removals, inserts)`.
+    /// One recorded `update_list_actions` call:
+    /// `(removals, inserts, updates)`.
     type RecordedActions = (Vec<i32>, Vec<ListItemAction>, Vec<ListItemAction>);
 
     /// Renderer that accepts explicit actions (like the real bridge on a

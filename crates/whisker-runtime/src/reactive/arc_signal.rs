@@ -53,12 +53,13 @@
 //!
 //! ## Conversions
 //!
-//! For now this module only provides the Arc-native primitives. A
-//! follow-up may add `From<ArcRwSignal<T>> for RwSignal<T>` so module
-//! authors can stash `ArcRwSignal` at the storage boundary and hand
-//! out arena-backed Copy handles at the API surface (the Leptos
-//! pattern). The Arc-only API already covers the bug class that
-//! motivated this change.
+//! Each Arc handle has a `From` impl into its arena-backed
+//! counterpart ([`RwSignal`](super::signal::RwSignal),
+//! [`ReadSignal`](super::signal::ReadSignal),
+//! [`WriteSignal`](super::signal::WriteSignal)), so a module can stash
+//! an `ArcRwSignal` at the storage boundary and hand out `Copy` handles
+//! at its API surface. The arena entry is only a lifecycle pin — reads
+//! and writes forward through the shared `Rc`.
 
 use std::cell::RefCell;
 use std::marker::PhantomData;
@@ -123,19 +124,15 @@ fn track<T: 'static>(inner: &Rc<ArcSignalInner<T>>) {
 /// the subscriber list from the Arc signal's own storage instead of
 /// from an arena node.
 ///
-/// Subscribers go through [`super::scheduler::schedule`] (not a raw
-/// `rt.pending.push`) so the host wake on the empty→non-empty edge
-/// fires. Without that, writes from a bridge callback (e.g.
-/// `module.on_event(...)` updating a global `ArcRwSignal`) queued
-/// dirty effects but never flushed them until some other source
-/// happened to trigger a reactive cycle — manifesting as a UI
-/// bound to the signal that simply never re-rendered. Stale
-/// subscriber pruning is independent of the wake.
+/// Subscribers go through [`super::scheduler::schedule`] rather than a
+/// raw `rt.pending.push` so the host wake on the empty→non-empty edge
+/// fires. A write arriving from a bridge callback is otherwise the only
+/// thing happening, and the dirty effects sit queued and unflushed.
 fn notify_subscribers<T: 'static>(inner: &Rc<ArcSignalInner<T>>) {
     let subscribers: Vec<NodeId> = inner.subscribers.borrow().clone();
     let mut stale: Vec<NodeId> = Vec::new();
-    // First pass: identify stale subscribers so the dedupe walk
-    // inside `schedule()` doesn't end up with freed slots.
+    // Identified up front so `schedule()`'s dedupe walk never sees a
+    // freed slot.
     with_runtime(|rt| {
         for sub in &subscribers {
             if !rt.nodes.contains_key(*sub) {
