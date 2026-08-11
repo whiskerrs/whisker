@@ -1,15 +1,9 @@
-//! `apply_*` helpers — Static-vs-Dynamic dispatch over [`Signal<T>`]
+//! `apply_*` helpers — Stored-vs-Dynamic dispatch over [`Signal<T>`]
 //! used by every prop-setting code path emitted by the macros.
 //!
-//! Lives in `whisker_runtime` (not the umbrella `whisker` crate or
-//! the proc-macro crate) so the umbrella can re-export it. Both app
-//! and module crates depend on the umbrella `whisker` and reach
-//! these via `::whisker::runtime::view::apply_styles` / `apply_attr`.
-//!
-//! The two helpers are intentionally generic over
-//! `V: Into<Signal<T>>` plus `T: ToString + Clone + 'static`, so a
-//! caller can hand them a `&'static str`, a `String`, a
-//! `ReadSignal<String>`, or any other source that
+//! They are generic over `V: Into<Signal<T>>` plus
+//! `T: ToString + Clone + 'static`, so a caller can hand them a
+//! `&'static str`, a `String`, a `ReadSignal<String>`, or anything else
 //! `From<...> for Signal<String>` covers. The `Dynamic` branch wraps
 //! the read in `effect(...)` so the value re-applies whenever the
 //! signal source changes.
@@ -22,7 +16,7 @@ use crate::view::renderer::{
 
 /// Apply an inline-styles value to `h`, picking a static vs reactive
 /// code path based on the [`Signal<T>`] variant. The `Dynamic` case
-/// wraps the read in an `effect` so the returned
+/// wraps the read in an `effect` so the
 /// [`ReadSignal<T>::get`](crate::reactive::ReadSignal::get) call
 /// registers the source as a dependency.
 pub fn apply_styles<V, T>(h: Element, v: V)
@@ -38,7 +32,7 @@ where
     }
 }
 
-/// Apply a named attribute value to `h`. Same Static / Dynamic
+/// Apply a named attribute value to `h`. Same Stored / Dynamic
 /// dispatch as [`apply_styles`].
 pub fn apply_attr<V, T>(h: Element, name: &'static str, v: V)
 where

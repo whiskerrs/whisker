@@ -45,27 +45,21 @@ use super::{untrack, with_runtime};
 pub fn computed<T: 'static + Clone + PartialEq>(
     mut f: impl FnMut() -> T + 'static,
 ) -> ReadSignal<T> {
-    // Seed inside `untrack` so the read graph it produces doesn't
-    // leak into whatever outer reactive node we may be constructed
-    // inside. The seed only initialises the cache; real dependency
-    // edges are registered by the explicit `schedule + flush` below.
-    // Without this guard, calling `computed(move || sig.get())` from
-    // inside an effect makes that effect a subscriber of `sig` — and
-    // a write to `sig` then re-runs the outer effect (often a route /
-    // component mount), silently leaking a fresh computed node every
-    // tick.
+    // The seed only initialises the cache; real dependency edges come
+    // from the `schedule + flush` below. Without `untrack`, a
+    // `computed(move || sig.get())` written inside an effect would make
+    // that effect a subscriber of `sig`, so a write to `sig` re-runs
+    // the effect and leaks a fresh computed node every tick.
     let initial = untrack(&mut f);
     let value: Rc<RefCell<dyn Any>> = Rc::new(RefCell::new(initial));
 
-    // Compute closure is set after we know the NodeId, so recomputes
-    // can write back into the same slot and notify subscribers on
-    // change.
+    // The real closure needs the NodeId to notify subscribers, so the
+    // node is registered with this trampoline and filled in after.
     type ComputeCell = Rc<RefCell<Option<Box<dyn FnMut()>>>>;
     let compute_cell: ComputeCell = Rc::new(RefCell::new(None));
     let compute_cell_clone = compute_cell.clone();
     let trampoline: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(move || {
-        // Take/run/put-back so we never hold the cell's borrow across
-        // user code — mirrors the scheduler's pattern for the compute Rc.
+        // Take/run/put-back so the cell's borrow never spans user code.
         let mut taken = compute_cell_clone.borrow_mut().take();
         if let Some(ref mut inner) = taken {
             inner();
@@ -99,8 +93,6 @@ pub fn computed<T: 'static + Clone + PartialEq>(
         id
     });
 
-    // Real compute closure: knows the node id, writes back to the
-    // value slot, notifies subscribers on change.
     let value_clone = value.clone();
     *compute_cell.borrow_mut() = Some(Box::new(move || {
         let new = f();
@@ -131,10 +123,8 @@ pub fn computed<T: 'static + Clone + PartialEq>(
         }
     }));
 
-    // First tracked run: populates the source graph. The initial
-    // value was already cached via the untracked seed above; we
-    // explicitly schedule + flush here because a bare `flush()` over
-    // an empty pending queue would miss tracking.
+    // First tracked run, which populates the source graph. Scheduled
+    // explicitly — a bare `flush()` over an empty queue does nothing.
     scheduler::schedule(node_id);
     scheduler::flush();
 

@@ -4,22 +4,17 @@
 //! ## Why this type exists
 //!
 //! `#[component]` bodies are `FnMut` (whisker's hot-reload wrapper —
-//! see [`Signal<T>`]'s docs, whisker issue #8). Moving a captured,
-//! non-`Copy` prop into a nested `move` closure (e.g.
-//! `view(on_tap: move |_| on_tap())`) violates that `FnMut` contract:
-//! the prop is moved out of the body on the first call, so a second
-//! invocation of the body (hot-reload, or any future re-render) can't
-//! move it again — `error[E0507]`. Until now the workaround has been
-//! an `Rc<dyn Fn()>` prop plus a manual `let cb = on_tap.clone();`
-//! before each handler closure that needs it.
+//! see [`Signal<T>`]'s docs). Moving a captured, non-`Copy` prop into a
+//! nested `move` closure (e.g. `view(on_tap: move |_| on_tap())`)
+//! violates that `FnMut` contract: the prop is moved out of the body on
+//! the first call, so a second invocation can't move it again —
+//! `error[E0507]`. The alternative is an `Rc<dyn Fn()>` prop plus a
+//! manual `let cb = on_tap.clone();` before every handler closure.
 //!
-//! `Callback<In, Out>` removes the workaround: like [`Signal<T>`], it
-//! stores the actual closure in an owner-bound [`StoredValue<T>`]
-//! arena slot and hands back only a `Copy` handle (a `NodeId`). A
-//! `Copy` value never needs `.clone()` — it can be moved into any
-//! number of `move` closures for free. Mirrors Leptos's
-//! `Callback<In, Out>`, which solves the identical problem the same
-//! way (an arena-backed, `Copy` handle) — see
+//! `Callback<In, Out>` avoids that: like [`Signal<T>`], it stores the
+//! closure in an owner-bound [`StoredValue<T>`] arena slot and hands
+//! back only a `Copy` handle, which moves into any number of `move`
+//! closures for free. Mirrors Leptos's `Callback<In, Out>` — see
 //! <https://docs.rs/leptos/latest/leptos/callback/index.html>.
 //!
 //! ```ignore
@@ -48,12 +43,9 @@ use super::stored::StoredValue;
 /// case — construct with a zero-arg closure (`move || …`) and call
 /// with [`Callback::call`] rather than `.run(())`.
 //
-// NOTE: `Clone`/`Copy` are hand-written rather than `#[derive]`d, same
-// reasoning as `Signal<T>` — a derived impl would add spurious
-// `In: Clone + Copy, Out: Clone + Copy` bounds, but neither type
-// parameter is ever stored inline (they only appear in the boxed
-// closure's signature), so `Callback<In, Out>` must be `Copy`
-// unconditionally.
+// `Clone`/`Copy` are hand-written for the same reason as `Signal<T>`:
+// `#[derive]` would add spurious `In: Copy, Out: Copy` bounds, though
+// neither is ever stored inline.
 pub struct Callback<In: 'static = (), Out: 'static = ()> {
     inner: StoredValue<Box<dyn Fn(In) -> Out>>,
 }
@@ -110,9 +102,8 @@ mod tests {
 
     #[test]
     fn callback_is_copy() {
-        // The whole point: a Callback prop can be moved into several
-        // `move` closures without `.clone()`. Wouldn't compile if
-        // `Callback` weren't `Copy`.
+        // A Callback prop must move into several `move` closures
+        // without `.clone()`.
         __reset_for_tests();
         fn assert_copy<C: Copy>(_: &C) {}
 

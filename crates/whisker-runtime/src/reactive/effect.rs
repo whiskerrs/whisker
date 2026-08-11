@@ -20,13 +20,12 @@ use super::with_runtime;
 /// Register `f` as a reactive effect. Returns the node id (so tests
 /// can inspect it; user code generally discards the return value).
 ///
-/// The closure receives no arguments and returns nothing. The
-/// `Option<R>`-of-previous-value variant from Solid/Leptos is omitted
-/// in v1 — it can be layered on later without breaking this API.
+/// Unlike Solid / Leptos, the closure takes no previous value and
+/// returns nothing.
 pub fn effect(f: impl FnMut() + 'static) -> NodeId {
-    // Wrap in `Rc<RefCell<dyn FnMut()>>` so the scheduler can clone a
-    // handle out of the runtime in a short borrow before invoking
-    // user code (avoiding a runtime double-borrow on re-entrant reads).
+    // `Rc<RefCell<dyn FnMut()>>` so the scheduler can clone a handle
+    // out under a short borrow and invoke user code with the runtime
+    // released — a re-entrant read would otherwise double-borrow.
     let compute: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new(f));
 
     let needs_warning = with_runtime(|rt| rt.current_owner().is_none());

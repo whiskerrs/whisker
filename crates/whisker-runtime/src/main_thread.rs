@@ -31,21 +31,15 @@
 //! }
 //! ```
 //!
-//! ## Why not `spawn_local` / async?
+//! ## Versus `spawn_local`
 //!
-//! `spawn_local` (Leptos, wasm-bindgen-futures, Tauri, …) is a
-//! main-thread async executor: it takes a `Future` and polls it on
-//! the UI thread. `run_on_main_thread` is the simpler primitive on
-//! the other side of the boundary — it takes a plain `FnOnce` and
-//! posts it to the main-thread queue. The same idea as Android's
-//! `Activity.runOnUiThread(r)`, iOS's `DispatchQueue.main.async {}`,
-//! Slint's `invoke_from_event_loop`, or gtk-rs's
-//! `MainContext::invoke`.
-//!
-//! Whisker doesn't run an async executor on the main thread (yet),
-//! so we expose only the marshaling primitive. If A4 lands a
-//! single-threaded executor later, `spawn_local` will sit on top of
-//! this same dispatcher.
+//! [`spawn_local`](crate::tasks::spawn_local) is the main-thread async
+//! executor: it takes a `Future` and polls it on the UI thread.
+//! `run_on_main_thread` is the simpler primitive underneath — it takes
+//! a plain `FnOnce` and posts it to the main-thread queue, the same
+//! idea as Android's `Activity.runOnUiThread(r)`, iOS's
+//! `DispatchQueue.main.async {}`, Slint's `invoke_from_event_loop`, or
+//! gtk-rs's `MainContext::invoke`.
 //!
 //! ## How it routes
 //!
@@ -90,15 +84,9 @@ static DISPATCHER: Mutex<Option<Dispatcher>> = Mutex::new(None);
 /// it (on the main thread, right after the marshaled closure runs)
 /// instead of merely requesting a vsync frame. The callback runs the
 /// driver's `tick_frame` — flush + drain the task pool + flush +
-/// mounts + renderer flush — so an async completion that was just
-/// marshaled onto the main thread is drained and painted immediately,
-/// on this main-run-loop post, with the vsync render loop untouched.
-///
-/// This is the proper fix for the resource hang: the worker's result
-/// is delivered via the host's main-thread dispatch (CFRunLoop /
-/// Looper), which the OS services even while CADisplayLink /
-/// Choreographer is paused, and we DRIVE the consequence here rather
-/// than racing an unpause of the paused vsync loop.
+/// mounts + renderer flush — so an async completion just marshaled
+/// onto the main thread is drained and painted on this same
+/// main-run-loop post, with the vsync render loop untouched.
 ///
 /// A plain `extern "C" fn()` pointer — no `user_data` needed; the
 /// driver's `tick_frame` reads its own thread-locals.
@@ -107,17 +95,13 @@ static DRIVE: Mutex<Option<extern "C" fn()>> = Mutex::new(None);
 std::thread_local! {
     /// Re-entrancy depth for main-thread render/tick/drive work.
     ///
-    /// The [`trampoline`] runs the driver's `tick_frame` directly on a
-    /// main-loop post. That is correct when the host dispatcher genuinely
-    /// *posts* the trampoline to a later run-loop turn. But some
-    /// dispatchers (Lynx's `run_on_tasm_thread`, iOS `Thread.isMainThread`
-    /// fast paths) invoke it **inline** when called from the TASM thread.
-    /// If `run_on_main_thread` is called from inside the initial render or
-    /// a `tick_frame` (e.g. a module's startup wiring), an inline trampoline
-    /// would re-enter `tick_frame` while the renderer/reactive runtime is
-    /// already active — a re-entrant borrow that aborts. This depth lets the
-    /// trampoline detect that nesting and DEFER (request a vsync frame)
-    /// instead of re-entering.
+    /// Some dispatchers (Lynx's `run_on_tasm_thread`, iOS
+    /// `Thread.isMainThread` fast paths) invoke the [`trampoline`]
+    /// **inline** when called from the TASM thread. Called from inside
+    /// the initial render or a `tick_frame`, that would re-enter
+    /// `tick_frame` while the renderer / reactive runtime is already
+    /// active — a re-entrant borrow that aborts. The depth lets the
+    /// trampoline see the nesting and defer instead.
     static MAIN_WORK_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
@@ -188,12 +172,10 @@ pub fn set_drive_callback(cb: Option<extern "C" fn()>) {
 /// dirty will wake the host's render loop automatically (via
 /// `host_wake::wake_runtime` from the scheduler).
 ///
-/// After `f` runs, the [`trampoline`] DRIVES the runtime directly (via
+/// After `f` runs, the [`trampoline`] drives the runtime directly (via
 /// the registered [`set_drive_callback`]) on this same main-thread
 /// post, so an async result marshaled here (the `run_blocking` /
-/// `resource()` path) is drained and painted immediately — see
-/// [`trampoline`]'s comment for why this beats requesting a vsync
-/// frame.
+/// `resource()` path) is drained and painted immediately.
 pub fn run_on_main_thread<F>(f: F)
 where
     F: FnOnce() + Send + 'static,
@@ -219,8 +201,8 @@ where
 
     let ok = (dispatcher.func)(dispatcher.engine, trampoline, user_data);
     if !ok {
-        // Dispatch refused (typically: engine torn down). Reclaim
-        // the box so we don't leak the closure.
+        // Dispatch refused (typically: engine torn down) — reclaim the
+        // box so the closure isn't leaked.
         let _: Box<Box<dyn FnOnce() + Send + 'static>> =
             unsafe { Box::from_raw(user_data as *mut Box<dyn FnOnce() + Send + 'static>) };
     }
@@ -236,33 +218,19 @@ extern "C" fn trampoline(user_data: *mut c_void) {
     let boxed: Box<Box<dyn FnOnce() + Send + 'static>> =
         unsafe { Box::from_raw(user_data as *mut Box<dyn FnOnce() + Send + 'static>) };
     boxed();
-    // We're now on the MAIN thread (this trampoline ran via the host's
-    // main-thread dispatch — a real CFRunLoop / Looper post, which the
-    // OS services even while the vsync render loop is paused). The
-    // closure we just ran is typically `tx.send(value)` from a
-    // `run_blocking` worker (the `resource()` path): it woke the
-    // awaiting future's `Waker`, re-queuing it in `LocalPool`. But
-    // `LocalPool` only re-polls when `run_until_stalled` runs, which
-    // happens inside the driver's `tick_frame`.
+    // The closure just run is typically `tx.send(value)` from a
+    // `run_blocking` worker: it woke the awaiting future's `Waker` and
+    // re-queued it in `LocalPool`, which only re-polls from
+    // `run_until_stalled` inside the driver's `tick_frame`. Driving
+    // that here — on the host's main-thread post, which the OS services
+    // even while the vsync loop is paused — avoids racing an unpause of
+    // a paused CADisplayLink / Choreographer.
     //
-    // If a drive callback is registered (production + the
-    // `cross_thread_wake` tests), invoke it: it runs `tick_frame` HERE,
-    // on this main-loop post — draining the pool, flushing, and
-    // painting the fetch's consequences immediately. The vsync loop is
-    // untouched, so there is NO race against an end-of-frame pause and
-    // NO need to busy-tick. This is the proper fix for the resource
-    // hang (was: request a vsync frame, which races the paused
-    // CADisplayLink/Choreographer and is silently clobbered).
+    // With no drive callback wired (tests that don't model the driver),
+    // fall back to requesting a vsync frame.
     //
-    // Fall back to `wake_runtime()` (request a vsync frame) when no
-    // drive callback is wired — e.g. tests that don't model the driver.
-    //
-    // RE-ENTRANCY: if this trampoline was invoked INLINE by the host
-    // dispatcher while we're already inside the initial render or a
-    // `tick_frame` (some dispatchers run same-thread posts synchronously),
-    // running `tick_frame` again would re-enter the renderer/reactive
-    // runtime and abort. In that case, defer via a vsync frame request
-    // instead — the deferred tick drains the pool on the next frame.
+    // An INLINE trampoline (see `MAIN_WORK_DEPTH`) must defer instead:
+    // running `tick_frame` from inside one aborts.
     if main_work_in_progress() {
         crate::host_wake::wake_runtime();
         return;
@@ -306,17 +274,12 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, MutexGuard};
 
-    /// Tests poke process-global host state (the registered
-    /// dispatcher), so they must run one at a time AND not race tests
-    /// in sibling modules that touch the same globals — hence the
-    /// shared [`super::host_test_lock`].
     fn lock<'a>() -> MutexGuard<'a, ()> {
         super::host_test_lock()
     }
 
     /// Pretend-host dispatcher: invokes the callback synchronously on
-    /// the caller's thread. Good enough to verify the trampoline /
-    /// boxing / unbox cycle without spawning a real second thread.
+    /// the caller's thread.
     extern "C" fn sync_invoke(
         _engine: *mut c_void,
         callback: extern "C" fn(*mut c_void),
@@ -357,7 +320,6 @@ mod tests {
     fn closure_dropped_when_no_dispatcher() {
         let _guard = lock();
         __reset_for_tests();
-        // Closure captures a state we can observe via Drop.
         struct DropFlag(Arc<AtomicBool>);
         impl Drop for DropFlag {
             fn drop(&mut self) {
@@ -367,8 +329,6 @@ mod tests {
         let dropped = Arc::new(AtomicBool::new(false));
         let flag = DropFlag(dropped.clone());
         run_on_main_thread(move || {
-            // Move `flag` in; if the closure is dropped without
-            // running, `flag` is also dropped.
             let _ = &flag;
         });
         assert!(
