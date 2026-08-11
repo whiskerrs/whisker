@@ -64,7 +64,6 @@ fn ios_generation_lands_assets_and_folder_reference() {
     let inputs = whisker_cng::ios::inputs_from_with_engine(
         &engine,
         &app_config(),
-        PathBuf::from("/abs/platforms/ios"),
         crate_dir.join("gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "asset-demo".into(),
