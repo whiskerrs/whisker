@@ -1,9 +1,10 @@
 // The resolver handed to an `AsyncFunction` handler (iOS).
 //
-// Wraps the C bridge's completion `callback` + opaque `user_data` (the
-// Rust `oneshot::Sender` boxed by `PlatformModule::invoke_async`), so a
-// module can deliver its result *later* — e.g. from a StoreKit purchase
-// or `URLSession` completion — instead of returning synchronously.
+// Wraps the completion path of an async dispatch — the C bridge's
+// `callback` + opaque `user_data` for module-level calls, or the Lynx
+// UI-method callback for view-bound calls — so a module can deliver
+// its result *later* (e.g. from a StoreKit purchase or `URLSession`
+// completion) instead of returning synchronously.
 //
 // Mirrors Expo's `Promise` (`resolve` / `reject`). One-shot: the first
 // `resolve`/`reject` wins and fires the callback exactly once; further
@@ -14,17 +15,29 @@
 import Foundation
 
 public final class WhiskerPromise {
-    private let callback: WhiskerModuleCallback
-    private let userData: UnsafeMutableRawPointer?
+    private let onSettle: (WhiskerValue) -> Void
     private let lock = NSLock()
     private var settled = false
 
-    /// `callback` is the bridge's `WhiskerModuleCallback`; `userData` the
-    /// opaque pointer the async dispatch was handed. Constructed only by
-    /// the module-dispatch layer.
+    /// Module-dispatch form: `callback` is the bridge's
+    /// `WhiskerModuleCallback`; `userData` the opaque pointer the async
+    /// dispatch was handed.
     init(callback: WhiskerModuleCallback, userData: UnsafeMutableRawPointer?) {
-        self.callback = callback
-        self.userData = userData
+        // Same encode → hand-to-bridge → release sequence the event
+        // center uses (`WhiskerModuleEventCenter.dispatchSend`): the
+        // callback copies the value out before returning, so releasing
+        // right after is safe.
+        self.onSettle = { value in
+            var raw = value.toRaw()
+            callback(userData, &raw)
+            whisker_bridge_value_release(&raw)
+        }
+    }
+
+    /// Closure form — constructed by the Lynx UI-method dispatch layer
+    /// (`WhiskerLynxInstaller.installAsyncFunction`).
+    init(onSettle: @escaping (WhiskerValue) -> Void) {
+        self.onSettle = onSettle
     }
 
     /// Resolve the call with `value` (`.null` for "no result").
@@ -47,12 +60,6 @@ public final class WhiskerPromise {
         settled = true
         lock.unlock()
 
-        // Same encode → hand-to-bridge → release sequence the event
-        // center uses (`WhiskerModuleEventCenter.dispatchSend`): the
-        // callback copies the value out before returning, so releasing
-        // right after is safe.
-        var raw = value.toRaw()
-        callback(userData, &raw)
-        whisker_bridge_value_release(&raw)
+        onSettle(value)
     }
 }

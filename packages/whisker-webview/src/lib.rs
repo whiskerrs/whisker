@@ -126,8 +126,8 @@
 //! - [`WebViewRef::stop_loading`] — abort the in-flight load.
 //! - [`WebViewRef::post_message`] — push a string to the page.
 //! - [`WebViewRef::evaluate_javascript`] — run script (fire-and-forget).
-//!   To read a value back, `postMessage` it from the script and handle
-//!   it in `on_message`.
+//! - [`WebViewRef::evaluate_javascript_with_result`] — async: run script
+//!   and get its completion value back as a JSON-encoded string.
 //! - [`WebViewRef::can_go_back`] / [`WebViewRef::can_go_forward`] —
 //!   async history-availability checks.
 //!
@@ -386,18 +386,34 @@ impl WebViewRef {
     }
 
     /// Run JavaScript in the page, fire-and-forget. No-op if unmounted.
-    ///
-    /// To get a value BACK from the page, have the script post it to the
-    /// host and read it via [`on_message`](web_view): e.g.
-    /// `evaluate_javascript("window.whisker.postMessage(document.title)")`
-    /// and handle it in `on_message`. There is no result-returning
-    /// variant: the native JS eval is asynchronous and the sync `Function`
-    /// dispatch it goes through cannot carry a result back.
+    /// Use [`evaluate_javascript_with_result`](Self::evaluate_javascript_with_result)
+    /// when you need the script's value.
     pub fn evaluate_javascript(&self, script: &str) {
         let _ = self.r.invoke(
             "evaluateJavaScript",
             WhiskerValue::args([WhiskerValue::String(script.to_string())]),
         );
+    }
+
+    /// Async: run JavaScript and get its completion value back as a
+    /// JSON-encoded string (`"null"` when the script yields no value).
+    ///
+    /// ```ignore
+    /// let title = webview.evaluate_javascript_with_result("document.title").await?;
+    /// // title == "\"My Page\"" — JSON-encoded, so decode as needed.
+    /// ```
+    ///
+    /// Platform asymmetry: a script that throws rejects with
+    /// [`RefError::DispatchFailed`] on iOS, but resolves `"null"` on
+    /// Android — `WebView.evaluateJavascript` cannot observe JS
+    /// exceptions.
+    pub async fn evaluate_javascript_with_result(&self, script: &str) -> Result<String, RefError> {
+        self.r
+            .invoke_typed::<String>(
+                "evaluateJavaScriptWithResult",
+                WhiskerValue::args([WhiskerValue::String(script.to_string())]),
+            )
+            .await
     }
 
     /// Async: can the view navigate back in history right now?
