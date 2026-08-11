@@ -63,6 +63,14 @@ public class PredictiveBackModule : Module() {
      * tearing it down and the next `OnStartObserving` re-registering.
      */
     private var callback: OnBackPressedCallback? = null
+
+    /**
+     * Whether the Rust side currently wants back consumed (`setBackEnabled`).
+     * Cached here because the callback registers deferred; while disabled,
+     * the dispatcher falls through to the OS default (exit / background)
+     * and the system's leave-the-app predictive animation.
+     */
+    private var backEnabled: Boolean = false
     /**
      * Pending registration listener. Set when `OnStartObserving` fires
      * before the WhiskerView attaches to its window — fires once the host
@@ -90,6 +98,25 @@ public class PredictiveBackModule : Module() {
         // screen. Rust caches the result rather than calling per frame.
         Function("getDeviceCornerRadius") { _ ->
             WhiskerValue.Float(deviceCornerRadiusDp())
+        }
+
+        Function("setBackEnabled") { args ->
+            backEnabled = args.getOrNull(0)?.asBool() ?: false
+            callback?.isEnabled = backEnabled
+            WhiskerValue.Null
+        }
+
+        // The platform's default leave-the-app behavior: re-dispatch
+        // back with our own callback disabled so the dispatcher falls
+        // through (finish on API < 31, task-to-background on 31+).
+        Function("exitApp") { _ ->
+            val activity = appContext.currentActivity as? ComponentActivity
+            if (activity != null) {
+                callback?.isEnabled = false
+                activity.onBackPressedDispatcher.onBackPressed()
+                callback?.isEnabled = backEnabled
+            }
+            WhiskerValue.Null
         }
     }
 
@@ -150,7 +177,7 @@ public class PredictiveBackModule : Module() {
     private fun tryRegisterCallback(): Boolean {
         if (callback != null) return true
         val activity = appContext.currentActivity as? ComponentActivity ?: return false
-        val cb = object : OnBackPressedCallback(true) {
+        val cb = object : OnBackPressedCallback(backEnabled) {
             override fun handleOnBackStarted(backEvent: BackEventCompat) {
                 sendEvent("backStarted", edgePayload(backEvent))
             }

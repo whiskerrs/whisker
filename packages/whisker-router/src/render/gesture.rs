@@ -58,6 +58,8 @@ const PB_EV_CANCELLED: &str = "backCancelled";
 const PB_EV_INVOKED: &str = "backInvoked";
 /// Module method returning the device display corner radius (dp).
 const PB_M_DEVICE_CORNER_RADIUS: &str = "getDeviceCornerRadius";
+const PB_M_SET_BACK_ENABLED: &str = "setBackEnabled";
+const PB_M_EXIT_APP: &str = "exitApp";
 /// Predictive-back event payload keys.
 const PB_K_TOUCH_Y: &str = "touchY";
 const PB_K_PROGRESS: &str = "progress";
@@ -195,6 +197,11 @@ fn install(container: Element, nav: RouterHandle) {
 /// **predictive-back** pose mode, and return the bridge. `None` means no
 /// gesture should begin.
 pub(crate) fn begin(nav: &RouterHandle, edge: SwipeEdge) -> Option<StackBridge> {
+    // An active `whisker::back::on_back` handler owns the back action;
+    // no interactive preview on either platform.
+    if whisker::back::has_active_handler() {
+        return None;
+    }
     let bridge = nav.active_stack_bridge()?;
     // Edge-swipe back is opt-in by *mounting* a gesture component
     // (`SwipeBack` / `AndroidPredictiveBack`); it is NOT gated on the
@@ -355,6 +362,29 @@ pub fn android_predictive_back() -> Element {
     let nav = use_navigator();
     let module = pb_module();
 
+    if cfg!(target_os = "android") {
+        whisker::back::set_exit_impl(|| {
+            let _ = pb_module().invoke(PB_M_EXIT_APP, std::vec![]);
+        });
+        // Mirror "something here will consume back" into the Kotlin
+        // callback's enabled state; when false, the OS default (exit /
+        // background) runs instead of a swallowed press.
+        let nav_for_enabled = nav.clone();
+        let last_sent: Rc<std::cell::Cell<Option<bool>>> = Rc::new(std::cell::Cell::new(None));
+        whisker::runtime::reactive::effect(move || {
+            let _ = nav_for_enabled.state().get();
+            let can_pop = nav_for_enabled.active_stack_bridge().is_some();
+            let enabled = can_pop || whisker::back::has_active_handler();
+            if last_sent.get() != Some(enabled) {
+                last_sent.set(Some(enabled));
+                let _ = pb_module().invoke(
+                    PB_M_SET_BACK_ENABLED,
+                    std::vec![WhiskerValue::Bool(enabled)],
+                );
+            }
+        });
+    }
+
     // The in-flight bridge for the current predictive-back gesture. Shared
     // across the four event listeners. The native `PredictiveBack` module
     // fires on the Android UI thread — the same thread as Whisker's main
@@ -427,11 +457,14 @@ pub fn android_predictive_back() -> Element {
                 // Interactive path (API 34+): a gesture was in flight, so
                 // commit it (animate the top off, then `back()`).
                 Some(bridge) => settle(nav, &bridge, /* commit = */ true, None),
-                // No preview (API < 34, or a discrete press): just pop.
-                // `back()` routes through `with_navigator`, which handles
-                // the keyboard (targeted blur of the focused field).
+                // No preview (API < 34, a discrete press, or an app-level
+                // handler suppressed it): the handler gets first claim,
+                // then `back()` (which handles the keyboard's targeted
+                // blur via `with_navigator`).
                 None => {
-                    let _ = nav.back();
+                    if !whisker::back::dispatch() {
+                        let _ = nav.back();
+                    }
                 }
             }
         })

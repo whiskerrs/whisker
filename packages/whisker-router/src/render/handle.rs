@@ -204,7 +204,6 @@ impl RouterHandle {
     /// The raw state signal (test only). Production code reads via
     /// [`slice_at`](Self::slice_at) / [`current`](Self::current) and mutates
     /// via the verbs.
-    #[cfg(test)]
     pub(crate) fn state(&self) -> RwSignal<RouteState> {
         self.inner.state
     }
