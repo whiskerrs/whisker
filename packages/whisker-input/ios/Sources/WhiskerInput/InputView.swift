@@ -2,10 +2,8 @@
 // (multiline) behind a unified interface. Registration is driven by
 // `InputModule`'s `definition()` — no annotations required here.
 //
-// `@objc(WhiskerInputView)` pins the Obj-C class name so the codegen
-// plugin's `NSClassFromString` lookup finds it whether the
-// SwiftPM-target-prefixed form (`whisker_input.WhiskerInputView`) or the
-// bare form is used.
+// `@objc(WhiskerInputView)` pins the Obj-C class name to the bare,
+// SwiftPM-target-unprefixed form, matching the sibling view modules.
 //
 // ## Single-line vs multiline
 //
@@ -28,7 +26,6 @@ import Foundation
 import UIKit
 import WhiskerModule
 
-@objc(WhiskerInputView)
 /// A container `UIView` that invokes `onDetach` when it leaves its
 /// window, so `WhiskerInputView` can resign first responder on teardown
 /// and a removed input never lingers as the keyboard target.
@@ -45,6 +42,7 @@ private final class DetachAwareView: UIView {
     }
 }
 
+@objc(WhiskerInputView)
 public final class WhiskerInputView: WhiskerUI<UIView> {
 
     // MARK: - Hosted controls

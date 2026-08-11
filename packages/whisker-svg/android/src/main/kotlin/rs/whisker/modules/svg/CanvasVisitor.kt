@@ -21,7 +21,6 @@ import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.PorterDuff
 
 internal class CanvasVisitor(
     private val canvas: Canvas,
@@ -203,11 +202,6 @@ internal class CanvasVisitor(
 
     private fun resolveStrokeColor(): Int? =
         if (strokeIsTint) tintArgb else currentStrokeArgb
-
-    /** Consumes the otherwise-unused `PorterDuff` import so lint is
-     *  happy. */
-    @Suppress("unused")
-    private val _porterDuffUsage = PorterDuff.Mode.SRC
 
     /**
      * Multiply the colour's alpha channel by the current group opacity.

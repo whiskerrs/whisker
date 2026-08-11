@@ -307,15 +307,10 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         val parsed = parseColor(color) ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             et.textCursorDrawable?.setColorFilter(parsed, PorterDuff.Mode.SRC_IN)
-        } else {
-            // Pre-API-29 has no typed cursor-tint API; the caret keeps the
-            // theme color. Cosmetic only.
-            try {
-                val field = android.widget.TextView::class.java
-                    .getDeclaredField("mCursorDrawableRes")
-                field.isAccessible = true
-            } catch (_: Throwable) { }
         }
+        // Pre-API-29 the caret keeps the theme color: there is no typed
+        // cursor-tint API, and the `mCursorDrawableRes` reflection hack is
+        // greylisted from API 28. Cosmetic only.
     }
 
     fun setSelectionColor(color: String) {
