@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-credentials-v0.10.12...whisker-credentials-v0.11.0) - 2026-08-11
+
+### Other
+
+- Sweep dev-server, cli, build, plugin, config, credentials comments ([#380](https://github.com/whiskerrs/whisker/pull/380))
+
 ## [0.8.0](https://github.com/whiskerrs/whisker/compare/whisker-credentials-v0.7.0...whisker-credentials-v0.8.0) - 2026-07-06
 
 ### Added

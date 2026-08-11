@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-asset-v0.10.12...whisker-asset-v0.11.0) - 2026-08-11
+
+### Other
+
+- Fix whisker-asset's iOS e2e call to the 4-arg inputs_from_with_engine ([#383](https://github.com/whiskerrs/whisker/pull/383))
+- Sweep Kotlin/Swift comments and clear the Rust sweep's follow-ups ([#382](https://github.com/whiskerrs/whisker/pull/382))
+- Sweep packages/* comments ([#379](https://github.com/whiskerrs/whisker/pull/379))
+
 ## [0.10.8](https://github.com/whiskerrs/whisker/compare/whisker-asset-v0.10.7...whisker-asset-v0.10.8) - 2026-08-07
 
 ### Other
