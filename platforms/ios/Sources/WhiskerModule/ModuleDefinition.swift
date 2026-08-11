@@ -1,13 +1,12 @@
-// Phase L-2a — `ModuleDefinition` DSL surface (iOS).
+// `ModuleDefinition` DSL surface (iOS).
 //
-// Single-language DSL that supersedes the `@WhiskerComponent` /
-// `@WhiskerProp` / `@WhiskerUIMethod` annotation set. Modeled after
-// Expo Modules' `ModuleDefinition` (https://docs.expo.dev/modules/module-api/)
-// but emits direct registrations against Lynx's prop / method
-// dispatch tables instead of routing through `@LynxProp` /
-// `@LynxUIMethod` reflection.
+// Modeled after Expo Modules' `ModuleDefinition`
+// (https://docs.expo.dev/modules/module-api/) but emits direct
+// registrations against Lynx's prop / method dispatch tables
+// instead of routing through `@LynxProp` / `@LynxUIMethod`
+// reflection.
 //
-// ## Target syntax
+// ## Syntax
 //
 // ```swift
 // public final class VideoModule: Module {
@@ -49,13 +48,9 @@
 // }
 // ```
 //
-// ## What L-2a delivers
-//
-// This file defines the **DSL surface and value model**. The
-// `Module` base class collects the `ModuleDefinition` at init time;
-// the iOS dispatch glue (L-2b) + the `WhiskerModuleCodegen`
-// plugin's `Module`-subclass discovery wire it into Lynx's prop /
-// method dispatch tables.
+// The `Module` base class collects the `ModuleDefinition` at init
+// time; the `WhiskerModuleCodegen` plugin's `Module`-subclass
+// discovery wires it into Lynx's prop / method dispatch tables.
 
 import Foundation
 
@@ -81,10 +76,7 @@ public struct WhiskerNameComponent: WhiskerDefinitionComponent {
 }
 
 /// Static constants component. Authors emit a dictionary that
-/// the framework exposes to the host. Mirrors Expo's deprecated
-/// `Constants([...])` form — we ship the dictionary form only;
-/// the dynamic closure form (`Constants { [...] }`) and per-key
-/// `Constant("key") { ... }` lazy form can land later.
+/// the framework exposes to the host. Dictionary form only.
 public struct WhiskerConstantsComponent: WhiskerDefinitionComponent {
     public let values: [String: Any]
     public init(_ values: [String: Any]) { self.values = values }
@@ -109,8 +101,8 @@ public struct WhiskerViewComponent: WhiskerDefinitionComponent {
 
 /// Type-erased setter the framework calls on prop dispatch.
 /// `view` is the Lynx UI instance the value was set on; `value`
-/// is the raw `WhiskerValue` (case ②: no auto-deserialization —
-/// the author destructures it, e.g. `value.asString()`).
+/// is the raw `WhiskerValue` — no auto-deserialization, the author
+/// destructures it, e.g. `value.asString()`.
 public typealias WhiskerPropSetter = (_ view: AnyObject, _ value: WhiskerValue) -> Void
 
 /// Prop component — a single named setter on the view class.
@@ -124,10 +116,9 @@ public struct WhiskerPropComponent: WhiskerDefinitionComponent {
 }
 
 /// Type-erased function handler. `args` are the raw positional
-/// `WhiskerValue`s from the Rust call site (case ②: no
-/// auto-deserialization — the author destructures, e.g.
-/// `args[0].asDouble()`); the result is a raw `WhiskerValue`
-/// (`.null` for "no result"). `view` is `nil` for module-level
+/// `WhiskerValue`s from the Rust call site — no auto-deserialization,
+/// the author destructures, e.g. `args[0].asDouble()`; the result is
+/// a raw `WhiskerValue` (`.null` for "no result"). `view` is `nil` for module-level
 /// `Function`s, the Lynx UI instance for view-block `Function`s.
 public typealias WhiskerFunctionHandler = (_ view: AnyObject?, _ args: [WhiskerValue]) -> WhiskerValue
 
@@ -164,16 +155,14 @@ public struct WhiskerAsyncFunctionComponent: WhiskerDefinitionComponent {
     }
 }
 
-/// Event-name declaration component. Authors declare event names
-/// they intend to emit; the runtime uses the list for type-checking
-/// + future docs generation. Dispatch from inside the module body
-/// goes through `Module.sendEvent(name, payload)` — the bridge fans
-/// the payload out to every Rust subscriber registered via
+/// Event-name declaration component. Metadata only; dispatch from
+/// inside the module body goes through
+/// `Module.sendEvent(name, payload)` — the bridge fans the payload
+/// out to every Rust subscriber registered via
 /// `PlatformModule::on_event`.
 ///
-/// Mirrors Expo's `Events("a", "b")` declaration; the matching
-/// `OnStartObserving` / `OnStopObserving` blocks below let the
-/// module lazily attach / detach its underlying source.
+/// The matching `OnStartObserving` / `OnStopObserving` blocks below
+/// let the module lazily attach / detach its underlying source.
 public struct WhiskerEventsComponent: WhiskerDefinitionComponent {
     public let names: [String]
     public init(_ names: [String]) { self.names = names }
@@ -290,9 +279,7 @@ public struct ModuleDefinition {
         self = body()
     }
 
-    /// Module name. Returns `nil` if no `Name(...)` was declared —
-    /// Phase L-2b will require this and surface a clear error at
-    /// registration time.
+    /// Module name. Returns `nil` if no `Name(...)` was declared.
     public var name: String? {
         for c in components {
             if let n = c as? WhiskerNameComponent { return n.value }
@@ -353,8 +340,7 @@ public func Name(_ value: String) -> WhiskerDefinitionComponent {
 }
 
 /// `Constants([key: value, ...])` — static constants exposed to
-/// the host. Dictionary form only in v1; per-key lazy form
-/// (`Constant("k") { ... }`) lands later.
+/// the host. Dictionary form only.
 public func Constants(_ values: [String: Any]) -> WhiskerDefinitionComponent {
     WhiskerConstantsComponent(values)
 }
@@ -398,7 +384,7 @@ public func OnStopObserving(
 // MARK: - Prop factories
 
 /// `Prop("src") { (view: VideoView, value) in view.setSrc(value.asString()) }`
-/// — view-bearing prop setter. Case ②: `value` is the raw
+/// — view-bearing prop setter. `value` is the raw
 /// `WhiskerValue`; the author destructures it (`.asString()`,
 /// `.asDouble()`, …). The framework downcasts the view and
 /// silently no-ops on a view-type mismatch (debug-build log).
@@ -417,10 +403,8 @@ public func Prop<V: AnyObject>(
     }
 }
 
-// MARK: - Function factories (case ② — raw `[WhiskerValue]`)
+// MARK: - Function factories (raw `[WhiskerValue]`)
 
-// L-2a ships sync `Function` only. `AsyncFunction` lands later.
-//
 // Two forms: view-bound (inside a `View(...)` block; closure gets
 // the view + raw args) and module-level (function-only module; raw
 // args only). Both pass the raw `[WhiskerValue]` through unchanged

@@ -1,29 +1,23 @@
-// Lynx UI subclass hosting a native EditText.
-// A plain `WhiskerUI` subclass — no Whisker annotations; registration
-// is driven by `InputModule`'s `definition()` (see `InputModule.kt`).
+// Lynx UI subclass hosting a native EditText. Registration is driven by
+// `InputModule`'s `definition()`, not by annotations on this class.
 //
 // ## Two-way binding + cursor-jump prevention
 //
 // The Rust side round-trips every `input` event value back down as a
-// new `value` prop. To avoid the cursor jumping to the end on every
-// keystroke, `setValue` is a no-op when the incoming string already
-// matches what the EditText displays. A boolean `programmaticWrite`
-// guard suppresses `afterTextChanged` during external writes so the
-// Rust signal doesn't double-fire.
-//
-// The other half of that filter is `userEdit`: the editor also gets
-// written by the framework itself (prop application, state restore as
-// the InputConnection is established), and those writes must not reach
-// the bound signal either. `WhiskerEditText` tags the entry points a
-// user's edits arrive through so the watcher can tell the two apart.
+// new `value` prop, so `setValue` is a no-op when the incoming string
+// already matches what the EditText displays — otherwise the cursor
+// jumps to the end on every keystroke. Two guards keep framework-origin
+// writes out of the bound signal: `programmaticWrite` for our own
+// writes, and `userEdit`, which `WhiskerEditText` sets at the entry
+// points a user's edits actually arrive through.
 //
 // ## CSS text-style interception
 //
-// `color`, `font-size`, `font-weight`, and `text-align` arrive through
-// Lynx's CSS cascade. Whisker-registered custom UIs don't get an
-// APT-generated prop setter for CSS properties, so we intercept them
-// in `updatePropertiesInterval` via `StylesDiffMap.mBackingMap` — the
-// same pattern used by `WhiskerImageView` for `border-radius`.
+// Whisker-registered custom UIs don't get an APT-generated prop setter
+// for CSS properties, so `color`, `font-size`, `font-weight`, and
+// `text-align` are intercepted in `updatePropertiesInterval` via
+// `StylesDiffMap.mBackingMap` — the same pattern `WhiskerImageView`
+// uses for `border-radius`.
 
 package rs.whisker.elements.input
 
@@ -56,10 +50,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     // State
     // -------------------------------------------------------------------------
 
-    /// True while we are programmatically writing to the EditText (e.g.
-    /// from an external `value` prop update or `setValue` / `clear` call).
-    /// While this flag is set, `afterTextChanged` does NOT emit an `input`
-    /// event so the two-way round-trip doesn't double-fire.
+    /// True while we are programmatically writing to the EditText, so
+    /// `afterTextChanged` doesn't emit an `input` event and double-fire the
+    /// two-way round-trip.
     private var programmaticWrite: Boolean = false
 
     /// True when the edit `afterTextChanged` is about to report came from
@@ -69,10 +62,10 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     ///
     /// Android fires a storm of `afterTextChanged('')` callbacks at mount
     /// / IME-attach time that are NOT user edits and NOT covered by
-    /// `programmaticWrite` (they come from the system clearing/restoring
-    /// the editor as the InputConnection is established). Without a gate,
-    /// those spurious empty events flow through the two-way writeback and
-    /// clobber the bound signal to "".
+    /// `programmaticWrite` (the system clears/restores the editor as the
+    /// InputConnection is established). Ungated, those spurious empty
+    /// events flow through the two-way writeback and clobber the bound
+    /// signal to "".
     ///
     /// Why not gate on "has the user ever touched this field" instead:
     /// a field the app focused itself (`InputRef::focus`, `auto-focus`)
@@ -80,57 +73,45 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     /// composition, and every commit on a keyboard that doesn't inject
     /// key events — arrives through the `InputConnection`, not through
     /// `View.onKeyDown`. Under a sticky interaction gate a whole word
-    /// could land in the field while the bound signal stayed empty, until
-    /// some later keystroke happened to be delivered as a real key event.
-    /// Tagging each edit where it enters the editor has no such blind
-    /// spot.
+    /// could land in the field while the bound signal stayed empty.
     private var userEdit: Boolean = false
 
-    /// Last text the two sides agreed on — what we last emitted upward, or
-    /// last accepted from a `value` prop / `setValue` / `clear`. A change
-    /// that leaves the text at this value carries no information for the
-    /// Rust signal, so it is not emitted: that both collapses the
-    /// mount-time `afterTextChanged('')` storm on an empty field and keeps
-    /// a `userEdit` tag set by a non-editing key (arrows, enter) from
-    /// leaking a later framework write upward.
+    /// Last text the two sides agreed on. A change that leaves the text at
+    /// this value carries no information for the Rust signal, so it is not
+    /// emitted: that collapses the mount-time `afterTextChanged('')` storm
+    /// on an empty field and keeps a `userEdit` tag set by a non-editing
+    /// key (arrows, enter) from leaking a later framework write upward.
     private var lastEmitted: String = ""
 
-    /// Pending `auto-focus` request. Stored until the view attaches to a
-    /// window (EditText must be attached before requesting focus works).
+    /// Pending `auto-focus` request, held until the view attaches to a
+    /// window — a focus request on a detached EditText does nothing.
     private var pendingAutoFocus: Boolean = false
 
     /// Selected auto-capitalization flag bit (one of the
     /// `InputType.TYPE_TEXT_FLAG_CAP_*` flags, or `0` for "none").
     ///
-    /// On Android, autocapitalization is NOT a standalone property like
-    /// iOS's `autocapitalizationType`; it's a few flag bits packed into
-    /// the same `inputType` Int that also carries the class / variation /
-    /// multiline / password bits. So `setKeyboardType`, `setSecure`, and
-    /// `setMultiline` — which all rebuild `inputType` — would wipe this
-    /// flag. We cache it here and reapply via [applyTextFlags] after every
-    /// such rebuild, so the cap setting survives regardless of prop order.
+    /// On Android autocapitalization is not a standalone property like
+    /// iOS's `autocapitalizationType`; it is flag bits packed into the same
+    /// `inputType` Int that carries the class / variation / multiline /
+    /// password bits, so `setKeyboardType`, `setSecure`, and `setMultiline`
+    /// all wipe it when they rebuild `inputType`. Caching it here and
+    /// reapplying via [applyTextFlags] makes the setting survive regardless
+    /// of prop-arrival order.
     ///
-    /// Default `TYPE_TEXT_FLAG_CAP_SENTENCES` matches iOS UIKit's
-    /// `.sentences` default, keeping the two platforms consistent (the
-    /// Rust component always sends an explicit `auto-capitalize` attr,
-    /// defaulting to `"sentences"`).
+    /// The `TYPE_TEXT_FLAG_CAP_SENTENCES` default matches iOS UIKit's
+    /// `.sentences`.
     private var capFlag: Int = InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
 
-    /// `auto-capitalize`'s siblings: the autocorrect and "no suggestions"
-    /// flag bits. Like [capFlag] these live in the shared `inputType` and
-    /// are reinstated by [applyTextFlags] after any inputType rebuild.
-    ///
-    /// `autoCorrectFlag` defaults to `TYPE_TEXT_FLAG_AUTO_CORRECT` (ON) to
-    /// match iOS's `.default` autocorrect, per the platform-alignment
-    /// decision. `noSuggestionsFlag` defaults to `0` (suggestions shown),
-    /// matching both Android's native default and iOS spell-check on.
+    /// The autocorrect and "no suggestions" bits. Like [capFlag] these live
+    /// in the shared `inputType` and are reinstated by [applyTextFlags]
+    /// after any rebuild. Defaults match iOS: autocorrect on, suggestions
+    /// shown.
     private var autoCorrectFlag: Int = InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
     private var noSuggestionsFlag: Int = 0
 
     /// Last-applied CSS `background-color` (ARGB int) and corner radius
-    /// (device px). We render these ourselves via a [GradientDrawable]
-    /// rather than relying on Lynx's `BackgroundDrawable` — see
-    /// [applyBackground] for why. `null` color means "transparent".
+    /// (device px), rendered through a [GradientDrawable] we own rather
+    /// than Lynx's `BackgroundDrawable` — see [applyBackground].
     private var bgColor: Int = Color.TRANSPARENT
     private var bgRadiusPx: Float = 0f
 
@@ -140,30 +121,22 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
 
     override fun createView(context: Context): android.widget.EditText {
         val et = WhiskerEditText(context)
-        // Replace the EditText's default underline background with a
-        // GradientDrawable WE own, so the CSS `background-color` /
-        // `border-radius` from the style cascade render here. We must NOT
-        // hard-null the background: a custom Lynx Android UI does not get
-        // its CSS background auto-drawn onto the wrapped view the way iOS
-        // does — Lynx only calls `view.setBackground(...)` once, in
+        // A GradientDrawable we own, replacing the EditText's default
+        // underline. It must not be nulled: Lynx calls
+        // `view.setBackground(...)` exactly once, in
         // `LynxUI.didEnsureCreateView()`, and only if its own
-        // `BackgroundDrawable` already exists at that instant; later
-        // background-color / border-radius changes mutate that drawable
-        // in place without re-attaching it. Owning the drawable ourselves
-        // (fed from `updatePropertiesInterval`, the same channel as the
-        // text color) is deterministic. Starts transparent (no CSS
-        // background → no visible surface, matching iOS).
+        // `BackgroundDrawable` already exists at that instant — later
+        // background-color / border-radius changes mutate that drawable in
+        // place without re-attaching it, so a custom UI's CSS background
+        // never reaches the wrapped view on its own.
         et.background = android.graphics.drawable.GradientDrawable()
-        // Single-line by default; `setMultiline("true")` switches to a
-        // multiline area.
         et.isSingleLine = true
         et.inputType = InputType.TYPE_CLASS_TEXT
 
-        // Deferred auto-focus: `setAutoFocus` may run before the EditText
-        // is attached to a window (a focus request has no effect then).
-        // We can't override `onAttachedToWindow` on this class — it's a
-        // LynxUI wrapper (`WhiskerUI`), not the View — so listen on the
-        // EditText itself.
+        // `setAutoFocus` may run before the EditText is attached, and a
+        // focus request has no effect then. This class is the LynxUI
+        // wrapper, not the View, so `onAttachedToWindow` isn't overridable
+        // here — listen on the EditText instead.
         et.addOnAttachStateChangeListener(
             object : android.view.View.OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(v: android.view.View) {
@@ -174,29 +147,23 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
                 }
 
                 override fun onViewDetachedFromWindow(v: android.view.View) {
-                    // Safety net for non-navigation unmounts (a
-                    // conditionally-rendered field being removed while
-                    // focused, a list row recycling): release focus and
-                    // hide the IME so a detached EditText never lingers as
-                    // the keyboard target. Navigation-driven dismissal is
-                    // handled up front by whisker-router; this covers the
-                    // cases that don't go through a route change. iOS gets
-                    // this for free (UIKit resigns first responder on
-                    // window removal); Android does not.
+                    // Android, unlike UIKit, does not resign the keyboard
+                    // target on window removal, so a field unmounted while
+                    // focused would linger as the IME target. Route-driven
+                    // dismissal is handled up front by whisker-router; this
+                    // covers unmounts that aren't route changes.
                     blurField()
                 }
             },
         )
 
         // Hardware-keyboard edits bypass the InputConnection entirely, so
-        // tag them here. The listener doesn't consume the event (returns
-        // false) — the EditText handles it normally.
+        // tag them here. Returning false leaves the event for the EditText.
         et.setOnKeyListener { _, _, _ ->
             userEdit = true
             false
         }
 
-        // Wire text changes back to Rust.
         et.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
@@ -207,8 +174,6 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
                 // framework write.
                 val fromUser = userEdit
                 userEdit = false
-                // Suppress events that originated from our own programmatic
-                // write — only user typing should emit `input`.
                 if (programmaticWrite) return
                 if (!fromUser) return
                 val text = s?.toString() ?: ""
@@ -218,7 +183,6 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             }
         })
 
-        // Focus change → `focus` / `blur` events.
         et.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 emitEvent("focus", "")
@@ -228,7 +192,6 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             }
         }
 
-        // Done / Go / Search / Send action → `submit` event.
         et.setOnEditorActionListener { _, actionId, _ ->
             when (actionId) {
                 EditorInfo.IME_ACTION_DONE,
@@ -249,22 +212,13 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     ///
     /// An `Editable` carries no record of where a change came from, and by
     /// the time `afterTextChanged` runs the originating call is off the
-    /// stack — so the distinction has to be captured at the entry points
-    /// the user's edits actually arrive through:
-    ///
-    /// * the IME's `InputConnection` — committed text, composition
-    ///   updates (a Japanese conversion updates the composing region on
-    ///   every keystroke; iOS's `UITextField` reports marked text through
-    ///   `editingChanged` the same way, so both platforms see the
-    ///   in-progress reading), surrounding-text deletes, autocorrect
-    ///   replacements, and the key events soft keyboards inject;
-    /// * the text-selection toolbar (paste / cut / autofill from the
-    ///   context menu), which writes to the `Editable` directly;
-    /// * the autofill framework.
-    ///
-    /// Everything else that mutates the editor — Lynx applying props, the
-    /// system restoring state as the InputConnection is (re)established —
-    /// is left untagged and stays out of the two-way binding.
+    /// stack — so the distinction has to be captured at the entry points a
+    /// user's edits arrive through: the IME's `InputConnection`, the
+    /// text-selection toolbar (paste / cut, which writes the `Editable`
+    /// directly), and the autofill framework. Everything else that mutates
+    /// the editor — Lynx applying props, the system restoring state as the
+    /// InputConnection is (re)established — stays untagged and out of the
+    /// two-way binding.
     private inner class WhiskerEditText(context: Context) : android.widget.EditText(context) {
         override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
             val base = super.onCreateInputConnection(outAttrs) ?: return null
@@ -344,26 +298,22 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         et.setHintTextColor(parsed)
     }
 
-    // Named `applyCaretColor` (not `setCaretColor`) on purpose: the
-    // LynxUI base class already declares `setCaretColor(String?)`, and a
-    // same-JVM-signature Kotlin `setCaretColor(String)` is an accidental
-    // override. We drive the EditText's cursor tint ourselves, so use a
-    // distinct name and call it from `InputModule`'s `caret-color` Prop.
+    // Named `applyCaretColor`, not `setCaretColor`: the LynxUI base class
+    // already declares `setCaretColor(String?)`, and a same-JVM-signature
+    // Kotlin `setCaretColor(String)` would accidentally override it.
+    // `InputModule`'s `caret-color` Prop calls this instead.
     fun applyCaretColor(color: String) {
         val et = view ?: return
         val parsed = parseColor(color) ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // API 29+: tint the cursor drawable directly.
             et.textCursorDrawable?.setColorFilter(parsed, PorterDuff.Mode.SRC_IN)
         } else {
-            // Pre-API-29: attempt reflection to reach mCursorDrawableRes.
-            // Best-effort — silently skip on failure.
+            // Pre-API-29 has no typed cursor-tint API; the caret keeps the
+            // theme color. Cosmetic only.
             try {
                 val field = android.widget.TextView::class.java
                     .getDeclaredField("mCursorDrawableRes")
                 field.isAccessible = true
-                // Not possible to tint without the typed API; skip on older
-                // Android. Cursor color is a cosmetic enhancement only.
             } catch (_: Throwable) { }
         }
     }
@@ -378,18 +328,16 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         val et = view ?: return
         val multi = flag == "true"
         if (multi) {
-            // Remove single-line constraint, allow multi-line input.
             et.isSingleLine = false
             et.inputType = et.inputType or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            // Top-align text in the multiline area (matches iOS behaviour).
+            // Top-align, matching iOS.
             et.gravity = Gravity.TOP or (et.gravity and Gravity.HORIZONTAL_GRAVITY_MASK)
         } else {
             et.isSingleLine = true
             et.inputType = et.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE.inv()
             et.gravity = Gravity.CENTER_VERTICAL or (et.gravity and Gravity.HORIZONTAL_GRAVITY_MASK)
         }
-        // `isSingleLine` / the MULTI_LINE flag toggle can reset inputType
-        // bits; reinstate the cached cap flag.
+        // `isSingleLine` / the MULTI_LINE toggle resets inputType bits.
         applyTextFlags()
     }
 
@@ -397,7 +345,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         val et = view ?: return
         val n = countStr.toIntOrNull() ?: 0
         if (n > 0) {
-            // Authoritative height is CSS for v1; `setLines` is best-effort.
+            // CSS is the authoritative height; this is best-effort.
             et.setLines(n)
         }
     }
@@ -405,14 +353,14 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     fun setSecure(flag: String) {
         val et = view ?: return
         if (flag == "true") {
-            // Preserve current class (text vs number), replace variation.
+            // Preserve the current class (text vs number), replace variation.
             val base = et.inputType and InputType.TYPE_MASK_CLASS
             et.inputType = base or InputType.TYPE_TEXT_VARIATION_PASSWORD
         } else {
             val base = et.inputType and InputType.TYPE_MASK_CLASS
             et.inputType = base or InputType.TYPE_TEXT_VARIATION_NORMAL
         }
-        // The masked rebuild above drops the cap flags; reinstate them.
+        // The masked rebuild above drops the cap flags.
         applyTextFlags()
     }
 
@@ -430,7 +378,6 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         if (et.isAttachedToWindow) {
             focusField()
         } else {
-            // Defer until onAttachedToWindow fires.
             pendingAutoFocus = true
         }
     }
@@ -441,15 +388,14 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         if (n > 0) {
             et.filters = arrayOf(InputFilter.LengthFilter(n))
         } else {
-            // Remove any previously applied length filter.
             et.filters = emptyArray()
         }
     }
 
     fun setKeyboardType(type: String) {
         val et = view ?: return
-        // Preserve the variation flags (password, etc.) and replace
-        // only the class bits.
+        // Preserve the variation flags (password, etc.), replace the class
+        // bits.
         val variation = et.inputType and InputType.TYPE_MASK_VARIATION
         et.inputType = when (type) {
             "number" -> InputType.TYPE_CLASS_NUMBER or variation
@@ -462,7 +408,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
                 InputType.TYPE_TEXT_VARIATION_URI
             else -> InputType.TYPE_CLASS_TEXT or variation
         }
-        // Rebuilding `inputType` from scratch drops the cap flags; reinstate.
+        // Rebuilding `inputType` from scratch drops the cap flags.
         applyTextFlags()
     }
 
@@ -494,8 +440,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     fun setSpellCheck(flag: String) {
-        // `spell_check` is the inverse of the `NO_SUGGESTIONS` flag:
-        // spell-check OFF → set NO_SUGGESTIONS to hide the suggestion strip.
+        // `spell_check` is the inverse of the `NO_SUGGESTIONS` flag.
         noSuggestionsFlag = if (flag == "false") InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS else 0
         applyTextFlags()
     }
@@ -503,15 +448,14 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     /**
      * Reapply the cached text-behaviour flag bits ([capFlag],
      * [autoCorrectFlag], [noSuggestionsFlag]) onto the EditText's current
-     * `inputType`, clearing the managed bits first. Called from each
-     * behaviour setter and after every setter that rebuilds `inputType`
-     * ([setKeyboardType], [setSecure], [setMultiline]) so these settings
-     * survive a rebuild regardless of prop-arrival order — they all share
-     * the single `inputType` Int (unlike iOS's orthogonal traits).
+     * `inputType`, clearing the managed bits first. Every setter that
+     * rebuilds `inputType` ([setKeyboardType], [setSecure],
+     * [setMultiline]) must call this, since all three settings share that
+     * one Int (unlike iOS's orthogonal traits).
      *
-     * These flags only have an effect under `TYPE_CLASS_TEXT`; for
-     * number / phone classes (or email / URI variations) Android ignores
-     * them, so ORing unconditionally is harmless.
+     * The flags only have an effect under `TYPE_CLASS_TEXT`; Android
+     * ignores them for number / phone classes, so ORing unconditionally is
+     * harmless.
      */
     private fun applyTextFlags() {
         val et = view ?: return
@@ -547,16 +491,14 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     /** Clear the text and emit `input` so the bound signal updates. */
     fun clearField() {
         val et = view ?: return
-        // `clear()` is an explicit, app-initiated content change, so the
-        // `input` event has to fire — but it is not a *user* edit, so it
-        // can't reach the watcher's gate. Write under `programmaticWrite`
-        // and emit here instead, which also makes the emit unconditional
-        // (a clear of an already-empty field still tells the Rust side the
-        // field is empty).
+        // An explicit, app-initiated content change: the `input` event has
+        // to fire, but it is not a *user* edit, so it can't reach the
+        // watcher's gate. Write under `programmaticWrite` and emit here
+        // instead — which also makes the emit unconditional, so clearing an
+        // already-empty field still tells the Rust side it is empty.
         programmaticWrite = true
         try {
             et.setText("")
-            // Move the cursor to position 0 (end of empty string).
             et.setSelection(0)
         } finally {
             programmaticWrite = false
@@ -572,26 +514,16 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     // CSS text-style interception
     // -------------------------------------------------------------------------
 
-    /// Intercept the CSS text-style cascade before the base implementation
-    /// runs. Custom UIs don't receive an APT-generated prop setter for CSS
-    /// properties, but the parsed values DO land in
-    /// `StylesDiffMap.mBackingMap` keyed by the CSS property name. We pull
-    /// `color`, `font-size`, `font-weight`, and `text-align` out of the
-    /// backing map and apply them to the EditText.
-    ///
-    /// `font-size` arrives as a 4-element `[px, unit, px, unit]` quartet
-    /// (PlatformLength) matching the border-radius shape in WhiskerImageView;
-    /// index 0 is the already-density-multiplied pixel value. We pass it to
-    /// `setTextSize(COMPLEX_UNIT_PX, px)` to avoid double-scaling.
-    ///
-    /// `color` and `font-weight` arrive as scalars (int and string/int).
-    /// `text-align` arrives as a string ("left", "center", "right").
+    /// Custom UIs don't receive an APT-generated prop setter for CSS
+    /// properties, but the parsed values do land in
+    /// `StylesDiffMap.mBackingMap` keyed by the CSS property name — so the
+    /// text styles have to be picked out of the backing map here.
     override fun updatePropertiesInterval(props: StylesDiffMap?) {
         super.updatePropertiesInterval(props)
         val map = props?.mBackingMap ?: return
         val et = view ?: return
 
-        // color — arrives as an ARGB int from Lynx's CSS engine.
+        // ARGB int from Lynx's CSS engine.
         if (map.hasKey("color")) {
             runCatching {
                 val color = map.getInt("color")
@@ -599,8 +531,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             }
         }
 
-        // font-size — PlatformLength quartet: [px, unit, px, unit].
-        // Index 0 is the pre-multiplied pixel value.
+        // PlatformLength quartet `[px, unit, px, unit]`; index 0 is already
+        // density-multiplied, so it goes out as COMPLEX_UNIT_PX to avoid
+        // double-scaling.
         if (map.hasKey("font-size")) {
             runCatching {
                 val arr = map.getArray("font-size")
@@ -611,8 +544,7 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             }
         }
 
-        // font-weight — may arrive as a number (400, 700) or a string
-        // ("bold", "normal"). Map to Typeface style.
+        // Arrives as a number (400, 700) or a string ("bold", "normal").
         if (map.hasKey("font-weight")) {
             runCatching {
                 val weight = when {
@@ -633,7 +565,6 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             }
         }
 
-        // text-align — "left" / "center" / "right".
         if (map.hasKey("text-align")) {
             runCatching {
                 val align = map.getString("text-align")
@@ -642,21 +573,15 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
                     "right" -> Gravity.END
                     else -> Gravity.START
                 }
-                // Preserve the vertical gravity already set (e.g. TOP for
-                // multiline, CENTER_VERTICAL for single-line).
+                // Preserve the vertical gravity `setMultiline` chose.
                 val vGrav = et.gravity and Gravity.VERTICAL_GRAVITY_MASK
                 et.gravity = vGrav or hGrav
             }
         }
 
-        // background-color + border-radius — see [applyBackground] for the
-        // rationale (Lynx doesn't auto-draw a custom UI's CSS background
-        // onto the wrapped Android view). Read both from the same backing
-        // map and rebuild our GradientDrawable when either changes.
         var bgChanged = false
 
-        // `background-color` arrives as an ARGB int (same encoding as
-        // `color`, matching Lynx's `setBackgroundColor(int)` setter).
+        // ARGB int, same encoding as `color`.
         if (map.hasKey("background-color")) {
             runCatching {
                 val c = map.getInt("background-color")
@@ -667,11 +592,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
             }
         }
 
-        // `border-*-radius` arrive as PlatformLength quartets
-        // `[px, unit, px, unit]` (index 0 = density-multiplied px), the
-        // same shape WhiskerImageView reads. Lynx splits the shorthand
-        // into four per-corner keys; GradientDrawable's `cornerRadius`
-        // takes one uniform float, so we collapse to the largest corner.
+        // Lynx splits the shorthand into four per-corner keys, but
+        // GradientDrawable's `cornerRadius` is one uniform float — collapse
+        // to the largest corner.
         var maxRadius = 0f
         var sawRadius = false
         for (k in CORNER_KEYS) {
@@ -696,14 +619,12 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
      * Rebuild and apply the EditText's background [GradientDrawable] from
      * the current [bgColor] + [bgRadiusPx].
      *
-     * We draw the CSS background ourselves because a custom Lynx Android
-     * UI does NOT get its CSS `background-color` / `border-radius`
-     * auto-painted onto the wrapped view (the iOS path does this via the
-     * UITextField's layer; the Android `LynxUI` only sets the view
-     * background once in `didEnsureCreateView`, and only when its own
+     * A custom Lynx Android UI does NOT get its CSS `background-color` /
+     * `border-radius` auto-painted onto the wrapped view: `LynxUI` sets the
+     * view background once in `didEnsureCreateView`, and only when its own
      * `BackgroundDrawable` already exists — later mutations don't
-     * re-attach). The GradientDrawable also replaces the EditText's
-     * default underline, which is what we wanted gone anyway.
+     * re-attach. iOS paints it via the UITextField's layer, so this is
+     * Android-only work.
      */
     private fun applyBackground() {
         val et = view ?: return
@@ -718,36 +639,26 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     // CSS padding
     // -------------------------------------------------------------------------
 
-    /// Lynx resolves the element's CSS `padding` / `padding-*` (shorthand,
-    /// units, %) during the layout pass and stores the result, in device
-    /// pixels, on the `LynxBaseUI` base via `mPaddingLeft` / `mPaddingTop`
-    /// / `mPaddingRight` / `mPaddingBottom` (exposed through
-    /// `getPaddingLeft()` etc.). `onLayoutUpdated` fires after every layout
-    /// pass with those values final, so it's the right hook to mirror them
-    /// onto the EditText — reading them in `updatePropertiesInterval` could
-    /// catch a pre-layout (stale/zero) value on first render.
-    ///
-    /// NOTE the name clash: `getPaddingLeft()` here resolves to LYNX's
-    /// computed padding (`LynxBaseUI.getPaddingLeft()`, returning
-    /// `mPaddingLeft`), NOT `android.view.View.getPaddingLeft()` — `this`
-    /// is the LynxUI wrapper, not the View.
+    /// Lynx resolves CSS `padding` (shorthand, units, %) during the layout
+    /// pass, so the values are only final once `onLayoutUpdated` fires;
+    /// reading them in `updatePropertiesInterval` can catch a pre-layout
+    /// zero on first render.
     override fun onLayoutUpdated() {
         super.onLayoutUpdated()
         applyPadding()
     }
 
     /**
-     * Mirror the Lynx-computed CSS padding (device px) onto the EditText,
-     * making CSS the single source of truth and overriding the EditText's
-     * built-in default internal padding (~4-6dp). With no CSS padding the
-     * computed values are 0 → the field sits flush, matching iOS's 0
-     * default. The EditText default must never leak through, so we set all
-     * four sides unconditionally.
+     * Mirror the Lynx-computed CSS padding (device px) onto the EditText.
+     * All four sides are set unconditionally so the EditText's built-in
+     * ~4-6dp internal padding never leaks through: with no CSS padding the
+     * computed values are 0 and the field sits flush, matching iOS.
      */
     private fun applyPadding() {
         val et = view ?: return
-        // `getPaddingLeft()` / … are LynxBaseUI's computed-padding
-        // accessors (device px), not the EditText's own.
+        // These resolve to `LynxBaseUI.getPaddingLeft()` etc. — Lynx's
+        // computed padding — not `android.view.View`'s, because `this` is
+        // the LynxUI wrapper rather than the View.
         et.setPadding(
             getPaddingLeft(),
             getPaddingTop(),
@@ -761,10 +672,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     // -------------------------------------------------------------------------
 
     /**
-     * Set the EditText text to [incoming] only when it differs from what
-     * is currently displayed. When a write is needed, `programmaticWrite`
-     * is set to suppress the resulting `afterTextChanged` `input` event
-     * (it's not user-typed). Cursor is moved to the end after each write.
+     * Set the EditText text to [incoming] only when it differs from what is
+     * currently displayed — an unconditional write would jump the cursor to
+     * the end on every keystroke of the two-way round-trip.
      */
     private fun applyTextIfChanged(incoming: String) {
         val et = view ?: return
@@ -774,7 +684,6 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
         programmaticWrite = true
         try {
             et.setText(incoming)
-            // Move cursor to end after an external value change.
             et.setSelection(et.text?.length ?: 0)
         } finally {
             programmaticWrite = false
@@ -782,38 +691,22 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     /**
-     * Build and dispatch a `{ detail: { value: "<text>" } }` custom
-     * event matching the shape [`InputEvent`] on the Rust side
-     * deserializes. The `detail` wrapper is the Lynx custom-event
-     * convention.
+     * Dispatch a custom event carrying the current text, in the shape
+     * `InputEvent` deserializes on the Rust side. `focus` and `blur` pass
+     * an empty [text] and the Rust handler ignores it.
      *
-     * For `focus` and `blur` the [text] is empty and the Rust handler
-     * ignores it (the event fires no value), but we keep the same
-     * payload shape for consistency.
-     *
-     * ## Synchronous dispatch
-     *
-     * `WhiskerCustomEvent.dispatch` is called synchronously. The Rust
-     * renderer is re-entrancy-safe (whisker #3: `with_renderer` takes a
-     * shared borrow and every renderer field borrow is scoped so it
-     * never spans a re-entrant FFI call), so a UI callback that reenters
-     * Rust during a hot-reload remount / teardown — e.g. Lynx
-     * `remove_child` triggering a native focus-loss callback that fires
-     * `blur` / `change` — no longer panics with "RefCell already
-     * borrowed". This used to be deferred a main-loop tick via
-     * `View.post { ... }`; dispatching synchronously removes that
-     * one-tick lag (whisker #3). All callers (`afterTextChanged`, focus
-     * listeners) already run on the UI thread.
+     * Dispatch is synchronous, which is safe because `with_renderer` takes
+     * a shared borrow and scopes every renderer field borrow so it never
+     * spans a re-entrant FFI call (whisker #3) — a native focus-loss
+     * callback firing `blur` / `change` from inside a Lynx `remove_child`
+     * therefore cannot hit "RefCell already borrowed". All callers already
+     * run on the UI thread.
      */
     private fun emitEvent(name: String, text: String) {
         // Pass the payload directly as the params — do NOT wrap it in a
-        // `detail` key. The Android event reporter (WhiskerView's
-        // LynxEventReporter) already places the dispatched params UNDER a
-        // `detail` key in the event body (matching iOS's
-        // `generateEventBody`: `{ type, target, currentTarget, detail }`).
-        // The Rust `InputEvent { detail: { value } }` reads `body.detail`.
-        // Wrapping here too would double-nest and the value would never
-        // reach `on_input` (it would always deliver an empty string).
+        // `detail` key. WhiskerView's LynxEventReporter already places the
+        // dispatched params under `detail` in the event body, so wrapping
+        // here double-nests and `on_input` only ever sees an empty string.
         val params = mapOf("value" to text)
         WhiskerCustomEvent.dispatch(
             ui = this,
@@ -840,10 +733,9 @@ open class WhiskerInputView(context: WhiskerContext) : WhiskerUI<android.widget.
     }
 
     private companion object {
-        /// Lynx splits the CSS `border-radius` shorthand into these four
-        /// per-corner keys in `mBackingMap`. Same list WhiskerImageView
-        /// reads; each value is a `[px, unit, px, unit]` PlatformLength
-        /// quartet with the density-multiplied px at index 0.
+        /// The four per-corner keys Lynx splits `border-radius` into, each
+        /// a `[px, unit, px, unit]` PlatformLength quartet with the
+        /// density-multiplied px at index 0.
         val CORNER_KEYS = listOf(
             "border-top-left-radius",
             "border-top-right-radius",

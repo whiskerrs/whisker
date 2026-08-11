@@ -1,4 +1,4 @@
-// Phase L-2c — Android dispatch wiring for the `ModuleDefinition` DSL.
+// Android dispatch wiring for the `ModuleDefinition` DSL.
 //
 // At module-registration time (host-app launch), the framework
 // calls `module.registerWithLynx()`. This walks the DSL definition
@@ -11,22 +11,14 @@
 //     `View(...)` block that dispatches every `Function("...") { handler }`
 //     declared inside it.
 //
-// Both are registered against the Lynx-fork-public Class-explicit
-// overloads added in Phase L-1 (`v3.7.0-whisker.4`):
+// Both are registered against the Class-explicit overloads the Lynx
+// fork makes public:
 //
 //   PropsUpdater.registerSetter(Class, Settable)
 //   LynxUIMethodsExecutor.registerMethodInvoker(Class, Invoker)
 //
 // keyed by the target UI class declared in `View(MyView::class.java) {...}`.
-//
-// ## Coexistence with the annotation API
-//
-// Both paths register against the same Lynx prop / method dispatch
-// tables. A class registered through this DSL path replaces (last-
-// write-wins) any prior reflection-based registration for the same
-// target class — which is what we want during the L-3 sample-
-// migration window where some modules use the DSL and others stay
-// on `@WhiskerComponent`.
+// Registration is last-write-wins per target class.
 
 package rs.whisker.runtime
 
@@ -47,7 +39,7 @@ import com.lynx.tasm.behavior.utils.PropsUpdater
  *
  *  - **View-bearing** (`View(...) { Prop / Function }`): installs a
  *    [LynxUISetter] + [LynxUIMethodInvoker] on the view class via
- *    the L-1 Class-explicit registration APIs.
+ *    the Class-explicit registration APIs.
  *  - **View-less** (module-level `Function`s, no `View(...)`):
  *    registers a dispatch closure with [WhiskerModuleRegistry]
  *    under the module's `Name(...)`, so `whisker_bridge_invoke_module`
@@ -108,8 +100,6 @@ private fun registerViewLess(def: ModuleDefinition, crateName: String?) {
         WhiskerModuleRegistry.registerDispatch(qualifiedName) { method, args ->
             val fn = byName[method]
                 ?: return@registerDispatch WhiskerValue.Err("unknown method `$method` on module `$name`")
-            // Case ②: hand the raw `List<WhiskerValue>` straight to the
-            // handler, which returns a `WhiskerValue`.
             try {
                 fn.handler(null, args.asList())
             } catch (t: Throwable) {
@@ -122,9 +112,9 @@ private fun registerViewLess(def: ModuleDefinition, crateName: String?) {
         val asyncByName = asyncFunctions.associateBy { it.name }
         WhiskerModuleRegistry.registerDispatchAsync(qualifiedName) { method, args, promise ->
             val fn = asyncByName[method] ?: return@registerDispatchAsync false
-            // Owned: invoke the handler with the promise; it resolves now
-            // or later. Exceptions surface via `invokeDispatchAsync`'s
-            // catch (→ promise.reject).
+            // The handler owns the promise; it resolves now or later.
+            // Exceptions surface via `invokeDispatchAsync`'s catch
+            // (→ promise.reject).
             fn.handler(null, args.asList(), promise)
             true
         }
@@ -146,25 +136,18 @@ internal class WhiskerDSLPropsSetter(
     private val props: List<WhiskerPropComponent>,
 ) : LynxUISetter<LynxBaseUI> {
 
-    // Lookup by name. Index-once on construction; the underlying
-    // list is immutable.
     private val byName: Map<String, WhiskerPropComponent> =
         props.associateBy { it.name }
 
     override fun setProperty(ui: LynxBaseUI, name: String, propsMap: StylesDiffMap) {
         val component = byName[name] ?: return
-        // Decode the Lynx prop value, then wrap as a raw
-        // `WhiskerValue` (case ②) — the closure destructures it
-        // (`value.asString()`, …).
         component.setter(ui, whiskerValueOf(decodeProp(propsMap, name)))
     }
 
     private fun decodeProp(propsMap: StylesDiffMap, name: String): Any? {
         val dyn = propsMap.getDynamic(name) ?: return null
-        // The Dynamic API surfaces values via type-specific
-        // getters. We try the common cases in order — what Lynx
-        // hands us is determined by the JS / Rust side's encoded
-        // value, not the Kotlin closure's declared type, so
+        // What Lynx hands us is determined by the JS / Rust side's
+        // encoded value, not the Kotlin closure's declared type, so
         // probing the type tag is the only safe path.
         return try {
             when (dyn.type) {
@@ -195,11 +178,9 @@ internal class WhiskerDSLPropsSetter(
  * closure, and resolve the callback with the result (or a
  * NODE_NOT_FOUND error if the method isn't declared).
  *
- * Params convention: Lynx's reflection-based path packs positional
- * args as `{"args": [v1, v2, ...]}` (matching what the existing
- * `@WhiskerUIMethod` macro decodes). We preserve that contract so
- * the same Rust-side `ElementRef::invoke(...)` call site can route
- * to either the annotation path or the DSL path interchangeably.
+ * Params convention: Lynx packs positional args as
+ * `{"args": [v1, v2, ...]}`. Preserving that contract is what lets
+ * the Rust-side `ElementRef::invoke(...)` call site stay uniform.
  */
 internal class WhiskerDSLMethodInvoker(
     private val functions: List<WhiskerFunctionComponent>,
@@ -222,9 +203,6 @@ internal class WhiskerDSLMethodInvoker(
             )
             return
         }
-        // Case ②: decode Lynx args, wrap each as a raw WhiskerValue,
-        // hand to the closure, encode its WhiskerValue result back
-        // for the Lynx callback.
         val args: List<WhiskerValue> = decodeArgs(params).map { whiskerValueOf(it) }
         val result: WhiskerValue = try {
             component.handler(ui, args)

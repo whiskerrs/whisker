@@ -1,6 +1,6 @@
 // Lynx UI subclass hosting an ImageView + Coil-driven URL loading.
-// A plain `WhiskerUI` subclass — no Whisker annotations; registration
-// is driven by `ImageModule`'s `definition()` (see `ImageModule.kt`).
+// Registration is driven by `ImageModule`'s `definition()`, not by
+// annotations on this class.
 
 package rs.whisker.elements.image
 
@@ -21,34 +21,28 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
     private var currentSrc: String? = null
     private var currentHeaders: Map<String, String> = emptyMap()
     private var currentRequest: Disposable? = null
-    /// Active corner radius in **device pixels** — the value Lynx's
-    /// CSS pipeline has already converted from the `8px` source. Fed
-    /// directly to Coil's `RoundedCornersTransformation`, which also
-    /// takes pixels. `0f` means "no rounding".
+    /// Corner radius in **device pixels** — Lynx's CSS pipeline has
+    /// already converted it, and Coil's `RoundedCornersTransformation`
+    /// takes pixels too, so it passes straight through. `0f` = no rounding.
     private var cornerRadiusPx: Float = 0f
 
     override fun createView(context: Context): ImageView {
         val v = ImageView(context)
-        // Default to `aspectFill` (`CENTER_CROP`) to match the Lynx
-        // `mode` default; `setMode(_)` flips it as soon as a non-
-        // default value lands.
+        // `CENTER_CROP` matches the Lynx `mode` default of `aspectFill`.
         v.scaleType = ImageView.ScaleType.CENTER_CROP
         return v
     }
 
-    /// Intercept the CSS `border-radius` cascade before the base
-    /// implementation runs. Whisker-registered custom UIs ship without
-    /// an APT-generated `$$PropsSetter`, so Lynx's per-key dispatch
-    /// path can't reach the typed `setBorderRadius(int, ReadableArray)`
-    /// hook on `LynxBaseUI`. The kebab-case `border-*-radius` entries
-    /// DO reach `StylesDiffMap.mBackingMap` though — we pull them out
-    /// here and forward to Coil's bitmap transformation.
+    /// Whisker-registered custom UIs ship without an APT-generated
+    /// `$$PropsSetter`, so Lynx's per-key dispatch never reaches the typed
+    /// `setBorderRadius(int, ReadableArray)` hook on `LynxBaseUI`. The
+    /// kebab-case `border-*-radius` entries DO land in
+    /// `StylesDiffMap.mBackingMap`, so they have to be read out here.
     ///
-    /// Lynx splits the CSS shorthand into four per-corner properties.
-    /// Each value is a 4-element `[x_px, x_unit, y_px, y_unit]` array
-    /// (PlatformLength quartet, x_px already density-multiplied).
-    /// `RoundedCornersTransformation` takes one uniform float, so we
-    /// collapse to the largest corner.
+    /// Lynx splits the shorthand into four per-corner properties, each a
+    /// `[x_px, x_unit, y_px, y_unit]` PlatformLength quartet with x_px
+    /// already density-multiplied. `RoundedCornersTransformation` takes one
+    /// uniform float, so this collapses to the largest corner.
     override fun updatePropertiesInterval(props: StylesDiffMap?) {
         super.updatePropertiesInterval(props)
         val map = props?.mBackingMap ?: return
@@ -69,29 +63,22 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
     }
 
     /**
-     * Backing of the `src` prop. Kicks off a Coil request bound to
-     * the ImageView itself. A second `setSrc` cancels the in-flight
-     * request automatically — `ImageView.load { ... }` returns a
-     * Disposable we cancel before issuing the next one.
+     * Backing of the `src` prop. Kicks off a Coil request bound to the
+     * ImageView; the returned Disposable is cancelled before the next
+     * request is issued, so a second `setSrc` cancels the in-flight one.
      */
     fun setSrc(value: String) {
-        // No-op on equal — avoids re-fetching on a benign re-render
-        // (e.g. a parent re-renders but the src signal didn't
-        // actually change). Coil would short-circuit via its memory
-        // cache, but the request construction itself is non-zero.
+        // Coil would short-circuit an unchanged src through its memory
+        // cache anyway, but constructing the request still costs something
+        // on every benign re-render.
         if (currentSrc == value) return
         currentSrc = value
         reload()
     }
 
-    /**
-     * Backing of the `mode` prop. Maps the Lynx-convention mode
-     * strings onto `ImageView.ScaleType`. Unknown values fall back
-     * to `aspectFill` (CENTER_CROP).
-     */
-    /// Backing of the `headers` prop: a JSON object of request
-    /// headers. Re-fetches, because a host that answers differently
-    /// per header answers differently per change.
+    /// Backing of the `headers` prop: a JSON object of request headers.
+    /// Re-fetches, because a host that answers differently per header
+    /// answers differently per change.
     fun setHeaders(json: String) {
         val parsed = parseHeaders(json)
         if (parsed == currentHeaders) return
@@ -107,6 +94,8 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
         }.getOrDefault(emptyMap())
     }
 
+    /// Backing of the `mode` prop, mapping the Lynx-convention mode
+    /// strings onto `ImageView.ScaleType`.
     fun setMode(value: String) {
         val imageView = view ?: return
         imageView.scaleType = when (value) {
@@ -119,16 +108,14 @@ open class WhiskerImageView(context: WhiskerContext) : WhiskerUI<ImageView>(cont
     }
 
     /**
-     * Issue (or re-issue) a Coil request for the current `src` with
-     * the current `cornerRadiusPx`. Called from `setSrc` and from
-     * `updatePropertiesInterval` when the radius changes.
+     * Issue (or re-issue) a Coil request for the current `src` with the
+     * current `cornerRadiusPx`.
      */
     private fun reload() {
         val src = currentSrc ?: return
         val imageView = view ?: return
 
-        // Cancel any prior request. `dispose()` is a no-op if the
-        // disposable has already completed.
+        // `dispose()` is a no-op on an already-completed disposable.
         currentRequest?.dispose()
         imageView.dispose()
 

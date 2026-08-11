@@ -56,7 +56,6 @@ fn ios_gen_tree_gets_asset_catalog_and_pbxproj_reference() {
     let inputs = whisker_cng::ios::inputs_from_with_engine(
         &engine_for(&crate_root),
         &app_with_icon(),
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "icon-app".into(),
@@ -187,7 +186,6 @@ fn ios_icon_bundle_reaches_gen_tree_and_pbxproj() {
     let inputs = whisker_cng::ios::inputs_from_with_engine(
         &engine_for(&crate_root),
         &app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "icon-app".into(),
@@ -216,7 +214,6 @@ fn no_declaration_leaves_gen_trees_icon_free() {
 
     let inputs = whisker_cng::ios::inputs_from(
         &app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "plain-app".into(),

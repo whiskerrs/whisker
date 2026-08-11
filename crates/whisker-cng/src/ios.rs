@@ -49,11 +49,6 @@ pub struct IosInputs {
     pub scheme: String,
     pub bundle_id: String,
     pub deployment_target: String,
-    /// Local checkout of the Whisker iOS SwiftPM sources — typically
-    /// `<workspace>/platforms/ios`. Not templated into the pbxproj,
-    /// which resolves `WhiskerRuntime` from the remote SPM package; it
-    /// only participates in the sync fingerprint.
-    pub whisker_runtime_path: PathBuf,
     /// Path to the auto-generated `WhiskerModules` SwiftPM package —
     /// typically `<crate_dir>/gen/ios/whisker_modules`, the dir
     /// `whisker-build::ios::stage_module_swift_sources` populates with
@@ -583,7 +578,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
 /// additional plugins.
 pub fn inputs_from(
     app_config: &Config,
-    whisker_runtime_path: PathBuf,
     whisker_modules_path: PathBuf,
     workspace_root: PathBuf,
     user_package: String,
@@ -591,7 +585,6 @@ pub fn inputs_from(
     inputs_from_with_engine(
         &Engine::with_builtins(),
         app_config,
-        whisker_runtime_path,
         whisker_modules_path,
         workspace_root,
         user_package,
@@ -604,7 +597,6 @@ pub fn inputs_from(
 pub fn inputs_from_with_engine(
     engine: &Engine,
     app_config: &Config,
-    whisker_runtime_path: PathBuf,
     whisker_modules_path: PathBuf,
     workspace_root: PathBuf,
     user_package: String,
@@ -651,7 +643,6 @@ pub fn inputs_from_with_engine(
         scheme,
         bundle_id,
         deployment_target,
-        whisker_runtime_path,
         whisker_modules_path,
         workspace_root,
         user_package,
@@ -687,7 +678,6 @@ mod tests {
             scheme: "HelloWorld".into(),
             bundle_id: "rs.whisker.examples.helloWorld".into(),
             deployment_target: "13.0".into(),
-            whisker_runtime_path: PathBuf::from("/abs/platforms/ios"),
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
@@ -847,14 +837,7 @@ mod tests {
             name: Some("X".into()),
             ..Config::default()
         };
-        let err = inputs_from(
-            &cfg,
-            PathBuf::new(),
-            PathBuf::new(),
-            PathBuf::new(),
-            String::new(),
-        )
-        .unwrap_err();
+        let err = inputs_from(&cfg, PathBuf::new(), PathBuf::new(), String::new()).unwrap_err();
         assert!(err.to_string().contains("bundle_id"), "got: {err:#}");
     }
 }

@@ -1,4 +1,4 @@
-// Phase L-2d — Module-side host context (Android).
+// Module-side host context (Android).
 //
 // Modelled on Expo's `appContext.currentActivity`. A `Module` body
 // reaches the host Activity via:
@@ -47,13 +47,6 @@ import java.lang.ref.WeakReference
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Marker interface a Whisker module host implements to publish
- * itself as a candidate for `appContext.currentActivity`. The
- * default implementer is `WhiskerView`, but a custom host (e.g. a
- * unit-test harness or a non-View embedding) can implement this
- * too.
- */
-/**
  * Listener registered via
  * [WhiskerAppContext.addOnHostAttachedListener]. Fires every time a
  * `WhiskerModuleHost` attaches (and once at registration time if a
@@ -73,6 +66,12 @@ public fun interface DeepLinkListener {
     public fun onDeepLink(url: String)
 }
 
+/**
+ * Marker interface a Whisker module host implements to publish
+ * itself as a candidate for `appContext.currentActivity`. The
+ * default implementer is `WhiskerView`, but a custom host (e.g. a
+ * unit-test harness or a non-View embedding) can implement this too.
+ */
 public interface WhiskerModuleHost {
     /**
      * The host's Android `Context`. [WhiskerAppContext.currentActivity]
@@ -116,9 +115,9 @@ public class WhiskerAppContext internal constructor() {
      * runtime's first render fires during `WhiskerView`'s
      * constructor (inside `nativeAppMain`), but
      * `onAttachedToWindow` only fires after `setContentView`
-     * inflates the view hierarchy. The
-     * [PredictiveBackModule](rs.whisker.router) defers its
-     * `addCallback` against the host Activity through this hook.
+     * inflates the view hierarchy. `rs.whisker.router`'s
+     * `PredictiveBackModule` defers its `addCallback` against the
+     * host Activity through this hook.
      *
      * Caller is responsible for [removeOnHostAttachedListener] —
      * stale listeners pin nothing (the listener list holds Kotlin

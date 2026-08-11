@@ -24,49 +24,41 @@ class WebViewModule : Module() {
 
             // ---- content props -------------------------------------------
 
-            // `url` — if non-empty, webView.loadUrl(). Prop is also the
-            // controlled-load trigger; the view guards re-entrant loads.
             Prop("url") { view: WhiskerWebView, value ->
                 view.setUrl(value.asString() ?: "")
             }
 
-            // `html` — inline HTML, used when `url` is empty.
+            // Inline HTML, used only when `url` is empty.
             Prop("html") { view: WhiskerWebView, value ->
                 view.setHtml(value.asString() ?: "")
             }
 
             // ---- behaviour props -----------------------------------------
 
-            // `user-agent` — overrides the WebView's user-agent string.
+            // Must be set before any load to take effect.
             Prop("user-agent") { view: WhiskerWebView, value ->
                 view.setUserAgent(value.asString() ?: "")
             }
 
-            // `javascript-enabled` — "true"/"false" string; default false
-            // on Android. Must be set before any load to take effect.
+            // Defaults to false on Android, unlike iOS.
             Prop("javascript-enabled") { view: WhiskerWebView, value ->
                 view.setJavascriptEnabled(value.asString() ?: "false")
             }
 
-            // `scroll-enabled` — "true"/"false". Disabling suppresses both
-            // the scroll bars and touch-driven scroll/fling.
             Prop("scroll-enabled") { view: WhiskerWebView, value ->
                 view.setScrollEnabled(value.asString() ?: "true")
             }
 
-            // `origin-whitelist` — JSON array string, e.g. `["https://*"]`.
-            // Parsed in the view; controls shouldOverrideUrlLoading.
+            // JSON array string, e.g. `["https://*"]`.
             Prop("origin-whitelist") { view: WhiskerWebView, value ->
                 view.setOriginWhitelist(value.asString() ?: "")
             }
 
-            // `style` handled by the WhiskerUI base (box / layout CSS).
+            // `style` is handled by the WhiskerUI base.
 
-            // ---- events (declaration-only metadata) ----------------------
-            // Actual dispatch goes through WhiskerCustomEvent.dispatch()
-            // inside WhiskerWebView. This block documents the emittable set
-            // so the KSP-generated registrar registers the event names with
-            // Lynx's event system — matching the Rust on_* handler suffixes.
+            // Declaration-only, but the KSP-generated registrar needs it to
+            // register these names with Lynx's event system; dispatch
+            // itself happens inside WhiskerWebView.
             Events(
                 "message",
                 "load_start",
@@ -77,8 +69,6 @@ class WebViewModule : Module() {
             )
 
             // ---- callable UI methods -------------------------------------
-
-            // Simple navigation controls — all return Null (fire-and-forget).
 
             Function("reload") { view: WhiskerWebView, _ ->
                 view.reload()
@@ -100,34 +90,24 @@ class WebViewModule : Module() {
                 WhiskerValue.Null
             }
 
-            // `postMessage` — Rust → JS. Args: `["<string>"]` (positional).
             Function("postMessage") { view: WhiskerWebView, args ->
                 val data = args.getOrNull(0)?.asString() ?: ""
                 view.postMessageToPage(data)
                 WhiskerValue.Null
             }
 
-            // `evaluateJavaScript` — run script. Has two call shapes:
-            //   - Fire-and-forget: Rust sends args `["<js>"]` via
-            //     invoke() and ignores the return.
-            //   - Result: Rust sends args via invoke_typed and awaits
-            //     `{ "value": "<result>" }`.
-            // Both cases share this single Function; the view's
-            // evaluateJs() returns the result map (the bridge discards it
-            // for fire-and-forget calls).
+            // One Function serves both `invoke` (ignores the return) and
+            // `invoke_typed` (awaits `{ "value": "<result>" }`).
             //
-            // NOTE: per repo memory, Android result-returning element
-            // methods require invoke_async wiring in lynx_native_renderer.cc
-            // (iOS-only in Lynx 3.8.0-whisker.1). Implement correctly now
-            // so the method is available once the fork wires it on Android.
+            // TODO: Android result-returning element methods need
+            // invoke_async wiring in lynx_native_renderer.cc, compiled
+            // iOS-only in Lynx 3.8.0-whisker.1 (memory note
+            // `whisker_element_method_results_need_async`).
             Function("evaluateJavaScript") { view: WhiskerWebView, args ->
                 val script = args.getOrNull(0)?.asString() ?: ""
                 view.evaluateJs(script)
             }
 
-            // `canGoBack` / `canGoForward` — sync boolean queries.
-            // Returns WhiskerValue.Bool so Rust can deserialize via
-            // invoke_typed::<bool>.
             Function("canGoBack") { view: WhiskerWebView, _ ->
                 view.queryCanGoBack()
             }

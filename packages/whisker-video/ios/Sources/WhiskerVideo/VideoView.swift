@@ -1,6 +1,5 @@
-// Lynx UI subclass hosting AVPlayer + AVPlayerLayer. A plain
-// `WhiskerUI` subclass — no annotations; registration is driven
-// by `VideoModule`'s `definition()` (see `VideoModule.swift`).
+// Lynx UI subclass hosting AVPlayer + AVPlayerLayer. Registration is
+// driven by `VideoModule`'s `definition()`, not by annotations here.
 //
 // `@objc(VideoView)` pins the Obj-C class name to the bare
 // `VideoView` so the codegen plugin's `NSClassFromString` lookup
@@ -43,10 +42,10 @@ public final class VideoView: WhiskerUI<UIView> {
         layer.backgroundColor = UIColor.black.cgColor
 
         let hostView: UIView = self.view()
-        // setSrc can fire before Lynx assigns the host view its
-        // computed frame (first dispatch happens during initial-
-        // mount prop application). Give the layer a sensible default
-        // rect; `frameDidChange` resizes once layout completes.
+        // setSrc can fire before Lynx assigns the host view its computed
+        // frame — the first dispatch happens during initial-mount prop
+        // application — so the layer needs a placeholder rect until
+        // `frameDidChange` resizes it.
         layer.frame = hostView.bounds.isEmpty
             ? CGRect(x: 0, y: 0, width: 400, height: 200)
             : hostView.bounds
@@ -54,8 +53,8 @@ public final class VideoView: WhiskerUI<UIView> {
 
         self.player = p
         self.playerLayer = layer
-        // Autoplay so the demo shows motion immediately. A real
-        // module would expose this via an `autoplay` attribute.
+        // TODO: expose this as an `autoplay` attribute instead of
+        // unconditionally starting playback.
         p.play()
     }
 

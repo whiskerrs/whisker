@@ -1,26 +1,14 @@
 package rs.whisker.runtime
 
 /**
- * Phase 7-Φ.H.1: Lynx symbol hiding (Android).
+ * Lynx symbol hiding (Android).
  *
  * A view-bearing Whisker module's `View(...)` block references a
- * Lynx UI subclass, which previously had to import Lynx types
- * directly:
- *
- * ```kotlin
- * import com.lynx.tasm.behavior.LynxContext
- * import com.lynx.tasm.behavior.ui.LynxUI
- *
- * class HelloView(context: LynxContext) : LynxUI<View>(context) { ... }
- * ```
- *
- * The bridge is built on Lynx and that won't change in the
- * foreseeable future, but the Lynx-ness leaking into every
- * module's public API surface makes Whisker feel like a thin
- * Lynx wrapper. These typealiases give module authors
+ * Lynx UI subclass. These typealiases give module authors
  * `Whisker*` symbols that resolve to their Lynx counterparts at
  * Kotlin's type-system level — same runtime classes, just a
- * presentation rename.
+ * presentation rename, so Lynx-ness doesn't leak into every
+ * module's public API:
  *
  * ```kotlin
  * import rs.whisker.runtime.WhiskerContext
@@ -30,10 +18,7 @@ package rs.whisker.runtime
  * ```
  *
  * Stack traces / debugger views still surface the real `LynxUI`
- * class names (typealiases are purely a source-level concept).
- * Renaming the underlying classes themselves would require
- * patching the Lynx fork — a separate, larger effort planned
- * for the long-term roadmap.
+ * class names — typealiases are purely a source-level concept.
  */
 
 public typealias WhiskerUI<V> = com.lynx.tasm.behavior.ui.LynxUI<V>
@@ -66,8 +51,8 @@ public typealias WhiskerEnv = com.lynx.tasm.LynxEnv
  * instead of manually constructing `LynxCustomEvent` and
  * reaching into `lynxContext.eventEmitter`. The function looks
  * at the UI's `sign` + `lynxContext` to wire the event back to
- * the host's bridge reporter, which delivers the JSON-serialised
- * params to the matching Rust `on_<event>: String` callback.
+ * the host's bridge reporter, which delivers `params` to the
+ * matching Rust `on_<event>` callback.
  */
 public object WhiskerCustomEvent {
     /**

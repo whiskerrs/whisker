@@ -27,10 +27,10 @@ public final class AudioModule: Module {
         var endObserver: NSObjectProtocol?
         var statusObservation: NSKeyValueObservation?
         var rateObservation: NSKeyValueObservation?
-        /// Foundation Timer driving position dispatch while
-        /// playback is active. `addPeriodicTimeObserver` was
-        /// unreliable on iOS Simulator (token returned non-nil but
-        /// the closure never fired), so we hand-tick instead.
+        /// Drives position dispatch while playback is active.
+        /// `addPeriodicTimeObserver` is unreliable on the iOS Simulator —
+        /// the token comes back non-nil but the closure never fires — so
+        /// this hand-ticks instead.
         var progressTimer: Timer?
 
         init(player: AVPlayer) {
@@ -109,14 +109,10 @@ public final class AudioModule: Module {
     // MARK: - Player lifecycle
 
     private func createPlayer(id: Int64, source: String) {
-        // iOS audio output is gated on an active AVAudioSession.
-        // Without `.playback` + `setActive(true)`, AVPlayer reports
-        // rate=1 after `play()` but the audio render loop never
-        // pulls samples — currentTime stays at 0 and no audio
-        // reaches the speaker. Activating the session is
-        // idempotent across players; we re-call on every create
-        // so a new player picks up the session even if the host
-        // app deactivated it.
+        // Without an active session, AVPlayer reports rate=1 after
+        // `play()` but the render loop never pulls samples — currentTime
+        // stays at 0 and nothing reaches the speaker. Re-called on every
+        // create (it is idempotent) in case the host app deactivated it.
         ensureAudioSessionActive()
 
         let player: AVPlayer
@@ -138,9 +134,8 @@ public final class AudioModule: Module {
         } else if let url = URL(string: source) {
             entry.player.replaceCurrentItem(with: AVPlayerItem(url: url))
         }
-        // Loop observer is item-scoped; reinstall on the fresh
-        // playerItem so end-of-source seeking still fires when
-        // appropriate.
+        // The loop observer is item-scoped, so it has to be reinstalled on
+        // the fresh playerItem.
         installEndObserver(for: entry, id: id)
         dispatchStatus(id: id)
     }
@@ -173,32 +168,24 @@ public final class AudioModule: Module {
                 self.stopProgressTimer(for: id)
             }
         }
-        // `status` lives on AVPlayerItem; observe transitions
-        // through replaceCurrentItem too — KVO continues across
-        // item swaps because we re-look up `.currentItem` inside
-        // the closure on every fire.
+        // `status` lives on AVPlayerItem, and the keypath through
+        // `.currentItem` is what keeps the observation alive across a
+        // `replaceCurrentItem`.
         entry.statusObservation = entry.player.observe(\.currentItem?.status, options: [.new]) { [weak self] _, _ in
             self?.dispatchStatus(id: id)
         }
     }
 
-    /// Start (or restart) a ~200 ms Timer that re-broadcasts
-    /// playback status while the player rate is non-zero.
-    ///
-    /// We use a hand-rolled Timer instead of
-    /// `AVPlayer.addPeriodicTimeObserver` because the latter
-    /// silently never fires on iOS Simulator (token comes back
-    /// non-nil; the closure is never invoked). Real devices honour
-    /// the periodic observer correctly, but the dev loop runs on
-    /// the sim so a portable solution wins.
+    /// Start (or restart) a ~200 ms Timer that re-broadcasts playback
+    /// status while the player rate is non-zero.
     private func startProgressTimer(for id: Int64) {
         guard let entry = players[id] else { return }
         entry.progressTimer?.invalidate()
         let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             self?.dispatchStatus(id: id)
         }
-        // Also schedule on `.common` modes so a touch-driven runloop
-        // mode (e.g. tracking a scroll) doesn't pause the tick.
+        // `.common` so a touch-driven runloop mode — tracking a scroll —
+        // doesn't pause the tick.
         RunLoop.main.add(timer, forMode: .common)
         entry.progressTimer = timer
     }
@@ -208,11 +195,10 @@ public final class AudioModule: Module {
         players[id]?.progressTimer = nil
     }
 
-    /// Activate a `.playback` AVAudioSession so AVPlayer's render
-    /// loop actually pulls samples. Whisker apps don't currently
-    /// take a stance on session category (no recording, mixing,
-    /// etc), so `.playback` is the safe default — it solo-routes
-    /// audio to the device speaker and survives a screen lock.
+    /// Activate a `.playback` AVAudioSession so AVPlayer's render loop
+    /// actually pulls samples. `.playback` is the safe default absent any
+    /// recording or mixing requirement: it solo-routes audio to the device
+    /// speaker and survives a screen lock.
     private func ensureAudioSessionActive() {
         let session = AVAudioSession.sharedInstance()
         do {
@@ -223,10 +209,8 @@ public final class AudioModule: Module {
         }
     }
 
-    /// (Re-)install the loop-on-end observer. Removes the prior
-    /// token before adding a fresh one so a sequence of
-    /// `setLoop(true)` / `setLoop(false)` / `setLoop(true)` calls
-    /// doesn't stack handlers.
+    /// (Re-)install the loop-on-end observer. The prior token is removed
+    /// first so repeated `setLoop` calls can't stack handlers.
     private func installEndObserver(for entry: PlayerEntry, id: Int64) {
         if let token = entry.endObserver {
             NotificationCenter.default.removeObserver(token)
@@ -251,12 +235,10 @@ public final class AudioModule: Module {
         let position = CMTimeGetSeconds(player.currentTime())
         let duration = player.currentItem.map { CMTimeGetSeconds($0.duration) } ?? 0
         let safeDuration = duration.isFinite ? duration : 0
-        // `currentItem.status == .readyToPlay` is the canonical
-        // "loaded" signal, but iOS Simulator hides the
-        // transition behind a KVO event that doesn't always
-        // fire — derive from "we have a finite duration" instead
-        // so the flag flips as soon as the asset metadata
-        // resolves, regardless of the status KVO path.
+        // `.readyToPlay` is the canonical "loaded" signal, but its KVO
+        // event doesn't always fire on the iOS Simulator — a finite
+        // duration flips the flag as soon as asset metadata resolves,
+        // regardless of that path.
         let isLoaded = safeDuration > 0 || (player.currentItem?.status == .readyToPlay)
         let isPlaying = player.rate > 0 && (player.error == nil)
         let payload: WhiskerValue = .map([

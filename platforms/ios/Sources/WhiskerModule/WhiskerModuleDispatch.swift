@@ -1,4 +1,4 @@
-// Phase L-3 — module-level (view-less) `Function` dispatch (iOS).
+// Module-level (view-less) `Function` dispatch (iOS).
 //
 // For view-less DSL modules (no `View(...)` block), the SwiftPM
 // codegen plugin registers a `@_cdecl` shim with the C bridge via
@@ -9,9 +9,9 @@
 //
 // Kept in its own file (separate from `WhiskerModuleRegistrar.swift`)
 // because it pulls in `WhiskerValue` / `WhiskerValueRaw` — the
-// C-ABI surface that can't be host-compiled. The L-2b view-install
-// path in the registrar stays free of that dependency so its
-// runtime smoke test keeps building on plain host macOS.
+// C-ABI surface that can't be host-compiled. The registrar's
+// view-install path must stay free of that dependency so its runtime
+// smoke test keeps building on plain host macOS.
 
 import Foundation
 
@@ -25,8 +25,7 @@ extension Module {
         guard let fn = self.definitionLazy.functions.first(where: { $0.name == method }) else {
             return .error("unknown method `\(method)`")
         }
-        // Case ②: raw `[WhiskerValue]` straight through. Module-level
-        // functions get `nil` for the view argument.
+        // Module-level functions get `nil` for the view argument.
         return fn.handler(nil, args)
     }
 

@@ -1,13 +1,9 @@
-// Lynx UI subclass hosting a `WhiskerSvgDrawingView`. A plain
-// `WhiskerUI` subclass — no Whisker annotations, registration is
-// driven by `SvgModule`'s `definition()`.
+// Lynx UI subclass hosting a `WhiskerSvgDrawingView`. Registration is
+// driven by `SvgModule`'s `definition()`, not by annotations here.
 //
-// The `WhiskerSvgDrawingView` (declared below) is a vanilla UIView
-// subclass that overrides `draw(_:)` to decode the cached display
-// list bytes into a CGContextVisitor against the active context.
-// We don't subclass UIImageView because we don't want any layer
-// caching shenanigans — the draw loop is small and we want exact
-// control over invalidation.
+// `WhiskerSvgDrawingView` is a plain UIView rather than a UIImageView:
+// the draw loop is small, and this keeps invalidation under exact
+// control instead of behind layer caching.
 
 import Foundation
 import UIKit
@@ -19,13 +15,12 @@ public final class WhiskerSvgView: WhiskerUI<WhiskerSvgDrawingView> {
     @objc public override func createView() -> WhiskerSvgDrawingView {
         let v = WhiskerSvgDrawingView()
         v.backgroundColor = .clear
-        // Repaint on bounds change instead of scaling cached content.
-        // Without this the default `.scaleToFill` scales whatever was
-        // drawn at the view's *first* layout — and if that first layout
-        // happened at zero size (the view was mounted inside a
-        // `display:none` Switch branch, which whisker-router mounts every
-        // branch as before toggling visibility), the cached content is
-        // empty and stays empty forever once the branch is shown. See #306.
+        // Repaint on bounds change rather than scaling cached content.
+        // The default `.scaleToFill` scales whatever was drawn at the
+        // view's FIRST layout, and whisker-router mounts every Switch
+        // branch `display:none` before toggling visibility — so that first
+        // layout is at zero size, and the empty raster would stay empty
+        // forever once the branch is shown (#306).
         v.contentMode = .redraw
         return v
     }
@@ -50,11 +45,10 @@ public final class WhiskerSvgView: WhiskerUI<WhiskerSvgDrawingView> {
         v.setNeedsDisplay()
     }
 
-    /// Backing of the `color` Prop. Parsed as a CSS-style colour
-    /// string. The resolved `UIColor` is what the replayer
-    /// substitutes wherever the source SVG used
-    /// `fill="currentColor"` / `stroke="currentColor"` (= the
-    /// `FILL_TINT` / `STROKE_TINT` opcodes).
+    /// Backing of the `color` Prop. The resolved `UIColor` is what the
+    /// replayer substitutes wherever the source SVG used
+    /// `fill="currentColor"` / `stroke="currentColor"` — the `FILL_TINT` /
+    /// `STROKE_TINT` opcodes.
     public func setColor(_ css: String) {
         let v: WhiskerSvgDrawingView = self.view()
         v.tintColorOverride = parseCssColor(css)
@@ -62,10 +56,9 @@ public final class WhiskerSvgView: WhiskerUI<WhiskerSvgDrawingView> {
     }
 }
 
-/// `UIView` that paints the cached display-list bytes inside its
-/// own bounds. Lives outside `WhiskerSvgView` because Whisker's UI
-/// owner expects a single `view()` accessor — we keep the
-/// drawing-specific overrides separate from the LynxUI bookkeeping.
+/// `UIView` that paints the cached display-list bytes inside its own
+/// bounds, kept separate from the LynxUI bookkeeping because Whisker's UI
+/// owner expects a single `view()` accessor.
 @objc(WhiskerSvgDrawingView)
 public final class WhiskerSvgDrawingView: UIView {
 
@@ -74,22 +67,20 @@ public final class WhiskerSvgDrawingView: UIView {
         didSet { setNeedsDisplay() }
     }
 
-    /// CSS `color` resolved value used as the tint substitute for
-    /// `FILL_TINT` / `STROKE_TINT` opcodes. Default = `.label` so
-    /// an unstyled `<Svg>` lands on the system's primary text
-    /// colour (matches a typical icon's "I want to be black on
-    /// light, white on dark" expectation).
+    /// Tint substitute for the `FILL_TINT` / `STROKE_TINT` opcodes.
+    /// Defaulting to `.label` puts an unstyled `<Svg>` on the system's
+    /// primary text colour — black on light, white on dark, which is what
+    /// an icon usually wants.
     var tintColorOverride: UIColor = .label {
         didSet { setNeedsDisplay() }
     }
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        // Force a repaint whenever the view is (re)laid out. Crucial for
-        // the display:none-branch case (#306): the view is first laid out
-        // at zero size, draws nothing, then gets its real bounds only when
-        // the branch becomes visible — at which point we must re-run
-        // `draw(_:)` at the new size rather than reuse the empty raster.
+        // Required for the display:none-branch case (#306): the view is
+        // first laid out at zero size and gets real bounds only when the
+        // branch becomes visible, so `draw(_:)` has to re-run at the new
+        // size rather than reuse the empty raster.
         setNeedsDisplay()
     }
 
@@ -105,12 +96,10 @@ public final class WhiskerSvgDrawingView: UIView {
         do {
             try dlReplay(bytes, into: &visitor)
         } catch {
-            // Malformed stream — fail closed by drawing nothing
-            // rather than throwing inside `draw(_:)` (UIKit
-            // doesn't propagate). The Rust producer's contract is
-            // that bytes are always well-formed; if they're not,
-            // that's a Whisker-side bug to surface via diagnostics
-            // rather than crash the host.
+            // Fail closed by drawing nothing: UIKit doesn't propagate a
+            // throw out of `draw(_:)`, and the Rust producer's contract is
+            // that the bytes are well-formed — a violation is a
+            // Whisker-side bug to diagnose, not a reason to kill the host.
             #if DEBUG
             NSLog("[WhiskerSvg] replay failed: \(error)")
             #endif
@@ -119,9 +108,8 @@ public final class WhiskerSvgDrawingView: UIView {
 }
 
 /// Best-effort CSS colour parser. Supports `#RGB`, `#RRGGBB`,
-/// `#RRGGBBAA`, `rgb(…)`, `rgba(…)`, and the small named colours
-/// the Rust compiler accepts. Returns `nil` on parse failure;
-/// callers fall back to the previous `tintColor` value.
+/// `#RRGGBBAA`, `rgb(…)`, `rgba(…)`, and the small set of named colours
+/// the Rust compiler accepts. An unparseable value falls back to `.label`.
 private func parseCssColor(_ raw: String) -> UIColor {
     let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     if s.hasPrefix("#") {
@@ -179,14 +167,11 @@ private func parseCssColor(_ raw: String) -> UIColor {
     }
 }
 
-/// Parses `rgb(r, g, b)` / `rgba(r, g, b, a)` — the format
-/// `whisker-css`'s `Color::to_css_string()` actually emits for any
-/// non-hex-literal, non-named color (e.g. every `Color::hex(...)`
-/// constant reactively interpolated into a string, as opposed to a
-/// `&'static str` hex literal written by hand). Without this, those
-/// colors fell through to the `default: return .label` case above —
-/// silently substituting the OS appearance's semantic label color
-/// for whatever the app's own color was.
+/// Parses `rgb(r, g, b)` / `rgba(r, g, b, a)`, which is what
+/// `whisker-css`'s `Color::to_css_string()` emits for every
+/// non-hex-literal, non-named colour. Without this branch they fall
+/// through to `.label` and the app's colour is silently replaced by the
+/// OS semantic one.
 private func parseRgbFunction(_ s: String) -> UIColor? {
     let isRgba = s.hasPrefix("rgba(")
     guard isRgba || s.hasPrefix("rgb(") else { return nil }

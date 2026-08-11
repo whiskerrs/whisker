@@ -115,7 +115,6 @@ fn sync_ios(
     package: &str,
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/ios");
-    let whisker_runtime = workspace_root.join("platforms/ios");
     // `whisker-build::ios::stage_module_swift_sources` fills
     // `gen/ios/whisker_modules/` later (between cargo build and
     // xcodebuild), but the pbxproj template's
@@ -125,7 +124,6 @@ fn sync_ios(
     let inputs = whisker_cng::ios::inputs_from_with_engine(
         &engine,
         app_config,
-        whisker_runtime,
         whisker_modules,
         workspace_root.to_path_buf(),
         package.to_string(),

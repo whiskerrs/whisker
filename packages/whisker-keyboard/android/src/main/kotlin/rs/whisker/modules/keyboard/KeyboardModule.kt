@@ -10,30 +10,27 @@
 //
 //  * `dismiss` function — a **real global unfocus**. On Android,
 //    `hideSoftInputFromWindow` only hides the soft keyboard; the focused
-//    `EditText` keeps focus (cursor, and — critically — a hardware
-//    keyboard keeps delivering key events to it). So we `clearFocus()`
-//    on the currently-focused view FIRST, then hide the IME. Clearing
-//    focus fires `onFocusChange(false)`, which flows back to the
-//    per-input `on_blur`, keeping Rust state consistent.
+//    `EditText` keeps focus, meaning the cursor stays and a hardware
+//    keyboard keeps delivering key events to it. So the focused view is
+//    also cleared, which fires `onFocusChange(false)` and flows back to
+//    the per-input `on_blur`, keeping Rust state consistent.
 //
 // ## Why an inset listener (not `windowSoftInputMode`)
 //
 // `WhiskerActivity` forces edge-to-edge
 // (`WindowCompat.setDecorFitsSystemWindows(window, false)`), so the OS
 // does NOT resize the window for the IME regardless of
-// `android:windowSoftInputMode`. Edge-to-edge apps must read the IME
-// inset themselves and apply it — which is exactly what this module
-// surfaces to Rust so the app can pad/scroll its content.
+// `android:windowSoftInputMode`. An edge-to-edge app has to read the IME
+// inset itself, which is what this module surfaces to Rust.
 //
 // ## Why `WhiskerInsetsDispatcher` (not a private decor listener)
 //
 // Android stores exactly one `OnApplyWindowInsetsListener` per view, so
-// this module and `whisker-safe-area` used to clobber each other's
-// listener on the shared decor view (last installer wins; the loser's
-// inset signal freezes). We subscribe through the runtime's shared
-// `WhiskerInsetsDispatcher` instead — it owns the single decor slot,
-// handles config-change re-installation, and fans the raw insets out to
-// every subscriber. See `WhiskerInsetsDispatcher` for the lifecycle.
+// this module and `whisker-safe-area` would clobber each other on the
+// shared decor view and the loser's inset signal would freeze. The
+// runtime's `WhiskerInsetsDispatcher` owns that single slot, handles
+// config-change re-installation, and fans the raw insets out to every
+// subscriber.
 
 package rs.whisker.modules.keyboard
 
@@ -72,9 +69,8 @@ public class KeyboardModule : Module() {
             insetsRegistration = null
         }
 
-        // Real global unfocus. Marshalled to the UI thread because the
-        // function body may run on the Lynx TASM thread and clearFocus /
-        // IMM are View work.
+        // Marshalled to the UI thread: this body may run on the Lynx TASM
+        // thread, and clearFocus / IMM are View work.
         Function("dismiss") {
             val activity = appContext.currentActivity
             activity?.runOnUiThread { dismissOn(activity) }
@@ -82,11 +78,7 @@ public class KeyboardModule : Module() {
         }
     }
 
-    /**
-     * Clear focus on the currently-focused view and hide the IME. Order
-     * matters: clearing focus removes the hardware-keyboard target; the
-     * IMM hide then dismisses the soft keyboard.
-     */
+    /** Hide the IME and clear focus on the currently-focused view. */
     private fun dismissOn(activity: Activity) {
         val focused = activity.currentFocus
         val imm = activity.getSystemService(Context.INPUT_METHOD_SERVICE)
@@ -101,11 +93,10 @@ public class KeyboardModule : Module() {
     }
 
     /**
-     * Forward the IME inset (keyboard) height in dp as `{ height }`.
-     * `Type.ime()` reports the full keyboard overlap from the bottom of
-     * the window — already inclusive of the navigation bar it sits over
-     * — so padding a bottom-anchored container by it clears the keyboard
-     * exactly.
+     * Forward the IME inset height in dp as `{ height }`. `Type.ime()`
+     * reports the full keyboard overlap from the bottom of the window,
+     * already inclusive of the navigation bar it sits over, so padding a
+     * bottom-anchored container by it clears the keyboard exactly.
      */
     private fun dispatch(activity: Activity, insets: WindowInsetsCompat) {
         val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom

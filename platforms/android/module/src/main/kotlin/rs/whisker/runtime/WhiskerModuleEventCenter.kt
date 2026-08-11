@@ -1,4 +1,4 @@
-// Phase L-2c — Android event-subscription wiring.
+// Android event-subscription wiring.
 //
 // Sits between the Rust subscription API (`PlatformModule::on_event`)
 // and the `Module` author's `Events("name")` +

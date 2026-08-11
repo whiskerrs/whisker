@@ -6,8 +6,8 @@
 // `plugins: [.plugin(name: "WhiskerModuleCodegenPlugin",
 //                    package: "macros")]`.
 //
-// Phase 7-Φ.G: applied per-module — each module package adds the
-// plugin to its own SwiftPM target. The codegen emits a top-level
+// Applied per-module — each module package adds the plugin to its
+// own SwiftPM target. The codegen emits a top-level
 // `_whiskerRegisterModules_<TargetName>()` function (uniquely
 // named per module to avoid linker conflicts across modules) plus
 // the per-target `<TargetName>+Generated.swift` file. The
@@ -49,12 +49,10 @@ struct WhiskerModuleCodegenPlugin: BuildToolPlugin {
 
         // `context.package.displayName` returns the `name:` declared
         // in the module's Package.swift. By convention each module
-        // package's Package.swift names itself after its cargo crate
-        // (kebab-case, e.g. "whisker-hello-element"), so this is the
-        // tag namespace string we prepend to element registration
-        // calls — matching what the Rust-side
-        // `#[whisker::platform_component]` proc macro emits via
-        // `env!("CARGO_PKG_NAME")`. Phase 7-Φ.H.2.
+        // package names itself after its cargo crate (kebab-case,
+        // e.g. "whisker-hello-element"), so this is the tag namespace
+        // prepended to element registration calls — it must match the
+        // crate name the Rust side derives from `CARGO_PKG_NAME`.
         var arguments: [String] = [
             "--target-name", sourceTarget.name,
             "--crate-name", context.package.displayName,

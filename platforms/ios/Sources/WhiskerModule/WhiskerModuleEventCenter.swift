@@ -1,4 +1,4 @@
-// Phase L-2c — iOS event subscription wiring.
+// iOS event subscription wiring.
 //
 // Sits between the Rust subscription API
 // (`PlatformModule::on_event`) and the `Module` author's
@@ -25,8 +25,8 @@
 //
 //    The codegen-emitted registration block calls
 //    `register(_ module:)` once per `Module` subclass after assigning
-//    its `qualifiedName`. The first registration also wires the
-//    shared trampolines into the bridge (lazy install).
+//    its `qualifiedName`; each call also points that module's bridge
+//    hooks at the shared trampolines.
 
 import Foundation
 @_exported import WhiskerCBridge

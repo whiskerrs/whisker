@@ -12,10 +12,9 @@
 //  * `dismiss` function — a real global unfocus. `endEditing(true)` on
 //    the key window walks the responder chain and resigns the current
 //    first responder, so the keyboard goes down AND the field stops
-//    receiving input (including from a hardware keyboard). This is not
-//    the same as "hide the keyboard": on iOS the software keyboard's
-//    presence is a consequence of first-responder status, so resigning
-//    it is the correct, complete dismissal.
+//    receiving input, including from a hardware keyboard. On iOS the
+//    software keyboard's presence is a consequence of first-responder
+//    status, so resigning it is the complete dismissal.
 //
 // ## Height semantics
 //
@@ -48,9 +47,8 @@ public final class KeyboardModule: Module {
                 self?.stopObserving()
             }
 
-            // Real global unfocus. Marshalled to the main thread because
-            // `invoke` may dispatch the function body on the Lynx TASM
-            // thread, and `endEditing` is UIKit work.
+            // Marshalled to the main thread: `invoke` may dispatch this
+            // body on the Lynx TASM thread, and `endEditing` is UIKit work.
             Function("dismiss") { _ in
                 DispatchQueue.main.async {
                     Self.keyWindow()?.endEditing(true)

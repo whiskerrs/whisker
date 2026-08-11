@@ -1,4 +1,4 @@
-// Phase L-2b runtime smoke test for `WhiskerLynxInstaller`.
+// Runtime smoke test for `WhiskerLynxInstaller`.
 //
 // Exercises the Obj-C-runtime install path end-to-end against a
 // fake LynxUI subclass (just an NSObject), then uses Obj-C
@@ -7,10 +7,9 @@
 // selectors land on the class and dispatch correctly.
 //
 // Does **not** depend on the real Lynx framework — it stubs the
-// LynxUI surface as plain NSObject. The point is to verify
-// installer correctness in isolation; full Lynx-side dispatch
-// will be exercised once the Phase L-3 sample-module migration
-// drives the path through a real `whisker run`.
+// LynxUI surface as plain NSObject, to verify installer correctness
+// in isolation. Full Lynx-side dispatch is covered by running a real
+// module through `whisker run`.
 //
 // ## Running
 //

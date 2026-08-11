@@ -44,7 +44,6 @@ fn ios_info_plist_extra_keys_reach_the_rendered_plist() {
 
     let inputs = whisker_cng::ios::inputs_from(
         &app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "hello-world".into(),
@@ -78,7 +77,6 @@ fn ios_info_plist_extra_escapes_xml_in_values() {
 
     let inputs = whisker_cng::ios::inputs_from(
         &app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "hello-world".into(),
@@ -107,7 +105,6 @@ fn ios_no_plugin_declared_means_no_extra_keys_in_plist() {
 
     let inputs = whisker_cng::ios::inputs_from(
         &app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "hello-world".into(),

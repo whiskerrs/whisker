@@ -22,13 +22,11 @@
 // ## Why `WhiskerInsetsDispatcher` (not a private decor listener)
 //
 // Android stores exactly one `OnApplyWindowInsetsListener` per view, so
-// this module and `whisker-keyboard` used to clobber each other's
-// listener on the shared decor view (last installer wins; the loser's
-// inset signal freezes). We subscribe through the runtime's shared
-// `WhiskerInsetsDispatcher` instead — it owns the single decor slot,
-// handles config-change re-installation (rotation, multi-window
-// resize), seeds late subscribers, and fans the raw insets out to every
-// subscriber. See `WhiskerInsetsDispatcher` for the lifecycle.
+// this module and `whisker-keyboard` would clobber each other on the
+// shared decor view and the loser's inset signal would freeze. The
+// runtime's `WhiskerInsetsDispatcher` owns that single slot, handles
+// config-change re-installation (rotation, multi-window resize), seeds
+// late subscribers, and fans the raw insets out to every subscriber.
 
 package rs.whisker.modules.safe_area
 
@@ -67,14 +65,8 @@ public class SafeAreaModule : Module() {
     }
 
     /**
-     * Convert system-bar + display-cutout insets to dp and forward as
-     * a `WhiskerValue.Map` payload.
-     *
-     * `decorFitsSystemWindows = true` (Whisker default) means the
-     * activity has already cut out the insets before they reach
-     * `decorView`, so `getInsets(systemBars() or displayCutout())`
-     * returns zero — see the module-level doc for the graceful-
-     * degrade reasoning.
+     * Convert system-bar + display-cutout insets to dp and forward as a
+     * `WhiskerValue.Map` payload.
      */
     private fun dispatch(activity: Activity, insets: WindowInsetsCompat) {
         val mask = WindowInsetsCompat.Type.systemBars() or

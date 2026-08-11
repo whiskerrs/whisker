@@ -1,4 +1,4 @@
-// Phase L-3 — `whisker-local-store` ModuleDefinition (iOS).
+// `whisker-local-store` ModuleDefinition (iOS).
 //
 // A view-less DSL module: `definition()` has no `View(...)` block,
 // just module-level `Function`s. The SwiftPM codegen plugin

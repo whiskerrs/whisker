@@ -62,8 +62,7 @@ public class StatusBarModule : Module() {
 }
 
 /// Plain helper — no Whisker types. Kept separate from `StatusBarModule`
-/// so the window logic is testable/readable on its own, matching the
-/// `whisker-haptics` `HapticsModule`/`Haptics` split.
+/// so the window logic is testable on its own.
 private object StatusBar {
     private fun controller(activity: Activity): WindowInsetsControllerCompat =
         WindowInsetsControllerCompat(activity.window, activity.window.decorView)

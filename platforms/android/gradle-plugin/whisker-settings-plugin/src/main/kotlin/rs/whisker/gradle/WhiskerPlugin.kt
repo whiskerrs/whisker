@@ -34,14 +34,12 @@ import java.util.Properties
 //      and writes the JSON output to
 //      `<workspace>/target/whisker/module-info-<package>.json`.
 //      Cached by Cargo.lock SHA-256 so a warm Sync skips cargo
-//      metadata (mirrors Flutter's `.flutter-plugins-dependencies`
-//      model). The filename carries the user package because the
-//      cache lives in the WORKSPACE-level target dir: in a monorepo
-//      with several apps (examples/*), a shared filename lets app
-//      A's report (possibly zero modules) poison app B's build —
-//      B's modules silently vanish from the APK and every custom
-//      element (`<input>`, `<svg>`, …) dies at render time with
-//      "No BehaviorController defined".
+//      metadata. The filename MUST carry the user package: the cache
+//      lives in the WORKSPACE-level target dir, so in a monorepo with
+//      several apps a shared filename lets one app's report poison
+//      another's — the victim's modules vanish from the APK and every
+//      custom element dies at render time with "No BehaviorController
+//      defined".
 //   2. Reads the JSON, `include()`s each Whisker module as a Gradle
 //      subproject, sets each one's `projectDir` to the module's
 //      package root.
@@ -61,14 +59,10 @@ class WhiskerPlugin : Plugin<Settings> {
         settings.gradle.settingsEvaluated {
             val workspace = ext.workspace.orNull?.asFile
                 ?: error("rs.whisker: `whisker { workspace = file(...) }` is required.")
-            // Sanity-check the workspace exists. `whisker run` bakes
-            // an absolute path into
-            // `gen/android/.whisker/config.properties` (the value the
-            // Settings extension reads). If the user moved or
-            // renamed the project tree after the last `whisker run`,
-            // Gradle Sync silently falls through to "modules report
-            // missing" downstream — much harder to diagnose than the
-            // one-line check here.
+            // `whisker run` bakes an absolute path into
+            // `gen/android/.whisker/config.properties`. Without this
+            // check a moved or renamed project tree surfaces much
+            // later as an opaque "modules report missing".
             if (!workspace.isDirectory) {
                 error(
                     "rs.whisker: workspace path baked into settings.gradle.kts no longer " +

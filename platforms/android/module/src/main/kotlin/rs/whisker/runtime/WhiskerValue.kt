@@ -7,22 +7,21 @@ import com.lynx.react.bridge.ReadableType
 /**
  * WhiskerValue — Kotlin mirror of the Rust `whisker::platform_module::
  * WhiskerValue` tagged union. Used by `Module`-subclass methods as
- * the universal arg/return type, replacing the previous
- * `Array<Any?>` + boxed-Java-type marshalling.
+ * the universal arg/return type.
  *
- * Phase 7-Φ.F: the platform_module bridge now exchanges typed Whisker
- * values directly. Author code pattern-matches on sealed-class
- * subtypes (`when (arg) { is WhiskerValue.Str -> ... }`) instead of
- * `as?` casts against `String` / `Long` / etc. — fewer silent
- * `null` results and exhaustive `when` coverage.
+ * The platform_module bridge exchanges typed Whisker values directly,
+ * so author code pattern-matches on sealed-class subtypes
+ * (`when (arg) { is WhiskerValue.Str -> ... }`) instead of `as?`
+ * casts against `String` / `Long` / etc. — fewer silent `null`
+ * results, and exhaustive `when` coverage.
  *
  * The C bridge (whisker_bridge_android.cc) constructs these
  * instances via JNI reflection on every `invoke_module` call, and
  * walks the returned subtype to build a `WhiskerValueRaw` for the
  * Rust side.
  *
- * `data class` for the variants so equality + hashCode are
- * structurally defined (helps snapshot tests + log diffs).
+ * Variants are `data class`es so equality + hashCode are structurally
+ * defined.
  */
 public sealed class WhiskerValue {
     public object Null : WhiskerValue() {
@@ -48,7 +47,6 @@ public sealed class WhiskerValue {
     public data class Map(val value: kotlin.collections.Map<String, WhiskerValue>) : WhiskerValue()
     public data class Err(val message: String) : WhiskerValue()
 
-    // ----- Convenience accessors (case ② arg destructuring) -----
     // Typed reads for module authors destructuring raw `WhiskerValue`
     // args (`args[0].asDouble()`, `value.asString()`). Numeric reads
     // coerce between Int/Float; mismatches return null.
@@ -84,21 +82,15 @@ public sealed class WhiskerValue {
 
         /**
          * Decode a Lynx `ReadableMap` (the `params` argument
-         * `LynxUIMethodsExecutor` hands the `@LynxUIMethod` forwarder)
-         * into the `List<WhiskerValue>` shape `@WhiskerUIMethod`
-         * authors expect.
+         * `LynxUIMethodsExecutor` hands the method forwarder) into the
+         * `List<WhiskerValue>` shape method authors expect.
          *
-         * Convention (Phase 7-Φ.H.2): the C bridge packs Rust-side
-         * `&[WhiskerValue]` into `{"args": [...]}` — single key
-         * `args` holding a `ReadableArray` of positional entries.
-         * Each entry decodes via [readableValue] (recursive). Missing
-         * key or non-array shape yields an empty list rather than
-         * an error so the user method still runs (with no args).
-         *
-         * The C bridge implementation that produces this shape lives
-         * in `whisker_bridge_invoke_element_method` (Phase 7-Φ.H.2.5,
-         * tracked separately) — until that lands, callers receive an
-         * empty list.
+         * Convention: `whisker_bridge_invoke_element_method` packs the
+         * Rust-side `&[WhiskerValue]` into `{"args": [...]}` — a single
+         * key `args` holding a `ReadableArray` of positional entries.
+         * Each entry decodes recursively. A missing key or non-array
+         * shape yields an empty list rather than an error, so the user
+         * method still runs (with no args).
          */
         @JvmStatic
         public fun fromReadableMap(params: ReadableMap?): List<WhiskerValue> {
@@ -159,9 +151,8 @@ public sealed class WhiskerValue {
 /**
  * Encode a [WhiskerValue] into a Java-compatible nested
  * map/list/primitive tree suitable for handing to Lynx's
- * `Callback.invoke(code, result)` (Phase 7-Φ.H.2). The host JS /
- * bridge then sees the value via Lynx's standard `Callback` -> JNI
- * marshalling.
+ * `Callback.invoke(code, result)`. The host JS / bridge then sees the
+ * value via Lynx's standard `Callback` -> JNI marshalling.
  *
  * `Bytes` is emitted as a `ByteArray` (passes through JNI as
  * `byte[]`). `Err` becomes a `mapOf("error" to message)` since

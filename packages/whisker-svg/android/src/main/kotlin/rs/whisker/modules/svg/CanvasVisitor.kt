@@ -30,7 +30,7 @@ internal class CanvasVisitor(
     private val viewHeight: Float,
 ) : DLVisitor {
 
-    // Reusable paint objects so we don't allocate per fill/stroke.
+    // Reused so a fill/stroke doesn't allocate.
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val tmpMatrix = Matrix()
@@ -204,17 +204,17 @@ internal class CanvasVisitor(
     private fun resolveStrokeColor(): Int? =
         if (strokeIsTint) tintArgb else currentStrokeArgb
 
-    /**
-     * Multiply the colour's alpha channel by the current group
-     * opacity. Avoids touching Canvas's own alpha (which is
-     * captured by save/restore) so the SPEC's
-     * "OPACITY multiplies into subsequent paints" semantics work
-     * even without a SAVE/RESTORE wrapper. Discards the `PorterDuff`
-     * import otherwise unused so lint is happy.
-     */
+    /** Consumes the otherwise-unused `PorterDuff` import so lint is
+     *  happy. */
     @Suppress("unused")
     private val _porterDuffUsage = PorterDuff.Mode.SRC
 
+    /**
+     * Multiply the colour's alpha channel by the current group opacity.
+     * Canvas's own alpha is deliberately left alone — it is captured by
+     * save/restore, and the SPEC's "OPACITY multiplies into subsequent
+     * paints" has to hold even without a SAVE/RESTORE wrapper.
+     */
     private fun applyOpacity(argb: Int): Int {
         if (currentOpacity >= 1f) return argb
         val origAlpha = (argb ushr 24) and 0xFF

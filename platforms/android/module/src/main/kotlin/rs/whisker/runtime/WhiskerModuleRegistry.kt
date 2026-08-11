@@ -18,22 +18,15 @@ public typealias WhiskerModuleAsyncDispatchFn =
 /**
  * Whisker native-module dispatch registry — Kotlin side.
  *
- * Phase 7-Φ.F: replaces the per-module class registration + JNI
- * `GetMethodID` reflection pattern with a `(module-name → dispatch
- * lambda)` table. KSP generates a `<Module>_Dispatch` object whose
- * static `dispatch(method, args)` resolves the right Kotlin method
- * via a `when (method)` switch and returns a [WhiskerValue].
+ * A `(module-name → dispatch lambda)` table. KSP generates a
+ * `<Module>_Dispatch` object whose static `dispatch(method, args)`
+ * resolves the right Kotlin method via a `when (method)` switch and
+ * returns a [WhiskerValue].
  *
  * The C bridge (`whisker_bridge_android.cc`) routes
  * `whisker_bridge_invoke_module` through [invokeDispatch] via a
- * single cached static-method JNI call, bypassing per-call
+ * single cached static-method JNI call, so there is no per-call
  * reflection.
- *
- * Pre-F the registry stored `(name → Class<*>)` and dispatched
- * methods by name via `Class.getMethod(name, Array<Any?>::class.java)`
- * on every call. That path is gone — the per-module dispatch
- * object subsumes both the class registration and the method
- * lookup.
  */
 public object WhiskerModuleRegistry {
     private val dispatchers = ConcurrentHashMap<String, WhiskerModuleDispatchFn>()

@@ -35,7 +35,6 @@ fn base_android_app() -> Config {
 fn sync_ios(app: &Config) -> (PathBuf, PathBuf) {
     let inputs = whisker_cng::ios::inputs_from(
         app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "hello-world".into(),
@@ -119,7 +118,6 @@ fn ios_extra_file_with_absolute_path_is_rejected() {
     });
     let inputs = whisker_cng::ios::inputs_from(
         &app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "hello-world".into(),
@@ -141,7 +139,6 @@ fn ios_extra_file_with_parent_dir_traversal_is_rejected() {
     });
     let inputs = whisker_cng::ios::inputs_from(
         &app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "hello-world".into(),
