@@ -49,6 +49,11 @@ platforms/ios/*.xcodeproj/
 platforms/ios/*.xcworkspace/
 platforms/bridge/build/
 
+# SwiftPM caches from standalone `swift build` runs inside a module's
+# ios/ package dir. Same story as the root `.build/`.
+packages/**/.build/
+packages/**/Package.resolved
+
 # Gradle build artifacts under per-package module trees
 # (`packages/<name>/build/`, `packages/<name>/.gradle/`). KSP outputs +
 # transform caches live there during dev; same story as native/.
