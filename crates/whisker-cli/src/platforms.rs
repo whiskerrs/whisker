@@ -64,7 +64,7 @@ pub struct PlatformSync {
 /// latter can be hard-breaking, because a per-app `WhiskerDriver`
 /// bridge built against a newer capi ABI refuses to attach to the Lynx
 /// an older SDK pulls in.
-const WHISKER_SDK_VERSION: &str = "0.1.18";
+const WHISKER_SDK_VERSION: &str = "0.1.19";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the

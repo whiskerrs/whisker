@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "WhiskerWebBrowser", targets: ["WhiskerWebBrowser"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.8"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.9"),
     ],
     targets: [
         .target(
