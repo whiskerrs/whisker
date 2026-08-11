@@ -20,15 +20,12 @@
 //! ```
 //!
 //! so the JumpTable's static keys can be adjusted to live runtime
-//! addresses. Two earlier bugs led us here:
-//!
-//! 1. Setting this to `file.relative_address_base()` (always 0 for
-//!    ELF PIE) shifted the keys by `runtime_main_addr` rather than
-//!    the image base; `call_as_ptr`'s map lookup always missed.
-//! 2. Anchoring on `main` instead of `whisker_aslr_anchor` — on
-//!    Android, `dlsym(RTLD_DEFAULT, "main")` resolves to
-//!    `app_process64`'s `main`, not the user's `.so`, so the slide
-//!    math computed garbage. The unique anchor name fixes that.
+//! addresses. Two things that look equivalent but aren't:
+//! `file.relative_address_base()` is 0 for an ELF PIE, which shifts
+//! every key by the wrong amount; and anchoring on `main` breaks on
+//! Android, where `dlsym(RTLD_DEFAULT, "main")` resolves to
+//! `app_process64`'s `main` rather than the user's `.so`. Only a
+//! uniquely-named anchor symbol gives the right slide.
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -96,10 +93,6 @@ impl HotpatchModuleCache {
         &self.lib
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

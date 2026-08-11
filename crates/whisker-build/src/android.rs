@@ -1,6 +1,6 @@
-//! Android cargo + gradle orchestration. Shared by `whisker-cli`'s
-//! the `whisker-build` binary (gradle plugin path) and `whisker-dev-server`'s full reload
-//! path.
+//! Android cargo + gradle orchestration. Shared by `whisker-cli`, the
+//! `whisker-build` binary (gradle plugin path) and
+//! `whisker-dev-server`'s full reload path.
 //!
 //! Three phases:
 //!
@@ -250,11 +250,9 @@ pub fn cargo_build_dylib(b: &CargoBuild<'_>) -> Result<PathBuf> {
         }
     }
 
-    // Resolve the output `.so` up-front and snapshot its mtime, so the step
-    // summary can report whether cargo actually relinked a fresh lib or
-    // no-op'd (`up-to-date`). This is the "did my change reach native code?"
-    // signal the dev loop was missing: a stale `.so` (#260) shows as
-    // `up-to-date` exactly when you expected a rebuild. mtime-only, so it's free.
+    // Snapshot the output `.so`'s mtime so the step summary can say
+    // whether cargo relinked or no-op'd — the signal that answers "did
+    // my change reach native code?" when a stale `.so` is suspected.
     let lib_name = format!("lib{}.so", b.package.replace('-', "_"));
     let so_path = b
         .workspace_root
@@ -411,11 +409,10 @@ pub fn stage_jni_libs(
 }
 
 /// Generate the per-app Gradle module-aggregator artefacts under
-/// `gen/android/`. Phase 7-Φ.G: replaces the previous file-copy
-/// flow — each Whisker module package is now its own Android
-/// library subproject with a hand-written `build.gradle.kts`. We
-/// emit three files that wire those subprojects into the user
-/// app's composite Gradle build:
+/// `gen/android/`. Each Whisker module package is its own Android
+/// library subproject with a hand-written `build.gradle.kts`; three
+/// emitted files wire those subprojects into the user app's composite
+/// Gradle build:
 ///
 /// 1. `whisker_modules.settings.gradle.kts` — `include(":<crate>")` +
 ///    `project(...).projectDir = file("...")` calls. Applied by the
@@ -449,7 +446,6 @@ pub fn stage_module_kotlin_sources(
         .filter(|m| m.manifest_dir.join("build.gradle.kts").is_file())
         .collect();
 
-    // 1. Settings include script.
     let settings_include_path = gen_android.join("whisker_modules.settings.gradle.kts");
     std::fs::write(
         &settings_include_path,
@@ -457,7 +453,6 @@ pub fn stage_module_kotlin_sources(
     )
     .with_context(|| format!("write {}", settings_include_path.display()))?;
 
-    // 2. App-level dependencies script.
     let deps_script_path = gen_android.join("whisker_module_deps.gradle.kts");
     std::fs::write(
         &deps_script_path,
@@ -465,13 +460,11 @@ pub fn stage_module_kotlin_sources(
     )
     .with_context(|| format!("write {}", deps_script_path.display()))?;
 
-    // 3. Aggregator Kotlin file. Always (re)create the directory
-    // so a removed module doesn't leave behind a stale aggregator.
+    // Both directories are wiped and recreated so a removed module
+    // can't leave a stale aggregator or `.kt` file behind for gradle
+    // to compile.
     let aggregator_dir =
         gen_android.join("app/src/main/whisker_generated/rs/whisker/runtime/generated");
-    // Also drop the legacy staging dir so removed-Phase-F builds
-    // don't leave behind stale `.kt` files that gradle would try
-    // to compile.
     let legacy_staging = gen_android.join("app/src/main/whisker_modules");
     if legacy_staging.exists() {
         std::fs::remove_dir_all(&legacy_staging)
@@ -653,12 +646,8 @@ pub fn run_gradle_assemble(
             cmd.env(k, v);
         }
     }
-    // Pipe stdout + stderr through the spinner. Gradle's per-task
-    // chatter (`> Task :app:assembleDebug`, BUILD SUCCESSFUL, …) and
-    // the JVM daemon advisory block fold into the spinner message
-    // instead of leaking into scrollback, mirroring the cargo build
-    // path's behaviour and matching the user's expectation that
-    // `whisker run` shows one summary line per subprocess.
+    // Piping folds gradle's per-task chatter and the JVM daemon
+    // advisory block into the spinner instead of scrollback.
     let status = gradle_step
         .pipe(&mut cmd)
         .with_context(|| format!("spawn {}", gen_android.join("gradlew").display()))?;
@@ -865,10 +854,6 @@ pub fn resolve_java_home() -> Result<PathBuf> {
         "JAVA_HOME unset and could not auto-detect a Java 17 JDK",
     ))
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

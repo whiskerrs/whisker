@@ -185,24 +185,17 @@ fn run_inner(
     target: Target,
     tui: Option<&crate::tui::TuiHandle>,
 ) -> Result<()> {
-    // Sync the native host project (gen/{android,ios}/) before doing
-    // anything else. The cargo-side `build_discovered_plugins` step
-    // happens inside `sync_for_target` and is the long pole here.
-    // `set_phase(Setup)` already fired from `run()` before we got
-    // here, so re-issuing it would duplicate the "▶ Setup" entry in
-    // scrollback.
+    // `set_phase(Setup)` already fired in `run()`; re-issuing it here
+    // would duplicate the "▶ Setup" scrollback entry.
     //
-    // No iOS Lynx pre-fetch: `platforms/ios/Package.swift` now uses
-    // `binaryTarget(url:checksum:)`, so xcodebuild resolves the four
-    // xcframeworks via SPM during package resolution. Android pulls
-    // its aar from `whiskerrs.github.io/lynx/maven` transitively via
-    // the SDK pom. Neither path needs the workspace `target/lynx-*`
-    // tree the cli used to stage here.
+    // Lynx needs no pre-fetch: xcodebuild resolves the four
+    // xcframeworks through SPM's `binaryTarget(url:checksum:)`, and
+    // Android pulls its aar from `whiskerrs.github.io/lynx/maven`
+    // transitively via the SDK pom.
 
-    // cng templates are `include_str!`-baked into this binary, so a CLI that
-    // predates an edit under `crates/whisker-cng/src` renders stale gen/ files
-    // (#260 trap #3). Read-only mtime check; only fires inside a whisker repo
-    // checkout (where those sources exist), never for installed users.
+    // cng templates are `include_str!`-baked into this binary, so a CLI
+    // older than the sources under `crates/whisker-cng/src` renders
+    // stale gen/ files. Only fires inside a whisker checkout.
     warn_if_cli_older_than_cng(&workspace_root);
 
     let sync = crate::platforms::sync_for_target(
@@ -213,9 +206,9 @@ fn run_inner(
         &m.package,
     )
     .context("sync native project (gen/{android,ios}/)")?;
-    // Always say which path was taken — a silent "reused" is exactly the
-    // staleness trap (#260): a template/source edit that didn't bump the cng
-    // `template_version` leaves the old gen/ tree on disk and nothing told you.
+    // Always say which path was taken: a template edit that didn't bump
+    // cng's `template_version` leaves the old gen/ tree on disk, and a
+    // silent "reused" makes that undiagnosable.
     let tv = sync
         .template_version
         .map(|v| format!(" (template_version {v})"))
@@ -293,14 +286,10 @@ fn run_inner(
         .with_command_receiver(cmd_rx)
         .on_event(move |e| {
             if let Some(h) = &tui_for_events {
-                // TUI mode: the handle's `apply_event` already pushes
-                // `Event::DeviceLog` into scrollback via `insert_before`
-                // as a `[device]` / `[device:err]` row. Routing the
-                // same event through `forward_event_to_ui` would
-                // double-print every device log line (once raw, once
-                // wrapped in `whisker_build::ui::info`'s `· ` prefix
-                // and captured back through stderr). Skip the legacy
-                // path entirely when the TUI is on.
+                // `apply_event` already puts `Event::DeviceLog` in
+                // scrollback; also calling `forward_event_to_ui` would
+                // print each device line twice (raw, then again via
+                // `ui::info` captured back through stderr).
                 h.apply_event(&e);
             } else {
                 forward_event_to_ui(e, show_native_logs);
@@ -310,9 +299,6 @@ fn run_inner(
     rt.block_on(server.run())
 }
 
-/// Friendly label for the TUI header. `whisker_dev_server::Target`'s
-/// Debug impl renders `IosSimulator` which is a mouthful — pick a
-/// short noun for screen real estate.
 /// Generate a random hex token for the hot-reload session.
 ///
 /// Reads 16 bytes from `/dev/urandom` (every host we run on is POSIX)
@@ -344,6 +330,9 @@ fn generate_dev_token() -> String {
     s
 }
 
+/// Friendly label for the TUI header. `whisker_dev_server::Target`'s
+/// Debug impl renders `IosSimulator`, which is a mouthful for the
+/// screen real estate available.
 fn target_label(target: Target) -> &'static str {
     match target {
         Target::Android => "Android",
@@ -351,12 +340,10 @@ fn target_label(target: Target) -> &'static str {
     }
 }
 
-/// Translate dev-server [`Event`]s into the existing line-based UI
-/// output. Phase 2 (ratatui TUI) will replace this with a routed
-/// dispatch into per-pane state; until then, the relevant signal we
-/// need to surface is the device's own stdout/stderr — everything else
-/// is already covered by `whisker_build::ui` calls inside the dev
-/// loop.
+/// Translate dev-server [`Event`]s into line-based UI output — the
+/// non-TUI path. Only the device's own stdout/stderr needs surfacing
+/// here; everything else is already covered by `whisker_build::ui`
+/// calls inside the dev loop.
 ///
 /// When `show_native_logs` is false (the default), device lines that
 /// match [`is_native_engine_noise`] are dropped silently. The escape
@@ -372,10 +359,8 @@ fn forward_event_to_ui(event: whisker_dev_server::Event, show_native_logs: bool)
         if !show_native_logs && is_native_engine_noise(&line) {
             return;
         }
-        // Short `[device]` / `[device:err]` prefix keeps the column
-        // alignment compact next to `whisker-build::ui::info`'s own
-        // output. The Phase-2 TUI can surface stream / timestamp /
-        // colour separately.
+        // Short prefix so the column alignment stays compact next to
+        // `whisker_build::ui::info`'s own output.
         let tag = match stream.as_str() {
             "stderr" => "device:err",
             _ => "device",
@@ -395,9 +380,8 @@ fn forward_event_to_ui(event: whisker_dev_server::Event, show_native_logs: bool)
 /// so genuine error output and user `eprintln!`s are never silenced.
 fn is_native_engine_noise(line: &str) -> bool {
     let t = line.trim_start();
-    // Lynx Skia / GL trace prefixes. The `s_gl<CamelCase>(` form is
-    // distinctive — Skia internals only — and shows up dozens of
-    // times per frame on first paint.
+    // The `s_gl<CamelCase>(` form is Skia-internal only, and shows up
+    // dozens of times per frame on first paint.
     const LYNX_NOISE_PREFIXES: &[&str] = &[
         "s_glBindAttribLocation:",
         "s_glGetUniformLocation:",
@@ -551,11 +535,11 @@ pub(crate) fn find_workspace_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Warn if the running `whisker` binary predates the cng template/renderer
-/// sources, i.e. its `include_str!`-baked templates are stale relative to the
-/// repo (#260 trap #3). No-op unless `crates/whisker-cng/src` exists under
-/// `workspace_root` — installed users (no whisker sources) never see this.
-/// Read-only: compares file mtimes and prints a warning, nothing else.
+/// Warn if the running `whisker` binary predates the cng
+/// template/renderer sources, i.e. its `include_str!`-baked templates
+/// are stale relative to the repo. No-op unless
+/// `crates/whisker-cng/src` exists under `workspace_root` — installed
+/// users never see it. Read-only: compares mtimes, warns, nothing else.
 fn warn_if_cli_older_than_cng(workspace_root: &Path) {
     let cng_src = workspace_root.join("crates/whisker-cng/src");
     if !cng_src.is_dir() {

@@ -1,17 +1,14 @@
 //! Inline-viewport TUI for `whisker run`.
 //!
-//! ## Design (vs. the alternate-screen design in #187)
+//! ## Design
 //!
-//! Full-screen ratatui owned the terminal and erased scrollback;
-//! cargo / gradle / xcodebuild log bursts during a build no longer
-//! fit in any reasonable pane and the user couldn't scroll back
-//! through them. The codex-rs TUI solves this by anchoring a small
-//! "live region" at the bottom and pushing everything else into the
-//! terminal's *normal* scrollback via ANSI scroll-region tricks. We
-//! get the same shape for free out of ratatui 0.29's
-//! [`Viewport::Inline`] + [`Terminal::insert_before`] (with the
-//! `scrolling-regions` feature enabled so we land on the DECSTBM
-//! fast path).
+//! A small "live region" is anchored at the bottom and everything
+//! else is pushed into the terminal's *normal* scrollback, so a
+//! cargo / gradle / xcodebuild log burst stays scrollable instead of
+//! being trapped in a pane a full-screen TUI would own. ratatui
+//! 0.29's [`Viewport::Inline`] + [`Terminal::insert_before`] give
+//! that shape directly (with the `scrolling-regions` feature enabled
+//! so we land on the DECSTBM fast path).
 //!
 //! Layout while the cli is running:
 //!
@@ -261,29 +258,19 @@ pub fn apply_event(
                 started_at: Instant::now(),
                 kind,
             };
-            // Phase entry markers come from `whisker_build::ui::section`
-            // ("──── Initial build ────"), which lands in scrollback
-            // via the stderr capture. Emitting a second "▶ Initial
-            // build" line here would just duplicate it. Phase *exit*
-            // (the `✓ Initial build  6.2s` summary) is unique to our
-            // TUI and is emitted on `BuildSucceeded`.
+            // No history row: `whisker_build::ui::section` already puts
+            // "──── Initial build ────" in scrollback via the stderr
+            // capture, and a "▶ Initial build" line would duplicate it.
             state.current_step = None;
         }
         Event::BuildSucceeded => {
             if let AppPhase::Building { started_at, kind } = &state.phase {
                 let elapsed = started_at.elapsed();
-                // Don't emit a `HistoryItem::PhaseDone` summary for
-                // builds. On iOS the `Event::BuildSucceeded` fires
-                // after `builder.build()` (= staging Swift sources,
-                // ~100ms); the *actual* cargo + xcodebuild work
-                // happens later inside `installer.install_and_launch`
-                // and gets its own `✓ xcodebuild Podcast … XX.Xs`
-                // row via `whisker_build::ui::step`. The Build
-                // section is already delimited by
-                // `──── Initial build ────` plus the in-line step
-                // rows, so an aggregate "✓ Initial build XXms"
-                // line either misleads (iOS) or duplicates the
-                // section header (Android / Host).
+                // No `HistoryItem::PhaseDone` here: on iOS this event
+                // fires after `builder.build()` (Swift staging, ~100ms)
+                // while cargo + xcodebuild are still ahead inside
+                // `installer.install_and_launch`, so an aggregate
+                // "✓ Initial build XXms" row would misstate the time.
                 state.last_build = Some(format!(
                     "{} · {}",
                     if matches!(kind, BuildKind::Initial) {
@@ -318,14 +305,9 @@ pub fn apply_event(
             state.client_count = state.client_count.saturating_sub(1);
         }
         Event::PatchBuilding => {
-            // Flip into Patching the moment the dev-server starts
-            // assembling the hot patch (cargo + symbol-table diff
-            // + ASLR rebase, the wall-clock-heavy bit of the loop).
-            // `Event::PatchSent` flips back to Idle on completion;
-            // `Event::BuildingFull` covers the full reload fallback case
-            // where hot reload errored out mid-build and the loop fell
-            // through to a cold rebuild — that event resets phase
-            // to Building, overriding this Patching state.
+            // Exits are `Event::PatchSent` (→ Idle) or, when the loop
+            // falls back to a cold rebuild, `Event::BuildingFull`
+            // (→ Building).
             state.phase = AppPhase::Patching {
                 started_at: Instant::now(),
             };
@@ -339,16 +321,11 @@ pub fn apply_event(
             state.current_step = None;
         }
         Event::FullReloadRequired { reason } => {
-            // The dev loop declined to act on a change (or a hot
-            // reload failed) — nothing is running, the user decides
-            // when to pay for a Full Reload. Persistent banner in
-            // the live region; the dev-server's own `ui::warn` line
-            // already landed in scrollback via captured stderr.
+            // Banner only — the dev-server's own `ui::warn` line is
+            // already in scrollback via captured stderr.
             state.full_reload_needed = Some(reason.clone());
-            // A `PatchBuilding` may have flipped the phase to
-            // Patching before the loop discovered it couldn't
-            // proceed — return to Idle so the spinner doesn't run
-            // forever.
+            // An earlier `PatchBuilding` may have set Patching; reset
+            // or the spinner runs forever.
             state.phase = AppPhase::Idle;
             state.current_step = None;
         }
@@ -390,11 +367,9 @@ impl TuiHandle {
     /// color and clears any in-progress step display. Does NOT push
     /// a scrollback entry — `whisker_build::ui::section` already
     /// prints labeled phase boundaries that flow into scrollback via
-    /// the stderr capture, so a duplicate "▶ <label>" line would
-    /// just be noise. Event-driven phase completions (build
-    /// finished, patch sent) still emit `HistoryItem::PhaseDone`
-    /// via [`apply_event`] — those carry elapsed-time data that
-    /// `whisker_build::ui` doesn't.
+    /// the stderr capture, so a duplicate "▶ <label>" line would just
+    /// be noise. Only a failed build emits a `HistoryItem::PhaseDone`
+    /// summary, from [`apply_event`].
     pub fn set_phase(&self, phase: AppPhase) {
         self.with(|s| {
             s.phase = phase;
@@ -573,10 +548,8 @@ impl Tui {
                 last_draw = Instant::now();
             }
 
-            // Short key poll — must be tight enough that pressing
-            // `q` feels responsive but not so tight it pegs a core.
-            // 50ms is the same budget the previous full-screen TUI
-            // used; works fine.
+            // Tight enough that `q` feels responsive, loose enough not
+            // to peg a core.
             if poll(Duration::from_millis(50))? {
                 if let CtEvent::Key(key) = read()? {
                     if matches!(key.kind, KeyEventKind::Press) {
@@ -585,10 +558,8 @@ impl Tui {
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 self.user_quit()
                             }
-                            // Reloads are explicit, keyboard-driven
-                            // actions: `r` pushes a hot-reload patch,
-                            // `R` (shift) runs the Full Reload the
-                            // dev loop never triggers on its own.
+                            // A Full Reload only ever happens on `R`;
+                            // the dev loop never triggers one itself.
                             KeyCode::Char('r') => {
                                 self.send_command(whisker_dev_server::DevCommand::HotReload)
                             }
@@ -614,9 +585,8 @@ impl Tui {
         loop {
             match self.rx.try_recv() {
                 Ok(HistoryItem::SetCurrentStep(label)) => {
-                    // Live-region-only update: don't `insert_before`,
-                    // just mutate the shared `LiveState` so the next
-                    // frame picks up the new spinner label.
+                    // Live-region-only: no `insert_before`, so the
+                    // spinner label never enters scrollback.
                     if let Ok(mut s) = self.live.lock() {
                         s.current_step = label;
                     }
@@ -627,8 +597,6 @@ impl Tui {
                     if height == 0 {
                         continue;
                     }
-                    // Move `lines` into the closure — ratatui's `Buffer`
-                    // borrows the cells we copy from `Line`s.
                     self.terminal
                         .insert_before(height, move |buf| {
                             write_lines_to_buffer(buf, &lines);
@@ -683,30 +651,19 @@ impl Tui {
         // cli emitted between the last render and quit lands in
         // scrollback before the live region disappears.
         let _ = self.drain_history_into_scrollback();
-        // ratatui clears its viewport rows on `clear`; on Inline
-        // mode this leaves the scrollback intact and just blanks
-        // the LIVE_HEIGHT rows at the cursor. Then we restore the
-        // cursor via `Terminal::show_cursor` (not a bare crossterm
-        // `cursor::Show` against the saved fd) — going through the
-        // terminal clears its internal `hidden_cursor` flag, which
-        // otherwise causes ratatui's `Drop` impl to try the same
-        // call later when the fd is already closed and we'd see
-        // `Failed to show the cursor: Bad file descriptor` printed
-        // to the shell.
+        // `Terminal::show_cursor`, not a bare crossterm `cursor::Show`
+        // against the saved fd: going through the terminal clears its
+        // `hidden_cursor` flag, which otherwise makes ratatui's `Drop`
+        // retry the call on an already-closed fd and print `Failed to
+        // show the cursor: Bad file descriptor` to the shell.
         let _ = self.terminal.clear();
         let _ = self.terminal.show_cursor();
-        // Force the cursor to column 0 of a fresh row before we
-        // hand the terminal back. `terminal.clear()` *should* leave
-        // the cursor at the viewport's top-left, but if the user
-        // hit `Ctrl-C` and the libc signal beat our `KeyEvent`
-        // handler to the punch, the in-flight render's last
-        // `\x1b[<row>;<col>H` is the position the shell's PS1
-        // inherits — and the visible symptom is a prompt that
-        // starts at column ~113 instead of 0. `\r` re-aligns,
-        // `\n` drops the prompt onto a brand-new row below the
-        // (now-blank) live region. Both bytes go through the saved
-        // stderr fd so they reach the real terminal even while
-        // STDERR_FILENO is still pointing at the capture pipe.
+        // Hand the terminal back with the cursor at column 0 of a
+        // fresh row: when a libc-delivered Ctrl-C beats the `KeyEvent`
+        // handler, the shell's PS1 otherwise inherits the in-flight
+        // render's cursor position. Written to the saved stderr fd,
+        // which still reaches the real terminal while STDERR_FILENO
+        // points at the capture pipe.
         let mut original = OriginalStderr(self.saved_stderr_fd);
         let _ = original.write_all(b"\r\n");
         let _ = disable_raw_mode();
@@ -784,13 +741,11 @@ fn capture_reader_loop(read_fd: c_int, tx: Sender<HistoryItem>) {
                 Ok(s) => s,
                 Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
             };
-            // Step markers are detected *before* `strip_ansi`, which
-            // drops C0 control bytes including the `\x1e` (RS) that
-            // frames our markers. The marker prefix is identical to
-            // `whisker_build::ui::TUI_STEP_*_MARKER`; we duplicate
-            // the constants as literals here to avoid pulling the
-            // `whisker-build` crate into a tighter ABI contract over
-            // an internal protocol.
+            // Marker detection must precede `strip_ansi`, which drops
+            // the framing `\x1e` (RS) along with the other C0 bytes.
+            // The literals mirror `whisker_build::ui::TUI_STEP_*_MARKER`
+            // rather than importing them, keeping this an internal
+            // protocol instead of a crate-level contract.
             if let Some(rest) = text.strip_prefix("\x1eWHISKER-TUI-STEP-START\x1e") {
                 let label = rest.replace('\x1e', " ").trim().to_string();
                 if !label.is_empty() && tx.send(HistoryItem::SetCurrentStep(Some(label))).is_err() {
@@ -920,10 +875,6 @@ fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>>
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     // Header line: ` <STATUS>  <target> · <bundle> [· <elapsed>] `.
-    // The leading chip used to be a static ` whisker run ` brand
-    // mark; it now doubles as the phase indicator. Background color
-    // + label change with the dev loop's state, so the user reads
-    // the run's situation without parsing the trailing word.
     let (chip_label, chip_bg, chip_fg) = status_chip(state);
     let mut header: Vec<Span<'static>> = vec![
         Span::styled(
@@ -947,15 +898,11 @@ fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>>
     }
     lines.push(Line::from(header));
 
-    // Current step line (spinner + label) OR phase-specific info.
     match (&state.current_step, &state.phase) {
         (Some(label), _) => {
             let spinner = SPINNER_FRAMES[spinner_idx % SPINNER_FRAMES.len()];
-            // Spinner colour = chip background so the eye reads the
-            // header + step row as one indicator. `chip_bg` is the
-            // RUNNING-or-BUILDING-or-PATCHING colour and is already
-            // computed for the header above; recompute here so the
-            // helper stays self-contained.
+            // Spinner takes the chip's background colour so the header
+            // and step row read as one indicator.
             let (_, chip_bg, _) = status_chip(state);
             lines.push(Line::from(vec![
                 Span::raw(" "),
@@ -975,8 +922,6 @@ fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>>
         }
     }
 
-    // Dev-server / clients info — shown once dev-server is bound,
-    // regardless of phase.
     if let Some(addr) = &state.ws_addr {
         lines.push(Line::from(vec![
             Span::raw(" "),
@@ -1006,9 +951,8 @@ fn build_live_lines(state: &LiveState, spinner_idx: usize) -> Vec<Line<'static>>
         lines.push(Line::from(""));
     }
 
-    // Banner row: persistent "press R" prompt while the dev loop is
-    // waiting on the user for a Full Reload. Doubles as the spacer
-    // row when no prompt is pending so the layout doesn't jiggle.
+    // Also the spacer row when no prompt is pending, so the layout
+    // doesn't jiggle.
     match &state.full_reload_needed {
         Some(reason) => {
             lines.push(Line::from(vec![
@@ -1155,15 +1099,14 @@ fn write_lines_to_buffer(buf: &mut Buffer, lines: &[Line<'static>]) {
 }
 
 /// Picks the leading status chip's (label, background, foreground)
-/// triple for the current live state. Combines `LiveState::phase`
-/// with `LiveState::current_step` so a long-running step that fires
-/// AFTER `Event::BuildSucceeded` (e.g. `xcodebuild` inside
-/// `installer.install_and_launch` — which runs while the phase is
-/// already `Idle`) still surfaces as `BUILDING`. Once the launch
-/// step finishes and `current_step` clears, the chip flips to
-/// `RUNNING`. Order of checks is significant: `Failed` outranks
-/// everything; `Patching` outranks both Building and Idle; in-flight
-/// step outranks bare Idle.
+/// triple for the current live state. `current_step` is consulted as
+/// well as `phase` so a step running after `Event::BuildSucceeded`
+/// (`xcodebuild` inside `installer.install_and_launch`, with the
+/// phase already `Idle`) still reads as `BUILDING`.
+///
+/// Check order is significant: `Failed` outranks everything,
+/// `Patching` outranks Building and Idle, an in-flight step outranks
+/// bare Idle.
 fn status_chip(state: &LiveState) -> (&'static str, Color, Color) {
     if matches!(state.phase, AppPhase::Failed { .. }) {
         return ("FAILED", Color::Red, Color::White);
@@ -1174,19 +1117,14 @@ fn status_chip(state: &LiveState) -> (&'static str, Color, Color) {
     if matches!(state.phase, AppPhase::Building { .. }) {
         return ("BUILDING", Color::Yellow, Color::Black);
     }
-    // Idle: distinguish "actively doing install / launch work" (a
-    // step is in flight, even though the phase-machine has moved on
-    // from Building) from "truly settled and the app is live on the
-    // device".
+    // Idle with a step in flight is still install / launch work.
     if matches!(state.phase, AppPhase::Idle) {
         if state.current_step.is_some() {
             return ("BUILDING", Color::Yellow, Color::Black);
         }
         return ("RUNNING", Color::Green, Color::Black);
     }
-    // Setup / Initializing — the very brief pre-build phases. Render
-    // as a neutral chip so the user knows the loop is alive but not
-    // doing anything heavy yet.
+    // Setup / Initializing.
     ("STARTING", Color::DarkGray, Color::White)
 }
 
@@ -1211,10 +1149,6 @@ fn fmt_elapsed(d: Duration) -> String {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1235,17 +1169,12 @@ mod tests {
         let mut st = s();
         let started = drain(&mut st, &Event::BuildingFull);
         assert!(matches!(st.phase, AppPhase::Building { .. }));
-        // BuildingFull no longer emits a PhaseEnter — that's
-        // delegated to `whisker_build::ui::section` which lands in
-        // scrollback via stderr capture.
+        // The section header comes from `whisker_build::ui::section`
+        // via captured stderr, so neither event emits a history row.
         assert!(started.is_empty());
         let done = drain(&mut st, &Event::BuildSucceeded);
         assert!(matches!(st.phase, AppPhase::Idle));
         assert!(st.last_build.is_some());
-        // BuildSucceeded no longer emits a `PhaseDone` summary —
-        // the section header + per-step rows in scrollback are
-        // enough. `last_build` is the only state mutation we care
-        // about here, plus the phase transition above.
         assert!(done.is_empty());
     }
 
@@ -1291,10 +1220,8 @@ mod tests {
         let h = drain(&mut st, &Event::PatchSent);
         assert!(matches!(st.phase, AppPhase::Idle));
         assert!(st.last_patch.is_some());
-        // PhaseDone is no longer emitted on PatchSent — the dev-server
-        // already emits `✓ patch hot reload …` via `ui::step` and a
-        // duplicate "Hot patch" summary row would just clutter
-        // scrollback.
+        // No history row: the dev-server's own `✓ patch hot reload …`
+        // step line already covers it.
         assert!(h.is_empty());
     }
 

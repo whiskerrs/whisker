@@ -211,7 +211,6 @@ mod tests {
             .unwrap();
         assert!(store.has("android/com.example.app/keystore.json"));
 
-        // Re-open (fresh parse of recipients.txt) and decrypt.
         let reopened = Store::open(root.path()).expect("open");
         let identity = Identity::parse(&secret).expect("parse identity");
         assert!(identity.matches(&reopened));
@@ -258,7 +257,6 @@ mod tests {
             let root = tmp();
             Store::bootstrap(root.path()).unwrap()
         };
-        // Build a recipients file with noise around a real key.
         let identity = Identity::parse(&secret).unwrap();
         let pk = identity.0.to_public().to_string();
         let parsed = parse_recipients(&format!("# comment\n\n{pk}\n  \n")).expect("parse");

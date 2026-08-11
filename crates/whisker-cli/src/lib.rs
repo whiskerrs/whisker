@@ -11,13 +11,11 @@
 //!   and project the resulting `Config` into the dev-server's
 //!   flat [`whisker_dev_server::Config`].
 //! - `new` / `new-module` — scaffolding.
-//!
-//! No `build` subcommand: production builds happen through the same
-//! `xcodebuild` / `gradle assembleRelease` invocations CI uses. Past
-//! revisions shipped a `whisker build` convenience wrapper, but it
-//! existed mostly to manage the `~/.cache/whisker/lynx/` user cache,
-//! which is itself gone now (iOS uses SPM remote binary targets,
-//! Android pulls aars from Maven).
+//! - `build` — signed release artifacts (`.aab` / `.apk` / `.ipa`),
+//!   with signing material from the age-encrypted `credentials/`
+//!   store.
+//! - `credential` — wizards that populate that store.
+//! - `fmt` — rustfmt drop-in that also formats `render!` / `css!`.
 //!
 //! ## Internal binaries
 //!
@@ -26,8 +24,8 @@
 //! capture the rustc + linker invocations that hot-reload patch will
 //! replay later:
 //!
-//! - `whisker-rustc-shim` (`-Cstrip=…` / `-Csave-temps=y` style
-//!   wrapper around rustc) — captures argv to
+//! - `whisker-rustc-shim` (installed as `RUSTC_WORKSPACE_WRAPPER`) —
+//!   captures argv to
 //!   `$WHISKER_RUSTC_CACHE_DIR/<crate>-<timestamp>.json`.
 //! - `whisker-linker-shim` (forwarded by rustc's `-C linker=…`) —
 //!   captures argv to `$WHISKER_LINKER_CACHE_DIR/<output>-…json`.
@@ -89,10 +87,10 @@ enum Command {
     /// `whisker run ios` from inside the new directory.
     New(new_app::NewAppArgs),
 
-    /// Produce distributable, signed artifacts — `appbundle` (.aab)
-    /// and `apk` today; `ipa` next. Signing material comes from the
-    /// encrypted `credentials/` store; missing pieces are set up
-    /// interactively on first use.
+    /// Produce distributable, signed artifacts — `appbundle` (.aab),
+    /// `apk` and `ipa`. Signing material comes from the encrypted
+    /// `credentials/` store; missing pieces are set up interactively
+    /// on first use.
     Build(build::BuildArgs),
 
     /// Manage signing credentials — the age-encrypted `credentials/`

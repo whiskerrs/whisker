@@ -47,13 +47,8 @@ pub fn run(args: Args) -> Result<()> {
     // directory; reports a single neutral line elsewhere.
     report.add_section("Credentials", check_credentials);
 
-    // No Lynx section: Android pulls the Lynx aar from gradle's
-    // `whiskerrs.github.io/lynx/maven` repository, and iOS resolves
-    // the four Lynx xcframeworks via SPM's `binaryTarget(url:checksum:)`
-    // declarations in `platforms/ios/Package.swift` during xcodebuild's
-    // package-resolution step. Neither writes to `~/.cache/whisker/`;
-    // the doctor has nothing useful to assert about Lynx before a
-    // build runs.
+    // No Lynx section: gradle and SPM each resolve Lynx during their
+    // own build, leaving nothing on disk to assert about beforehand.
 
     report.print_summary();
     if report.has_errors() {
@@ -513,10 +508,6 @@ fn which(cmd: &str) -> Option<PathBuf> {
     }
     None
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

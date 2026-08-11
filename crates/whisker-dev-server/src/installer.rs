@@ -24,15 +24,11 @@ pub struct Installer {
     ios: Option<IosParams>,
     workspace_root: PathBuf,
     package: String,
-    /// hot reload capture shims for hot-reload. When `Some`, the
-    /// xcodebuild Command in [`ios_install_and_launch`] gets the
+    /// Capture shims for hot reload. When `Some`, the xcodebuild
+    /// Command in [`ios_install_and_launch`] gets
     /// `RUSTC_WORKSPACE_WRAPPER` + `CARGO_TARGET_*_LINKER` +
-    /// `CARGO_TARGET_*_RUSTFLAGS` env vars set so the Step-7
-    /// Build Phase's cargo invocation runs as a fat capture build.
-    /// Pre-Step-7 the dev-server primed capture via a separate
-    /// `build_xcframework_with` call in `builder.rs`; that call now
-    /// produces an artifact xcodebuild's Build Phase rebuilds anyway,
-    /// so the capture wiring moves here.
+    /// `CARGO_TARGET_*_RUSTFLAGS` set, so the cargo invocation its
+    /// Build Phase makes runs as a fat capture build.
     capture: Option<CaptureShims>,
     /// Cargo features forwarded to the iOS Build Phase via the
     /// `WHISKER_FEATURES` env var (the pbxproj's shell script expands
@@ -156,14 +152,11 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
         if kind.is_benign(trimmed) {
             continue;
         }
-        // Anything that survived the filter is real output — surface
-        // it as a warning so the user notices but the curated layout
-        // isn't drowned.
+        // Anything past the filter is real output.
         whisker_build::ui::warn(trimmed);
     }
-    // Stdout from these tools is usually empty or low-noise (e.g.
-    // `simctl launch` prints `<bundle_id>: <pid>`); echo it through
-    // info() at debug-grade.
+    // Stdout from these tools is low-noise, so it goes through
+    // info() at debug grade.
     let stdout_str = String::from_utf8_lossy(&out_buf);
     for line in stdout_str.lines() {
         let trimmed = line.trim();
@@ -191,18 +184,15 @@ async fn run_filtered(mut cmd: Command, kind: SimctlNoise) -> Result<std::proces
 /// Real errors are preserved: lines containing `error:` /
 /// `fatal error:` / `** BUILD FAILED **` always fall through.
 fn is_benign_xcodebuild_line(raw: &str) -> bool {
-    // Under `--verbose` / `WHISKER_VERBOSE=1`, let every line
-    // through — that's the explicit "I want to see the full
-    // underlying tool output" mode, including the deprecation
-    // chain we'd otherwise suppress.
+    // `--verbose` means "show me the full tool output", deprecation
+    // chain included.
     if whisker_build::ui::is_verbose() {
         return false;
     }
 
     let line = raw.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '·');
 
-    // Always surface real errors. Check this first so we don't
-    // accidentally suppress a `warning:`-prefixed error message.
+    // First, so a `warning:`-prefixed error isn't suppressed below.
     if line.starts_with("error:")
         || line.contains(" error:")
         || line.starts_with("fatal error:")
@@ -222,8 +212,7 @@ fn is_benign_xcodebuild_line(raw: &str) -> bool {
         return true;
     }
 
-    // Diagnostic chain: warnings, notes, source line listings,
-    // `N warnings generated.` summary.
+    // Diagnostic chain: warnings, notes, source listings, summary.
     if line.starts_with("warning:")
         || line.contains(" warning:")
         || line.starts_with("note:")
@@ -239,10 +228,9 @@ fn is_benign_xcodebuild_line(raw: &str) -> bool {
     //   `217 | #import "LynxBackgroundInfo.h"`
     //   `    | ^`
     //   `56 |`        (empty source line for context)
-    // After trimming leading whitespace + all leading digits, the
-    // remainder always starts with `|` (with or without trailing
-    // content). Multi-digit line numbers were the gap that earlier
-    // single-char `strip_prefix` filters missed.
+    // After trimming leading whitespace and ALL leading digits, the
+    // remainder always starts with `|` — trimming a single character
+    // would miss multi-digit line numbers.
     let after_digits = line
         .trim_start()
         .trim_start_matches(|c: char| c.is_ascii_digit() || c.is_ascii_whitespace());
@@ -305,24 +293,19 @@ impl SimctlNoise {
     }
 
     fn is_benign_stdout(&self, line: &str) -> bool {
-        // For xcodebuild, also fold stdout through the benign filter
-        // — `-quiet` doesn't fully silence it on iOS 26 SDK + Lynx
-        // pre-iOS-26 headers, so `mainScreen` deprecations etc. land
-        // on stdout depending on Xcode version.
+        // `-quiet` doesn't fully silence xcodebuild on an iOS 26 SDK
+        // against pre-iOS-26 Lynx headers, so its stdout needs the
+        // benign filter too.
         if matches!(self, SimctlNoise::Xcodebuild) && is_benign_xcodebuild_line(line) {
             return true;
         }
         match self {
-            // `simctl launch` always reports `<bundle_id>: <pid>` on
-            // success; it duplicates info our `step.done(...)`
-            // already covers.
+            // Duplicates what `step.done(...)` already reports.
             SimctlNoise::Other => line.contains(": ") && line.chars().any(|c| c.is_ascii_digit()),
-            // `adb install -r`: two stdout lines on success — both
-            // are subsumed by the `install` step's ✓ row.
+            // Subsumed by the `install` step's ✓ row.
             SimctlNoise::AdbInstall => line == "Performing Streamed Install" || line == "Success",
-            // `adb shell am start -n <component>`: the one stdout
-            // line "Starting: Intent { cmp=… }" duplicates the
-            // launch step's label.
+            // "Starting: Intent { cmp=… }" duplicates the launch
+            // step's label.
             SimctlNoise::AdbAmStart => line.starts_with("Starting: Intent {"),
             _ => false,
         }
@@ -368,17 +351,14 @@ async fn android_install_and_launch(
         anyhow::bail!("APK missing at {}", apk.display());
     }
 
-    // adb reverse — bridge device `127.0.0.1:9876` → host `dev_port` so
-    // the on-device dev-runtime can reach our WebSocket without knowing
-    // the emulator-gateway IP (10.0.2.2). The device keeps dialing its
-    // default 9876 (`WHISKER_DEV_ADDR` fallback); only the host side of
-    // the mapping follows `--bind`, so a custom `--bind` port keeps hot
-    // reload working. Best-effort: it might already be set from a
-    // previous run, or the device might be a non-emulator that doesn't
-    // need it. Routed through `run_filtered` rather than `.status()` so
-    // its stdio doesn't bypass the TUI's stderr-capture pipe and overlay
-    // the live region — same reason every other adb call below now uses
-    // it.
+    // Bridge device `127.0.0.1:9876` → host `dev_port` so the
+    // dev-runtime reaches the WebSocket without knowing the
+    // emulator-gateway IP. The device always dials its default 9876;
+    // only the host side follows `--bind`, so a custom port still hot
+    // reloads. Best-effort — a previous run may have set it, and a
+    // physical device doesn't need it at all. Every adb call goes
+    // through `run_filtered` so its stdio can't bypass the TUI's
+    // capture pipe and overlay the live region.
     let mut reverse_cmd = Command::new("adb");
     reverse_cmd.args(["reverse", "tcp:9876", &format!("tcp:{dev_port}")]);
     let _ = run_filtered(reverse_cmd, SimctlNoise::Other).await;
@@ -415,10 +395,7 @@ async fn android_install_and_launch(
     }
     install_step.done("");
 
-    // adb shell am force-stop  (so the relaunch actually re-bootstraps).
-    // `force-stop` is silent on success; route through `run_filtered`
-    // anyway so any error preamble lands in scrollback rather than on
-    // top of the live region.
+    // force-stop first, so the relaunch really re-bootstraps.
     let mut stop_cmd = Command::new("adb");
     stop_cmd.args(["shell", "am", "force-stop", &p.application_id]);
     let _ = run_filtered(stop_cmd, SimctlNoise::Other).await;
@@ -474,21 +451,16 @@ async fn ios_install_and_launch(
         // Whisker's own `whisker` SPM package).
         .arg("-skipPackagePluginValidation")
         .args(["-quiet", "build"]);
-    // NB: WhiskerRuntime + the codegen plugin now resolve from the
-    // remote `whisker` SwiftPM package (see whisker_build::ios::
-    // WHISKER_IOS_SPM_URL), so the old `WHISKER_IOS_RUNTIME` /
-    // `WHISKER_IOS_MACROS` env injection that pointed module manifests at
-    // `platforms/ios` is gone — modules no longer read it.
-    // hot reload capture wiring (hot-reload). Pre-Step-7 the dev-server
-    // ran a separate `build_xcframework_with` call to prime the rustc
-    // + linker capture caches before xcodebuild touched the framework.
-    // Step 7's Build Phase produces the framework during xcodebuild
-    // itself, so the capture envs need to ride along here — they
-    // propagate xcodebuild → shell Build Phase → `whisker build-ios`
-    // subprocess → cargo, where the shims actually intercept rustc +
-    // linker. Capture is opt-in (`HotPatchMode::HotReload`); when
-    // `None`, xcodebuild runs without the shims and the loop falls
-    // back to full reloads.
+    // No `WHISKER_IOS_RUNTIME` / `WHISKER_IOS_MACROS` injection:
+    // WhiskerRuntime and the codegen plugin resolve from the remote
+    // `whisker` SwiftPM package (`whisker_build::ios::WHISKER_IOS_SPM_URL`).
+    // The framework is produced by a Build Phase inside this very
+    // xcodebuild run, so the capture envs have to ride along on it:
+    // they propagate xcodebuild → shell Build Phase → `whisker
+    // build-ios` subprocess → cargo, where the shims intercept rustc
+    // and the linker. `None` (not `HotPatchMode::HotReload`) runs
+    // xcodebuild without them and the loop falls back to full
+    // reloads.
     if let Some(c) = capture {
         let sim_triple = "aarch64-apple-ios-sim";
         for (k, v) in whisker_build::capture_env_vars_for_triple(c, Some(sim_triple)) {
@@ -556,16 +528,12 @@ async fn ios_install_and_launch(
     // `SIMCTL_CHILD_<NAME>` shows up as `<NAME>` inside the launched
     // app's env — that's how the dev-runtime finds us.
     //
-    // `--terminate-running-process` makes simctl atomically kill the
-    // previous instance (so the runtime re-bootstraps + reconnects
-    // the dev WebSocket) and immediately launch the fresh build. We
-    // used to do this as two steps — `simctl terminate` followed by
-    // `simctl launch` — but the terminate call emits
-    // `Simulator device failed to terminate <bundle>.` to stderr
-    // whenever the app exists on the simulator but isn't actually
-    // running (which is every cold start, and also the "user
-    // backgrounded the app between rebuilds" case). The flag bundles
-    // both operations and handles the not-running case silently.
+    // `--terminate-running-process` atomically kills the previous
+    // instance (so the runtime re-bootstraps and reconnects the dev
+    // WebSocket) and launches the fresh build. A separate `simctl
+    // terminate` first would print `Simulator device failed to
+    // terminate <bundle>.` on every cold start, where the app is
+    // installed but not running; the flag handles that silently.
     let launch_step = whisker_build::ui::step("launch", p.bundle_id.clone());
     let mut launch_cmd = Command::new("xcrun");
     launch_cmd
@@ -623,10 +591,6 @@ fn pick_available_iphone() -> Option<String> {
     }
     None
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -12,11 +12,10 @@
 //! ## Why a single-crate workspace?
 //!
 //! `whisker run` walks up from the crate's `Cargo.toml` looking for a
-//! `[workspace]` table — it uses the workspace root for Lynx cache
-//! paths, the rustc-shim cache dir, etc. A standalone app crate needs
-//! to advertise itself as both `[package]` and `[workspace]` so the
-//! single directory satisfies both lookups; otherwise `whisker run`
-//! errors out with "no [workspace] Cargo.toml at or above …".
+//! `[workspace]` table — the workspace root anchors the shim cache
+//! dirs, the gen tree and cargo's `target/`. A standalone app crate
+//! must therefore declare both `[package]` and `[workspace]`, or
+//! `whisker run` errors with "no [workspace] Cargo.toml at or above …".
 //!
 //! ## Naming
 //!

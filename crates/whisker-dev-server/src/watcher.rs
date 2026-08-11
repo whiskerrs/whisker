@@ -1,8 +1,7 @@
 //! File watcher + change classifier for the dev loop.
 //!
-//! Wraps `notify` so the rest of the dev server (the builder in I4e
-//! and the hot-reload patcher in I4g) doesn't have to deal with raw
-//! filesystem events. Three things happen here:
+//! Wraps `notify` so the builder and the hot-reload patcher don't
+//! have to deal with raw filesystem events. Three things happen here:
 //!
 //! 1. **Recursive watch** of a package root.
 //! 2. **Debounce** raw notify events for ~200 ms — a single file save
@@ -25,8 +24,8 @@ use tokio::sync::mpsc;
 /// (Cargo.toml beats Rust code beats anything else).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeKind {
-    /// `.rs` files inside the watched tree. full reload
-    /// today; hot reload subsecond patch once I4g lands.
+    /// `.rs` files inside the watched tree — a hot-reload patch when
+    /// the patcher is available, a Full Reload prompt otherwise.
     RustCode,
     /// `Cargo.toml` (or `Cargo.lock`) — needs a full
     /// `cargo build` and re-launch; subsecond can't reload deps.
@@ -166,10 +165,6 @@ fn is_interesting(k: &EventKind) -> bool {
     )
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,14 +290,11 @@ mod tests {
 
     #[tokio::test]
     async fn rapid_edits_get_coalesced_into_one_change() {
-        // Drive `debounce_loop` directly with synthetic events
-        // instead of touching the filesystem + notify. The earlier
-        // e2e version was flaky on slow CI runners (#30/#33/#34):
-        // each `std::fs::write` + `tokio::time::sleep(20ms)` could
-        // stretch past the 150 ms debounce window, splitting the
-        // batch into two `Change`s and tripping the "expect no
-        // second change" assertion. Feeding events through the std
-        // channel keeps the test deterministic — the only timing
+        // Drive `debounce_loop` with synthetic events rather than
+        // real filesystem writes: on a slow CI runner a write plus its
+        // sleep can outlast the debounce window, splitting one batch
+        // into two `Change`s. Feeding the std channel directly keeps
+        // the test deterministic — the only timing
         // dependency left is the debounce window itself, which is
         // the thing under test.
         let debounce = Duration::from_millis(100);

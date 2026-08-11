@@ -11,7 +11,7 @@
 //!
 //! 1. Dump the rustc invocation (full argv + crate name + timestamp)
 //!    to JSON at `$WHISKER_RUSTC_CACHE_DIR/<crate>-<microseconds>.json`.
-//!    The dev server reads these later to drive thin rebuilds (I4g-5).
+//!    The dev server reads these later to drive thin rebuilds.
 //! 2. Spawn the *real* rustc with the original args and exit with the
 //!    same status code — to cargo, the wrapper is invisible.
 //!
@@ -64,7 +64,6 @@ pub fn run() -> Result<()> {
     let real_rustc = argv.remove(0); // path cargo prepended
     let rustc_args = argv; // remainder = real rustc args
 
-    // Capture step (silent if no cache dir).
     if let Some(cache_dir) = std::env::var_os("WHISKER_RUSTC_CACHE_DIR") {
         let cache_dir = PathBuf::from(cache_dir);
         let invocation = capture(&rustc_args)?;
@@ -72,7 +71,6 @@ pub fn run() -> Result<()> {
             .with_context(|| format!("save to {}", cache_dir.display()))?;
     }
 
-    // Forward to real rustc, transparent exit.
     let status = std::process::Command::new(&real_rustc)
         .args(&rustc_args)
         .status()
@@ -160,10 +158,6 @@ pub fn save_invocation(cache_dir: &Path, invocation: &CapturedRustcInvocation) -
     std::fs::write(&path, json).with_context(|| format!("write {}", path.display()))?;
     Ok(())
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -265,9 +259,6 @@ mod tests {
 
     #[test]
     fn capture_envs_excludes_cargo_makeflags() {
-        // CARGO_MAKEFLAGS carries jobserver fds that are dead outside
-        // cargo's process tree; replaying it makes rustc warn on
-        // every thin rebuild.
         let vars = vec![
             (
                 "CARGO_MAKEFLAGS".to_string(),
@@ -357,7 +348,6 @@ mod tests {
         save_invocation(&dir, &inv).expect("save");
         assert!(dir.is_dir());
 
-        // cleanup
         let mut to_remove = dir;
         for _ in 0..4 {
             to_remove.pop();

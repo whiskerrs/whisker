@@ -17,9 +17,8 @@
 //! [rest:           raw patch dylib bytes (no encoding) ]
 //! ```
 //!
-//! No base64. The dylib lands on the device with the original byte
-//! count, ~30 % smaller on the wire than the previous JSON-with-
-//! base64-string protocol.
+//! No base64 — the dylib lands on the device with its original byte
+//! count.
 //!
 //! **Hello** — *text* frame, `{"kind":"hello","aslr_reference":<u64>}`.
 //! The device sends this on connect; the server stores the value
@@ -127,8 +126,9 @@ impl PatchSender {
         self.tx.receiver_count()
     }
 
-    /// The runtime address of `main` (= `subsecond::aslr_reference()`)
-    /// most recently reported by a connected client. `None` when no
+    /// The runtime address of `whisker_aslr_anchor`
+    /// (= `subsecond::aslr_reference()`) most recently reported by a
+    /// connected client. `None` when no
     /// client has connected or sent its `hello` yet — the patcher
     /// should withhold hot-reload patches in that case (fall back to
     /// full reload).
@@ -206,10 +206,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // is open by default — local loopback / tests.
     let mut authed = state.expected_token.is_none();
 
-    // Only announce clients that pass the token gate. During the
-    // initial build, a stale app from the previous session retries
-    // its (doomed) connection every few seconds — announcing each
-    // attempt makes the TUI's client count flap 0↔1 the whole build.
+    // Announce only clients past the token gate: a stale app from a
+    // previous session retries every few seconds, which would flap the
+    // TUI's client count 0↔1 for the whole build.
     let mut announced = false;
     if authed {
         if let Some(cb) = &state.on_event {
@@ -244,10 +243,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     break;
                 }
             }
-            // client → server: drain incoming so Pings/Pongs are honoured;
-            // close on Close frame or transport error. Text frames are
-            // parsed for `hello` envelopes carrying the client's
-            // `aslr_reference` (+ session token).
+            // client → server: drain so Pings/Pongs are honoured and
+            // `hello` envelopes (aslr_reference + session token) are
+            // parsed.
             msg = rx_ws.next() => {
                 match msg {
                     Some(Ok(Message::Close(_))) | None => break,
@@ -260,18 +258,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             // the patch path for it.
                             if let Some(expected) = &state.expected_token {
                                 if hello.token.as_deref() != Some(expected.as_ref()) {
-                                    // Debug-only: usually an app left
-                                    // over from a previous dev session
-                                    // retrying with that session's
-                                    // token until a launch replaces
-                                    // it — expected noise, not a
-                                    // user-actionable event. The
-                                    // symptom that IS actionable (the
-                                    // *current* app being rejected)
-                                    // shows up as `0 connected` +
-                                    // "no device connected" prompts;
-                                    // WHISKER_VERBOSE=1 surfaces this
-                                    // line for that diagnosis.
+                                    // Debug-only: an app from a
+                                    // previous dev session retrying
+                                    // with its stale token is the
+                                    // usual cause, and it isn't
+                                    // actionable. A rejected *current*
+                                    // app instead shows up as
+                                    // `0 connected`.
                                     whisker_build::ui::debug(
                                         "rejected a hot-reload client (missing/invalid dev \
                                          token) — usually an app left over from a previous \
@@ -311,19 +304,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    // Clear the stored `aslr_reference` on disconnect. It's the ASLR
-    // slide of the *now-dead* process; reusing it to build a patch for
-    // the next process (e.g. a full reload relaunch) would stamp
-    // jump stubs against meaningless addresses and crash the device.
-    // The replacement process re-sends its own `hello` with a fresh
-    // slide; until then `latest_aslr_reference()` returns `None` and the
-    // patch path skips rather than shipping a stale-based patch.
+    // The stored slide belongs to the now-dead process; stamping jump
+    // stubs with it for the replacement would crash the device. Clear
+    // it and let the new process send its own `hello`.
     //
-    // Only for AUTHED sockets: a rejected client never stored a slide,
-    // and clearing here would wipe the *live* app's reference every
-    // time a stale-token app's doomed reconnect attempt bounced off
-    // the gate — leaving hot reload stuck at "no device connected"
-    // while the device is, in fact, connected.
+    // Authed sockets only: a rejected client never stored a slide, so
+    // clearing on its disconnect would wipe the *live* app's reference
+    // every time a stale-token app bounced off the gate.
     if authed {
         if let Ok(mut g) = state.aslr_reference.lock() {
             *g = None;
@@ -426,10 +413,6 @@ fn parse_client_log(text: &str) -> Option<ClientLog> {
         ts_micros,
     })
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -7,10 +7,9 @@
 //!   so it stays unit-testable against tempdirs.
 //! - This module decides *where* the gen dirs live (always
 //!   `<crate_dir>/gen/{android,ios}`), resolves the Whisker native
-//!   runtime paths (today: `<workspace>/native/{android,ios}`), and
-//!   handles the side-effect bits that follow a sync — running
-//!   `xcodegen generate` after iOS regeneration so the
-//!   `<scheme>.xcodeproj` is fresh before `xcodebuild` runs.
+//!   runtime paths (`<workspace>/platforms/ios`), and handles the
+//!   side-effect bits a sync needs — pinning the SDK / Gradle plugin
+//!   versions and building the app's discovered CNG plugins.
 //!
 //! Public entry point: [`sync_for_target`]. The cli's `run` and
 //! `build` subcommands call this before kicking off the rest of the
@@ -58,164 +57,20 @@ pub struct PlatformSync {
 /// `app/build.gradle.kts` (`rs.whisker:whisker-runtime-android:<this>`).
 /// Bumped alongside the `sdk-v*` release tag.
 ///
-/// 0.1.1 rolls forward the transitive Lynx pin baked into the SDK's
-/// POM from `v3.8.0-whisker.4` (initial SDK release) to
-/// `v3.8.0-whisker.7`. The newer Lynx exposes `lynx_capi_abi_version()`
-/// which the Step-6 dlopen-based bridge requires; without this bump,
-/// downstream apps that pull `whisker-runtime-android:0.1.0`
-/// transitively get the older Lynx and the bridge loader aborts on
-/// "undefined symbol: lynx_capi_abi_version" at engine_attach time.
-///
-/// 0.1.2 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.7` →
-/// `v3.8.0-whisker.8`, which raises the capi ABI to **v2** (list data
-/// source driven by real item-keys + per-item metadata; object-valued
-/// attributes for `item-snap`). The per-app WhiskerDriver bridge is now
-/// built for ABI v2, so it refuses to attach to the ABI v1 Lynx that
-/// `whisker-runtime-android:0.1.1` still pulls — apps must move to 0.1.2.
-///
-/// 0.1.3 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.8` →
-/// `v3.8.0-whisker.9`, which adds `lynx_shell_set_custom_event_callback`
-/// (tail addition, ABI stays v2) — the channel that routes core-
-/// originated `<list>` events (`scroll` / `scrolltolower` / `snap` /
-/// `layoutcomplete`) to whisker. Non-breaking: the bridge feature-
-/// detects the symbol, so 0.1.2's Lynx still attaches — list events
-/// just stay dark until the app moves to 0.1.3.
-///
-/// 0.1.4 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.9` →
-/// `v3.8.0-whisker.10`, which adds `lynx_element_update_list_actions`
-/// (tail addition, ABI stays v2) — explicit minimal diff actions for
-/// `<list>` data updates, so the scroll position holds across appends
-/// (infinite scroll) instead of resetting to the top. Non-breaking:
-/// feature-detected; on 0.1.3's Lynx whisker falls back to the
-/// full-replace update (the pre-fix behaviour).
-///
-/// 0.1.5 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.10` →
-/// `v3.8.0-whisker.12` (capi ABI v3):
-/// `lynx_element_update_list_actions` now carries per-item metadata
-/// (estimated size / full-span / sticky / recyclable) on the diff
-/// actions plus in-place metadata updates — what makes sticky
-/// headers, waterfall full-span and item size estimates actually work
-/// (the `ItemMeta` API). BREAKING at the capi layer (v2 embedders
-/// refuse to attach via the abi-version handshake) — accepted while
-/// whisker is the only consumer.
-///
-/// 0.1.7 adds `WhiskerAppContext.DeepLinkListener`/
-/// `addDeepLinkListener`/`removeDeepLinkListener`/`dispatchDeepLink`
-/// (`whisker-module-android`) and `WhiskerActivity.onNewIntent`
-/// forwarding into it (`whisker-runtime-android`) — the plumbing
-/// `whisker-web-browser`'s Android `openAuthSession` needs to observe
-/// an OAuth redirect delivered as a new Intent. Non-breaking, pure
-/// Kotlin/JVM API addition — no capi/Lynx ABI change. (0.1.6 was a
-/// Kotlin-only change too — `WhiskerInsetsDispatcher` — and didn't
-/// bump this constant; do not assume every `sdk-v*` tag necessarily
-/// needs one, but check the SDK diff each time.)
-///
-/// 0.1.8 sets `LynxViewBuilder.setTapSlop("18px")` in
-/// `WhiskerView`'s constructor (`whisker-runtime-android`) — Lynx's
-/// own tap-cancel threshold defaulted to ~50dp-equivalent, far more
-/// generous than the ~8dp `ViewConfiguration.getScaledTouchSlop()`
-/// scroll containers use to start scrolling, so a finger drift big
-/// enough to visibly start a scroll could still fire a `tap` on
-/// release. Kotlin-only, no capi/Lynx ABI change.
-///
-/// 0.1.9 populates `touches`/`changedTouches`/`detail` for
-/// `LynxTouchEvent` in `WhiskerView`'s event reporter
-/// (`whisker-runtime-android`) — Android previously sent every touch
-/// event with an empty body (`detail: null`, no `touches`), so
-/// `whisker_runtime::event::TouchEvent`'s coordinate fields all
-/// silently defaulted to zero (`#[serde(default)]`), breaking any
-/// Rust-side drag-to-seek/gesture math that reads touch coordinates
-/// on Android specifically — iOS's `whisker_bridge_ios.mm` already
-/// populated this shape, this brings Android to parity with it.
-/// Kotlin-only, no capi/Lynx ABI change.
-///
-/// 0.1.10 fixes those same touch coordinates being forwarded in raw
-/// device px instead of dip — `LynxTouchEvent.getPagePoint()`/
-/// `getClientPoint()`/`getTouchMap()` hand back unconverted
-/// `MotionEvent` coordinates, while `boundingClientRect()` and all
-/// other layout geometry reaching Rust is in dip. Divides by
-/// `resources.displayMetrics.density` before packing the event body.
-/// Kotlin-only, no capi/Lynx ABI change.
-///
-/// 0.1.11 is a temporary diagnostic build — logs the tapSlop value
-/// `TouchEventDispatcher` actually ends up armed with (via reflection
-/// on its private `mTapSlop` field) 1s after each `WhiskerView`
-/// constructs, tagged `WhiskerTapSlop`. Investigating a report that
-/// 0.1.8's 18px tapSlop fix stopped taking effect. Remove once
-/// root-caused. Kotlin-only, no capi/Lynx ABI change.
-///
-/// 0.1.12 fixes that diagnostic itself — `TouchEventDispatcher` is
-/// lazily created on the first real touch event
-/// (`LynxUIRenderer.EnsureEventDispatcher`), not at `WhiskerView`
-/// construction, so the fixed 1s-post-construction read always logged
-/// `null` (confirmed on-device). Moved the read to fire after
-/// `ACTION_UP` instead, guaranteeing the dispatcher already exists.
-/// Kotlin-only, no capi/Lynx ABI change.
-///
-/// 0.1.13 fixes the actual regression 0.1.11/0.1.12 were diagnosing —
-/// confirmed on-device that `TouchEventDispatcher.mTapSlop` stayed at
-/// Lynx's built-in 50dip default regardless of
-/// `LynxViewBuilder().setTapSlop(...)`. Root cause: that value only
-/// reaches the live dispatcher via `onPageConfigDecoded` →
-/// `updateEventDispatcherConfig()`, both driven by Lynx's own
-/// template-loading pipeline, which this app bypasses entirely (see
-/// `WhiskerView`'s own class doc comment). Reflects through
-/// `LynxView.mLynxTemplateRender` → `LynxTemplateRender.mLynxUIRender`
-/// → `LynxUIRenderer.mEventDispatcher` to reach the live dispatcher
-/// directly and set its tapSlop, bypassing the page-config path this
-/// app never drives. Kotlin-only, no capi/Lynx ABI change.
-///
-/// 0.1.14 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.12` →
-/// `v3.8.0-whisker.13`, which adds `lynx_element_insert_child_before`
-/// (positioned insert — tail addition, ABI stays v3). whisker's bridge
-/// now binds it strictly and always drives the native positioned-insert
-/// path, so a hoisted / reordered child no longer append+rotates its
-/// following siblings — which used to detach + reattach a stateful
-/// native sibling (a focused `<input>` lost focus). Apps must move to
-/// 0.1.14 to get the Lynx that exports the symbol; the per-app
-/// `WhiskerDriver` bridge built for this SDK refuses to attach to the
-/// older Lynx that lacks it (strict loader bind).
-///
-/// 0.1.15 ships `AsyncFunction` + `WhiskerPromise`
-/// (`whisker-module-android`, plus the registrar/registry plumbing that
-/// resolves an async function and the KSP codegen that emits it) — the
-/// Kotlin half of real async module functions. A module whose native
-/// half declares an `AsyncFunction` doesn't compile against 0.1.14, so
-/// apps shipping one must move to 0.1.15. Kotlin-only, no capi/Lynx ABI
-/// change.
-///
-/// 0.1.16 rolls the SDK's transitive Lynx pin `v3.8.0-whisker.13` →
-/// `v4.0.1-whisker.1` — the fork rebased onto upstream Lynx 4.0.1. The
-/// capi is untouched (ABI stays v3), so this is a pure engine bump;
-/// what forces the move is the `org.lynxsdk.lynx:primjs` coordinate
-/// going 3.7.0 → 4.0.0 alongside it, since 0.1.15's POM would resolve
-/// a Lynx 4.0 AAR against a PrimJS the engine wasn't built for.
-///
-/// 0.1.17 carries the Android half of multi-touch: the runtime turns
-/// Lynx's multi-touch switch on and implements the channel it moves
-/// touch events onto. Apps on 0.1.16 see `TouchEvent.touches` hold one
-/// finger at most — a pinch is indistinguishable from a drag — so
-/// anything reading a second finger must move to 0.1.17. Kotlin-only,
-/// no capi/Lynx ABI change.
+/// Not every `sdk-v*` tag needs a bump here — read the SDK diff and
+/// move this only when apps must pick the release up. Two cases force
+/// that: a Kotlin API a module or the runtime now calls, and a roll of
+/// the transitive Lynx / PrimJS pin baked into the SDK's POM. The
+/// latter can be hard-breaking, because a per-app `WhiskerDriver`
+/// bridge built against a newer capi ABI refuses to attach to the Lynx
+/// an older SDK pulls in.
 const WHISKER_SDK_VERSION: &str = "0.1.17";
 /// Gradle plugin version pinned into the generated
 /// `settings.gradle.kts` `pluginManagement.plugins` + `plugins`
 /// blocks. Bumped independently from the SDK via the
-/// `gradle-plugin-v*` release tag.
-///
-/// 0.3.0 was the first version with the two-JAR split (Settings
-/// plugin / Project plugin in separate Maven artifacts). 0.4.0
-/// adds two fixes that surfaced during the first Step-5 e2e:
-///   - `WhiskerBuildTask.workspace` switched from `@InputDirectory`
-///     to `@Internal` so Gradle stops walking the cargo workspace
-///     tree (which contains other subprojects' `build/` dirs)
-///     and refusing the build for implicit dependencies.
-///   - `WhiskerProjectPlugin` now wires the aggregator Kotlin
-///     generator into `variant.sources.java` (which AGP 8.6's
-///     Kotlin compile actually depends on) rather than `.kotlin`
-///     alone, plus places the staged `.so` into a nested
-///     `<jniLibsDir>/<abi>/` subdir so AGP's `mergeJniLibFolders`
-///     recognises the layout.
+/// `gradle-plugin-v*` release tag. The Settings plugin and the
+/// Project plugin ship as separate Maven artifacts but share this
+/// version.
 const WHISKER_GRADLE_PLUGIN_VERSION: &str = "0.4.1";
 const WHISKER_MAVEN_URL: &str = "https://whiskerrs.github.io/whisker/maven";
 const LYNX_MAVEN_URL: &str = "https://whiskerrs.github.io/lynx/maven";
@@ -226,13 +81,10 @@ fn sync_android(
     workspace_root: &Path,
     package: &str,
 ) -> Result<PlatformSync> {
-    // Settings plugin reads `workspace` as a `file(...)` — Gradle
-    // resolves that relative to the settings.gradle.kts directory
-    // (= `gen/android/`). Hand the renderer the absolute path; the
-    // template embeds it verbatim. Absolute keeps the generated
-    // tree independent of `gen/android`'s on-disk depth, at the cost
-    // of looking less portable in diffs (acceptable — these files
-    // are AUTO-GENERATED and not meant to be committed).
+    // The Settings plugin reads `workspace` as a `file(...)`, which
+    // Gradle resolves relative to `gen/android/`. Pass an absolute
+    // path — the template embeds it verbatim, and absolute keeps the
+    // generated tree independent of where `gen/android` sits on disk.
     let workspace_path = workspace_root.to_path_buf();
     let engine = build_engine_with_discovered_plugins(crate_dir, workspace_root, package)?;
     let inputs = whisker_cng::android::inputs_from_with_engine(
@@ -264,12 +116,10 @@ fn sync_ios(
 ) -> Result<PlatformSync> {
     let gen_dir = crate_dir.join("gen/ios");
     let whisker_runtime = workspace_root.join("platforms/ios");
-    // `gen/ios/whisker_modules/` is populated lazily by
-    // `whisker-build::ios::stage_module_swift_sources` later in the
-    // pipeline (between cargo build and xcodebuild). The pbxproj
-    // template's `XCLocalSwiftPackageReference` for WhiskerModules
-    // needs an *absolute* path to that directory at sync time, so we
-    // pre-compute it here even though the contents will land later.
+    // `whisker-build::ios::stage_module_swift_sources` fills
+    // `gen/ios/whisker_modules/` later (between cargo build and
+    // xcodebuild), but the pbxproj template's
+    // `XCLocalSwiftPackageReference` needs its absolute path now.
     let whisker_modules = gen_dir.join("whisker_modules");
     let engine = build_engine_with_discovered_plugins(crate_dir, workspace_root, package)?;
     let inputs = whisker_cng::ios::inputs_from_with_engine(
@@ -314,9 +164,6 @@ fn build_engine_with_discovered_plugins(
         return Ok(engine);
     }
 
-    // Single `cargo build` invocation listing every plugin's
-    // `--bin` + `--package` pair. Cheaper than spawning cargo once
-    // per plugin and shares the build graph / unit cache.
     build_discovered_plugins(workspace_root, &discovered)?;
 
     let target_dir = workspace_root.join("target/debug");
@@ -349,23 +196,17 @@ fn build_engine_with_discovered_plugins(
 /// (cargo's own incremental cache).
 ///
 /// One invocation per plugin, not a single batched `-p A -p B --bin
-/// X --bin Y` command: cargo's package-id-spec resolution for a
-/// bare-name `-p` spec only reliably searches the *current* build's
-/// package selection, and mixing a workspace member (e.g. an app's
-/// own local module crate) with a non-member patched path dependency
-/// (e.g. `whisker-router`) in one `-p`/`-p` invocation intermittently
-/// fails with "package ID specification `<name>` did not match any
-/// packages" even though each package resolves fine on its own
-/// (confirmed via `cargo pkgid`). Building separately sidesteps the
-/// ambiguity entirely and gives cleaner per-plugin error attribution
-/// as a side benefit.
+/// X --bin Y` command: a bare-name `-p` spec resolves against the
+/// current build's package selection only, so mixing a workspace
+/// member with a non-member patched path dependency in one invocation
+/// intermittently fails with "package ID specification `<name>` did
+/// not match any packages" even where each package resolves on its
+/// own. Separate builds also attribute errors per plugin.
 ///
-/// Output streams through the curated `Step::pipe` machinery so the
-/// cargo progress (`    Compiling …` / `    Finished …` lines) folds
-/// into a single spinner row per plugin instead of leaking unfiltered
-/// ahead of the dev loop's `── whisker run ──` section header — and,
-/// with the TUI on, ahead of the inline status bar where stray
-/// `eprintln!`s race the viewport redraw.
+/// Output streams through `Step::pipe` so cargo progress folds into
+/// one spinner row per plugin rather than leaking ahead of the dev
+/// loop's section header — and, under the TUI, racing the viewport
+/// redraw.
 fn build_discovered_plugins(workspace_root: &Path, discovered: &[DiscoveredPlugin]) -> Result<()> {
     for plugin in discovered {
         let step = whisker_build::ui::step("compile", format!("plugin ({})", plugin.name));

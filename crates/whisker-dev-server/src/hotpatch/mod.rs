@@ -1,14 +1,13 @@
 //! Hot Reload (subsecond patching) pipeline.
 //!
-//! See `docs/hot-reload-plan.md` for the architecture. The modules
-//! land one per task ID:
+//! See `docs/hot-reload-internals.md` for the architecture.
 //!
-//! - [`symbol_table`] (I4g-1): parse ELF / Mach-O symbol tables
-//! - `jump_table`     (I4g-2): diff old vs new symbol tables
-//! - `cache`          (I4g-3): hold the original module's parsed table
-//! - `wrapper`        (I4g-4): rustc + linker hijack
-//! - `thin_build`     (I4g-5): partial rebuild driver
-//! - `Patcher`        (I4g-6): the integrated `Change → JumpTable` API
+//! - [`symbol_table`]: parse ELF / Mach-O symbol tables
+//! - `jump_table`: diff old vs new symbol tables
+//! - `cache`: hold the original module's parsed table
+//! - `wrapper`: rustc + linker hijack
+//! - `thin_build`: partial rebuild driver
+//! - `Patcher`: the integrated `Change → JumpTable` API
 
 pub mod android_ndk;
 pub mod cache;

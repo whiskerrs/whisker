@@ -30,25 +30,10 @@
 //! # so no source-file list is needed for DSL modules.
 //! ```
 //!
-//! Older revisions also accepted `[package.metadata.whisker.ios]
-//! native_sources = [...]` to declare raw Obj-C++ files compiled
-//! into the host dylib's bridge — that path was rewired through
-//! `WHISKER_IOS_MODULE_NATIVE_SOURCES` + the Lynx-header stage in
-//! `whisker-driver-sys/build.rs`, and required Whisker to download
-//! the Lynx iOS tarball just to satisfy PrimJS `#include`s. No
-//! module in this monorepo (or in any external module surveyed)
-//! ever declared `native_sources`, so the field is no longer
-//! recognised — re-introducing iOS Obj-C++ sources can be done
-//! cleanly through SwiftPM target dependencies in `ios/Package.swift`
-//! without re-creating the bespoke env-var plumbing.
-//!
 //! All paths are resolved relative to the directory containing the
 //! manifest (the crate's `Cargo.toml`). The resolver returns
 //! absolute paths so the downstream cc::Build / gradle invocations
 //! don't have to know about the module's source layout.
-//!
-//! Future extensions (e.g. exported headers, link flags, cargo
-//! feature gates) land additively under the same table.
 
 use std::path::{Path, PathBuf};
 
@@ -91,11 +76,8 @@ pub struct IosSectionRaw {
     /// into the host app target alongside its own Swift sources.
     /// Mirror of `[android].kotlin_sources` for symmetry.
     ///
-    /// Largely vestigial in the Expo-style layout: DSL module
-    /// authors declare their Swift in `ios/Package.swift`, which
-    /// whisker-build discovers directly. Retained for the rare
-    /// module that wants raw Swift sources staged outside a SwiftPM
-    /// package; existence-checked but otherwise inert.
+    /// Existence-checked but otherwise inert: iOS staging keys off a
+    /// module's `ios/Package.swift`, not this list.
     #[serde(default)]
     pub swift_sources: Vec<String>,
 }
@@ -173,10 +155,9 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
             )
         })?;
 
-    // Find the resolved dep tree rooted at `app_package`. We walk
-    // the resolution graph (which encodes activated features /
-    // platform deps) rather than `metadata.packages` directly, so
-    // we only see deps that would actually be linked into the app.
+    // Walk the resolution graph rather than `metadata.packages`: it
+    // encodes activated features / platform deps, so only deps that
+    // would really be linked into the app show up.
     let resolve = metadata
         .resolve
         .as_ref()
@@ -200,8 +181,6 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
         })
         .ok_or_else(|| anyhow!("cargo package `{app_package}` not found in the workspace"))?;
 
-    // BFS the resolution graph. The `nodes` list keys by package
-    // id; `deps` carries forward edges.
     let mut visit: Vec<&cargo_metadata::PackageId> = vec![&root_id];
     let mut seen: std::collections::HashSet<&cargo_metadata::PackageId> = Default::default();
     let mut module_pkg_ids: Vec<cargo_metadata::PackageId> = Vec::new();
@@ -215,9 +194,8 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                 visit.push(&dep.pkg);
             }
         }
-        // Don't include the root app itself — by convention an app
-        // declares native sources directly, not through a
-        // `[package.metadata.whisker]` table.
+        // The root app declares native sources directly, never through
+        // a `[package.metadata.whisker]` table.
         if pkg_id != &root_id {
             module_pkg_ids.push(pkg_id.clone());
         }
@@ -230,7 +208,6 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
             .iter()
             .find(|p| p.id == id)
             .expect("dep id came from `resolve.nodes`; must exist in metadata.packages");
-        // Manifest dir = directory containing this dep's Cargo.toml.
         let manifest_dir = pkg
             .manifest_path
             .parent()
@@ -242,10 +219,8 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
                     pkg.manifest_path,
                 )
             })?;
-        // The opt-in marker: a `[package.metadata.whisker]` table.
-        // cargo_metadata surfaces `[package.metadata]` as a JSON
-        // value; absence is `Value::Null`, so a non-module dep has
-        // no `whisker` key and is skipped.
+        // A `[package.metadata.whisker]` table is the opt-in marker;
+        // deps without one are not modules.
         let Some(whisker_meta) = pkg.metadata.get("whisker") else {
             continue;
         };
@@ -305,9 +280,8 @@ pub fn discover(manifest_path: &Path, app_package: &str) -> Result<Vec<ResolvedM
         });
     }
 
-    // Stable ordering by package name so two consecutive runs produce
-    // deterministic gen-tree output (and gradle / cargo don't re-run
-    // downstream tasks for spurious permutation reasons).
+    // Stable order keeps the gen tree byte-identical between runs, so
+    // gradle / cargo don't re-run downstream tasks on a permutation.
     resolved.sort_by(|a, b| a.package.cmp(&b.package));
     Ok(resolved)
 }
@@ -341,11 +315,10 @@ pub fn android_jni_sources_env_value(modules: &[ResolvedModule]) -> String {
 
 // ----- JSON report for build-system plugins ---------------------------------
 //
-// The Settings Plugin / SwiftPM Build Tool Plugin can't link against
-// this crate (they live in Kotlin / Swift), so they consume module
-// discovery through stdout JSON from the `whisker modules`
-// subcommand. The shape below is the wire schema — keep it stable
-// across releases (additive changes only; rename → version bump).
+// The Kotlin Settings Plugin / Swift Build Tool Plugin can't link
+// against this crate, so they read module discovery as stdout JSON
+// from `whisker modules`. The shape below is that wire schema:
+// additive changes only, a rename needs a version bump.
 
 /// Per-Whisker-module JSON record returned by
 /// [`build_modules_report`]. Per-platform fields are `Option` so
@@ -417,25 +390,15 @@ pub struct ModulesReport {
 /// invocation (`whisker build appbundle|apk`, the dev loop's
 /// assemble).
 ///
-/// Why the cache can't be trusted without this: the Settings plugin
-/// validates its cache against the `Cargo.lock` hash alone, which
-/// goes stale in two realistic ways —
-///
-/// 1. **Cross-app poisoning**: the cache file lives in the
-///    workspace-level `target/whisker/`, so in a workspace holding
-///    several apps, app A's report (possibly zero modules) gets
-///    reused for app B (same lock hash). B's modules silently
-///    vanish from the APK and every custom element dies at render
-///    time with "No BehaviorController defined".
-/// 2. **Metadata edits**: `[package.metadata.whisker]` changes in a
-///    path-dep module's Cargo.toml don't touch `Cargo.lock`, so a
-///    module author's new declaration never reaches the build.
-///
-/// Since the CLI always runs before gradle, pre-writing a fresh
-/// report turns the plugin's cache read into "always valid, always
-/// current" regardless of plugin version. Both filenames are
-/// written: the shared legacy name published plugin ≤0.4.1 reads,
-/// and the per-package name 0.4.2+ reads.
+/// The Settings plugin validates its cache against the `Cargo.lock`
+/// hash alone, which goes stale two ways: the cache file lives in the
+/// workspace-level `target/whisker/`, so in a multi-app workspace one
+/// app's report is reused for another at the same lock hash; and
+/// `[package.metadata.whisker]` edits in a path-dep don't touch
+/// `Cargo.lock` at all. Either way the modules silently vanish from
+/// the APK. Pre-writing a fresh report makes the plugin's cache read
+/// current whatever its version. Both filenames are written — the
+/// shared legacy name (plugin ≤0.4.1) and the per-package one.
 pub fn refresh_gradle_module_cache(workspace_root: &Path, user_package: &str) -> Result<()> {
     let report = build_modules_report(workspace_root, user_package)
         .with_context(|| format!("build modules report for `{user_package}`"))?;

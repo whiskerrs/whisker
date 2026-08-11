@@ -1,6 +1,6 @@
 //! Fat-build runner + captured-args loader.
 //!
-//! The other half of the rustc/linker hijack started in I4g-4a.
+//! The host half of the rustc/linker hijack.
 //! `whisker-rustc-shim` writes a JSON file per rustc invocation into a
 //! cache dir; this module:
 //!
@@ -10,15 +10,15 @@
 //! 2. Loads those JSON files back into a `HashMap<String,
 //!    CapturedRustcInvocation>` keyed by crate name, picking the
 //!    most recent timestamp when a crate was rebuilt mid-session.
-//! 3. (Future, I4g-5) hands the captured args to a thin-rebuild
-//!    driver that only recompiles the changed crate and re-links.
+//! 3. Hands the captured args to [`super::thin_build`], which
+//!    recompiles only the changed crate and re-links.
 //!
-//! `CapturedRustcInvocation` is currently *defined* here, not in
-//! whisker-cli, so that the shim binary doesn't need to pull in the
-//! whole dev-server dep tree (tokio / axum / notify / object). The
-//! shim has its own copy of the struct shape; serde keeps the wire
-//! format compatible. A future cleanup will extract a tiny
-//! `whisker-hotpatch-types` crate and dedupe both sides — see TODO.
+//! `CapturedRustcInvocation` is defined here rather than in
+//! whisker-cli so the shim binary doesn't pull in the whole
+//! dev-server dep tree (tokio / axum / notify / object). The shim
+//! keeps its own copy of the struct shape; serde is what holds the
+//! two in sync, so a field added on one side must be added on the
+//! other.
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -82,10 +82,8 @@ pub struct LinkerCaptureConfig<'a> {
 /// then both fill up during the same fat build, and hot reload's
 /// thin_rebuild_obj can replay them together.
 ///
-/// `target` is currently a hint only; the cargo command we run is the
-/// host build (`cargo build -p <pkg>`). I4g-5 will switch to the
-/// platform-specific `whisker-build` invocations once thin rebuild
-/// is wired up.
+/// `target` is a hint only; the cargo command run here is the host
+/// build (`cargo build -p <pkg>`).
 pub fn run_fat_build(
     workspace_root: &Path,
     package: &str,
@@ -319,10 +317,6 @@ pub fn resolve_host_linker() -> PathBuf {
     }
     PathBuf::from("cc")
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -632,10 +626,8 @@ mod tests {
     // ----- run_fat_build (integration: runs a real cargo) ---------------
     //
     // Smoke-test only: spawn `cargo --version` instead of a real
-    // build to keep the test fast. The real round-trip
-    // (build → JSON files appear → load_captured_args returns them)
-    // is exercised in I4g-5's integration test against a fixture
-    // crate.
+    // build to keep the test fast. `tests/thin_rebuild_obj.rs` covers
+    // the real round-trip against a fixture crate.
 
     #[test]
     fn run_fat_build_creates_the_cache_dir_even_if_build_fails() {

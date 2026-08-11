@@ -322,13 +322,8 @@ impl DevServer {
     /// restarts the app automatically: changes a patch can't express
     /// prompt for an explicit Full Reload (`DevCommand::FullReload`).
     pub async fn run(mut self) -> Result<()> {
-        // In TUI mode the live region's header already shows the
-        // package + target + phase; the `──── whisker run ────` +
-        // `· podcast · Android` rows above just duplicated that
-        // information. The `mode={:?}` debug line is debug-only
-        // anyway, so it never made it to scrollback in the
-        // production curated path. Non-TUI runs (CI, `--no-tui`)
-        // still get the intro section + info line.
+        // The TUI's live-region header already carries package, target
+        // and phase, so the intro rows are for non-TUI runs only.
         if !whisker_build::ui::is_tui() {
             whisker_build::ui::section("whisker run");
             whisker_build::ui::info(format!(
@@ -338,20 +333,16 @@ impl DevServer {
         }
         whisker_build::ui::debug(format!("mode={:?}", self.config.hot_patch_mode));
 
-        // Configure the initial build first. The Builder + Installer
-        // pair doesn't need the WS server, so we wire them up before
-        // touching the socket — this lets the user see a clean
-        // "Initial build" section open immediately after the
-        // top-level "whisker run" section, with no intervening
-        // dev-server chatter. Once the cargo step (the long pole)
-        // succeeds we bind the WS, then `install_and_launch` so the
-        // device app has somewhere to connect to.
+        // Builder + Installer are wired before the socket so no
+        // dev-server chatter lands between the "whisker run" and
+        // "Initial build" sections; the WS binds once cargo (the long
+        // pole) succeeds, before `install_and_launch` gives the device
+        // something to dial.
         //
-        // For hot-reload mode this build doubles as the fat build that
-        // fills the rustc / linker capture caches; the shims are
-        // resolved (built if missing) and installed into the builder
-        // *before* the spawn. The same Builder is reused for Full
-        // fallback rebuilds inside the change loop.
+        // In hot-reload mode this build doubles as the fat build
+        // filling the rustc / linker capture caches, so the shims must
+        // be installed into the builder *before* the spawn. The same
+        // Builder serves Full Reload rebuilds inside the change loop.
         let mut builder = Builder::new(
             self.config.workspace_root.clone(),
             self.config.crate_dir.clone(),
@@ -390,24 +381,17 @@ impl DevServer {
             self.config.dev_token.clone(),
         );
 
-        // Initial build — cargo only. `install_and_launch` is
-        // deferred until *after* the WS is bound, because the device
-        // app spins up its `whisker-dev-runtime` socket as soon as it
-        // launches and would race a not-yet-bound dev-server.
+        // Initial build — cargo only. `install_and_launch` waits until
+        // the WS is bound, because the device app opens its
+        // `whisker-dev-runtime` socket the moment it launches and
+        // would race a not-yet-bound dev-server.
         //
-        // A build failure here is fatal: there's nothing actionable
-        // the dev-loop can do (no app to patch, no install to
-        // recover from a source-edit save), so we surface the error
-        // and exit. The previous behaviour of "enter the loop anyway
-        // and recover on next save" was misleading — users routinely
-        // missed the warn line and assumed the build had succeeded.
+        // A build failure here is fatal: with no app on the device
+        // there is nothing to patch and nothing a later save could
+        // recover.
         //
-        // The `──── Initial build ────` section header is only
-        // emitted in non-TUI mode. In TUI mode the live region's
-        // phase indicator (`building`) + spinner already make it
-        // obvious that the build started; the section divider
-        // becomes pure noise above the in-line cargo/gradle/
-        // xcodebuild step rows.
+        // The section header is non-TUI only — the live region's phase
+        // indicator already announces the build.
         if !whisker_build::ui::is_tui() {
             whisker_build::ui::section("Initial build");
         }
@@ -415,27 +399,18 @@ impl DevServer {
         if let Err(e) = builder.build().await {
             let msg = format!("{e:#}");
             emit(&self.on_event, Event::BuildFailed(msg.clone()));
-            // cli main prints the bail message via `ui::error` (it
-            // formats `e.root_cause()`), so emitting our own
-            // `ui::error` here would double-print every install /
-            // build failure to the user. Keep the bail message
-            // user-actionable; the verbose chain is still reachable
-            // via `WHISKER_VERBOSE=1`.
+            // No `ui::error` here: cli main already prints the bail
+            // message that way, so it would double-print. Keep the
+            // message user-actionable — `WHISKER_VERBOSE=1` still
+            // reaches the full chain.
             anyhow::bail!("initial build failed: {msg}");
         }
         emit(&self.on_event, Event::BuildSucceeded);
 
-        // Now bind the WS so `install_and_launch` (next) has
-        // somewhere for the device's `whisker-dev-runtime` to dial.
-        // `whisker_build::ui::section("dev server")` used to live
-        // here as a visual divider between the cargo build and the
-        // device install/launch. The TUI's live region already
-        // surfaces the ws addr + client count, so the section
-        // header was a redundant row of dashes. `ensure_status` /
-        // `set_status` are no-ops in TUI mode (see
-        // `whisker_build::ui::set_status`); we keep them for the
-        // `--no-tui` and CI paths where the legacy status surface
-        // is still the only signal.
+        // Bind the WS so `install_and_launch` (next) has somewhere for
+        // the device's `whisker-dev-runtime` to dial. The status calls
+        // are no-ops under the TUI, whose live region shows the ws addr
+        // and client count; they carry `--no-tui` and CI.
         whisker_build::ui::ensure_status("dev-server");
         let (sender, bound, _server_handle) = server::serve(
             self.config.bind_addr,
@@ -446,13 +421,11 @@ impl DevServer {
         whisker_build::ui::set_status(format!("ws://{bound} · 0 client(s)"));
         whisker_build::ui::debug(format!("ws://{bound}/whisker-dev"));
 
-        // Walk the user crate's dep graph for every workspace path
-        // dep. The watcher attaches one notify root per `src/`, and
-        // the change loop uses the same list to map a changed file
-        // back to its owning crate. Registry / git deps are excluded
-        // — their sources live outside the workspace; Cargo.toml /
-        // Cargo.lock edits prompt a Full Reload, which picks them
-        // up.
+        // One notify root per workspace path dep's `src/`; the change
+        // loop maps a changed file back to its owning crate through
+        // the same list. Registry / git deps are out of scope — their
+        // sources sit outside the workspace, and a Cargo.toml edit
+        // prompts a Full Reload that picks them up anyway.
         let path_deps = workspace::discover_path_deps(
             &self.config.crate_dir.join("Cargo.toml"),
             &self.config.package,
@@ -463,9 +436,8 @@ impl DevServer {
             ));
             Vec::new()
         });
-        // Always include the user crate's src dir as a fallback even
-        // if cargo metadata returned nothing — the dev loop should
-        // still work in degraded mode.
+        // The user crate's src dir goes in even when cargo metadata
+        // returned nothing, so the loop still works degraded.
         let user_src = self.config.crate_dir.join("src");
         let mut watch_roots: Vec<PathBuf> = path_deps
             .iter()
@@ -476,14 +448,12 @@ impl DevServer {
             watch_roots.push(user_src.clone());
         }
         if watch_roots.is_empty() {
-            // Last-resort: watch the user_src path even if it doesn't
-            // exist yet — notify will fail and we'll surface the
-            // error to the user.
+            // Push it even if absent: notify's failure is the error the
+            // user needs to see.
             watch_roots.push(user_src.clone());
         }
-        // Caller-specified extras (the cli passes `<crate>/src` — already
-        // covered above — plus `<crate>/whisker.rs`). Files are fine:
-        // notify watches single files too.
+        // Caller-specified extras. Single files are fine — notify
+        // watches those too.
         for extra in &self.config.watch_paths {
             if extra.exists() && !watch_roots.contains(extra) {
                 watch_roots.push(extra.clone());
@@ -506,17 +476,13 @@ impl DevServer {
         }
         emit(&self.on_event, Event::Started);
 
-        // Install + launch the freshly-built artifact. A failure
-        // here is fatal for the same reason a build failure is —
-        // there's nothing to dev-loop against if the app never made
-        // it onto the device (no `INSTALL_FAILED_INSUFFICIENT_STORAGE`
-        // recovery story over file watching). `run_build_cycle`
-        // reuses the build + install codepath for rebuilds inside
-        // the loop (where WS is already bound and a failure there
-        // does fall through — the user can then save again to retry).
+        // Fatal for the same reason a build failure is: nothing to
+        // dev-loop against if the app never reached the device. The
+        // in-loop rebuild path (`run_build_cycle`) shares this code but
+        // does fall through, so the user can retry with another save.
         if let Err(e) = installer.install_and_launch().await {
-            // See the `initial build failed` arm above for why we
-            // bail instead of `ui::error`-ing here.
+            // Bails rather than `ui::error`s — see the initial-build
+            // arm above.
             anyhow::bail!("initial install failed: {e:#}");
         }
         whisker_build::ui::info(format!(
@@ -524,12 +490,10 @@ impl DevServer {
             sender.client_count()
         ));
 
-        // After the fat build has happened, Patcher::initialize can
-        // read the now-populated caches. Failure here is non-fatal
-        // — log, prompt Full Reloads meanwhile, and retry the init
-        // on later changes (each Full Reload runs with the capture shims
-        // wired, so the caches that were missing or stale here may
-        // have been repopulated by the time the user saves again).
+        // Only now, after the fat build, are the capture caches
+        // populated for `Patcher::initialize`. A failure is non-fatal:
+        // Full Reloads carry the session and rerun the capture shims,
+        // so a later save may find the caches repaired.
         let mut patcher = match hot_reload_init.as_ref() {
             Some(prep) => match init_patcher_for(&self.config, prep) {
                 Ok(p) => {
@@ -553,18 +517,13 @@ impl DevServer {
         // `None` immediately and spin the select).
         let mut commands = self.commands.take().unwrap_or_else(parked_command_receiver);
 
-        // Dev loop. Two input sources: debounced file changes and
-        // explicit DevCommands (`r` Hot Reload / `R` Full Reload).
-        //
         // Saves only ever hot-reload. Anything a patch can't express
         // — Cargo.toml edits, multi-crate batches, missing patcher,
         // patch build failures — *prompts* for an explicit Full
-        // Reload instead of rebuilding + restarting the app behind
-        // the user's back (an unexpected restart mid-interaction
-        // costs more than it saves). The one non-prompt failure is a
-        // compile error in the user's code (`RustcRejectedCode`): a
-        // Full Reload would fail identically, so the loop reports
-        // and waits for the next save.
+        // Reload rather than restarting the app behind the user's
+        // back. The exception is a compile error in the user's code
+        // (`RustcRejectedCode`): a Full Reload would fail identically,
+        // so the loop just waits for the next save.
         loop {
             enum Input {
                 Change(watcher::Change),
@@ -588,9 +547,8 @@ impl DevServer {
             };
             match input {
                 Input::Change(mut change) => {
-                    // `──── Change ────` only in non-TUI mode (live
-                    // region's phase flip already announces a save
-                    // has been picked up).
+                    // Non-TUI only — the live region's phase flip
+                    // already announces a picked-up save.
                     if !whisker_build::ui::is_tui() {
                         whisker_build::ui::section("Change");
                     }
@@ -621,11 +579,9 @@ impl DevServer {
                         }
                         LoopAction::HotReload => {
                             let p = patcher.as_ref().expect("decide_action guarantees Some");
-                            // Map the changed file paths to the owning
-                            // crate. None = batch spans multiple crates
-                            // or a path outside every known src dir —
-                            // a patch covers one crate per batch, so
-                            // that needs a Full Reload.
+                            // `None` = the batch spans several crates
+                            // or an unknown path. A patch covers one
+                            // crate, so that needs a Full Reload.
                             let crate_key =
                                 workspace::identify_crate_for_paths(&change.paths, &path_deps);
                             if !path_deps.is_empty() && crate_key.is_none() {
@@ -768,19 +724,15 @@ async fn hot_reload_cycle(
     on_event: &Option<Arc<dyn Fn(Event) + Send + Sync>>,
     crate_key: Option<&str>,
 ) {
-    // Open the step as soon as we know we're patching; the spinner
-    // runs across both the build + the wire-up so the user sees a
-    // single elapsed duration for "edit → app updated".
+    // Opened before the build so the spinner spans the whole
+    // "edit → app updated" duration.
     let step = whisker_build::ui::step("hot reload", "subsecond patch");
-    // Tell the cli to flip into "reloading" right now — the patcher
-    // work that follows (`build_patch` + dylib read + send) is the
-    // wall-clock-heavy bit, and the matching `PatchSent` flips back
-    // to Idle.
+    // Emitted before the wall-clock-heavy patcher work; `PatchSent`
+    // flips the cli back to Idle.
     emit(on_event, Event::PatchBuilding);
     let Some(aslr_reference) = sender.latest_aslr_reference() else {
-        // No client has reported its `aslr_reference` yet (handshake
-        // hasn't completed, or never connected). Without that value
-        // a stub-asm-style patch can't be built.
+        // Without an `aslr_reference` from a client handshake there
+        // is no slide to build the stub trampolines against.
         step.fail("no connected device yet");
         prompt_full_reload(
             on_event,
@@ -818,11 +770,9 @@ async fn hot_reload_cycle(
             emit(on_event, Event::PatchSent);
         }
         Err(e) if e.downcast_ref::<hotpatch::RustcRejectedCode>().is_some() => {
-            // The user's code doesn't compile. A Full Reload would
-            // fail with the exact same diagnostics after a 10-30s
-            // wait, so don't prompt for one — rustc already printed
-            // them (stderr is inherited). Report and wait for the
-            // next save.
+            // A Full Reload would fail with the same diagnostics
+            // after a 10-30s wait, so don't prompt for one — rustc
+            // already printed them on the inherited stderr.
             let msg = "compile error — fix the code and save again";
             step.fail(msg);
             emit(on_event, Event::BuildFailed(msg.to_string()));
@@ -850,10 +800,8 @@ fn log_patch_diff(report: &hotpatch::DiffReport) {
         ));
     }
     if !report.removed.is_empty() {
-        // Removed-symbol counts are noisy on every patch (typically
-        // thousands of `GCC_except_table*` entries that compiled
-        // away). Surface only in verbose mode; the "host shell may
-        // crash" warning was alarmist for the normal case.
+        // Verbose-only: a normal patch drops thousands of
+        // `GCC_except_table*` entries, which means nothing is wrong.
         whisker_build::ui::debug(format!(
             "patch removed {} symbol(s): {:?}",
             report.removed.len(),
@@ -915,13 +863,9 @@ fn target_triple_for(config: &Config) -> Option<String> {
             Some(triple.to_string())
         }
         Target::IosSimulator => {
-            // Pick the simulator triple that matches the host arch
-            // running `whisker run`. Both arm64 Macs (`aarch64-apple-
-            // ios-sim`) and Intel Macs (`x86_64-apple-ios`) need a
-            // simulator slice. The Build Phase that xcodebuild fires
-            // (via `whisker build-ios`) cross-compiles whichever arch
-            // Xcode requests via `$ARCHS`; the hot-patch path rebuilds
-            // just the thin obj for whichever triple the user is on.
+            // The simulator triple has to match the host arch:
+            // `aarch64-apple-ios-sim` on Apple silicon,
+            // `x86_64-apple-ios` on Intel.
             let triple = match std::env::consts::ARCH {
                 "aarch64" => "aarch64-apple-ios-sim",
                 "x86_64" => "x86_64-apple-ios",

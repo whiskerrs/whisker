@@ -4,8 +4,7 @@
 //! branches to the corresponding *runtime* address in the live host
 //! process.
 //!
-//! This is the load-bearing piece of the Option B / Dioxus-style
-//! patch-resolution scheme:
+//! This is the load-bearing piece of the patch-resolution scheme:
 //!
 //! - The dev server already knows every symbol's *static* address in
 //!   the host `.so` (parsed once into [`HotpatchModuleCache`]).
@@ -24,9 +23,9 @@
 //! After linking the patch with this stub object, the patch has *no*
 //! `DT_NEEDED` back-edge to the host and no dlopen-time symbol
 //! resolution to perform: every call from the patch into the host
-//! lands at the correct address by construction. This sidesteps the
-//! Android linker-namespace + `RTLD_LOCAL` problems that the prior
-//! "back-edge to host dylib" scheme tripped over.
+//! lands at the correct address by construction. A patch that instead
+//! kept a back-edge to the host dylib would run into Android's
+//! linker-namespace and `RTLD_LOCAL` rules.
 //!
 //! Mirrors `dioxus-cli-0.7.9::build::patch::create_undefined_symbol_stub`.
 //! Differences:
@@ -34,9 +33,8 @@
 //! - We don't support Windows (`__imp_` prefix handling and PE32+
 //!   stubs are skipped — Whisker targets Android + iOS-sim + the
 //!   macOS / Linux host).
-//! - We only emit Text stubs; Data symbol stubs are deferred (none of
-//!   our hot-patches reference data symbols in the host so far; the
-//!   tests in B-4 confirm this).
+//! - We only emit Text stubs; no hot-patch has needed a Data symbol
+//!   stub so far.
 
 use anyhow::{Context, Result, bail};
 use object::write::{Object, StandardSection, Symbol, SymbolSection};
@@ -231,10 +229,6 @@ fn arm64_jump_stub(addr: u64) -> Vec<u8> {
     code.extend_from_slice(&[0x00, 0x02, 0x1F, 0xD6]);
     code
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
