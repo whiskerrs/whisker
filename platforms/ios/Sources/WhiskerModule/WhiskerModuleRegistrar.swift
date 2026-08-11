@@ -174,11 +174,7 @@ internal enum WhiskerLynxInstaller {
         let handler = comp.handler
         let methodBlock: @convention(block) (AnyObject, NSDictionary?, LynxUIMethodCallbackBlockShim?) -> Void = { view, params, cb in
             let args = WhiskerValue.fromNSDictionary(params)
-            let result = handler(view, args)
-            // Lynx kUIMethodSuccess = 0; reported unconditionally —
-            // dispatch failures surface as a `WhiskerValue.error`
-            // inside `result` rather than a failure code.
-            cb?(0, WhiskerValue.toAnyObject(result) as AnyObject?)
+            settle(cb, with: handler(view, args))
         }
         let methodIMP = imp_implementationWithBlock(methodBlock)
         addInstanceMethod(
@@ -198,9 +194,7 @@ internal enum WhiskerLynxInstaller {
     /// receives a [`WhiskerPromise`] wrapping the Lynx callback, so it
     /// can deliver the result from a later completion. Lynx's UI-method
     /// callback is late-callable by design (its own `boundingClientRect`
-    /// resolves it asynchronously); errors travel as
-    /// `WhiskerValue.error` inside a success-coded result, mirroring the
-    /// sync Function path.
+    /// resolves it asynchronously).
     static func installAsyncFunction(
         _ comp: WhiskerAsyncFunctionComponent, on viewClass: AnyClass
     ) {
@@ -221,7 +215,7 @@ internal enum WhiskerLynxInstaller {
         let methodBlock: @convention(block) (AnyObject, NSDictionary?, LynxUIMethodCallbackBlockShim?) -> Void = { view, params, cb in
             let args = WhiskerValue.fromNSDictionary(params)
             let promise = WhiskerPromise(onSettle: { value in
-                cb?(0, WhiskerValue.toAnyObject(value) as AnyObject?)
+                settle(cb, with: value)
             })
             handler(view, args, promise)
         }
@@ -234,6 +228,20 @@ internal enum WhiskerLynxInstaller {
     }
 
     // ---- Helpers ---------------------------------------------------------
+
+    /// Route a handler result onto the Lynx UI-method callback.
+    /// `.error` goes out as a non-zero code (UNKNOWN = 1) with the
+    /// message as the string payload — an error delivered as a
+    /// success-coded value flattens into a plain map in the ObjC→lepus
+    /// round-trip, and the bridge adapter can only recover the message
+    /// from the error-code path.
+    private static func settle(_ cb: LynxUIMethodCallbackBlockShim?, with value: WhiskerValue) {
+        if case .error(let message) = value {
+            cb?(1, message as NSString)
+        } else {
+            cb?(0, WhiskerValue.toAnyObject(value) as AnyObject?)
+        }
+    }
 
     private static func addInstanceMethod(
         on cls: AnyClass,
