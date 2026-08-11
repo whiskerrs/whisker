@@ -139,8 +139,6 @@ impl DisplayListBuilder {
         self.buf.len() == HEADER_LEN
     }
 
-    // ---- container / canvas state -----------------------------------------
-
     pub fn save(&mut self) {
         self.buf.push(OP_SAVE);
     }
@@ -162,8 +160,6 @@ impl DisplayListBuilder {
             self.buf.extend_from_slice(&v.to_le_bytes());
         }
     }
-
-    // ---- paint state ------------------------------------------------------
 
     pub fn fill_color(&mut self, c: Color) {
         self.buf.push(OP_PAINT_FILL_COLOR);
@@ -192,8 +188,6 @@ impl DisplayListBuilder {
     pub fn stroke_tint(&mut self) {
         self.buf.push(OP_PAINT_STROKE_TINT);
     }
-
-    // ---- path commands ----------------------------------------------------
 
     pub fn path_begin(&mut self) {
         self.buf.push(OP_PATH_BEGIN);
@@ -228,8 +222,6 @@ impl DisplayListBuilder {
     pub fn close(&mut self) {
         self.buf.push(OP_PATH_CLOSE);
     }
-
-    // ---- path execution ---------------------------------------------------
 
     pub fn fill(&mut self) {
         self.buf.push(OP_PATH_FILL);

@@ -15,14 +15,11 @@ use whisker::{ArcReadSignal, ArcRwSignal, ReadSignal, module};
 /// bar can branch on `is_loaded` to fade in once the value is
 /// meaningful.
 ///
-/// `#[non_exhaustive]` so the surface can grow (e.g. a future
-/// `is_buffering` flag, an `error: Option<...>`) without breaking
-/// downstream code. Users read fields directly but should not
-/// match the struct exhaustively — `PlaybackStatus { position,
-/// duration, .. }` is the supported destructure form, and
-/// construction from outside the crate is intentionally not
-/// supported (the value is produced by the native module, never by
-/// the consumer).
+/// `#[non_exhaustive]` so the surface can grow without breaking
+/// downstream code. Read fields directly; `PlaybackStatus { position,
+/// duration, .. }` is the supported destructure form. Construction
+/// from outside the crate is deliberately unsupported — the value is
+/// produced by the native module, never by the consumer.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[non_exhaustive]
 pub struct PlaybackStatus {
@@ -231,8 +228,6 @@ impl Player {
     }
 }
 
-// ---- Process-global status subscription dispatch --------------------------
-
 // Atomic so any thread that managed to construct a `Player` can
 // allocate; the dispatch path that consumes the id is main-thread-only.
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -323,16 +318,15 @@ fn read_bool(fields: &BTreeMap<String, WhiskerValue>, key: &str) -> bool {
     matches!(fields.get(key), Some(WhiskerValue::Bool(true)))
 }
 
-/// Main-thread-only wrapper (mirrors `whisker-safe-area`'s). Asserts
-/// the Lynx TASM-thread contract so `OnceLock<T>`'s `T: Sync` bound
-/// passes without making `Rc` actually `Sync`.
+/// Main-thread-only wrapper. Asserts the Lynx TASM-thread contract so
+/// `OnceLock<T>`'s `T: Sync` bound passes without making `Rc` actually
+/// `Sync`.
 #[derive(Clone)]
 struct MainThreadOnly<T> {
     inner: T,
 }
-// Safety: every consumer runs on the reactive thread by contract
-// (the bridge dispatches status events on the main thread). Misuse
-// would corrupt the arena — same risk as any signal-touching code
-// off the main thread.
+// SAFETY: every consumer runs on the reactive thread by contract — the
+// bridge dispatches status events on the main thread. Misuse would corrupt
+// the arena.
 unsafe impl<T> Send for MainThreadOnly<T> {}
 unsafe impl<T> Sync for MainThreadOnly<T> {}

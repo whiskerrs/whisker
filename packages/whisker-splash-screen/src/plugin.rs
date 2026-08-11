@@ -129,13 +129,11 @@ impl PluginConfig for WhiskerSplashScreenConfig {
 /// The plugin the Whisker engine drives, and the config-plugin marker.
 pub struct WhiskerSplashScreen;
 
-// -- Android resource names (kept in one place) -----------------------
-
 const ANDROID_THEME: &str = "@style/Theme.Whisker.Splash";
 const ANDROID_BG_COLOR: &str = "whisker_splash_background";
 const ANDROID_ICON: &str = "whisker_splash_icon";
 /// The app's normal theme, restored after the splash (`postSplashScreenTheme`).
-/// Matches the manifest template's historical default.
+/// Must match the manifest template's default.
 const ANDROID_POST_THEME: &str = "@style/Theme.AppCompat.NoActionBar";
 const ANDROID_SPLASHSCREEN_DEP: &str = "implementation(\"androidx.core:core-splashscreen:1.0.1\")";
 
@@ -146,9 +144,7 @@ impl Plugin for WhiskerSplashScreen {
         ctx: &mut GenerateContext,
         cfg: &WhiskerSplashScreenConfig,
     ) -> anyhow::Result<()> {
-        // Read the splash image up-front (needs the app crate dir; the
-        // config path is spelled relative to it). Done before mutating
-        // the per-target IR so the borrows stay simple.
+        // Read before mutating the per-target IR, so the borrows stay simple.
         let image_bytes =
             match &cfg.image {
                 Some(rel) => {
@@ -183,11 +179,9 @@ impl Plugin for WhiskerSplashScreen {
 fn apply_android(ctx: &mut GenerateContext, cfg: &WhiskerSplashScreenConfig, image: Option<&[u8]>) {
     let android = ctx.android.as_mut().expect("android checked by caller");
 
-    // 1. Point `<application android:theme>` at the splash theme.
     android.manifest.application_theme = Some(ANDROID_THEME.to_string());
 
-    // 2. Inject `installSplashScreen()` into MainActivity.onCreate
-    //    (before super.onCreate — required by the SplashScreen API).
+    // `installSplashScreen()` must run before `super.onCreate`.
     android
         .manifest
         .main_activity_imports
@@ -197,13 +191,12 @@ fn apply_android(ctx: &mut GenerateContext, cfg: &WhiskerSplashScreenConfig, ima
         .main_activity_pre_super
         .push("installSplashScreen()".to_string());
 
-    // 3. androidx SplashScreen backport (also enables it on API < 31).
+    // The backport also enables the splash on API < 31.
     android
         .gradle
         .dependencies
         .push(ANDROID_SPLASHSCREEN_DEP.to_string());
 
-    // 4. Emit the splash theme + background color (one values file).
     let icon_item = if image.is_some() {
         format!(
             "\n        <item name=\"windowSplashScreenAnimatedIcon\">@drawable/{ANDROID_ICON}</item>"
@@ -227,8 +220,7 @@ fn apply_android(ctx: &mut GenerateContext, cfg: &WhiskerSplashScreenConfig, ima
         FileEntry::text(styles),
     );
 
-    // 5. Emit the icon drawable (density-independent so the system just
-    //    scales it into the splash icon slot).
+    // `-nodpi` so the system scales the one bitmap into the icon slot.
     if let Some(bytes) = image {
         android.extra_files.insert(
             PathBuf::from(format!(
@@ -265,8 +257,6 @@ fn apply_android(ctx: &mut GenerateContext, cfg: &WhiskerSplashScreenConfig, ima
     );
 }
 
-// -- iOS asset names ---------------------------------------------------
-
 const IOS_IMAGE_NAME: &str = "WhiskerSplashLogo";
 const IOS_COLOR_NAME: &str = "WhiskerSplashBackground";
 
@@ -280,7 +270,6 @@ const IOS_COLOR_NAME: &str = "WhiskerSplashBackground";
 fn apply_ios(ctx: &mut GenerateContext, cfg: &WhiskerSplashScreenConfig, image: Option<&[u8]>) {
     let ios = ctx.ios.as_mut().expect("ios checked by caller");
 
-    // Background color asset.
     let (r, g, b) = parse_hex_rgb(cfg.bg());
     ios.extra_files.insert(
         PathBuf::from(format!(
@@ -299,7 +288,6 @@ fn apply_ios(ctx: &mut GenerateContext, cfg: &WhiskerSplashScreenConfig, image: 
         PlistValue::Boolean(false),
     );
 
-    // Logo image asset (optional).
     if let Some(bytes) = image {
         ios.extra_files.insert(
             PathBuf::from(format!(
@@ -393,7 +381,6 @@ mod tests {
 
     #[test]
     fn android_wires_theme_activity_gradle_and_styles() {
-        // No image → styles still emitted (background only), no drawable.
         let mut ctx = ctx_with_android();
         let cfg = {
             let mut c = WhiskerSplashScreenConfig::default();
@@ -430,7 +417,6 @@ mod tests {
         assert!(styles.contents.contains("#123456"));
         assert!(styles.contents.contains("parent=\"Theme.SplashScreen\""));
         assert!(styles.contents.contains("postSplashScreenTheme"));
-        // No image → no animated-icon item, no drawable file.
         assert!(!styles.contents.contains("windowSplashScreenAnimatedIcon"));
         assert!(
             !a.extra_files
@@ -451,7 +437,6 @@ mod tests {
 
     #[test]
     fn ios_sets_launch_screen_dict_and_colorset() {
-        // No-image path (color only) to avoid file I/O.
         let mut ctx = GenerateContext {
             ios: Some(IosProjectIr::default()),
             ..Default::default()
@@ -466,7 +451,6 @@ mod tests {
                 assert!(
                     matches!(d.get("UIColorName"), Some(PlistValue::String(s)) if s == IOS_COLOR_NAME)
                 );
-                // No image → no UIImageName.
                 assert!(!d.contains_key("UIImageName"));
             }
             other => panic!("expected UILaunchScreen dict, got {other:?}"),

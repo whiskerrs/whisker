@@ -151,21 +151,12 @@ use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
 use whisker::{ElementRef, RefError, Signal, Style};
 
-// ---------------------------------------------------------------------------
-// Event payload
-// ---------------------------------------------------------------------------
-
 /// Payload of an input event (`input` / `change` / `submit`).
 ///
 /// The native view dispatches the event with the field's current text
-/// under `detail.value`. Both platforms deliver it under `detail`: the
-/// Android event reporter wraps a custom event's params there, and the
-/// iOS bridge normalizes `LynxCustomEvent`'s `params` key to `detail`
-/// (see `whisker_bridge_ios.mm`) so this struct reads one shape on both.
-/// Every field is `#[serde(default)]` so a partial / mismatched body
-/// degrades to an empty string rather than dropping the handler call
-/// (the "the event fired is the primary signal" philosophy `bind_typed`
-/// follows).
+/// under `detail.value`; both platforms deliver that same shape. Every
+/// field is `#[serde(default)]` so a partial / mismatched body degrades
+/// to an empty string rather than dropping the handler call.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[non_exhaustive]
 pub struct InputEvent {
@@ -196,10 +187,6 @@ impl InputEvent {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Callback newtype
-// ---------------------------------------------------------------------------
-
 /// A cloneable user callback for an [`Input`] event prop.
 ///
 /// Wraps `Rc<dyn Fn(A)>` so it's `Clone` (required: `#[component]`
@@ -208,11 +195,6 @@ impl InputEvent {
 /// (`on_input: move |s| …`). `A` is `String` for value-carrying
 /// events (`on_input` / `on_change` / `on_submit`) and `()` for the
 /// bare focus / blur events.
-///
-/// This is the one deviation from the original `Box<dyn Fn(..)>`
-/// design sketch: a `Box<dyn Fn>` is neither `Clone` (the macro needs
-/// it) nor `Into`-coercible from a closure through the generated
-/// `Optional` setter, so the newtype carries both properties.
 #[derive(Clone)]
 pub struct InputCallback<A>(Rc<dyn Fn(A) + 'static>);
 
@@ -247,10 +229,6 @@ impl<F: Fn() + 'static> From<F> for InputAction {
         InputAction(Rc::new(f))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Keyboard / return-key enums
-// ---------------------------------------------------------------------------
 
 /// On-screen keyboard layout for an [`Input`]. Variant wire strings
 /// are locked against the native modules' string dispatch.
@@ -365,10 +343,6 @@ impl AutoCapitalize {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Imperative handle
-// ---------------------------------------------------------------------------
-
 /// Typed imperative handle for a mounted [`Input`].
 ///
 /// Wraps the framework-internal `ElementRef` bound on mount when
@@ -441,11 +415,10 @@ impl InputRef {
     ///
     /// **iOS:** reliable — the result arrives over Lynx's UI-method
     /// callback. **Android:** result-returning custom element methods
-    /// may require a Lynx fork release (per repo notes — `componentAt`
-    /// / result-method plumbing is iOS-only-compiled upstream). On an
-    /// unforked Android runtime this resolves to
-    /// [`RefError::DispatchFailed`] or `NotBound`; prefer reading a
-    /// bound `text` signal there.
+    /// may require a Lynx fork release (the result-method plumbing is
+    /// iOS-only-compiled upstream). On an unforked Android runtime this
+    /// resolves to [`RefError::DispatchFailed`] or `NotBound`; prefer
+    /// reading a bound `text` signal there.
     pub async fn get_value(&self) -> Result<String, RefError> {
         self.r
             .invoke_typed::<GetValueResult>("getValue", WhiskerValue::Null)
@@ -469,19 +442,10 @@ struct GetValueResult {
     value: String,
 }
 
-// ---------------------------------------------------------------------------
-// Inner native binding — the thin element.
-//
-// `value` / `placeholder` / `…color` are reactive `Signal<String>`
-// attrs (kebab-cased: `placeholder-color`, `caret-color`,
-// `selection-color`). The bool / number / enum props are passed as
-// pre-stringified `Signal<String>` attrs ("true" / "false", a decimal
-// string, the enum's `as_attr`) so the macro's `apply_attr`
-// stringifies them uniformly and the native view reads one stable
-// string form. `on_*: InputEvent` props are typed events wired via
-// `bind_typed`. Crate-internal — only the outer `input` component
-// uses it; not part of the public doc surface.
-// ---------------------------------------------------------------------------
+// Bool / number / enum props reach the native side pre-stringified ("true" /
+// "false", a decimal string, the enum's `as_attr`), so it reads one stable
+// string form per attr. Attr names are the kebab-cased field names
+// (`placeholder-color`, `caret-color`, `selection-color`).
 
 #[doc(hidden)]
 #[whisker::module_component("Input")]
@@ -510,10 +474,6 @@ pub fn native_input(
     on_submit: InputEvent,
 ) {
 }
-
-// ---------------------------------------------------------------------------
-// Public ergonomic component.
-// ---------------------------------------------------------------------------
 
 /// `whisker-input:Input` — a native text field with Leptos-style
 /// two-way binding.
@@ -597,24 +557,10 @@ pub fn input(
     /// Imperative handle ([`InputRef`]).
     input_ref: Option<InputRef>,
 ) -> Element {
-    // ----- Effective displayed value (reactive) ------------------------
-    //
-    // Priority: `text` (two-way) → `value` (controlled) → empty. Feed
-    // it down to `NativeInput`'s `value` prop as a `Signal::Dynamic`
-    // so an external `text.set(...)` / a controlled `value` change
-    // re-applies natively.
-    //
-    // We do NOT guard cursor-jump / echo here: the native view only
-    // re-sets its displayed text when the incoming `value` differs
-    // from what it currently shows, so feeding the round-tripped value
-    // straight back down is safe.
-    //
-    // `text` is `Option<RwSignal<String>>` — `RwSignal` is `Copy`, so
-    // the whole `Option` is `Copy` and freely usable in every closure
-    // below. The other props (`value`, the callbacks) are `Clone`
-    // (Rc-backed / signal handles), so we clone them into each closure
-    // rather than moving them out of the `#[component]` re-invokable
-    // body.
+    // Priority: `text` (two-way) → `value` (controlled) → empty, fed down as
+    // a `Signal::Dynamic` so an external write re-applies natively. No
+    // cursor-jump / echo guard is needed here: the native view only re-sets
+    // its displayed text when the incoming value differs from what it shows.
     let value_prop: Signal<String> = {
         Signal::Dynamic(computed(move || {
             if let Some(t) = text {
@@ -627,11 +573,8 @@ pub fn input(
         }))
     };
 
-    // ----- Event wiring -----------------------------------------------
-    //
-    // on_input: update the bound `text` signal FIRST (so reads inside
-    // the user callback already see the new value), then call the
-    // user's `on_input`.
+    // Update the bound `text` signal BEFORE calling the user's `on_input`, so
+    // reads inside that callback already see the new value.
     let on_input_cb = {
         let on_input = on_input.clone();
         move |ev: InputEvent| {
@@ -652,9 +595,8 @@ pub fn input(
             }
         }
     };
-    // The element handle this field is bound to. If the caller passed an
-    // `input_ref`, reuse it; otherwise mint an internal one so the field
-    // still registers itself in the focused-element registry (below).
+    // Mint an internal handle when the caller passed none, so the field still
+    // registers itself in the focused-element registry below.
     let element_ref = input_ref
         .as_ref()
         .map(|h| h.r())
@@ -663,10 +605,8 @@ pub fn input(
     let on_focus_cb = {
         let on_focus = on_focus.clone();
         move |_ev: InputEvent| {
-            // Publish ourselves as the currently-focused field — the
-            // signal `whisker-router` reads to blur/restore this exact
-            // input on navigation (mirrors RN's
-            // `TextInput.State.currentlyFocusedInput()`).
+            // `whisker-router` reads this registry to blur/restore this exact
+            // input across a navigation.
             whisker::focus::note_focused(element_ref);
             if let Some(cb) = &on_focus {
                 cb.call();
@@ -691,7 +631,6 @@ pub fn input(
         }
     };
 
-    // ----- Pass-through attrs (None → sensible default) ----------------
     let placeholder_prop: Signal<String> = placeholder.unwrap_or_default();
     let caret_color_prop: Signal<String> = caret_color.unwrap_or_default();
     let placeholder_color_prop: Signal<String> = placeholder_color.unwrap_or_default();
@@ -711,7 +650,6 @@ pub fn input(
     let autocorrect_attr = bool_attr(autocorrect);
     let spell_check_attr = bool_attr(spell_check);
 
-    // ----- Imperative handle: forward its ElementRef as `ref:` ---------
     let mut builder = NativeInput::builder()
         .value(value_prop)
         .placeholder(placeholder_prop)
@@ -782,8 +720,6 @@ mod tests {
     fn enum_defaults() {
         assert_eq!(KeyboardType::default(), KeyboardType::Default);
         assert_eq!(ReturnKey::default(), ReturnKey::Default);
-        // Default matches iOS UIKit's `.sentences` so existing iOS behaviour
-        // is preserved; Android honours the same default explicitly.
         assert_eq!(AutoCapitalize::default(), AutoCapitalize::Sentences);
     }
 
@@ -807,9 +743,8 @@ mod tests {
 
     #[test]
     fn input_event_empty_body_defaults_to_empty() {
-        // focus / blur carry no value: the native side emits an empty
-        // (or `detail`-less) body. An empty map deserializes cleanly to
-        // an empty value via the `#[serde(default)]` on `detail`.
+        // focus / blur carry no value: the native side emits an empty (or
+        // `detail`-less) body.
         let empty: [(&str, WhiskerValue); 0] = [];
         let ev: InputEvent = WhiskerValue::map(empty)
             .deserialize_into()
@@ -819,9 +754,8 @@ mod tests {
 
     #[test]
     fn input_event_default_is_empty() {
-        // serde refuses to build a struct from a bare `null`, so for a
-        // truly null body `bind_typed` falls back to `E::default()` —
-        // which must be the empty-value event.
+        // serde refuses to build a struct from a bare `null`, so `bind_typed`
+        // falls back to `E::default()` for a null body.
         assert_eq!(InputEvent::default().value(), "");
     }
 

@@ -20,9 +20,7 @@
 //! [`RouterHandle::slice_at`](crate::render::RouterHandle::slice_at)), so
 //! an op that doesn't touch a given container produces an unchanged slice
 //! and that container's effect does not re-run — the fine-grained
-//! property. The mount/swap mechanics follow the old `outlet.rs` phantom
-//! slot pattern, rebuilt against the new core + the continuous animation
-//! engine.
+//! property.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -85,10 +83,6 @@ fn mount_with_layout(handle: &RouterHandle, path: NodePath, layout: LayoutFn) ->
     layout.call()
 }
 
-// =====================================================================
-// Route leaf
-// =====================================================================
-
 fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
     // Route with children: mount each child (the Route is a structural
     // grouping node — its children are Stack/Switch/Route).
@@ -128,15 +122,12 @@ fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
     effect(move || {
         let inst = instance.get();
 
-        // CRITICAL: when the instance becomes `None` — i.e. this leaf's
-        // entry was just removed from `RouteState` by a `back()`/pop — DO
-        // NOT tear the content down. The leaf's content lifetime is owned
-        // by its enclosing `Stack` wrapper, which keeps the popped screen
-        // mounted through its exit animation and disposes the whole
-        // subtree (cascading to this leaf's owner) only when the animation
-        // finishes. Removing here on `None` is exactly what made the
-        // popped screen vanish on frame 1 while its wrapper was still
-        // sliding out. So `None` is a no-op; teardown is by owner dispose.
+        // CRITICAL: `None` — this leaf's entry was just removed from
+        // `RouteState` by a `back()`/pop — must NOT tear the content down.
+        // The leaf's content lifetime belongs to its enclosing `Stack`
+        // wrapper, which keeps the popped screen mounted through its exit
+        // animation and disposes the whole subtree only when that finishes.
+        // Removing here would blank the screen on frame 1 of the slide-out.
         let Some(inst) = inst else {
             return;
         };
@@ -174,10 +165,6 @@ fn mount_route(handle: &RouterHandle, path: NodePath) -> Element {
 
     slot
 }
-
-// =====================================================================
-// Switch — all branches mounted, display toggled on `selected`
-// =====================================================================
 
 fn mount_switch(handle: &RouterHandle, path: NodePath) -> Element {
     // A real, positioned container holds the branch wrappers: it
@@ -238,10 +225,6 @@ fn branch_base_style(visible: bool) -> String {
          left: 0; top: 0; right: 0; bottom: 0;"
     )
 }
-
-// =====================================================================
-// Stack — history kept mounted, transitions on push/pop
-// =====================================================================
 
 /// One live history wrapper.
 ///
@@ -451,7 +434,7 @@ fn reconcile_stack(
     // transient `Under`), and the old wrapper is disposed when the slide
     // finishes. The entry *below* the old top is left untouched (it stays
     // covered), so the lower screen never flashes into view behind the
-    // incoming one. (#265)
+    // incoming one.
     if new_len == old_len && new_len > 0 {
         let top_idx = new_len - 1;
         let entry = &stack.history[top_idx];
@@ -466,17 +449,13 @@ fn reconcile_stack(
             let old = live.borrow_mut().remove(top_idx);
 
             // FREEZE the outgoing screen. Its leaf shares the incoming
-            // wrapper's static path, so the top-instance swap this `replace`
-            // performs would otherwise flip the outgoing leaf's `instance`
-            // computed to the NEW route and re-mount it — mounting the new
-            // screen twice (once here in the disposing under-wrapper, once in
-            // the incoming top). The two instances then fight over shared
-            // reader state / native `<list>` handles, and disposing this
-            // wrapper on finish tears down state the survivor still needs,
-            // blanking the incoming screen. A `pop` is immune (the popped
-            // entry leaves `history`, so its slice goes `None` and the leaf
-            // no-ops); only `replace` hits the `Some(new)` path, so pause the
-            // outgoing subtree to hold it on its own route until disposed.
+            // wrapper's static path, so the top-instance swap would otherwise
+            // flip the outgoing leaf's `instance` computed to the NEW route
+            // and mount that screen twice — once in this disposing
+            // under-wrapper, once in the incoming top — leaving the two
+            // fighting over shared state and native handles. Only `replace`
+            // hits this: a pop's entry leaves `history`, so its slice goes
+            // `None` and the leaf no-ops.
             old.owner.pause();
 
             let w = mount_wrapper(handle, slot, top_idx, entry);
@@ -547,10 +526,9 @@ fn reconcile_stack(
     // ONLY for a push / steady state. During a **pop** the live top is the
     // revealed survivor, but the wrapper that must paint on top is the
     // *leaving* one (it slides off ABOVE the survivor) — `run_pop` keeps it
-    // last. Re-appending the survivor here would put it over the leaving
-    // card (Lynx ignores z-index during transform animations, so paint
-    // order = DOM order), which is exactly the "previous screen on top
-    // during the back slide" bug.
+    // last. Lynx ignores z-index during transform animations, so paint
+    // order is DOM order and re-appending the survivor here would draw it
+    // over the leaving card.
     if new_len >= old_len {
         let l = live.borrow();
         if let Some(top_w) = l.last() {
@@ -704,14 +682,11 @@ fn mount_wrapper(
         });
         let _ = idx;
 
-        // Clip layer: `overflow: hidden; border-radius` on the *wrapper*
-        // did NOT clip the user's screen view on Lynx — the opaque child
-        // covers the wrapper and isn't rounded (a Lynx draw quirk, like the
-        // row-default one). The proven structure is a dedicated clip view
-        // BETWEEN the transform wrapper and the child: wrapper (transform /
-        // opacity only) → clip_view (border-radius + overflow:hidden, sized
-        // 100%) → child. The clip view is the *direct* parent of the screen
-        // content, so Lynx rounds it.
+        // Lynx only rounds a view's *direct* children, so
+        // `overflow: hidden; border-radius` on the transform wrapper does
+        // not clip the screen — the opaque child covers it unrounded. Hence
+        // a dedicated clip view in between: wrapper (transform / opacity) →
+        // clip (border-radius + overflow:hidden, 100%) → child.
         let clip = create_element(ElementTag::View);
         // `clip-radius` is a Lynx **prop** (`@LynxProp`), NOT a CSS style —
         // it must be set as an attribute, not in the inline style string.

@@ -74,7 +74,6 @@ fn ios_generation_lands_assets_and_folder_reference() {
     let r#gen = unique_tempdir("ios-gen").join("gen/ios");
     whisker_cng::ios::sync(&r#gen, &inputs).unwrap();
 
-    // Assets written under whisker_assets/<rel>, bytes intact.
     let logo = r#gen.join("whisker_assets/images/logo.png");
     assert!(logo.exists(), "logo not written to {}", logo.display());
     assert_eq!(
@@ -83,7 +82,6 @@ fn ios_generation_lands_assets_and_folder_reference() {
     );
     assert!(r#gen.join("whisker_assets/data/config.json").exists());
 
-    // pbxproj carries the folder reference so the bundle keeps subdirs.
     let pbxproj =
         std::fs::read_to_string(r#gen.join(format!("{}.xcodeproj/project.pbxproj", inputs.scheme)))
             .unwrap();
@@ -122,7 +120,6 @@ fn android_generation_lands_assets_under_whisker_namespace() {
     let r#gen = unique_tempdir("android-gen").join("gen/android");
     whisker_cng::android::sync(&r#gen, &inputs).unwrap();
 
-    // AGP source set: app/src/main/assets/whisker/<rel>
     let logo = r#gen.join("app/src/main/assets/whisker/images/logo.png");
     assert!(logo.exists(), "logo not written to {}", logo.display());
     assert_eq!(std::fs::read(&logo).unwrap(), vec![0x00, 0xff, 0x10]);

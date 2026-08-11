@@ -340,8 +340,6 @@ fn arc_to_cubics(
     }
 }
 
-// ---- low-level tokenizer ---------------------------------------------------
-
 struct Parser<'a> {
     bytes: &'a [u8],
     pos: usize,

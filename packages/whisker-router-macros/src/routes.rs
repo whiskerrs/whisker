@@ -160,14 +160,12 @@ fn parse_route(input: ParseStream, kw: Ident) -> syn::Result<Node> {
                     ));
                 }
             }
-            // Eat optional trailing comma.
             if content.peek(Token![,]) {
                 content.parse::<Token![,]>()?;
             }
         }
     }
 
-    // Parse optional braced children.
     let children = if input.peek(syn::token::Brace) {
         let content;
         braced!(content in input);
@@ -453,7 +451,6 @@ fn collect(
                 children,
                 ..
             } => {
-                // Only register routes that have a component.
                 if let Some(comp) = component {
                     let id = route_id(&Some(comp.clone()), path);
                     match reg.iter_mut().find(|e| e.id == id) {
@@ -500,7 +497,6 @@ fn collect(
                         }),
                     }
                 }
-                // Recurse into children.
                 collect(children, reg, spreads, err);
             }
         }
@@ -525,7 +521,6 @@ fn node_to_tree(
             let id = route_id(component, seg);
             let anchor = kw_anchor(kw);
 
-            // Build the RouteDef.
             let segment_expr = match seg {
                 Some(s) => quote! { ::std::option::Option::Some(::std::string::String::from(#s)) },
                 None => quote! { ::std::option::Option::None },
@@ -539,8 +534,6 @@ fn node_to_tree(
             };
             let is_group = seg.as_ref().map(is_group_path).unwrap_or(false);
 
-            // If this Route has a component and children, it's a layout route:
-            // register it in the layout registry.
             if component.is_some() && !children.is_empty() {
                 layouts.push((path.to_vec(), component.as_ref().unwrap().clone()));
             }
@@ -551,7 +544,6 @@ fn node_to_tree(
                 children_vec_tokens(children, path, switch_n, layouts)
             };
 
-            // Extract params from the path segment.
             let params: Vec<String> = seg
                 .as_ref()
                 .map(|s| {

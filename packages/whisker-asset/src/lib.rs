@@ -143,11 +143,6 @@ pub fn resolve(rel: &str) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// C ABI — called by native (iOS/Android) at startup. Phase 1 only wires
-// these to `set_base`; native registration lands in a later phase.
-// ---------------------------------------------------------------------------
-
 /// Install an iOS directory base from native code.
 ///
 /// # C ABI
@@ -197,30 +192,13 @@ pub extern "C" fn whisker_asset_set_android() {
     set_base(AssetBase::AndroidAssets);
 }
 
-// ---------------------------------------------------------------------------
-// Android startup wiring (Phase 3).
-//
-// Unlike iOS — where the bundle path is only known at runtime, so the
-// base MUST be installed by native Swift after `Bundle.main.bundlePath`
-// resolves — the Android base is a compile-time constant
-// (`file:///android_asset/whisker/`). There is therefore no runtime
-// data to ferry across the Kotlin↔Rust boundary, and wiring a Kotlin
-// `external fun` would require a JNI C++ shim living in the driver
-// bridge crate (not here). Instead we install the Android base from
-// Rust, deterministically, the moment this crate's object code is
-// loaded into the app's `cdylib`.
-//
-// The user app links `whisker-asset` because `asset!(…)` expands to
-// `::whisker_asset::resolve(…)`, so this translation unit is always
-// present in the final `.so`. The `.init_array` entry below runs at
-// `dlopen`/`System.loadLibrary` time — long before `whisker_app_main`
-// and the first render — so `resolve` already returns the
-// `file:///android_asset/whisker/…` form on the very first call.
-//
-// `whisker_asset_set_android()` (the C-ABI entry above) remains
-// exported so native Kotlin/JNI can still flip the base explicitly if
-// a future host wants to; the constructor just means it doesn't have
-// to.
+// The Android base is a compile-time constant, so nothing has to cross the
+// Kotlin↔Rust boundary to install it — the `.init_array` constructor below
+// does it at `.so` load, long before the first render, and `resolve` returns
+// the `file:///android_asset/whisker/…` form on the very first call. The
+// `whisker_asset_set_android()` C-ABI entry stays exported so a host that
+// wants to set it explicitly still can.
+
 /// Install the fixed Android base. Shared body for the `.init_array`
 /// constructor (Android) and the unit test (host) so the exact
 /// install path is exercised off-device.
@@ -346,8 +324,6 @@ mod tests {
     fn install_android_base_sets_android_form() {
         let _g = GUARD.lock().unwrap();
         reset();
-        // Exercises the exact body the Android `.init_array`
-        // constructor runs at `.so` load.
         install_android_base();
         assert!(base_is_set());
         assert_eq!(resolve("a/b.png"), "file:///android_asset/whisker/a/b.png");
@@ -359,7 +335,6 @@ mod tests {
         let _g = GUARD.lock().unwrap();
         reset();
         set_base(AssetBase::IosDir("/base".into()));
-        // A leading slash is stripped so the base is preserved.
         assert_eq!(resolve("/images/logo.png"), "/base/images/logo.png");
         reset();
     }
@@ -369,7 +344,6 @@ mod tests {
         let _g = GUARD.lock().unwrap();
         reset();
         set_base(AssetBase::AndroidAssets);
-        // `..` components are dropped; the base can't be escaped.
         assert_eq!(
             resolve("images/../../../etc/passwd"),
             "file:///android_asset/whisker/etc/passwd"

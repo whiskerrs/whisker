@@ -69,13 +69,10 @@ use whisker_svg::Svg;
 ///   (`"1.5em"`, `"100%"`, `"24px"`) pass through unchanged.
 #[component]
 pub fn icon(svg: Signal<String>, color: Signal<String>, size: Signal<String>) -> Element {
-    // `Signal<T>` is `Copy` (whisker #8), so `size`/`svg`/`color` move
-    // freely into the closure and builder below — no `.clone()`.
     let style = computed(move || {
         let raw = size.get();
         let t = raw.trim();
-        // Common CSS length units pass through; bare numbers
-        // are treated as `px`.
+        // A bare number means `px`; anything with a unit passes through.
         let has_unit = ["px", "em", "rem", "%", "vw", "vh"]
             .iter()
             .any(|u| t.ends_with(u));
@@ -114,8 +111,6 @@ mod tests {
 
     #[test]
     fn well_known_icons_resolve_to_nonempty_svg() {
-        // Compile-time existence checks the PascalCase rule + the
-        // build.rs walk; runtime non-empty checks that bytes landed.
         for (label, body) in [
             ("Heart", lucide::Heart),
             ("ChevronRight", lucide::ChevronRight),

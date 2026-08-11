@@ -71,19 +71,15 @@ pub async fn open_auth_session_async(
     let module = module!("WebBrowser");
     let (tx, rx) = futures_channel::oneshot::channel::<AuthSessionResult>();
     let tx = Arc::new(Mutex::new(Some(tx)));
-    // Held as a plain local for the whole function body (across the
-    // `.await` below) so it only drops once this fn returns — NOT
-    // inside the callback that fires it. Dropping a `ModuleSubscription`
-    // frees the very `Box<EventCallback>` the bridge is currently
-    // executing; doing that synchronously from within its own callback
-    // is a use-after-free (crashed with SIGSEGV during on-device testing).
+    // Held as a plain local across the `.await` below so it drops only once
+    // this fn returns, never inside the callback that fires it: dropping a
+    // `ModuleSubscription` frees the very `Box<EventCallback>` the bridge is
+    // executing, so a drop from within its own callback is a use-after-free.
     let subscription = module.on_event("authSessionCompleted", move |payload| {
-        // Resolve in its own statement, not `if let Some(x) =
-        // mutex.lock().unwrap().take() { ... }` — that form holds the
-        // `MutexGuard` alive through the whole body, still locked
-        // during `send()` below. `send()` can reentrantly drop
-        // `subscription` (freeing `tx`), and the guard then unlocks
-        // freed memory — confirmed SIGSEGV on device.
+        // Take in its own statement, not `if let Some(x) =
+        // mutex.lock().unwrap().take()` — that form holds the `MutexGuard`
+        // alive through `send()`, which can reentrantly drop `subscription`
+        // (freeing `tx`), leaving the guard to unlock freed memory.
         let sender = tx.lock().unwrap().take();
         if let Some(sender) = sender {
             let _ = sender.send(decode_auth_result(payload));

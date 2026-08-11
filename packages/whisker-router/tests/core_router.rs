@@ -1,10 +1,10 @@
-//! Exhaustive unit tests for the new router core (`whisker_router::core`).
+//! Exhaustive unit tests for the router core (`whisker_router::core`).
 //!
 //! These build the Twitter-style tree from `docs/router-design.md` by
 //! hand and assert URL derivation, `current` derivation, the five
 //! operations, relative resolution, the buried-container reveal, and the
-//! no-stored-marker invariant. The 14 numbered behaviours from the phase
-//! brief are tagged in the test names / comments.
+//! no-stored-marker invariant. The 14 numbered behaviours the design doc
+//! enumerates are tagged in the section comments below.
 
 use whisker_router::core::{
     CompiledTree, NavError, Navigator, NodePath, RouteDef, RouteState, RouteTree, Scope, SwitchDef,
@@ -91,7 +91,8 @@ fn bare_group_url_resolves_to_its_first_screen() {
 }
 
 // ===================================================================
-// The Twitter-style tree (built by hand — no macro yet)
+// The Twitter-style tree, built by hand so the core is tested without
+// the `routes!` macro.
 // ===================================================================
 //
 // The root node has the empty NodePath [], so its children start at [0]:
@@ -566,8 +567,8 @@ fn reset_crosses_into_another_branch() {
     {
         let mut nav = Navigator::new(&t, &mut st);
         nav.navigate("/post/1").unwrap(); // timeline depth 2, switch on timeline
-        // Reset straight into the search tab (a different Switch branch) —
-        // the old same-stack `reset` would have errored CrossStack.
+        // Reset straight into the search tab — a different Switch branch,
+        // not just a same-stack reset.
         nav.reset("/search").unwrap();
         assert_eq!(nav.current().path, p(&[0, 1, 0]), "current = search home");
     }
@@ -774,7 +775,7 @@ fn select_is_nondestructive_and_returns_to_retained_screen() {
 }
 
 // ===================================================================
-// within(scope) API-surface smoke (deferred behaviour)
+// within(scope): resolution restricted to a subtree
 // ===================================================================
 
 #[test]

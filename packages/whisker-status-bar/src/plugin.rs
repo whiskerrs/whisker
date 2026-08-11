@@ -1,14 +1,12 @@
 //! Whisker plugin for the status-bar module.
 //!
-//! Currently a no-op: the module is **Android-only** (see `runtime.rs`),
-//! and Android needs no manifest/config entry to drive the status bar.
-//! It previously injected `UIViewControllerBasedStatusBarAppearance =
-//! false` for the deprecated app-level iOS API — that API is no longer
-//! used (it broke router transitions), so the injection is gone. When
-//! iOS is implemented via `WhiskerViewController.prefersStatusBarHidden`,
-//! this plugin should instead ensure that key is `true` (its default).
-//! Kept as a registered no-op so that future work has a home and
-//! `app.plugin::<WhiskerStatusBar>(|c| c)` stays valid.
+//! A no-op: the module is **Android-only** (see `runtime.rs`), and Android
+//! needs no manifest/config entry to drive the status bar. Registered
+//! anyway so `app.plugin::<WhiskerStatusBar>(|c| c)` stays valid and iOS
+//! support has a home — once that lands via
+//! `WhiskerViewController.prefersStatusBarHidden`, this plugin should
+//! ensure `UIViewControllerBasedStatusBarAppearance` is `true` (its
+//! default).
 //!
 //! ## Usage in `whisker.rs`
 //!

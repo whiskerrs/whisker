@@ -67,8 +67,7 @@ use whisker::{ArcRwSignal, ArcWriteSignal, Owner, ReadSignal, WhiskerValue};
 /// call from any Whisker event handler; the native side marshals the
 /// UIKit / Android View work to the main thread.
 pub fn dismiss() {
-    // Fire-and-forget; an unregistered module (app didn't add
-    // whisker-keyboard's native half) surfaces as a swallowed
+    // An app without whisker-keyboard's native half surfaces a swallowed
     // `WhiskerValue::Error`, degrading to a no-op.
     let _ = module!("Keyboard").invoke("dismiss", vec![]);
 }
@@ -92,8 +91,6 @@ pub fn keyboard_height() -> ReadSignal<f64> {
     SLOT.get().expect("install() ran above").read.inner
 }
 
-// ---- Internals -------------------------------------------------------------
-
 struct Slot {
     read: MainThreadOnly<ReadSignal<f64>>,
     #[allow(dead_code)]
@@ -104,8 +101,7 @@ struct Slot {
 /// Idempotent. The `Copy` arena handle callers receive is minted once
 /// under a never-disposed [`Owner::detached_root`] so a transient
 /// per-route / per-component scope can't free it out from under a
-/// surviving reader (the footgun documented at length in
-/// `whisker-safe-area`).
+/// surviving reader.
 fn install() {
     SLOT.get_or_init(|| {
         let (read, write) = ArcRwSignal::new(0.0_f64).split();
@@ -164,10 +160,9 @@ static SLOT: OnceLock<Slot> = OnceLock::new();
 struct MainThreadOnly<T> {
     inner: T,
 }
-// Safety: signal read (`keyboard_height`) and write (the `on_event`
-// callback) both run on the Lynx TASM thread by contract. Misuse
-// would corrupt the reactive arena — same risk as touching any signal
-// API from a worker thread.
+// SAFETY: the signal read (`keyboard_height`) and write (the `on_event`
+// callback) both run on the Lynx TASM thread by contract. Misuse would
+// corrupt the reactive arena.
 unsafe impl<T> Send for MainThreadOnly<T> {}
 unsafe impl<T> Sync for MainThreadOnly<T> {}
 

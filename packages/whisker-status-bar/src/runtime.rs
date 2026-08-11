@@ -4,15 +4,14 @@
 //! `whisker::module!("WhiskerStatusBar").invoke(method, args)`, and
 //! lifts the returned `WhiskerValue` into a typed result.
 //!
-//! **Android-only.** The native calls fire only on Android. On iOS they
-//! are a no-op: the only status-bar API reachable from a view-less module
-//! is the deprecated app-level `UIApplication.setStatusBarHidden`, and
-//! that call corrupts `whisker-router`'s transform-based transition
-//! animations whenever it lands around one (verified on-device). iOS
-//! support is a TODO — it needs to drive the status bar through
+//! **Android-only.** On iOS the methods are a no-op: the only status-bar
+//! API reachable from a view-less module is the deprecated app-level
+//! `UIApplication.setStatusBarHidden`, and that call corrupts
+//! `whisker-router`'s transform-based transition animations whenever it
+//! lands around one. TODO: drive iOS through
 //! `WhiskerViewController.prefersStatusBarHidden` (the non-deprecated,
-//! view-controller-based API) instead. Until then the methods no-op on
-//! iOS so call sites work unchanged on both platforms.
+//! view-controller-based API) instead. Until then the no-op keeps call
+//! sites working unchanged on both platforms.
 
 use whisker::platform_module::WhiskerModuleError;
 #[cfg(target_os = "android")]
@@ -41,8 +40,8 @@ impl StatusBarStyle {
 }
 
 /// Typed Rust API for the `WhiskerStatusBar` platform module. The struct
-/// itself lives in `plugin.rs` (see its doc comment for why); this
-/// `impl` block just adds the runtime methods.
+/// itself lives in `plugin.rs` — one unit struct serves as both the
+/// plugin and this namespace.
 impl WhiskerStatusBar {
     /// Show or hide the system status bar (Android only — see the module
     /// docs; no-op on iOS). Immediate on Android.

@@ -157,16 +157,9 @@ use whisker::platform_module::WhiskerValue;
 use whisker::prelude::*;
 use whisker::{ElementRef, RefError, Signal, Style};
 
-// ---------------------------------------------------------------------------
-// Event payloads
-//
-// Every native event delivers its body under `detail` (the Android event
-// reporter wraps a custom event's params there, and the iOS bridge
-// normalizes `LynxCustomEvent`'s `params` key to `detail`), so each struct
-// reads one shape on both platforms. Every field is `#[serde(default)]` so
-// a partial / mismatched body degrades to a default rather than dropping
-// the handler call.
-// ---------------------------------------------------------------------------
+// Every native event delivers its body under `detail` on both platforms, so
+// each payload struct reads one shape. Fields are `#[serde(default)]` so a
+// partial body degrades to a default rather than dropping the handler call.
 
 /// Payload of the JS-bridge message event (`message`).
 ///
@@ -282,10 +275,6 @@ pub struct ProgressDetail {
     pub progress: f64,
 }
 
-// ---------------------------------------------------------------------------
-// Public error type
-// ---------------------------------------------------------------------------
-
 /// A navigation / load failure surfaced to [`on_error`](WebViewProps).
 ///
 /// The ergonomic, app-facing shape of an [`ErrorEvent`]'s `detail`.
@@ -298,10 +287,6 @@ pub struct WebViewError {
     /// Human-readable error description.
     pub description: String,
 }
-
-// ---------------------------------------------------------------------------
-// Callback newtype
-// ---------------------------------------------------------------------------
 
 /// A cloneable user callback for a [`WebView`] event prop.
 ///
@@ -326,10 +311,6 @@ impl<A, F: Fn(A) + 'static> From<F> for Callback<A> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Origin whitelist default
-// ---------------------------------------------------------------------------
-
 /// The default navigation origin whitelist: `["https://*", "http://*"]`.
 ///
 /// Permits any HTTPS or HTTP origin. Tighten it per-app by passing an
@@ -337,10 +318,6 @@ impl<A, F: Fn(A) + 'static> From<F> for Callback<A> {
 pub fn default_origin_whitelist() -> Vec<String> {
     vec!["https://*".to_string(), "http://*".to_string()]
 }
-
-// ---------------------------------------------------------------------------
-// Imperative handle
-// ---------------------------------------------------------------------------
 
 /// Typed imperative handle for a mounted [`WebView`].
 ///
@@ -413,10 +390,9 @@ impl WebViewRef {
     /// To get a value BACK from the page, have the script post it to the
     /// host and read it via [`on_message`](web_view): e.g.
     /// `evaluate_javascript("window.whisker.postMessage(document.title)")`
-    /// and handle it in `on_message`. (A direct result-returning
-    /// `evaluate_javascript_result` awaits an async-native-result module
-    /// feature; the native WebView's JS eval is inherently asynchronous
-    /// and the current sync `Function` dispatch can't carry its result.)
+    /// and handle it in `on_message`. There is no result-returning
+    /// variant: the native JS eval is asynchronous and the sync `Function`
+    /// dispatch it goes through cannot carry a result back.
     pub fn evaluate_javascript(&self, script: &str) {
         let _ = self.r.invoke(
             "evaluateJavaScript",
@@ -445,17 +421,9 @@ impl Default for WebViewRef {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Inner native binding — the thin element.
-//
-// `url` / `html` / `user_agent` / `style` are reactive `Signal<String>`
-// attrs (kebab-cased: `user-agent`). The bool props are passed as
-// pre-stringified `Signal<String>` attrs ("true" / "false"); the origin
-// whitelist is a JSON-array string (e.g. `["https://*","http://*"]`) so
-// the native side parses one stable form. `on_*` props are typed events
-// wired via `bind_typed`. Crate-internal — only the outer `web_view`
-// component uses it; not part of the public doc surface.
-// ---------------------------------------------------------------------------
+// Bool props reach the native side pre-stringified ("true" / "false") and the
+// origin whitelist as a JSON-array string, so it parses one stable form per
+// attr. Attr names are the kebab-cased field names (`user-agent`).
 
 #[doc(hidden)]
 #[whisker::module_component("WebView")]
@@ -475,10 +443,6 @@ pub fn native_webview(
     on_navigation: NavEvent,
 ) {
 }
-
-// ---------------------------------------------------------------------------
-// Public ergonomic component.
-// ---------------------------------------------------------------------------
 
 /// `whisker-webview:WebView` — a native web view with reactive content,
 /// a JS bridge, and an imperative handle.
@@ -523,19 +487,14 @@ pub fn web_view(
     /// Imperative handle ([`WebViewRef`]).
     webview_ref: Option<WebViewRef>,
 ) -> Element {
-    // ----- Content (reactive) -----------------------------------------
-    //
-    // Feed `url` down as a `Signal::Dynamic` so an external
-    // `url.set(...)` re-applies natively (a controlled load prop). When
-    // `url` is unset, the attr stays empty and the native side falls
-    // back to `html`. `url` is `Option<RwSignal<String>>` — `RwSignal`
-    // is `Copy`, so the whole `Option` is `Copy`.
+    // `Signal::Dynamic` so an external `url.set(...)` re-applies natively.
+    // An unset `url` leaves the attr empty and the native side falls back
+    // to `html`.
     let url_prop: Signal<String> = Signal::Dynamic(computed(move || match url {
         Some(u) => u.get(),
         None => String::new(),
     }));
 
-    // ----- Event wiring -----------------------------------------------
     let on_message_cb = {
         let on_message = on_message.clone();
         move |ev: MessageEvent| {
@@ -589,7 +548,6 @@ pub fn web_view(
         }
     };
 
-    // ----- Pass-through attrs (None → sensible default) ----------------
     let html_prop: Signal<String> = html.unwrap_or_default();
     let user_agent_prop: Signal<String> = user_agent.unwrap_or_default();
     let style_prop: Style = style.clone().unwrap_or_default();
@@ -598,7 +556,6 @@ pub fn web_view(
     let scroll_enabled_attr = bool_attr(scroll_enabled);
     let origin_whitelist_attr = origin_whitelist_json(&origin_whitelist);
 
-    // ----- Imperative handle: forward its ElementRef as `ref:` ---------
     let element_ref = webview_ref.as_ref().map(|h| h.r());
 
     let mut builder = NativeWebview::builder()
@@ -738,8 +695,6 @@ mod tests {
 
     #[test]
     fn empty_body_defaults() {
-        // Events with no body (or a `detail`-less body) degrade to
-        // defaults via the `#[serde(default)]` on `detail`.
         let empty: [(&str, WhiskerValue); 0] = [];
         let ev: NavEvent = WhiskerValue::map(empty)
             .deserialize_into()

@@ -5,11 +5,11 @@
 //! ## Why not a global dismiss
 //!
 //! The obvious implementation — call [`whisker_keyboard::dismiss`] on
-//! every navigation — is what this crate used to do, and it is *more*
-//! aggressive than React Navigation. A global unfocus dispatched at
-//! navigation time is fire-and-forget on the native side; it can land
-//! *after* the screen being entered has already auto-focused its own
-//! input, resigning it (the "focus flashes then drops ~0.5s in" bug).
+//! every navigation — is *more* aggressive than React Navigation. A
+//! global unfocus dispatched at navigation time is fire-and-forget on
+//! the native side, so it can land *after* the screen being entered has
+//! auto-focused its own input, resigning it: focus appears, then drops
+//! half a second later.
 //!
 //! React Navigation avoids this by capturing the concrete focused input
 //! (`TextInput.State.currentlyFocusedInput()`) and blurring *that ref*,
