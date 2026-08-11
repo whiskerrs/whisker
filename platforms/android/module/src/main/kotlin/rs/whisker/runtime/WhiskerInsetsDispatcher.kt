@@ -6,26 +6,20 @@
 //
 // Android stores exactly ONE `OnApplyWindowInsetsListener` per view
 // (`View.ListenerInfo.mOnApplyWindowInsetsListener`) — the setter
-// overwrites, it does not append. `whisker-safe-area` and
-// `whisker-keyboard` both need the decor view's insets, and both were
-// independently calling `ViewCompat.setOnApplyWindowInsetsListener` on
-// the SAME `decorView`. Whichever installed last silently clobbered the
-// other, so one module's inset signal froze (for keyboard that means
-// `keyboardChanged` never fires — IME show/hide doesn't recreate the
-// Activity, so nothing ever re-installs the lost listener).
+// overwrites, it does not append. Two modules both calling
+// `ViewCompat.setOnApplyWindowInsetsListener` on the same `decorView`
+// means whichever installs last silently clobbers the other, freezing
+// its inset signal for good (IME show/hide doesn't recreate the
+// Activity, so nothing re-installs the lost listener).
 //
 // This dispatcher owns the single slot and multiplexes it: every module
 // that wants insets calls [addListener] and receives the same
-// `WindowInsetsCompat` the platform delivers. No module touches the
-// decor slot directly anymore, so there is nothing left to clobber.
-//
-// ## Generic on purpose
+// `WindowInsetsCompat` the platform delivers. No module may touch the
+// decor slot directly.
 //
 // The public surface is `(WindowInsetsCompat) -> Unit` — the dispatcher
 // knows nothing about IME vs system-bars vs cutout. Each subscriber
-// reads whatever `Type` it cares about from the raw insets in its own
-// callback. A future inset consumer needs zero changes here: it just
-// calls [addListener].
+// reads whatever `Type` it cares about from the raw insets.
 //
 // ## Lifecycle + configuration-change handling
 //
@@ -33,10 +27,9 @@
 // (rotation, multi-window resize). We rewire transparently by owning a
 // single [HostAttachedListener]: registered lazily on the 0→1
 // subscriber transition, it (re)installs the inset listener on whichever
-// decor view is current each time a host attaches, and dropped on the
-// 1→0 transition. This is the same host-attach trick the modules used
-// individually — now centralised so there is one host listener and one
-// decor slot regardless of how many modules subscribe.
+// decor view is current each time a host attaches, and is dropped on the
+// 1→0 transition. One host listener and one decor slot regardless of how
+// many modules subscribe.
 
 package rs.whisker.runtime
 

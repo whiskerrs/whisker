@@ -34,7 +34,6 @@ fn base_app() -> Config {
 fn sync_and_read_pbxproj(app: &Config) -> (PathBuf, String) {
     let inputs = whisker_cng::ios::inputs_from(
         app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "hello-world".into(),

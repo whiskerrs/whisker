@@ -1,10 +1,10 @@
-// Phase L-2a — `ModuleDefinition` DSL surface (Android).
+// `ModuleDefinition` DSL surface (Android).
 //
 // Kotlin counterpart of `platforms/ios/Sources/WhiskerModule/
 // ModuleDefinition.swift`. Modeled after Expo Modules'
 // `ModuleDefinition` (https://docs.expo.dev/modules/module-api/).
 //
-// ## Target syntax
+// ## Syntax
 //
 // ```kotlin
 // class VideoModule : Module() {
@@ -39,12 +39,8 @@
 // }
 // ```
 //
-// ## What L-2a delivers
-//
-// Type surface only. The `Module` base + DSL types compile and
-// authors write modules using the syntax above; the KSP codegen
-// (L-2c) walks every `Module` subclass and turns `definition()`
-// into Lynx prop / method registrations.
+// The KSP codegen walks every `Module` subclass and turns
+// `definition()` into Lynx prop / method registrations.
 
 package rs.whisker.runtime
 
@@ -64,8 +60,7 @@ public data class WhiskerNameComponent(public val value: String) :
 
 /**
  * `Constants("k" to v, ...)` — static key/value pairs exposed to
- * the host. Dictionary form only in v1; the dynamic closure form
- * and per-key lazy `Constant("k") { ... }` form land later.
+ * the host. Dictionary form only.
  */
 public data class WhiskerConstantsComponent(public val values: Map<String, Any?>) :
     WhiskerDefinitionComponent
@@ -85,8 +80,8 @@ public data class WhiskerViewComponent(
 /**
  * Type-erased prop setter the framework calls on prop dispatch.
  * `view` is the Lynx UI instance; `value` is the raw
- * [WhiskerValue] (case ②: no auto-deserialization — the author
- * destructures it, e.g. `value.asString()`).
+ * [WhiskerValue] — no auto-deserialization, the author destructures
+ * it, e.g. `value.asString()`.
  */
 public typealias WhiskerPropSetterFn = (view: Any, value: WhiskerValue) -> Unit
 
@@ -99,8 +94,8 @@ public data class WhiskerPropComponent(
  * Type-erased function handler. `view` is `null` for module-level
  * [Function]s, the Lynx UI instance for view-block [Function]s.
  * `args` are the raw positional [WhiskerValue]s from the Rust call
- * site (case ②: no auto-deserialization — the author destructures,
- * e.g. `args[0].asDouble()`); the return is a raw [WhiskerValue]
+ * site — no auto-deserialization, the author destructures, e.g.
+ * `args[0].asDouble()`; the return is a raw [WhiskerValue]
  * (`WhiskerValue.Null` for "no result").
  */
 public typealias WhiskerFunctionHandlerFn = (view: Any?, args: List<WhiskerValue>) -> WhiskerValue
@@ -240,8 +235,6 @@ public class WhiskerModuleDefinitionBuilder {
     ): WhiskerDefinitionComponent =
         WhiskerOnStopObservingComponent(name, handler).also { components.add(it) }
 
-    // ---- Module-level (view-less) function: raw args (case ②) ----
-
     /**
      * `Function("save") { args -> WhiskerValue.Bool(...) }` — the
      * author reads `args[i]` (e.g. `args[0].asString()`) and returns
@@ -278,7 +271,7 @@ public class WhiskerViewDefinitionBuilder {
 
     /**
      * `Prop("src") { view: VideoView, value -> view.setSrc(value.asString()) }`
-     * — view-bearing prop setter. Case ②: `value` is the raw
+     * — view-bearing prop setter. `value` is the raw
      * [WhiskerValue]; the author destructures it. `V` is inferred
      * from the lambda; the dispatch-time view cast is unchecked
      * (erased generics) — a mismatch raises `ClassCastException`.
@@ -295,8 +288,6 @@ public class WhiskerViewDefinitionBuilder {
     /** `Events("a", "b", ...)` declared inside a `View(...)` block. */
     public fun Events(vararg names: String): WhiskerDefinitionComponent =
         WhiskerEventsComponent(names.toList()).also { components.add(it) }
-
-    // ---- View-bound function: view + raw args (case ②) ----
 
     /**
      * `Function("seek") { view: VideoView, args -> view.seek(args[0].asDouble()); WhiskerValue.Null }`

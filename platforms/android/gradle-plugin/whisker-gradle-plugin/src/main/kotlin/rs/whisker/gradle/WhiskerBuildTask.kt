@@ -23,9 +23,7 @@ import javax.inject.Inject
 //     Gradle task when cargo fails.
 //
 // `whisker` is resolved off `PATH` — bootstrap with
-// `cargo install whisker-cli`. A future improvement is to download
-// a pinned pre-built binary in `WhiskerPlugin.apply` so contributors
-// don't need a Rust toolchain just to open the Android project.
+// `cargo install whisker-cli`.
 abstract class WhiskerBuildTask : DefaultTask() {
 
     // `@Internal` rather than `@InputDirectory` so Gradle doesn't
@@ -36,10 +34,9 @@ abstract class WhiskerBuildTask : DefaultTask() {
     // refuse to run with "implicit dependency on
     // :whisker-router:generateReleaseResValues" etc.
     //
-    // Cargo has its own incremental build detection (target/cache,
-    // .fingerprint files), so we don't gain much by also having
-    // Gradle UP-TO-DATE-check us. The task re-runs every time;
-    // cargo skips the actual compile when nothing changed.
+    // Cargo has its own incremental build detection, so the task
+    // re-runs every time and cargo skips the compile when nothing
+    // changed.
     @get:Internal
     abstract val workspace: DirectoryProperty
 
@@ -119,18 +116,12 @@ abstract class WhiskerBuildTask : DefaultTask() {
                     "--min-sdk=${minSdk.get()}",
                 ) + featureArgs,
             )
-            // Forward the dev-loop UI mode env vars to the child.
-            // `exec {}` inherits the gradle daemon's env by default,
-            // but the daemon's env is captured at fork-time and may
-            // predate the `whisker run` cli setting `WHISKER_TUI=1`
-            // (especially with `--daemon` reuse across sessions).
-            // Without these explicit forwards, `whisker build-android`
-            // calls `whisker_build::ui::step` in non-TUI mode and
-            // emits the `⏵ …` row that the whisker-cli capture
-            // thread treats as plain scrollback output, then
-            // immediately follows with the `✓ …` row from
-            // `Step::finish` — doubling the row count for every
-            // step the child runs.
+            // `exec {}` inherits the gradle daemon's env, but that env
+            // is captured at fork-time and may predate `whisker run`
+            // setting `WHISKER_TUI=1` (especially with `--daemon` reuse
+            // across sessions). Without the explicit forward the child
+            // runs `whisker_build::ui::step` in non-TUI mode and emits
+            // a duplicate progress row for every step.
             for (name in listOf("WHISKER_TUI", "WHISKER_VERBOSE")) {
                 System.getenv(name)?.let { value -> environment(name, value) }
             }

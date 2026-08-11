@@ -1,8 +1,8 @@
-// Compile-time smoke checks for the L-2a `ModuleDefinition` DSL.
+// Compile-time smoke checks for the `ModuleDefinition` DSL.
 //
-// These samples exist purely so a `swift build` failure against
-// the DSL surface surfaces here at build time. Phase L-2a — no
-// runtime behavior; just exercises the type surface end-to-end.
+// These samples exist purely so a break in the DSL surface fails
+// `swift build` here. No runtime behavior — they just exercise the
+// type surface end-to-end.
 
 import Foundation
 

@@ -5,15 +5,12 @@ import java.io.File
 import java.io.Serializable
 
 // Mirror of the JSON schema `whisker modules` writes to stdout.
-// Kept as plain `data class`es with explicit `fromMap` constructors so
-// the BuildService can carry them through Gradle's configuration cache
-// (Serializable).
+// Plain `Serializable` data classes with explicit `fromMap`
+// constructors, so they survive Gradle's configuration cache.
 //
-// Why JsonSlurper + manual mapping rather than kotlinx.serialization or
+// JsonSlurper + manual mapping rather than kotlinx.serialization or
 // moshi: JsonSlurper is already on Gradle's classpath (Gradle ships
 // `groovy-json`), so the plugin's published JAR drags no extra deps.
-// The schema is small enough that the boilerplate cost is real but
-// modest.
 
 data class ModulesReport(
     val cargoLockSha256: String,

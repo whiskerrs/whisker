@@ -1,15 +1,14 @@
 // WhiskerValue — Swift mirror of the Rust `whisker::platform_module::
 // WhiskerValue` tagged union. Used by `Module`-subclass methods as
-// the universal arg/return type, replacing the previous `NSArray` +
-// Foundation type marshalling.
+// the universal arg/return type.
 //
 // ## Why a Swift enum
 //
-// Phase 7-Φ.F: the platform_module bridge now exchanges typed Whisker
-// values directly, not Foundation NSObject wrappers. Author code
-// pattern-matches on enum cases instead of `as?` casting against
-// NSNumber / NSString / NSData / NSArray / NSDictionary — fewer
-// silent nil casts and exhaustive switch coverage.
+// The platform_module bridge exchanges typed Whisker values directly,
+// not Foundation NSObject wrappers, so author code pattern-matches on
+// enum cases instead of `as?` casting against NSNumber / NSString /
+// NSData / NSArray / NSDictionary — fewer silent nil casts, and
+// exhaustive switch coverage.
 //
 // ## C ABI bridge
 //
@@ -22,10 +21,9 @@
 //
 // ## Discriminant alignment
 //
-// The `caseValue` mapping matches `WhiskerValueType` in
-// `whisker_bridge.h`. Drift between the two would corrupt the
-// payload union — the static `assert`s in `decode` / `toRaw` guard
-// against silent regressions.
+// The discriminants below must stay aligned with `WhiskerValueType`
+// in `whisker_bridge.h`. Drift between the two silently corrupts the
+// payload union.
 
 import Foundation
 // `@_exported` so module-author Swift files can `import WhiskerRuntime`
@@ -48,7 +46,7 @@ public enum WhiskerValue: Equatable {
     case error(String)
 }
 
-// MARK: - Convenience accessors (case ② arg destructuring)
+// MARK: - Convenience accessors
 
 /// Typed reads for module authors destructuring raw `WhiskerValue`
 /// args (`args[0].asDouble()`, `value.asString()`, …). Numeric
@@ -209,9 +207,8 @@ private func encodeArray(_ items: [WhiskerValue]) -> WhiskerValueArray {
 }
 
 private func encodeMap(_ entries: [String: WhiskerValue]) -> WhiskerValueMap {
-    // BTreeMap-like stable ordering — sort by key so two encodes of
-    // equivalent maps produce byte-identical raw buffers (helps
-    // snapshot tests + deterministic logs).
+    // Sort by key so two encodes of equivalent maps produce
+    // byte-identical raw buffers.
     let sorted = entries.sorted { $0.key < $1.key }
     let count = sorted.count
     let buf = UnsafeMutablePointer<WhiskerKeyValueRaw>.allocate(capacity: max(count, 1))
@@ -255,24 +252,20 @@ private func decodeMap(_ map: WhiskerValueMap) -> [String: WhiskerValue] {
     return out
 }
 
-// MARK: - NSDictionary <-> WhiskerValue (Phase 7-Φ.H.2)
+// MARK: - NSDictionary <-> WhiskerValue
 
 public extension WhiskerValue {
     /// Decode the params `NSDictionary` Lynx's `LynxUIMethodProcessor`
-    /// hands to a `@WhiskerUIMethod`-emitted dispatcher into the
-    /// `[WhiskerValue]` shape user code expects.
+    /// hands a method dispatcher into the `[WhiskerValue]` shape user
+    /// code expects.
     ///
-    /// Convention: the C bridge packs the Rust-side `&[WhiskerValue]`
-    /// into `{"args": [...]}` — a single key `args` holding an
-    /// `NSArray` of positionally-encoded entries. Each entry decodes
-    /// via [WhiskerValue.from(nsObject:)] (recursive). Missing key
-    /// or non-array shape yields an empty list rather than an error
-    /// so the user method still runs (with no args).
-    ///
-    /// The C bridge that produces this shape lives in
-    /// `whisker_bridge_invoke_element_method` (Phase 7-Φ.H.2.5,
-    /// tracked separately) — until that lands, callers receive an
-    /// empty list.
+    /// Convention: `whisker_bridge_invoke_element_method` packs the
+    /// Rust-side `&[WhiskerValue]` into `{"args": [...]}` — a single
+    /// key `args` holding an `NSArray` of positionally-encoded
+    /// entries. Each entry decodes via [WhiskerValue.from(nsObject:)]
+    /// (recursive). A missing key or non-array shape yields an empty
+    /// list rather than an error, so the user method still runs (with
+    /// no args).
     static func fromNSDictionary(_ params: NSDictionary?) -> [WhiskerValue] {
         guard let params, let raw = params["args"] else { return [] }
         guard let arr = raw as? [Any] else { return [] }

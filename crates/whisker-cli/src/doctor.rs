@@ -321,25 +321,20 @@ fn check_android() -> Vec<Check> {
         }
     };
 
-    // NDK 21.1.6352462 — pinned because Lynx's gn/ninja toolchain
-    // requires that exact version (build_lynx_aar bails otherwise).
-    let ndk = android_home.join("ndk/21.1.6352462");
-    if ndk.is_dir() {
-        out.push(Check::ok("NDK 21.1.6352462", ndk.display().to_string()));
+    // App builds need an NDK (any of the versions whisker-build
+    // accepts); Lynx itself resolves prebuilt via Maven, so no exact
+    // pin is required here.
+    let ndk_root = android_home.join("ndk");
+    let has_ndk = std::fs::read_dir(&ndk_root)
+        .map(|mut d| d.any(|e| e.is_ok()))
+        .unwrap_or(false);
+    if has_ndk {
+        out.push(Check::ok("NDK", ndk_root.display().to_string()));
     } else {
         out.push(Check::err(
-            "NDK 21.1.6352462",
-            "missing — `sdkmanager 'ndk;21.1.6352462'`",
+            "NDK",
+            "none installed — `sdkmanager 'ndk;27.1.12297006'`",
         ));
-    }
-
-    // JDK 11 — Lynx's gradle wrapper (6.7.1) refuses anything newer.
-    match resolve_jdk11() {
-        Some(p) => out.push(Check::ok("JDK 11", p.display().to_string())),
-        None => out.push(Check::warn(
-            "JDK 11",
-            "not found (set WHISKER_JAVA11_HOME) — required for Lynx AAR build only",
-        )),
     }
 
     // adb — required for `whisker run android` / install workflows.
@@ -355,22 +350,6 @@ fn check_android() -> Vec<Check> {
     }
 
     out
-}
-
-fn resolve_jdk11() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("WHISKER_JAVA11_HOME").map(PathBuf::from) {
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    [
-        home.join("work/java11/jdk-11.0.25+9/Contents/Home"),
-        home.join("work/java11/jdk-11.0.25+9"),
-        PathBuf::from("/Library/Java/JavaVirtualMachines/temurin-11.jdk/Contents/Home"),
-    ]
-    .into_iter()
-    .find(|cand| cand.is_dir())
 }
 
 // ----- iOS -------------------------------------------------------------------

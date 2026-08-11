@@ -13,10 +13,8 @@ import org.gradle.api.tasks.TaskAction
 //
 // whose `registerAll()` chains every Whisker module's KSP-emitted
 // `<Module>Behaviors.registerAll()`. The host app's `Application.kt`
-// (cng-rendered) calls
-// `WhiskerModuleBehaviors.registerAll()` once at launch — that fans
-// out to each module's `@WhiskerElement` / `@WhiskerModule`
-// registrations.
+// (cng-rendered) calls `WhiskerModuleBehaviors.registerAll()` once at
+// launch — that fans out to each module's Lynx registrations.
 //
 // The behaviors objects all live in package
 // `rs.whisker.runtime.generated`, same as the aggregator, so we can

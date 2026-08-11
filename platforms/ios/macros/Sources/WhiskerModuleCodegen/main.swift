@@ -15,18 +15,15 @@
 // `Module` (or `WhiskerModule.Module`) and produce one registration
 // block per match.
 //
-// Discovery is **inheritance-based** — Phase M (Issue #59) dropped
-// the `@WhiskerModule` marker macro. A Whisker module is now
-// defined by exactly one signal: `extends WhiskerModule.Module`.
-// Same shape as Android's KSP processor, just over SwiftSyntax
-// instead of KSP's `Resolver`.
+// Discovery is **inheritance-based**: a Whisker module is defined by
+// exactly one signal, `extends WhiskerModule.Module`. Same shape as
+// Android's KSP processor, just over SwiftSyntax instead of KSP's
+// `Resolver`.
 //
-// Phase 7-Φ.G: emitted per-module. Each module's SwiftPM target
-// owns its registration code (`_whiskerRegisterModules_<TargetName>`),
-// and the whisker-build-generated aggregator imports + calls every
-// per-module register fn from its own `WhiskerModuleBehaviors.
-// registerAll()`. The previous `WhiskerModuleBehaviors` class emitted
-// here is gone — the codegen now produces a top-level fn only.
+// Output is per-module: each module's SwiftPM target owns its
+// registration code (`_whiskerRegisterModules_<TargetName>`), and the
+// whisker-build-generated aggregator imports + calls every per-module
+// register fn from its own `WhiskerModuleBehaviors.registerAll()`.
 
 import Foundation
 import SwiftSyntax
@@ -40,7 +37,6 @@ struct Args {
     /// the SwiftPM plugin via `context.package.displayName`. Used as
     /// the element tag namespace so two modules' identical local
     /// tag names don't collide in Lynx's behaviour registry.
-    /// Phase 7-Φ.H.2.
     let crateName: String
     let outputPath: String
     let inputs: [String]
@@ -83,7 +79,7 @@ func parseArgs(_ argv: [String]) -> Args? {
 /// modules — registers a Lynx behavior using the view class from
 /// the `View(...)` block, then calls `module.registerWithLynx()`
 /// so the DSL's Prop / Function dispatchers install via the
-/// Obj-C-runtime path (L-2b). View-less modules register their
+/// Obj-C-runtime path. View-less modules register their
 /// `Function`s through `whisker_bridge_register_module_dispatch`.
 struct DSLModuleHit {
     let className: String
@@ -93,19 +89,14 @@ final class WhiskerAnnotationCollector: SyntaxVisitor {
     var dslModules: [DSLModuleHit] = []
 
     override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind {
-        // ---- DSL module path: subclass of `Module` ----
-        //
         // Discovery is purely syntactic — SwiftSyntax has no semantic
         // resolver, so we match the inheritance clause's first
         // identifier against the unqualified base name. `Module` is
-        // the convention; `WhiskerModule.Module` is also accepted in
-        // case a user fully-qualifies to disambiguate. Subclassing
-        // the base IS the registration trigger; no annotation is
-        // applied at the declaration site. Companion of Android's
-        // KSP inheritance walk.
+        // the convention; `WhiskerModule.Module` is also accepted when
+        // a user fully-qualifies to disambiguate.
         //
         // Protocols come after the base class in `inheritanceClause`,
-        // so we only need to inspect the first inherited type.
+        // so only the first inherited type needs inspecting.
         if let inheritance = node.inheritanceClause,
            let first = inheritance.inheritedTypes.first?.type
         {
@@ -186,18 +177,16 @@ func render(
     if sortedDSLModules.isEmpty {
         out += "    // (no Module subclass found)\n"
     }
-    // ---- Phase L-3 — DSL modules ---------------------------------------
-    //
     // For each `Module` subclass found in this target's sources,
-    // the registration block reads its `definitionLazy`
-    // (via a top-level instance referenced directly — same SwiftPM
-    // target, so no `NSClassFromString` / `@objc` pinning needed),
-    // then branches at runtime:
+    // the registration block reads its `definitionLazy` (via a
+    // top-level instance referenced directly — same SwiftPM target,
+    // so no `NSClassFromString` / `@objc` pinning needed), then
+    // branches at runtime:
     //
     //   - **View-bearing** (`def.view != nil`): register a Lynx
     //     behavior bound to `def.view!.viewClass`, then
     //     `module.registerWithLynx()` to install Prop / Function
-    //     dispatch (Obj-C-runtime path, L-2b).
+    //     dispatch via the Obj-C runtime.
     //   - **View-less** (module-level `Function`s): register the
     //     `@_cdecl` dispatch shim (emitted as a top-level decl
     //     below) with the C bridge via
@@ -252,9 +241,7 @@ func render(
 
         """
 
-    // ---- Top-level @_cdecl shims for DSL modules -----------------------
-    //
-    // One per DSL module. Always emitted (codegen can't know at
+    // One @_cdecl shim per DSL module. Always emitted (codegen can't know at
     // build time whether a module is view-less); only registered at
     // runtime when `def.view == nil`. The shim forwards the C-ABI
     // call straight into `WhiskerModule.dispatchModuleFunctionRaw`.

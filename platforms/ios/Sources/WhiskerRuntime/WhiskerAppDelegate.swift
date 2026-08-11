@@ -2,10 +2,8 @@ import UIKit
 
 /// Base AppDelegate for Whisker apps.
 ///
-/// CNG-generated `AppDelegate` extends this. In Phase 0 we just set up a
-/// window with a `WhiskerViewController`. Later phases will:
-/// - Initialize the Rust runtime via FFI
-/// - Provide injection points for plugins (camera, push notifications, …)
+/// CNG-generated `AppDelegate` extends this. Sets up a window with a
+/// `WhiskerViewController`, which attaches the Rust runtime.
 open class WhiskerAppDelegate: UIResponder, UIApplicationDelegate {
     public var window: UIWindow?
 

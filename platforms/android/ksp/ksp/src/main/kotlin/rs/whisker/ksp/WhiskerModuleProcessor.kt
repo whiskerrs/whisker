@@ -22,17 +22,16 @@ import com.google.devtools.ksp.symbol.Modifier
  * whose `registerAll()` does the Lynx behaviour / module-registry
  * wiring.
  *
- * Discovery is **inheritance-based** — Phase M (Issue #59) dropped
- * the `@WhiskerModule` marker annotation. A Whisker module is now
- * defined by exactly one signal: `extends rs.whisker.runtime.Module`.
- * Subclassing the base class is the registration trigger; no
- * companion annotation needs to be applied at the declaration site.
+ * Discovery is **inheritance-based**: a Whisker module is defined by
+ * exactly one signal, `extends rs.whisker.runtime.Module`. Subclassing
+ * the base class is the registration trigger; no companion annotation
+ * needs to be applied at the declaration site.
  *
  * For each subclass found: instantiates it, reads its `definition()`,
  * registers a Lynx `Behavior` for view-bearing modules, and calls
  * `.registerWithLynx()`. `registerWithLynx()` branches internally —
- * view-bearing modules install their Prop / Function dispatchers
- * via the L-1 Lynx APIs; view-less modules register with
+ * view-bearing modules install their Prop / Function dispatchers via
+ * the Lynx APIs; view-less modules register with
  * `WhiskerModuleRegistry` so `whisker_bridge_invoke_module` from
  * Rust routes to the DSL's `Function` handlers.
  *
@@ -45,7 +44,7 @@ public class WhiskerModuleProcessor(
     private val codeGenerator: CodeGenerator,
     private val logger: KSPLogger,
     /**
-     * Per-subproject KSP run identifier (Phase 7-Φ.G). Passed via
+     * Per-subproject KSP run identifier. Passed via
      * Gradle's `ksp { arg("whisker.moduleName", "<Name>") }` in each
      * Whisker module's `build.gradle.kts`. The processor uses this
      * to name the generated file (`<ModuleName>Behaviors.kt`) and
@@ -53,9 +52,8 @@ public class WhiskerModuleProcessor(
      * into the same user-app composite build don't shadow each
      * other's `registerAll()` entry point.
      *
-     * `null` falls back to the legacy `WhiskerModuleBehaviors`
-     * name — used by user apps that still run KSP themselves
-     * (pre-Phase G).
+     * `null` falls back to the `WhiskerModuleBehaviors` name, used by
+     * user apps that run KSP themselves.
      */
     private val moduleName: String?,
     /**
@@ -64,7 +62,7 @@ public class WhiskerModuleProcessor(
      * each Whisker module's `build.gradle.kts`. Used as the
      * element tag namespace so two unrelated modules' identical
      * local tag names don't collide in Lynx's behaviour registry.
-     * `null` defaults to no namespace prefix (legacy behaviour).
+     * `null` defaults to no namespace prefix.
      */
     private val crateName: String?,
 ) : SymbolProcessor {
@@ -85,12 +83,8 @@ public class WhiskerModuleProcessor(
     override fun process(resolver: Resolver): List<KSAnnotated> {
         if (generated) return emptyList()
 
-        // DSL modules. Discovery: every concrete class whose direct
-        // or transitive superclass is `rs.whisker.runtime.Module`.
-        // Phase M (#59) — replaces the previous `@WhiskerModule`
-        // marker annotation; subclassing the base class is the sole
-        // registration trigger so module authors don't have to
-        // remember a companion annotation.
+        // Discovery: every concrete class whose direct or transitive
+        // superclass is `rs.whisker.runtime.Module`.
         val collector = ModuleSubclassCollector(moduleBaseFqn)
         resolver.getAllFiles().forEach { file ->
             file.declarations.forEach { it.accept(collector, Unit) }
@@ -166,13 +160,12 @@ public class WhiskerModuleProcessor(
         val sourceFiles = dslModules.mapNotNull { it.containingFile }
         val dependencies = Dependencies(aggregating = true, *sourceFiles.toTypedArray())
 
-        // File / object name. Per-subproject KSP runs (Phase G) pass
-        // `whisker.moduleName` so each module's compilation produces
-        // its own uniquely-named `<ModuleName>Behaviors.kt` — the
-        // user app's whisker-build-generated aggregator imports each
-        // and chains the per-module `registerAll()` calls. Pre-Phase
-        // G fallback keeps the original `WhiskerModuleBehaviors`
-        // name so user-app-level KSP still works.
+        // Per-subproject KSP runs pass `whisker.moduleName` so each
+        // module's compilation produces its own uniquely-named
+        // `<ModuleName>Behaviors.kt` — the user app's
+        // whisker-build-generated aggregator imports each and chains
+        // the per-module `registerAll()` calls. Without it the shared
+        // `WhiskerModuleBehaviors` name keeps user-app-level KSP working.
         val behaviorsObjectName = moduleName?.let { "${it}Behaviors" } ?: "WhiskerModuleBehaviors"
 
         codeGenerator.createNewFile(
@@ -214,23 +207,10 @@ public class WhiskerModuleProcessor(
                 w.appendLine("        // (no rs.whisker.runtime.Module subclass found)")
             }
 
-            // ---- DSL modules ------------------------------
-            //
-            // For each `rs.whisker.runtime.Module` subclass:
-            //   1. Build an instance.
-            //   2. Read its `definitionLazy`.
-            //   3. If a `View(...)` block is present, register a
-            //      `Behavior` against the user's view class so Lynx
-            //      can instantiate it on element creation.
-            //   4. Call `.registerWithLynx()` — which installs the
-            //      view's Prop / Function dispatchers (view-bearing)
-            //      OR registers the module-level `Function`s with
-            //      `WhiskerModuleRegistry` (view-less, Phase L-3).
-            //
             // `registerWithLynx()` branches internally on whether the
             // definition has a `View(...)` block, so the codegen path
-            // is identical for both shapes — we only add the
-            // `addBehavior(...)` call when a view exists.
+            // is identical for both shapes — the `addBehavior(...)`
+            // call is the only view-only piece.
             for (cls in dslModules) {
                 val fqn = cls.qualifiedName?.asString()
                 if (fqn == null) {
@@ -251,8 +231,8 @@ public class WhiskerModuleProcessor(
                 w.appendLine("            val $nameLocal = $defLocal.name")
                 w.appendLine("            val $viewLocal = $defLocal.view")
                 w.appendLine("            if ($nameLocal != null) {")
-                // Phase L-2c — every module records its fully-qualified
-                // name (`<crate>:<Name>`) so `sendEvent` / observer-hook
+                // Every module records its fully-qualified name
+                // (`<crate>:<Name>`) so `sendEvent` / observer-hook
                 // routing can find it via `WhiskerModuleEventCenter`.
                 val tagPrefix = if (crateName != null) "$crateName:" else ""
                 w.appendLine("                val qualifiedName = \"$tagPrefix\" + $nameLocal")
@@ -277,9 +257,6 @@ public class WhiskerModuleProcessor(
                 w.appendLine("                                .newInstance(context) as LynxUI<*>")
                 w.appendLine("                    })")
                 w.appendLine("                }")
-                // Install dispatch: view Prop/Function (view-bearing)
-                // or module-level Function registration (view-less,
-                // keyed by `<crate>:Name`).
                 w.appendLine("                // Install dispatch (view: Prop/Function; view-less: module Function).")
                 val crateArg = if (crateName != null) "\"$crateName\"" else "null"
                 w.appendLine("                $instanceLocal.registerWithLynx($crateArg)")

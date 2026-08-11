@@ -53,15 +53,6 @@ pub struct IosInputs {
     pub scheme: String,
     pub bundle_id: String,
     pub deployment_target: String,
-    /// Path the generated pbxproj's `XCLocalSwiftPackageReference`
-    /// for `WhiskerRuntime` points at — typically
-    /// `<workspace>/platforms/ios` in the monorepo. cng emits a local-
-    /// path reference because each Whisker module's `Package.swift`
-    /// pulls `WhiskerRuntime` via `.package(path:)` against the same
-    /// directory; until module manifests migrate to a shared remote
-    /// URL, mixing a remote root reference with local module refs
-    /// would produce duplicate `WhiskerRuntime` SwiftPM identities.
-    pub whisker_runtime_path: PathBuf,
     /// Path to the auto-generated `WhiskerModules` SwiftPM package
     /// — typically `<crate_dir>/gen/ios/whisker_modules`. Pointed
     /// at the gen-tree-managed dir `whisker-build::ios::
@@ -644,7 +635,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
 /// `_with_engine` form directly.
 pub fn inputs_from(
     app_config: &Config,
-    whisker_runtime_path: PathBuf,
     whisker_modules_path: PathBuf,
     workspace_root: PathBuf,
     user_package: String,
@@ -652,7 +642,6 @@ pub fn inputs_from(
     inputs_from_with_engine(
         &Engine::with_builtins(),
         app_config,
-        whisker_runtime_path,
         whisker_modules_path,
         workspace_root,
         user_package,
@@ -665,7 +654,6 @@ pub fn inputs_from(
 pub fn inputs_from_with_engine(
     engine: &Engine,
     app_config: &Config,
-    whisker_runtime_path: PathBuf,
     whisker_modules_path: PathBuf,
     workspace_root: PathBuf,
     user_package: String,
@@ -717,7 +705,6 @@ pub fn inputs_from_with_engine(
         scheme,
         bundle_id,
         deployment_target,
-        whisker_runtime_path,
         whisker_modules_path,
         workspace_root,
         user_package,
@@ -761,7 +748,6 @@ mod tests {
             scheme: "HelloWorld".into(),
             bundle_id: "rs.whisker.examples.helloWorld".into(),
             deployment_target: "13.0".into(),
-            whisker_runtime_path: PathBuf::from("/abs/platforms/ios"),
             whisker_modules_path: PathBuf::from("/abs/gen/ios/whisker_modules"),
             workspace_root: PathBuf::from("/abs/workspace"),
             user_package: "hello-world".into(),
@@ -935,14 +921,7 @@ mod tests {
             name: Some("X".into()),
             ..Config::default()
         };
-        let err = inputs_from(
-            &cfg,
-            PathBuf::new(),
-            PathBuf::new(),
-            PathBuf::new(),
-            String::new(),
-        )
-        .unwrap_err();
+        let err = inputs_from(&cfg, PathBuf::new(), PathBuf::new(), String::new()).unwrap_err();
         assert!(err.to_string().contains("bundle_id"), "got: {err:#}");
     }
 }

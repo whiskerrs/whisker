@@ -42,7 +42,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! whisker-local-store = { path = "../whisker/packages/whisker-local-store" }
+//! whisker-local-store = "0.10"
 //! ```
 //!
 //! Call from anywhere reactive runs (component bodies, event

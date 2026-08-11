@@ -1,30 +1,18 @@
 // `whisker-webview` ModuleDefinition (iOS).
 //
-// Mirrors `whisker-input`'s `InputModule` shape for the `View(...)` +
-// `Prop(...)` + `Function(...)` + `Events(...)` DSL surface. The codegen
-// plugin discovers this `Module` subclass and emits a registration block in
-// `WhiskerWebView+Generated.swift` that:
-//
-//   - Reads `definitionLazy.view!.viewClass` (== `WhiskerWebViewView`).
-//   - Calls `LynxComponentRegistry.registerUI(viewClass, withName:
-//     "whisker-webview:WebView")`.
-//   - Calls `module.registerWithLynx()` so all `Prop(...)` setters +
-//     `Function(...)` methods install via the Obj-C-runtime path.
+// The codegen plugin discovers this `Module` subclass and emits a
+// registration block in `WhiskerWebView+Generated.swift` that registers
+// `definitionLazy.view!.viewClass` with `LynxComponentRegistry` under
+// "whisker-webview:WebView", then calls `module.registerWithLynx()` so
+// every `Prop(...)` setter and `Function(...)` method installs via the
+// Obj-C-runtime path.
 //
 // The `WhiskerWebViewView` Lynx UI subclass lives in `WhiskerWebView.swift`.
 //
-// ## Events
-//
-// Events are declared inside the `View(...)` block. Dispatch goes through
-// `WhiskerCustomEvent.dispatch(from:name:params:)` called by the view's
-// WKNavigationDelegate / WKScriptMessageHandler / KVO methods — see
-// `WhiskerWebView.swift`. `Events(...)` here is declaration-only metadata.
-//
 // ## Prop delivery
 //
-// All props arrive as `WhiskerValue` (typically `.string`). Bool props
-// ("true"/"false") and the JSON-array whitelist are pre-stringified by the
-// Rust layer, so we always read `value.asString`.
+// Bool props and the JSON-array whitelist are pre-stringified by the Rust
+// layer, so every prop reads through `value.asString`.
 
 import WhiskerModule
 
@@ -60,13 +48,8 @@ public final class WebViewModule: Module {
                     view.setOriginWhitelist(value.asString ?? "")
                 }
 
-                // ---- Events ---------------------------------------------
-                //
-                // Declaration-only: dispatch goes through
-                // `WhiskerCustomEvent.dispatch(from:name:params:)` in
-                // `WhiskerWebView.swift`. Listed here so the codegen /
-                // docs scanner knows the full event surface.
-
+                // Declaration-only metadata for the codegen / docs scanner;
+                // dispatch happens in `WhiskerWebView.swift`.
                 Events(
                     "load_start",
                     "load",
@@ -78,13 +61,10 @@ public final class WebViewModule: Module {
 
                 // ---- Imperative methods ----------------------------------
                 //
-                // Void methods return `.null`. The async-result methods
-                // (`evaluateJavaScript`, `canGoBack`, `canGoForward`) also
-                // use the sync `Function` form — Lynx's
-                // `<name>:withResult:` dispatch calls the closure and
-                // passes the returned `WhiskerValue` straight to the
-                // Rust-side `invoke_typed` awaiter via the Lynx callback.
-                // This is the same pattern `InputModule.getValue` uses.
+                // The result-returning methods still use the sync `Function`
+                // form: Lynx's `<name>:withResult:` dispatch calls the
+                // closure and hands the returned `WhiskerValue` straight to
+                // the Rust-side `invoke_typed` awaiter.
 
                 Function("reload") { (view: WhiskerWebViewView, _: [WhiskerValue]) -> WhiskerValue in
                     view.reloadPage()
@@ -103,7 +83,6 @@ public final class WebViewModule: Module {
                     return .null
                 }
 
-                // Rust → JS message delivery. Args: `["<string>"]` (positional).
                 Function("postMessage") { (view: WhiskerWebViewView, args: [WhiskerValue]) -> WhiskerValue in
                     if let data = args.first?.asString {
                         view.postMessageToPage(data)
@@ -111,14 +90,9 @@ public final class WebViewModule: Module {
                     return .null
                 }
 
-                // Evaluate arbitrary JavaScript. The same method name serves
-                // both the fire-and-forget call (`invoke`) and the async-result
-                // call (`invoke_typed`). When Rust calls `invoke`, it ignores the
-                // returned `WhiskerValue`; when it calls `invoke_typed` it awaits
-                // the `.map(["value": ...])` result. Returning the value here
-                // covers both paths without any branching.
-                //
-                // Args: `["<js>"]` (positional).
+                // One method name serves both `invoke` (ignores the return)
+                // and `invoke_typed` (awaits the `.map(["value": ...])`), so
+                // returning the value covers both without branching.
                 Function("evaluateJavaScript") { (view: WhiskerWebViewView, args: [WhiskerValue]) -> WhiskerValue in
                     guard let script = args.first?.asString else {
                         return .map(["value": .string("")])
@@ -126,8 +100,6 @@ public final class WebViewModule: Module {
                     return view.evaluateJavaScript(script)
                 }
 
-                // Returns `.bool(webView.canGoBack)` for the async-result
-                // `invoke_typed::<bool>` path.
                 Function("canGoBack") { (view: WhiskerWebViewView, _: [WhiskerValue]) -> WhiskerValue in
                     return view.canGoBackResult()
                 }

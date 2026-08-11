@@ -44,21 +44,14 @@ class WhiskerView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : LynxView(
         context,
-        // Lynx's own tap-cancel threshold (`TouchEventDispatcher.mTapSlop`)
-        // defaults to 50px (~50dip-equivalent), far more generous than the
-        // ~8dp `ViewConfiguration.getScaledTouchSlop()` Android's own
-        // scroll containers (and Lynx's `NestedScrollContainerView`) use to
-        // start scrolling. That gap let a finger drift far enough to
-        // visibly start a scroll while still firing a `tap` on release.
-        // 18dp (not the scroll threshold's own 8dp) matches Flutter's
-        // `kTouchSlop` — Flutter shipped 8dp first and raised it to 18dp
-        // after complaints that deliberate taps were too easily cancelled
-        // by ordinary hand tremor; still far below the original 50dp gap.
+        // Lynx's `TouchEventDispatcher.mTapSlop` default of 50px is far
+        // more generous than the ~8dp `ViewConfiguration.getScaledTouchSlop()`
+        // Android's scroll containers use, so a finger can drift far enough
+        // to start a scroll and still fire a `tap` on release. 18dp matches
+        // Flutter's `kTouchSlop`.
         //
-        // Kept even though it's confirmed dead for this app (see
-        // `configureEventDispatcher`'s doc comment below) — cheap, harmless, and
-        // becomes real again if a future Lynx version or code path
-        // starts honoring it.
+        // Dead for this app (see `configureEventDispatcher` below) but kept:
+        // cheap, and live again if a Lynx version starts honoring it.
         LynxViewBuilder().setTapSlop("18px"),
     ),
     WhiskerModuleHost {
@@ -81,38 +74,32 @@ class WhiskerView @JvmOverloads constructor(
             // `LynxEvent.generateEventBody` produces —
             // `{type, target, currentTarget, detail}` — so the typed
             // event structs in `whisker_runtime::event` deserialize
-            // identically on both platforms. Android's reporter
-            // otherwise hands us only the raw params dict
-            // (`LynxCustomEvent.eventParams()`, where component events
-            // like `scroll` put their fields directly via `addDetail`),
-            // which has no `detail` wrapper or target keys — leaving the
-            // typed `detail` (and `target`) blank. `target`/`currentTarget`
-            // are the integer sign (the Rust `Target` deserializes an
-            // int → `uid`). `detail` is the params dict for
-            // `LynxCustomEvent` (scroll / layout / …). The marshaller
-            // turns this Java map into a `WhiskerValueRaw` tree (no JSON).
+            // identically on both platforms. Android's reporter otherwise
+            // hands us only the raw params dict
+            // (`LynxCustomEvent.eventParams()`), with no `detail` wrapper
+            // or target keys. `target`/`currentTarget` are the integer tag
+            // (the Rust `Target` deserializes an int → `uid`). The
+            // marshaller turns this Java map into a `WhiskerValueRaw` tree
+            // (no JSON).
             val body: MutableMap<String, Any?> =
                 mutableMapOf(
                     "type" to name,
                     "target" to event.tag,
                     "currentTarget" to event.tag,
                     // Overwritten below for custom/touch events; stays
-                    // explicitly null (not just absent) for anything
-                    // else, matching this reporter's previous behavior.
+                    // explicitly null (not just absent) for anything else.
                     "detail" to null,
                 )
             if (event is LynxCustomEvent) {
                 body["detail"] = event.eventParams()
             } else if (event is LynxTouchEvent) {
-                // `LynxTouchEvent` doesn't carry coordinates through
-                // the generic params path above — only
-                // `getClientPoint`/`getPagePoint` do.
-                // Splice touches/changedTouches/detail on here,
-                // mirroring the shape `whisker_bridge_ios.mm`'s
-                // reporter block builds from the same Lynx class on
-                // iOS, so `whisker_runtime::event::TouchEvent`
-                // deserializes identically on both platforms instead
-                // of every field silently defaulting to zero here.
+                // `LynxTouchEvent` doesn't carry coordinates through the
+                // generic params path above — only
+                // `getClientPoint`/`getPagePoint` do. Splice
+                // touches/changedTouches/detail on here, mirroring the
+                // shape `whisker_bridge_ios.mm`'s reporter block builds,
+                // so `whisker_runtime::event::TouchEvent` deserializes
+                // identically on both platforms.
                 val page = event.getPagePoint()
                 val client = event.getClientPoint()
                 if (page != null && client != null) {
@@ -143,10 +130,9 @@ class WhiskerView @JvmOverloads constructor(
     /**
      * Fingers currently on the screen, keyed by touch identifier, in
      * the order they landed. Lynx reports only the fingers that changed
-     * in a given event, so `touches` — every finger currently down,
-     * which is what the DOM contract and
-     * `whisker_runtime::event::TouchEvent` both promise — has to be
-     * accumulated here.
+     * in a given event, so `touches` — every finger currently down, as
+     * the DOM contract and `whisker_runtime::event::TouchEvent` both
+     * promise — has to be accumulated here.
      */
     private val currentTouches = LinkedHashMap<Int, Map<String, Any?>>()
 
@@ -227,15 +213,10 @@ class WhiskerView @JvmOverloads constructor(
 
     // `LynxTouchEvent.getPagePoint()`/`getClientPoint()`/`getTouchMap()`
     // hand back raw `MotionEvent` coordinates (device px, no density
-    // conversion) — confirmed against the Lynx fork's own
-    // `TouchEventDispatcher.dispatchEvent`. Every other geometry value
-    // reaching Rust (`boundingClientRect()`, layout `left`/`top`/…) is
-    // in dip, via `LynxBaseUI.boundingClientRectInner`'s explicit
-    // `/ density`. Forwarding touch points unconverted made drag
-    // gestures (e.g. the reader's progress-bar seek, which divides a
-    // touch delta by a dip-based measured width) scale with the
-    // device's density instead of the physical drag distance — up to
-    // ~3x too sensitive on a high-density phone.
+    // conversion), while every other geometry value reaching Rust
+    // (`boundingClientRect()`, layout `left`/`top`/…) is in dip via
+    // `LynxBaseUI.boundingClientRectInner`. Touch points must be
+    // converted so a drag delta stays comparable to a measured width.
     private fun pxToDip(px: Float): Float = px / resources.displayMetrics.density
 
     init {
@@ -247,35 +228,22 @@ class WhiskerView @JvmOverloads constructor(
         }
     }
 
-    // `LynxViewBuilder().setTapSlop(...)` above is a no-op for this
-    // app — confirmed on-device via reflection (`adb logcat -s
-    // WhiskerTapSlop`: `TouchEventDispatcher.mTapSlop` stayed at
-    // Lynx's built-in 50dip default no matter what the builder was
-    // given). Root cause, traced in the Lynx fork source
-    // (`LynxUIRenderer.java`): the builder's tapSlop string only ever
-    // reaches the live `TouchEventDispatcher` via
-    // `onPageConfigDecoded()` → `updateEventDispatcherConfig()`, both
-    // driven by Lynx's own template-loading pipeline — the one this
-    // class's own doc comment says whisker bypasses entirely (engine
-    // handed to Rust via JNI instead). `onPageConfigDecoded` never
-    // fires, `mIsUpdatedConfig` never flips true, so
-    // `EnsureEventDispatcher()` creates the dispatcher (lazily, on the
-    // first real touch — `LynxUIRenderer.onTouchEvent`/
-    // `onInterceptTouchEvent`) but never calls
-    // `updateEventDispatcherConfig()`, and the dispatcher is left on
-    // its own constructor default.
+    // `LynxViewBuilder().setTapSlop(...)` above is a no-op for this app:
+    // the builder's value only reaches the live `TouchEventDispatcher`
+    // via `onPageConfigDecoded()` → `updateEventDispatcherConfig()`,
+    // both driven by Lynx's template-loading pipeline, which whisker
+    // bypasses entirely (engine handed to Rust via JNI). The dispatcher
+    // is created lazily on the first touch and left on its constructor
+    // defaults. Nothing calls `LynxContext.setTouchEventDispatcher`
+    // either, so `lynxContext.touchEventDispatcher` stays null — there
+    // is no public path to the live dispatcher.
     //
-    // Since nothing ever calls `LynxContext.setTouchEventDispatcher`
-    // either, `lynxContext.touchEventDispatcher` stays null forever
-    // too — there's no public path to the live dispatcher at all.
-    // Reflects through `LynxView.mLynxTemplateRender` (protected,
-    // direct field access) → `LynxTemplateRender.mLynxUIRender`
-    // (private, declared as the `ILynxUIRenderer` interface but always
-    // a `LynxUIRenderer` at runtime) → `LynxUIRenderer.mEventDispatcher`
-    // (private) to reach the actual instance and set its tapSlop
-    // directly, bypassing the page-config pipeline this app never
-    // drives. Tried on every touch (idempotent past the first success)
-    // since the dispatcher doesn't exist until the first one.
+    // Reflect through `LynxView.mLynxTemplateRender` →
+    // `LynxTemplateRender.mLynxUIRender` (declared as `ILynxUIRenderer`,
+    // always a `LynxUIRenderer` at runtime) → `LynxUIRenderer
+    // .mEventDispatcher` to reach the instance and configure it
+    // directly. Retried on every touch (idempotent past the first
+    // success) because the dispatcher doesn't exist until then.
     private var dispatcherConfigured = false
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {

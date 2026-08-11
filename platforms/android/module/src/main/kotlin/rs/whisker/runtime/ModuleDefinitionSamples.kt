@@ -1,13 +1,9 @@
-// Compile-time smoke checks for the L-2a `ModuleDefinition` DSL.
+// Compile-time smoke checks for the `ModuleDefinition` DSL.
 //
-// These samples exist purely so a `compileDebugKotlin` failure
-// against the DSL surface surfaces here at build time. They're
-// `internal` so they don't show up in the public module ABI;
-// strip in a follow-up if they're holding back stripping the
-// annotation-based API path.
-//
-// Phase L-2a — no runtime behavior; just exercises the type
-// surface end-to-end.
+// These samples exist purely so a break in the DSL surface fails
+// `compileDebugKotlin` here. `internal` so they stay out of the
+// public module ABI. No runtime behavior — they just exercise the
+// type surface end-to-end.
 
 package rs.whisker.runtime
 

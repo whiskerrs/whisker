@@ -211,7 +211,6 @@ fn inputs_from_ios_still_produces_correct_pbxproj_after_ir_refactor() {
     let app = base_app();
     let inputs = whisker_cng::ios::inputs_from(
         &app,
-        PathBuf::from("/abs/platforms/ios"),
         PathBuf::from("/abs/gen/ios/whisker_modules"),
         PathBuf::from("/abs/workspace"),
         "hello-world".into(),

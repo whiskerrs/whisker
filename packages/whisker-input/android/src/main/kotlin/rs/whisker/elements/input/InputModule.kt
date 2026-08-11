@@ -79,43 +79,35 @@ class InputModule : Module() {
 
             // ---- callable UI methods ---------------------------------------
 
-            // `focus` — request focus + show soft keyboard.
             Function("focus") { view: WhiskerInputView, _ ->
                 view.focusField()
                 WhiskerValue.Null
             }
-            // `blur` — clear focus + hide keyboard.
             Function("blur") { view: WhiskerInputView, _ ->
                 view.blurField()
                 WhiskerValue.Null
             }
-            // `clear` — empty the text and fire `input` so the bound
-            // signal sees the change as though the user typed it.
+            // `clear` fires `input` so the bound signal sees the change as
+            // though the user had typed it.
             Function("clear") { view: WhiskerInputView, _ ->
                 view.clearField()
                 WhiskerValue.Null
             }
-            // `setValue` — external text replacement. The view applies
-            // the cursor-diff guard and suppresses the resulting
-            // afterTextChanged event (not user-typed).
+            // The view applies the cursor-diff guard and suppresses the
+            // resulting afterTextChanged, which is not a user edit.
             Function("setValue") { view: WhiskerInputView, args ->
-                // Args arrive packed as { "args": [map] } by the Lynx
-                // bridge. The map carries { "value": "<text>" }. Access
-                // via the first arg cast to a Map.
+                // The Lynx bridge packs args as { "args": [map] }; the map
+                // carries { "value": "<text>" }.
                 val map = (args.getOrNull(0) as? WhiskerValue.Map)?.value
                 val text = map?.get("value")?.asString() ?: ""
                 view.setValueExternal(text)
                 WhiskerValue.Null
             }
-            // `getValue` — return the field's current text.
-            //
-            // NOTE (repo memory): Android result-returning custom element
-            // methods require the `invoke_async` bridge path wired through
-            // `lynx_native_renderer.cc`, which is iOS-only-compiled in
-            // Lynx 3.8.0-whisker.1. On an unforked Android runtime the
-            // Rust side receives a DispatchFailed error. Implement
-            // correctly here so the method is available once the fork
-            // wires the result-method plumbing on Android.
+            // TODO: Android result-returning custom element methods need
+            // the `invoke_async` bridge path in `lynx_native_renderer.cc`,
+            // compiled iOS-only in Lynx 3.8.0-whisker.1 (memory note
+            // `whisker_element_method_results_need_async`). Until the fork
+            // wires it, Rust receives a DispatchFailed error here.
             Function("getValue") { view: WhiskerInputView, _ ->
                 WhiskerValue.Map(
                     mapOf("value" to WhiskerValue.Str(view.currentText()))

@@ -14,10 +14,10 @@ import org.gradle.api.provider.Property
 //     graph rooted here, picks every dep with
 //     `[package.metadata.whisker]`.
 //
-// Both are required. The Project plugin re-reads the same values from
-// the Settings extension via the `WhiskerModuleRegistry` BuildService
-// so users don't have to declare a second `whisker { ... }` block in
-// `app/build.gradle.kts`.
+// Both are required. The Settings plugin writes them to
+// `<rootDir>/.whisker/config.properties`, which the Project plugin
+// reads, so users don't have to declare a second `whisker { ... }`
+// block in `app/build.gradle.kts`.
 abstract class WhiskerSettingsExtension {
     abstract val workspace: DirectoryProperty
 

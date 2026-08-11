@@ -621,11 +621,6 @@ pub struct XcodebuildArgs<'a> {
 /// and `AppDelegate.swift` compiles.
 pub fn stage_module_swift_sources(
     gen_ios: &Path,
-    // Retained for call-site compatibility; the aggregator now
-    // references WhiskerRuntime + macros via the remote `whisker` SPM
-    // package instead of these local paths.
-    _whisker_runtime_path: &Path,
-    _whisker_ios_macros_path: &Path,
     modules: &[crate::modules::ResolvedModule],
 ) -> Result<()> {
     let root = gen_ios.join("whisker_modules");

@@ -14,26 +14,22 @@ import PackageDescription
 //                             binaries themselves. The PrimJS public
 //                             headers are still staged out of the
 //                             tarball cache for `whisker-driver-sys`'s
-//                             cargo build until that consumer is
-//                             refactored.
+//                             cargo build.
 //   WhiskerCBridge          — header-only systemLibrary exposing the
 //                             Whisker C ABI declarations. The actual
 //                             implementation lives in
 //                             `WhiskerDriver.framework`, which is built
 //                             per-app by an Xcode Run Script Build
-//                             Phase (Step 7) — see below.
+//                             Phase — see below.
 //   WhiskerRuntime (Swift)  — thin Swift API: WhiskerView,
 //                             WhiskerAppDelegate, CADisplayLink-driven
 //                             render loop.
 //
-// Step-7 change: `WhiskerDriver` is NOT declared here as a `binaryTarget`.
+// `WhiskerDriver` is deliberately NOT declared here as a `binaryTarget`.
 // The Rust crate it wraps contains user `#[whisker::main]` code, so it
-// can't be pre-built and shipped — it has to be compiled per-app. Pre-
-// Step-7 the monorepo flow staged it under `target/whisker-driver/` so
-// SPM could resolve a path-based binaryTarget, but that forced every
-// build to go through the `whisker-build` CLI before Xcode opened. The
+// can't be pre-built and shipped — it has to be compiled per-app. The
 // Run Script Build Phase that whisker-cng injects into the per-app
-// pbxproj now produces `WhiskerDriver.framework` inside
+// pbxproj produces `WhiskerDriver.framework` inside
 // `$(BUILT_PRODUCTS_DIR)/Frameworks/` during the build itself; the
 // project's `OTHER_LDFLAGS` adds `-framework WhiskerDriver` so Xcode's
 // link step picks it up, and `LD_RUNPATH_SEARCH_PATHS` includes
@@ -45,12 +41,10 @@ import PackageDescription
 // `@_exported import WhiskerCBridge` — at link time the consumer's app
 // resolves the undefined refs against `WhiskerDriver.framework`.
 //
-// The bridge is intentionally NOT an SPM target. We used to have a
-// `WhiskerBridge` C++ target here that compiled bridge sources via SPM;
-// building an iOS dylib + an Android cdylib both require the same
-// bridge sources, so keeping the build in `crates/whisker-driver-sys/
-// build.rs` (where it already lived for Android) means a single source
-// of truth. The bridge now lives under `crates/whisker-driver-sys/bridge/`.
+// The bridge is intentionally NOT an SPM target. The iOS dylib and the
+// Android cdylib need the same bridge sources, so the build stays in
+// `crates/whisker-driver-sys/build.rs` as the single source of truth.
+// The sources live under `crates/whisker-driver-sys/bridge/`.
 
 let package = Package(
     name: "WhiskerRuntime",
@@ -58,7 +52,7 @@ let package = Package(
         .iOS(.v13),
     ],
     products: [
-        // Phase J — the minimal surface a third-party Whisker module
+        // The minimal surface a third-party Whisker module
         // depends on. Re-exports `WhiskerValue`, `WhiskerLynxAliases`
         // (WhiskerUI / WhiskerContext / WhiskerCustomEvent), and
         // `@_exported imports Lynx` so subclasses of `WhiskerUI<View>`
@@ -67,11 +61,10 @@ let package = Package(
         // including WhiskerView / WhiskerViewController / AppDelegate).
         .library(name: "WhiskerModule", targets: ["WhiskerModule"]),
         .library(name: "WhiskerRuntime", targets: ["WhiskerRuntime"]),
-        // Phase 7-Φ.G: each module package is now its own SwiftPM
-        // library and needs to `import Lynx` (etc.) directly to
-        // subclass `LynxUI<UIView>`. Expose the binary frameworks
-        // as products so module Package.swifts can pull them via
-        // `.product(name: "Lynx", package: "WhiskerRuntime")`.
+        // Each module package is its own SwiftPM library and needs to
+        // `import Lynx` (etc.) directly to subclass `LynxUI<UIView>`,
+        // so the binary frameworks are exposed as products and pulled
+        // via `.product(name: "Lynx", package: "WhiskerRuntime")`.
         .library(name: "Lynx", targets: ["Lynx"]),
         .library(name: "LynxBase", targets: ["LynxBase"]),
         .library(name: "LynxServiceAPI", targets: ["LynxServiceAPI"]),
@@ -90,13 +83,8 @@ let package = Package(
         // step (before any Build Phase runs), caches the unpacked
         // xcframeworks under the user's per-Xcode-project SourcePackages
         // dir, and shares them across every WhiskerRuntime consumer.
-        // The previous `binaryTarget(path:)` form required the cli to
-        // pre-populate `target/lynx-ios/*.xcframework` via
-        // `ensure_lynx_ios` + `link_lynx_into_workspace(Ios)` before
-        // xcodebuild started — that prerequisite no longer applies for
-        // the binaries themselves (PrimJS *headers* are still staged
-        // by `whisker-driver-sys`'s build.rs out of `target/lynx-headers`
-        // until the matching module-side refactor lands).
+        // PrimJS *headers* are separate: `whisker-driver-sys`'s
+        // build.rs still stages them out of `target/lynx-headers`.
         .binaryTarget(
             name: "Lynx",
             url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.1/Lynx-4.0.1-whisker.1.xcframework.zip",
@@ -118,8 +106,8 @@ let package = Package(
             checksum: "76502d535310b42d7c15d9dcb8e802622d17f8541bcee5a8dcf8863b59d8f45b"
         ),
 
-        // Phase J — minimal module-author surface. Carved out of the
-        // larger `WhiskerRuntime` target so a third-party Whisker
+        // Minimal module-author surface, kept apart from the larger
+        // `WhiskerRuntime` target so a third-party Whisker
         // module's `Package.swift` only pulls in the types it actually
         // uses (`WhiskerValue`, `WhiskerUI`, `WhiskerContext`,
         // `WhiskerCustomEvent`) without dragging in the host-side

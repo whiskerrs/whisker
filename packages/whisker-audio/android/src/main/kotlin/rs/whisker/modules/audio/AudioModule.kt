@@ -1,15 +1,12 @@
 // `whisker-audio` Module (Android). View-less.
 //
-// Holds a `MutableMap<Long, ExoPlayer>` of active players; each
-// Rust-side `Player` allocation calls `create(id, source)` to
-// install a fresh entry, drives it through `play` / `pause` /
-// `seekTo` / etc, and `release(id)` from `PlayerInner::drop`
-// removes it.
+// Each Rust-side `Player` allocation calls `create(id, source)`, drives
+// its entry through `play` / `pause` / `seekTo`, and `release(id)` from
+// `PlayerInner::drop` removes it.
 //
-// Per-player playback state is dispatched back through a
-// `statusChanged` event whose payload carries the `playerId`
-// alongside the position / duration / flags — the Rust side's
-// global dispatch table routes each event to the matching handle.
+// Playback state flows back through a single `statusChanged` event whose
+// payload carries `playerId`, so the Rust side's global dispatch table
+// can route it to the matching handle.
 
 package rs.whisker.modules.audio
 
@@ -27,37 +24,32 @@ import rs.whisker.runtime.WhiskerValue
 class AudioModule : Module() {
 
     /**
-     * Live players, keyed by the id the Rust side allocates. Map
-     * lookups happen on the main thread (Lynx's bridge dispatch
-     * thread is the UI thread on Android), so a plain
-     * `HashMap` is enough — no Concurrent variant needed.
+     * Live players, keyed by the id the Rust side allocates. A plain
+     * `HashMap` suffices because every lookup is on the main thread —
+     * Lynx's bridge dispatch thread is the UI thread on Android.
      */
     private val players: MutableMap<Long, ExoPlayer> = mutableMapOf()
     private val loopFlags: MutableMap<Long, Boolean> = mutableMapOf()
 
     /**
-     * Pending `create` requests that arrived before any
-     * `WhiskerView` was attached as a host. `Player::new` on the
-     * Rust side fires from the first render, which runs inside
-     * `WhiskerView`'s constructor — `currentActivity` is still
-     * `null` at that moment. We stash the requests here and drain
-     * them from the [HostAttachedListener] body.
+     * `create` requests that arrived before any `WhiskerView` was attached
+     * as a host. Rust's `Player::new` fires from the first render, which
+     * runs inside `WhiskerView`'s constructor, so `currentActivity` is
+     * still `null` then. Drained by the [HostAttachedListener].
      */
     private val pendingCreates: MutableList<Pair<Long, String>> = mutableListOf()
 
     /**
-     * `null` until [ensureAttachListener] runs the first time
-     * `pendingCreates` had to queue something; from then on it
-     * stays installed for the process lifetime and drains the
-     * queue on every (re-)attach.
+     * Installed the first time [pendingCreates] has to queue something,
+     * then kept for the process lifetime so the queue drains on every
+     * re-attach.
      */
     private var hostListener: HostAttachedListener? = null
 
     /**
-     * Per-player position timer. While `isPlaying` we tick at
-     * ~200 ms cadence so the Rust signal sees smooth progress;
-     * the timer is cancelled on `pause` / `stop` / `release` so a
-     * paused player doesn't pin a Handler post for nothing.
+     * Per-player position timer, ticking at ~200 ms while playing so the
+     * Rust signal sees smooth progress. Cancelled on pause / stop /
+     * release so a paused player doesn't pin a Handler post for nothing.
      */
     private val positionTicker = Handler(Looper.getMainLooper())
     private val tickRunnables: MutableMap<Long, Runnable> = mutableMapOf()
@@ -129,14 +121,9 @@ class AudioModule : Module() {
     }
 
     /**
-     * Create the ExoPlayer instance for `id` and wire its
-     * `Player.Listener` so state changes flow back to Rust via
-     * `statusChanged` events.
-     *
-     * Defers if the host Activity isn't attached yet (the common
-     * case when `Player::new` runs during the very first render).
-     * Queued requests drain via [ensureAttachListener] once the
-     * WhiskerView attaches.
+     * Create the ExoPlayer for `id` and wire its `Player.Listener` so state
+     * changes flow back to Rust. Defers when the host Activity isn't
+     * attached yet — the common case during the very first render.
      */
     private fun createPlayer(id: Long, source: String) {
         val ctx = appContext.currentActivity
@@ -167,9 +154,9 @@ class AudioModule : Module() {
     }
 
     /**
-     * Snapshot the current state of player `id` and broadcast it
-     * as a `statusChanged` event. Silently no-ops if the player
-     * is no longer in the map (e.g. event fired after release).
+     * Snapshot player `id` and broadcast it as `statusChanged`. No-ops when
+     * the player is gone from the map — a listener callback can still land
+     * after `release`.
      */
     private fun dispatchStatus(id: Long) {
         val p = players[id] ?: return
@@ -190,14 +177,12 @@ class AudioModule : Module() {
     }
 
     /**
-     * Begin posting a status update every ~200 ms for player `id`.
-     * The Handler runs on the main thread, the only one allowed to
-     * touch ExoPlayer state.
+     * The Handler runs on the main thread, the only one allowed to touch
+     * ExoPlayer state.
      */
     private fun startTicker(id: Long) {
-        // Cancel any prior ticker before installing a fresh one —
-        // a rapid pause-play flip otherwise stacks two
-        // simultaneous post chains.
+        // A rapid pause-play flip would otherwise stack two simultaneous
+        // post chains.
         tickRunnables.remove(id)?.let { positionTicker.removeCallbacks(it) }
         val runnable = object : Runnable {
             override fun run() {
@@ -215,17 +200,15 @@ class AudioModule : Module() {
     }
 
     /**
-     * One-shot install of the host-attached listener that drains
-     * [pendingCreates]. `addOnHostAttachedListener` fires
-     * synchronously if a host is already attached, so even a late
-     * call after host-attach lands at the right place.
+     * One-shot install of the listener that drains [pendingCreates].
+     * `addOnHostAttachedListener` fires synchronously when a host is
+     * already attached, so a late call still lands correctly.
      */
     private fun ensureAttachListener() {
         if (hostListener != null) return
         val listener = HostAttachedListener {
-            // Snapshot then clear so a re-attach during drain
-            // (e.g. config-change rotation) doesn't see a
-            // half-drained queue.
+            // Snapshot then clear, so a re-attach mid-drain (rotation)
+            // can't see a half-drained queue.
             val pending = pendingCreates.toList()
             pendingCreates.clear()
             for ((id, source) in pending) {

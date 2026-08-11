@@ -12,14 +12,11 @@
 //
 // ## Lifecycle
 //
-// * `OnStartObserving("insetsChanged")` — register the
-//   `NotificationCenter` observer **and** push the current insets of
-//   any already-attached `WhiskerView` so the signal isn't stuck at
-//   `default()` after a late subscription (e.g. a component that
-//   mounts after the host view has finished laying out).
-// * `OnStopObserving("insetsChanged")` — remove the observer. The
-//   bridge guarantees this fires on the 1→0 transition, so we don't
-//   leak the closure.
+// `OnStartObserving` must also push the current insets of any
+// already-attached `WhiskerView`, or a component that mounts after the
+// host view finished laying out leaves the signal stuck at `default()`.
+// The bridge guarantees `OnStopObserving` fires on the 1→0 transition,
+// so the observer closure can't leak.
 
 import Foundation
 import UIKit
@@ -28,11 +25,9 @@ import WhiskerRuntime
 
 public final class SafeAreaModule: Module {
 
-    /// Live `NotificationCenter` observer token. `nil` between the
-    /// `OnStopObserving` removal and the next `OnStartObserving`
-    /// install. Stored so the matching remove call targets the same
-    /// token (`NotificationCenter.removeObserver(_:)` keys on
-    /// identity).
+    /// Live `NotificationCenter` observer token, held because
+    /// `removeObserver(_:)` keys on identity and must be handed the same
+    /// token back.
     private var observerToken: NSObjectProtocol?
 
     public override func definition() -> ModuleDefinition {
@@ -62,12 +57,10 @@ public final class SafeAreaModule: Module {
             self?.sendEvent("insetsChanged", Self.encode(insets))
         }
 
-        // Late-subscription priming: if a WhiskerView is already
-        // attached and laid out, its `safeAreaInsetsDidChange` has
-        // already fired (before our observer existed). Walk the
-        // connected scenes and push the current value of any
-        // matching key window's root so the Rust signal moves off
-        // `default()` immediately.
+        // An already-laid-out WhiskerView fired
+        // `safeAreaInsetsDidChange` before this observer existed, so its
+        // current value has to be pushed by hand or the Rust signal sits
+        // at `default()` until the next change.
         if let insets = currentAttachedInsets() {
             sendEvent("insetsChanged", Self.encode(insets))
         }
@@ -80,10 +73,9 @@ public final class SafeAreaModule: Module {
         observerToken = nil
     }
 
-    /// Find the first attached `WhiskerView`'s safe-area insets among
-    /// the connected scenes. Returns `nil` if no `WhiskerView` is on
-    /// screen yet (cold start before first attach) — the regular
-    /// notification path takes over once one mounts.
+    /// Find the first attached `WhiskerView`'s safe-area insets among the
+    /// connected scenes. `nil` on a cold start before first attach, where
+    /// the regular notification path takes over once one mounts.
     private func currentAttachedInsets() -> UIEdgeInsets? {
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
@@ -96,11 +88,10 @@ public final class SafeAreaModule: Module {
         return nil
     }
 
-    /// Recursive search for the first `WhiskerView` in a view tree.
-    /// Linear in the number of subviews — fine for the one-shot
-    /// startObserving priming. Apps with multiple WhiskerViews get the
-    /// first one in tree order; the regular notification path
-    /// thereafter handles the per-instance broadcast.
+    /// Recursive search for the first `WhiskerView` in a view tree. An app
+    /// with several of them gets the first in tree order; only the
+    /// one-shot priming uses this, and the notification path handles the
+    /// per-instance broadcast thereafter.
     private func findWhiskerView(in view: UIView) -> WhiskerView? {
         if let v = view as? WhiskerView { return v }
         for child in view.subviews {
@@ -109,11 +100,11 @@ public final class SafeAreaModule: Module {
         return nil
     }
 
-    /// `UIEdgeInsets` → `WhiskerValue.map` with the keys the Rust
-    /// side's `decode_payload` expects. iOS's `UIEdgeInsets` uses
-    /// `left` / `right` (not `leading` / `trailing`) — map directly,
-    /// LTR-only for now. RTL-aware modules can read
-    /// `effectiveUserInterfaceLayoutDirection` later if needed.
+    /// `UIEdgeInsets` → `WhiskerValue.map` with the keys the Rust side's
+    /// `decode_payload` expects. `UIEdgeInsets` is `left` / `right` while
+    /// the payload is `leading` / `trailing`, mapped directly — this is
+    /// LTR-only, and an RTL-aware version would consult
+    /// `effectiveUserInterfaceLayoutDirection`.
     static func encode(_ insets: UIEdgeInsets) -> WhiskerValue {
         .map([
             "top": .float(Double(insets.top)),

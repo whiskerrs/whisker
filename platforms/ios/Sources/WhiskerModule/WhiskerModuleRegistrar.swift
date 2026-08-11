@@ -1,4 +1,4 @@
-// Phase L-2b — iOS dispatch wiring for the `ModuleDefinition` DSL.
+// iOS dispatch wiring for the `ModuleDefinition` DSL.
 //
 // At module-registration time (typically host-app launch), the
 // framework calls `module.registerWithLynx()`. This walks the DSL
@@ -15,26 +15,13 @@
 //       + instance method `foo:withResult:`              → invokes the closure
 //
 // These are exactly the shapes Lynx's `LynxPropsProcessor` and
-// `LynxUIMethodProcessor` scan for via class-method reflection, so
-// the DSL-driven setters / methods become indistinguishable at the
-// Lynx layer from those emitted by the `@WhiskerProp` /
-// `@WhiskerUIMethod` annotations.
-//
-// ## Coexistence with the annotation API
-//
-// Both paths register against the same Lynx reflection surface.
-// A class that uses *only* the DSL has no annotation-emitted
-// methods to worry about. A class that mixes both works too — the
-// emitted selectors are distinct (annotation-based methods are
-// compile-time-known, DSL-based ones are runtime-added) and Lynx's
-// reflection discovers both.
+// `LynxUIMethodProcessor` scan for via class-method reflection.
 //
 // ## Author bootstrap
 //
 // Module authors add their `WhiskerModule` subclass once to the
-// host app's startup code (or — once Phase L-2's codegen plugin
-// lands — let the build plugin generate the registration call). A
-// minimal driver:
+// host app's startup code, or let the codegen build plugin generate
+// the registration call. A minimal driver:
 //
 // ```swift
 // @main
@@ -58,16 +45,14 @@ extension Module {
     /// re-installs over the previous registration (last-write-wins).
     /// Module-level (view-less) `Function`s are not wired up here;
     /// the module-level dispatch path lives in the codegen-emitted
-    /// `@_cdecl` shim + `whisker_bridge_register_module_dispatch`
-    /// (Phase L-3).
+    /// `@_cdecl` shim + `whisker_bridge_register_module_dispatch`.
     public func registerWithLynx() {
         let def = self.definitionLazy
 
         // Function-only modules (no `View(...)` block) don't install
         // anything on a LynxUI class — their module-level `Function`s
         // dispatch through `dispatchModuleFunction(_:_:)` via the
-        // codegen-emitted `@_cdecl` shim + `whisker_bridge_register_
-        // module_dispatch` (Phase L-3), not through this method.
+        // codegen-emitted `@_cdecl` shim, not through this method.
         guard let viewBlock = def.view else { return }
 
         let viewClass: AnyClass = viewBlock.viewClass
@@ -79,9 +64,8 @@ extension Module {
             case let fn as WhiskerFunctionComponent:
                 WhiskerLynxInstaller.installFunction(fn, on: viewClass)
             case is WhiskerEventsComponent:
-                // Events are declaration-only metadata in L-2a/b.
-                // Dispatch is still via the imperative
-                // `WhiskerCustomEvent.dispatch(from:name:params:)` path.
+                // Declaration-only metadata; dispatch goes through
+                // `WhiskerCustomEvent.dispatch(from:name:params:)`.
                 continue
             default:
                 continue
@@ -106,10 +90,6 @@ internal enum WhiskerLynxInstaller {
         // Lynx's reflection: for each class method whose name starts
         // with `__lynx_prop_config__`, call it to recover the
         // `[propName, shortSelector, typeName]` triple.
-        //
-        // We pick selector `set<Capitalized>:requestReset:` so the
-        // generated probe shape matches what `@WhiskerProp` would
-        // have produced for an identically-named prop.
         let propName = comp.name
         let setterShort = "set" + propName.uppercasingFirstLetter()
         let configSelName = "__lynx_prop_config__" + propName
@@ -122,8 +102,6 @@ internal enum WhiskerLynxInstaller {
         let configBlock: @convention(block) (AnyClass) -> [String] = { _ in
             // Type name `id` keeps Lynx's value-unboxing in
             // "pass through whatever the bridge handed in" mode.
-            // L-2c will tighten this for typed props once the
-            // DSL component carries explicit type info.
             return [propName, setterShort, "id"]
         }
         let configIMP = imp_implementationWithBlock(configBlock)
@@ -145,7 +123,6 @@ internal enum WhiskerLynxInstaller {
         let setterSel = NSSelectorFromString(setterShort + ":requestReset:")
         let setter = comp.setter
         let setterBlock: @convention(block) (AnyObject, Any?, Bool) -> Void = { view, value, _ in
-            // Case ②: hand the closure the raw `WhiskerValue`.
             let wv = value.map { WhiskerValue.from(nsObject: $0) } ?? .null
             setter(view, wv)
         }
@@ -188,16 +165,12 @@ internal enum WhiskerLynxInstaller {
         // on a normal return and pass back the result encoded as an
         // Any? (NSNull-erased on Void closures).
         //
-        // Args decode: Lynx hands `params` as `@{ "args":
-        //   [<positional entries>] }` (matching what the existing
-        //   `@WhiskerUIMethod` macro decodes). We pull out the array
-        //   and hand it to the closure.
+        // Args decode: Lynx hands `params` as
+        //   `@{ "args": [<positional entries>] }`. We pull out the
+        //   array and hand it to the closure.
         let methodSel = NSSelectorFromString(methodName + ":withResult:")
         let handler = comp.handler
         let methodBlock: @convention(block) (AnyObject, NSDictionary?, LynxUIMethodCallbackBlockShim?) -> Void = { view, params, cb in
-            // Case ②: decode Lynx's `@{ "args": [...] }` into the raw
-            // `[WhiskerValue]` the closure receives, and encode its
-            // `WhiskerValue` result back for the Lynx callback.
             let args = WhiskerValue.fromNSDictionary(params)
             let result = handler(view, args)
             // Lynx kUIMethodSuccess = 0; reported unconditionally —
@@ -210,12 +183,9 @@ internal enum WhiskerLynxInstaller {
             on: viewClass,
             selector: methodSel,
             imp: methodIMP,
-            // `v@:@@` = void return, (self id, SEL, params id, block id).
-            // Obj-C blocks are typed as `@?` strictly, but `@` works
-            // for argument-position blocks against `imp_implementation
-            // WithBlock`-produced IMPs (the underlying ABI is the
-            // same). `@?` here gives clearer crash diagnostics when
-            // Lynx ever invokes us with a wrong shape.
+            // `v@:@@?` = void return, (self id, SEL, params id, block).
+            // `@` also works for argument-position blocks (same ABI);
+            // `@?` gives clearer crash diagnostics on a shape mismatch.
             typeEncoding: "v@:@@?"
         )
     }
@@ -229,9 +199,7 @@ internal enum WhiskerLynxInstaller {
         typeEncoding: String,
     ) {
         if !class_addMethod(cls, selector, imp, typeEncoding) {
-            // Method already exists on the class — replace its IMP
-            // in-place. `class_replaceMethod` returns the previous
-            // IMP (or nil); we ignore that.
+            // Method already exists — replace its IMP in-place.
             _ = class_replaceMethod(cls, selector, imp, typeEncoding)
         }
     }

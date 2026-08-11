@@ -41,7 +41,7 @@ open class Module {
     /// Fully-qualified module name (`<crate>:<Name>`), set by the
     /// codegen-emitted registration call. `nil` until the module
     /// has been registered — `sendEvent` will silently no-op in
-    /// that window. Authors must NOT set this themselves; the L-2c
+    /// that window. Authors must NOT set this themselves; the
     /// codegen does. (Public-set rather than `internal(set)` so the
     /// generated registration block, which lives in a different
     /// Swift module than `WhiskerModule`, can assign it.)

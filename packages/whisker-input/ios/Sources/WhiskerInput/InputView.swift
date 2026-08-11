@@ -3,42 +3,26 @@
 // `InputModule`'s `definition()` — no annotations required here.
 //
 // `@objc(WhiskerInputView)` pins the Obj-C class name so the codegen
-// plugin's `NSClassFromString` lookup can find it regardless of whether
-// the SwiftPM-target prefix (`whisker_input.WhiskerInputView`) or the
+// plugin's `NSClassFromString` lookup finds it whether the
+// SwiftPM-target-prefixed form (`whisker_input.WhiskerInputView`) or the
 // bare form is used.
 //
 // ## Single-line vs multiline
 //
-// The backing control is chosen lazily. `WhiskerUI<UIView>` hosts a
-// transparent `containerView` that holds either a `UITextField` or a
-// `UITextView` pinned to its bounds. The `multiline` prop (default
-// false) triggers a rebuild of the hosted control the first time it
-// changes; subsequent changes to `multiline` after the control is
-// built are treated as no-ops (matching native-input semantics: the
-// field type is set once at construction time). Consumers that need to
-// switch between single/multiline should remount the component.
-//
-// ## Event body shape
-//
-// All value-carrying events use `{ "detail": { "value": "<text>" } }`
-// so the Rust `InputEvent` struct's `#[serde(default)]` decode sees
-// the expected shape. Focus / blur emit `{ "detail": {} }`.
+// `WhiskerUI<UIView>` hosts a transparent `containerView` holding either
+// a `UITextField` or a `UITextView` pinned to its bounds. Because the
+// two are different UIKit classes, switching `multiline` tears the
+// control down and rebuilds it — so every prop is cached and re-applied
+// across the swap (props may arrive in any order relative to
+// `multiline`, which itself arrives after `createView`).
 //
 // ## Cursor-preservation diff
 //
-// `setValue(_:)` only calls `field.text = ...` / `textView.text = ...`
-// when the incoming string differs from what the control currently
-// displays. This avoids a cursor-jump on the two-way-binding round
-// trip (Rust sets `value`, view fires `input`, Rust sets `value` again
-// with the same text the view just reported — without the guard this
-// causes the insertion point to jump to the end on every keystroke).
-//
-// ## CSS text-style props
-//
-// `color`, `font-size`, `font-weight`, `text-align` are received as
-// `Prop(...)` callbacks from the `InputModule` definition. They are
-// applied immediately to whichever control is currently active and
-// cached so the next control swap re-applies them.
+// `setValue(_:)` writes the control's text only when it differs from
+// what is displayed. Rust sets `value`, the view fires `input`, Rust
+// sets `value` again with the text the view just reported — writing
+// unconditionally would jump the insertion point to the end on every
+// keystroke.
 
 import Foundation
 import UIKit
@@ -46,17 +30,15 @@ import WhiskerModule
 
 @objc(WhiskerInputView)
 /// A container `UIView` that invokes `onDetach` when it leaves its
-/// window (a real unmount). Used by [`WhiskerInputView`] to resign the
-/// field's first responder on teardown so a removed input never lingers
-/// as the keyboard target.
+/// window, so `WhiskerInputView` can resign first responder on teardown
+/// and a removed input never lingers as the keyboard target.
 private final class DetachAwareView: UIView {
     var onDetach: (() -> Void)?
 
     override func willMove(toWindow newWindow: UIWindow?) {
         super.willMove(toWindow: newWindow)
-        // `nil` newWindow = the view is being removed from the hierarchy.
-        // (A single↔multiline control swap replaces the *inner* control,
-        // not this container, so it doesn't spuriously trigger here.)
+        // A single↔multiline swap replaces the *inner* control, not this
+        // container, so a nil window really is an unmount.
         if newWindow == nil {
             onDetach?()
         }
@@ -67,16 +49,13 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
 
     // MARK: - Hosted controls
 
-    /// Transparent container that fills the LynxUI frame; holds
-    /// either the `textField` or `textView` as a subview.
+    /// Transparent container that fills the LynxUI frame; holds either the
+    /// `textField` or `textView` as a subview.
     ///
     /// A [`DetachAwareView`] so it can resign focus on unmount. UIKit
-    /// already auto-resigns a first responder that's removed from its
-    /// window, but doing it explicitly also dismisses the IME promptly
-    /// and keeps parity with the Android `onViewDetachedFromWindow`
-    /// hook. Navigation-driven dismissal is handled up front by
-    /// whisker-router; this covers non-navigation unmounts (a
-    /// conditionally-rendered field removed while focused).
+    /// auto-resigns a first responder removed from its window anyway, but
+    /// doing it explicitly dismisses the IME promptly and keeps parity with
+    /// Android's `onViewDetachedFromWindow` hook.
     private lazy var containerView: UIView = {
         let v = DetachAwareView()
         v.backgroundColor = .clear
@@ -84,28 +63,20 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         return v
     }()
 
-    /// The live single-line field, when the current mode is single-line.
     /// Mutually exclusive with `textView` — exactly one is non-nil once a
     /// control has been built.
     private var textField: UITextField?
 
-    /// The live multiline area, when the current mode is multiline.
     /// Mutually exclusive with `textField`.
     private var textView: UITextView?
 
-    /// Whether the view is currently in multiline mode. Determines which
-    /// control is hosted in `containerView`. `setMultiline` rebuilds the
-    /// control whenever the requested mode differs from this.
     private var isMultiline: Bool = false
 
     // MARK: - Cached prop state
     //
-    // All mutable props are cached so they can be re-applied whenever the
-    // hosted control is (re)built — both on the initial build and when
-    // `setMultiline` switches between single-line and multiline. Props can
-    // arrive in any order relative to `multiline`, so we cache everything
-    // and `applyAllCachedProps()` reinstates the full state onto the new
-    // control after a switch.
+    // Every prop is cached so `applyAllCachedProps()` can reinstate the
+    // full state onto a freshly built control after a single↔multiline
+    // switch.
 
     private var cachedText: String = ""
     private var cachedPlaceholder: String = ""
@@ -118,13 +89,10 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     private var cachedMaxLength: Int = 0                // 0 = unset
     private var cachedKeyboardType: UIKeyboardType = .default
     private var cachedReturnKeyType: UIReturnKeyType = .default
-    // Default `.sentences` matches UIKit's own UITextField/UITextView
-    // default, so a field that never sets `auto-capitalize` behaves
-    // exactly as before this prop existed.
     private var cachedAutoCapitalize: UITextAutocapitalizationType = .sentences
-    // `.default` (not `.yes`) for the enabled case so UIKit keeps its
-    // contextual behaviour — e.g. it already disables autocorrect on URL
-    // / email keyboards. `false` forces `.no`.
+    // `.default` rather than `.yes` for the enabled case, so UIKit keeps
+    // its contextual behaviour — it already disables autocorrect on URL /
+    // email keyboards. Only `false` forces `.no`.
     private var cachedAutocorrect: UITextAutocorrectionType = .default
     private var cachedSpellCheck: UITextSpellCheckingType = .default
     private var cachedTextColor: UIColor = .label
@@ -132,49 +100,41 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     private var cachedFontWeight: UIFont.Weight = .regular
     private var cachedTextAlignment: NSTextAlignment = .natural
 
-    /// Computed CSS padding (left/top/right/bottom) read from the base
-    /// `LynxUI.padding`. Insets the text inside both controls so the text
-    /// doesn't sit flush against the element edges. Defaults to `.zero`
-    /// (flush) so a field with no CSS padding matches Android's 0 default.
+    /// Computed CSS padding read from the base `LynxUI.padding`. Defaults
+    /// to `.zero` so a field with no CSS padding sits flush, matching
+    /// Android.
     private var cachedPadding: UIEdgeInsets = .zero
 
-    /// True once a control (UITextField or UITextView) has been built.
-    /// Distinguishes "no control yet" (initial build path) from "control
-    /// exists, possibly needs a mode switch" in `ensureControl`.
+    /// Distinguishes "no control yet" from "control exists, possibly needs
+    /// a mode switch" in `ensureControl`.
     private var controlBuilt: Bool = false
 
     // MARK: - LynxUI lifecycle
 
     @objc public override func createView() -> UIView {
-        // The host container is created once; the inner control
-        // (`UITextField` or `UITextView`) is built lazily in
-        // `ensureControl()`. Default to single-line so the very first
-        // render shows a working text field even if `multiline` hasn't
-        // arrived yet.
+        // Default to single-line so the first render shows a working field
+        // even though `multiline` hasn't arrived yet.
         ensureControl(multiline: false)
         return containerView
     }
 
     @objc public override func frameDidChange() {
         super.frameDidChange()
-        // `self.view()` is the `containerView` — Lynx already set its
-        // frame to the computed element bounds. Propagate that frame to
-        // the hosted UITextField / UITextView so they fill the element.
+        // Lynx sizes `containerView` to the computed element bounds; the
+        // hosted control has to be propagated the same frame by hand.
         let bounds = self.view().bounds
         textField?.frame = bounds
         textView?.frame = bounds
-        // Padding is resolved during layout, so this hook (which fires
-        // after layout) is the authoritative point to read it.
+        // Padding is only resolved during layout, so this post-layout hook
+        // is the authoritative point to read it.
         syncPadding()
     }
 
-    /// Fired by Lynx after a batch of prop / style updates has been
-    /// applied. We use it as a belt-and-braces fallback for `font-size`:
-    /// the base `LynxUI` exposes the computed `fontSize` (a resolved
-    /// point value) for ANY element, so even if the `font-size` prop
-    /// dispatch didn't reach our setter, we still pick up the cascaded
-    /// value here. `color` / `font-weight` / `text-align` have no
-    /// base-class computed accessor, so those rely on the `Prop` setters.
+    /// Fallback for `font-size`: the base `LynxUI` exposes a resolved
+    /// computed `fontSize` for any element, so the cascaded value is picked
+    /// up here even when the `font-size` prop dispatch never reaches
+    /// `setFontSize`. `color` / `font-weight` / `text-align` have no such
+    /// base-class accessor and depend on their `Prop` setters.
     @objc public override func propsDidUpdate() {
         super.propsDidUpdate()
         let computed = self.fontSize
@@ -186,10 +146,9 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         syncPadding()
     }
 
-    /// Read the base `LynxUI.padding` (computed CSS padding — shorthand,
-    /// units, and per-side longhands all already resolved to point insets
-    /// by Lynx's layout) and apply it to the live control when it changed.
-    /// This is the single source of truth for the field's text inset.
+    /// Apply the base `LynxUI.padding` — shorthand, units, and per-side
+    /// longhands already resolved to point insets by Lynx's layout — to the
+    /// live control. The single source of truth for the field's text inset.
     private func syncPadding() {
         let p = self.padding
         if p != cachedPadding {
@@ -201,23 +160,13 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     // MARK: - Control builder
 
     /// Build the hosted control for `multiline`, or switch to it if a
-    /// control of the other mode is already live.
-    ///
-    /// `createView()` calls this once with the default single-line mode
-    /// so the element always shows a working field. `setMultiline(...)`
-    /// then calls it again once the real `multiline` value arrives (props
-    /// are applied after `createView`); if that differs from the current
-    /// mode we tear down the old control and rebuild as the other kind,
-    /// re-applying all cached props so no state (text / colours / font /
-    /// alignment / behaviour) is lost across the switch.
+    /// control of the other mode is already live, re-applying every cached
+    /// prop so no state is lost across the switch.
     private func ensureControl(multiline: Bool) {
-        // Already in the requested mode → nothing to do.
         if controlBuilt && isMultiline == multiline { return }
 
-        // Tear down the existing control (if any) before building the new
-        // one. Removing from the superview drops UIKit's strong ref; we
-        // also nil our own refs and clear the delegate / targets so a
-        // stale control can't deliver events after the switch.
+        // Clear the delegate and targets as well as dropping the refs, so a
+        // torn-down control can't deliver events after the switch.
         if let tf = textField {
             tf.delegate = nil
             tf.removeTarget(self, action: nil, for: .allEvents)
@@ -239,8 +188,8 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
             buildTextField()
         }
 
-        // Pin the freshly-built control to the container's current bounds
-        // (frameDidChange may have already fired before this switch).
+        // `frameDidChange` may already have fired before this switch, so
+        // pin the fresh control to the container's current bounds.
         let bounds = containerView.bounds
         textField?.frame = bounds
         textView?.frame = bounds
@@ -249,15 +198,9 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     private func buildTextField() {
-        // `PaddedTextField` insets text / placeholder by `textInsets`;
-        // plain UITextField has no built-in inset, so a subclass is the
-        // only way to honor CSS padding on a single-line field.
         let tf = PaddedTextField()
         tf.borderStyle = .none
         tf.backgroundColor = .clear
-        // `autocorrectionType` / `spellCheckingType` are applied from the
-        // cached prop state in `applyBehaviour` (called via
-        // `applyAllCachedProps` right after this build).
         tf.addTarget(self, action: #selector(textFieldDidChange(_:)), for: .editingChanged)
         tf.addTarget(self, action: #selector(textFieldDidEndOnExit(_:)), for: .editingDidEndOnExit)
         tf.delegate = self
@@ -268,21 +211,16 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     private func buildTextView() {
         let tv = UITextView()
         tv.backgroundColor = .clear
-        // Start flush; `applyPadding()` sets the real CSS-padding inset.
-        // `lineFragmentPadding = 0` so horizontal padding equals exactly
-        // the CSS value (otherwise the container adds its own padding).
+        // Zero `lineFragmentPadding` so horizontal CSS padding lands
+        // exactly, rather than adding to the container's own padding.
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
-        // Top-align the text. A UITextView vertically centers its content
-        // whenever the content height is shorter than the bounds UNLESS
-        // scrolling is enabled (scroll-enabled views pin content to the
-        // top). Force scroll on, and disable the system content-inset
-        // adjustment so the safe-area / nav-bar doesn't push the first
-        // line down off the top edge.
+        // A UITextView vertically centers content shorter than its bounds
+        // unless scrolling is enabled, so scroll-on is what top-aligns the
+        // text; `.never` then stops the safe area pushing the first line
+        // off the top edge.
         tv.isScrollEnabled = true
         tv.contentInsetAdjustmentBehavior = .never
-        // Default the keyboard's return key to insert a newline (the
-        // multiline contract); `setReturnKey` may override the label.
         tv.returnKeyType = .default
         tv.delegate = self
         containerView.addSubview(tv)
@@ -302,10 +240,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     /// Inset the text by the computed CSS padding on whichever control is
-    /// live. UITextField routes through the `PaddedTextField` subclass's
-    /// `textInsets`; UITextView uses `textContainerInset` directly (with
-    /// `lineFragmentPadding = 0` already set so horizontal padding is
-    /// exact, not padding + the container's default fragment padding).
+    /// live.
     private func applyPadding() {
         if let tf = textField as? PaddedTextField {
             tf.textInsets = cachedPadding
@@ -315,8 +250,8 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         }
     }
 
-    /// Apply current text to whichever control is active, without
-    /// cursor-jump (no-op when text hasn't changed).
+    /// Apply current text to whichever control is active. The equality
+    /// check is what preserves the cursor position.
     private func applyText(_ s: String) {
         if let tf = textField {
             if tf.text != s { tf.text = s }
@@ -332,18 +267,13 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
                 attributes: [.foregroundColor: cachedPlaceholderColor]
             )
         }
-        // UITextView has no native placeholder; skip for v1
-        // (a label-overlay approach would be the follow-up).
+        // UITextView has no native placeholder; unsupported for now.
     }
 
     private func applyColors() {
-        // iOS uses `tintColor` for both the cursor and selection highlight
-        // (UITextField / UITextView do not expose independent
-        // selection-color control via a public API). When `selection-color`
-        // is set it "wins" for that combined tint; otherwise fall back to
-        // `caret-color`. Both paths leave `caret-color` as the effective
-        // cursor color — best-effort, single tint shared across cursor and
-        // selection on this platform.
+        // UIKit exposes no independent selection color: `tintColor` drives
+        // both the cursor and the selection highlight, so `selection-color`
+        // wins the shared tint when set and `caret-color` is the fallback.
         let tint = cachedSelectionColor ?? cachedCaretColor
         if let tf = textField {
             tf.textColor = cachedTextColor
@@ -382,12 +312,12 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
             tv.autocapitalizationType = cachedAutoCapitalize
             tv.autocorrectionType = cachedAutocorrect
             tv.spellCheckingType = cachedSpellCheck
-            // UITextView has no `isSecureTextEntry`; secure flag is a no-op
-            // for multiline (passwords are always single-line in practice).
+            // UITextView has no `isSecureTextEntry`; `secure` is a no-op
+            // for multiline.
         }
         if cachedAutoFocus {
-            // Defer to the next run-loop so the view has been attached to
-            // the window before we try to become first responder.
+            // `becomeFirstResponder` does nothing until the view is in a
+            // window, which it isn't yet on this pass.
             DispatchQueue.main.async { [weak self] in
                 self?.textField?.becomeFirstResponder()
                 self?.textView?.becomeFirstResponder()
@@ -399,9 +329,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
 
     // ---- Value ----------------------------------------------------------
 
-    /// External value write (from Rust signal). Only re-sets the field's
-    /// displayed text when it differs from the current value — this is
-    /// the cursor-preservation diff guard described in the class comment.
+    /// External value write (from the Rust signal).
     public func setValue(_ s: String) {
         cachedText = s
         applyText(s)
@@ -427,7 +355,7 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     public func setSelectionColor(_ value: WhiskerValue) {
-        // Empty string / null → unset → fall back to caret color.
+        // Empty string / null means unset — fall back to the caret color.
         if case .string(let s) = value, s.isEmpty {
             cachedSelectionColor = nil
         } else if case .null = value {
@@ -442,20 +370,12 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
 
     public func setMultiline(_ s: String) {
         let want = (s == "true")
-        // `multiline` is always sent by the Rust outer component, and it
-        // arrives AFTER `createView()` has built the default single-line
-        // field. `ensureControl` switches the control to a UITextView when
-        // `want` is true (and back to a UITextField if it ever flips),
-        // re-applying all cached props so the field lands in the right mode
-        // with its full state intact.
         ensureControl(multiline: want)
     }
 
     public func setLines(_ s: String) {
-        // `lines` is a best-effort visible-line hint for multiline areas.
-        // CSS `height` / `min-height` from the Rust style prop is
-        // authoritative in v1; we store this for potential future use.
-        // (`UITextView` doesn't expose a "visible line count" API.)
+        // Deliberately inert: `UITextView` has no visible-line-count API,
+        // and CSS `height` / `min-height` is the authoritative sizing.
         _ = Int(s) ?? 0
     }
 
@@ -505,16 +425,13 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         cachedAutoCapitalize = Self.mapAutoCapitalize(s)
         textField?.autocapitalizationType = cachedAutoCapitalize
         textView?.autocapitalizationType = cachedAutoCapitalize
-        // Changing the autocapitalization type while the keyboard is up
-        // only takes effect on the next keyboard presentation; UIKit
-        // exposes `reloadInputViews()` to apply it live.
+        // A keyboard trait changed while the keyboard is up only takes
+        // effect on the next presentation unless the input views reload.
         if textField?.isFirstResponder == true { textField?.reloadInputViews() }
         if textView?.isFirstResponder == true { textView?.reloadInputViews() }
     }
 
     public func setAutocorrect(_ s: String) {
-        // `.default` (not `.yes`) for the enabled case — see the cached
-        // property's declaration.
         cachedAutocorrect = (s == "false") ? .no : .default
         textField?.autocorrectionType = cachedAutocorrect
         textView?.autocorrectionType = cachedAutocorrect
@@ -532,12 +449,12 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
 
     // ---- CSS text-style props ------------------------------------------
     //
-    // These arrive from Lynx's CSS cascade ALREADY PARSED (not as CSS
-    // strings): `color` is an ARGB int, `font-size` a resolved point
-    // value, `font-weight` a `LynxFontWeightType` enum int, `text-align`
-    // a `LynxTextAlignType` enum int. Each setter decodes the numeric
-    // form first and falls back to string parsing so it still works if
-    // the value is ever delivered as a plain-string attribute.
+    // These arrive from Lynx's CSS cascade ALREADY PARSED, not as CSS
+    // strings: `color` is an ARGB int, `font-size` a resolved point value,
+    // `font-weight` a `LynxFontWeightType` enum int, `text-align` a
+    // `LynxTextAlignType` enum int. Each setter decodes the numeric form
+    // first and falls back to string parsing, so it still works when the
+    // value arrives as a plain-string attribute instead.
 
     public func setTextColor(_ value: WhiskerValue) {
         cachedTextColor = Self.resolveColor(value) ?? .label
@@ -545,15 +462,13 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     public func setFontSize(_ value: WhiskerValue) {
-        // Numeric form (Lynx cascade): a resolved point size — use as-is.
         if let n = value.asDouble, n > 0 {
             cachedFontSize = CGFloat(n)
             applyFont()
             return
         }
-        // String form (plain attr): "16px", "16", "1.5em" → strip a
-        // trailing `px` and read the leading number. Unknown units leave
-        // the cached size unchanged rather than regressing the font.
+        // Unknown units leave the cached size unchanged rather than
+        // regressing the font to a wrong number.
         if let s = value.asString {
             let stripped = s.hasSuffix("px") ? String(s.dropLast(2)) : s
             if let pt = Double(stripped.trimmingCharacters(in: .whitespaces)), pt > 0 {
@@ -564,8 +479,6 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     public func setFontWeight(_ value: WhiskerValue) {
-        // Numeric form: `LynxFontWeightType` enum (Normal=0, Bold=1,
-        // 100=2 … 900=10). String form: a CSS keyword / numeric weight.
         if let i = value.asInt {
             cachedFontWeight = Self.mapLynxFontWeightEnum(Int(i))
         } else if let s = value.asString {
@@ -575,8 +488,6 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     public func setTextAlign(_ value: WhiskerValue) {
-        // Numeric form: `LynxTextAlignType` enum (Left=0, Center=1,
-        // Right=2, Start=3, End=4, Justify=5). String form: CSS keyword.
         if let i = value.asInt {
             cachedTextAlignment = Self.mapLynxTextAlignEnum(Int(i))
         } else if let s = value.asString {
@@ -599,8 +510,8 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         textView?.resignFirstResponder()
     }
 
-    /// Clear the text to empty AND emit `input` so the bound signal
-    /// updates (the same outcome as the user deleting all characters).
+    /// Clear the text and emit `input`, so the bound signal ends up where
+    /// it would be had the user deleted every character.
     public func clearField() {
         applyText("")
         cachedText = ""
@@ -617,40 +528,28 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     /// The event params — `{ "value": "<text>" }`.
     ///
     /// IMPORTANT: do NOT wrap this in a `detail` key. Lynx's
-    /// `generateEventBody` (iOS) / the Android event reporter already
-    /// places the dispatched `params` UNDER a `detail` key in the event
-    /// body (`{ type, target, currentTarget, detail: <params> }`). The
-    /// Rust `InputEvent { detail: { value } }` then reads `body.detail`.
-    /// Wrapping here too would double-nest (`detail: { detail: { value }}`)
-    /// and the value would never reach the handler — every `on_input` /
-    /// `on_change` / `on_submit` would deliver an empty string.
+    /// `generateEventBody` already places the dispatched `params` under
+    /// `detail` in the event body, and the Rust `InputEvent { detail: {
+    /// value } }` reads `body.detail`. Wrapping here double-nests, and
+    /// every `on_input` / `on_change` / `on_submit` delivers an empty
+    /// string.
     private func detailPayload(_ text: String) -> [AnyHashable: Any] {
         return ["value": text]
     }
 
-    // These dispatch SYNCHRONOUSLY. UIKit delegate callbacks
-    // (`textFieldDidEndEditing`, `textViewDidChange`, …) can fire during
-    // Lynx's native teardown on a hot-reload remount, *while*
-    // `remove_child` is on the stack inside Rust's renderer. Previously
-    // that re-entered `dispatch_event` → a second `with_renderer` borrow
-    // → "RefCell already borrowed" panic, so we deferred a runloop tick
-    // (`DispatchQueue.main.async`) to dodge it — which is exactly the
-    // one-tick-late delivery of whisker #3.
-    //
-    // The Rust renderer is now re-entrancy-safe: `DynRenderer` methods
-    // take `&self`, `BridgeRenderer` holds its state behind per-field
-    // `RefCell`s with FFI-scoped borrows, and `with_renderer` takes a
-    // SHARED borrow — so a synchronous re-entrant `dispatch_event` during
-    // teardown is granted instead of aborting. See
-    // `crates/whisker-runtime/src/view/renderer.rs` (`with_renderer`) and
-    // `crates/whisker-driver/src/lynx/renderer.rs` (BridgeRenderer). With
-    // that fix the deferral is no longer needed, and removing it collapses
-    // the one-tick delay: `on_input` / `on_change` / `on_submit` now
-    // deliver on the same tick the user interacts.
+    // The emitters below dispatch SYNCHRONOUSLY, which is only safe because
+    // the Rust renderer is re-entrancy-safe: `DynRenderer` methods take
+    // `&self`, `BridgeRenderer` keeps its state behind per-field `RefCell`s
+    // with FFI-scoped borrows, and `with_renderer` takes a SHARED borrow
+    // (whisker #3). That matters because UIKit delegate callbacks can fire
+    // during Lynx's teardown on a hot-reload remount, while `remove_child`
+    // is still on the Rust stack — a re-entrant `dispatch_event` is granted
+    // rather than aborting on "RefCell already borrowed". Deferring a
+    // runloop tick instead would cost every event a tick of latency.
 
     private func emitInput(_ text: String) {
-        // `cachedText` is owned state — keep it correct before dispatch so
-        // `getValue` / the cursor-preservation diff stay consistent.
+        // Update owned state before dispatch, so a handler that reads back
+        // through `getValue` sees the new text.
         cachedText = text
         WhiskerCustomEvent.dispatch(from: self, name: "input", params: detailPayload(text))
     }
@@ -679,7 +578,6 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     @objc private func textFieldDidEndOnExit(_ sender: UITextField) {
-        // "Done" / return key on a UITextField. Emit both submit and change.
         let text = sender.text ?? ""
         emitSubmit(text)
         emitChange(text)
@@ -745,8 +643,8 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
 
     /// `LynxTextAlignType` enum → `NSTextAlignment`. Values per
     /// `LynxCSSType.h`: Left=0, Center=1, Right=2, Start=3, End=4,
-    /// Justify=5. Start/End map to `.natural` (UIKit resolves per the
-    /// writing direction).
+    /// Justify=5. Start/End become `.natural`, which UIKit resolves per the
+    /// writing direction.
     private static func mapLynxTextAlignEnum(_ i: Int) -> NSTextAlignment {
         switch i {
         case 0:  return .left
@@ -757,12 +655,11 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
         }
     }
 
-    /// Numeric `font-weight` → `UIFont.Weight`. Lynx normally delivers
-    /// the `LynxFontWeightType` enum (Normal=0, Bold=1, 100=2 … 900=10,
-    /// per `LynxAutoGenCSSType.h`). As a belt-and-braces guard we also
-    /// accept a raw CSS weight number (100…900) since those ranges don't
-    /// overlap the 0…10 enum range — whichever form arrives resolves
-    /// correctly.
+    /// Numeric `font-weight` → `UIFont.Weight`. Lynx normally delivers the
+    /// `LynxFontWeightType` enum (Normal=0, Bold=1, 100=2 … 900=10, per
+    /// `LynxAutoGenCSSType.h`), but raw CSS weights are accepted too: the
+    /// 100…900 literals don't overlap the 0…10 enum range, so either form
+    /// resolves unambiguously.
     private static func mapLynxFontWeightEnum(_ i: Int) -> UIFont.Weight {
         switch i {
         // LynxFontWeightType enum indices.
@@ -792,17 +689,16 @@ public final class WhiskerInputView: WhiskerUI<UIView> {
     }
 
     /// Resolve a colour prop value to a `UIColor`. Lynx's CSS cascade
-    /// delivers a parsed colour as an ARGB integer (`0xAARRGGBB`,
-    /// arriving as `.int` after the NSNumber → WhiskerValue conversion);
-    /// a plain-string attribute delivers a CSS string. Returns `nil` on
-    /// an unrecognised / empty value so callers keep their default.
+    /// delivers a parsed colour as an ARGB integer (`0xAARRGGBB`, arriving
+    /// as `.int` after the NSNumber → WhiskerValue conversion); a
+    /// plain-string attribute delivers a CSS string. Returns `nil` on an
+    /// unrecognised / empty value so callers keep their default.
     private static func resolveColor(_ value: WhiskerValue) -> UIColor? {
-        // Numeric ARGB (Lynx cascade). `.int`/`.float` both coerce via
-        // `asInt`. A literal 0 is fully-transparent black — a legitimate
-        // value, so we DON'T treat it as "unset" here.
         if case .string(let s) = value {
             return parseCssColor(s)
         }
+        // A literal 0 is fully-transparent black — a legitimate value, not
+        // "unset".
         if let argb = value.asInt {
             return colorFromARGB(UInt32(truncatingIfNeeded: argb))
         }
@@ -833,9 +729,7 @@ extension WhiskerInputView: UITextFieldDelegate {
         emitChange(text)
     }
 
-    /// Enforce `max-length` on UITextField. The standard delegate
-    /// intercept: return `false` when adding `string` would push
-    /// the count over `cachedMaxLength`.
+    /// Enforce `max-length` on UITextField.
     public func textField(
         _ textField: UITextField,
         shouldChangeCharactersIn range: NSRange,
@@ -869,15 +763,11 @@ extension WhiskerInputView: UITextViewDelegate {
 
     /// Enforce `max-length` on UITextView.
     ///
-    /// Return is a normal newline in a multiline area — we do NOT
-    /// intercept `\n` here. The field inserts the line break naturally,
-    /// and `submit` is a single-line-only concept (handled by the
-    /// UITextField `editingDidEndOnExit` path). Intercepting the newline
-    /// (the previous behaviour) both suppressed the line break the user
-    /// expected AND fired a spurious `submit` on every Return.
-    ///
-    /// `max-length` still counts newlines as characters, so a `\n` that
-    /// would exceed the limit is rejected like any other character.
+    /// Return must NOT be intercepted here: in a multiline area it is a
+    /// normal newline, and `submit` is a single-line-only concept handled
+    /// by the UITextField `editingDidEndOnExit` path. `max-length` still
+    /// counts a newline as a character, so it is rejected past the limit
+    /// like any other.
     public func textView(
         _ textView: UITextView,
         shouldChangeTextIn range: NSRange,
@@ -896,10 +786,6 @@ extension WhiskerInputView: UITextViewDelegate {
 /// `#RRGGBBAA`, `rgb(r, g, b)`, `rgba(r, g, b, a)`, and a handful of
 /// named colours. Returns `nil` on parse failure so callers can fall
 /// back to their cached default.
-///
-/// Mirrors `parseCssColor` from `whisker-svg/ios/Sources/WhiskerSvg/
-/// WhiskerSvgView.swift`, extended with `rgb()`/`rgba()` support for
-/// the colour-string inputs the Input view handles.
 private func parseCssColor(_ raw: String) -> UIColor? {
     let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !s.isEmpty else { return nil }
@@ -946,7 +832,6 @@ private func parseCssColor(_ raw: String) -> UIColor? {
     // ---- rgb() / rgba() ------------------------------------------------
     let lower = s.lowercased()
     if lower.hasPrefix("rgb") {
-        // Grab the content inside the outer parens.
         guard let open = s.firstIndex(of: "("),
               let close = s.lastIndex(of: ")") else { return nil }
         let inner = String(s[s.index(after: open)..<close])
@@ -982,18 +867,15 @@ private func parseCssColor(_ raw: String) -> UIColor? {
 // MARK: - Padded single-line field
 
 /// `UITextField` that insets its text, editing, and placeholder rects by
-/// `textInsets`. Plain `UITextField` has no built-in content inset, so a
-/// subclass overriding the three rect hooks is the only way to honor CSS
-/// padding on a single-line field — the multiline `UITextView` gets the
-/// same effect for free via `textContainerInset`.
+/// `textInsets`. Plain `UITextField` has no built-in content inset, so
+/// overriding the three rect hooks is the only way to honor CSS padding on
+/// a single-line field — the multiline `UITextView` gets the same effect
+/// for free via `textContainerInset`.
 ///
-/// `clearButtonRect` is intentionally left at the default so the clear
-/// button (when present) still tracks the right edge sensibly; the field
-/// doesn't enable a clear button today, so it's a non-issue in practice.
+/// `clearButtonRect` is deliberately left at the default so a clear button
+/// would still track the right edge.
 private final class PaddedTextField: UITextField {
 
-    /// CSS padding (left/top/right/bottom). Setting it re-lays-out so the
-    /// new inset takes effect immediately.
     var textInsets: UIEdgeInsets = .zero {
         didSet {
             guard textInsets != oldValue else { return }

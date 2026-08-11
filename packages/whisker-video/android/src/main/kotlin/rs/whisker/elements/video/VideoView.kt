@@ -1,7 +1,6 @@
 // Lynx UI subclass that hosts the AndroidX Media3 ExoPlayer +
-// PlayerView. A plain `WhiskerUI` subclass — no Whisker
-// annotations; registration is driven by `VideoModule`'s
-// `definition()` (see `VideoModule.kt`).
+// PlayerView. Registration is driven by `VideoModule`'s `definition()`,
+// not by annotations here.
 
 package rs.whisker.elements.video
 
@@ -19,13 +18,9 @@ open class VideoView(context: WhiskerContext) : WhiskerUI<View>(context) {
     private var playerView: PlayerView? = null
 
     override fun createView(context: Context): View {
-        // PlayerView wraps a SurfaceView/TextureView under the
-        // hood + draws the playback controls overlay. The ExoPlayer
-        // instance is attached via `player =` once a media item
-        // is set in `setSrc`.
         val view = PlayerView(context)
-        // Hide the built-in controls — Whisker apps drive playback
-        // through the DSL's `Function` handlers from Rust.
+        // Whisker apps drive playback through the DSL's `Function`
+        // handlers from Rust, so PlayerView's own controls stay off.
         view.useController = false
         playerView = view
         return view
@@ -33,9 +28,8 @@ open class VideoView(context: WhiskerContext) : WhiskerUI<View>(context) {
 
     /** Backing of the `src` prop. */
     fun setSrc(value: String) {
-        // Tear down any prior player so a `src=` change rebuilds
-        // cleanly. Media3 requires `release()` before dropping the
-        // last reference; without it the audio session leaks.
+        // Media3 requires `release()` before the last reference is
+        // dropped, or the audio session leaks.
         player?.release()
 
         val ctx = view?.context ?: return
@@ -43,8 +37,8 @@ open class VideoView(context: WhiskerContext) : WhiskerUI<View>(context) {
         playerView?.player = p
         p.setMediaItem(MediaItem.fromUri(value))
         p.prepare()
-        // Autoplay so the demo shows motion immediately. Real
-        // modules would expose this via an `autoplay` attribute.
+        // TODO: expose this as an `autoplay` attribute instead of
+        // unconditionally starting playback.
         p.playWhenReady = true
         player = p
     }

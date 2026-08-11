@@ -3,12 +3,10 @@
 // `WhiskerModuleMacros` — SwiftPM Build Tool plugin powering the
 // Whisker module system's iOS module-discovery codegen.
 //
-// The package name is kept as `WhiskerModuleMacros` for source
-// compatibility with user packages that reference
-// `.package(name: "macros", ...)` and consume the plugin product.
-// Phase M (Issue #59) removed the `@WhiskerModule` Swift macro
-// itself; discovery now finds concrete subclasses of
-// `WhiskerModule.Module` directly.
+// Despite the name there is no Swift macro here — discovery finds
+// concrete subclasses of `WhiskerModule.Module` directly. The name
+// stays `WhiskerModuleMacros` for source compatibility with user
+// packages that reference `.package(name: "macros", ...)`.
 //
 // Two targets:
 //
@@ -44,11 +42,9 @@ let package = Package(
         ),
     ],
     dependencies: [
-        // swift-syntax version compatibility: 510.0.0 series tracks
-        // Swift 5.10 / Xcode 15.3+. The Lynx fork's CI uses Xcode 16
-        // (objectVersion 77 pbxproj), which ships Swift 6 — both
-        // 510 and 600 release lines work, 510 is the broader
-        // compatibility floor.
+        // The 510.0.0 series tracks Swift 5.10 / Xcode 15.3+. Both the
+        // 510 and 600 lines work under Xcode 16 / Swift 6; 510 is the
+        // broader compatibility floor.
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "510.0.0"),
     ],
     targets: [

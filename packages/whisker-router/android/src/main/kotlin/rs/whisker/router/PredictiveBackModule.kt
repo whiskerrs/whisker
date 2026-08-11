@@ -1,18 +1,14 @@
 // Android predictive-back gesture, Kotlin half.
 //
 // Subscribes to the host Activity's `OnBackPressedDispatcher` while at
-// least one Rust subscriber is registered. Rust-side, the new
-// `AndroidPredictiveBack` component (packages/whisker-router/src/render/
-// gesture.rs) drives the SAME coordinated two-screen scrub the iOS
-// `SwipeBack` uses: it reads the active stack's transition controller
-// from the router and animates the outgoing/revealed screens by the
-// gesture progress.
+// least one Rust subscriber is registered. The Rust half is
+// `AndroidPredictiveBack` in `src/render/gesture.rs`, which drives the
+// same coordinated two-screen scrub as the iOS `SwipeBack`.
 //
-// We use `androidx.activity.OnBackPressedDispatcher` (not the raw
-// `Activity.onBackInvokedDispatcher`, API 33+) so one code path works on
-// minSdk=21 — androidx routes through the platform dispatcher on 33+
-// automatically, and exposes the predictive-back progress via
-// `BackEventCompat`.
+// `androidx.activity.OnBackPressedDispatcher` rather than the raw
+// API-33+ `Activity.onBackInvokedDispatcher`, so one code path covers
+// minSdk=21: androidx routes through the platform dispatcher on 33+ by
+// itself and exposes predictive-back progress via `BackEventCompat`.
 //
 // ## Events
 //
@@ -78,9 +74,8 @@ public class PredictiveBackModule : Module() {
         Name("PredictiveBack")
         Events("backStarted", "backProgressed", "backCancelled", "backInvoked")
 
-        // Any of the four events being observed registers the single
-        // dispatcher callback; `backProgressed` is the canonical one the
-        // Rust component subscribes first. Registration is idempotent.
+        // Any of the four events registers the single dispatcher callback;
+        // registration is idempotent.
         OnStartObserving("backProgressed") { ensureRegistered() }
         OnStartObserving("backStarted") { ensureRegistered() }
         OnStartObserving("backCancelled") { ensureRegistered() }
@@ -91,27 +86,22 @@ public class PredictiveBackModule : Module() {
         OnStopObserving("backCancelled") { teardown() }
         OnStopObserving("backInvoked") { teardown() }
 
-        // Static device info: the display's top-left rounded-corner radius
-        // in dp, so the predictive-back preview can round its card to match
-        // the screen. Rust calls this once (not per frame) and caches it.
-        // Returns [NOT_READY] (negative) when the host Activity/insets
-        // aren't attached yet, so Rust keeps the default and retries on the
-        // first gesture instead of latching the early fallback.
+        // Lets the predictive-back preview round its card to match the
+        // screen. Rust caches the result rather than calling per frame.
         Function("getDeviceCornerRadius") { _ ->
             WhiskerValue.Float(deviceCornerRadiusDp())
         }
     }
 
     /**
-     * The display's top-left rounded-corner radius in **dp** (px / density),
-     * via the API 31+ `RoundedCorner` API.
+     * The display's top-left rounded-corner radius in **dp**, via the API
+     * 31+ `RoundedCorner` API.
      *
-     * Distinguishes two kinds of "no real reading":
-     *  - **Transient** (host Activity / decor / insets not attached yet):
-     *    returns [NOT_READY] (negative) so the caller doesn't latch and
-     *    retries once the Activity is up.
-     *  - **Permanent** (API < 31, or a genuinely square display): returns
-     *    [DEFAULT_CORNER_RADIUS_DP] so the caller latches a sane default.
+     * The two kinds of "no real reading" must stay distinguishable: a
+     * transient miss (host Activity / decor / insets not attached yet)
+     * returns [NOT_READY] so the caller retries once the Activity is up,
+     * while a permanent one (API < 31, or a genuinely square display)
+     * returns [DEFAULT_CORNER_RADIUS_DP] to latch.
      */
     private fun deviceCornerRadiusDp(): Double {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return DEFAULT_CORNER_RADIUS_DP
@@ -149,14 +139,13 @@ public class PredictiveBackModule : Module() {
     }
 
     /**
-     * Register `OnBackPressedCallback` (with predictive-back hooks)
-     * against the host Activity's dispatcher. Returns true if registered
-     * (or already installed); false if the host isn't attached yet.
+     * Register `OnBackPressedCallback` against the host Activity's
+     * dispatcher. Returns true when registered or already installed, false
+     * when the host isn't attached yet.
      *
      * The `handleOnBackStarted` / `handleOnBackProgressed` /
-     * `handleOnBackCancelled` overrides are only invoked on API 34+; on
-     * older platforms only `handleOnBackPressed` (commit) fires, so the
-     * component gracefully degrades to commit-only.
+     * `handleOnBackCancelled` overrides only run on API 34+; older
+     * platforms fire `handleOnBackPressed` alone, degrading to commit-only.
      */
     private fun tryRegisterCallback(): Boolean {
         if (callback != null) return true

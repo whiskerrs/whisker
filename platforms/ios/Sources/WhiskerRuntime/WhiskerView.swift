@@ -1,6 +1,6 @@
 import UIKit
 import Lynx
-// WhiskerDriver re-exports the C ABI of `whisker_bridge.h` (see its
+// WhiskerCBridge re-exports the C ABI of `whisker_bridge.h` (see its
 // module.modulemap), so `whisker_bridge_engine_attach` etc. are visible
 // from this single import.
 import WhiskerCBridge
@@ -39,34 +39,22 @@ public final class WhiskerView: LynxView {
         }
         self.engine = engine
 
-        // IMPORTANT: create the CADisplayLink BEFORE calling
-        // `whisker_app_main`. The Rust bootstrap registers
-        // `requestFrameTrampoline` as the host-wake callback and
-        // then synchronously runs the user's `app()` — which calls
-        // `resource(fetch_stories)` → `spawn_local(future)` →
-        // `host_wake::wake_runtime()` → this trampoline.
-        //
-        // If `displayLink` is still nil at that point (because we
-        // hadn't created it yet), the `view.displayLink?.isPaused`
-        // optional-chaining no-ops and the wake is silently
-        // dropped. The future then never gets polled — no
-        // CADisplayLink → no `whisker_tick` → no
-        // `run_until_stalled` → fetch sits unscheduled — and the
-        // app is stuck on the loading banner forever.
-        //
-        // Creating the link upfront makes the trampoline's unpause
-        // actually take effect.
+        // Create the CADisplayLink BEFORE calling `whisker_app_main`.
+        // The Rust bootstrap registers `requestFrameTrampoline` as the
+        // host-wake callback and then synchronously runs the user's
+        // `app()`, which can wake the runtime immediately. With
+        // `displayLink` still nil, the trampoline's
+        // `view.displayLink?.isPaused` optional-chaining no-ops and
+        // that first wake is silently dropped — no display link means
+        // no `whisker_tick`, so any pending future never gets polled.
         //
         // Route through a weak proxy rather than `target: self`. A
         // CADisplayLink added to a run loop is retained by that run
         // loop, and the link strongly retains its `target`; `target:
         // self` therefore forms a retain cycle (run loop → link → view)
-        // that keeps the WhiskerView — and the whole Rust engine it
-        // owns — alive forever. `deinit` would never run, so
-        // `invalidate()` / `whisker_bridge_engine_release` would never
-        // fire (a per-view leak). The proxy holds the view weakly, so
-        // the cycle is broken and `deinit` runs when the hierarchy lets
-        // go of the view.
+        // that keeps the WhiskerView — and the Rust engine it owns —
+        // alive forever, so `deinit` never runs and
+        // `whisker_bridge_engine_release` never fires.
         let proxy = DisplayLinkProxy(target: self)
         self.displayLinkProxy = proxy
         let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick(_:)))
@@ -136,13 +124,9 @@ public final class WhiskerView: LynxView {
     /// multitasking split-screen resize, on notch / Dynamic Island
     /// reveal. We re-broadcast through `NotificationCenter` so the
     /// `whisker-safe-area:SafeArea` module can pick the change up
-    /// without holding a direct reference to this view.
-    ///
-    /// Loose-coupling through the notification keeps the runtime
-    /// agnostic of the safe-area module: the consumer crate is opt-
-    /// in. Apps that don't depend on `whisker-safe-area` pay only the
-    /// cost of one `NotificationCenter.post` per insets change, which
-    /// is rare and cheap.
+    /// without holding a direct reference to this view. Going through
+    /// a notification keeps the runtime agnostic of the opt-in
+    /// safe-area module.
     public override func safeAreaInsetsDidChange() {
         super.safeAreaInsetsDidChange()
         NotificationCenter.default.post(

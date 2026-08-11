@@ -1,4 +1,4 @@
-// Phase L-3 — `whisker-local-store` ModuleDefinition (Android).
+// `whisker-local-store` ModuleDefinition (Android).
 //
 // A view-less DSL module: `definition()` has no `View(...)` block,
 // just module-level `Function`s. The KSP processor finds every

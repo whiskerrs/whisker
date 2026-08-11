@@ -1,24 +1,10 @@
-// Phase 7-Φ.H.1: Lynx symbol hiding (iOS).
+// Lynx symbol hiding (iOS).
 //
 // A view-bearing Whisker module's `View(...)` block references a
-// Lynx UI subclass, which previously had to import Lynx types
-// directly:
-//
-// ```swift
-// import Lynx
-//
-// public final class HelloView: LynxUI<UIView> {
-//     @objc public override func createView() -> UIView { … }
-// }
-// ```
-//
-// The bridge runtime is built on Lynx and that won't change in
-// the foreseeable future, but the Lynx-ness leaking into every
-// module's public API surface makes Whisker feel like a thin
-// Lynx wrapper rather than its own framework. These typealiases
-// give module authors `Whisker*` symbols that resolve to their
-// Lynx counterparts at the Swift type-system level — same
-// runtime classes, just a presentation rename.
+// Lynx UI subclass. These typealiases give module authors `Whisker*`
+// symbols that resolve to their Lynx counterparts at the Swift
+// type-system level — same runtime classes, just a presentation
+// rename, so Lynx-ness doesn't leak into every module's public API:
 //
 // ```swift
 // import WhiskerModule
@@ -29,10 +15,7 @@
 // ```
 //
 // Stack traces / debugger views still surface the real `LynxUI`
-// class names (typealiases are purely a source-level concept).
-// Renaming the underlying classes themselves would require
-// patching the Lynx fork — a separate, larger effort planned for
-// the long-term roadmap.
+// class names — typealiases are purely a source-level concept.
 
 // `@_exported` so module-author `.swift` files can `import
 // WhiskerRuntime` alone — the typealias targets (`LynxUI`,
@@ -87,9 +70,9 @@ public typealias WhiskerComponentRegistry = LynxComponentRegistry
 /// instead of manually constructing `LynxCustomEvent` and
 /// reaching into `context.eventEmitter`. The function looks at
 /// the UI's `sign` + `context` to wire the event back to the
-/// host's `whisker_bridge_set_event_listener_with_payload`
-/// reporter, which delivers the JSON-serialised params to the
-/// matching Rust `on_<event>: String` callback.
+/// host's `whisker_bridge_set_event_listener_with_value` reporter,
+/// which delivers `params` to the matching Rust `on_<event>`
+/// callback.
 public enum WhiskerCustomEvent {
     /// Build and dispatch a `LynxCustomEvent` from `ui`.
     /// No-op if the UI has been detached from its context

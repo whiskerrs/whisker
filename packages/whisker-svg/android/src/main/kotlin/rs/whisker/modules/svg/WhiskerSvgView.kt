@@ -1,6 +1,5 @@
-// Lynx UI subclass hosting a `WhiskerSvgDrawingView`. A plain
-// `WhiskerUI` subclass — no Whisker annotations, registration
-// driven by `SvgModule`'s `definition()`.
+// Lynx UI subclass hosting a `WhiskerSvgDrawingView`. Registration is
+// driven by `SvgModule`'s `definition()`, not by annotations here.
 
 package rs.whisker.modules.svg
 
@@ -43,10 +42,9 @@ open class WhiskerSvgView(context: WhiskerContext) : WhiskerUI<WhiskerSvgDrawing
     }
 
     /**
-     * Backing of the `color` Prop. Parsed as a CSS-style colour
-     * string. The resolved ARGB int is substituted wherever the
-     * source SVG used `fill="currentColor"` / `stroke="currentColor"`
-     * (= the `FILL_TINT` / `STROKE_TINT` opcodes).
+     * Backing of the `color` Prop. The resolved ARGB int is substituted
+     * wherever the source SVG used `fill="currentColor"` /
+     * `stroke="currentColor"` — the `FILL_TINT` / `STROKE_TINT` opcodes.
      */
     fun setColor(value: String) {
         val v = view ?: return
@@ -56,10 +54,9 @@ open class WhiskerSvgView(context: WhiskerContext) : WhiskerUI<WhiskerSvgDrawing
 }
 
 /**
- * `View` that paints the cached display-list bytes inside its own
- * bounds. Lives outside `WhiskerSvgView` because Whisker's UI
- * owner expects a single `view` accessor — we keep the
- * drawing-specific `onDraw` separate from the LynxUI bookkeeping.
+ * `View` that paints the cached display-list bytes inside its own bounds,
+ * kept separate from the LynxUI bookkeeping because Whisker's UI owner
+ * expects a single `view` accessor.
  */
 class WhiskerSvgDrawingView(context: Context) : View(context) {
 
@@ -67,19 +64,18 @@ class WhiskerSvgDrawingView(context: Context) : View(context) {
     var displayListBytes: ByteArray? = null
         set(v) { field = v; invalidate() }
 
-    /** CSS `color` resolved value used for `FILL_TINT` /
-     *  `STROKE_TINT`. Default = the platform "primary text"
-     *  colour so an unstyled `<Svg>` lands on a sane neutral. */
+    /** Tint substitute for the `FILL_TINT` / `STROKE_TINT` opcodes.
+     *  Defaults to opaque black so an unstyled `<Svg>` lands on a sane
+     *  neutral. */
     var tintArgb: Int = 0xFF000000.toInt()
         set(v) { field = v; invalidate() }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        // Repaint when the view gets its real size after being laid out at
-        // 0×0 — e.g. mounted inside a `display:none` Switch branch (which
-        // whisker-router mounts every branch as before toggling visibility)
-        // and only sized once the branch is shown. Without this the glyph
-        // set while hidden is never painted at the real size. See #306.
+        // whisker-router mounts every Switch branch `display:none` before
+        // toggling visibility, so the view is first laid out at 0x0 and
+        // only sized once the branch is shown — without this repaint, a
+        // glyph set while hidden never paints at the real size (#306).
         invalidate()
     }
 
@@ -96,12 +92,10 @@ class WhiskerSvgDrawingView(context: Context) : View(context) {
         try {
             dlReplay(bytes, visitor)
         } catch (e: DLReplayError) {
-            // Malformed stream — fail closed by drawing nothing
-            // rather than throwing inside onDraw (the framework
-            // doesn't propagate). Rust producer contract is
-            // that bytes are always well-formed; if they're not,
-            // that's a Whisker-side bug worth surfacing via
-            // diagnostics rather than crashing the host.
+            // Fail closed by drawing nothing: the framework doesn't
+            // propagate a throw out of onDraw, and the Rust producer's
+            // contract is that the bytes are well-formed — a violation is a
+            // Whisker-side bug to diagnose, not a reason to kill the host.
             Log.w("WhiskerSvg", "replay failed: ${e.message}")
         }
     }
@@ -154,13 +148,11 @@ private fun parseCssColor(raw: String): Int {
 }
 
 /**
- * Parses `rgb(r, g, b)` / `rgba(r, g, b, a)` — the format
- * `whisker-css`'s `Color::to_css_string()` actually emits for any
- * non-hex-literal, non-named color (e.g. every `Color::hex(...)`
- * constant reactively interpolated into a string, as opposed to a
- * hardcoded hex literal). Without this, those colors fell through to
- * the opaque-black fallback below — silently discarding the app's
- * intended color.
+ * Parses `rgb(r, g, b)` / `rgba(r, g, b, a)`, which is what
+ * `whisker-css`'s `Color::to_css_string()` emits for every
+ * non-hex-literal, non-named colour. Without this branch they fall
+ * through to the opaque-black fallback and the app's intended colour is
+ * silently discarded.
  */
 private fun parseRgbFunction(s: String): Int? {
     val isRgba = s.startsWith("rgba(")

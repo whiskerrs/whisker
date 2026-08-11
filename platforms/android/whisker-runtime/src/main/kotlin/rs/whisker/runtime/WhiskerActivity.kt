@@ -17,10 +17,10 @@ import androidx.core.view.WindowInsetsControllerCompat
  * LinearLayout + status-bar-guard view between the decor view and
  * the user's content. The guard takes up status-bar height even with
  * `setDecorFitsSystemWindows(false)`, which prevents WhiskerView from
- * actually filling the window and ruins the edge-to-edge story. Apps
- * built on Whisker don't use AppCompat's actual feature set (themed
- * dialogs, toolbar action bar, day-night, …) — they render exclusively
- * through Lynx — so the dependency was carrying nothing but the bug.
+ * actually filling the window and ruins the edge-to-edge story. Whisker
+ * apps render exclusively through Lynx, so none of AppCompat's own
+ * features (themed dialogs, toolbar action bar, day-night, …) are
+ * missed.
  *
  * The CNG-generated `MainActivity` extends this and sets a
  * `WhiskerView` as its content view. Lifecycle events forward to the
@@ -62,10 +62,9 @@ open class WhiskerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Edge-to-edge. AndroidX wrapper handles the API-level branching
-        // (the underlying platform call is `Window.setDecorFitsSystemWindows`,
-        // API 30+; below that the wrapper sets the legacy `SYSTEM_UI_FLAG_*`
-        // bits that achieve the same effect).
+        // The AndroidX wrapper handles the API-level branching:
+        // `Window.setDecorFitsSystemWindows` on API 30+, the legacy
+        // `SYSTEM_UI_FLAG_*` bits below that.
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         // Drop the theme-provided window background. With edge-to-edge
@@ -87,12 +86,9 @@ open class WhiskerActivity : ComponentActivity() {
         window.navigationBarColor = Color.TRANSPARENT
 
         // Stop the system from forcing its own translucent scrims behind
-        // status / navigation bars. The contrast-enforcement heuristic
-        // decides when to apply each based on the app's drawn pixel
-        // contrast against the system-bar foreground — we always want
-        // the app's own background to show through unmodified. Both
-        // setters are available from API 29; on API 35+ they're the
-        // *only* way to suppress the scrim, since the platform ignores
+        // status / navigation bars, so the app's background shows through
+        // unmodified. API 29+; on API 35+ these are the *only* way to
+        // suppress the scrim, since the platform ignores
         // `statusBarColor` / `navigationBarColor` from that release on.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isStatusBarContrastEnforced = false
@@ -102,17 +98,10 @@ open class WhiskerActivity : ComponentActivity() {
         val view = WhiskerView(this).also { whiskerView = it }
         setContentView(view)
 
-        // `windowDrawsSystemBarBackgrounds=true` (AppCompat default,
-        // inherited by `Theme.AppCompat.NoActionBar` even when we
-        // base on ComponentActivity) inflates a screen layout that
-        // includes a `statusBarBackground` / `navigationBarBackground`
-        // pair as sibling Views of the content frame inside a
-        // LinearLayout. Their non-zero `layout_height` /
-        // `layout_width` pushes the content down by the status-bar
-        // height (and right by the nav-bar width in landscape), so
-        // WhiskerView still doesn't actually fill the window even
-        // with edge-to-edge enabled. Walk the tree and collapse each
-        // to zero so the content frame snaps to (0,0).
+        // `windowDrawsSystemBarBackgrounds=true` (inherited from
+        // `Theme.AppCompat.NoActionBar` even on ComponentActivity)
+        // inflates system-bar guard Views that push the content down
+        // even with edge-to-edge enabled — see below.
         view.post { collapseSystemBarGuards(window.decorView) }
 
         // Force light foreground (icons / time) on the system bars.

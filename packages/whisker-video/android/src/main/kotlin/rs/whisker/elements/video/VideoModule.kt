@@ -1,10 +1,4 @@
-// Phase L-3 — `whisker-video` ModuleDefinition (Android).
-//
-// Replaces the pre-L-3 `@WhiskerComponent("Video")`-annotated
-// `WhiskerVideoComponent`. The Lynx tag stays `whisker-video:Video`;
-// the DSL's `Prop("src")` / `Function("play"/"pause"/"seek")` expand
-// into the same Lynx-visible setters / invokers via KSP L-2c +
-// the runtime install.
+// `whisker-video` ModuleDefinition (Android).
 //
 // The `VideoView` Lynx UI subclass this references lives in
 // `VideoView.kt`. Same split on iOS (`VideoModule.swift` +
@@ -17,14 +11,9 @@ import rs.whisker.runtime.ModuleDefinition
 import rs.whisker.runtime.WhiskerValue
 
 /**
- * DSL-driven module. Subclassing [Module] is the registration
- * signal — the KSP processor finds every concrete subclass and
- * emits the registration block into
- * `WhiskerVideoBehaviors.registerAll()`. This module declares:
- *   - Tag name `Video` (registers as `whisker-video:Video`).
- *   - View class [VideoView].
- *   - One prop setter (`src`).
- *   - Three sync method dispatchers (`play`, `pause`, `seek`).
+ * DSL-driven module. Subclassing [Module] is the registration signal:
+ * the KSP processor finds every concrete subclass and emits the
+ * registration block into `WhiskerVideoBehaviors.registerAll()`.
  */
 class VideoModule : Module() {
     override fun definition() = ModuleDefinition {

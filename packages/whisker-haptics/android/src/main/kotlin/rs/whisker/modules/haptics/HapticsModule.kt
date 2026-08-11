@@ -66,8 +66,7 @@ class HapticsModule : Module() {
 }
 
 /// Plain helper — no Whisker / Lynx types. Kept separate from
-/// `HapticsModule` so the vibration logic is testable/readable on its
-/// own, matching `whisker-pdf`'s `PdfModule`/`PdfRenderer` split.
+/// `HapticsModule` so the vibration logic is testable on its own.
 private object Haptics {
     private fun context(): Context =
         WhiskerApplication.appContext
