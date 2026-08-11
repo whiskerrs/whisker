@@ -201,14 +201,8 @@ internal class WhiskerDSLMethodInvoker(
     ) {
         val asyncComponent = asyncByName[methodName]
         if (asyncComponent != null) {
-            // The promise owns the Lynx callback — late-callable by
-            // design — and fires it once with SUCCESS; errors travel as
-            // `WhiskerValue.Err` inside the result, mirroring the sync
-            // path below.
             val args = decodeArgs(params).map { whiskerValueOf(it) }
-            val promise = WhiskerPromise({ value ->
-                callback.invoke(LynxUIMethodConstants.SUCCESS, value.toJavaObject())
-            })
+            val promise = WhiskerPromise({ value -> settle(callback, value) })
             try {
                 asyncComponent.handler(ui, args, promise)
             } catch (t: Throwable) {
@@ -235,7 +229,19 @@ internal class WhiskerDSLMethodInvoker(
             )
             return
         }
-        callback.invoke(LynxUIMethodConstants.SUCCESS, result.toJavaObject())
+        settle(callback, result)
+    }
+
+    /** [WhiskerValue.Err] rides the error-code channel — a
+     *  success-coded error flattens into a plain map in the lepus
+     *  round-trip and the message is lost. */
+    private fun settle(callback: Callback, value: WhiskerValue) {
+        when (value) {
+            is WhiskerValue.Err ->
+                callback.invoke(LynxUIMethodConstants.UNKNOWN, value.message)
+            else ->
+                callback.invoke(LynxUIMethodConstants.SUCCESS, value.toJavaObject())
+        }
     }
 
     private fun decodeArgs(params: ReadableMap?): List<Any?> {

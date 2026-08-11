@@ -304,7 +304,12 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         }
         wv.evaluateJavaScript(script) { value, error in
             if let error = error {
-                promise.reject("evaluateJavaScript failed: \(error.localizedDescription)")
+                // The JS exception text rides in userInfo, not
+                // localizedDescription.
+                let ns = error as NSError
+                let detail = ns.userInfo["WKJavaScriptExceptionMessage"] as? String
+                    ?? error.localizedDescription
+                promise.reject("evaluateJavaScript failed: \(detail)")
                 return
             }
             guard let value = value else {
