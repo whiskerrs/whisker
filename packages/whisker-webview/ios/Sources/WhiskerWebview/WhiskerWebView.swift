@@ -304,9 +304,8 @@ public final class WhiskerWebViewView: WhiskerUI<UIView> {
         }
         wv.evaluateJavaScript(script) { value, error in
             if let error = error {
-                // WebKit buries the actual JS exception text in
-                // userInfo; localizedDescription is just "a JavaScript
-                // exception occurred".
+                // The JS exception text rides in userInfo, not
+                // localizedDescription.
                 let ns = error as NSError
                 let detail = ns.userInfo["WKJavaScriptExceptionMessage"] as? String
                     ?? error.localizedDescription

@@ -191,10 +191,8 @@ internal enum WhiskerLynxInstaller {
     // ---- AsyncFunction installation --------------------------------------
 
     /// Same selector shapes as [`installFunction`], but the handler
-    /// receives a [`WhiskerPromise`] wrapping the Lynx callback, so it
-    /// can deliver the result from a later completion. Lynx's UI-method
-    /// callback is late-callable by design (its own `boundingClientRect`
-    /// resolves it asynchronously).
+    /// receives a [`WhiskerPromise`] wrapping the (late-callable) Lynx
+    /// callback, so it can deliver the result from a later completion.
     static func installAsyncFunction(
         _ comp: WhiskerAsyncFunctionComponent, on viewClass: AnyClass
     ) {
@@ -229,12 +227,9 @@ internal enum WhiskerLynxInstaller {
 
     // ---- Helpers ---------------------------------------------------------
 
-    /// Route a handler result onto the Lynx UI-method callback.
-    /// `.error` goes out as a non-zero code (UNKNOWN = 1) with the
-    /// message as the string payload — an error delivered as a
-    /// success-coded value flattens into a plain map in the ObjC→lepus
-    /// round-trip, and the bridge adapter can only recover the message
-    /// from the error-code path.
+    /// `.error` rides the error-code channel (UNKNOWN = 1) — a
+    /// success-coded error flattens into a plain map in the lepus
+    /// round-trip and the message is lost.
     private static func settle(_ cb: LynxUIMethodCallbackBlockShim?, with value: WhiskerValue) {
         if case .error(let message) = value {
             cb?(1, message as NSString)

@@ -201,8 +201,6 @@ internal class WhiskerDSLMethodInvoker(
     ) {
         val asyncComponent = asyncByName[methodName]
         if (asyncComponent != null) {
-            // The promise owns the Lynx callback — late-callable by
-            // design.
             val args = decodeArgs(params).map { whiskerValueOf(it) }
             val promise = WhiskerPromise({ value -> settle(callback, value) })
             try {
@@ -234,11 +232,9 @@ internal class WhiskerDSLMethodInvoker(
         settle(callback, result)
     }
 
-    /** Route a handler result onto the Lynx callback. [WhiskerValue.Err]
-     *  goes out as a non-zero code with the message as the string
-     *  payload — an error delivered as a success-coded value flattens
-     *  into a plain map in the lepus round-trip, and the bridge adapter
-     *  can only recover the message from the error-code path. */
+    /** [WhiskerValue.Err] rides the error-code channel — a
+     *  success-coded error flattens into a plain map in the lepus
+     *  round-trip and the message is lost. */
     private fun settle(callback: Callback, value: WhiskerValue) {
         when (value) {
             is WhiskerValue.Err ->
