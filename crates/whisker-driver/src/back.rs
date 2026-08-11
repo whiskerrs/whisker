@@ -129,12 +129,26 @@ pub fn set_exit_impl(f: impl Fn() + 'static) {
     EXIT_IMPL.with(|e| *e.borrow_mut() = Some(Rc::new(f)));
 }
 
-/// Framework wiring: whether an active handler exists right now.
-/// Reads the registry's revision signal, so calling inside an
-/// `effect` re-runs it on register / unregister.
+/// Framework wiring: whether an active (non-paused) handler exists
+/// right now — the dispatch / preview-suppression predicate. Reads
+/// the registry's revision signal, so calling inside an `effect`
+/// re-runs it on register / unregister.
 pub fn has_active_handler() -> bool {
     let _ = revision_signal().get();
     HANDLERS.with(|h| h.borrow().iter().any(Entry::is_active))
+}
+
+/// Framework wiring: whether ANY registration exists, paused or not —
+/// the platform enabled-state predicate. Pause is deliberately
+/// ignored here: a pop's survivor stays paused until its settle
+/// animation finishes, and an enabled state computed through the
+/// pause filter would fall to the OS default in exactly that window,
+/// exiting past a guarded root. A paused-but-registered guard keeps
+/// the platform callback enabled; [`dispatch`]'s pause filter still
+/// routes the action to the pop instead of the buried handler.
+pub fn has_any_handler() -> bool {
+    let _ = revision_signal().get();
+    HANDLERS.with(|h| !h.borrow().is_empty())
 }
 
 /// Framework wiring: deliver one back action to the most recent
@@ -204,6 +218,16 @@ mod tests {
         owner.resume();
         assert!(dispatch());
         assert_eq!(hits.get(), 1);
+    }
+
+    #[test]
+    fn paused_owner_still_counts_for_the_enabled_predicate() {
+        reset();
+        let owner = Owner::new(None);
+        let _guard = owner.with(|| on_back(|| {}));
+        owner.pause();
+        assert!(!has_active_handler());
+        assert!(has_any_handler());
     }
 
     #[test]

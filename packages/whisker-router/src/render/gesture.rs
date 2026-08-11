@@ -374,7 +374,11 @@ pub fn android_predictive_back() -> Element {
         whisker::runtime::reactive::effect(move || {
             let _ = nav_for_enabled.state().get();
             let can_pop = nav_for_enabled.active_stack_bridge().is_some();
-            let enabled = can_pop || whisker::back::has_active_handler();
+            // `has_any_handler`, not `has_active_handler`: a pop's
+            // survivor stays paused until its settle finishes, and the
+            // pause-filtered predicate would disable back past a
+            // guarded root for that whole window.
+            let enabled = can_pop || whisker::back::has_any_handler();
             if last_sent.get() != Some(enabled) {
                 last_sent.set(Some(enabled));
                 let _ = pb_module().invoke(
