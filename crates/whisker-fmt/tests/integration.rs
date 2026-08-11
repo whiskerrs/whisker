@@ -24,9 +24,7 @@ fn full_pipeline_formats_rust_and_macro() {
         "fn   ui()->Element{ render!{view(style:\"x\",class:\"y\"){text(value:\"hi\")}} }\n";
     let out = format_source(messy, &opts(4, 100)).expect("format_source");
 
-    // rustfmt normalized the fn signature …
     assert!(out.contains("fn ui() -> Element {"), "rust pass:\n{out}");
-    // … and the macro body got reformatted onto its own indented lines.
     assert!(out.contains("    render! {"), "macro indent:\n{out}");
     assert!(
         out.contains("        view(style: \"x\", class: \"y\") {"),
@@ -58,10 +56,8 @@ fn check_reports_diff_then_clean() {
         return;
     }
     let messy = "fn ui()->Element{render!{view(style:\"x\")}}\n";
-    // First check: not formatted → Some(diff).
     let diff = check_source(messy, &opts(4, 100)).unwrap();
     assert!(diff.is_some(), "expected a diff for messy input");
-    // After formatting, check is clean.
     let formatted = format_source(messy, &opts(4, 100)).unwrap();
     let clean = check_source(&formatted, &opts(4, 100)).unwrap();
     assert!(
@@ -77,8 +73,6 @@ fn formats_embedded_format_macro_expr() {
     if !rustfmt_available() {
         return;
     }
-    // The kwarg value is a `format!` call with a missing comma-space:
-    // rustfmt should normalize it.
     let src =
         "fn ui() -> Element {\n    render! { text(value: format!(\"count: {}\",c.get())) }\n}\n";
     let out = format_source(src, &opts(4, 100)).unwrap();
@@ -93,14 +87,12 @@ fn long_kwarg_value_wraps_at_max_width() {
     if !rustfmt_available() {
         return;
     }
-    // A long call expression as a kwarg value should be wrapped by
-    // rustfmt onto multiple lines.
     let long = "some_function_with_a_fairly_long_name(argument_one, argument_two, argument_three, argument_four)";
     let src = format!("fn ui() -> Element {{\n    render! {{ text(value: {long}) }}\n}}\n");
     let narrow = format_source(&src, &opts(4, 40)).unwrap();
     let wide = format_source(&src, &opts(4, 200)).unwrap();
-    // Narrow max_width forces the expr to wrap (more body lines); wide
-    // keeps it on one line — proving rustfmt.toml/max_width flows in.
+    // Narrow max_width must wrap the expr where wide keeps it inline,
+    // proving rustfmt.toml's max_width reaches the embedded-expr pass.
     assert!(
         narrow.matches('\n').count() > wide.matches('\n').count(),
         "narrow max_width should wrap the embedded expr more than wide:\n--narrow--\n{narrow}\n--wide--\n{wide}"
@@ -112,14 +104,10 @@ fn multi_statement_closure_handler_reindented() {
     if !rustfmt_available() {
         return;
     }
-    // A multi-statement closure handler should be rustfmt-formatted and
-    // re-indented under the kwarg column in the macro body.
     let src = "fn ui() -> Element {\n    render! { view(on_tap: move |_| { let x=1;do_thing(x); }) }\n}\n";
     let out = format_source(src, &opts(4, 100)).unwrap();
-    // rustfmt splits the two statements onto their own lines …
     assert!(out.contains("let x = 1;"), "statement formatted:\n{out}");
     assert!(out.contains("do_thing(x);"), "statement formatted:\n{out}");
-    // … and they sit indented inside the macro body (not at col 0).
     assert!(
         out.contains("\n            let x = 1;") || out.contains("\n                let x = 1;"),
         "closure body re-indented into the macro:\n{out}"
@@ -131,8 +119,8 @@ fn comment_inside_expr_preserved() {
     if !rustfmt_available() {
         return;
     }
-    // A block comment INSIDE the expr must survive — proving we format
-    // the SOURCE SLICE, not the (comment-stripped) AST.
+    // A comment inside the expr only survives if the SOURCE SLICE is
+    // formatted rather than the comment-stripped AST.
     let src = "fn ui() -> Element {\n    render! { text(value: foo(/* keep me */ x)) }\n}\n";
     let out = format_source(src, &opts(4, 100)).unwrap();
     assert!(
@@ -160,11 +148,8 @@ fn tab_spaces_option_changes_output() {
     if !rustfmt_available() {
         return;
     }
-    // Proves the layout flows from FmtOptions, not a hardcoded value.
-    // NOTE: rustfmt itself defaults to 4-space indent for the *Rust*
-    // part regardless of `opts.tab_spaces` (it reads rustfmt.toml, not
-    // our opts), so we assert on the MACRO-BODY indentation, which the
-    // whisker pretty-printer controls via `opts.tab_spaces`.
+    // rustfmt indents the *Rust* part from rustfmt.toml, not from
+    // `opts`, so only the MACRO-BODY indentation reflects `tab_spaces`.
     let src =
         "fn ui() -> Element {\n    render! { view(style: \"x\") { text(value: \"hi\") } }\n}\n";
     let four = format_source(src, &opts(4, 100)).unwrap();
@@ -177,11 +162,9 @@ fn full_pipeline_nested_css_in_render_reformats() {
     if !rustfmt_available() {
         return;
     }
-    // The real rustfmt pass runs FIRST (normalizing the `fn` signature
-    // and the macro's own opening line), then our macro pass must still
-    // reach into the nested `css!(...)` kwarg value — exercising the
-    // full pipeline's embedded-expr batching (`ExprFormatter`) alongside
-    // the nested-macro recursion, not just the rustfmt-free core.
+    // The macro pass must still reach into the nested `css!(...)` kwarg
+    // after the real rustfmt pass has run over the file — exercising
+    // `ExprFormatter` batching, not just the rustfmt-free core.
     let messy = "fn   ui( )->Element{render!{view(style:css!(flex_grow:1.0,background_color:BG)){text(value:\"hi\")}}}\n";
     let out = format_source(messy, &opts(4, 100)).unwrap();
     assert!(out.contains("fn ui() -> Element {"), "rust pass:\n{out}");
@@ -211,11 +194,8 @@ fn full_pipeline_composite_podcast_like_tree() {
     if !rustfmt_available() {
         return;
     }
-    // A shape close to the real `examples/podcast` app: a wide nested
-    // css!, a nested routes! with a Stack of Routes, and plain
-    // zero-kwarg user-component children — through the FULL pipeline
-    // (real rustfmt + our macro pass), checked for both idempotency and
-    // the max_width budget on every line.
+    // A shape close to the real `examples/podcast` app, through the FULL
+    // pipeline, checked for idempotency and the max_width budget.
     let messy = "fn app()->Element{render!{view(style:css!(flex_grow:1.0,width:vw(100),height:vh(100),background_color:BG,display:Display::Flex)){Router(routes:routes!{Stack{Route(path:\"\",component:Home)Route(path:\"detail/:id\",component:Detail)}}){Outlet{}SwipeBack{}}}}}\n";
     let once = format_source(messy, &opts(4, 100)).unwrap();
     let twice = format_source(&once, &opts(4, 100)).unwrap();

@@ -1,18 +1,16 @@
-//! Integration tests for the unified component invocation syntax
-//! (issue #18). Verifies that `render! { my_component { … } }` lowers
-//! to `my_component(MyComponentProps::builder().…build())` and that
-//! the auto-generated `Props` struct exposes all the expected setter
-//! behaviours: `Into` coercion, `Option<T>` strip, `Children` default,
+//! Integration tests for the unified component invocation syntax:
+//! `render! { MyComponent(…) }` lowers to
+//! `MyComponent(MyComponentProps::builder().…build())`, and the
+//! auto-generated `Props` struct exposes the expected setter
+//! behaviours — `Into` coercion, `Option<T>` strip, `Children` default,
 //! and generics.
 //!
-//! For `String`-shaped props we side-channel the received value into
-//! a thread-local `Vec<String>` rather than trying to interpolate the
-//! prop inside `render!` — interpolation routes through an `Fn +
-//! 'static` effect closure that has to take ownership of any
-//! non-`Copy` capture, which conflicts with the `#[component]`-wrapped
-//! `FnMut` outer closure. (Real apps that need to interpolate a
-//! `String` prop typically `clone()` it into a local, then move that
-//! into the effect.)
+//! `String`-shaped props are side-channelled into a thread-local
+//! `Vec<String>` rather than interpolated inside `render!`:
+//! interpolation routes through an `Fn + 'static` effect closure that
+//! must own any non-`Copy` capture, which conflicts with the
+//! `#[component]`-wrapped `FnMut` outer closure. (Real apps `clone()`
+//! such a prop into a local first.)
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -103,9 +101,6 @@ fn with_test_env<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
     result
 }
 
-// Side-channel for prop captures. Component bodies push the
-// stringified values of the props they received here; tests read it
-// back to assert what made it through the builder.
 thread_local! {
     static PROP_CAPTURES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
@@ -140,10 +135,9 @@ fn two_props(title: String, count: i32) -> Element {
 
 #[component]
 fn option_prop(alt: Option<String>) -> Element {
-    // `.as_deref()` borrows the inner str so the FnMut closure
-    // surrounding this body can be invoked more than once (per-
-    // component remount). Calling `.unwrap_or_else(...)` directly
-    // moves `alt` out of the closure.
+    // `.as_deref()` borrows the inner str so the surrounding FnMut can
+    // be invoked more than once; `.unwrap_or_else(...)` directly would
+    // move `alt` out of the closure.
     let v = alt
         .as_deref()
         .map(str::to_owned)
@@ -161,11 +155,8 @@ fn with_default_prop(#[prop(default = 5)] count: i32) -> Element {
 #[component]
 fn with_children(label: String, children: Children) -> Element {
     push_capture(format!("with_children:label={label}"));
-    // The `children()` slot is the canonical way to mount a
-    // `children: Children` prop inside `render!`. It lowers to
-    // `view::mount_children(&children)` — borrows the Rc (no move,
-    // so the surrounding FnMut can re-run) and attaches the
-    // children's view to a phantom element at this position.
+    // `children()` lowers to `view::mount_children(&children)`, which
+    // borrows the Rc so the surrounding FnMut can re-run.
     render! {
         view() {
             children()
@@ -186,10 +177,8 @@ fn component_with_no_props_invokable_via_braces() {
     with_test_env(|log| {
         let _h = render! { NoPropsComponent() };
 
-        // Side-channel: body ran.
         assert_eq!(captures(), vec!["no_props_component:invoked"]);
 
-        // Sanity: at least one view element was created by the body.
         let view_creates = log
             .borrow()
             .iter()
@@ -210,8 +199,6 @@ fn component_with_no_props_invokable_via_braces() {
 #[test]
 fn component_with_string_prop_accepts_str_literal_via_into_coercion() {
     with_test_env(|_log| {
-        // `label: "hello"` — typed-builder `setter(into)` should
-        // convert the `&'static str` to `String`.
         let _h = render! { OneStringProp(label: "hello") };
         assert_eq!(captures(), vec!["one_string_prop:label=hello"]);
     });
@@ -242,7 +229,7 @@ fn component_with_two_props_uses_named_setters() {
 #[test]
 fn option_prop_can_be_omitted() {
     with_test_env(|_log| {
-        // No `alt:` kwarg — typed-builder's `default` kicks in → None.
+        // No `alt:` kwarg — the builder's default kicks in.
         let _h = render! { OptionProp() };
         assert_eq!(captures(), vec!["option_prop:alt=default"]);
     });
@@ -251,8 +238,6 @@ fn option_prop_can_be_omitted() {
 #[test]
 fn option_prop_accepts_inner_via_strip_option_into() {
     with_test_env(|_log| {
-        // `strip_option + into` lets the user pass `&str` directly
-        // (no `Some(...)` wrapping needed).
         let _h = render! { OptionProp(alt: "custom") };
         assert_eq!(captures(), vec!["option_prop:alt=custom"]);
     });
@@ -277,10 +262,6 @@ fn prop_default_attribute_overridable_at_call_site() {
 #[test]
 fn children_prop_receives_wrapped_closure() {
     with_test_env(|log| {
-        // Nested children should be routed into a `.children(...)`
-        // closure that the component invokes inside its body. The
-        // body emits one outer `view`; the children closure emits
-        // two `text` elements inside it.
         let _h = render! {
             WithChildren(label: "wrapper") {
                 text(value: "child-1")
@@ -292,7 +273,6 @@ fn children_prop_receives_wrapped_closure() {
         assert_eq!(captured.len(), 1, "with_children should be invoked once");
         assert_eq!(captured[0], "with_children:label=wrapper");
 
-        // Both children should have rendered their text.
         let texts: Vec<_> = log
             .borrow()
             .iter()
@@ -315,7 +295,6 @@ fn children_prop_defaults_to_empty_view_when_omitted() {
 
         assert_eq!(captures(), vec!["with_children:label=only label"]);
 
-        // No raw_text elements (empty children closure → View::Empty).
         let raw_text_creates = log
             .borrow()
             .iter()
@@ -357,8 +336,6 @@ fn generic_component_with_string_arg() {
 #[test]
 fn nested_component_invocations() {
     with_test_env(|_log| {
-        // Component inside a component, both via the new brace syntax.
-        // Outer's children closure invokes the inner component.
         let _h = render! {
             WithChildren(label: "outer") {
                 OneStringProp(label: "inner")
@@ -366,9 +343,8 @@ fn nested_component_invocations() {
         };
 
         let captured = captures();
-        // Outer body runs first (sees its label), then the children
-        // closure runs as part of the outer body's `view { {body} }`,
-        // invoking one_string_prop.
+        // The outer body runs first, then its children closure invokes
+        // the inner component.
         assert!(
             captured.iter().any(|s| s == "with_children:label=outer"),
             "outer captured; got: {captured:?}",
@@ -383,21 +359,16 @@ fn nested_component_invocations() {
 #[test]
 #[should_panic(expected = "required field `label` was not set")]
 fn build_panics_when_required_field_missing() {
-    // Regression pin for the hand-rolled builder's runtime
-    // required-field check. Pre-typed-builder migration this would
-    // have been a compile error; with the hand-rolled builder we
-    // surface the same constraint at mount time. The panic message
-    // must name the field for the user to find the offending
-    // call-site quickly.
+    // The builder checks required fields at runtime, so the panic
+    // message must name the field for the user to find the call site.
     fresh();
     let _ = OneStringPropProps::builder().build();
 }
 
 #[test]
 fn build_default_field_uses_user_supplied_default() {
-    // `#[prop(default = 5)] count: i32` — omitting `.count(…)`
-    // produces 5 at build time. Verifies the build_assignment
-    // emission path for PropKind::Default { is_generic: false }.
+    // Covers the build_assignment path for
+    // `PropKind::Default { is_generic: false }`.
     fresh();
     let props = WithDefaultPropProps::builder().build();
     assert_eq!(props.count, 5);
@@ -419,9 +390,8 @@ fn build_option_field_defaults_to_none() {
 
 #[test]
 fn build_option_field_strips_outer_option_in_setter() {
-    // Setter takes `impl Into<String>`, wraps to Some(_) at build.
-    // This is the `strip_option` ergonomics the typed-builder
-    // version gave us, now hand-rolled.
+    // Setter takes `impl Into<String>` and wraps to `Some(_)` at build
+    // — the strip-option ergonomics.
     fresh();
     let props = OptionPropProps::builder().alt("hi").build();
     assert_eq!(props.alt.as_deref(), Some("hi"));
@@ -429,9 +399,6 @@ fn build_option_field_strips_outer_option_in_setter() {
 
 #[test]
 fn build_children_defaults_to_empty_view_closure() {
-    // Missing `children:` should produce a closure that returns
-    // View::Empty so iterating the result of `(children)()` is a
-    // no-op.
     fresh();
     let props = WithChildrenProps::builder().label("x").build();
     let v = (props.children)();
@@ -440,8 +407,6 @@ fn build_children_defaults_to_empty_view_closure() {
 
 #[test]
 fn build_into_setter_accepts_str_literal_for_string_field() {
-    // `setter(into)` ergonomics — `&str` flows into a `String`
-    // field through `impl Into<String>` on the setter.
     fresh();
     let props = OneStringPropProps::builder().label("from str").build();
     assert_eq!(props.label, "from str");
@@ -457,9 +422,8 @@ fn build_into_setter_accepts_owned_string() {
 
 #[test]
 fn build_generic_setter_accepts_concrete_type() {
-    // Generic prop's setter takes `T` directly (no Into) — the
-    // call site picks T at the chain head and the setter just
-    // stores the value.
+    // A generic prop's setter takes `T` directly: the call site picks
+    // `T` at the chain head.
     fresh();
     let props = GenericLabelProps::builder().value(7_i32).build();
     assert_eq!(props.value, 7);
@@ -467,18 +431,15 @@ fn build_generic_setter_accepts_concrete_type() {
 
 #[test]
 fn props_struct_is_constructable_directly() {
-    // Smoke test: the auto-generated builder is reachable from user
-    // code as `XxxProps::builder()`. Not the recommended path (users
-    // go through `render!`), but it's the typed-builder API surface
-    // and shouldn't break by accident.
+    // The builder must stay reachable as `XxxProps::builder()` even
+    // though `render!` is the recommended path.
     fresh();
     let owner = Owner::new(None);
     let rec = Recorder::default();
     let prev = install_renderer(Box::new(rec));
     owner.with(|| {
-        // Direct (non-render!) call must go through the PascalCase
-        // alias the `#[component]` macro emits — the snake_case fn
-        // is private inside the `__one_string_prop_inner` module.
+        // The snake_case fn is private inside its inner module, so a
+        // direct call must go through the PascalCase alias.
         let _h = OneStringProp(
             OneStringPropProps::builder()
                 .label("direct construction")
@@ -495,19 +456,15 @@ fn props_struct_is_constructable_directly() {
 
 #[test]
 fn view_module_exposes_children_alias() {
-    // The `Children` type alias must be reachable for users to
-    // declare component props of that type.
     fn _accepts(_: whisker::Children) {}
     let c: whisker::Children = ::std::rc::Rc::new(|| View::Empty);
     _accepts(c);
 }
 
-// A component defined in its own module exporting ONLY its
-// PascalCase alias (its `…Props` struct stays unimported). The
-// `#[component]` macro emits a same-named type alias in the type
-// namespace alongside the value-namespace fn, so `render!` can
-// lower `Card(...)` to `Card::builder()` without a separate
-// `CardProps` import. This is the ergonomics fix for issue #1.
+// A component whose module exports ONLY its PascalCase alias. The
+// macro emits a same-named type alias in the type namespace alongside
+// the value-namespace fn, so `render!` can lower `Card(...)` to
+// `Card::builder()` without a separate `CardProps` import.
 mod alias_only {
     use whisker::prelude::*;
     use whisker::runtime::view::Element;
@@ -523,10 +480,8 @@ mod alias_only {
 
 #[test]
 fn component_usable_in_render_with_only_pascal_alias_imported() {
-    // Import the component by its PascalCase name only — crucially
-    // NOT `alias_only::CardProps`. If the macro failed to emit the
-    // type-namespace alias, `Card::builder()` inside `render!` would
-    // not resolve and this file would not compile.
+    // Imported by PascalCase name only — NOT `alias_only::CardProps`.
+    // Without the type-namespace alias this file would not compile.
     use alias_only::Card;
 
     with_test_env(|_log| {

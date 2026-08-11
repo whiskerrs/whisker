@@ -16,21 +16,16 @@
 //!    module — that's what render! calls and what RA surfaces in
 //!    identifier completion.
 //!
-//! Why hand-roll the builder instead of `#[derive(TypedBuilder)]`:
-//! typed-builder generates per-field type-state markers
-//! (`<Name>PropsBuilder_Error_Missing_required_field_<field>` etc.)
-//! that, while marked `pub`, are pulled into RA's auto-import
-//! completion at the user's call site as noise even when nested in a
-//! private module. The hand-rolled builder emits exactly two types:
-//! the `Props` struct and one builder struct. Required-field validation
-//! moves from compile-time (typed-builder's type-state) to runtime
-//! (`.expect(...)` at `.build()`); the panic fires at component-mount
-//! time with a clear "required field `xxx` was not set" message.
+//! The builder is hand-rolled rather than `#[derive(TypedBuilder)]`:
+//! typed-builder's per-field type-state markers
+//! (`<Name>PropsBuilder_Error_Missing_required_field_<field>` etc.) are
+//! `pub`, so RA pulls them into auto-import completion at the user's
+//! call site even from a private module. The cost is that required-field
+//! validation is a runtime `.expect(...)` at `.build()` instead of a
+//! compile error.
 //!
-//! The function signature change (positional args → single Props arg)
-//! deliberately breaks the old `xxx(arg1, arg2)` calling convention:
-//! user components must be invoked through `render!`'s
-//! `XxxName(kwarg: value)` syntax, which expands to
+//! Components take a single Props arg, so they can only be invoked
+//! through `render!`'s `XxxName(kwarg: value)` syntax, which expands to
 //! `XxxName(XxxProps::builder().kwarg(value).build())`.
 
 use proc_macro2::TokenStream as TokenStream2;
@@ -52,21 +47,16 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
     let output = &sig.output;
     let generics = &sig.generics;
 
-    // Generic params split:
-    //   `<T: Bound, U>` → `<T: Bound, U>` (impl) + `<T, U>` (ty)
-    //
-    // We use both: the function and Props struct carry the full
-    // bounds in declaration position, and the turbofish on the
-    // `as *const ()` cast inside the body needs the type-only form
-    // so the fn pointer monomorphizes correctly.
+    // Both forms are needed: the fn and Props struct carry the full
+    // bounds in declaration position, while the turbofish on the
+    // `as *const ()` cast needs the type-only form so the fn pointer
+    // monomorphizes correctly.
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let ty_generics_for_turbofish = ty_generics_to_turbofish(generics);
 
-    // Collect the names of the fn's generic *type* params so
-    // `builder_annotation` can recognise a prop whose type is a bare
-    // generic param (`value: T`) and skip `setter(into)` — `Into<T>`
-    // with an unconstrained `T` blows up call-site inference (the
-    // compiler can't pick a concrete `T` from `From<i32>` candidates).
+    // A prop whose type is a bare generic param (`value: T`) must skip
+    // `setter(into)`: `Into<T>` with an unconstrained `T` blows up
+    // call-site inference.
     let generic_type_params: Vec<Ident> = generics
         .params
         .iter()
@@ -76,10 +66,6 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         })
         .collect();
 
-    // Walk the parameter list. For each `Typed` arg, collect a
-    // `Prop` (binding name + type + classification) so the emission
-    // step can generate per-field tokens for the Props struct, the
-    // Builder struct, the setters, and the `.build()` body.
     let mut props: Vec<Prop> = Vec::new();
     for arg in &sig.inputs {
         let pat_type = match arg {
@@ -110,11 +96,9 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
             Err(e) => return e.to_compile_error(),
         };
 
-        // Strip the param's `#[prop(...)]` attribute from forwarding
-        // attrs — it's a `#[component]` directive, not something the
-        // emitted Props struct should carry forward. Other attrs
-        // (`#[allow(...)]`, doc comments) ride along on the Props
-        // field unchanged.
+        // `#[prop(...)]` is a `#[component]` directive, not something
+        // the Props struct carries forward. Other attrs
+        // (`#[allow(...)]`, doc comments) ride along unchanged.
         let other_attrs: Vec<syn::Attribute> = pat_type
             .attrs
             .iter()
@@ -131,7 +115,6 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
     }
     let prop_idents: Vec<Ident> = props.iter().map(|p| p.ident.clone()).collect();
 
-    // ---- Generate per-field tokens for the Props struct + Builder ----
     let props_fields: Vec<TokenStream2> = props.iter().map(prop_struct_field).collect();
     let builder_fields: Vec<TokenStream2> = props.iter().map(prop_builder_field).collect();
     let builder_init: Vec<TokenStream2> = props.iter().map(prop_builder_init).collect();
@@ -140,8 +123,8 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
 
     let props_name = props_struct_name(fn_name);
 
-    // Generate the destructure + capture + re-clone pattern that the
-    // existing remount machinery expects:
+    // The destructure + capture + re-clone pattern the remount
+    // machinery expects:
     //
     //   let XxxProps { a, b, c } = __props;
     //   let __whisker_prop_a = a;
@@ -169,16 +152,11 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         })
         .collect();
 
-    // Force the subsecond-dispatched inner closure to capture EVERY
-    // prop, not just the ones `#block` happens to reference. A `move`
-    // closure captures each path it mentions by value, so touching
-    // all props here pins the closure's environment layout to the
-    // props signature alone. Without this, an edit that merely
-    // *starts using* a previously-unused prop changes the capture
-    // set — and a hot-patched body would then read the old (smaller)
-    // environment through the new layout: garbage props / UB. With
-    // it, the layout moves only when the props signature moves,
-    // which is exactly what `__whisker_props_hash` below detects.
+    // Touching every prop pins the subsecond-dispatched closure's
+    // captured-environment layout to the props signature alone.
+    // Without it, an edit that merely *starts using* a previously-unused
+    // prop changes the capture set, and the hot-patched body then reads
+    // the old, smaller environment through the new layout: UB.
     let force_capture = if prop_idents.is_empty() {
         quote! {}
     } else {
@@ -188,18 +166,14 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         }
     };
 
-    // Layout hash: FNV-1a over the props signature tokens (ident +
-    // type, declaration order) — the compile-time part of what
-    // determines the inner closure's captured-environment layout
-    // given the forced capture above. The generated
-    // `__whisker_props_hash` fn additionally folds in each prop
-    // type's `size_of`/`align_of` AT ITS OWN BUILD's notion of the
-    // type, so a change to a prop type's *definition* (fields added
-    // to a struct the signature merely names) also shifts the value.
-    // Read through subsecond dispatch at remount time, so the
-    // runtime can compare "layout this site's stored closure was
-    // built for" against "layout the freshly patched code expects"
-    // and refuse the in-place remount on mismatch.
+    // Layout hash: FNV-1a over the props signature tokens, the
+    // compile-time part of the closure's captured-environment layout.
+    // The generated `__whisker_props_hash` also folds in each prop
+    // type's `size_of`/`align_of` AT ITS OWN BUILD, so a change to a
+    // prop type's *definition* shifts the value too. Read through
+    // subsecond dispatch at remount time so the runtime can refuse an
+    // in-place remount when the stored closure's layout no longer
+    // matches what the patched code expects.
     let props_sig = props
         .iter()
         .map(|p| {
@@ -217,65 +191,43 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         quote! { __whisker_props_hash :: < #(#ty_generics_for_turbofish),* > }
     };
 
-    // `<fn>` for the `as *const ()` cast inside the body.
-    //
-    // Non-generic case: bare `fn_name as *const ()` works — there's
-    //   only one monomorphization, so the fn ptr is unambiguous.
-    // Generic case: must turbofish: `fn_name::<T, U> as *const ()`
-    //   so we cast the *current monomorphization*. Each `T` =
-    //   different `*const ()` value, which is what we want — the
-    //   per-component remount registry keys on it.
+    // A generic fn must be turbofished so the cast picks the CURRENT
+    // monomorphization: each `T` yields a distinct `*const ()`, which
+    // is what the per-component remount registry keys on.
     let fn_ptr_expr = if ty_generics_for_turbofish.is_empty() {
         quote! { #fn_name as *const () }
     } else {
         quote! { #fn_name :: < #(#ty_generics_for_turbofish),* > as *const () }
     };
 
-    // Props struct + hand-rolled Builder live inside a PRIVATE
-    // module so the builder type's name doesn't surface as
-    // identifier-completion noise at the user's call sites. Only
-    // `XxxProps` is re-exported outward (doc-hidden); the builder
-    // is reached via the `.builder()` method chain and never needs
-    // to be in scope by name.
-    //
-    // Generics + where clause carry through from the user's fn so
-    // a `#[component] fn xxx<T>(value: T)` gets a `XxxProps<T>` and
-    // a `XxxPropsBuilder<T>`.
+    // Props + Builder live inside a PRIVATE module so the builder
+    // type's name isn't identifier-completion noise at the user's call
+    // sites. Only `XxxProps` is re-exported (doc-hidden); the builder
+    // is reached through `.builder()` and never needs to be in scope.
     let internal_mod = format_ident!("__{}_props_internal", fn_name);
     let builder_name = format_ident!("{}Builder", props_name);
     let props_struct = quote! {
-        // No `#vis` on the module — visibility is deliberately
-        // tighter than the surrounding fn so the builder type
-        // stays unreachable as a bare identifier from outside.
+        // No `#vis`: the module is deliberately tighter than the
+        // surrounding fn so the builder stays unreachable by name.
         #[doc(hidden)]
         mod #internal_mod {
-            // Pull in everything from the outer scope so prop types
-            // referenced in fields (`Children`, user types, etc.)
-            // resolve.
+            // Prop types referenced in fields must resolve here.
             use super::*;
 
             pub struct #props_name #impl_generics #where_clause {
                 #(#props_fields),*
             }
 
-            // Builder: every field becomes `Option<T>` (or, for
-            // already-`Option<T>` props, `Option<Option<T>>`) so we
-            // can tell "user hasn't set this" from "user set it to
-            // None". `.build()` collapses each Option back into the
-            // field's declared type, with the appropriate
-            // default / panic-on-missing for required fields.
+            // Every builder field becomes `Option<T>` (or
+            // `Option<Option<T>>` for an already-`Option<T>` prop) so
+            // "not set" is distinguishable from "set to None".
             //
-            // The struct stays `pub` (with `#[doc(hidden)]`) because
-            // a `pub` struct's `pub fn` methods are only callable
-            // from outside if the struct itself is reachable. A
-            // truly-private builder breaks `XxxProps::builder()
-            // .setter(…).build()` from outside the mod — Rust's
-            // method-resolution sees the methods as private when
-            // the type is private, even though the value is held
-            // by the caller. So the builder's name is necessarily
-            // visible at the user's call site; `#[doc(hidden)]` is
-            // the best signal we can give RA. Newer RA versions
-            // honour it for auto-import filtering.
+            // The struct must stay `pub`: a private type's `pub fn`
+            // methods are unreachable from outside the module even when
+            // the caller holds the value, which would break
+            // `XxxProps::builder().setter(…).build()`. Its name is
+            // therefore visible at the call site, and `#[doc(hidden)]`
+            // is the only signal RA's auto-import filter can act on.
             #[doc(hidden)]
             pub struct #builder_name #impl_generics #where_clause {
                 #(#builder_fields),*
@@ -307,44 +259,30 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         #vis use #internal_mod::#props_name;
     };
 
-    // PascalCase alias is the user-facing call-site name. Visible
-    // (NOT doc-hidden) because this is the canonical name in
-    // render! syntax — surfacing it in completion is the whole
-    // point. `non_snake_case` opt-out for the fn-as-PascalCase
-    // alias.
-    // `props_name` is `<PascalCase fn>Props`. Strip the suffix
-    // exactly once to recover the alias name — `trim_end_matches`
-    // is the wrong tool here because it greedily strips repeats
-    // (`TwoPropsProps` → `Two`, dropping the user's actual name).
+    // The PascalCase alias is the canonical render! call-site name, so
+    // it stays visible (NOT doc-hidden) for completion.
+    //
+    // Strip the `Props` suffix exactly once: `trim_end_matches` would
+    // greedily strip repeats (`TwoPropsProps` → `Two`).
     let props_name_str = props_name.to_string();
     let alias_str = props_name_str
         .strip_suffix("Props")
         .unwrap_or(&props_name_str);
     let fn_name_str = fn_name.to_string();
 
-    // Rewritten function: same signature except parameters are
-    // collapsed into a single `__props: XxxProps<...>` arg. Body
-    // destructures and runs the existing remount machinery.
-    //
-    // The fn lives inside a PRIVATE inner module so its
-    // snake_case name (`art_tile`) doesn't pollute outer-scope
-    // completion candidates. Only the PascalCase alias (declared
-    // below) re-exports it outward. `#[doc(hidden)]` is
-    // redundant given the private module, but kept as belt-and-
-    // suspenders for tools that filter by doc-attribute.
+    // The rewritten fn lives inside a PRIVATE inner module so its
+    // snake_case name doesn't pollute outer-scope completion. Only the
+    // PascalCase alias below re-exports it outward.
     let inner_mod = format_ident!("__{}_inner", fn_name);
     let new_fn = quote! {
         #[doc(hidden)]
         mod #inner_mod {
             use super::*;
 
-            // Props-layout hash (see the macro-side comment on
-            // `props_sig`). Read through `__hot::call_hash` so a
-            // just-applied patch answers with ITS layout. The
-            // size_of/align_of folds evaluate in whichever build
-            // this fn was compiled into — that's what lets a
-            // prop-type *definition* change (same signature tokens,
-            // different struct fields) shift the patch's value.
+            // Read through `__hot::call_hash` so a just-applied patch
+            // answers with ITS layout: the size_of/align_of folds
+            // evaluate in whichever build this fn was compiled into,
+            // which is what catches a prop-type *definition* change.
             #[doc(hidden)]
             pub fn __whisker_props_hash #impl_generics () -> u64 #where_clause {
                 let mut __h: u64 = #props_hash;
@@ -366,10 +304,10 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
                 let #props_name { #(#prop_idents),* } = __props;
                 #(#captures)*
 
-                // Two-closure layering: the outer closure keeps the
-                // re-clone bookkeeping out of the subsecond-dispatched
-                // inner, which has to live at the user crate's source
-                // position for hot reload to find it.
+                // The outer closure keeps re-clone bookkeeping out of
+                // the subsecond-dispatched inner one, which must sit at
+                // the user crate's source position for hot reload to
+                // find it.
                 let __body: ::std::boxed::Box<
                     dyn ::std::ops::Fn() -> ::whisker::runtime::view::Element + 'static,
                 > = ::std::boxed::Box::new(move || {
@@ -390,20 +328,14 @@ pub fn expand(item: TokenStream2) -> TokenStream2 {
         }
     };
 
-    // PascalCase alias re-exports the fn from the inner module.
-    // This (and only this) is the user-facing call-site name.
+    // `#[component]` must sit at module level: `pub use` only works
+    // there.
     //
-    // `#[component]` is expected at module level (not nested
-    // inside fn bodies) — both because `pub use` only works at
-    // module level and because components benefit from being
-    // visible to their crate's `render!` callers.
-    // Alongside the callable alias (value namespace), expose the same
-    // PascalCase name as a TYPE alias to the Props struct (type
-    // namespace). The two coexist because Rust keeps separate value and
-    // type namespaces, and a single `use crate::Icon` imports the name
-    // from *both* — so `render!` can lower a call to
-    // `Icon(Icon::builder()…build())` using only the component name, and
-    // users never have to import `IconProps` separately.
+    // The PascalCase name is emitted twice — a callable alias in the
+    // value namespace and a type alias to Props in the type namespace.
+    // A single `use crate::Icon` imports both, so `render!` can lower a
+    // call to `Icon(Icon::builder()…build())` from the component name
+    // alone and users never import `IconProps` separately.
     let pascal_alias = if alias_str == fn_name_str {
         quote! {
             #[doc(hidden)]
@@ -439,12 +371,9 @@ struct PropAttr {
     /// `expr` for them.
     default: Option<Expr>,
     /// `#[prop(optional)]` — equivalent to declaring the type as
-    /// `Option<T>` from the caller's perspective. Emits
-    /// `#[builder(default, setter(into, strip_option))]`. Currently
-    /// the macro is conservative and the user is expected to write
-    /// `Option<T>` directly; this attribute is reserved for future
-    /// use (e.g., explicit opt-in to `strip_option` on a wrapper
-    /// type the macro can't auto-detect).
+    /// `Option<T>` from the caller's perspective. User code is expected
+    /// to write `Option<T>` directly; this is reserved for opting into
+    /// the same treatment on a wrapper type the macro can't detect.
     optional: bool,
 }
 
@@ -506,10 +435,10 @@ enum PropKind {
     /// Setter: `pub fn x(self, v: T) -> Self`.
     /// Build:  `self.x.expect(...)`.
     RequiredGeneric,
-    /// `Option<U>` prop. Builder stores `Option<Option<U>>` so we
-    /// can tell "user didn't set it" (outer None) apart from "user
-    /// set it to None" (outer Some, inner None — currently
-    /// unreachable in render! but kept for direct construction).
+    /// `Option<U>` prop. Builder stores `Option<Option<U>>` so "user
+    /// didn't set it" (outer None) is distinguishable from "user set it
+    /// to None" (outer Some, inner None — reachable only via direct
+    /// construction, not render!).
     /// Setter takes the inner `U` (or `impl Into<U>` when U isn't
     /// generic) and wraps to `Some(Some(...))`. Build collapses
     /// the outer `Option` with `.unwrap_or(None)` so missing props
@@ -523,10 +452,8 @@ enum PropKind {
     },
     /// `Children` prop. Builder field is `Option<Children>`. Setter
     /// takes `Children` directly (the type is already a wrapped
-    /// `Rc<dyn Fn>` — there's no useful `Into` story). Build
-    /// defaults a missing children prop to a closure returning
-    /// `View::Empty`, matching the typed-builder behaviour from
-    /// before.
+    /// `Rc<dyn Fn>` — there's no useful `Into` story). Build defaults a
+    /// missing children prop to a closure returning `View::Empty`.
     Children,
     /// `#[prop(default = expr)]`. Behaves like Required for the
     /// setter and like `unwrap_or_else(|| expr)` at build time.
@@ -541,14 +468,11 @@ enum PropKind {
 }
 
 /// Decide the [`PropKind`] for a given type + user `#[prop(...)]`
-/// directive. The precedence (mirrors what `typed_builder` did for us
-/// before):
+/// directive. The precedence:
 ///
 /// 1. `#[prop(default = expr)]` wins regardless of type.
 /// 2. `#[prop(optional)]` on a non-`Option<T>` type → upgrade to
-///    `Optional { inner: T, ... }` so the user can omit. (Currently
-///    user code uses `Option<T>` directly; this branch is reserved
-///    for future opt-in.)
+///    `Optional { inner: T, ... }` so the user can omit.
 /// 3. `Children` (last path segment) → `Children` kind.
 /// 4. `Option<U>` (last path segment) → `Optional { inner: U, ... }`.
 /// 5. Bare generic param → `RequiredGeneric`.
@@ -569,10 +493,8 @@ fn classify_prop(ty: &Type, attr: &PropAttr, generic_type_params: &[Ident]) -> P
                 inner_is_generic,
             };
         }
-        // `#[prop(optional)]` on a non-`Option<T>` — wrap the user's
-        // type into an Optional with the same inner so the
-        // setter/build still typecheck. typed-builder's
-        // `strip_option` did the same.
+        // Wrap into an Optional with the same inner so setter/build
+        // still typecheck.
         return PropKind::Optional {
             inner: ty.clone(),
             inner_is_generic: is_generic,
@@ -595,7 +517,7 @@ fn classify_prop(ty: &Type, attr: &PropAttr, generic_type_params: &[Ident]) -> P
 }
 
 /// One field in the public `XxxProps` struct. Types stay exactly as
-/// the user wrote them — Props is the user-visible struct.
+/// the user wrote them.
 fn prop_struct_field(prop: &Prop) -> TokenStream2 {
     let ident = &prop.ident;
     let ty = &prop.ty;
@@ -656,10 +578,8 @@ fn prop_setter_method(prop: &Prop) -> TokenStream2 {
             inner,
             inner_is_generic,
         } => {
-            // Setter takes the inner (unwrapped) T — same surface
-            // typed-builder's `strip_option` gave us. Stored as
-            // `Some(Some(v))` to record both "set" and "set to a
-            // Some-value".
+            // Setter takes the inner (unwrapped) T; stored as
+            // `Some(Some(v))` to record both "set" and "set to Some".
             if *inner_is_generic {
                 quote! {
                     #[allow(unused_mut)]
@@ -721,9 +641,8 @@ fn prop_build_assignment(prop: &Prop) -> TokenStream2 {
             #ident: self.#ident.expect(#missing_msg)
         },
         PropKind::Optional { .. } => quote! {
-            // Outer Option = "did the user call .ident(…)?"
-            // — collapse missing → None so the public `Option<T>`
-            // field is the user's chosen value or None.
+            // Outer Option = "did the user call .ident(…)?" — collapse
+            // missing to None.
             #ident: self.#ident.unwrap_or(::std::option::Option::None)
         },
         PropKind::Children => quote! {
@@ -813,11 +732,9 @@ fn props_struct_name(fn_name: &Ident) -> Ident {
     Ident::new(&camel, fn_name.span())
 }
 
-/// Pull the type-parameter identifiers out of the function generics
-/// so we can build a turbofish for the `as *const ()` cast. Lifetimes
-/// and const generics are skipped (lifetimes aren't part of
-/// turbofish; const generics aren't yet supported on
-/// `#[component]`).
+/// Pull the type-parameter identifiers out of the function generics to
+/// build a turbofish for the `as *const ()` cast. Lifetimes aren't part
+/// of a turbofish; const generics aren't supported on `#[component]`.
 fn ty_generics_to_turbofish(generics: &syn::Generics) -> Vec<TokenStream2> {
     generics
         .params
@@ -836,8 +753,6 @@ fn ty_generics_to_turbofish(generics: &syn::Generics) -> Vec<TokenStream2> {
 mod tests {
     use super::*;
     use syn::parse_quote;
-
-    // -- Naming + helpers ---------------------------------------------------
 
     #[test]
     fn props_struct_name_pascal_case_conversion() {
@@ -884,15 +799,12 @@ mod tests {
         let not_option: Type = parse_quote!(String);
         assert!(option_inner_type(&not_option).is_none());
 
-        // `MyOptional` ends in `al` not `Option`. Not an Option.
         let custom: Type = parse_quote!(MyOptional);
         assert!(option_inner_type(&custom).is_none());
 
-        // `Option` without generic args → not a valid Option<T> for us.
         let bare_option: Type = parse_quote!(Option);
         assert!(option_inner_type(&bare_option).is_none());
 
-        // Non-path type (tuple).
         let tup: Type = parse_quote!((u8, u8));
         assert!(option_inner_type(&tup).is_none());
     }
@@ -914,21 +826,14 @@ mod tests {
         assert!(is_generic_type_param(&parse_quote!(T), &generics));
         assert!(is_generic_type_param(&parse_quote!(U), &generics));
 
-        // `Option<T>` — the outer type is `Option`, not bare T.
         assert!(!is_generic_type_param(&parse_quote!(Option<T>), &generics));
-        // Multi-segment path with same final ident does NOT match.
         assert!(!is_generic_type_param(&parse_quote!(crate::T), &generics));
-        // Concrete non-generic type.
         assert!(!is_generic_type_param(&parse_quote!(String), &generics));
-        // Generic-shaped (T<X>) doesn't match.
         let t_with_args: Type = parse_quote!(T<i32>);
         assert!(!is_generic_type_param(&t_with_args, &generics));
-        // Non-path type (reference) doesn't match.
         let reference: Type = parse_quote!(&'a str);
         assert!(!is_generic_type_param(&reference, &generics));
     }
-
-    // -- #[prop(...)] attribute parser -------------------------------------
 
     #[test]
     fn parse_prop_default_attribute() {
@@ -972,8 +877,6 @@ mod tests {
         assert!(parsed.default.is_none());
         assert!(!parsed.optional);
     }
-
-    // -- classify_prop decision table --------------------------------------
 
     fn classify(ty: Type, attr: PropAttr, generics: &[Ident]) -> PropKind {
         classify_prop(&ty, &attr, generics)
@@ -1028,7 +931,6 @@ mod tests {
     fn classify_children_for_children_type() {
         let k = classify(parse_quote!(Children), PropAttr::default(), &[]);
         assert!(matches!(k, PropKind::Children));
-        // Qualified path also matches.
         let k = classify(parse_quote!(whisker::Children), PropAttr::default(), &[]);
         assert!(matches!(k, PropKind::Children));
     }
@@ -1079,8 +981,6 @@ mod tests {
 
     #[test]
     fn classify_optional_attribute_wraps_non_option_type() {
-        // `#[prop(optional)]` on `String` should treat the field as
-        // Optional<String>.
         let attr = PropAttr {
             optional: true,
             ..PropAttr::default()
@@ -1099,8 +999,6 @@ mod tests {
 
     #[test]
     fn classify_optional_attribute_on_option_uses_inner() {
-        // `#[prop(optional)]` on `Option<String>` extracts the inner
-        // String — same as a plain Option<String>.
         let attr = PropAttr {
             optional: true,
             ..PropAttr::default()
@@ -1108,8 +1006,6 @@ mod tests {
         let k = classify(parse_quote!(Option<String>), attr, &[]);
         assert!(matches!(k, PropKind::Optional { .. }));
     }
-
-    // -- Per-prop emission helpers (struct field / builder field / setter / build assignment) -----
 
     fn make_prop(ident: &str, ty: Type, kind: PropKind) -> Prop {
         Prop {
@@ -1217,9 +1113,7 @@ mod tests {
             },
         );
         let out = prop_setter_method(&p).to_string();
-        // Setter takes the inner String (not Option<String>).
         assert!(out.contains("impl :: std :: convert :: Into < String >"));
-        // Stored as Some(Some(v.into())) — double wrap.
         assert!(out.contains("Option :: Some (:: std :: option :: Option :: Some"));
     }
 
@@ -1302,7 +1196,6 @@ mod tests {
             },
         );
         let out = prop_build_assignment(&p).to_string();
-        // unwrap_or(None) — missing prop becomes None.
         assert!(out.contains("unwrap_or"));
         assert!(out.contains("Option :: None"));
     }
@@ -1331,8 +1224,6 @@ mod tests {
         assert!(out.contains("99"));
     }
 
-    // -- expand() end-to-end shape ----------------------------------------
-
     #[test]
     fn expand_emits_props_struct_and_rewritten_fn() {
         let input: TokenStream2 = quote! {
@@ -1341,13 +1232,11 @@ mod tests {
             }
         };
         let output = expand(input).to_string();
-        // Props struct lives inside the hidden inner mod.
         assert!(output.contains("struct CardProps"));
         assert!(output.contains("struct CardPropsBuilder"));
         assert!(output.contains("fn card"));
         assert!(output.contains("__props : CardProps"));
         assert!(output.contains("CardProps { title }"));
-        // PascalCase alias is emitted.
         assert!(output.contains("use __card_inner :: card as Card"));
     }
 
@@ -1364,16 +1253,13 @@ mod tests {
             output.contains("HeaderProps { }") || output.contains("HeaderProps {}"),
             "no-param destructure should be empty braces; got: {output}"
         );
-        // No setters for a zero-param component, just builder()+build().
         assert!(output.contains("pub fn builder"));
         assert!(output.contains("pub fn build"));
     }
 
     #[test]
     fn expand_does_not_reference_typed_builder() {
-        // Regression: we replaced typed-builder with a hand-rolled
-        // builder. The emission must not reference the old crate
-        // path or its derive macro.
+        // The emission must not reference typed-builder.
         let input: TokenStream2 = quote! {
             fn card(title: String, count: i32) -> Element {
                 render! { view {} }
@@ -1408,8 +1294,6 @@ mod tests {
             }
         };
         let output = expand(input).to_string();
-        // The expansion replaces the body with a compile_error!() —
-        // detect it via the macro path.
         assert!(
             output.contains("compile_error"),
             "method receiver should produce a compile error; got: {output}"
@@ -1429,9 +1313,8 @@ mod tests {
 
     #[test]
     fn expand_props_alias_strips_props_suffix_once() {
-        // Regression test for the `TwoPropsProps -> Two` greedy-trim
-        // bug. The alias derived from `TwoPropsProps` must be
-        // `TwoProps`, not `Two`.
+        // The alias derived from `TwoPropsProps` must be `TwoProps`,
+        // not `Two` — only one `Props` suffix comes off.
         let input: TokenStream2 = quote! {
             fn two_props(title: String, count: i32) -> Element {
                 render! { view {} }
@@ -1446,7 +1329,6 @@ mod tests {
 
     #[test]
     fn expand_forwards_attribute_on_param_to_props_field() {
-        // Non-`#[prop]` attrs ride along on the emitted Props field.
         let input: TokenStream2 = quote! {
             fn card(#[allow(dead_code)] title: String) -> Element {
                 render! { view {} }
@@ -1458,8 +1340,6 @@ mod tests {
             "user attr should appear on the Props field; got: {output}"
         );
     }
-
-    // -- Helper used by classify_* assertions -----------------------------
 
     fn kind_name(k: &PropKind) -> &'static str {
         match k {

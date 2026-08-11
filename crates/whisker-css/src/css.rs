@@ -126,8 +126,6 @@ impl Css {
     /// only the final occurrence of each property name is yielded,
     /// in the position of that final occurrence.
     pub fn resolved(&self) -> Vec<&CssProp> {
-        // Walk backwards, recording the first time we see each name,
-        // then reverse for forward order.
         let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
         let mut out: Vec<&CssProp> = Vec::new();
         for prop in self.props.iter().rev() {
@@ -212,17 +210,14 @@ mod tests {
             .raw("color", "blue")
             .raw("color", "green");
         assert_eq!(s.to_css_string(), "color: green;");
-        // Internal `entries` keeps all three — only `resolved`
-        // collapses.
         assert_eq!(s.len(), 3);
         assert_eq!(s.resolved().len(), 1);
     }
 
     #[test]
     fn duplicate_property_preserves_position_of_last() {
-        // color appears at index 0 then again at 2; final order
-        // should place `color: blue` where the last occurrence sits
-        // (after `background-color`).
+        // The last write decides where the property lands in the
+        // resolved order.
         let s = Css::new()
             .raw("color", "red")
             .raw("background-color", "white")

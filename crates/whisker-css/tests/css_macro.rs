@@ -35,8 +35,8 @@ fn multiple_properties_emit_in_order() {
         border_radius: px(10)
     );
     let out = s.to_css_string();
-    // Padding expands to four longhands; border-radius too. We assert
-    // the salient pieces rather than the full ordering.
+    // Padding and border-radius each expand to four longhands; only
+    // the salient pieces are asserted, not the full ordering.
     assert!(out.contains("background-color: rgb(26, 19, 48)"));
     assert!(out.contains("color: white"));
     assert!(out.contains("padding-top: 12px"));
@@ -153,14 +153,11 @@ fn computed_inside_block() {
     fn light() -> Color {
         Color::Named(NamedColor::Blue)
     }
-    // The block holds a load-bearing local + a conditional — the
-    // `{ … }` is genuinely a block expr, not a redundant brace
-    // around a single call (which would trip `unused_braces`).
     let theme = "dark";
     let s = css!(color: {
-        // Two statements + the trailing expr so the block expression
-        // form is actually load-bearing (and `unused_braces` /
-        // `let_and_return` stay silent).
+        // Two statements plus a trailing expr keep the block genuinely
+        // load-bearing, so `unused_braces` / `let_and_return` stay
+        // silent.
         let primary = dark();
         let secondary = light();
         if theme == "dark" { primary } else { secondary }
@@ -170,8 +167,6 @@ fn computed_inside_block() {
 
 #[test]
 fn css_macro_returns_css_type_for_chaining() {
-    // The macro result is `Css`, so it can be `.<method>()`-chained
-    // afterwards as a regular builder value.
     let s = css!(color: Color::Named(NamedColor::Red)).padding(px(8));
     let out = s.to_css_string();
     assert!(out.contains("color: red"));
@@ -187,9 +182,8 @@ fn css_macro_value_is_clonable() {
 
 #[test]
 fn flex_keyword_method_via_no_arg_path() {
-    // Methods that take no value (`display_flex()`, etc.) aren't
-    // expressible as kwargs here because `css!` requires `name:
-    // value`. The follow-up chain handles them:
+    // `css!` requires `name: value`, so value-less methods
+    // (`display_flex()`, …) can only be reached by chaining after it.
     let s = css!(color: Color::Named(NamedColor::Red))
         .display_flex()
         .flex_direction(FlexDirection::Row);
@@ -225,7 +219,6 @@ fn nested_shorthand_within_kwarg() {
 
 #[test]
 fn many_properties_in_one_call() {
-    // A larger call exercising the `+` repetition path.
     let s = css!(
         display: whisker_css::Display::Flex,
         flex_direction: FlexDirection::Column,

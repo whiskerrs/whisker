@@ -183,10 +183,9 @@ fn nested_view_with_text_child() {
                 tag: ElementTag::RawText
             }
         );
-        // The raw_text gets its text attr set in an effect. We check
-        // the attr appears in the op stream and the raw_text is
-        // attached to the text. Order between the SetAttr and the
-        // append is an implementation detail of the value() method.
+        // The raw_text's text attr is set in an effect, so its order
+        // relative to the append is an implementation detail of
+        // `value()`.
         assert!(ops.iter().any(|op| matches!(op, Op::SetAttr {
             id: 2, key, value
         } if key == "text" && value == "Hello")));
@@ -260,15 +259,14 @@ fn arbitrary_attribute_emits_set_attribute() {
 
 #[test]
 fn typed_attribute_methods_route_to_named_setters() {
-    // Phase: built-in attribute coverage. Named attribute methods route
-    // to `.method(v)` (not the String-only `.attr`), so bool / number /
-    // enum-string values stringify to the right Lynx attribute name.
+    // Named attribute methods route to `.method(v)`, not the
+    // String-only `.attr`, so bool / number / enum-string values reach
+    // the right Lynx attribute name.
     let has = |ops: &[Op], key: &str, val: &str| {
         ops.iter()
             .any(|op| matches!(op, Op::SetAttr { key: k, value: v, .. } if k == key && v == val))
     };
 
-    // scroll_view: bool + number attrs.
     with_recorder(|log| {
         let _ = render! {
             scroll_view(bounces: true, enable_scroll: false, upper_threshold: 50)
@@ -279,7 +277,6 @@ fn typed_attribute_methods_route_to_named_setters() {
         assert!(has(&ops, "upper-threshold", "50"), "got {ops:?}");
     });
 
-    // text: number + bool.
     with_recorder(|log| {
         let _ = render! {
             text(value: "hi", text_maxline: 2, text_selection: true)
@@ -289,7 +286,6 @@ fn typed_attribute_methods_route_to_named_setters() {
         assert!(has(&ops, "text-selection", "true"), "got {ops:?}");
     });
 
-    // common (trait) attrs on a plain view: bool + string.
     with_recorder(|log| {
         let _ = render! {
             view(flatten: true, hit_slop: "10px", pan_intercept_direction: PanInterceptDirection::Horizontal)
@@ -318,16 +314,16 @@ fn on_tap_emits_set_event_listener() {
             op,
             Op::Event { name, bind_type, .. } if name == "tap" && *bind_type == BindType::Bind
         )));
-        // The recorder stored but doesn't fire the callback —
-        // verifying registration is enough at the macro layer.
+        // The recorder stores but never fires the callback;
+        // registration is all the macro layer can be held to.
         assert!(!*fired.borrow());
     });
 }
 
 #[test]
 fn tap_propagation_variants_route_to_bind_types() {
-    // The 1:1 mapping: each `on_[capture_]tap[_catch]` kwarg registers
-    // a "tap" listener with the matching propagation `BindType`.
+    // Each `on_[capture_]tap[_catch]` kwarg registers a "tap" listener
+    // with the matching propagation `BindType`.
     with_recorder(|log| {
         let _ = render! {
             view {
@@ -361,9 +357,8 @@ fn tap_propagation_variants_route_to_bind_types() {
 
 #[test]
 fn component_specific_events_route_bind_only() {
-    // Phase 6 coverage: tag-specific CustomEvents (scroll_view /
-    // text) register their named listener as BindType::Bind. They have
-    // no catch/capture variants (Lynx CustomEvent = target-only).
+    // Tag-specific CustomEvents register as `BindType::Bind` and have
+    // no catch/capture variants — Lynx CustomEvents are target-only.
     with_recorder(|log| {
         let _ = render! {
             scroll_view {
@@ -466,10 +461,9 @@ fn multiple_children_append_in_order() {
 fn dynamic_value_renders_initial_via_effect() {
     with_recorder_and_owner(|log| {
         let (count, _set_count) = signal(0_i32).split();
-        // Phase 7-Φ.B: macro no longer auto-wraps kwargs. For
-        // reactive numeric → string interpolation, derive a
-        // `ReadSignal<String>` via `computed`. Passes through as
-        // `Signal::Dynamic` to the `value` builder.
+        // The macro does not auto-wrap kwargs: reactive numeric →
+        // string interpolation goes through a `computed`, which reaches
+        // the `value` builder as `Signal::Dynamic`.
         let label = computed(move || count.get().to_string());
         let _h = render! {
             text(value: label)
@@ -515,9 +509,6 @@ fn dynamic_value_updates_on_signal_write() {
 fn dynamic_style_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
         let (color, set_color) = signal("red".to_string()).split();
-        // `format!` expression captured inside `computed` so the
-        // closure (and the underlying signal read) re-runs on
-        // change.
         let css = computed(move || format!("color: {};", color.get()));
         let _h = render! {
             view(style: css)
@@ -541,8 +532,6 @@ fn dynamic_style_re_runs_on_dep_change() {
 fn dynamic_attribute_re_runs_on_dep_change() {
     with_recorder_and_owner(|log| {
         let (src, set_src) = signal("a.png".to_string()).split();
-        // Already a `ReadSignal<String>` — pass the handle directly,
-        // it converts to `Signal::Dynamic`.
         let _h = render! {
             view(src: src)
         };
@@ -581,9 +570,8 @@ fn static_value_only_sets_text_once() {
 
 #[test]
 fn mixed_static_and_dynamic_children_via_raw_text() {
-    // Two separate raw_text siblings — first static, second
-    // reading the signal. Same op-stream shape the legacy
-    // `<text>"count=" {count.get()}</text>` produced.
+    // Two raw_text siblings: the first static, the second reading the
+    // signal.
     with_recorder_and_owner(|log| {
         let (count, _set) = signal(7_i32).split();
         let count_label = computed(move || count.get().to_string());
@@ -621,7 +609,6 @@ fn signal_only_updates_elements_that_read_it() {
         log.borrow_mut().clear(); // ignore initial ops
         set_a.set(1);
         flush();
-        // Only the element reading `a` should have its SetAttr fire.
         let set_text_count = log
             .borrow()
             .iter()
@@ -703,7 +690,6 @@ fn show_swaps_on_condition_flip() {
         set_cond.set(false);
         flush();
 
-        // After flip: a new "fb" element gets created + text set.
         let texts_after: Vec<_> = log
             .borrow()
             .iter()

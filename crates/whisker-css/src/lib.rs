@@ -52,12 +52,10 @@ pub mod shorthand;
 mod to_css;
 pub mod value;
 
-// `css!(name: value, …)` — kwarg syntax for the [`Css`] builder.
-// Lives in `whisker-macros` so it can be a proc macro (the
-// partial-input recovery driving rust-analyzer completion needs
-// fine-grained control over the expansion). Re-exported here so
-// callers can spell `whisker_css::css!` without a direct dep on
-// the macros crate.
+// `css!` lives in `whisker-macros` because the partial-input recovery
+// that drives rust-analyzer completion needs a proc macro. Re-exported
+// here so callers can spell `whisker_css::css!` without depending on
+// the macros crate directly.
 pub use whisker_macros::css;
 
 pub use crate::css::{Css, CssProp};

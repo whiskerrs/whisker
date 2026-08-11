@@ -65,40 +65,30 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
     let fn_name = &func.sig.ident;
 
-    // Deterministic hash of the app fn's token stream. Baked into a
-    // generated fn below so the hot-reload runtime can ask "did the
-    // `app()` source change in this patch?" — the host binary and a
-    // patch dylib each carry the hash of the source they were built
-    // from, and the runtime reads the patch's value through the same
-    // subsecond dispatch as the app body itself. FNV-1a over the
-    // token string: stable across compilations of identical tokens
-    // (unlike `DefaultHasher`'s unspecified algorithm), and token-
-    // level means formatting-only edits don't shift it.
+    // Deterministic hash of the app fn's token stream, so the
+    // hot-reload runtime can ask "did the `app()` source change in this
+    // patch?". FNV-1a over the token string: stable across compilations
+    // of identical tokens (unlike `DefaultHasher`), and token-level so
+    // formatting-only edits don't shift it.
     let body_hash = fnv1a64(&quote!(#func).to_string());
 
     let expanded = quote! {
         #func
 
-        // The app fn the runtime invokes every frame. Unconditionally
-        // routes through `whisker::__main_runtime::call_user_app`, which
-        // is `#[inline(always)]` so the wrapper body lands in the user
-        // crate's compilation unit. Whether the wrapper actually
-        // dispatches through `subsecond::call` (hot reload / hot-reload
-        // on) or just invokes `#fn_name()` directly (release) is
-        // decided by `whisker`'s own `hot-reload` feature flag — the
-        // user crate doesn't need a matching feature of its own.
+        // `call_user_app` is `#[inline(always)]` so the wrapper body
+        // lands in the USER crate's compilation unit. Whether it
+        // dispatches through `subsecond::call` or invokes `#fn_name()`
+        // directly is decided by `whisker`'s own `hot-reload` feature,
+        // so the user crate needs no matching feature.
         fn __whisker_app_dispatch() -> ::whisker::runtime::view::Element {
             ::whisker::__main_runtime::call_user_app(#fn_name)
         }
 
-        // Source-hash pair for the full-remount trigger. The
-        // inner fn returns the compile-time hash of the `app` fn's
-        // tokens; the dispatch wrapper routes through
-        // `call_app_hash` (subsecond `call` when hot-reload is on),
-        // so after a patch the runtime reads the *patch dylib's*
-        // hash. A changed value means the user edited `app()` itself
-        // — something no `#[component]` remount can reflect — and
-        // the bootstrap re-runs `app()` from scratch.
+        // Source-hash pair for the full-remount trigger. The dispatch
+        // wrapper routes through `call_app_hash`, so after a patch the
+        // runtime reads the *patch dylib's* hash. A changed value means
+        // the user edited `app()` itself — which no `#[component]`
+        // remount can reflect — and the bootstrap re-runs it.
         #[doc(hidden)]
         fn __whisker_app_body_hash() -> u64 {
             #body_hash
@@ -109,12 +99,9 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ::whisker::__main_runtime::call_app_hash(__whisker_app_body_hash)
         }
 
-        // `#[unsafe(no_mangle)]` (not bare `#[no_mangle]`): in edition
-        // 2024 a bare `#[no_mangle]` is a hard error, and this macro
-        // expands in the USER crate's edition. The `#[unsafe(...)]`
-        // attribute spelling was stabilized in Rust 1.82 — below the
-        // workspace MSRV of 1.85 — so it compiles cleanly in both 2021
-        // and 2024 user crates.
+        // `#[unsafe(no_mangle)]`, not bare `#[no_mangle]`: this macro
+        // expands in the USER crate's edition, and a bare `#[no_mangle]`
+        // is a hard error under edition 2024.
         #[unsafe(no_mangle)]
         pub extern "C" fn whisker_app_main(
             engine: *mut ::std::ffi::c_void,
@@ -137,26 +124,21 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
             ::whisker::__main_runtime::tick(engine)
         }
 
-        // Anchor symbol used by Whisker's vendored subsecond fork to
-        // compute the ASLR slide between this dylib's static layout
-        // (cached server-side) and its runtime load address. Both the
-        // host dylib and every patch dylib must export this so
-        // `dlsym(RTLD_DEFAULT, "whisker_aslr_anchor")` resolves
-        // unambiguously inside the user's `.so`.
+        // Anchor symbol the vendored subsecond fork uses to compute
+        // the ASLR slide between this dylib's static layout and its
+        // runtime load address. Both the host dylib and every patch
+        // dylib must export it so
+        // `dlsym(RTLD_DEFAULT, "whisker_aslr_anchor")` resolves inside
+        // the user's `.so`.
         //
-        // Why a unique name instead of `main` (upstream subsecond's
-        // sentinel): on Android, Whisker is loaded via
-        // `System.loadLibrary` into a process whose linker namespace
-        // already contains several `main` symbols
-        // (`app_process64`'s, plus any prior memfd patches), so a
-        // dlsym for `main` returns the wrong one and the slide math
-        // computes garbage. A unique name only exists in the user's
-        // `.so`, so the lookup is collision-free regardless of
-        // namespace order.
+        // A unique name rather than upstream subsecond's `main`
+        // sentinel: on Android the process linker namespace already
+        // holds several `main` symbols (`app_process64`'s, plus prior
+        // memfd patches), so a dlsym for `main` returns the wrong one
+        // and the slide math computes garbage.
         //
-        // The stub never runs — Whisker is JNI-loaded, never executed
-        // as a process entry point. It only needs to exist in the
-        // export list at a known static address.
+        // The stub never runs — it only needs to exist in the export
+        // list at a known static address.
         #[unsafe(no_mangle)]
         pub extern "C" fn whisker_aslr_anchor() -> ::std::ffi::c_int { 0 }
     };
@@ -165,10 +147,10 @@ pub fn main(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// FNV-1a 64-bit over a string. Used for the `#[whisker::main]`
-/// app-body hash and the `#[component]` props-layout hash: must
-/// produce the same value for the same token string in every rustc
-/// process (host fat build AND thin patch build), which rules out
-/// `DefaultHasher` (algorithm unspecified).
+/// app-body hash and the `#[component]` props-layout hash, both of
+/// which must produce the same value for the same token string in every
+/// rustc process (host fat build AND thin patch build) — which rules
+/// out `DefaultHasher`.
 pub(crate) fn fnv1a64(s: &str) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
@@ -263,11 +245,10 @@ pub fn css(input: TokenStream) -> TokenStream {
 ///    remount + subsecond hot-reload integration).
 ///
 /// The signature change is deliberate: positional `xxx(a, b)`
-/// invocations no longer compile. User components are now invoked
-/// exclusively through `render!`'s `xxx { a: …, b: … }` syntax,
-/// which the `render!` macro lowers to
-/// `xxx(XxxProps::builder().a(…).b(…).build())`. This unifies the
-/// call-site shape with built-in elements (`view { … }`).
+/// invocations do not compile. User components are invoked exclusively
+/// through `render!`'s `Xxx(a: …, b: …)` syntax, which lowers to
+/// `Xxx(XxxProps::builder().a(…).b(…).build())`. This unifies the
+/// call-site shape with built-in elements (`view(…)`).
 ///
 /// ```ignore
 /// use whisker::prelude::*;
@@ -278,8 +259,8 @@ pub fn css(input: TokenStream) -> TokenStream {
 ///     render! { /* ... */ }
 /// }
 ///
-/// // Call site (always through `render!`):
-/// render! { counter { initial: 0 } }
+/// // Call site (always through `render!`, under the PascalCase alias):
+/// render! { Counter(initial: 0) }
 /// ```
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -324,8 +305,7 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// See `crates/whisker-macros/src/module_component.rs` for the
-/// emission details (children props are NOT yet supported; tracked
-/// in follow-ups).
+/// emission details.
 #[proc_macro_attribute]
 pub fn module_component(attr: TokenStream, item: TokenStream) -> TokenStream {
     module_component::expand(attr.into(), item.into()).into()

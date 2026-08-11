@@ -10,13 +10,11 @@
 //! | `hard_tabs`  | `hard_tabs`      | false   |
 //! | `edition`    | (CLI `--edition`)| 2015    |
 //!
-//! `format_source` lets the rustfmt *binary* read `rustfmt.toml` for
-//! the base Rust pass (so any key rustfmt understands is honored). The
-//! subset captured here is exactly the subset the macro-body
-//! pretty-printer needs in order to match rustfmt's indentation /
-//! wrapping. We resolve those few keys from the same `rustfmt.toml`
-//! ([`FmtOptions::from_rustfmt_config`]) so the macro bodies line up
-//! with the surrounding code.
+//! The rustfmt *binary* reads `rustfmt.toml` itself for the base Rust
+//! pass, so any key it understands is honored. The subset captured here
+//! is what the macro-body pretty-printer needs to match rustfmt's
+//! indentation and wrapping, resolved from that same `rustfmt.toml`
+//! ([`FmtOptions::from_rustfmt_config`]).
 
 /// Layout options for the macro-body pretty-printer. Mirrors the
 /// rustfmt keys that affect indentation and wrapping.
@@ -39,7 +37,6 @@ pub struct FmtOptions {
 
 impl Default for FmtOptions {
     fn default() -> Self {
-        // rustfmt's documented defaults.
         Self {
             max_width: 100,
             tab_spaces: 4,
@@ -74,10 +71,6 @@ impl FmtOptions {
     /// `rustfmt.toml` text blob. Unknown keys are ignored (rustfmt
     /// itself still sees them on the base pass). Missing keys keep
     /// their default.
-    ///
-    /// This is a tiny hand-rolled `key = value` reader rather than a
-    /// full TOML parse so the crate doesn't take a `toml` dependency
-    /// just for four scalar keys.
     pub fn from_rustfmt_config(toml_src: &str) -> Self {
         let mut opts = FmtOptions::default();
         for line in toml_src.lines() {
@@ -158,7 +151,6 @@ mod tests {
         o.hard_tabs = true;
         assert_eq!(o.indent_unit(), "\t");
         assert_eq!(o.indent_prefix(2), "\t\t");
-        // width accounting still charges tab_spaces per level
         assert_eq!(o.indent_width(2), 4);
     }
 }

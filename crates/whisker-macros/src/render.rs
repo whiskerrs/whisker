@@ -5,13 +5,11 @@
 //! codegen AND the `whisker-fmt` formatter can share it. This module
 //! holds only the lowering.
 //!
-//! Because the AST types ([`Root`], [`Node`], …) are now defined in
-//! another crate, the orphan rule forbids adding *inherent* methods to
-//! them here. The lowering is therefore expressed as FREE FUNCTIONS
-//! over `&Root` / `&Node` / `&ElementNode` / `&UserComponentNode`
-//! (`root_to_tokens`, `node_to_tokens`, …). The emitted token streams
-//! are byte-for-byte identical to the previous inherent-method form, so
-//! all existing macro behavior and tests are preserved.
+//! Because the AST types ([`Root`], [`Node`], …) live in another crate,
+//! the orphan rule forbids adding *inherent* methods to them here. The
+//! lowering is therefore expressed as FREE FUNCTIONS over `&Root` /
+//! `&Node` / `&ElementNode` / `&UserComponentNode` (`root_to_tokens`,
+//! `node_to_tokens`, …).
 //!
 //! See `whisker-macro-syntax/src/render.rs` for the grammar.
 
@@ -26,11 +24,9 @@ pub fn expand(input: TokenStream) -> TokenStream {
     match syn::parse2::<Root>(tokens) {
         Ok(root) => root_to_tokens(&root).into(),
         Err(err) => {
-            // Pair the compile_error with a same-typed placeholder
-            // so the surrounding code (`let h: Element = render!
-            // { … };`) keeps type-checking and diagnostics stay
-            // confined to the actual syntax error. Same approach
-            // leptos uses for its `view!` macro.
+            // Pairing the compile_error with a same-typed placeholder
+            // keeps `let h: Element = render! { … };` type-checking, so
+            // diagnostics stay confined to the actual syntax error.
             let err_tokens = err.to_compile_error();
             quote! {
                 {
@@ -62,14 +58,11 @@ fn node_to_tokens_returning_handle(node: &Node) -> TokenStream2 {
     match node {
         Node::Element(el) => element_to_tokens(el),
         Node::UserComponent(u) => user_component_to_tokens(u),
-        // `children()` resolves the surrounding `#[component]`'s
-        // `children: Children` prop by name. The body of a
-        // `#[component]` fn always destructures `children` into
-        // scope when the prop is declared, so this is a plain
-        // local-ident reference — no closure capture, no `move`,
-        // and (crucially) no `Rc::clone` either: `mount_children`
-        // takes `&Children` so the outer `FnMut` body can re-run
-        // (e.g. hot-reload remount) without `cannot move out`.
+        // A plain local-ident reference to the surrounding
+        // `#[component]`'s destructured `children` prop. Deliberately
+        // no `Rc::clone`: `mount_children` takes `&Children` so the
+        // outer `FnMut` body can re-run (hot-reload remount) without
+        // `cannot move out`.
         Node::ChildrenSlot { span } => quote_spanned! {*span=>
             ::whisker::runtime::view::mount_children(&children)
         },
@@ -97,13 +90,12 @@ fn element_to_tokens(el: &ElementNode) -> TokenStream2 {
     let tag_name = tag_ident.to_string();
     let tag_span = tag_ident.span();
     let ctor_ident = format_ident!("__{}_ctor", tag_ident, span = tag_span);
-    // Inline the full `::whisker::__tags::__<tag>_ctor()` path
-    // into the outer `quote!`s below. Storing it into an
-    // intermediate TokenStream and interpolating captures span /
-    // grouping info differently and breaks RA's kwarg completion.
+    // The full `::whisker::__tags::__<tag>_ctor()` path must be inlined
+    // into the outer `quote!`s: interpolating an intermediate
+    // TokenStream captures span / grouping differently and breaks RA's
+    // kwarg completion.
 
-    // One `.kwarg(value)` token group per attr, span-anchored
-    // at the user's kwarg-name source position so RA's
+    // Span-anchored at the user's kwarg-name source position so RA's
     // method-name completion lands on the right token.
     let setter_calls: Vec<TokenStream2> = el
         .kwargs
@@ -111,13 +103,9 @@ fn element_to_tokens(el: &ElementNode) -> TokenStream2 {
         .filter_map(|kw| element_kwarg_to_setter(el, kw))
         .collect();
 
-    // Every partial kwarg routes through the setter chain as a
-    // method call — see the long comment in `element_kwarg_to_setter`.
     let ident_refs: Vec<TokenStream2> = Vec::new();
     let _ = tag_name;
 
-    // Children: each child becomes a `.child({ inner_chain })`
-    // method call on the builder.
     let child_calls: Vec<TokenStream2> = el
         .children
         .iter()
@@ -127,9 +115,8 @@ fn element_to_tokens(el: &ElementNode) -> TokenStream2 {
         })
         .collect();
 
-    // No children AND no ident-refs → bare expression form.
-    // Keeps the chain on RA's happy path for partial-kwarg
-    // completion.
+    // Bare expression form keeps the chain on RA's happy path for
+    // partial-kwarg completion.
     if child_calls.is_empty() && ident_refs.is_empty() {
         return quote! {
             {
@@ -139,10 +126,9 @@ fn element_to_tokens(el: &ElementNode) -> TokenStream2 {
         };
     }
 
-    // Has children or ident-refs → still keep chain inline (no
-    // `let __h = … ; __h` binding around it), but add the
-    // ident-refs in a side block. The chain itself stays
-    // a single expression so RA can thread its receiver type.
+    // The chain must stay a single expression (no `let __h = …; __h`)
+    // so RA can thread its receiver type; ident-refs go in a side
+    // block.
     let ident_refs_block = if ident_refs.is_empty() {
         quote! {}
     } else {
@@ -183,56 +169,37 @@ fn element_kwarg_to_setter(el: &ElementNode, kw: &Kwarg) -> Option<TokenStream2>
     let tag_name = el.tag.to_string();
 
     if name_str == "key" && tag_name != "list" {
-        // `key:` on a direct element is a no-op (reconciliation
-        // hint with no semantic effect outside keyed lists). The
-        // `list` builder has its own typed `key` setter for the
-        // keyed-list key extractor closure, so let it through.
+        // `key:` on a direct element is a no-op outside keyed lists.
+        // `list` has its own typed `key` setter, so let that through.
         return None;
     }
 
     if kw.partial {
-        // ALWAYS emit a method call for partial kwargs. RA
-        // injects a sentinel suffix at the cursor during its
-        // expansion-for-completion pass, so any prefix-match
-        // heuristic (e.g. "only emit `.sty(())` if some builder
-        // method starts with `sty`") sees the suffixed name and
-        // returns false, breaking method-name completion.
+        // ALWAYS emit a method call for partial kwargs: RA injects a
+        // sentinel suffix at the cursor during its
+        // expansion-for-completion pass, so any prefix-match heuristic
+        // sees the suffixed name and fails, killing completion.
         return Some(quote_spanned! {span=> .#name(()) });
     }
 
     let call = if is_known_attr_method(&tag_name, &name_str) {
-        // Named builder attribute method (`style`, `class`, the
-        // universal trait attrs, and per-tag ones like
-        // `scroll_view::bounces`, `text::text_maxline`). The method
-        // takes `impl Into<Signal<T>>` for its semantic `T` and
-        // handles Static / Dynamic dispatch internally; the value
-        // flows as-is and type inference picks the right `From`
-        // (`From<T>` static / `From<ReadSignal<T>>` reactive) — so
-        // `bounces: true` / `text_maxline: 3` /
-        // `mode: ImageMode::AspectFit` all just work.
+        // Named builder attribute method. Each takes
+        // `impl Into<Signal<T>>` for its semantic `T`, so the value
+        // flows as-is and inference picks `From<T>` (static) or
+        // `From<ReadSignal<T>>` (reactive).
         quote_spanned! {span=> .#name(#value) }
     } else if name_str == "ref" {
-        // `ref: <ElementRef>` on a built-in element → bind the ref
-        // to this element so its UI methods are invokable after
-        // mount. (`ref` is a keyword, so the builder method is
-        // `bind_ref`.)
+        // `ref` is a keyword, so the builder method is `bind_ref`.
         quote_spanned! {span=> .bind_ref(#value) }
     } else if is_known_event_method(&name_str) {
-        // Typed event helper on `ElementBuilder` — `.on_tap(f)`,
-        // `.on_longpress(f)`, … — where `f` receives a typed
-        // `TouchEvent` / `CustomEvent` / `AnimationEvent`. The
-        // closure flows through unchanged; the builder method
-        // fixes the event type.
+        // Typed event helper on `ElementBuilder`: the closure flows
+        // through unchanged and the builder method fixes the event
+        // type.
         quote_spanned! {span=> .#name(#value) }
     } else if let Some(event) = strip_on_prefix(&name_str) {
-        // Unknown event name → raw `WhiskerValue` escape hatch
-        // (`.on("name", |e: WhiskerValue| …)`).
         let event_lit = LitStr::new(&event, span);
         quote_spanned! {span=> .on(#event_lit, #value) }
     } else {
-        // Catch-all → `.attr("kebab-name", value)`. The builder's
-        // `.attr` accepts `impl Into<Signal<T>>` like the named
-        // attr methods; no closure wrapping here either.
         let kebab = name_str.replace('_', "-");
         let kebab_lit = LitStr::new(&kebab, span);
         quote_spanned! {span=>
@@ -245,12 +212,11 @@ fn element_kwarg_to_setter(el: &ElementNode, kw: &Kwarg) -> Option<TokenStream2>
 /// Kwargs that map to a **named** builder attribute method
 /// (`.#name(value)`) rather than the catch-all `.attr("kebab", value)`.
 /// Each method takes `impl Into<Signal<T>>` for its semantic `T`
-/// (bool / number / String), so the value flows through unchanged and
-/// type inference picks the right `From` — crucial for bool/number
-/// attrs, which `.attr` (String-only) couldn't accept. Mirrors the
-/// methods on `ElementBuilder` + the per-tag inherent impls in
-/// `whisker::__tags`; tag-specific names only match their tag, so using
-/// one on the wrong element is a clear "no method" error.
+/// (bool / number / String), which is what lets bool and number attrs
+/// through — `.attr` is String-only. Mirrors the methods on
+/// `ElementBuilder` + the per-tag inherent impls in `whisker::__tags`;
+/// a tag-specific name used on the wrong element is a clear "no method"
+/// error.
 fn is_known_attr_method(tag: &str, attr: &str) -> bool {
     // Universal attributes (the `ElementBuilder` trait — any tag).
     let common = matches!(
@@ -325,11 +291,9 @@ fn is_known_attr_method(tag: &str, attr: &str) -> bool {
             | ("list", "preload_buffer_count")
             | ("list", "list_main_axis_gap")
             | ("list", "list_cross_axis_gap")
-            // Render-props setters on `list` — type-stated, take
-            // closure literals via `Into<EachFn<T>>` etc. The
-            // typed-setter route is what makes the closure flow
-            // through the right `Into` impl (the generic `attr`
-            // fallback would try `Into<Signal<String>>`).
+            // Typed render-props setters on `list`: the closure needs
+            // `Into<EachFn<T>>`, whereas the generic `attr` fallback
+            // would try `Into<Signal<String>>`.
             | ("list", "each")
             | ("list", "meta")
             | ("list", "children")
@@ -363,10 +327,8 @@ fn is_known_event_method(name: &str) -> bool {
             | "on_transitionstart"
             | "on_transitionend"
             | "on_transitioncancel"
-            // Component-specific events (CustomEvent → bind only). These
-            // are inherent methods on a single tag's builder (scroll_view
-            // / text), so the macro emits `.on_scroll(f)` etc.;
-            // using one on the wrong tag is a clear "no method" error.
+            // Inherent methods on a single tag's builder, so using one
+            // on the wrong tag is a clear "no method" error.
             | "on_scroll"
             | "on_scrolltoupper"
             | "on_scrolltolower"
@@ -379,11 +341,9 @@ fn is_known_event_method(name: &str) -> bool {
             | "on_layout"
             | "on_selectionchange"
     );
-    // … plus the catch / capture propagation variants for the touch
-    // family (`on_tap_catch`, `on_capture_tap`, `on_capture_tap_catch`,
-    // …). These map 1:1 to Lynx's `catchtap` / `capture-bindtap` /
-    // `capture-catchtap` handler kinds. Mirrors the `on_*` methods on
-    // `ElementBuilder` in `whisker::__tags`.
+    // … plus the catch / capture propagation variants, which map 1:1 to
+    // Lynx's `catchtap` / `capture-bindtap` / `capture-catchtap`
+    // handler kinds.
     let propagation_variant = matches!(
         name,
         "on_tap_catch"
@@ -424,15 +384,12 @@ fn user_component_to_tokens(uc: &UserComponentNode) -> TokenStream2 {
             let name_str = name.to_string();
             let span = name.span();
             if kw.partial {
-                // Partial kwarg on a user component → emit
-                // `.name(())` so typed-builder's per-field
-                // setter shows up under RA's method completion.
+                // `.name(())` so the Props builder's per-field setter
+                // shows up under RA's method completion.
                 quote_spanned! {span=> .#name(()) }
             } else if name_str == "ref" {
-                // `ref:` is the canonical call-site name for the
-                // implicit ElementRef prop. `ref` is a Rust
-                // keyword so the setter is exposed as
-                // `.with_ref(...)`; re-route here.
+                // `ref` is a Rust keyword, so the implicit ElementRef
+                // prop's setter is exposed as `.with_ref(...)`.
                 let value = &kw.value;
                 quote_spanned! {span=> .with_ref(#value) }
             } else {
@@ -442,9 +399,8 @@ fn user_component_to_tokens(uc: &UserComponentNode) -> TokenStream2 {
         })
         .collect();
 
-    // `key` flows as a regular Props field — control-flow
-    // components like `ForEach` are themselves `#[component]`s
-    // and read it directly off `XxxProps`.
+    // `key` flows as a regular Props field: control-flow components
+    // are themselves `#[component]`s and read it off `XxxProps`.
 
     let children_call = if uc.children.is_empty() {
         quote! {}
@@ -466,12 +422,10 @@ fn user_component_to_tokens(uc: &UserComponentNode) -> TokenStream2 {
         }
     };
 
-    // `#fn_ident::builder()` (not `#props_ident::builder()`): the
-    // component name doubles as a TYPE alias to its Props struct (see
-    // `#[component]`), so a single `use crate::Icon` is enough — no
-    // separate `IconProps` import. The outer `#fn_ident(…)` resolves
-    // to the callable (value namespace), the inner `#fn_ident::` to
-    // the Props type (type namespace).
+    // `#fn_ident::builder()`, not `#props_ident::builder()`: the
+    // component name doubles as a TYPE alias to its Props struct, so a
+    // single `use crate::Icon` covers both namespaces and users never
+    // import `IconProps`.
     quote! {
         #fn_ident(
             #fn_ident::builder()
@@ -542,8 +496,6 @@ mod tests {
         assert_eq!(snake_to_pascal("tab_item"), "TabItem");
     }
 
-    // ---- Compose-syntax parser & emission --------------------------------
-
     #[test]
     fn view_emission_uses_builder_chain() {
         let input: TokenStream2 = quote::quote! { view(style: "x") };
@@ -564,9 +516,6 @@ mod tests {
 
     #[test]
     fn ref_kwarg_on_builtin_routes_to_bind_ref() {
-        // `ref:` on a built-in element binds an ElementRef to the
-        // element (vs the catch-all `.attr("ref", …)`), so its UI
-        // methods (bounding_client_rect, …) are invokable after mount.
         let input: TokenStream2 = quote::quote! { view(ref: my_ref) };
         let output = super::expand_test(input).to_string();
         assert!(
@@ -581,8 +530,6 @@ mod tests {
 
     #[test]
     fn no_children_emits_bare_chain_expression() {
-        // No-children case must stay a bare chain expression — a
-        // `let __h = …; __h` wrapper breaks RA's kwarg completion.
         let input: TokenStream2 = quote::quote! { view(style: "x") };
         let output = super::expand_test(input).to_string();
         assert!(
@@ -606,10 +553,9 @@ mod tests {
 
     #[test]
     fn every_partial_kwarg_emits_method_call() {
-        // All partial kwargs route through `.name(())` — even
-        // prefixes that don't match any builder method. RA's
-        // sentinel-suffix injection during completion makes any
-        // "does this prefix match a method" heuristic unreliable.
+        // Even prefixes matching no builder method must route through
+        // `.name(())`; RA's sentinel-suffix injection makes any
+        // prefix-match heuristic unreliable.
         let input: TokenStream2 = quote::quote! { view(v) };
         let output = super::expand_test(input).to_string();
         assert!(
@@ -681,12 +627,8 @@ mod tests {
             "user components must not touch the built-in tags module; \
              output was: {output}"
         );
-        // Emission goes through the PascalCase alias the `#[component]`
-        // macro emits — both the value-namespace fn AND the
-        // type-namespace `type MyCard = MyCardProps` alias share that
-        // name, so `MyCard::builder()` resolves without a separate
-        // `MyCardProps` import (issue #1). The `…Props` name must NOT
-        // appear in the emission.
+        // `MyCard::builder()` must resolve through the PascalCase alias
+        // alone; the `…Props` name must NOT appear in the emission.
         assert!(
             output.contains("MyCard (MyCard :: builder ()") && !output.contains("MyCardProps"),
             "user component must lower to `MyCard(MyCard::builder()…)` \
@@ -698,9 +640,8 @@ mod tests {
 
     #[test]
     fn snake_case_non_builtin_is_back_compat_user_component() {
-        // Snake-case still parses (so mid-typing partials like `my_c|`
-        // don't blow up the macro), but the emission still goes
-        // through the PascalCase alias derived from the input.
+        // Snake-case must still parse so mid-typing partials like
+        // `my_c|` don't blow up the macro.
         let input: TokenStream2 = quote::quote! { my_card(title: "x") };
         let output = super::expand_test(input).to_string();
         assert!(
@@ -726,8 +667,6 @@ mod tests {
 
     #[test]
     fn nested_children_use_inline_chain() {
-        // Verify the chain stays a single expression even with
-        // children — no `let __h = …; __h` wrapper.
         let input: TokenStream2 = quote::quote! {
             view(style: "outer") {
                 view(class: "inner")
@@ -741,14 +680,8 @@ mod tests {
         );
     }
 
-    // ---- `children()` slot ---------------------------------------------
-
     #[test]
     fn children_slot_lowers_to_mount_children() {
-        // `children()` inside a `render!` body should resolve to
-        // `view::mount_children(&children)`, where `children` is the
-        // surrounding `#[component]`'s `children: Children` prop in
-        // local scope.
         let input: TokenStream2 = quote::quote! {
             view(style: "x") {
                 children()
@@ -769,9 +702,8 @@ mod tests {
 
     #[test]
     fn children_slot_can_appear_multiple_times() {
-        // Multi-projection: `children()` appearing N times produces
-        // N independent `mount_children(&children)` calls. The Rc
-        // is borrowed, never moved, so all N calls succeed.
+        // The Rc is borrowed, never moved, so N projections all
+        // succeed.
         let input: TokenStream2 = quote::quote! {
             view(style: "x") {
                 children()
@@ -790,10 +722,6 @@ mod tests {
 
     #[test]
     fn children_slot_sits_inside_child_method_call() {
-        // The slot lowers to a `.child(mount_children(&children))`
-        // call on the parent builder — i.e. it goes through the
-        // exact same shape as any other child node, so the parent's
-        // builder chain stays a single expression.
         let input: TokenStream2 = quote::quote! {
             view(style: "x") {
                 children()
@@ -814,10 +742,8 @@ mod tests {
 
     #[test]
     fn children_with_args_is_not_a_slot() {
-        // `children(arg: x)` is NOT the slot — falls through to the
-        // regular user-component path so a user fn named `children`
-        // with props still resolves correctly. (Esoteric, but the
-        // grammar must not steal the identifier.)
+        // The grammar must not steal the `children` identifier from a
+        // user component that happens to be named it.
         let input: TokenStream2 = quote::quote! {
             children(title: "x")
         };
@@ -836,10 +762,6 @@ mod tests {
 
     #[test]
     fn children_with_block_is_not_a_slot() {
-        // `children() { … }` is also NOT the slot — that's a tag
-        // invocation with empty kwargs and a children block. The
-        // user is using a component literally named `children`; let
-        // the regular path handle it.
         let input: TokenStream2 = quote::quote! {
             children() {
                 text(value: "y")

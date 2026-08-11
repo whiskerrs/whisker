@@ -22,7 +22,6 @@ use whisker_css::{Css, ToCss};
 // on every public type, including the ones that are also `Copy`.
 #[allow(clippy::clone_on_copy)]
 fn debug_and_clone_pass_through() {
-    // Exercise auto-derived `Clone` + `Debug` on every public type.
     let n = Number(1.0);
     let p = Percentage(50.0);
     let l = Length::Px(8.0);
@@ -66,7 +65,7 @@ fn debug_and_clone_pass_through() {
         radial.clone(),
     );
 
-    // Force `Debug` (drops the verbose result on the floor).
+    // Force `Debug`, dropping the result.
     let _ = format!(
         "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
         n, p, l, lp, a, t, cs, c, g, f, m, calc, i, pos, stop, easing, stop_pos, lin, radial,
@@ -75,10 +74,9 @@ fn debug_and_clone_pass_through() {
 
 #[test]
 fn length_zero_via_constructor_helpers() {
-    // ZERO constant and is_zero detection.
     let z = whisker_css::ext::ZERO;
     assert!(z.is_zero());
-    // Construct via `0.px()` — non-Zero variant whose value is 0.
+    // `0.px()` is a non-Zero variant whose value is 0.
     assert!(0.px().is_zero());
 }
 
@@ -96,7 +94,6 @@ fn length_percentage_calc_all_operators() {
 
 #[test]
 fn color_hex_alpha_opaque_path() {
-    // alpha = 255 → opaque rgb form.
     assert_eq!(
         Color::hex_alpha(0xFF0000FF).to_css_string(),
         "rgb(255, 0, 0)"
@@ -116,7 +113,6 @@ fn color_named_round_trip_via_from() {
 
 #[test]
 fn gradient_radial_with_shape_keywords() {
-    // Exercise Circle / Ellipse keyword paths.
     let g = Gradient::Radial {
         shape: RadialShape::Ellipse,
         stops: vec![ColorStop::new(Color::Named(NamedColor::Red))],
@@ -264,10 +260,9 @@ fn repeated_empty_collection() {
 
 #[test]
 fn animation_only_a_few_fields_set() {
-    // Exercises individual setters being absent without crashing.
     let s = Css::new().animation(Animation::new("x"));
     assert_eq!(s.to_string(), "animation: x;");
-    // Now exercise the path with delay set but iteration_count omitted.
+    // Delay set but iteration_count omitted.
     let s = Css::new().animation(Animation::new("y").delay(50.ms()));
     assert!(s.to_string().contains("50ms"));
 }
@@ -306,7 +301,6 @@ fn calc_expr_value_and_number_constructors() {
     let v = CalcExpr::value(px(4));
     let n = CalcExpr::number(2.0);
     let _ = LengthPercentage::calc(v.clone().mul(n.clone()));
-    // Smoke check on stand-alone formatting.
     assert!(v.to_css_string().contains("4px"));
     assert!(n.to_css_string() == "2");
 }
@@ -339,14 +333,12 @@ fn linear_direction_keyword_directions_in_gradient() {
 
 #[test]
 fn fit_content_keyword_path() {
-    // FitContent::keyword() variant — no limit.
     let fc = FitContent::keyword();
     assert_eq!(fc.to_css_string(), "fit-content");
 }
 
 #[test]
 fn length_each_unit_zero_path() {
-    // is_zero for every variant where value == 0.0.
     assert!(Length::Px(0.0).is_zero());
     assert!(Length::Rpx(0.0).is_zero());
     assert!(Length::Ppx(0.0).is_zero());

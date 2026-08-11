@@ -1,11 +1,10 @@
 //! `Show` rebuilds its branch only when the condition **changes**, not
 //! on every dependency change of `when`.
 //!
-//! `WriteSignal::set` notifies subscribers unconditionally (even for a
-//! no-op write), so an effect keyed on a signal that `when` reads used
-//! to tear down and re-mount the branch for an unchanged condition —
-//! churning the DOM, disposing branch-internal state, and re-anchoring
-//! following siblings. These tests pin the fixed behaviour.
+//! `WriteSignal::set` notifies subscribers unconditionally, even for a
+//! no-op write, so the branch must not be rebuilt just because the
+//! effect re-ran: doing so churns the DOM, disposes branch-internal
+//! state, and re-anchors following siblings.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -85,8 +84,6 @@ fn with_test_env<R>(f: impl FnOnce(Rc<RefCell<Vec<Op>>>) -> R) -> R {
 fn unchanged_cond_does_not_rebuild_branch() {
     with_test_env(|log| {
         let s = RwSignal::new(0i32);
-        // The bool only flips at the threshold 10, so `s: 0 -> 1` leaves
-        // the condition `true` while still notifying the effect.
         let _tree = render! {
             view() {
                 Show(when: move || s.get() < 10) {
@@ -97,12 +94,10 @@ fn unchanged_cond_does_not_rebuild_branch() {
         };
         flush();
 
-        // Everything above is the initial mount — ignore it.
         log.borrow_mut().clear();
 
-        // Unchanged condition: the effect re-runs (it reads `s`), but the
-        // branch must not be torn down / rebuilt, and the sibling must not
-        // be re-anchored.
+        // Unchanged condition: the effect re-runs (it reads `s`), but
+        // the branch must not be rebuilt nor the sibling re-anchored.
         s.set(1);
         flush();
 
@@ -128,7 +123,6 @@ fn changed_cond_still_rebuilds_branch() {
         flush();
         log.borrow_mut().clear();
 
-        // Genuine flip true -> false: the branch must be torn down.
         s.set(20);
         flush();
 

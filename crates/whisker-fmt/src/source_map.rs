@@ -37,7 +37,6 @@ impl<'a> SourceMap<'a> {
     /// `proc_macro2::LineColumn`).
     fn offset(&self, line: usize, column: usize) -> Option<usize> {
         let line_start = *self.line_starts.get(line.checked_sub(1)?)?;
-        // `column` counts chars; walk that many chars from line_start.
         let rest = &self.src[line_start..];
         let mut byte = line_start;
         let mut chars = column;
@@ -93,23 +92,18 @@ impl<'a> SourceMap<'a> {
     pub(crate) fn node_extent(&self, start: usize) -> (Option<usize>, usize) {
         let bytes = self.src.as_bytes();
         let len = bytes.len();
-        // Skip the ident: identifier chars (alnum / `_`).
         let mut i = start;
         while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
             i += 1;
         }
-        // Skip whitespace + comments to the next significant byte.
         i = self.skip_trivia(i);
-        // Optional `( … )`.
         if i < len && bytes[i] == b'(' {
             i = self.skip_balanced(i, b'(', b')');
         }
         let after_parens = i;
         i = self.skip_trivia(i);
-        // Optional `{ … }`.
         if i < len && bytes[i] == b'{' {
             let close = self.skip_balanced(i, b'{', b'}');
-            // `close` is just past `}`; the `}` byte is `close - 1`.
             return (Some(close - 1), close);
         }
         (None, after_parens)
@@ -121,7 +115,6 @@ impl<'a> SourceMap<'a> {
         let bytes = self.src.as_bytes();
         let len = bytes.len();
         loop {
-            // whitespace
             while i < len && bytes[i].is_ascii_whitespace() {
                 i += 1;
             }
@@ -230,8 +223,7 @@ impl<'a> SourceMap<'a> {
     pub(crate) fn slice(&self, span: Span) -> Option<&'a str> {
         let start = span.start();
         let end = span.end();
-        // A synthesized/`call_site` span reports (1,0)..(1,0); guard
-        // against that producing an empty (or bogus) slice.
+        // A synthesized/`call_site` span reports (1,0)..(1,0).
         if start.line == 0 {
             return None;
         }
@@ -268,7 +260,6 @@ mod tests {
         let ts: TokenStream = src.parse().unwrap();
         let call: syn::ExprCall = syn::parse2(ts).unwrap();
         let map = SourceMap::new(src);
-        // first (and only) argument is `bar + 1`
         let arg = call.args.first().unwrap();
         assert_eq!(map.slice(arg.span()).unwrap(), "bar + 1");
     }
@@ -284,8 +275,6 @@ mod tests {
 
     #[test]
     fn slices_multiline_expr_verbatim() {
-        // A user expression that spans lines should come back exactly
-        // as written (this is what preserves the user's formatting).
         let src = "a\n    + b\n    + c";
         let ts: TokenStream = src.parse().unwrap();
         let expr: Expr = syn::parse2(ts).unwrap();

@@ -27,10 +27,8 @@ impl Parse for CssInput {
     fn parse(input: ParseStream) -> SynResult<Self> {
         let mut kwargs = Vec::new();
         while !input.is_empty() {
-            // Bail out if the next token isn't an ident — RA may
-            // inject other sentinels we don't want to chase. The
-            // already-collected kwargs still produce a useful
-            // expansion.
+            // RA injects sentinels that aren't idents; stopping here
+            // still leaves the collected kwargs to expand.
             if !input.peek(Ident) {
                 break;
             }
@@ -38,13 +36,11 @@ impl Parse for CssInput {
 
             let value = if input.peek(Token![:]) {
                 let _: Token![:] = input.parse()?;
-                // Try to parse the value expression. If the user is
-                // mid-typing and the parse fails, fall through with
-                // `None`; the emitter uses `()` so the method-call
-                // shape survives for RA's completion.
+                // A failed parse (mid-typing) falls through as `None`;
+                // the emitter uses `()` so the method-call shape
+                // survives for RA's completion.
                 input.parse::<Expr>().ok()
             } else {
-                // No `:` yet — cursor sits right after the ident.
                 None
             };
 
@@ -53,9 +49,8 @@ impl Parse for CssInput {
             if input.peek(Token![,]) {
                 let _: Token![,] = input.parse()?;
             } else {
-                // No comma, but the stream might still have trailing
-                // tokens (e.g. an unfinished partial after the last
-                // kwarg). Drain them so the macro doesn't error out.
+                // Drain any trailing tokens (an unfinished partial
+                // after the last kwarg) so the macro doesn't error.
                 while !input.is_empty() {
                     let _: proc_macro2::TokenTree = input.parse()?;
                 }

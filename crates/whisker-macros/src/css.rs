@@ -19,17 +19,12 @@ use whisker_macro_syntax::css::CssInput;
 
 /// Expand `css!(name: value, …)` into `Css::new().name(value).…`.
 ///
-/// Paths resolve against the call site. `Css` itself is taken
-/// straight from the call site's scope — `use whisker::prelude::*`
-/// brings it in. Falling through unqualified keeps the macro usable
-/// from both `whisker` (umbrella) and `whisker-css` standalone
-/// without runtime-aware path detection.
+/// `Css` is taken unqualified from the call site's scope (via
+/// `use whisker::prelude::*`), which keeps the macro usable from both
+/// the `whisker` umbrella and `whisker-css` standalone.
 pub fn expand(input: TokenStream2) -> TokenStream2 {
     let parsed: CssInput = match syn::parse2(input) {
         Ok(p) => p,
-        // On total parse failure, still emit the root `Css::new()`
-        // so the user sees a real type at the cursor instead of a
-        // raw macro error.
         Err(_) => return quote! { Css::new() },
     };
 
@@ -40,9 +35,8 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
             Some(expr) => quote! { #expr },
             None => quote! { () },
         };
-        // Keep the method-call's identifier span attached to the
-        // user's source span so RA's jump-to-definition / hover
-        // resolve to the right method on `Css`.
+        // Keep the identifier on the user's source span so RA's
+        // jump-to-definition / hover resolve to the right `Css` method.
         chain = quote_spanned! {name.span()=> #chain.#name(#value) };
     }
     chain
@@ -84,27 +78,18 @@ mod tests {
 
     #[test]
     fn partial_ident_only_emits_unit_arg() {
-        // Cursor sits right after `back` — no `:` yet. The expansion
-        // still surfaces `.back(())` so RA's method-name completion
-        // fires on the `.back` part.
         let out = expand(quote! { back });
         assert_eq!(norm(out), "Css::new().back(())");
     }
 
     #[test]
     fn partial_ident_with_colon_no_value_emits_unit_arg() {
-        // `color:` with no expression after — common when the user
-        // is about to start typing the value. We still emit a
-        // method call so RA can complete the value position.
         let out = expand(quote! { color: });
         assert_eq!(norm(out), "Css::new().color(())");
     }
 
     #[test]
     fn partial_kwarg_after_complete_ones_keeps_both() {
-        // Earlier complete kwargs survive; the trailing partial
-        // contributes a `.<name>(())` so the user still gets
-        // method-name completion at the cursor.
         let out = expand(quote! { color: red, back });
         assert_eq!(norm(out), "Css::new().color(red).back(())");
     }
@@ -112,15 +97,13 @@ mod tests {
     #[test]
     fn complete_value_with_tuple_passes_through() {
         let out = expand(quote! { padding: (px(8), px(16)) });
-        // Whitespace-normalised; the `:` etc. is fine inside the call.
         assert_eq!(norm(out), "Css::new().padding((px(8),px(16)))");
     }
 
     #[test]
     fn unparseable_value_falls_back_to_unit() {
-        // `color: !` is not a valid expression. The parser bails
-        // on the value and we emit `.color(())` so the call shape
-        // survives for RA.
+        // `color: !` is not a valid expression; the parser bails on the
+        // value and emits `.color(())` so the shape survives for RA.
         let out = expand(quote! { color: ! });
         assert_eq!(norm(out), "Css::new().color(())");
     }

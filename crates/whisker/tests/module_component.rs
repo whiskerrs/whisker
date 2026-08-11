@@ -117,8 +117,6 @@ pub fn x_styled(style: Signal<String>) {}
 #[whisker::module_component("x-input")]
 pub fn x_input(value: Signal<String>, placeholder: Signal<String>) {}
 
-// ---- Phase 7-Φ.D v2 elements ----------------------------------------------
-
 #[whisker::module_component("x-typed-checkbox")]
 pub fn x_typed_checkbox(checked: Signal<bool>, count: Signal<i32>) {}
 
@@ -150,19 +148,17 @@ fn zero_props_creates_element_with_tag_name() {
                 _ => None,
             })
             .collect();
-        // Tag is namespaced with the cargo crate name. Phase
-        // 7-Φ.H.2.1 — `concat!(env!("CARGO_PKG_NAME"), ":", tag)`
-        // resolves at the integration-test crate to
-        // `whisker:x-zero-props`.
+        // `concat!(env!("CARGO_PKG_NAME"), ":", tag)` resolves in this
+        // integration-test crate to `whisker:x-zero-props`.
         assert_eq!(creates, vec!["whisker:x-zero-props".to_string()]);
     });
 }
 
 #[test]
 fn style_prop_routes_through_set_inline_styles() {
-    // The `style` prop is special — it must call set_inline_styles
-    // (Lynx's SetRawInlineStyles), not set_attribute. Mirrors what
-    // built-in `view(style: …)` does.
+    // The `style` prop must call set_inline_styles (Lynx's
+    // SetRawInlineStyles), not set_attribute — as built-in
+    // `view(style: …)` does.
     with_recorder_and_owner(|log| {
         let _h = render! {
             XStyled(style: "background: red; height: 8px;")
@@ -209,10 +205,9 @@ fn dynamic_style_re_runs_on_signal_change() {
 
 #[test]
 fn non_style_props_route_through_set_attribute_with_kebab_case() {
-    // `value` and `placeholder` are regular SetAttribute calls.
-    // Snake-case prop name → kebab-case attribute name (matches the
-    // built-in `attr()` mapping in __tags). For these two props the
-    // names are already single-word so kebab == snake.
+    // Regular SetAttribute calls. Snake-case prop names map to
+    // kebab-case attribute names; both of these are single-word, so
+    // kebab == snake here.
     with_recorder_and_owner(|log| {
         let _h = render! {
             XInput(value: "hello", placeholder: "type here")
@@ -258,14 +253,11 @@ fn read_signal_prop_tracks_underlying_signal() {
     });
 }
 
-// ---- Phase 7-Φ.D v2 tests -------------------------------------------------
-
 #[test]
 fn typed_signal_bool_serialises_via_to_string() {
-    // `Signal<bool>` extracts T = bool. The Static / Dynamic dispatch
-    // path goes through `apply_attr::<_, bool>`, which calls
-    // `bool::to_string()` → "true" / "false". Verifies the macro's
-    // turbofish picks the inner T correctly (not hardcoded String).
+    // Pins that the macro's turbofish extracts `T = bool` from
+    // `Signal<bool>` rather than hardcoding String:
+    // `apply_attr::<_, bool>` stringifies to "true" / "false".
     with_recorder_and_owner(|log| {
         let (checked, set_checked) = signal(false).split();
         let _h = render! {
@@ -292,9 +284,8 @@ fn typed_signal_bool_serialises_via_to_string() {
 
 #[test]
 fn no_payload_event_handler_registers_listener() {
-    // `on_press: ()` → builder takes `Fn() + 'static`, body wires through
-    // `set_event_listener`. The Recorder logs as `Op::Event`. (`on_press`,
-    // not `on_tap`: `tap` is a reserved Lynx gesture name the macro rejects.)
+    // `on_press`, not `on_tap`: `tap` is a reserved Lynx gesture name
+    // the macro rejects.
     with_recorder_and_owner(|log| {
         let _h = render! {
             XButton(label: "Click me", on_press: || {})
@@ -313,10 +304,6 @@ fn no_payload_event_handler_registers_listener() {
 
 #[test]
 fn raw_payload_event_handler_registers_listener() {
-    // `on_input: WhiskerValue` → builder takes `Fn(WhiskerValue) +
-    // 'static`, body wires through `event::bind_typed` (the raw
-    // body, no field deserialization). The recorder logs the
-    // event-name registration so we can verify the wiring.
     with_recorder_and_owner(|log| {
         let _h = render! {
             XInputPayload(value: "", on_input: |_raw: ::whisker::WhiskerValue| {})
@@ -335,9 +322,6 @@ fn raw_payload_event_handler_registers_listener() {
 
 #[test]
 fn typed_payload_event_handler_registers_listener() {
-    // `on_change: TouchEvent` → builder takes `Fn(TouchEvent) +
-    // 'static`, body wires through `event::bind_typed::<TouchEvent>`
-    // which deserializes the event body before calling the handler.
     with_recorder_and_owner(|log| {
         let _h = render! {
             XTypedInput(on_change: |_e: ::whisker::event::TouchEvent| {})
@@ -356,9 +340,7 @@ fn typed_payload_event_handler_registers_listener() {
 
 #[test]
 fn children_prop_attaches_inner_view() {
-    // `children: Children` → builder takes a `Children` (= Rc<dyn Fn() -> View>),
-    // body calls the closure and attaches the View to the element.
-    // The render! macro lowers the `{ Inner() ... }` block to a
+    // `render!` lowers the `{ Inner() … }` block to a
     // `.children(Rc::new(move || { … }))` setter call.
     with_recorder_and_owner(|log| {
         let _h = render! {
@@ -367,9 +349,6 @@ fn children_prop_attaches_inner_view() {
                 text(value: "child 2")
             }
         };
-        // The container should be appended-to by the two text
-        // elements. Find the container's id (CreateByName) and
-        // count Append entries whose parent is that id.
         let log_b = log.borrow();
         let container_id = log_b.iter().find_map(|op| match op {
             Op::CreateByName { id, tag_name } if tag_name == "whisker:x-container" => Some(*id),
