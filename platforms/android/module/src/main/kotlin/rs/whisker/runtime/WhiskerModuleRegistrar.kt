@@ -70,6 +70,7 @@ private fun registerViewBearing(viewBlock: WhiskerViewComponent) {
 
     val propComponents = viewBlock.components.filterIsInstance<WhiskerPropComponent>()
     val funcComponents = viewBlock.components.filterIsInstance<WhiskerFunctionComponent>()
+    val asyncComponents = viewBlock.components.filterIsInstance<WhiskerAsyncFunctionComponent>()
 
     if (propComponents.isNotEmpty()) {
         PropsUpdater.registerSetter(
@@ -77,10 +78,10 @@ private fun registerViewBearing(viewBlock: WhiskerViewComponent) {
             WhiskerDSLPropsSetter(propComponents),
         )
     }
-    if (funcComponents.isNotEmpty()) {
+    if (funcComponents.isNotEmpty() || asyncComponents.isNotEmpty()) {
         LynxUIMethodsExecutor.registerMethodInvoker(
             viewClass,
-            WhiskerDSLMethodInvoker(funcComponents),
+            WhiskerDSLMethodInvoker(funcComponents, asyncComponents),
         )
     }
 }
@@ -184,10 +185,13 @@ internal class WhiskerDSLPropsSetter(
  */
 internal class WhiskerDSLMethodInvoker(
     private val functions: List<WhiskerFunctionComponent>,
+    private val asyncFunctions: List<WhiskerAsyncFunctionComponent> = emptyList(),
 ) : LynxUIMethodInvoker<LynxBaseUI> {
 
     private val byName: Map<String, WhiskerFunctionComponent> =
         functions.associateBy { it.name }
+    private val asyncByName: Map<String, WhiskerAsyncFunctionComponent> =
+        asyncFunctions.associateBy { it.name }
 
     override fun invoke(
         ui: LynxBaseUI,
@@ -195,6 +199,24 @@ internal class WhiskerDSLMethodInvoker(
         params: ReadableMap?,
         callback: Callback,
     ) {
+        val asyncComponent = asyncByName[methodName]
+        if (asyncComponent != null) {
+            // The promise owns the Lynx callback — late-callable by
+            // design — and fires it once with SUCCESS; errors travel as
+            // `WhiskerValue.Err` inside the result, mirroring the sync
+            // path below.
+            val args = decodeArgs(params).map { whiskerValueOf(it) }
+            val promise = WhiskerPromise({ value ->
+                callback.invoke(LynxUIMethodConstants.SUCCESS, value.toJavaObject())
+            })
+            try {
+                asyncComponent.handler(ui, args, promise)
+            } catch (t: Throwable) {
+                promise.reject("exception while invoking `$methodName`: ${t.message}")
+            }
+            return
+        }
+
         val component = byName[methodName]
         if (component == null) {
             callback.invoke(

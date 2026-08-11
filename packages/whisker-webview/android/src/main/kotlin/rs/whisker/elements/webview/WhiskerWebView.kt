@@ -52,6 +52,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import rs.whisker.runtime.WhiskerContext
 import rs.whisker.runtime.WhiskerCustomEvent
+import rs.whisker.runtime.WhiskerPromise
 import rs.whisker.runtime.WhiskerUI
 import rs.whisker.runtime.WhiskerValue
 
@@ -431,6 +432,21 @@ open class WhiskerWebView(context: WhiskerContext) :
             result = jsonDecodeString(raw)
         }
         return WhiskerValue.Map(mapOf("value" to WhiskerValue.Str(result)))
+    }
+
+    /** Evaluate JavaScript and resolve [promise] from the WebView's
+     *  callback with the JSON-encoded result string (`"null"` when the
+     *  script yields no value — including on a JS exception, which
+     *  Android's `evaluateJavascript` does not report). */
+    fun evaluateJsWithResult(script: String, promise: WhiskerPromise) {
+        val wv = view
+        if (wv == null) {
+            promise.resolve(WhiskerValue.Str("null"))
+            return
+        }
+        wv.evaluateJavascript(script) { jsonEncodedResult ->
+            promise.resolve(WhiskerValue.Str(jsonEncodedResult ?: "null"))
+        }
     }
 
     fun queryCanGoBack(): WhiskerValue =

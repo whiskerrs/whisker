@@ -100,6 +100,15 @@ public final class WebViewModule: Module {
                     return view.evaluateJavaScript(script)
                 }
 
+                // Async so the WKWebView completion can carry the JS
+                // result back through the promise.
+                AsyncFunction("evaluateJavaScriptWithResult") { (view: WhiskerWebViewView, args: [WhiskerValue], promise: WhiskerPromise) in
+                    guard let script = args.first?.asString else {
+                        return promise.reject("evaluateJavaScriptWithResult: missing script argument")
+                    }
+                    view.evaluateJavaScript(script, resolving: promise)
+                }
+
                 Function("canGoBack") { (view: WhiskerWebViewView, _: [WhiskerValue]) -> WhiskerValue in
                     return view.canGoBackResult()
                 }

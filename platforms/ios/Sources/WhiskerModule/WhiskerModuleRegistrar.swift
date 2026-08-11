@@ -63,6 +63,8 @@ extension Module {
                 WhiskerLynxInstaller.installProp(prop, on: viewClass)
             case let fn as WhiskerFunctionComponent:
                 WhiskerLynxInstaller.installFunction(fn, on: viewClass)
+            case let afn as WhiskerAsyncFunctionComponent:
+                WhiskerLynxInstaller.installAsyncFunction(afn, on: viewClass)
             case is WhiskerEventsComponent:
                 // Declaration-only metadata; dispatch goes through
                 // `WhiskerCustomEvent.dispatch(from:name:params:)`.
@@ -186,6 +188,47 @@ internal enum WhiskerLynxInstaller {
             // `v@:@@?` = void return, (self id, SEL, params id, block).
             // `@` also works for argument-position blocks (same ABI);
             // `@?` gives clearer crash diagnostics on a shape mismatch.
+            typeEncoding: "v@:@@?"
+        )
+    }
+
+    // ---- AsyncFunction installation --------------------------------------
+
+    /// Same selector shapes as [`installFunction`], but the handler
+    /// receives a [`WhiskerPromise`] wrapping the Lynx callback, so it
+    /// can deliver the result from a later completion. Lynx's UI-method
+    /// callback is late-callable by design (its own `boundingClientRect`
+    /// resolves it asynchronously); errors travel as
+    /// `WhiskerValue.error` inside a success-coded result, mirroring the
+    /// sync Function path.
+    static func installAsyncFunction(
+        _ comp: WhiskerAsyncFunctionComponent, on viewClass: AnyClass
+    ) {
+        let methodName = comp.name
+        let configSelName = "__lynx_ui_method_config__" + methodName
+        let configBlock: @convention(block) (AnyClass) -> NSString = { _ in
+            return methodName as NSString
+        }
+        addClassMethod(
+            on: viewClass,
+            selector: NSSelectorFromString(configSelName),
+            imp: imp_implementationWithBlock(configBlock),
+            typeEncoding: "@@:"
+        )
+
+        let methodSel = NSSelectorFromString(methodName + ":withResult:")
+        let handler = comp.handler
+        let methodBlock: @convention(block) (AnyObject, NSDictionary?, LynxUIMethodCallbackBlockShim?) -> Void = { view, params, cb in
+            let args = WhiskerValue.fromNSDictionary(params)
+            let promise = WhiskerPromise(onSettle: { value in
+                cb?(0, WhiskerValue.toAnyObject(value) as AnyObject?)
+            })
+            handler(view, args, promise)
+        }
+        addInstanceMethod(
+            on: viewClass,
+            selector: methodSel,
+            imp: imp_implementationWithBlock(methodBlock),
             typeEncoding: "v@:@@?"
         )
     }

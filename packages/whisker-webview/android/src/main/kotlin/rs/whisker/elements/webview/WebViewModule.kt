@@ -96,16 +96,22 @@ class WebViewModule : Module() {
                 WhiskerValue.Null
             }
 
-            // One Function serves both `invoke` (ignores the return) and
-            // `invoke_typed` (awaits `{ "value": "<result>" }`).
-            //
-            // TODO: Android result-returning element methods need
-            // invoke_async wiring in lynx_native_renderer.cc, compiled
-            // iOS-only in Lynx 3.8.0-whisker.1 (memory note
-            // `whisker_element_method_results_need_async`).
+            // Fire-and-forget; the result-returning form is the
+            // AsyncFunction below.
             Function("evaluateJavaScript") { view: WhiskerWebView, args ->
                 val script = args.getOrNull(0)?.asString() ?: ""
                 view.evaluateJs(script)
+            }
+
+            // Async so the WebView's ValueCallback can carry the JS
+            // result back through the promise.
+            AsyncFunction("evaluateJavaScriptWithResult") { view: WhiskerWebView, args, promise ->
+                val script = args.getOrNull(0)?.asString()
+                if (script == null) {
+                    promise.reject("evaluateJavaScriptWithResult: missing script argument")
+                } else {
+                    view.evaluateJsWithResult(script, promise)
+                }
             }
 
             Function("canGoBack") { view: WhiskerWebView, _ ->
