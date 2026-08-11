@@ -6,12 +6,10 @@
 //! invoking the user's `render!`-bearing fn, so the macro's
 //! `create_element` / `set_attribute` / etc. calls land here.
 //!
-//! Translation layer: the public `Element` is a `u32` index
-//! assigned by [`BridgeRenderer::create_element`]. Internally a
-//! `Vec<Option<NonNull<WhiskerElement>>>` maps each index back to the
-//! raw C pointer the bridge gave us. Released slots become `None`;
-//! we don't currently reuse them (cheap; can be revisited if
-//! per-frame churn ever matters).
+//! Translation layer: the public `Element` is a `u32` index assigned
+//! by [`BridgeRenderer::create_element`], mapped back to the bridge's
+//! raw C pointer through a `Vec<Option<NonNull<WhiskerElement>>>`.
+//! Released slots become `None` and are not reused.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -35,7 +33,7 @@ type Listener = (BindType, Rc<dyn Fn(WhiskerValue) + 'static>);
 /// `&self` (see the trait docs) — the three mutable fields therefore
 /// live behind **per-field** `RefCell`s rather than `&mut self`.
 ///
-/// ## Re-entrancy contract (whisker #3)
+/// ## Re-entrancy contract
 ///
 /// A native event can fire *synchronously* from inside an FFI call
 /// that this renderer makes — e.g. `whisker_bridge_remove_child`
@@ -57,19 +55,13 @@ pub struct BridgeRenderer {
     /// the public `Element`.
     elements: RefCell<Vec<Option<NonNull<WhiskerElement>>>>,
     /// Child Lynx-sign → parent Lynx-sign, mirroring the attached
-    /// tree. Populated in [`append_child`](Self::append_child),
-    /// cleared in [`remove_child`](Self::remove_child) /
-    /// [`release_element`](Self::release_element). The event-dispatch
-    /// chain walk (`target → root`) follows these links — Lynx's
-    /// reporter only hands us the target, so we reconstruct the
-    /// ancestor chain ourselves.
+    /// tree. The event-dispatch chain walk (`target → root`) follows
+    /// these links, because Lynx's reporter hands us only the target.
     parent_sign: RefCell<HashMap<i32, i32>>,
-    /// `(element sign, event name)` → listeners registered for it.
-    /// Keyed by Lynx sign so the reporter's target sign (and the
-    /// ancestor signs we walk to) look up directly. A given
-    /// `(element, event)` can hold more than one listener when capture
-    /// and bubble handlers are both registered (mirrors Lynx storing a
-    /// handler per type).
+    /// `(element sign, event name)` → listeners, keyed by Lynx sign so
+    /// the reporter's target sign (and the ancestors we walk to) look up
+    /// directly. One pair can hold several listeners when capture and
+    /// bubble handlers are both registered.
     #[allow(clippy::type_complexity)]
     listeners: RefCell<HashMap<(i32, String), Vec<Listener>>>,
 }
@@ -107,11 +99,6 @@ impl BridgeRenderer {
     /// The Lynx element sign for `handle`, or `None` if the handle is
     /// unknown / released. Routes through the bridge (the sign is
     /// `lynx_element_id` of the underlying FiberElement).
-    ///
-    /// `lookup`'s `elements` borrow is dropped before the FFI call (it
-    /// only returns a copied pointer), so this never holds a borrow
-    /// across `whisker_bridge_element_sign` — a pure getter that does
-    /// not tear down views or dispatch events.
     fn sign_of(&self, handle: Element) -> Option<i32> {
         let ptr = self.lookup(handle)?;
         let sign = unsafe { ffi::whisker_bridge_element_sign(ptr.as_ptr()) };
@@ -133,10 +120,9 @@ fn map_tag(tag: ElementTag) -> WhiskerElementTag {
 
 impl DynRenderer for BridgeRenderer {
     fn create_element(&self, tag: ElementTag) -> Element {
-        // FFI first, with NO `elements` borrow held — then borrow only
-        // to register the new pointer. Element creation can't dispatch
-        // an event, but keeping the borrow off the FFI call obeys the
-        // renderer's uniform re-entrancy contract.
+        // FFI first with no `elements` borrow held, then borrow only to
+        // register the pointer — the uniform re-entrancy contract, even
+        // though element creation can't itself dispatch.
         let raw = unsafe { ffi::whisker_bridge_create_element(self.engine_ptr(), map_tag(tag)) };
         let ptr = match NonNull::new(raw) {
             Some(p) => p,
@@ -172,13 +158,11 @@ impl DynRenderer for BridgeRenderer {
     }
 
     fn release_element(&self, handle: Element) {
-        // RE-ENTRANT FFI: `whisker_bridge_release_element` tears down
-        // the native view, which can synchronously dispatch an event
-        // that re-enters `plan_event_dispatch` (reads `parent_sign` +
-        // `listeners`). So: resolve the sign and take the pointer out
-        // of `elements` under SHORT borrows, DROP them, then make the
-        // FFI call, then re-borrow `parent_sign`/`listeners` to clean
-        // up. No field borrow spans the release call.
+        // `whisker_bridge_release_element` tears down the native view
+        // and can synchronously dispatch an event that re-enters
+        // `plan_event_dispatch`, so no field borrow may span it: resolve
+        // the sign and pointer first, then FFI, then re-borrow to clean
+        // up.
         let sign = self.sign_of(handle);
         let ptr = self
             .elements
@@ -243,9 +227,8 @@ impl DynRenderer for BridgeRenderer {
         let Some(ptr) = self.lookup(handle) else {
             return;
         };
-        // Own the C strings for the duration of the call; build a
-        // NULL-safe `char*` pointer array. No borrow of any renderer field
-        // spans the FFI call.
+        // Own the C strings for the duration of the call, and build a
+        // NULL-safe `char*` array.
         let c_keys: Vec<std::ffi::CString> = item_keys
             .iter()
             .map(|k| std::ffi::CString::new(k.as_str()).unwrap_or_default())
@@ -272,8 +255,7 @@ impl DynRenderer for BridgeRenderer {
         let Some(ptr) = self.lookup(handle) else {
             return false;
         };
-        // Own the C strings for the duration of the call; no renderer
-        // field borrow spans the FFI.
+        // Own the C strings for the duration of the call.
         fn to_raw(
             actions: &[whisker_runtime::view::ListItemAction],
         ) -> (Vec<std::ffi::CString>, Vec<ffi::WhiskerListItemActionRaw>) {
@@ -341,38 +323,30 @@ impl DynRenderer for BridgeRenderer {
         handle: Element,
         provider: whisker_runtime::view::list_provider::NativeItemProvider,
     ) -> bool {
-        // Delegate to the inherent impl in `crate::lynx::list_provider`,
-        // which holds the C trampolines + `Box<dyn FnMut>` lifetime
-        // plumbing (kept there so the FFI machinery stays clustered).
+        // The C trampolines and `Box<dyn FnMut>` lifetime plumbing live
+        // in `crate::lynx::list_provider`.
         BridgeRenderer::install_list_native_item_provider(self, handle, provider)
     }
 
     fn append_child(&self, parent: Element, child: Element) {
-        // `lookup` returns copied pointers (its `elements` borrow is
-        // already dropped). The FFI append can synchronously dispatch
-        // an event, so we must NOT hold a `parent_sign` borrow across
-        // it: do the FFI first, then borrow `parent_sign` to record
-        // the edge.
+        // The FFI append can synchronously dispatch, so no
+        // `parent_sign` borrow may span it — FFI first, record after.
         let Some(p) = self.lookup(parent) else { return };
         let Some(c) = self.lookup(child) else { return };
         unsafe { ffi::whisker_bridge_append_child(p.as_ptr(), c.as_ptr()) };
         // Mirror the attachment in sign space for the event chain walk.
-        // (`insert_child_at` is built on append/remove, so it flows
-        // through here too.) `sign_of` holds no `parent_sign` borrow,
-        // so computing the signs first and inserting after is safe.
+        // `insert_child_at` is built on append/remove and flows through
+        // here too.
         if let (Some(cs), Some(ps)) = (self.sign_of(child), self.sign_of(parent)) {
             self.parent_sign.borrow_mut().insert(cs, ps);
         }
     }
 
     fn remove_child(&self, parent: Element, child: Element) {
-        // RE-ENTRANT FFI: `whisker_bridge_remove_child` tears down the
-        // native subtree, which can synchronously dispatch an event
-        // that re-enters `plan_event_dispatch` (walks `parent_sign`,
-        // reads `listeners`). We resolve the child's sign BEFORE the
-        // FFI (the pointer is still live then), hold NO field borrow
-        // across the FFI call, and only borrow `parent_sign` to drop
-        // the edge AFTER it returns.
+        // `whisker_bridge_remove_child` tears down the native subtree
+        // and can synchronously dispatch a re-entrant event. Resolve the
+        // child's sign BEFORE the FFI, while its pointer is still live,
+        // and drop the edge only after it returns.
         let Some(p) = self.lookup(parent) else { return };
         let Some(c) = self.lookup(child) else { return };
         let child_sign = self.sign_of(child);
@@ -383,19 +357,17 @@ impl DynRenderer for BridgeRenderer {
     }
 
     fn supports_insert_before(&self) -> bool {
-        // Always: whisker pins a Lynx (v3.8.0-whisker.13+) that exports
-        // the positioned-insert symbol, and the loader binds it strictly,
-        // so the bridge always drives the native path.
+        // whisker pins a Lynx (v3.8.0-whisker.13+) exporting the
+        // positioned-insert symbol, and the loader binds it strictly, so
+        // the bridge always drives the native path.
         true
     }
 
     fn insert_child_before(&self, parent: Element, child: Element, reference: Option<Element>) {
-        // Same FFI-borrow discipline as `append_child`: do the FFI first
-        // (it can synchronously dispatch), then record the sign edge.
+        // Same FFI-borrow discipline as `append_child`.
         let Some(p) = self.lookup(parent) else { return };
         let Some(c) = self.lookup(child) else { return };
-        // A `reference` that isn't currently mounted degrades to append
-        // (null reference), matching the mirror's intent.
+        // An unmounted `reference` passes NULL, degrading to append.
         let r_ptr = reference
             .and_then(|r| self.lookup(r))
             .map_or(std::ptr::null_mut(), |r| r.as_ptr());
@@ -423,16 +395,11 @@ impl DynRenderer for BridgeRenderer {
         let Some(sign) = self.sign_of(handle) else {
             return;
         };
-        // Component-specific events (scroll / layout / uiappear / …) are
-        // only EMITTED by Lynx's UI components when the element has a
-        // handler bound for that name (they're gated on its event set).
-        // Touch/gesture events bypass the event set — they flow through
-        // the gesture pipeline to the reporter regardless — so we only
-        // register a native handler for the non-gesture events, both to
-        // unblock their emission and to avoid any double-fire on touch.
-        // The native-handler registration FFI runs with NO `listeners`
-        // borrow held — it only enables emission and cannot dispatch.
-        // We borrow `listeners` afterwards to record the closure.
+        // Lynx's UI components only EMIT a component event (scroll /
+        // layout / uiappear / …) when the element's event set has a
+        // handler bound for that name. Touch/gesture events bypass the
+        // event set entirely, so registering a native handler for them
+        // would risk a double-fire without unblocking anything.
         if !is_gesture_event(event_name) {
             if let Ok(name_c) = CString::new(event_name) {
                 unsafe {
@@ -442,10 +409,9 @@ impl DynRenderer for BridgeRenderer {
         }
         let mut listeners = self.listeners.borrow_mut();
         let entry = listeners.entry((sign, event_name.to_string())).or_default();
-        // Replace any handler of the SAME bind/catch/capture type for
-        // this (element, event) — mirrors Lynx's per-type handler slot.
-        // A different type (e.g. capture + bubble on one element) is
-        // kept alongside.
+        // Replace any handler of the SAME bind/catch/capture type,
+        // mirroring Lynx's per-type handler slot; a different type
+        // (capture alongside bubble) is kept.
         entry.retain(|(bt, _)| *bt != bind_type);
         entry.push((bind_type, Rc::from(callback)));
     }
@@ -457,10 +423,7 @@ impl DynRenderer for BridgeRenderer {
         body: &WhiskerValue,
     ) -> EventDispatchPlan {
         // Reconstruct the response chain (target → root) from the
-        // parent mirror — Lynx's reporter only hands us the target.
-        // The `parent_sign` borrow is scoped to the walk and dropped
-        // before we touch `listeners`; planning makes no FFI call, so
-        // these read-only borrows can't span a re-entrant op.
+        // parent mirror — Lynx's reporter hands us only the target.
         let chain = {
             let parent_sign = self.parent_sign.borrow();
             let mut chain = vec![target_sign];
@@ -470,7 +433,7 @@ impl DynRenderer for BridgeRenderer {
                 chain.push(parent);
                 cur = parent;
                 guard += 1;
-                // Defensive: a malformed tree shouldn't spin forever.
+                // A malformed tree must not spin forever.
                 if guard > 4096 {
                     break;
                 }
@@ -478,11 +441,9 @@ impl DynRenderer for BridgeRenderer {
             chain
         };
 
-        // Hold a single shared borrow of `listeners` across the plan.
-        // `propagation::plan` only reads (no FFI), so this borrow can't
-        // conflict with a re-entrant op; releasing it after planning
-        // means the listeners then fire (in `dispatch_event`) with no
-        // renderer-field borrow held at all.
+        // `propagation::plan` only reads and makes no FFI call, so this
+        // borrow is safe to hold; releasing it before the listeners fire
+        // means they run with no renderer-field borrow held at all.
         let empty: Vec<Listener> = Vec::new();
         let listeners = self.listeners.borrow();
         let (consumed, ordered) = propagation::plan(&chain, |sign| {
@@ -504,25 +465,21 @@ impl DynRenderer for BridgeRenderer {
     }
 
     fn set_root(&self, page: Element) {
-        // `lookup`'s `elements` borrow is dropped before the FFI call
-        // (it returns a copied pointer), so even if attaching the root
-        // dispatches an event, no field borrow spans the call.
+        // No field borrow spans the call, so attaching the root may
+        // safely dispatch.
         let Some(ptr) = self.lookup(page) else { return };
         unsafe { ffi::whisker_bridge_set_root(self.engine_ptr(), ptr.as_ptr()) };
     }
 
     fn flush(&self) {
-        // No field borrow held; if flush triggers native layout that
-        // dispatches an event, the re-entrant op sees no outstanding
-        // borrow of any renderer field.
+        // No field borrow held — flush can trigger native layout that
+        // dispatches re-entrantly.
         unsafe { ffi::whisker_bridge_flush(self.engine_ptr()) };
     }
 
     fn module_component_ptr(&self, handle: Element) -> usize {
-        // Cast the per-element `WhiskerElement*` to `usize` so the
-        // runtime crate doesn't need to import bridge types. The
-        // driver's element-method dispatch casts back to
-        // `*mut WhiskerElement` before calling the bridge.
+        // `usize` so the runtime crate needn't import bridge types; the
+        // driver's element-method dispatch casts it back.
         self.lookup(handle)
             .map(|p| p.as_ptr() as usize)
             .unwrap_or(0)
@@ -587,8 +544,7 @@ extern "C" fn whisker_event_dispatch_entry(
         Ok(s) => s,
         Err(_) => return false,
     };
-    // The bridge normalises a missing body to `WHISKER_VALUE_NULL`, so
-    // `body` is non-null; guard anyway.
+    // The bridge normalises a missing body to `WHISKER_VALUE_NULL`.
     let value = if body.is_null() {
         WhiskerValue::Null
     } else {
@@ -596,10 +552,9 @@ extern "C" fn whisker_event_dispatch_entry(
         // the bridge, valid for this call. `from_raw` copies it out.
         unsafe { crate::module::from_raw(&*body) }
     };
-    // Contain panics from user event handlers (`on_tap`, etc.) so a
-    // bad `unwrap()` in a handler drops the event instead of unwinding
-    // across the C ABI and aborting the app. Report "not consumed" on
-    // panic so the bridge falls back to its native chain.
+    // Contain handler panics so a bad `unwrap()` drops the event
+    // instead of unwinding across the C ABI. Reporting "not consumed"
+    // lets the bridge fall back to its native chain.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         whisker_runtime::view::dispatch_event(target_sign, name, value)
     })) {
@@ -618,8 +573,6 @@ pub(crate) fn register_event_dispatcher() {
     unsafe { ffi::whisker_bridge_register_event_dispatcher(whisker_event_dispatch_entry) };
 }
 
-// ----- Core-originated custom events -----------------------------------------
-//
 // The `<list>` scroll family (`scroll` / `scrolltoupper` / `scrolltolower`
 // / `snap` / `layoutcomplete` / impression events) is generated inside
 // Lynx's C++ core, not by the platform UI layer, so it never reaches the
@@ -709,8 +662,8 @@ pub(crate) fn drain_custom_events() {
 /// Register [`whisker_custom_event_entry`] and point Lynx's core
 /// custom-event callback at the bridge. `engine` must be inside a
 /// `whisker_bridge_dispatch` callback (TASM thread, fiber-arch
-/// initialized). Returns whether the loaded Lynx supports the capi
-/// (`false` on an older fork — list events stay dark, as before).
+/// initialized). Returns whether the loaded Lynx supports the capi;
+/// `false` on an older fork, where list events stay dark.
 pub(crate) fn register_custom_event_dispatcher(engine: *mut ffi::WhiskerEngine) -> bool {
     unsafe {
         ffi::whisker_bridge_register_custom_event_dispatcher(whisker_custom_event_entry);

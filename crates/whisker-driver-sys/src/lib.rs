@@ -29,15 +29,9 @@ pub enum WhiskerElementTag {
 pub type WhiskerTasmCallback = extern "C" fn(user_data: *mut c_void);
 pub type WhiskerEventCallback = extern "C" fn(user_data: *mut c_void);
 
-// ----- List native item provider --------------------------------------------
-//
-// C-ABI callback set for `whisker_bridge_list_set_native_item_provider`.
-// Mirrors `lynx_list_*` typedefs in `whiskerrs/lynx#9` — the bridge wires
-// these through to `ListNativeItemProvider` on the C++ ListElement.
-//
-// Whisker users do NOT construct these directly. A higher-level safe
-// wrapper in `whisker-driver::lynx::list_provider` (boxed `FnMut` +
-// lifetime management) is the supported surface.
+// C-ABI callback set for `whisker_bridge_list_set_native_item_provider`,
+// mirroring the `lynx_list_*` typedefs in `whiskerrs/lynx#9`. The safe
+// wrapper is `whisker-driver::lynx::list_provider`.
 
 /// Called by Lynx's list machinery when it needs the element for `index`.
 /// Returns the FiberElement's `impl_id` (sign) or
@@ -59,12 +53,10 @@ pub type LynxListEnqueueComponentFn = extern "C" fn(sign: i32, user_data: *mut c
 /// `Box<dyn FnMut>` packed into `user_data` can be dropped.
 pub type LynxUserDataFreeFn = extern "C" fn(user_data: *mut c_void);
 
-/// Mirror of `LYNX_LIST_INVALID_INDEX` (the C macro in
-/// `lynx_capi.h`) — returned by
-/// [`LynxListComponentAtIndexFn`] to signal "no element could be
-/// produced for this index". Matches Lynx's
-/// `lynx::tasm::list::kInvalidIndex`; 0 is a real `impl_id` and
-/// would be silently consumed.
+/// Mirror of `LYNX_LIST_INVALID_INDEX` in `lynx_capi.h` — returned by
+/// [`LynxListComponentAtIndexFn`] to signal "no element for this
+/// index". Must match Lynx's `lynx::tasm::list::kInvalidIndex`; 0 is a
+/// real `impl_id` and would be silently consumed.
 pub const LYNX_LIST_INVALID_INDEX: i32 = -1;
 /// Value-payload event callback. `payload` is a `WhiskerValueRaw`
 /// tree (never NULL — the bridge normalises a missing body to a
@@ -102,18 +94,10 @@ pub type WhiskerEventDispatcher = extern "C" fn(
     body: *const WhiskerValueRaw,
 ) -> bool;
 
-// ----- Platform module invocation (Phase 7-Φ.E) ------------------------------
-//
 // `#[repr(C)]` mirror of the C tagged-union in `whisker_bridge.h`.
-// Each variant has its own pure-Rust struct so the layout matches
-// the C compiler's union member layout byte-for-byte — without the
-// opaque-storage approach the E.1 draft tried (which silently
-// disagreed on total size with the C side).
-//
-// Native callers (Rust runtime, proc-macro-generated proxies)
-// don't touch this `Raw` form directly — `whisker-runtime::view::
-// module` exposes a typed `WhiskerValue` enum with conversions in
-// both directions.
+// Each variant gets its own struct so the layout matches the C
+// compiler's union member layout byte-for-byte. Callers use the typed
+// `WhiskerValue` enum in `whisker-driver::module` instead of this.
 
 /// Discriminant for [`WhiskerValueRaw::type_`]. Must stay in lock
 /// step with `enum WhiskerValueType` in `whisker_bridge.h`.
@@ -183,7 +167,7 @@ pub union WhiskerValueUnion {
 
 /// Raw FFI form of `WhiskerValue` — byte-for-byte compatible with
 /// the C `struct WhiskerValueRec`. Total size = 24 bytes
-/// (1 discriminant + 7 padding + 16 union = 24).
+/// (1 discriminant + 7 padding + 16 union).
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct WhiskerValueRaw {
@@ -231,9 +215,8 @@ pub type WhiskerModuleObserverHook =
 
 /// Per-module dispatch function — the platform-side Swift Macro or
 /// KSP processor emits one of these per `@WhiskerModule`-annotated
-/// class. The bridge stores `(module_name → dispatch_fn)` in a
-/// lookup table; `whisker_bridge_invoke_module` then routes calls
-/// through the registered function directly (Phase 7-Φ.F).
+/// class. The bridge stores `(module_name → dispatch_fn)` in a lookup
+/// table that `whisker_bridge_invoke_module` routes through.
 pub type WhiskerModuleDispatchFn = extern "C" fn(
     method_name: *const c_char,
     args: *const WhiskerValueRaw,
@@ -278,10 +261,9 @@ unsafe extern "C" {
         key: *const c_char,
         value: *const c_char,
     );
-    // Typed-attr variants — see `whisker_bridge_common.cc` for the
-    // rationale. Use them for props the Lynx prop-dispatch gates on
-    // `value.IsNumber()` / `value.IsBool()` (e.g. `<list>`'s
-    // `span-count`, `<scroll-view>`'s `bounces`). String dispatch
+    // Use the typed variants for props whose Lynx prop-dispatch gates
+    // on `value.IsNumber()` / `value.IsBool()` (`<list>`'s
+    // `span-count`, `<scroll-view>`'s `bounces`, …) — string dispatch
     // silently no-ops in those branches.
     pub fn whisker_bridge_set_attribute_int(
         element: *mut WhiskerElement,
@@ -338,8 +320,8 @@ unsafe extern "C" {
         user_data_free: LynxUserDataFreeFn,
     );
 
-    // Diagnostic only (Android bridge logs the int as ERROR-level under
-    // the given tag). Stub on iOS — symbol present but no-op.
+    // Diagnostic only — logcat at ERROR level on Android, `NSLog` on
+    // iOS, under the given tag.
     pub fn whisker_bridge_debug_log_i32(tag: *const c_char, value: i32);
 
     pub fn whisker_bridge_append_child(parent: *mut WhiskerElement, child: *mut WhiskerElement);
@@ -379,9 +361,9 @@ unsafe extern "C" {
     pub fn whisker_bridge_register_custom_event_dispatcher(dispatcher: WhiskerEventDispatcher);
 
     /// Point Lynx's core custom-event callback at the bridge. Requires
-    /// the fork capi tail-added after ABI v2; returns `false` (list
-    /// events stay dark, as before the feature) on an older Lynx. Call
-    /// on the TASM thread after fiber-arch init.
+    /// the fork capi tail-added after ABI v2; returns `false` on an
+    /// older Lynx, where list events simply stay dark. Call on the TASM
+    /// thread after fiber-arch init.
     pub fn whisker_bridge_install_custom_event_reporter(engine: *mut WhiskerEngine) -> bool;
 
     /// The Lynx element sign for `element` — same id the reporter
@@ -428,10 +410,10 @@ unsafe extern "C" {
     /// call this on the returned value (no-op for scalars).
     pub fn whisker_bridge_value_release(value: *mut WhiskerValueRaw);
 
-    /// Register a dispatch function for `module_name`. Called by
-    /// the platform-side generated code at app launch (Swift Macro
-    /// emits a `@_cdecl` fn + registration call; KSP emits a JNI
-    /// wrapper that does the equivalent). Phase 7-Φ.F.
+    /// Register a dispatch function for `module_name`. Called by the
+    /// platform-side generated code at app launch (Swift Macro emits a
+    /// `@_cdecl` fn + registration call; KSP emits a JNI wrapper that
+    /// does the equivalent).
     pub fn whisker_bridge_register_module_dispatch(
         module_name: *const c_char,
         dispatch: WhiskerModuleDispatchFn,
@@ -445,10 +427,6 @@ unsafe extern "C" {
         module_name: *const c_char,
         dispatch: WhiskerModuleAsyncDispatchFn,
     );
-
-    // ------------------------------------------------------------------
-    // Module event subscription (Phase L-2c)
-    // ------------------------------------------------------------------
 
     /// Register `callback` against `(module_name, event_name)`.
     /// Returns a positive listener id on success, or <= 0 on a
@@ -487,37 +465,30 @@ unsafe extern "C" {
         stopped: WhiskerModuleObserverHook,
     );
 
-    /// Write `msg` to `adb logcat` (Android only — no-op on iOS;
-    /// debug print path that survives Android's stderr-is-dropped
-    /// policy). `tag == NULL` defaults to "WhiskerRust".
+    /// Write `msg` to the platform log (logcat on Android, `os_log` on
+    /// iOS) — the debug print path that survives Android's
+    /// stderr-is-dropped policy. `tag == NULL` defaults to
+    /// "WhiskerRust".
     pub fn whisker_bridge_log_info(tag: *const c_char, msg: *const c_char);
 
-    /// Invoke a Lynx UI method on a mounted element. Synchronous —
-    /// dispatches through Lynx's `LynxUIMethodProcessor` (iOS) /
-    /// `LynxUIMethodsExecutor` (Android), which in turn calls the
+    /// Invoke a Lynx UI method on a mounted element. Dispatches
+    /// through Lynx's `LynxUIMethodProcessor` (iOS) /
+    /// `LynxUIMethodsExecutor` (Android) onto the
     /// `@WhiskerUIMethod`-emitted forwarder on the element's
     /// `WhiskerUI<View>` subclass.
-    ///
-    /// `element` is the `WhiskerElement*` originally returned by
-    /// `whisker_bridge_create_element_by_name`. The bridge looks up
-    /// the Lynx UI sign from this element and routes the method
-    /// call to the matching mounted `LynxUI`.
     ///
     /// `args` matches the `invoke_module` shape — a flat
     /// `WhiskerValueRaw[]` the platform side decodes into
     /// `[WhiskerValue]` before dispatch.
     ///
-    /// Returns `WhiskerValueRaw` whose ownership matches
-    /// `invoke_module` — caller MUST eventually pass it to
-    /// `whisker_bridge_value_release`. A bridge-side failure (no
-    /// such method, element not mounted, args wrong shape, …)
-    /// surfaces as `WHISKER_VALUE_ERROR`.
-    ///
-    /// Phase 7-Φ.H.2.5: implementation is currently a stub
-    /// returning `WHISKER_VALUE_ERROR` — the real wiring lives in
-    /// Phase 7-Φ.H.2.7 once the Lynx fork exposes the C wrappers
-    /// over `LynxShell::GetUIOwner` / `LynxUIOwner::FindUIBySign` /
-    /// `LynxUIMethodProcessor::InvokeMethod`.
+    /// Fire-and-forget: the platform routes the call to the UI thread,
+    /// so the return value only reports whether dispatch was scheduled
+    /// — use [`whisker_bridge_invoke_element_method_async`] when the
+    /// result matters. Ownership matches `invoke_module`: the caller
+    /// MUST eventually pass the returned value to
+    /// `whisker_bridge_value_release`. A bridge-side failure (no such
+    /// method, element not mounted, args wrong shape, …) surfaces as
+    /// `WHISKER_VALUE_ERROR`.
     pub fn whisker_bridge_invoke_element_method(
         element: *mut WhiskerElement,
         method_name: *const c_char,
@@ -567,9 +538,9 @@ unsafe extern "C" {
     /// Async, result-returning element-method dispatch
     /// (`boundingClientRect` / `takeScreenshot`). Returns immediately;
     /// `callback(user_data, &result)` fires once the method completes
-    /// (typically on the UI thread). On precondition failure / an
-    /// unsupported platform the bridge invokes `callback` synchronously
-    /// with a `WHISKER_VALUE_ERROR` and returns `false`.
+    /// (typically on the UI thread). On a precondition failure the
+    /// bridge invokes `callback` synchronously with a
+    /// `WHISKER_VALUE_ERROR` and returns `false`.
     pub fn whisker_bridge_invoke_element_method_async(
         element: *mut WhiskerElement,
         method_name: *const c_char,
@@ -595,16 +566,12 @@ unsafe extern "C" {
 
 #[cfg(test)]
 mod tests {
-    /// The bridge must stay executable on every `arm64-v8a` device.
-    /// That ABI's baseline is Armv8.0, so an `-march=armv8.1-a` (or
-    /// `+lse`) flag turns C++ atomics into `ldadd`/`cas` — undefined
-    /// instructions that kill the app with SIGILL on older hardware,
-    /// which no emulator or recent phone ever reproduces. Guard the
-    /// flag list rather than wait for the next e-reader bug report.
+    /// `arm64-v8a`'s baseline is Armv8.0, so any `-march` flag that
+    /// would compile here (`armv8.1-a`, `armv8-a+lse`, …) turns C++
+    /// atomics into LSE instructions that SIGILL on older hardware —
+    /// which no emulator or recent phone reproduces.
     #[test]
     fn bridge_targets_the_armv8_0_baseline() {
-        // Any `-march` at all, since every form that would compile
-        // here (`armv8.1-a`, `armv8-a+lse`, …) raises the floor.
         let build_rs = include_str!("../build.rs");
         assert!(
             !build_rs.contains("flag(\"-march="),

@@ -4,16 +4,8 @@
 //! topologically orders the plugins via their `after()` / `before()`
 //! constraints, runs each one with its user-supplied config (or the
 //! Config's default when the user didn't declare it), and returns
-//! the post-pipeline [`GenerateContext`]. The CNG renderer pass
-//! (Phase 3) consumes the context to write `gen/{android,ios}/`.
-//!
-//! ## Scope (Phase 1 PR 3a)
-//!
-//! Only the in-process case. 3rd-party plugin subprocesses and
-//! Cargo-metadata-driven discovery come in follow-up PRs; this
-//! module wires the typed-Plugin → erased-trait dispatch path and
-//! the ordering / conflict-detection skeleton everything else
-//! sits on top of.
+//! the post-pipeline [`GenerateContext`] that the renderer writes
+//! `gen/{android,ios}/` from.
 //!
 //! ## Type erasure
 //!
@@ -24,10 +16,8 @@
 //! for "use the Config's `Default`"), deserializes it into the
 //! plugin's typed Config, then drives `validate` + `apply`.
 //!
-//! `DynPlugin` is `pub(crate)` because callers should always go
-//! through [`Engine::register`] — handing them the erased trait
-//! invites trying to instantiate a plugin without registering it
-//! with the engine, which loses the topo-sort / conflict checks.
+//! `DynPlugin` is `pub(crate)` because a plugin instantiated outside
+//! [`Engine::register`] loses the topo-sort and conflict checks.
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
@@ -40,10 +30,6 @@ use whisker_plugin::{
     AndroidManifest, AndroidProjectIr, AppMeta, GenerateContext, IosProjectIr, MutationJournal,
     MutationRecord, Operation, PlistValue, Plugin, PluginRequest, PluginResponse, Target,
 };
-
-// ============================================================================
-// Public surface
-// ============================================================================
 
 /// Which platform targets the current `compose` invocation should
 /// produce IRs for. Plugins see `ctx.ios.is_some()` /
@@ -110,12 +96,10 @@ impl Engine {
         self
     }
 
-    /// Like [`Engine::new`] but pre-registers every built-in
-    /// plugin shipped under [`crate::plugins`]. The standard entry
-    /// point for `inputs_from` / `whisker generate` — built-ins
-    /// are opt-in (their `Config::default()` is empty), so apps that
-    /// never call `app.plugin::<…>(|c| …)` see the same output as
-    /// pre-engine `whisker-cng`.
+    /// Like [`Engine::new`] but pre-registers every built-in plugin
+    /// shipped under [`crate::plugins`]. Built-ins are opt-in — their
+    /// `Config::default()` is empty — so an app that never calls
+    /// `app.plugin::<…>(|c| …)` gets no extra output from them.
     pub fn with_builtins() -> Self {
         let mut e = Self::new();
         e.register(crate::plugins::info_plist_extra::InfoPlistExtra)
@@ -131,17 +115,15 @@ impl Engine {
         e
     }
 
-    /// Register a typed [`Plugin`] with the engine. The engine
-    /// retains ownership for the rest of its lifetime; plugins are
-    /// run in topologically-sorted order on every `compose` call,
-    /// not in registration order.
+    /// Register a typed [`Plugin`] with the engine. Plugins run in
+    /// topologically-sorted order on every `compose` call, not in
+    /// registration order.
     pub fn register<P: Plugin + 'static>(&mut self, plugin: P) -> &mut Self {
         self.plugins.push(Box::new(plugin));
         self
     }
 
-    /// Number of plugins currently registered. Mostly useful for
-    /// tests / debug output.
+    /// Number of plugins currently registered.
     pub fn len(&self) -> usize {
         self.plugins.len()
     }
@@ -189,19 +171,13 @@ impl Engine {
     }
 }
 
-// ============================================================================
-// Internal — type erasure
-// ============================================================================
-
 /// Erased [`Plugin`] surface. One blanket impl on every `P: Plugin`
 /// for in-process plugins; an explicit impl on [`SubprocessPlugin`]
 /// for 3rd-party binaries.
 ///
-/// Return shapes are owned-string-ish (`&str`, `Vec<&str>`) rather
-/// than `&'static`-pinned: subprocess plugins read their name and
-/// ordering hints at runtime (from Cargo metadata in PR 3c), so the
-/// trait has to accept dynamic strings as well as the
-/// `&'static`-clean shape `Plugin` exposes.
+/// Returns `&str` / `Vec<&str>` rather than the `&'static`-pinned
+/// shape `Plugin` exposes, because a subprocess plugin's name and
+/// ordering hints are read from Cargo metadata at runtime.
 pub(crate) trait DynPlugin {
     fn name(&self) -> &str;
     fn after(&self) -> Vec<&str>;
@@ -236,10 +212,6 @@ impl<P: Plugin> DynPlugin for P {
     }
 }
 
-// ============================================================================
-// Internal — pipeline steps
-// ============================================================================
-
 fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> GenerateContext {
     let app_meta = AppMeta {
         name: app_config.name.clone().unwrap_or_default(),
@@ -265,10 +237,9 @@ fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> Genera
         },
     };
 
-    // Seed the IRs with core fields from `Config` before any
-    // plugin runs. Plugins then mutate from this baseline — the
-    // canonical layering is "engine seeds defaults; plugins
-    // override via Operation::Override".
+    // The layering is "engine seeds defaults; plugins override via
+    // Operation::Override", so every core `Config` field lands in the
+    // IR before the first plugin runs.
     let ios = enabled.ios.then(|| IosProjectIr {
         app_name: app_config.name.clone(),
         version: app_config.version.clone(),
@@ -298,8 +269,8 @@ fn build_initial_context(app_config: &Config, enabled: EnabledTargets) -> Genera
         ios,
         android,
         journal: MutationJournal::default(),
-        // Stamped by `Engine::compose` after this baseline is built;
-        // `build_initial_context` itself has no app-crate context.
+        // Stamped by `Engine::compose`, which is where the app crate
+        // dir is known.
         app_crate_dir: None,
     }
 }
@@ -334,13 +305,6 @@ fn check_no_unregistered_plugin_configs(
 /// `(plugins, Config)` pair always produces the same execution
 /// order. The fingerprint path downstream depends on this.
 fn topo_sort(plugins: &[Box<dyn DynPlugin>]) -> Result<Vec<usize>> {
-    // name → index. Only used for `after()` / `before()` lookups;
-    // determinism of the final order comes from sort_by_key on the
-    // ready-queue below, not from iteration of this map.
-    //
-    // Keys are borrowed-from-plugin (`&str`), since subprocess
-    // plugins' names live in a `String` field rather than a
-    // `&'static str` constant.
     let mut name_to_idx: BTreeMap<&str, usize> = BTreeMap::new();
     for (i, p) in plugins.iter().enumerate() {
         if name_to_idx.insert(p.name(), i).is_some() {
@@ -348,8 +312,7 @@ fn topo_sort(plugins: &[Box<dyn DynPlugin>]) -> Result<Vec<usize>> {
         }
     }
 
-    // Edges: predecessor → list of successors. `X.after(Y)` and
-    // `Y.before(X)` both produce the edge `Y → X`.
+    // `X.after(Y)` and `Y.before(X)` both produce the edge `Y → X`.
     let mut succ: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut in_degree: Vec<usize> = vec![0; plugins.len()];
 
@@ -381,9 +344,6 @@ fn topo_sort(plugins: &[Box<dyn DynPlugin>]) -> Result<Vec<usize>> {
         }
     }
 
-    // Seed queue from index order so registration order breaks
-    // ties — combined with the alphabetical name_to_idx walk above
-    // this is deterministic.
     let mut queue: VecDeque<usize> = VecDeque::new();
     let mut candidates: Vec<usize> = (0..plugins.len()).filter(|&i| in_degree[i] == 0).collect();
     candidates.sort_by_key(|&i| plugins[i].name());
@@ -440,9 +400,8 @@ fn detect_conflicts(journal: &MutationJournal) -> Result<()> {
                 last_writer.insert(key, r);
             }
             Operation::Override => {
-                // Explicitly acknowledges the prior writer — no
-                // conflict either way. Still record so a subsequent
-                // `Set` against the same path errors.
+                // Acknowledges the prior writer, but still recorded so
+                // a later `Set` on the same path errors.
                 last_writer.insert((r.target, r.path.as_str()), r);
             }
             Operation::ArrayPush { .. } => {
@@ -454,35 +413,24 @@ fn detect_conflicts(journal: &MutationJournal) -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Subprocess plugins
-// ============================================================================
-
 /// 3rd-party plugin shipped as a standalone binary, driven by JSON
 /// over stdin/stdout. The corresponding author-side helper is
 /// `whisker_plugin::run_as_subprocess`.
 ///
-/// From [`Engine`]'s perspective a subprocess plugin behaves
-/// exactly like an in-process one: same `name` / `after` / `before`
-/// surface, same dispatch into [`DynPlugin::run`]. The difference
-/// is what `run` does — spawn a child process, write a
-/// [`PluginRequest`] to its stdin, parse a [`PluginResponse`] back
-/// from its stdout, swap the response's context into the engine's
-/// running context.
+/// From [`Engine`]'s perspective a subprocess plugin behaves exactly
+/// like an in-process one: same `name` / `after` / `before` surface,
+/// same dispatch into [`DynPlugin::run`]. `run` spawns a child
+/// process, writes a [`PluginRequest`] to its stdin, parses a
+/// [`PluginResponse`] back, and swaps the response's context into the
+/// engine's running context.
 ///
 /// ## Journal continuity
 ///
-/// The engine hands the subprocess the full running
-/// [`GenerateContext`], including the [`MutationJournal`] entries
-/// previous plugins already wrote. The subprocess's
-/// `whisker_plugin::run_as_subprocess` helper preserves those
-/// records and appends new ones via `MutationJournal::record`,
-/// which keeps sequence indices monotonic across the in-process /
-/// subprocess boundary.
-///
-/// A malicious or buggy subprocess could drop existing journal
-/// entries. PR 3c (discovery) is the right place to surface that
-/// guarantee as a hard check; for now we trust the response.
+/// The subprocess receives the full running [`GenerateContext`],
+/// [`MutationJournal`] included, and `run_as_subprocess` appends to
+/// those records rather than replacing them — which is what keeps
+/// sequence indices monotonic across the process boundary. A buggy
+/// subprocess can still drop entries; the response is trusted as-is.
 pub struct SubprocessPlugin {
     name: String,
     binary: PathBuf,
@@ -556,9 +504,8 @@ fn merge_response(ctx: &mut GenerateContext, response: PluginResponse) {
     *ctx = response.context;
 }
 
-/// Spawn the plugin binary, pipe JSON, parse the response. stderr
-/// is inherited so plugin diagnostics reach the user during
-/// `whisker generate --verbose`.
+/// Spawn the plugin binary, pipe JSON, parse the response. stderr is
+/// inherited so plugin diagnostics reach the user's terminal.
 fn spawn_and_exchange(
     binary: &Path,
     plugin_name: &str,
@@ -582,13 +529,10 @@ fn spawn_and_exchange(
             .write_all(&json)
             .with_context(|| format!("write PluginRequest to plugin `{plugin_name}`"))?;
     }
-    // No explicit `child.stdin.take()` here — `wait_with_output`
-    // does it internally before reading stdout, which is what
-    // signals EOF to the child. If we closed stdin first AND the
-    // child wrote a stdout response larger than the pipe buffer,
-    // we'd deadlock (parent waiting on child exit, child waiting
-    // on parent to drain stdout). The wait_with_output path
-    // serialises them safely.
+    // Leave stdin to `wait_with_output`, which closes it (signalling
+    // EOF) before draining stdout. Closing it here instead deadlocks
+    // whenever the child's response exceeds the pipe buffer: the
+    // parent waits on exit while the child waits on a stdout drain.
 
     let output = child
         .wait_with_output()
@@ -622,20 +566,13 @@ fn decode_response_bytes(plugin_name: &str, bytes: &[u8]) -> Result<PluginRespon
 
 /// Seed `UISupportedInterfaceOrientations` (and its `~ipad` variant).
 ///
-/// Not optional the way most plist keys are: App Store validation
-/// rejects a bundle that declares no orientations at all ("No
-/// orientations were specified… To support iPad multitasking, specify
-/// …"), so every generated app needs them whether or not its author
-/// thought about it. Hence all four by default.
+/// App Store validation rejects a bundle that declares no orientations
+/// at all, so every generated app gets all four by default. Restricting
+/// them is only legal for a bundle that also opts out of iPad
+/// multitasking, hence the `UIRequiresFullScreen` companion.
 ///
-/// Restricting them — a portrait-locked phone app, say — is only legal
-/// for a bundle that also opts out of iPad multitasking, so that case
-/// sets `UIRequiresFullScreen` too rather than producing another
-/// bundle that fails upload.
-///
-/// Seeded into the IR, not written straight into the template, so a
-/// plugin can still override either key (the engine-seeds /
-/// plugins-override layering this module documents above).
+/// Seeded into the IR rather than the template so a plugin can still
+/// override either key.
 fn seed_orientation_plist(
     orientations: &[whisker_config::Orientation],
 ) -> std::collections::BTreeMap<String, PlistValue> {
@@ -666,10 +603,6 @@ fn seed_orientation_plist(
     seeded
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -687,7 +620,6 @@ mod tests {
             seeded["UISupportedInterfaceOrientations"],
             seeded["UISupportedInterfaceOrientations~ipad"]
         );
-        // Unrestricted apps support iPad multitasking, so no opt-out.
         assert!(!seeded.contains_key("UIRequiresFullScreen"));
     }
 
@@ -706,8 +638,6 @@ mod tests {
             "Apple only allows fewer than four orientations when the app opts out"
         );
     }
-
-    // ----- Test plugins ----------------------------------------------------
 
     #[derive(Default, Serialize, Deserialize)]
     struct BundleIdConfig {
@@ -828,8 +758,6 @@ mod tests {
         a
     }
 
-    // ----- Happy paths -----------------------------------------------------
-
     #[test]
     fn empty_engine_yields_an_empty_context() {
         let engine = Engine::new();
@@ -891,22 +819,17 @@ mod tests {
 
     #[test]
     fn plugin_falls_back_to_default_config_when_not_declared() {
-        // No app.plugin::<BundleId> call → engine still runs the
-        // registered plugin with BundleIdConfig::default().
         let mut engine = Engine::new();
         engine.register(BundleId);
         let ctx = engine
             .compose(&base_app_config(), EnabledTargets::ios_only())
             .unwrap();
         let ios = ctx.ios.unwrap();
-        // suffix defaults to "" → no suffix appended.
         assert_eq!(
             ios.info_plist.get("CFBundleIdentifier"),
             Some(&PlistValue::String("rs.whisker.demo".into())),
         );
     }
-
-    // ----- Ordering --------------------------------------------------------
 
     #[test]
     fn after_constraint_orders_dependent_plugin_later() {
@@ -920,8 +843,6 @@ mod tests {
             ios.info_plist.get("CFBundleIdentifier"),
             Some(&PlistValue::String("rs.overridden".into())),
         );
-        // BundleId ran first → set-bundle-id (Set) came before
-        // override-bundle-id (Override). Sequence indices reflect that.
         let seqs: Vec<_> = ctx
             .journal
             .records
@@ -933,7 +854,6 @@ mod tests {
 
     #[test]
     fn cycle_in_after_constraints_is_rejected() {
-        // A.after(B) and B.after(A)
         struct A;
         struct B;
         #[derive(Default, Serialize, Deserialize)]
@@ -999,12 +919,8 @@ mod tests {
         assert!(msg.contains("non-existent"), "{msg}");
     }
 
-    // ----- Validation ------------------------------------------------------
-
     #[test]
     fn declaring_an_unknown_plugin_in_app_config_is_rejected() {
-        // User wrote app.plugin::<X>(…) but no engine has X
-        // registered. Caught before any plugin runs.
         let mut app = base_app_config();
         app.plugins
             .insert("ghost-plugin".to_string(), serde_json::json!({}));
@@ -1050,8 +966,6 @@ mod tests {
         assert!(format!("{err:#}").contains("nope"));
     }
 
-    // ----- Conflict detection ----------------------------------------------
-
     #[test]
     fn two_set_writes_to_same_path_is_a_conflict() {
         let mut engine = Engine::new();
@@ -1069,7 +983,6 @@ mod tests {
     fn override_resolves_what_would_otherwise_be_a_conflict() {
         let mut engine = Engine::new();
         engine.register(BundleId).register(OverrideBundleId);
-        // Override-after-Set is the documented use case for Override.
         engine
             .compose(&base_app_config(), EnabledTargets::ios_only())
             .expect("override should resolve the would-be conflict");
@@ -1132,11 +1045,8 @@ mod tests {
         assert_eq!(perms.len(), 2);
     }
 
-    // ----- Integration --------------------------------------------------
-
     #[test]
     fn config_decode_error_is_surfaced_with_plugin_name() {
-        // Plugin expects suffix: String but we hand it `{"suffix": 7}`.
         let mut app = base_app_config();
         app.plugins.insert(
             BundleIdConfig::NAME.to_string(),
@@ -1174,11 +1084,8 @@ mod tests {
             PlistValue::String("rs.whisker.demo.dev".into()),
         );
         assert_eq!(ctx.android.as_ref().unwrap().manifest.permissions.len(), 2);
-        // 1 record from bundle id (Set) + 1 from permissions (ArrayPush)
         assert_eq!(ctx.journal.records.len(), 2);
     }
-
-    // ----- Subprocess plumbing (pure helpers) --------------------------
 
     #[test]
     fn build_request_carries_name_config_and_full_context() {
@@ -1197,9 +1104,6 @@ mod tests {
         );
         assert_eq!(req.name, "my-plugin");
         assert_eq!(req.config["opt"], true);
-        // The journal entry already in the engine context must be
-        // visible to the subprocess so its sequence counter continues
-        // monotonically — `next_sequence_index` will be 1 there.
         assert_eq!(req.context.journal.next_sequence_index, 1);
         assert_eq!(req.context.app_meta.name, "Demo");
     }

@@ -37,11 +37,9 @@ use crate::compose::{EnabledTargets, Engine};
 use crate::fingerprint;
 use crate::render::{escape_xml, render};
 
-// ---- Embedded templates ----------------------------------------------------
-//
-// Text files go through `{{placeholder}}` substitution. Binary files
-// (the gradle wrapper jar) are copied verbatim. `gradlew` is text but
-// needs the +x bit on Unix so it lives in its own list.
+// Text templates go through `{{placeholder}}` substitution; the gradle
+// wrapper jar is copied verbatim, and `gradlew` needs the +x bit on
+// Unix, so each group is written separately below.
 
 const APP_BUILD_GRADLE_KTS: &str = include_str!("templates/android/app/build.gradle.kts");
 const APP_MANIFEST_XML: &str = include_str!("templates/android/app/src/main/AndroidManifest.xml");
@@ -58,13 +56,10 @@ const GRADLE_WRAPPER_PROPERTIES: &str =
 const GRADLE_WRAPPER_JAR: &[u8] =
     include_bytes!("templates/android/gradle/wrapper/gradle-wrapper.jar");
 
-/// Inputs the Android renderer pulls out of `Config` (+ a few
-/// values the cli passes in like the dylib name and the workspace's
-/// `platforms/android/whisker-runtime` location).
-///
-/// Holding these in a struct rather than a big tuple keeps the
-/// fingerprint serialization stable and the template-vars build site
-/// easy to read.
+/// Inputs the Android renderer pulls out of `Config`, plus a few
+/// values the cli passes in (the dylib name, the workspace location).
+/// Struct rather than a tuple so the fingerprint serialization stays
+/// stable as fields are added.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AndroidInputs {
     pub app_name: String,
@@ -87,13 +82,13 @@ pub struct AndroidInputs {
     /// walks the cargo dep graph rooted here for
     /// `[package.metadata.whisker]`-tagged module deps.
     pub whisker_user_package: String,
-    /// `rs.whisker:whisker-runtime-android:<this>` + sibling SDK
-    /// coords' version. Step 4.5-e initial release is `0.1.0`.
+    /// Version for `rs.whisker:whisker-runtime-android:<this>` and its
+    /// sibling SDK coordinates.
     pub whisker_sdk_version: String,
-    /// `rs.whisker:rs.whisker.gradle.plugin:<this>` version pinned
-    /// in `pluginManagement.plugins`. Independent from
-    /// `whisker_sdk_version` — gradle-plugin and SDK release on
-    /// separate `gradle-plugin-v*` / `sdk-v*` tag streams.
+    /// `rs.whisker:rs.whisker.gradle.plugin:<this>` version pinned in
+    /// `pluginManagement.plugins`. Independent of `whisker_sdk_version`
+    /// — gradle-plugin and SDK release on separate `gradle-plugin-v*` /
+    /// `sdk-v*` tag streams.
     pub whisker_gradle_plugin_version: String,
     /// gh-pages Maven URL hosting Whisker's plugins + SDK. Templates
     /// declare it in both `pluginManagement.repositories` and
@@ -103,15 +98,13 @@ pub struct AndroidInputs {
     /// `whisker-runtime-android` pulls transitively.
     pub lynx_maven_url: String,
     /// `<uses-permission android:name="…"/>` rows from the engine's
-    /// post-pipeline IR. Emitted after the template's hardcoded
-    /// `INTERNET` permission. Dedup'd: the same permission
-    /// contributed by multiple plugins shows up once.
+    /// post-pipeline IR, emitted after the template's hardcoded
+    /// `INTERNET` permission and dedup'd across plugins.
     #[serde(default)]
     pub extra_permissions: Vec<String>,
-    /// `<meta-data android:name="…" android:value="…"/>` rows from
-    /// the engine's post-pipeline IR. Emitted inside the
-    /// `<application>` block. Preserves insertion order — multiple
-    /// plugins contributing entries see deterministic output.
+    /// `<meta-data android:name="…" android:value="…"/>` rows from the
+    /// engine's post-pipeline IR, emitted inside `<application>` in
+    /// insertion order.
     #[serde(default)]
     pub extra_meta_data: Vec<MetaDataEntry>,
     /// Attributes on the `<application>` tag itself (e.g.
@@ -153,31 +146,24 @@ pub struct AndroidInputs {
     #[serde(default)]
     pub extra_gradle_dependencies: Vec<String>,
     /// Plugin-supplied additional files dropped into `gen/android/`.
-    /// Keys are relative paths (validated at write time); values
-    /// are [`FileEntry`]s — UTF-8 contents + optional POSIX mode.
+    /// Keys are relative paths (validated at write time); values are
+    /// [`FileEntry`]s — UTF-8 contents + optional POSIX mode.
     ///
-    /// Mode handling on Android is intentionally coarser than the
-    /// iOS renderer's: the existing `write_file` helper takes a
-    /// `bool` executable flag, so the renderer projects
-    /// `FileEntry::mode` onto "executable yes/no" (any mode with
-    /// the user-execute bit set → 0o755, otherwise 0o644). Plugins
-    /// that need finer-grained Android permissions today would have
-    /// to ship a wrapper script that `chmod`s at build time —
-    /// loosening this is a one-line `write_file` refactor when the
-    /// first consumer needs it.
+    /// Mode is coarser here than in the iOS renderer: `write_file`
+    /// takes a `bool` executable flag, so any mode with the
+    /// user-execute bit set becomes 0o755 and everything else 0o644.
     #[serde(default)]
     pub extra_files: BTreeMap<PathBuf, FileEntry>,
-    /// Bumped whenever the template *shape* changes (added file,
-    /// renamed placeholder, …). The fingerprint mixes this in so
-    /// existing `gen/` trees regenerate after an upgrade.
+    /// Bump whenever the template *shape* changes (added file, renamed
+    /// placeholder, …). The fingerprint mixes this in, so without a
+    /// bump existing `gen/` trees keep their stale output.
     pub template_version: u32,
 }
 
 /// Render the Android project into `out_dir` (typically
 /// `<crate_dir>/gen/android`). Returns whether files were actually
 /// rewritten — `false` means the cached fingerprint matched and the
-/// existing tree was reused. The caller decides what to do with that
-/// (log "in sync", skip a downstream sync, …).
+/// existing tree was reused.
 pub fn sync(out_dir: &Path, inputs: &AndroidInputs) -> Result<bool> {
     let new_fp = fingerprint::fingerprint(
         serde_json::to_vec(inputs)
@@ -197,8 +183,7 @@ pub fn sync(out_dir: &Path, inputs: &AndroidInputs) -> Result<bool> {
     Ok(true)
 }
 
-/// Build the `{{var}}` table from `inputs`. Split out so unit tests
-/// can assert against the result without going through file I/O.
+/// Build the `{{var}}` table from `inputs`.
 pub(crate) fn template_vars(inputs: &AndroidInputs) -> HashMap<&'static str, String> {
     let mut v = HashMap::new();
     v.insert("app_name", inputs.app_name.clone());
@@ -331,10 +316,8 @@ fn render_main_activity(
 ///     → wrapped in `id("…")`.
 ///   - Anything containing a `(` character (e.g. `id("…") version "X"`,
 ///     `alias(libs.plugins.foo)`, `kotlin("jvm")`) → emitted
-///     verbatim. The Kotlin DSL's plugin block accepts every
-///     callable that returns a `PluginDependencySpec`, and bare
-///     gradle plugin ids never contain `(`, so this is a safe
-///     discriminator.
+///     verbatim. Bare gradle plugin ids never contain `(`, which is
+///     what makes the character a safe discriminator.
 fn render_extra_gradle_plugins(entries: &[String]) -> String {
     if entries.is_empty() {
         return String::new();
@@ -502,11 +485,6 @@ fn application_id_to_path(application_id: &str) -> PathBuf {
 fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
     let vars = template_vars(inputs);
 
-    // Wipe the existing tree, but spare anything we know is a runtime
-    // build artifact (so we don't blow away gradle's cache on every
-    // sync). Today that means `app/build/`, `.gradle/`, and the
-    // `app/src/main/jniLibs/` directory whose bytes are produced by
-    // `cargo build` outside the renderer.
     clean_managed_tree(out_dir).context("clean previous gen tree")?;
 
     let kotlin_pkg = out_dir
@@ -515,7 +493,6 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
 
     let app_class_filename = format!("{}.kt", application_class_name(&inputs.app_name));
 
-    // Text templates.
     let text_files: &[(PathBuf, &str)] = &[
         (out_dir.join("app/build.gradle.kts"), APP_BUILD_GRADLE_KTS),
         (
@@ -542,17 +519,12 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
     write_file(&out_dir.join("gradlew"), GRADLEW.as_bytes(), true)?;
     write_file(&out_dir.join("gradlew.bat"), GRADLEW_BAT.as_bytes(), false)?;
 
-    // Binary.
     write_file(
         &out_dir.join("gradle/wrapper/gradle-wrapper.jar"),
         GRADLE_WRAPPER_JAR,
         false,
     )?;
 
-    // Plugin-supplied `extra_files`. Paths are validated to be
-    // relative and traversal-free; on Unix, `mode` is applied via
-    // the existing `write_file` executable flag (0o755 when set
-    // and `>= 0o100`, otherwise the default 0o644).
     for (rel, entry) in &inputs.extra_files {
         crate::render::validate_extra_file_path(rel).with_context(|| {
             format!(
@@ -561,9 +533,6 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
             )
         })?;
         let abs = out_dir.join(rel);
-        // The Android renderer's `write_file` takes a `bool`
-        // executable flag (0o755 on Unix). Apply that for any
-        // mode that has the user-execute bit set.
         let executable = entry.mode.map(|m| m & 0o100 != 0).unwrap_or(false);
         let bytes = entry
             .to_bytes()
@@ -574,11 +543,9 @@ fn write_files(out_dir: &Path, inputs: &AndroidInputs) -> Result<()> {
     Ok(())
 }
 
-/// Delete the previous gen tree but keep `app/build/`, `.gradle/`,
-/// and `app/src/main/jniLibs/`. These three are runtime build
-/// artifacts; wiping them on every sync forces gradle into a cold
-/// rebuild and `cargo build` to re-copy the dylib, which would make
-/// the dev loop unbearable.
+/// Delete the previous gen tree but keep `app/build/`, `.gradle/`, and
+/// `app/src/main/jniLibs/` — wiping those forces a cold gradle rebuild
+/// and a dylib re-copy on every sync.
 fn clean_managed_tree(out_dir: &Path) -> Result<()> {
     if !out_dir.exists() {
         return Ok(());
@@ -598,13 +565,12 @@ fn clean_managed_tree(out_dir: &Path) -> Result<()> {
                 continue;
             }
         }
-        // Don't blow away top-level `app/` either — only the files we
-        // own under it. Recurse one level.
+        // Only the files we own under `app/`; recurse one level.
         if entry.file_name() == "app" && entry.path().is_dir() {
             clean_under_app(&entry.path())?;
             continue;
         }
-        // Skip our own fingerprint file — it'll be overwritten in `sync`.
+        // `sync` overwrites the fingerprint itself.
         if entry.file_name() == ".whisker-fingerprint" {
             continue;
         }
@@ -618,7 +584,7 @@ fn clean_under_app(app_dir: &Path) -> Result<()> {
         std::fs::read_dir(app_dir).with_context(|| format!("read_dir {}", app_dir.display()))?
     {
         let entry = entry?;
-        // Keep `build/` (gradle's output) and the jniLibs subtree.
+        // Keep gradle's `build/` output and the jniLibs subtree.
         if entry.file_name() == "build" {
             continue;
         }
@@ -650,7 +616,7 @@ fn clean_under_main(main_dir: &Path) -> Result<()> {
         std::fs::read_dir(main_dir).with_context(|| format!("read_dir {}", main_dir.display()))?
     {
         let entry = entry?;
-        // Keep the jniLibs subtree (dylib drops here).
+        // Keep the jniLibs subtree — the dylib drops here.
         if entry.file_name() == "jniLibs" {
             continue;
         }
@@ -690,9 +656,8 @@ fn write_file(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
 /// applicationId is mandatory; everything else has a default).
 ///
 /// Thin wrapper over [`inputs_from_with_engine`] using
-/// [`Engine::with_builtins`]. Callers that want extra plugins
-/// (e.g. subprocess plugins discovered via cargo metadata) should
-/// call the `_with_engine` form directly.
+/// [`Engine::with_builtins`] — call that form directly to register
+/// additional plugins.
 // Eight arguments — over clippy's seven-arg default. Bundling them
 // behind a builder or a config struct would just push the same value
 // list one level deeper without changing the call site, so allow.
@@ -735,9 +700,8 @@ pub fn inputs_from_with_engine(
     whisker_maven_url: String,
     lynx_maven_url: String,
 ) -> Result<AndroidInputs> {
-    // Run the plugin pipeline. `build_initial_context` seeds the
-    // IR with core fields from `Config`; plugins can override
-    // any of them. The renderer reads the post-pipeline IR.
+    // The engine seeds the IR from `Config` and plugins may override
+    // any of it, so everything below reads the post-pipeline IR.
     let ctx = engine
         .compose(app_config, EnabledTargets::android_only())
         .context("compose Whisker CNG plugin pipeline for Android")?;
@@ -800,16 +764,9 @@ pub fn inputs_from_with_engine(
         extra_gradle_plugins,
         extra_gradle_dependencies,
         extra_files,
-        // Bumped 13 → 14: the MainActivity carries
-        // `windowSoftInputMode="adjustResize"` (app-owned keyboard
-        // avoidance — see the manifest template).
         template_version: 14,
     })
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -857,8 +814,6 @@ mod tests {
 
     #[test]
     fn extra_files_writes_binary_contents_via_base64() {
-        // whisker-asset drops assets under app/src/main/assets/whisker/
-        // as base64 FileEntry::binary — the renderer must decode them.
         let mut inputs = sample_inputs();
         let raw = vec![0x00u8, 0x01, 0xfe, 0xff];
         inputs.extra_files.insert(
@@ -893,8 +848,6 @@ mod tests {
     #[test]
     fn android_theme_defaults_and_overrides() {
         let mut inputs = sample_inputs();
-        // Default → the AppCompat NoActionBar theme (matches the manifest
-        // template's historical hardcoded value).
         assert_eq!(
             template_vars(&inputs)["android_theme"],
             "@style/Theme.AppCompat.NoActionBar"
@@ -920,12 +873,10 @@ mod tests {
             &["installSplashScreen()".into()],
             &[],
         );
-        // `Bundle` auto-added; the splash import follows.
         assert!(imports.contains("\nimport android.os.Bundle"));
         assert!(imports.contains(
             "\nimport androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen"
         ));
-        // The pre-super statement lands before `super.onCreate`.
         let pre = body.find("installSplashScreen()").unwrap();
         let sup = body.find("super.onCreate(savedInstanceState)").unwrap();
         assert!(pre < sup, "installSplashScreen must precede super.onCreate");
@@ -1029,8 +980,6 @@ mod tests {
             manifest.contains("android:enableOnBackInvokedCallback=\"true\""),
             "attribute should appear in the manifest:\n{manifest}"
         );
-        // Rendered exactly once (dedup by name) and inside the
-        // `<application …>` open tag (before the first child element).
         assert_eq!(
             manifest
                 .matches("android:enableOnBackInvokedCallback")
@@ -1039,7 +988,6 @@ mod tests {
             "deduped to a single occurrence"
         );
         let app_open = manifest.find("<application").unwrap();
-        // First `>` at or after the `<application` open tag closes it.
         let app_close = app_open + manifest[app_open..].find('>').unwrap();
         let attr_pos = manifest.find("enableOnBackInvokedCallback").unwrap();
         assert!(
@@ -1080,7 +1028,6 @@ mod tests {
 
     #[test]
     fn sync_preserves_jnilibs_across_regeneration() {
-        // The dylib `cargo build` drops here must survive a sync.
         let tmp = unique_tempdir();
         let out = tmp.join("gen/android");
         sync(&out, &sample_inputs()).unwrap();

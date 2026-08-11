@@ -1,18 +1,8 @@
-//! End-to-end check on the gradle IR pass-through (RFC #164
-//! B-direction PR 2): built-in plugin → engine → `inputs_from` →
-//! template substitution → rendered `app/build.gradle.kts`.
-//!
-//! Complements:
-//!   - `crates/whisker-cng/src/plugins/android_gradle_*.rs`
-//!     unit tests, which only check IR-level mutations
-//!   - `tests/builtins_e2e.rs` which covers Info.plist /
-//!     permissions / meta-data — those land in the manifest, not
-//!     gradle
-//!
-//! Together with PR 1's IR-canonical refactor, this means
-//! Firebase / Google Maps / Crashlytics integration is now
-//! expressible as a single `app.plugin::<…>(|c| …)` block without
-//! forking `whisker-cng`.
+//! End-to-end check on the gradle IR pass-through: built-in plugin →
+//! engine → `inputs_from` → template substitution → rendered
+//! `app/build.gradle.kts`. The manifest-side equivalents
+//! (Info.plist / permissions / meta-data) live in
+//! `tests/builtins_e2e.rs`.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,10 +47,6 @@ fn sync_and_read_gradle(app: &Config) -> String {
     gradle
 }
 
-// ============================================================================
-// Gradle plugins block
-// ============================================================================
-
 #[test]
 fn gradle_bare_plugin_id_is_wrapped_in_id_call() {
     let mut app = base_android_app();
@@ -100,8 +86,6 @@ fn gradle_version_catalog_alias_passes_through_verbatim() {
         gradle.contains("alias(libs.plugins.kotlin.android)"),
         "{gradle}",
     );
-    // Specifically, the renderer must NOT have wrapped it as
-    // `id("alias(libs.plugins.kotlin.android)")`.
     assert!(
         !gradle.contains("id(\"alias("),
         "renderer wrapped a DSL call: {gradle}",
@@ -115,7 +99,6 @@ fn gradle_plugin_entry_lands_inside_the_plugins_block() {
         c.add("com.google.gms.google-services");
     });
     let gradle = sync_and_read_gradle(&app);
-    // Find the plugins { } block and check our entry is inside.
     let plugins_open = gradle.find("plugins {").unwrap();
     let plugins_close = gradle[plugins_open..].find("\n}").unwrap() + plugins_open;
     let inside_plugins = &gradle[plugins_open..plugins_close];
@@ -124,10 +107,6 @@ fn gradle_plugin_entry_lands_inside_the_plugins_block() {
         "must be inside plugins block: {inside_plugins}",
     );
 }
-
-// ============================================================================
-// Gradle dependencies block
-// ============================================================================
 
 #[test]
 fn gradle_dependency_line_emitted_verbatim() {
@@ -175,9 +154,6 @@ fn gradle_dependencies_preserve_insertion_order() {
 
 #[test]
 fn gradle_supports_non_implementation_configurations() {
-    // Real-world: Firebase needs kapt + classpath stuff in
-    // various configurations. The raw-line approach must let
-    // users emit any of them.
     let mut app = base_android_app();
     app.plugin::<GradleDependencies>(|c| {
         c.add("kapt(\"androidx.room:room-compiler:2.6.0\")")
@@ -188,31 +164,19 @@ fn gradle_supports_non_implementation_configurations() {
     assert!(gradle.contains("runtimeOnly(\"com.example:plugin:1.0\")"));
 }
 
-// ============================================================================
-// No-op when no plugin declared
-// ============================================================================
-
 #[test]
 fn gradle_baseline_unchanged_when_no_plugin_declared() {
     let app = base_android_app();
     let gradle = sync_and_read_gradle(&app);
-    // Baseline plugins / deps must still be there.
     assert!(gradle.contains("id(\"com.android.application\")"));
     assert!(gradle.contains("id(\"rs.whisker.gradle\")"));
     assert!(gradle.contains("implementation(\"rs.whisker:whisker-runtime-android:"));
-    // Nothing from any plugin.
     assert!(!gradle.contains("com.google.gms.google-services"));
     assert!(!gradle.contains("firebase-analytics"));
 }
 
-// ============================================================================
-// Realistic scenario: Firebase
-// ============================================================================
-
 #[test]
 fn gradle_firebase_scenario_reaches_the_rendered_file() {
-    // Recreate the exact pattern a `whisker-firebase` plugin
-    // (Phase 4 dogfood) would produce.
     let mut app = base_android_app();
     app.plugin::<GradlePlugins>(|c| {
         c.add("com.google.gms.google-services");

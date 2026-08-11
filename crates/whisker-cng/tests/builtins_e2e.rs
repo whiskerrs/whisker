@@ -1,11 +1,7 @@
-//! End-to-end check on the Phase 2/3 wiring: built-in plugin →
-//! engine → `inputs_from` → template substitution → rendered file.
-//!
-//! Complements the per-plugin unit tests in
-//! `crates/whisker-cng/src/plugins/*` (which only check IR-level
-//! mutations) and the per-renderer tests in `src/ios.rs` /
-//! `src/android.rs` (which only check default-config rendering).
-//! Here we verify the whole pipeline writes the expected XML.
+//! End-to-end: built-in plugin → engine → `inputs_from` → template
+//! substitution → rendered file. The per-plugin unit tests cover
+//! IR-level mutations and the per-renderer tests cover default-config
+//! rendering; this checks the whole pipeline's XML output.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,10 +33,6 @@ fn base_android_app() -> Config {
     });
     a
 }
-
-// ============================================================================
-// iOS: InfoPlistExtra
-// ============================================================================
 
 #[test]
 fn ios_info_plist_extra_keys_reach_the_rendered_plist() {
@@ -126,16 +118,10 @@ fn ios_no_plugin_declared_means_no_extra_keys_in_plist() {
     whisker_cng::ios::sync(&out, &inputs).unwrap();
 
     let plist = std::fs::read_to_string(out.join("Info.plist")).unwrap();
-    // Sanity: the rendered plist still has the baseline keys.
     assert!(plist.contains("<key>CFBundleDisplayName</key>"));
-    // And nothing from any plugin's NAME landed.
     assert!(!plist.contains("NSCameraUsageDescription"));
     let _ = std::fs::remove_dir_all(&tmp);
 }
-
-// ============================================================================
-// Android: Permissions + MetaData
-// ============================================================================
 
 #[test]
 fn android_extra_permissions_reach_the_rendered_manifest() {
@@ -261,9 +247,7 @@ fn android_no_plugin_declared_means_only_baseline_internet_permission() {
     whisker_cng::android::sync(&out, &inputs).unwrap();
 
     let manifest = std::fs::read_to_string(out.join("app/src/main/AndroidManifest.xml")).unwrap();
-    // The hardcoded INTERNET permission must still be there.
     assert!(manifest.contains("android.permission.INTERNET"));
-    // Nothing else.
     assert!(!manifest.contains("android.permission.CAMERA"));
     assert!(!manifest.contains("<meta-data"));
     let _ = std::fs::remove_dir_all(&tmp);

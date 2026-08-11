@@ -16,16 +16,12 @@
 //! └── Sources/AppDelegate.swift
 //! ```
 //!
-//! Why direct pbxproj rendering: avoids the `xcodegen` runtime
-//! dependency. xcodegen was useful to spit out a baseline pbxproj
-//! once, after which we templatize and check it into the crate.
-//! Subsequent renders are pure string substitution. Same pattern
-//! Expo uses for its prebuild bare workflow.
-//!
-//! Trade-off: we own the pbxproj's compatibility with future Xcode
-//! versions. `objectVersion = 77` is the current Xcode 15+ format;
-//! if Xcode N+1 demands a new objectVersion, regenerate the
-//! template via xcodegen once and re-templatize.
+//! Rendering the pbxproj directly (rather than shelling out to
+//! `xcodegen`) keeps `xcodegen` off the user's machine, at the cost of
+//! owning the pbxproj's compatibility with future Xcode versions:
+//! `objectVersion = 77` is the Xcode 15+ format, and if a later Xcode
+//! demands a new one, regenerate the template via xcodegen once and
+//! re-templatize.
 
 use anyhow::{Context, Result, anyhow};
 use std::collections::{BTreeMap, HashMap};
@@ -53,41 +49,30 @@ pub struct IosInputs {
     pub scheme: String,
     pub bundle_id: String,
     pub deployment_target: String,
-    /// Path the generated pbxproj's `XCLocalSwiftPackageReference`
-    /// for `WhiskerRuntime` points at — typically
-    /// `<workspace>/platforms/ios` in the monorepo. cng emits a local-
-    /// path reference because each Whisker module's `Package.swift`
-    /// pulls `WhiskerRuntime` via `.package(path:)` against the same
-    /// directory; until module manifests migrate to a shared remote
-    /// URL, mixing a remote root reference with local module refs
-    /// would produce duplicate `WhiskerRuntime` SwiftPM identities.
+    /// Local checkout of the Whisker iOS SwiftPM sources — typically
+    /// `<workspace>/platforms/ios`. Not templated into the pbxproj,
+    /// which resolves `WhiskerRuntime` from the remote SPM package; it
+    /// only participates in the sync fingerprint.
     pub whisker_runtime_path: PathBuf,
-    /// Path to the auto-generated `WhiskerModules` SwiftPM package
-    /// — typically `<crate_dir>/gen/ios/whisker_modules`. Pointed
-    /// at the gen-tree-managed dir `whisker-build::ios::
-    /// stage_module_swift_sources` populates with each module's
-    /// `[ios].swift_sources` and the generated
+    /// Path to the auto-generated `WhiskerModules` SwiftPM package —
+    /// typically `<crate_dir>/gen/ios/whisker_modules`, the dir
+    /// `whisker-build::ios::stage_module_swift_sources` populates with
+    /// each module's `[ios].swift_sources` and the generated
     /// `WhiskerModuleBehaviors.swift`.
     pub whisker_modules_path: PathBuf,
-    /// Absolute path to the cargo workspace root that contains the
-    /// user app crate's top-level `Cargo.toml` (the one with
-    /// `[workspace]`). Embedded into the pbxproj's Run Script Build
-    /// Phase as `--workspace=...` so Xcode-driven builds invoke
-    /// `whisker build-ios` without the user typing it. Step 7.
+    /// Absolute path to the cargo workspace root holding the user app
+    /// crate's `[workspace]` `Cargo.toml`. Embedded into the pbxproj's
+    /// Run Script Build Phase as `--workspace=...` so Xcode-driven
+    /// builds invoke `whisker build-ios` without the user typing it.
     pub workspace_root: PathBuf,
     /// Cargo package name (the user app crate) — the Rust side of
-    /// `whisker build-ios --package=...`. Step 7.
+    /// `whisker build-ios --package=...`.
     pub user_package: String,
-    /// Plugin-supplied `Info.plist` entries sourced from the
-    /// engine's post-pipeline IR (`ctx.ios.info_plist`). Emitted
-    /// just before the closing `</dict>`.
-    ///
-    /// Rendered by [`render_extra_info_plist`], which handles every
-    /// `PlistValue` variant — `String` / `Boolean` / `Integer` / `Real`
-    /// / nested `Dict` / `Array` — recursively. The only thing dropped
-    /// is a **mixed-type array** (an array whose items aren't all
-    /// strings), since the hand-rolled XML renderer has no meaningful
-    /// mapping for it.
+    /// Plugin-supplied `Info.plist` entries from the engine's
+    /// post-pipeline IR (`ctx.ios.info_plist`), emitted just before the
+    /// closing `</dict>` by [`render_extra_info_plist`]. Every
+    /// `PlistValue` variant renders recursively except a mixed-type
+    /// array, which the hand-rolled XML renderer drops.
     #[serde(default)]
     pub extra_info_plist: BTreeMap<String, PlistValue>,
     /// Plugin-supplied additional files dropped into `gen/ios/`.
@@ -97,13 +82,10 @@ pub struct IosInputs {
     #[serde(default)]
     pub extra_files: BTreeMap<PathBuf, FileEntry>,
     /// Plugin-supplied structural mutations against the Xcode
-    /// `project.pbxproj`. Each variant maps to a small set of
-    /// generated entries in the rendered pbxproj — see
-    /// [`PbxprojOp`] for the supported ops and
-    /// [`render_pbxproj_op_placeholders`] for the renderer's
-    /// behaviour. Deterministic UUIDs (FNV-1a over each op's
-    /// content) keep the rendered file byte-identical across
-    /// rebuilds.
+    /// `project.pbxproj`; see [`PbxprojOp`] for the supported ops and
+    /// [`render_pbxproj_op_placeholders`] for how each renders.
+    /// Deterministic UUIDs (FNV-1a over each op's content) keep the
+    /// rendered file byte-identical across rebuilds.
     #[serde(default)]
     pub pbxproj_ops: Vec<PbxprojOp>,
     pub template_version: u32,
@@ -139,10 +121,10 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
     v.insert("ios_scheme", inputs.scheme.clone());
     v.insert("ios_bundle_id", inputs.bundle_id.clone());
     v.insert("ios_deployment_target", inputs.deployment_target.clone());
-    // WhiskerRuntime now resolves from the remote `whisker` SwiftPM
-    // package (pbxproj `XCRemoteSwiftPackageReference`) rather than a
-    // local `platforms/ios` path, so the generated project builds
-    // outside the monorepo.
+    // WhiskerRuntime resolves from the remote `whisker` SwiftPM
+    // package (`XCRemoteSwiftPackageReference`) so the generated
+    // project builds outside the monorepo. Module `Package.swift`
+    // pins must name the same version, or SwiftPM sees two identities.
     v.insert(
         "whisker_ios_spm_url",
         whisker_build::ios::WHISKER_IOS_SPM_URL.to_string(),
@@ -160,9 +142,8 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
         inputs.workspace_root.display().to_string(),
     );
     v.insert("whisker_user_package", inputs.user_package.clone());
-    // `UILaunchScreen` is no longer hardcoded in the template (so a
-    // plugin can supply the launch image/color); default it to an empty
-    // dict here, matching the old behavior, unless a plugin set it.
+    // `UILaunchScreen` is seeded rather than hardcoded in the template
+    // so a plugin can supply a launch image / color instead.
     let mut info_plist = inputs.extra_info_plist.clone();
     info_plist
         .entry("UILaunchScreen".to_string())
@@ -194,10 +175,8 @@ pub(crate) fn template_vars(inputs: &IosInputs) -> HashMap<&'static str, String>
     v
 }
 
-/// Bundled output of [`render_pbxproj_op_placeholders`] — one
-/// field per pbxproj-template placeholder so adding a new
-/// op-derived section stays a single-line change here + a
-/// matching `{{…}}` in the template.
+/// Bundled output of [`render_pbxproj_op_placeholders`] — one field
+/// per pbxproj-template placeholder.
 struct PbxprojRendered {
     build_file_entries: String,
     file_reference_entries: String,
@@ -210,14 +189,12 @@ struct PbxprojRendered {
 
 /// Translate the engine's `Vec<PbxprojOp>` into the seven
 /// pbxproj-template placeholder strings the renderer needs. Empty
-/// inputs → empty strings for every placeholder so the template
-/// stays valid pbxproj even with no plugin contributions.
+/// inputs → empty strings for every placeholder so the template stays
+/// valid pbxproj even with no plugin contributions.
 ///
-/// UUIDs are deterministic ([`pbxproj_uuid`]). A given
-/// `(op variant, payload)` pair produces the same UUID across
-/// every render, which keeps the rendered file byte-identical
-/// across rebuilds and lets the fingerprint cache skip path do
-/// its job.
+/// UUIDs are deterministic per `(op variant, payload)` ([`pbxproj_uuid`]),
+/// which is what keeps the rendered file byte-identical across rebuilds
+/// and lets the fingerprint fast path fire.
 fn render_pbxproj_op_placeholders(ops: &[PbxprojOp]) -> PbxprojRendered {
     let mut build_file_entries = String::new();
     let mut file_reference_entries = String::new();
@@ -250,15 +227,10 @@ fn render_pbxproj_op_placeholders(ops: &[PbxprojOp]) -> PbxprojRendered {
                     .push_str(&format!("\t\t\t\t{fileref_uuid} /* {path_str} */,\n",));
             }
             PbxprojOp::AddResourceFolder { path } => {
-                // A *folder reference* (Xcode "blue folder"):
-                // `lastKnownFileType = folder` on a directory path.
-                // Xcode's resources phase then copies the entire tree
-                // into the `.app` bundle preserving subdirectories —
-                // exactly what `whisker_assets/<sub>` needs so the
-                // iOS resolver (`<bundle>/whisker_assets/<rel>`) finds
-                // each asset. Same four pbxproj sections as
-                // `AddResource`, but the fileref's `lastKnownFileType`
-                // is `folder` and the path names the directory.
+                // `lastKnownFileType = folder` makes this an Xcode
+                // "blue folder", whose resources-phase copy preserves
+                // subdirectories — required for the iOS asset resolver
+                // to find `<bundle>/whisker_assets/<rel>`.
                 let path_str = path.display().to_string();
                 let fileref_uuid = pbxproj_uuid(&format!("PBXFileReference:Folder:{path_str}"));
                 let buildfile_uuid =
@@ -393,35 +365,26 @@ fn last_known_file_type(path: &Path) -> &'static str {
     }
 }
 
-/// Deterministic 24-hex-char UUID for a stable string seed.
-/// Pbxproj refs are 24-char hex strings (96-bit). We splice two
-/// FNV-1a hashes (16 hex each, salted differently) and take the
-/// first 24 chars so the output stays in the canonical shape Xcode
-/// produces. Determinism is what matters — collision risk across
-/// `seed` strings within a single sync is negligible at this
-/// length and the rendered pbxproj would fail to parse on
-/// collision anyway, surfacing the bug immediately.
+/// Deterministic 24-hex-char UUID for a stable string seed, matching
+/// the canonical shape Xcode produces (96-bit): two differently-salted
+/// FNV-1a hashes spliced and truncated. A collision within one sync
+/// would make the rendered pbxproj fail to parse rather than corrupt
+/// silently.
 fn pbxproj_uuid(seed: &str) -> String {
     let a = crate::fingerprint::fingerprint(seed.as_bytes());
     let b = crate::fingerprint::fingerprint(format!("{seed}-salt").as_bytes());
     format!("{a}{}", &b[..8]).to_uppercase()
 }
 
-/// Render the engine-supplied plist entries as XML rows ready to
-/// drop straight into the Info.plist template just before
-/// `</dict>`. Empty map → empty string (no whitespace) so the
-/// template still parses cleanly.
+/// Render the engine-supplied plist entries as XML rows ready to drop
+/// straight into the Info.plist template just before `</dict>`. Empty
+/// map → empty string (no whitespace) so the template still parses
+/// cleanly.
 ///
-/// Supported `PlistValue` variants:
-///   - `String` → `<string>…</string>`
-///   - `Boolean` → `<true/>` / `<false/>`
-///   - `Integer` → `<integer>…</integer>`
-///   - `Array<String>` → `<array><string>…</string>…</array>`
-///
-/// Anything else (nested `Dict`, `Array` of non-strings, `Real`)
-/// is silently dropped — the Info.plist template is hand-rolled
-/// XML, not a real plist serializer; extending the variant set is
-/// additive when a built-in or 3rd-party plugin asks for it.
+/// Every `PlistValue` variant renders, `Dict` / `Array` recursively.
+/// A mixed-type array is the one exception: the hand-rolled XML
+/// renderer has no mapping for it, so [`push_plist_kv`] drops the
+/// whole key.
 fn render_extra_info_plist(entries: &BTreeMap<String, PlistValue>) -> String {
     if entries.is_empty() {
         return String::new();
@@ -452,9 +415,8 @@ fn push_plist_kv(out: &mut String, key: &str, value: &PlistValue, level: usize) 
     push_plist_value(out, value, level);
 }
 
-/// Render a `PlistValue` at `level` tabs of indent. Nested (dict/array)
-/// values recurse. Mirrors the plist XML the CoreFoundation serializer
-/// accepts.
+/// Render a `PlistValue` at `level` tabs of indent, mirroring the plist
+/// XML the CoreFoundation serializer accepts.
 fn push_plist_value(out: &mut String, value: &PlistValue, level: usize) {
     let ind = "\t".repeat(level);
     match value {
@@ -471,8 +433,6 @@ fn push_plist_value(out: &mut String, value: &PlistValue, level: usize) {
             out.push_str(&format!("{ind}<real>{r}</real>\n"));
         }
         PlistValue::Array(items) => {
-            // String-of-string arrays only (mixed arrays are dropped by
-            // `push_plist_kv` before we get here).
             out.push_str(&format!("{ind}<array>\n"));
             for item in items {
                 push_plist_value(out, item, level + 1);
@@ -500,7 +460,6 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
     // expensive to recreate and re-derivable by re-running xcodebuild.
     clean_managed_tree(out_dir, &inputs.scheme).context("clean previous iOS gen tree")?;
 
-    // Top-level text files (plain templates).
     let text_files: &[(PathBuf, &str)] = &[
         (out_dir.join("Info.plist"), INFO_PLIST),
         (
@@ -514,25 +473,19 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
         write_file(path, rendered.as_bytes())?;
     }
 
-    // Xcode project tree. Filename includes the scheme, content is
-    // rendered.
     let xcodeproj = out_dir.join(format!("{}.xcodeproj", inputs.scheme));
     let pbxproj = render(PBXPROJ, &vars).context("render project.pbxproj")?;
     write_file(&xcodeproj.join("project.pbxproj"), pbxproj.as_bytes())?;
-    // xcworkspacedata has no placeholders — write as-is.
     write_file(
         &xcodeproj
             .join("project.xcworkspace")
             .join("contents.xcworkspacedata"),
         XCWORKSPACEDATA.as_bytes(),
     )?;
-    // Shared xcscheme so opening the project in Xcode.app yields the
-    // same Build / Run / Test / Profile / Analyze / Archive surface
-    // every contributor sees. Without this, Xcode auto-creates a
-    // per-user scheme on first open — works, but isn't shared via
-    // source control and the user has to pick a destination on every
-    // fresh checkout. Filename mirrors the scheme name so Xcode picks
-    // it up by convention (it scans `xcshareddata/xcschemes/*.xcscheme`).
+    // Without a shared xcscheme Xcode auto-creates a per-user one on
+    // first open, so each fresh checkout has to re-pick a destination.
+    // The filename must mirror the scheme name — Xcode discovers these
+    // by scanning `xcshareddata/xcschemes/*.xcscheme`.
     let xcscheme = render(XCSCHEME, &vars).context("render xcscheme")?;
     write_file(
         &xcodeproj
@@ -541,11 +494,6 @@ fn write_files(out_dir: &Path, inputs: &IosInputs) -> Result<()> {
         xcscheme.as_bytes(),
     )?;
 
-    // Plugin-supplied `extra_files`. Paths are validated to be
-    // relative + traversal-free; on Unix, `mode` is applied
-    // verbatim. iOS doesn't typically need the executable bit, but
-    // shipping the helper means a plugin can drop a code-signing
-    // script alongside the project.
     for (rel, entry) in &inputs.extra_files {
         crate::render::validate_extra_file_path(rel).with_context(|| {
             format!(
@@ -580,10 +528,8 @@ fn apply_mode(path: &Path, mode: Option<u32>) -> Result<()> {
 
 #[cfg(not(unix))]
 fn apply_mode(_path: &Path, _mode: Option<u32>) -> Result<()> {
-    // POSIX mode bits don't translate cleanly to Windows ACLs.
-    // The IR is platform-agnostic so we accept the field on every
-    // host and silently ignore it on Windows — matches how cargo
-    // and rustc handle the same situation in `[[bin]]` targets.
+    // POSIX mode bits don't translate cleanly to Windows ACLs, and the
+    // IR is platform-agnostic, so the field is accepted and ignored.
     Ok(())
 }
 
@@ -591,10 +537,8 @@ fn clean_managed_tree(out_dir: &Path, scheme: &str) -> Result<()> {
     if !out_dir.exists() {
         return Ok(());
     }
-    // The `.xcodeproj` directory is now CNG-owned (we render every
-    // file inside it) so we clean it on each sync to avoid stale
-    // content. `build` is xcodebuild's `-derivedDataPath` output
-    // and is expensive to rebuild; preserve it.
+    // Everything here is CNG-rendered and safe to wipe except
+    // `build`, xcodebuild's `-derivedDataPath` output.
     let xcodeproj_dir = format!("{scheme}.xcodeproj");
     let keep = ["build"];
     for entry in
@@ -608,9 +552,6 @@ fn clean_managed_tree(out_dir: &Path, scheme: &str) -> Result<()> {
         if keep.iter().any(|k| name.as_os_str() == *k) {
             continue;
         }
-        // The xcodeproj itself is regenerated on every sync (because
-        // its contents may template differently each time). Skip the
-        // keep list and let `remove_path` blow it away.
         let _ = &xcodeproj_dir;
         remove_path(&entry.path())?;
     }
@@ -633,15 +574,13 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
     std::fs::write(path, bytes).with_context(|| format!("write {}", path.display()))
 }
 
-/// Pull the iOS-relevant subset of `Config` into the renderer
-/// input struct. Errors out on required fields. `scheme` defaults to
-/// `name`; `bundle_id` defaults to the top-level `app.bundle_id`.
+/// Pull the iOS-relevant subset of `Config` into the renderer input
+/// struct. Errors out on required fields. `scheme` defaults to `name`;
+/// `bundle_id` defaults to the top-level `app.bundle_id`.
 ///
 /// Thin wrapper over [`inputs_from_with_engine`] using
-/// [`Engine::with_builtins`]. Callers that want to register
-/// additional plugins (subprocess plugins discovered via
-/// `cargo metadata`, custom in-process plugins) should call the
-/// `_with_engine` form directly.
+/// [`Engine::with_builtins`] — call that form directly to register
+/// additional plugins.
 pub fn inputs_from(
     app_config: &Config,
     whisker_runtime_path: PathBuf,
@@ -670,12 +609,9 @@ pub fn inputs_from_with_engine(
     workspace_root: PathBuf,
     user_package: String,
 ) -> Result<IosInputs> {
-    // Run the plugin pipeline. `build_initial_context` seeds the
-    // IR with core fields from `Config`; plugins can override
-    // any of them via `Operation::Override`. The renderer reads
-    // the post-pipeline IR — `inputs_from`'s job is now strictly
-    // extraction + ergonomic defaults for fields the engine left
-    // as `None`.
+    // The engine seeds the IR from `Config` and plugins may override
+    // any of it, so everything below is extraction plus ergonomic
+    // defaults for whatever the pipeline left as `None`.
     let ctx = engine
         .compose(app_config, EnabledTargets::ios_only())
         .context("compose Whisker CNG plugin pipeline for iOS")?;
@@ -693,8 +629,6 @@ pub fn inputs_from_with_engine(
         .clone()
         .unwrap_or_else(|| "0.1.0".to_string());
     let build_number = ios_ir.build_number.unwrap_or(1);
-    // Scheme defaults to the app name — the engine doesn't apply
-    // ergonomic defaults; that's `inputs_from`'s contract.
     let scheme = ios_ir.scheme.clone().unwrap_or_else(|| app_name.clone());
     let bundle_id = ios_ir.bundle_id.clone().ok_or_else(|| {
         anyhow!(
@@ -724,20 +658,12 @@ pub fn inputs_from_with_engine(
         extra_info_plist,
         extra_files,
         pbxproj_ops,
-        // Bumped 13 → 14 for richer Info.plist value support.
-        // `IosInputs::extra_info_plist` is now
-        // `BTreeMap<String, PlistValue>` (was previously
-        // `BTreeMap<String, String>` — String-only).
-        // The renderer handles String, Boolean, Integer, and
-        // Array<String> variants; existing `gen/ios/` trees
-        // regenerate so the new placeholder rendering takes effect.
+        // Bump on any template or renderer change: it feeds the sync
+        // fingerprint, and without it existing `gen/ios/` trees keep
+        // their stale output.
         template_version: 15,
     })
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -788,7 +714,6 @@ mod tests {
         ] {
             assert!(out.join(expected).exists(), "missing: {expected}");
         }
-        // No project.yml — xcodegen is gone.
         assert!(!out.join("project.yml").exists());
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -802,9 +727,6 @@ mod tests {
             std::fs::read_to_string(out.join("HelloWorld.xcodeproj/project.pbxproj")).unwrap();
         assert!(pbxproj.contains("PRODUCT_BUNDLE_IDENTIFIER = \"rs.whisker.examples.helloWorld\""));
         assert!(pbxproj.contains("IPHONEOS_DEPLOYMENT_TARGET = \"13.0\""));
-        // WhiskerRuntime resolves from the remote `whisker` SwiftPM
-        // package (so apps build outside the monorepo); module
-        // Package.swifts pull the same remote identity.
         assert!(pbxproj.contains("isa = XCRemoteSwiftPackageReference;"));
         assert!(pbxproj.contains(&format!(
             "repositoryURL = \"{}\"",
@@ -814,13 +736,10 @@ mod tests {
             "version = \"{}\"",
             whisker_build::ios::WHISKER_IOS_SPM_VERSION
         )));
-        // The product dependency must link to the remote package ref.
         assert!(pbxproj.contains("package = B25ED1A6F9E42E26D051E805"));
-        // WhiskerModules still resolves through the per-app gen-tree dir.
         assert!(pbxproj.contains("relativePath = \"/abs/gen/ios/whisker_modules\""));
         assert!(pbxproj.contains("name = \"HelloWorld\""));
         assert!(pbxproj.contains("productName = \"HelloWorld\""));
-        // Catch any unsubstituted placeholders.
         assert!(!pbxproj.contains("{{"));
     }
 
@@ -854,8 +773,6 @@ mod tests {
         let mut next = sample_inputs();
         next.scheme = "NewScheme".into();
         sync(&out, &next).unwrap();
-        // New scheme dir exists; old one is gone (entire xcodeproj
-        // is re-rendered).
         assert!(out.join("NewScheme.xcodeproj/project.pbxproj").exists());
         assert!(!out.join("HelloWorld.xcodeproj").exists());
         let _ = std::fs::remove_dir_all(&tmp);
@@ -863,8 +780,6 @@ mod tests {
 
     #[test]
     fn add_resource_folder_emits_folder_file_type() {
-        // The whisker-asset case: register `whisker_assets` as an Xcode
-        // folder reference so the bundle preserves subdirectories.
         let rendered = render_pbxproj_op_placeholders(&[PbxprojOp::AddResourceFolder {
             path: PathBuf::from("whisker_assets"),
         }]);
@@ -880,7 +795,6 @@ mod tests {
                 .file_reference_entries
                 .contains("path = \"whisker_assets\"")
         );
-        // Lands in the Resources phase + navigator group, not Sources.
         assert!(
             rendered
                 .resources_phase_files
@@ -913,8 +827,6 @@ mod tests {
 
     #[test]
     fn extra_files_writes_binary_contents_via_base64() {
-        // whisker-asset places PNGs etc. as base64 FileEntry::binary —
-        // the renderer must decode and write the raw bytes.
         let mut inputs = sample_inputs();
         let raw = vec![0x89u8, 0x50, 0x4e, 0x47, 0x00, 0xff];
         inputs.extra_files.insert(

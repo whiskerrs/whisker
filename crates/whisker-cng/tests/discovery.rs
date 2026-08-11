@@ -19,8 +19,7 @@ fn unique_tempdir() -> PathBuf {
 }
 
 /// Write a tiny path-deps workspace: one app crate consumes the
-/// plugin crate(s). Returns the path to the workspace root
-/// (which holds the workspace `Cargo.toml`).
+/// plugin crate(s). Returns the workspace root.
 struct WorkspaceFixture {
     root: PathBuf,
 }
@@ -149,9 +148,8 @@ fn returns_empty_when_no_dep_declares_plugins() {
         ("plugin-multi", "../plugin-multi"),
     ]);
     fx.add_plugin("plugin-a", "plugin-a", "");
-    // Even an unrelated `[package.metadata.whisker.ios]` block (the
-    // module-discovery surface) should not be picked up as a
-    // plugin.
+    // A sibling `[package.metadata.whisker.ios]` block belongs to
+    // module discovery and must not register as a plugin.
     fx.add_plugin(
         "plugin-multi",
         "plugin-multi",
@@ -217,7 +215,5 @@ fn typoed_plugin_entry_field_is_rejected_with_crate_path() {
     let err = discover_plugins(&fx.app_manifest(), "test-app").unwrap_err();
     let msg = format!("{err:#}");
     assert!(msg.contains("aftr"), "{msg}");
-    // Crate-path attribution should be present so the user knows
-    // which Cargo.toml to fix.
     assert!(msg.contains("plugin-a"), "{msg}");
 }
