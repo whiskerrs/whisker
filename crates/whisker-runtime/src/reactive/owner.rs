@@ -335,6 +335,14 @@ impl Owner {
     pub fn is_paused(self) -> bool {
         with_runtime(|rt| rt.owners.get(self).map(|o| o.paused).unwrap_or(false))
     }
+
+    /// The owner currently at the top of the scope stack, if any —
+    /// the scope that new signals, effects, and cleanups would
+    /// register against. Lets registries capture the scope of the
+    /// code that called them (see `whisker-driver`'s `back` module).
+    pub fn current() -> Option<Owner> {
+        with_runtime(|rt| rt.current_owner())
+    }
 }
 
 /// Register a callback to run when the current owner is disposed.

@@ -95,6 +95,12 @@ pub use whisker_driver::module::PlatformModule;
 /// restore the specific field that was focused.
 pub use whisker_driver::focus;
 
+/// Platform back-action interception (Whisker's analogue of React
+/// Native's `BackHandler`): [`back::on_back`] captures the Android
+/// back button / gesture while its guard lives, [`back::exit_app`]
+/// triggers the platform's default leave-the-app behavior.
+pub use whisker_driver::back;
+
 /// The universal tagged-union value model. Crosses the native
 /// boundary as both module args/returns and event payloads, so it
 /// lives at the crate root rather than buried under
