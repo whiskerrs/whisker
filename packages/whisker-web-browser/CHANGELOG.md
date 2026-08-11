@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-web-browser-v0.10.12...whisker-web-browser-v0.11.0) - 2026-08-11
+
+### Other
+
+- Sweep packages/* comments ([#379](https://github.com/whiskerrs/whisker/pull/379))
+
 ## [0.10.8](https://github.com/whiskerrs/whisker/compare/whisker-web-browser-v0.10.7...whisker-web-browser-v0.10.8) - 2026-08-07
 
 ### Other

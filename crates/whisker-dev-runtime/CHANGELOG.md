@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-dev-runtime-v0.10.12...whisker-dev-runtime-v0.11.0) - 2026-08-11
+
+### Other
+
+- Sweep whisker-dev-runtime comments per the comment style guide ([#376](https://github.com/whiskerrs/whisker/pull/376))
+
 ## [0.10.12](https://github.com/whiskerrs/whisker/compare/whisker-dev-runtime-v0.10.11...whisker-dev-runtime-v0.10.12) - 2026-08-10
 
 ### Other

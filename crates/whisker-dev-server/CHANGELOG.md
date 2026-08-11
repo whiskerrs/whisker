@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-dev-server-v0.10.12...whisker-dev-server-v0.11.0) - 2026-08-11
+
+### Other
+
+- Sweep Kotlin/Swift comments and clear the Rust sweep's follow-ups ([#382](https://github.com/whiskerrs/whisker/pull/382))
+- Sweep dev-server, cli, build, plugin, config, credentials comments ([#380](https://github.com/whiskerrs/whisker/pull/380))
+
 ## [0.10.12](https://github.com/whiskerrs/whisker/compare/whisker-dev-server-v0.10.11...whisker-dev-server-v0.10.12) - 2026-08-10
 
 ### Other

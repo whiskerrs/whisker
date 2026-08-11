@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.10.12...whisker-fmt-v0.11.0) - 2026-08-11
+
+### Other
+
+- Sweep Kotlin/Swift comments and clear the Rust sweep's follow-ups ([#382](https://github.com/whiskerrs/whisker/pull/382))
+- Sweep whisker, css, macros, macro-syntax, fmt comments ([#377](https://github.com/whiskerrs/whisker/pull/377))
+
 ## [0.8.2](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.8.1...whisker-fmt-v0.8.2) - 2026-07-12
 
 ### Fixed

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-router-macros-v0.10.12...whisker-router-macros-v0.11.0) - 2026-08-11
+
+### Other
+
+- Sweep packages/* comments ([#379](https://github.com/whiskerrs/whisker/pull/379))
+
 ## [0.7.0](https://github.com/whiskerrs/whisker/compare/whisker-router-macros-v0.6.0...whisker-router-macros-v0.7.0) - 2026-06-26
 
 ### Added
