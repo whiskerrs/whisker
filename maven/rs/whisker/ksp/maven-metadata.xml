@@ -3,11 +3,11 @@
   <groupId>rs.whisker</groupId>
   <artifactId>ksp</artifactId>
   <versioning>
-    <latest>0.1.18</latest>
-    <release>0.1.18</release>
+    <latest>0.1.19</latest>
+    <release>0.1.19</release>
     <versions>
-      <version>0.1.18</version>
+      <version>0.1.19</version>
     </versions>
-    <lastUpdated>20260811141157</lastUpdated>
+    <lastUpdated>20260811205152</lastUpdated>
   </versioning>
 </metadata>
