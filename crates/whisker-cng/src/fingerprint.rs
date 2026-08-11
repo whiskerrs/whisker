@@ -6,24 +6,18 @@
 //! it and compare. Equal → skip regeneration (fast path). Different →
 //! regenerate.
 //!
-//! Why not just compare file mtimes: the user's `whisker.rs` could be
-//! touched without semantic change (formatter, save-on-build), and we
-//! don't want a no-op regeneration. Conversely, the user could
-//! manually edit a file under `gen/` and it would silently survive an
-//! mtime-only check. A content fingerprint of *the inputs that
-//! generated `gen/`* is the cleaner invariant.
+//! Fingerprinting the inputs rather than comparing mtimes: a
+//! formatter touching `whisker.rs` would otherwise force a no-op
+//! regeneration, and a hand-edit under `gen/` would survive unnoticed.
 //!
-//! Hash function is FNV-1a — same one used by
-//! `whisker-dev-server::hotpatch::patcher`. We just need a stable u64
-//! that's identical across processes; cryptographic strength would
-//! mean an extra workspace dep for zero practical benefit.
+//! FNV-1a is enough — the requirement is a stable u64 identical across
+//! processes, not collision resistance.
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
 
-/// Compute the FNV-1a hash of `bytes` and format as a 16-hex-char
-/// string. The hex string is what gets written to / compared against
-/// the on-disk fingerprint file.
+/// Compute the FNV-1a hash of `bytes` as a 16-hex-char string — the
+/// form written to and compared against the on-disk fingerprint.
 pub fn fingerprint(bytes: &[u8]) -> String {
     let mut h = FNV_OFFSET;
     for b in bytes {

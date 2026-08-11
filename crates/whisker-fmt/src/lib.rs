@@ -14,9 +14,8 @@
 //!    back over the original body token range. ([`reformat_macros`])
 //!
 //! [`format_source`] runs the whole pipeline. [`reformat_macros`] is
-//! the macro-only pass and is independently testable WITHOUT the
-//! rustfmt binary (feed it already-rust-formatted input) — useful in
-//! CI environments where rustfmt may be absent.
+//! the macro-only pass; it needs no rustfmt binary, so it stays
+//! testable where rustfmt is absent.
 //!
 //! # Config
 //!
@@ -28,20 +27,17 @@
 //!
 //! `syn` drops comments and `proc-macro2` exposes them only as
 //! whitespace between tokens, so reprinting a `render!` / `css!` body
-//! from the parsed AST would lose them. To preserve them we recover the
-//! comments straight from the body source text ([`comments`]) and
-//! reattach them while pretty-printing ([`printer`]): own-line comments
-//! go on their own line at the block's indent, trailing comments are
-//! appended to the end of the preceding line. Comments INSIDE an embedded
-//! expr value are excluded from this pass — they ride along with the
-//! verbatim / rustfmt-formatted expr source instead.
+//! from the parsed AST would lose them. They are recovered from the
+//! body source text ([`comments`]) and reattached while pretty-printing
+//! ([`printer`]): own-line comments go on their own line at the block's
+//! indent, trailing comments are appended to the end of the preceding
+//! line. Comments INSIDE an embedded expr value are excluded — they
+//! ride along with the verbatim / rustfmt-formatted expr source.
 //!
-//! A **fail-safe** guards the result: after formatting, if any recovered
-//! comment would be dropped, or the output is not idempotent
-//! (`f(f(x)) != f(x)`), the body is left **untouched** (the original
-//! verbatim text) — so a comment can never be silently lost. See
-//! [`macro_body_edit`]. Comments OUTSIDE macros are preserved by rustfmt
-//! as usual.
+//! A **fail-safe** guards the result: if any recovered comment would be
+//! dropped, or the output is not idempotent (`f(f(x)) != f(x)`), the
+//! body is left **untouched** — so a comment can never be silently
+//! lost. See [`macro_body_edit`].
 
 mod comments;
 mod expr_fmt;
@@ -159,16 +155,10 @@ fn run_rustfmt(src: &str, opts: &FmtOptions, config_dir: Option<&Path>) -> Resul
         cmd.arg("--edition").arg(ed);
     }
     if let Some(dir) = config_dir {
-        // Run with cwd = the file's directory so rustfmt's own upward
-        // search finds the nearest `rustfmt.toml`. Only pass an explicit
-        // `--config-path` when a config actually exists at/above `dir`,
-        // and point it at the ACTUAL config file `find_rustfmt_toml`
-        // returned — NOT at `dir`. The config may live at a PARENT (e.g.
-        // the project root) while `dir` is a nested subdir with no
-        // rustfmt.toml of its own; `--config-path <dir>` would then make
-        // rustfmt error "unable to find a config file for the given
-        // path". Passing the found file path is deterministic and always
-        // resolves.
+        // `--config-path` must be the config FILE, not `dir`: the config
+        // often lives at a parent while `dir` is a subdir with none of
+        // its own, and `--config-path <dir>` then makes rustfmt error
+        // "unable to find a config file for the given path".
         cmd.current_dir(dir);
         if let Some(toml_path) = find_rustfmt_toml(dir) {
             cmd.arg("--config-path").arg(&toml_path);
@@ -218,8 +208,7 @@ pub fn find_rustfmt_toml(dir: &Path) -> Option<std::path::PathBuf> {
 
 /// The edition assumed when neither `rustfmt.toml` nor any `Cargo.toml`
 /// up the tree declares one. rustfmt's *own* default is 2015, which
-/// rejects 2018+ syntax (`async move`, etc.); we pick a modern default
-/// so `whisker fmt` never falls into the 2015 trap.
+/// rejects 2018+ syntax (`async move`, etc.).
 const DEFAULT_EDITION: &str = "2021";
 
 /// Walk upward from `dir` looking for the nearest `Cargo.toml`.
@@ -271,7 +260,7 @@ fn edition_from_cargo_value(value: &toml::Value) -> Option<String> {
 /// 1. The nearest `rustfmt.toml`'s `edition` key, if present (wins).
 /// 2. else the nearest `Cargo.toml`'s edition (`[package]` or
 ///    `[workspace.package]`), searching upward from `dir`.
-/// 3. else [`DEFAULT_EDITION`] (`"2021"`).
+/// 3. else [`DEFAULT_EDITION`].
 ///
 /// The non-edition layout keys (`max_width`, `tab_spaces`, `hard_tabs`)
 /// come from the same `rustfmt.toml`. The returned `edition` is ALWAYS
@@ -285,8 +274,7 @@ pub fn resolve_options(dir: &Path) -> FmtOptions {
         None => FmtOptions::default(),
     };
 
-    // rustfmt.toml edition wins; otherwise fall back to Cargo.toml, then
-    // the modern default. Never leave `edition` as `None` (2015).
+    // Never leave `edition` as `None` — rustfmt would then assume 2015.
     if opts.edition.is_none() {
         opts.edition = Some(cargo_toml_edition(dir).unwrap_or_else(|| DEFAULT_EDITION.to_string()));
     }
@@ -310,10 +298,8 @@ pub fn resolve_options(dir: &Path) -> FmtOptions {
 /// comment would be dropped or the result is not idempotent, so comments
 /// are never lost.
 pub fn reformat_macros(rust_src: &str, opts: &FmtOptions) -> Result<String> {
-    // Public entry point: the rustfmt-FREE core. No `ExprFormatter`, so
-    // every embedded expr is rendered verbatim (the printer's empty-map
-    // path). This is what keeps the 17 unit tests in this file passing
-    // without a rustfmt binary.
+    // No `ExprFormatter`, so every embedded expr renders verbatim (the
+    // printer's empty-map path) and no rustfmt binary is needed.
     reformat_macros_inner(rust_src, opts, None)
 }
 
@@ -351,9 +337,6 @@ fn reformat_macros_pass(
 
     let file_map = SourceMap::new(rust_src);
 
-    // Collect (body_open_offset, body_close_offset, replacement) for
-    // every macro, then splice from the end backwards so earlier
-    // offsets stay valid.
     let mut edits: Vec<MacroEdit> = Vec::new();
     collect_macro_edits(
         tokens, &file_map, rust_src, opts, exprfmt, verify, &mut edits,
@@ -405,22 +388,15 @@ fn collect_macro_edits(
                     {
                         edits.push(edit);
                     }
-                    // Don't recurse into a macro body we've already
-                    // reformatted as a whole; but DO recurse if we
-                    // skipped it (comments etc.) so nested macros still
-                    // get a chance. Simplest correct choice: recurse
-                    // into the body always — the inner macro edits use
-                    // the same global byte offsets and the outer edit
-                    // (if any) reformats the body text from the AST,
-                    // which re-prints nested render!/css! via slicing.
-                    // To avoid double-editing the same bytes we only
-                    // recurse when no outer edit was produced.
+                    // Never recurse into a macro body: nested
+                    // `render!`/`css!` are re-printed by the body's own
+                    // printer, so an inner edit would splice into byte
+                    // ranges the outer edit already owns.
                     i += 3;
                     continue;
                 }
             }
         }
-        // Recurse into any group we didn't treat as a macro body.
         if let TokenTree::Group(group) = &trees[i] {
             collect_macro_edits(
                 group.stream(),
@@ -451,12 +427,11 @@ fn macro_body_edit(
     verify: bool,
 ) -> Result<Option<MacroEdit>> {
     let span = group.span();
-    // Byte offsets of the WHOLE group (including delimiters).
+    // Byte offsets of the WHOLE group, delimiters included.
     let Some((group_start, group_end)) = file_map.byte_range(span) else {
         return Ok(None);
     };
-    // The opening / closing delimiters are single chars; the body is
-    // between them.
+    // Delimiters are single chars, so the body is one byte inside each.
     let open_byte = group_start + 1;
     let close_byte = group_end - 1;
     if close_byte <= open_byte {
@@ -464,7 +439,6 @@ fn macro_body_edit(
     }
     let body_src = &rust_src[open_byte..close_byte];
 
-    // Base indent = the indent level of the line the macro sits on.
     let line_start = rust_src[..group_start]
         .rfind('\n')
         .map(|n| n + 1)
@@ -472,9 +446,8 @@ fn macro_body_edit(
     let line_prefix = &rust_src[line_start..group_start];
     let base_indent = indent_level_of(line_prefix, opts);
 
-    // Re-parse the body with whisker-macro-syntax. The span locations
-    // inside `body_ts` are relative to `body_src`, so build a fresh
-    // SourceMap over exactly that substring.
+    // Span locations inside `body_ts` are relative to `body_src`, so the
+    // SourceMap must cover exactly that substring.
     let body_ts: TokenStream = body_src
         .parse()
         .map_err(|e| anyhow!("whisker-fmt: could not lex {macro_name}! body: {e}"))?;
@@ -482,11 +455,10 @@ fn macro_body_edit(
 
     let body_len = body_src.len();
 
-    // Collect the embedded-expr spans up front: we need them both to
-    // batch-format the exprs AND to mask out expr-internal comments when
-    // recovering the grammar comments to reattach. Comments INSIDE an
-    // expr value are kept by slicing / rustfmt-ing the expr source; only
-    // GRAMMAR comments are reattached here.
+    // The embedded-expr spans are collected up front because they serve
+    // twice: batch-formatting the exprs, and masking out expr-internal
+    // comments so only GRAMMAR comments get reattached (expr-internal
+    // ones ride along with the expr's own source).
     let (formatted, grammar_comments) = match macro_name {
         "render" => match whisker_macro_syntax::render::parse_root(body_ts.clone()) {
             Ok(root) => {
@@ -494,9 +466,6 @@ fn macro_body_edit(
                 let mut spans = Vec::new();
                 ir::collect_ir_expr_spans(&ir_root, &mut spans);
                 let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
-                // Batch-format every embedded expr with one rustfmt spawn.
-                // With no `exprfmt` (rustfmt-free core) the map stays
-                // empty and every expr renders verbatim.
                 let expr_map = build_expr_map(&spans, &body_map, exprfmt);
                 let s = printer::print_render(
                     &ir_root,
@@ -509,7 +478,7 @@ fn macro_body_edit(
                 );
                 (s, comments)
             }
-            // Not a well-formed render! body (e.g. mid-edit) — leave it.
+            // Not a well-formed body (e.g. mid-edit) — leave it.
             Err(_) => return Ok(None),
         },
         "routes" => match whisker_macro_syntax::routes::parse_input(body_ts.clone()) {
@@ -566,39 +535,27 @@ fn macro_body_edit(
         _ => return Ok(None),
     };
 
-    // Wrap with the delimiter-relative newlines: the printer emits the
-    // body already indented to `base_indent + 1`; surround with a
-    // leading newline and a trailing newline + closing-brace indent.
+    // The printer emits the body already indented to `base_indent + 1`,
+    // so only the surrounding newlines and closing indent are added
+    // here. Every delimiter form breaks onto its own lines, matching
+    // rustfmt's treatment of multi-item macros.
     let closing_indent = opts.indent_prefix(base_indent);
     let replacement = match group.delimiter() {
-        // `render! { … }` — the common form. Put body on its own lines.
         Delimiter::Brace => format!("\n{formatted}\n{closing_indent}"),
-        // `css!( … )` / `css![ … ]` — also break onto lines for
-        // consistency with rustfmt's treatment of multi-item macros.
         _ => format!("\n{formatted}\n{closing_indent}"),
     };
 
-    // Idempotency guard: if the body already equals the replacement,
-    // skip (avoids spurious diffs and keeps format(format(x))==format(x)).
     if body_src == replacement {
         return Ok(None);
     }
 
-    // ---- comment-preservation fail-safe ------------------------------
-    //
-    // If reattaching the comments could possibly have dropped one, or the
-    // result isn't a fixed point, leave the body UNTOUCHED (today's old
-    // behavior — no regression, no comment ever lost).
+    // Comment-preservation fail-safe: if reattaching the comments could
+    // have dropped one, or the result isn't a fixed point, leave the body
+    // UNTOUCHED rather than risk losing a comment.
     if verify && !grammar_comments.is_empty() {
-        // (1) No comment lost: every recovered comment's text must appear
-        // in the formatted output, counting duplicates.
         if !all_comments_present(&replacement, &grammar_comments) {
             return Ok(None);
         }
-        // (2) Idempotency: re-running the formatter on the produced body
-        // must be a fixed point. We re-run the SAME macro pass over a
-        // minimal synthetic wrapper containing the produced body and check
-        // the body comes back unchanged.
         if !macro_replacement_is_fixed_point(macro_name, &replacement, base_indent, opts) {
             return Ok(None);
         }
@@ -618,7 +575,6 @@ fn macro_body_edit(
 /// survive. Uses a per-text occurrence count.
 fn all_comments_present(output: &str, comments: &[comments::GrammarComment]) -> bool {
     use std::collections::HashMap;
-    // Required count per comment text.
     let mut need: HashMap<&str, usize> = HashMap::new();
     for c in comments {
         *need.entry(c.text.trim()).or_insert(0) += 1;
@@ -661,15 +617,12 @@ fn macro_replacement_is_fixed_point(
     opts: &FmtOptions,
 ) -> bool {
     let indent = opts.indent_prefix(base_indent);
-    // Wrap in a trivial fn so the source is valid Rust. The macro sits at
-    // `base_indent` (the wrapper body is at base_indent, the fn at 0).
-    // To get `base_indent` levels of indent for the macro line we open
-    // (base_indent) nested-block-free wrapper: a single fn plus manual
-    // indent prefix on the macro line works because rustfmt isn't run.
+    // A trivial fn wrapper plus a manual indent prefix is enough to put
+    // the macro line at `base_indent`, since rustfmt never runs on this.
     let src = format!("fn _w() {{\n{indent}{macro_name}! {{{replacement}}}\n}}\n");
-    // Re-run WITHOUT the verify guard (`verify = false`) so this check does
-    // not recurse into itself — otherwise each fixed-point check would
-    // spawn another, blowing the stack on large / nested bodies.
+    // `verify = false` so this check does not recurse into itself —
+    // otherwise each fixed-point check spawns another, blowing the stack
+    // on large / nested bodies.
     let once = match reformat_macros_pass(&src, opts, None, false) {
         Ok(s) => s,
         Err(_) => return false,
@@ -688,11 +641,6 @@ fn span_of_expr(expr: &syn::Expr) -> Span {
     use syn::spanned::Spanned;
     expr.span()
 }
-
-// `render!`/`routes!` embedded-expr span collection now walks the
-// adapted `ir::IrNode` tree (see `ir::collect_ir_expr_spans`) instead of
-// each macro's own parse type — one shared walk instead of two near-
-// identical ones.
 
 /// Slice each expr's verbatim source from `body_map` and batch-format
 /// the whole set with one rustfmt spawn (via `exprfmt`). Returns an
@@ -748,8 +696,8 @@ mod tests {
         }
     }
 
-    // All tests below feed already-rust-formatted input to
-    // `reformat_macros`, so they DO NOT require the rustfmt binary.
+    // Every test below feeds already-rust-formatted input to
+    // `reformat_macros`, so none require the rustfmt binary.
 
     #[test]
     fn reformats_messy_render_body() {
@@ -788,8 +736,6 @@ mod tests {
 
     #[test]
     fn wraps_kwargs_over_max_width() {
-        // A node whose kwargs blow past a tiny max_width breaks each
-        // kwarg onto its own line with a trailing comma.
         let input = "fn ui() -> Element {\n    render! { view(style: \"a-long-value\", class: \"another-long-value\") }\n}\n";
         let out = reformat_macros(input, &opts(4, 40)).unwrap();
         assert!(out.contains("view(\n"), "expected broken kwargs:\n{out}");
@@ -801,8 +747,6 @@ mod tests {
 
     #[test]
     fn preserves_user_expression_source() {
-        // The embedded closure expression should be kept verbatim
-        // (sliced), not re-printed from tokens.
         let input =
             "fn ui() -> Element {\n    render! { view(on_tap: move |_| do_thing(a, b)) }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
@@ -824,8 +768,6 @@ mod tests {
 
     #[test]
     fn trailing_block_comment_preserved_and_reflowed() {
-        // A trailing block comment after a node is now KEPT (reattached to
-        // the node's line) while the body is reflowed.
         let input = "fn ui() -> Element {\n    render! { view(style:\"x\") /* keep me */ }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
         let expected = "fn ui() -> Element {\n    render! {\n        view(style: \"x\") /* keep me */\n    }\n}\n";
@@ -914,9 +856,6 @@ mod tests {
 
     #[test]
     fn nested_css_in_render_kwarg_reformats() {
-        // A `css!(...)` kwarg value is no longer passed through verbatim —
-        // it's reformatted by the same grammar-aware printer as a
-        // top-level `css!`, so messy spacing/commas get cleaned up.
         let input =
             "fn ui() -> Element {\n    render! { view(style: css!(color:red,padding:px(8))) }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
@@ -956,14 +895,9 @@ mod tests {
 
     #[test]
     fn nested_render_in_render_kwarg_reformats() {
-        // A kwarg value that is itself a `render!{...}` call now recurses
-        // through the same shared IR-based printer as css!/routes! — a
-        // capability that fell out of unifying render!/routes! tree
-        // printing onto one `IrNode`, not something render! itself is
-        // expected to use in practice. Nesting the whole thing inside an
-        // OUTER render! is what actually routes the inner call through
-        // `nested_macro_src` (a bare top-level `render!{...}` would just
-        // hit `macro_body_edit`'s own "render" arm directly).
+        // The OUTER render! is load-bearing: it routes the inner call
+        // through `nested_macro_src`, whereas a bare top-level
+        // `render!{...}` hits `macro_body_edit`'s own "render" arm.
         let input = "fn ui() -> Element {\n    render! { view(child: render!{text(value:\"nested\")}) }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
         assert!(
@@ -985,12 +919,8 @@ mod tests {
 
     #[test]
     fn nested_css_with_comment_left_untouched() {
-        // Comment-safety fail-safe: a nested css!/routes! whose source
-        // contains a comment is NOT recursively reformatted (comments
-        // inside a nested macro aren't threaded through the
-        // grammar-comment recovery pass), so it falls back to the normal
-        // verbatim / rustfmt-free expr path rather than risk dropping
-        // the comment.
+        // A nested macro carrying a comment is left to the verbatim expr
+        // path — grammar-comment recovery doesn't reach inside it.
         let input = "fn ui() -> Element {\n    render! { view(style: css!(\n        // keep me\n        flex_grow: 1.0,\n    )) }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
         assert!(out.contains("// keep me"), "comment must survive:\n{out}");
@@ -998,14 +928,9 @@ mod tests {
 
     #[test]
     fn nested_css_wraps_using_its_real_depth_not_a_fixed_shallow_one() {
-        // Regression: a nested `css!`'s OWN inline-vs-wrap fit check must
-        // use the depth it will ACTUALLY be printed at — one level deeper
-        // than the kwarg line it sits on, once a wide sibling kwarg
-        // (`value: "…"` here) forces the enclosing tag to break its
-        // kwargs onto their own lines — not a fixed shallow depth.
-        // Checking against a fixed shallow depth let content that clearly
-        // doesn't fit at its real column collapse onto one badly-overlong
-        // line instead of wrapping.
+        // A nested `css!`'s inline-vs-wrap fit check must use the depth
+        // it will ACTUALLY print at — one deeper than its kwarg line once
+        // a wide sibling forces the enclosing tag to break.
         let input = "fn ui() -> Element {\n    render! { text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
         assert!(
@@ -1054,7 +979,6 @@ mod tests {
 
     #[test]
     fn cargo_toml_package_edition_used_without_rustfmt_edition() {
-        // No rustfmt.toml at all, but a Cargo.toml up the tree.
         let tmp = unique_tmp("cargo-pkg");
         let sub = tmp.join("src");
         std::fs::create_dir_all(&sub).unwrap();
@@ -1083,7 +1007,6 @@ mod tests {
 
     #[test]
     fn defaults_to_2021_without_any_config() {
-        // Neither rustfmt.toml nor Cargo.toml anywhere in the (temp) tree.
         let tmp = unique_tmp("none");
         let o = resolve_options(&tmp);
         assert_eq!(o.edition.as_deref(), Some("2021"));
@@ -1093,8 +1016,7 @@ mod tests {
     #[test]
     fn resolved_edition_is_always_some() {
         let tmp = unique_tmp("always-some");
-        // rustfmt.toml present but WITHOUT an edition key → must still
-        // fall through to Cargo.toml / default, never None.
+        // rustfmt.toml without an edition key must still resolve.
         std::fs::write(tmp.join("rustfmt.toml"), "tab_spaces = 2\n").unwrap();
         let o = resolve_options(&tmp);
         assert_eq!(o.tab_spaces, 2);
@@ -1102,11 +1024,9 @@ mod tests {
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
-    /// Integration: an `async move { … }` snippet — which rustfmt rejects
-    /// under its 2015 default — formats SUCCESSFULLY when the resolved
-    /// edition comes from a temp `Cargo.toml` with `edition = "2021"` and
-    /// NO rustfmt.toml is present. Reproduces-then-verifies the reported
-    /// failure. Gated on a real rustfmt binary.
+    /// An `async move { … }` snippet — which rustfmt rejects under its
+    /// 2015 default — must format when the edition comes from a
+    /// `Cargo.toml` and no rustfmt.toml is present. Needs a real rustfmt.
     #[test]
     fn async_move_formats_with_cargo_edition_no_rustfmt_toml() {
         if !rustfmt_available() {
@@ -1127,30 +1047,24 @@ mod tests {
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
-    /// Regression: a `rustfmt.toml` at the project ROOT must govern even
-    /// when formatting from a NESTED subdir that has no rustfmt.toml of
-    /// its own. Before the fix, `run_rustfmt` passed `--config-path
-    /// <subdir>` and rustfmt errored "unable to find a config file for
-    /// the given path"; now it passes the found config file path.
+    /// A `rustfmt.toml` at the project ROOT must govern even when
+    /// formatting from a NESTED subdir that has none of its own.
     #[test]
     fn root_rustfmt_toml_governs_nested_subdir() {
         if !rustfmt_available() {
             return;
         }
         let root = unique_tmp("nested-config");
-        // 2-space indent at the root, no rustfmt.toml in the subdir.
         std::fs::write(root.join("rustfmt.toml"), "tab_spaces = 2\n").unwrap();
         let nested = root.join("src").join("screens");
         std::fs::create_dir_all(&nested).unwrap();
 
         let opts = resolve_options(&nested);
-        // Resolver picked up the root rustfmt.toml's tab_spaces.
         assert_eq!(opts.tab_spaces, 2);
 
         let src = "fn f() {\nlet x = 1;\n}\n";
         let out = format_source_in_dir(src, &opts, &nested)
             .expect("root rustfmt.toml must govern a nested subdir");
-        // rustfmt applied 2-space indent from the root config.
         assert!(out.contains("\n  let x = 1;"), "got:\n{out}");
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -1158,9 +1072,8 @@ mod tests {
 
 // ---- comment-preservation tests -----------------------------------------
 //
-// All feed already-rust-formatted input to `reformat_macros`, so they do
-// NOT need the rustfmt binary. They assert EXACT output to prove real
-// comment-preserving formatting happens (not just fallback).
+// These assert EXACT output, so a silent fall-back to the untouched body
+// fails them rather than passing.
 #[cfg(test)]
 mod comment_tests {
     use super::*;
@@ -1178,7 +1091,6 @@ mod comment_tests {
         reformat_macros(input, &o()).unwrap()
     }
 
-    // 1. Own-line `//` before a top-level element (also reflows the body).
     #[test]
     fn own_line_before_top_element() {
         let input = "fn d() -> Element {\n    render! {\n        // header\n        view(style: \"x\") { text(value: \"hi\") }\n    }\n}\n";
@@ -1186,96 +1098,82 @@ mod comment_tests {
         assert_eq!(fmt(input), expected);
     }
 
-    // 2. Own-line comment between two sibling children.
     #[test]
     fn own_line_between_siblings() {
         let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // mid\n            text(value: \"b\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 3. Own-line comment as the first child (right after `{`).
     #[test]
     fn own_line_first_child() {
         let input = "fn d() -> Element {\n    render! {\n        view {\n            // first\n            text(value: \"a\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 4. Own-line comment after the last child, before `}` (inside block).
     #[test]
     fn own_line_after_last_child() {
         let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n            // last\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 5. Trailing `//` on the same line as a child.
     #[test]
     fn trailing_line_comment_on_child() {
         let input = "fn d() -> Element {\n    render! {\n        view {\n            text(value: \"a\") // tail\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 6. Trailing comment after a `css!` field.
     #[test]
     fn trailing_comment_after_css_field() {
         let input = "fn s() -> Css {\n    css! {\n        color: red, // c\n        padding: px(8),\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 7. Own-line comment between two `css!` fields.
     #[test]
     fn own_line_between_css_fields() {
         let input = "fn s() -> Css {\n    css! {\n        color: red,\n        // gap\n        padding: px(8),\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 8. `/* block */` single-line comment.
     #[test]
     fn block_comment_single_line() {
         let input = "fn d() -> Element {\n    render! {\n        /* b */\n        view(style: \"x\")\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 9. Multi-line `/* … */` block comment, kept verbatim.
     #[test]
     fn block_comment_multiline_verbatim() {
         let input = "fn d() -> Element {\n    render! {\n        /* line1\n           line2 */\n        view(style: \"x\")\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 10. Two consecutive own-line comments.
     #[test]
     fn two_consecutive_comments() {
         let input = "fn d() -> Element {\n    render! {\n        // one\n        // two\n        view(style: \"x\")\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 11. A comment INSIDE an embedded expr is not touched by
-    // reattachment and survives (handled by the expr path).
+    // A comment INSIDE an embedded expr survives via the expr path, not
+    // via reattachment.
     #[test]
     fn comment_inside_embedded_expr_survives() {
         let input = "fn d() -> Element {\n    render! {\n        view(on_tap: move |_| { /* keep */ go() })\n    }\n}\n";
         let out = fmt(input);
         assert!(out.contains("/* keep */"), "got:\n{out}");
-        // Not duplicated.
         assert_eq!(out.matches("/* keep */").count(), 1, "got:\n{out}");
     }
 
-    // 12. Deeply nested element: own-line comment before an inner child
-    // lands at the correct (deeper) indent.
     #[test]
     fn nested_inner_child_indent() {
         let input = "fn d() -> Element {\n    render! {\n        view {\n            scroll_view {\n                // inner\n                text(value: \"a\")\n            }\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 13. Mixed leading + trailing comments in the same body.
     #[test]
     fn mixed_leading_and_trailing() {
         let input = "fn d() -> Element {\n    render! {\n        // lead\n        view {\n            text(value: \"a\") // tail\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 14. Idempotency over several comment-bearing inputs.
     #[test]
     fn idempotent_with_comments() {
         let inputs = [
@@ -1291,8 +1189,8 @@ mod comment_tests {
         }
     }
 
-    // 15a. Fallback safety: directly exercise the `all_comments_present`
-    // guard — a dropped duplicate makes it report "not present".
+    // Exercises the `all_comments_present` guard directly: a dropped
+    // duplicate must make it report "not present".
     #[test]
     fn fallback_guard_detects_dropped_comment() {
         let comments = vec![
@@ -1309,15 +1207,12 @@ mod comment_tests {
                 own_line: true,
             },
         ];
-        // Output with only ONE `// hi` must fail the duplicate-aware check.
         assert!(!all_comments_present("only one // hi here", &comments));
-        // Output with BOTH passes.
         assert!(all_comments_present("// hi and // hi", &comments));
     }
 
-    // 15b. Fallback safety end-to-end: even a comment in an awkward spot
-    // (between a tag and its parens) is never lost — either reflowed or
-    // left untouched, but always present.
+    // A comment in an awkward spot (between a tag and its parens) is
+    // never lost — reflowed or left untouched, but always present.
     #[test]
     fn fallback_keeps_comment_when_in_doubt() {
         let input =
@@ -1326,42 +1221,28 @@ mod comment_tests {
         assert!(out.contains("/* odd */"), "comment must survive:\n{out}");
     }
 
-    // 16. Wallet-style section comments kept on their own lines.
     #[test]
     fn wallet_style_section_comments() {
         let input = "fn d() -> Element {\n    render! {\n        view {\n            // \u{2500}\u{2500} Header \u{2500}\u{2500}\n            text(value: \"hi\")\n            // \u{2500}\u{2500} Body \u{2500}\u{2500}\n            text(value: \"yo\")\n        }\n    }\n}\n";
         assert_eq!(fmt(input), input);
     }
 
-    // 17. Wallet-faithful reduction: a `render!` with section comments,
-    // irregular OVER-INDENTATION (page→view migration leftovers), and a
-    // user-component call whose closing `)` sits on its own line at a weird
-    // column. This is the exact shape that previously fell back (the body
-    // got NO formatting). It must now actually reflow — comments kept on
-    // their own lines at the corrected indent — AND be idempotent. The
-    // nested `css!(…)` kwarg value is now reformatted by the grammar-aware
-    // `css!` printer (not left verbatim), so its two kwargs collapse onto
-    // one line since they fit under `max_width` — the same rule a
-    // top-level `css! { … }` follows — which in turn lets the whole
-    // `view(style: css!(…))` collapse fully inline too.
+    // A `render!` combining section comments, irregular over-indentation
+    // and a stray closing paren: it must reflow (not fall back), keep the
+    // comments at the corrected indent, and be idempotent.
     #[test]
     fn wallet_faithful_reduction_formats_and_preserves_comments() {
         let input = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n        view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false\n    )\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n        }\n        }\n    }\n}\n";
         let expected = "fn d() -> Element {\n    render! {\n        view(style: css!(flex_grow: 1.0, background_color: BG)) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
         let out = fmt(input);
-        // The body MUST be reformatted (not the fallback), with the section
-        // comment preserved at the right indent.
         assert_ne!(out, input, "must not fall back:\n{out}");
         assert_eq!(out, expected, "got:\n{out}");
-        // And it must be a fixed point.
         assert_eq!(fmt(&out), out, "not idempotent");
     }
 
-    // 18. Regression: a multi-line embedded-expr value (e.g. a wrapped
-    // `css!( … )` kwarg) must format idempotently via the rustfmt-free
-    // core — the verbatim slice is dedented before re-indenting so the
-    // continuation lines don't gain indentation on every pass. This is the
-    // bug that made the whole wallet body fail the idempotency fail-safe.
+    // A multi-line embedded-expr value must be dedented before
+    // re-indenting, or its continuation lines gain a level per pass and
+    // the body never reaches a fixed point.
     #[test]
     fn multiline_expr_value_is_idempotent() {
         let input = "fn s() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n            display: Display::Flex,\n        ))\n    }\n}\n";
@@ -1371,7 +1252,6 @@ mod comment_tests {
             once, twice,
             "not idempotent:\nonce:\n{once}\ntwice:\n{twice}"
         );
-        // The css! values survive verbatim.
         assert!(once.contains("flex_grow: 1.0,"), "got:\n{once}");
         assert!(once.contains("background_color: BG,"), "got:\n{once}");
     }
@@ -1379,9 +1259,8 @@ mod comment_tests {
 
 // ---- broad grammar coverage ----------------------------------------------
 //
-// A wide sweep of render!/css!/routes! shapes and nesting combinations,
-// beyond the earlier bug-driven regression tests. All feed already-
-// rust-formatted input to `reformat_macros` (no rustfmt binary needed).
+// A wide sweep of render!/css!/routes! shapes and nesting combinations.
+// All feed already-rust-formatted input (no rustfmt binary needed).
 #[cfg(test)]
 mod coverage_tests {
     use super::*;
@@ -1430,9 +1309,8 @@ mod coverage_tests {
 
     #[test]
     fn render_snake_case_user_component_gets_pascal_alias() {
-        // A snake_case tag that ISN'T in the built-in whitelist is the
-        // back-compat user-component path: it prints under its derived
-        // PascalCase alias, not the literal source text.
+        // A snake_case tag outside the built-in whitelist is a user
+        // component: it prints under its derived PascalCase alias.
         let input = "fn ui() -> Element {\n    render! { my_card(title: \"hi\") }\n}\n";
         let out = fmt(input);
         assert!(
@@ -1452,7 +1330,7 @@ mod coverage_tests {
 
     #[test]
     fn render_partial_kwarg_mid_typing_preserved() {
-        // No `:` yet — mid-typing. Printed as the bare name, no value.
+        // No `:` yet — mid-typing.
         let input = "fn ui() -> Element {\n    render! { view(style) }\n}\n";
         let out = fmt(input);
         assert!(out.contains("view(style)"), "got:\n{out}");
@@ -1478,7 +1356,6 @@ mod coverage_tests {
         ] {
             let input = format!("fn ui() -> Element {{\n    render! {{ {tag}(key: 1) }}\n}}\n");
             let out = fmt(&input);
-            // Built-in tags print verbatim (no PascalCase alias derivation).
             assert!(
                 out.contains(&format!("{tag}(key: 1)")),
                 "builtin tag {tag} mis-formatted:\n{out}"
@@ -1488,11 +1365,8 @@ mod coverage_tests {
 
     #[test]
     fn render_bare_tag_no_parens_no_children() {
-        // No kwargs, no children — parens fully omitted. The top-level
-        // `render!` body still always breaks onto its own lines (pre-
-        // existing behavior: `macro_body_edit` unconditionally wraps a
-        // macro's body, regardless of how short it is — same as css!/
-        // routes!), so `view` alone still lands on its own line.
+        // Parens are omitted, but `macro_body_edit` wraps every macro
+        // body onto its own lines however short, so `view` still breaks.
         let input = "fn ui() -> Element {\n    render! { view }\n}\n";
         let out = fmt(input);
         let expected = "fn ui() -> Element {\n    render! {\n        view\n    }\n}\n";
@@ -1617,8 +1491,8 @@ mod coverage_tests {
 
     #[test]
     fn routes_empty_stack_keeps_mandatory_braces() {
-        // Switch/Stack's `{ … }` is mandatory even when empty — must
-        // never collapse away, unlike every other tag's optional block.
+        // Switch/Stack's `{ … }` is mandatory even when empty, unlike
+        // every other tag's optional block.
         let input = "fn r() -> Routes {\n    routes! { Stack {} }\n}\n";
         let out = fmt(input);
         assert!(
@@ -1678,8 +1552,7 @@ mod coverage_tests {
 
     #[test]
     fn exactly_at_max_width_stays_inline() {
-        // "        view(style: \"1234567890123456789012345678901234567\")"
-        // is engineered to land exactly at width 60.
+        // Engineered to land exactly at width 60.
         let value = "1".repeat(37);
         let input =
             format!("fn ui() -> Element {{\n    render! {{ view(style: \"{value}\") }}\n}}\n");
@@ -1733,9 +1606,8 @@ mod coverage_tests {
 
     #[test]
     fn nested_css_empty_parens_left_as_opaque_expr() {
-        // `css!()` with no kwargs doesn't fit the nested-macro grammar
-        // (empty input) — falls back to being treated as a normal opaque
-        // expr rather than crashing or vanishing.
+        // `css!()` has no kwargs to parse, so it falls back to being an
+        // opaque expr rather than vanishing.
         let input = "fn ui() -> Element {\n    render! { view(style: css!()) }\n}\n";
         let out = fmt(input);
         assert!(out.contains("css!()"), "got:\n{out}");
@@ -1745,10 +1617,8 @@ mod coverage_tests {
 
     #[test]
     fn comment_before_nested_css_kwarg_value_survives() {
-        // The comment sits INSIDE the nested css! call — excluded from
-        // the outer body's grammar-comment recovery, and the comment
-        // fail-safe inside `nested_macro_src` bails out (leaves the
-        // whole nested call untouched) rather than risk dropping it.
+        // The comment sits INSIDE the nested css! call, so
+        // `nested_macro_src`'s own fail-safe leaves that call untouched.
         let input = "fn ui() -> Element {\n    render! { view(style: css!(\n        // keep\n        flex_grow: 1.0,\n    )) }\n}\n";
         let out = fmt(input);
         assert!(out.contains("// keep"), "comment must survive:\n{out}");
@@ -1804,7 +1674,6 @@ mod coverage_tests {
         let input = "fn ui() -> Element {\n  render! { view { text(value: \"a-fairly-long-value-string-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold, color: Color::Named(NamedColor::Black))) } }\n}\n";
         let out = reformat_macros(input, &opts(2, 100)).unwrap();
         assert!(out.contains("style: css!(\n"), "got:\n{out}");
-        // 2-space continuation lines inside the nested css! wrap.
         assert!(
             out.contains("  font_size: 24.0.px(),\n") || out.contains("      font_size:"),
             "got:\n{out}"

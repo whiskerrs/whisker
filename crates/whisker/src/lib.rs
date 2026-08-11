@@ -67,15 +67,10 @@ pub use whisker_runtime as runtime;
 pub use whisker_css as css;
 
 // Continuous, signal-based animation engine (Flutter-style
-// AnimationController + Tween). See `docs/animation-design.md`. The
-// public surface is also re-exported flat into the prelude below so
-// `whisker::{animated, AnimationController, Tween, AnimConfig,
-// Animatable, Curve}` work directly.
+// AnimationController + Tween). See `docs/animation-design.md`.
 pub use whisker_animation as animation;
 pub use whisker_animation::{AnimConfig, Animatable, AnimationController, Curve, Tween, animated};
 
-// The macro expansions reference this through `::whisker::ElementTag`;
-// the C bridge keys element creation off the same enum.
 pub use whisker_runtime::element::ElementTag;
 
 /// The return type of a `#[component]` / `#[whisker::main]` function —
@@ -146,8 +141,7 @@ pub use whisker_runtime::reactive::{
 };
 // Component mount/unmount + mount-queue machinery. Driven by the
 // `#[component]` expansion and the hot-reload remount path, not by app
-// code — `#[doc(hidden)]` keeps it out of the public docs while
-// remaining reachable for the macro and framework internals.
+// code.
 #[doc(hidden)]
 pub use whisker_runtime::reactive::{flush_mounts, mount_component, unmount_component};
 // Owner / scope API. Application code rarely touches these —
@@ -206,14 +200,12 @@ pub mod __tags {
         create_phantom_element, set_attribute_object, set_event_listener,
     };
 
-    // Why a trait (and not `macro_rules!`): RA's method-completion
-    // does NOT surface methods produced by a `macro_rules!` expansion
-    // inside an `impl` block (which is why the per-tag methods used
-    // to be hand-inlined). Trait methods are first-class items RA
-    // indexes and completes, provided the trait is in scope — the
-    // `render!` / `#[component]` expansions bring it in with
-    // `use ::whisker::__tags::ElementBuilder as _;` right before the
-    // builder chain. End-to-end guard:
+    // A trait, not `macro_rules!`: RA's method-completion does NOT
+    // surface methods produced by a `macro_rules!` expansion inside an
+    // `impl` block, whereas trait methods are first-class items it
+    // indexes — provided the trait is in scope, which the `render!` /
+    // `#[component]` expansions arrange with
+    // `use ::whisker::__tags::ElementBuilder as _;`. End-to-end guard:
     // `crates/whisker-macros/tests/ra_completion.rs`.
 
     /// Shared builder methods for every built-in element tag.
@@ -433,9 +425,6 @@ pub mod __tags {
             apply_attr(self.__element(), "accessibility-exclusive-focus", v);
             self
         }
-
-        // Advanced gesture-coordination attrs: tune what reaches the
-        // Lynx hit-tester / native scroll. Most apps never set these.
 
         /// `hit-slop` — expand the touch-responsive area beyond the
         /// element's bounds (e.g. `"10px"`, or per-side
@@ -1210,25 +1199,18 @@ pub mod __tags {
 
     // ---- list / list-item (Lynx's virtualized list) ---------------------
     //
-    // The standard Lynx `list` creates its items through lepus
-    // `componentAtIndex` callbacks the JS framework registers — Whisker
-    // has no such runtime. So the `list` builder opts into Lynx's
-    // *decoupled native* list: it virtualizes / recycles the actual
-    // `<list-item>` children present in the element tree (via the native
-    // `ListChildrenHelper`), with no framework callbacks. That fits
-    // Whisker's direct-tree model — author code writes
-    // `list { … }` like any other container.
-    //
-    // Two flags gate that mode (see `list_element.cc`):
+    // The builder opts into Lynx's *decoupled native* list. Two flags
+    // gate that mode (see `list_element.cc`):
     //   • `custom-list-name="list-container"` → `ResolveEnableNativeList`
-    //     Case 2 sets `disable_list_platform_implementation_ = true`. This
-    //     is a *string* compare, so it survives `apply_attr`'s
+    //     Case 2 sets `disable_list_platform_implementation_ = true`.
+    //     This is a *string* compare, so it survives `apply_attr`'s
     //     stringification.
-    //   • the decoupled mediator additionally needs `enable_decoupled_list_`,
-    //     which `ResolveEnableDecoupledList` only reads from the attr when
-    //     the value `IsBool()` — a stringified attr never is, so it falls
-    //     back to `LynxEnv::EnableDecoupledList()`, which defaults to
-    //     `true`. So `custom-list-name` alone activates the decoupled path.
+    //   • the decoupled mediator additionally needs
+    //     `enable_decoupled_list_`, which `ResolveEnableDecoupledList`
+    //     only reads from the attr when the value `IsBool()` — a
+    //     stringified attr never is, so it falls back to
+    //     `LynxEnv::EnableDecoupledList()`, which defaults to `true`.
+    // So `custom-list-name` alone activates the decoupled path.
 
     /// `<list>` — Lynx's native-virtualised list. Pass the items
     /// source as three kwargs and Lynx mounts only the visible items
@@ -1282,10 +1264,9 @@ pub mod __tags {
     #[allow(non_snake_case)]
     pub fn __list_ctor() -> list<(), (), ()> {
         let handle = create_element_by_name("list");
-        // Drive the list natively from its tree children rather than through
-        // (absent) JS `componentAtIndex` callbacks. `custom-list-name` is the
-        // string-compare flag that disables the platform list impl; the
-        // decoupled mediator then activates via the env default (true).
+        // `custom-list-name` is the string-compare flag that disables
+        // the platform list impl; the decoupled mediator then activates
+        // via the env default (true).
         apply_attr::<_, ::std::string::String>(handle, "custom-list-name", "list-container");
         list {
             handle,
@@ -1298,11 +1279,8 @@ pub mod __tags {
         fn __element(&self) -> Element {
             self.handle
         }
-        // `list` doesn't accept body children — the macro is
-        // responsible for rejecting `list { … }` at parse time.
-        // Should the user reach this through a non-macro path, the
-        // default `.child()` semantics (a regular `append_child`)
-        // would still work but is not the supported shape.
+        // `list` takes its items through the `each`/`key`/`children`
+        // render props, never body children.
     }
     impl<EachF, MetaF, ChildF> list<EachF, MetaF, ChildF> {
         /// `list-type` layout — takes the typed

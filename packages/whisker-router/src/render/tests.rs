@@ -78,8 +78,6 @@ fn tabbed_handle() -> RouterHandle {
     RouterHandle::new((tree, registry()))
 }
 
-// ----- registry -------------------------------------------------------
-
 #[test]
 fn registry_resolves_ids_and_transitions() {
     with_runtime(|| {
@@ -99,25 +97,20 @@ fn registry_resolves_ids_and_transitions() {
     });
 }
 
-// ----- navigate / back ------------------------------------------------
-
 #[test]
 fn navigate_pushes_and_current_tracks_signal() {
     with_runtime(|| {
         let h = simple_handle();
         let current = h.current();
-        // Starts on home (root stack child 0).
         assert_eq!(current.get().path, NodePath(vec![0]));
 
         h.navigate("/detail/1").unwrap();
         flush();
-        // Now on detail (child 1).
         assert_eq!(current.get().path, NodePath(vec![1]));
 
         assert!(h.back().is_ok());
         flush();
         assert_eq!(current.get().path, NodePath(vec![0]));
-        // Nothing left to pop.
         assert_eq!(h.back(), Err(crate::core::NavError::NothingToPop));
     });
 }
@@ -133,14 +126,11 @@ fn navigate_url_params_land_on_signal() {
     });
 }
 
-// ----- replace / pop_to / reset --------------------------------------
-
 #[test]
 fn replace_swaps_top_same_depth() {
     with_runtime(|| {
         let h = simple_handle();
         h.navigate("/detail/1").unwrap();
-        // replace the top detail with another detail (same stack).
         h.replace("/detail/1").unwrap();
         // Still depth 2 (home + detail), still on detail.
         assert_eq!(h.current().get().path, NodePath(vec![1]));
@@ -157,7 +147,6 @@ fn pop_to_returns_to_target() {
         let h = simple_handle();
         h.navigate("/detail/1").unwrap();
         h.navigate("/detail/1").unwrap();
-        // pop back to home.
         h.pop_to("/").unwrap();
         assert_eq!(h.current().get().path, NodePath(vec![0]));
     });
@@ -202,7 +191,7 @@ fn layout_stack_history_len(h: &RouterHandle) -> usize {
     s.history.len()
 }
 
-/// Regression: `replace` / `reset` (and `pop_to`) must work when a layout
+/// `replace` / `reset` (and `pop_to`) must work when a layout
 /// Route sits above the active stack. `active_stack_mut` returned `None` for
 /// any `Route`, so it disagreed with `deepest_active_stack_path` and the
 /// `.expect("stack exists")` panicked — surfaced by the tabbed router example
@@ -232,8 +221,6 @@ fn stack_ops_work_under_a_layout_route() {
     });
 }
 
-// ----- select / tabs --------------------------------------------------
-
 #[test]
 fn select_switches_tab_and_keeps_history() {
     with_runtime(|| {
@@ -242,7 +229,6 @@ fn select_switches_tab_and_keeps_history() {
         let selected = h.selected_at(switch_path.clone());
         assert_eq!(selected.get(), Some(0));
 
-        // Push a detail in tab 0, then switch to tab 1.
         h.navigate("/detail/1").unwrap();
         h.select("/list").unwrap();
         flush();
@@ -276,7 +262,6 @@ fn slice_only_changes_for_touched_tab() {
         let before_b = slice_b.get();
         let before_a = slice_a.get();
 
-        // Push a detail into tab A.
         h.navigate("/detail/1").unwrap();
         flush();
 
@@ -286,8 +271,6 @@ fn slice_only_changes_for_touched_tab() {
         assert_eq!(slice_b.get(), before_b);
     });
 }
-
-// ----- state_at slice walk -------------------------------------------
 
 #[test]
 fn state_at_walks_to_active_child() {
@@ -313,8 +296,6 @@ fn state_at_walks_to_active_child() {
         ));
     });
 }
-
-// ----- single draw path (no double-mount) ----------------------------
 
 /// Per-id render-invocation counts. Render fns return a phantom (no
 /// renderer needed) and bump their id's counter, so a test can assert how
@@ -368,7 +349,6 @@ fn tree_is_drawn_once_no_double_mount() {
         let c = counts.borrow();
         assert_eq!(c.get("home").copied(), Some(1), "home mounted once");
         assert_eq!(c.get("list").copied(), Some(1), "list mounted once");
-        // detail not navigated to yet.
         assert_eq!(c.get("detail").copied(), None);
     });
 }
@@ -381,7 +361,6 @@ fn navigate_mounts_new_leaf_exactly_once() {
         let _slot = mount_node(&h, NodePath::root());
         flush();
 
-        // Push a detail into the Home tab.
         h.navigate("/detail/1").unwrap();
         flush();
 
@@ -415,11 +394,11 @@ fn counting_simple_handle(counts: Counts) -> RouterHandle {
     RouterHandle::new((tree, registry))
 }
 
-/// Regression for #264. When `reset` replaces the whole history with a route
-/// that differs from the surviving index-0 wrapper, the reconcile must dispose
-/// the stale survivor and mount the new route — not re-show the old screen.
-/// (Wrappers are keyed by history index; a naive shrink kept the stale
-/// survivor, so the cleared screen reappeared and its native views leaked.)
+/// When `reset` replaces the whole history with a route that differs from the
+/// surviving index-0 wrapper, the reconcile must dispose the stale survivor
+/// and mount the new route — not re-show the old screen. Wrappers are keyed by
+/// history index, so a naive shrink would keep the cleared screen mounted and
+/// leak its native views.
 #[test]
 fn reset_to_different_route_reinstantiates_revealed_top() {
     with_runtime(|| {
@@ -446,8 +425,7 @@ fn reset_to_different_route_reinstantiates_revealed_top() {
         assert_eq!(s.history.len(), 1, "reset collapses to a single entry");
 
         // The revealed top is a NEW detail leaf (mounted for /2), so detail
-        // mounted twice total. Pre-fix this stayed at 1 — the stale `home`
-        // wrapper was kept and `detail/2` never mounted.
+        // mounted twice total.
         assert_eq!(
             counts.borrow().get("detail").copied(),
             Some(2),
@@ -455,8 +433,6 @@ fn reset_to_different_route_reinstantiates_revealed_top() {
         );
     });
 }
-
-// ----- coordinated pop: survivor returns to the active (0%) pose -------
 
 /// A single-stack handle with Slide routes so a push/pop runs a real
 /// transition we can step to completion.
@@ -582,9 +558,8 @@ fn push_settles_top_to_full_progress() {
     owner.dispose();
 }
 
-/// Regression for #265. `replace` used to snap the new top to its final pose
-/// (`ctrl.set_value(1.0)`); it must instead slide the new screen in (drive
-/// 0 → 1) using the route transition.
+/// `replace` must slide the new screen in (drive 0 → 1) using the route
+/// transition, not snap it to its final pose.
 #[test]
 fn replace_animates_the_new_top_in() {
     whisker::runtime::reactive::__reset_for_tests();
@@ -610,7 +585,7 @@ fn replace_animates_the_new_top_in() {
 
         // Step a few frames WITHOUT settling: the new top's progress must
         // traverse intermediate values (a visible slide-in), not be pinned at
-        // 1.0 from the first frame (the pre-fix instant-swap bug).
+        // 1.0 from the first frame.
         let mut t = 1000.0;
         let mut traj = Vec::new();
         for _ in 0..6 {
@@ -730,8 +705,7 @@ fn back_after_replace_animates_under_a_layout_route() {
 /// is mid-animation and so stays live). An interactive swipe-back must resume
 /// it so its pose effect follows the finger through the scrub; the gesture can
 /// only re-point the bridge's pose bindings, so the bridge carries the under's
-/// owner for exactly this. Regression for "SwipeBack intermediate animation
-/// doesn't work after replace".
+/// owner for exactly this.
 #[test]
 fn swipe_back_resumes_the_paused_under_after_replace() {
     whisker::runtime::reactive::__reset_for_tests();
@@ -794,7 +768,7 @@ fn pop_animates_outgoing_top_through_intermediate_frames() {
         // Pop, then step a few frames WITHOUT fully settling and record the
         // outgoing top's progress trajectory: it must descend through
         // intermediate values (a visible slide-out), not instant-finish at
-        // 0 on the first frame (the "Detail vanishes from frame 1" bug).
+        // 0 on the first frame.
         assert!(h.back().is_ok());
         flush();
         let mut t = 1000.0;
@@ -853,12 +827,10 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
         assert_eq!(*cleanups.borrow(), 0, "detail content alive after push");
 
         // Pop. Immediately after `back()` + flush — BEFORE the exit
-        // animation finishes — the detail content must STILL be mounted
-        // (this is the bug: the leaf used to tear itself down the moment
-        // its RouteState entry vanished, blanking the sliding-out screen).
+        // animation finishes — the detail content must STILL be mounted, or
+        // the sliding-out screen blanks.
         assert!(h.back().is_ok());
         flush();
-        // step a couple of mid-animation frames
         whisker_animation::__step_for_tests(1000.0);
         flush();
         whisker_animation::__step_for_tests(1016.0);
@@ -882,8 +854,6 @@ fn popped_leaf_content_survives_until_exit_animation_finishes() {
     owner.dispose();
 }
 
-// ----- Android predictive-back: event → coordinated-scrub mapping -----
-//
 // The native module delivery can't run headless, but the mapping the
 // `AndroidPredictiveBack` component performs — `backProgressed{progress}`
 // -> scrub the top controller, `backInvoked` -> commit -> `back()` — is
@@ -972,8 +942,7 @@ fn predictive_back_invoke_commits_pop() {
 #[test]
 fn settle_commit_animates_from_current_value_without_jumping_back() {
     // A *partial* release commits by animating from the current value to 0
-    // — it must NOT jump backward (toward 1) first. (Regression for the
-    // bad re-anchor that pushed a deep-swipe value 0.05 back up to 0.18.)
+    // — it must NOT jump backward (toward 1) first.
     whisker::runtime::reactive::__reset_for_tests();
     whisker_animation::__reset_for_tests();
     let owner = Owner::new(None);
@@ -994,7 +963,6 @@ fn settle_commit_animates_from_current_value_without_jumping_back() {
 
         settle(&h, &bridge, /* commit = */ true, None);
         // The value must never exceed the release point — no backward jump.
-        // (The bad re-anchor set it to 0.18 here; the fix leaves it at 0.05.)
         let after_settle = ctrl.value().get_untracked();
         assert!(
             after_settle <= start + 1e-3,
@@ -1057,7 +1025,6 @@ fn predictive_back_cancel_restores_top() {
         let bridge = begin(&h, SwipeEdge::Left).expect("bridge");
         let ctrl = bridge.top_ctrl.clone().expect("top ctrl");
         scrub(&bridge, 0.4);
-        // Cancel: forward() back to present; no pop.
         settle(&h, &bridge, /* commit = */ false, None);
         settle_animations();
 
@@ -1136,19 +1103,16 @@ fn predictive_back_works_with_grouped_tabs() {
         let _slot = mount_node(&h, NodePath::root());
         flush();
 
-        // Navigate to detail in home tab.
         h.navigate("/detail/1").unwrap();
         flush();
         settle_animations();
 
-        // Verify we're on detail.
         assert_eq!(
             h.current().get().path,
             NodePath(vec![0, 0, 0, 1]),
             "should be on detail in home tab"
         );
 
-        // Try to begin a predictive-back gesture.
         let bridge = begin(&h, SwipeEdge::Left);
         assert!(
             bridge.is_some(),
@@ -1158,12 +1122,10 @@ fn predictive_back_works_with_grouped_tabs() {
         let bridge = bridge.unwrap();
         assert!(bridge.can_back, "can_back must be true");
 
-        // Scrub and commit.
         scrub(&bridge, 0.5);
         settle(&h, &bridge, true, None);
         settle_animations();
 
-        // Back should have popped to Home.
         assert_eq!(
             h.current().get().path,
             NodePath(vec![0, 0, 0, 0]),
@@ -1178,8 +1140,6 @@ fn progress_payload(p: f64) -> WhiskerValue {
     m.insert("progress".to_string(), WhiskerValue::Float(p));
     WhiskerValue::Map(m)
 }
-
-// ----- Material predictive-back pose ----------------------------------
 
 #[test]
 fn back_edge_decodes_payload() {
@@ -1405,9 +1365,7 @@ fn one_transition_poses_all_four_directional_slots() {
     assert_eq!(pose_for(&pop, Role::Under, 0.5).transform, "pop_enter");
 }
 
-// =====================================================================
-// Renderer-level reproduction: `replace` content-attach (next-chapter)
-// =====================================================================
+// Renderer-level reproduction of the `replace` content-attach path.
 //
 // The tests above run without a renderer, so they never exercise the
 // real Lynx op sequence. This block installs a recording renderer that
@@ -1546,7 +1504,7 @@ mod replace_repro {
         }
         fn set_inline_styles(&self, handle: Element, css: &str) {
             // Record `display` transitions so tests can assert Switch
-            // branch visibility + mount ordering (#306).
+            // branch visibility + mount ordering.
             if let Some(d) = parse_display(css) {
                 let mut inner = self.0.borrow_mut();
                 inner
@@ -1686,7 +1644,7 @@ mod replace_repro {
         });
     }
 
-    /// Regression: on a `replace`, the OUTGOING screen (kept mounted as the
+    /// On a `replace`, the OUTGOING screen (kept mounted as the
     /// slide-out `Under`) must be FROZEN showing its own route. It shares the
     /// leaf's static path with the incoming wrapper, so when `replace` swaps
     /// the top instance the outgoing leaf's `instance` computed also flips to

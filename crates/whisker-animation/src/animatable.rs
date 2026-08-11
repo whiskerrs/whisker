@@ -73,7 +73,7 @@ impl Animatable for Color {
                 lerp_u8(b0, b1, t),
                 f32::lerp(&a0, &a1, t),
             ),
-            // A named endpoint can't be resolved to channels here;
+            // A named endpoint can't be resolved to channels here, so
             // snap at the midpoint rather than guess.
             _ => {
                 if t < 0.5 {

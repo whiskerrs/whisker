@@ -15,11 +15,10 @@ use super::tree::{CompiledTree, NodePath};
 
 /// An explicit resolution-scope override hook (`within(scope)`).
 ///
-/// This is the rare cross-branch case. The **API surface is provided**
-/// so callers can be written against it, but full behaviour is deferred
-/// to a later phase; [`resolve_within`] currently restricts the candidate
-/// set to the scope subtree and then applies the ordinary
-/// deepest-common-ancestor rule within it.
+/// This is the rare cross-branch case. [`resolve_within`] restricts the
+/// candidate set to the scope subtree and then applies the ordinary
+/// deepest-common-ancestor rule within it — it does not yet implement a
+/// scope-specific resolution rule.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scope {
     /// The subtree to resolve within (a container node's path).

@@ -1,9 +1,8 @@
 //! Workspace path-dep walker.
 //!
-//! Hot-reload coverage (#103): the file watcher and the patcher both
-//! need to know which sub-crates the user app depends on so an edit
-//! to e.g. `examples/podcast/crates/podcast-ui-kit/src/top_nav.rs`
-//! produces a tier-1 patch instead of being silently ignored.
+//! The file watcher and the patcher both need to know which
+//! sub-crates the user app depends on, so that an edit inside a
+//! path-dep produces a patch instead of being silently ignored.
 //!
 //! [`discover_path_deps`] runs `cargo metadata` against the user
 //! crate's manifest and returns every path-dep reachable from it,

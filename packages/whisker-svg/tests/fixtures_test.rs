@@ -39,7 +39,6 @@ fn run_fixture(svg_path: &Path) {
         compiled.warnings
     );
 
-    // ---- trace golden ----
     let mut tracer = TraceVisitor::new();
     replay(&compiled.bytes, &mut tracer).expect("replay clean");
     let actual_trace = tracer.into_string();
@@ -62,7 +61,7 @@ fn run_fixture(svg_path: &Path) {
         );
     }
 
-    // ---- bin golden — the cross-platform fixture ----
+    // The `.bin` golden is the fixture the native replayers read too.
     let bin_path = svg_path.with_extension("bin");
     if update_mode() {
         fs::write(&bin_path, &compiled.bytes).expect("write bin golden");

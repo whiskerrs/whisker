@@ -10,8 +10,7 @@
 //!
 //! Each `node` is classified by its leading ident:
 //!
-//! - Built-in tag (`view`, `page`, `text`, `raw_text`,
-//!   `scroll_view`) → [`Node::Element`].
+//! - Built-in tag (see [`is_builtin_tag`]) → [`Node::Element`].
 //! - `children()` (lowercase ident + empty parens, no block) →
 //!   [`Node::ChildrenSlot`].
 //! - Anything else → user `#[component]` invocation →
@@ -20,10 +19,9 @@
 //! ## Children-block restriction
 //!
 //! Every item in a `{ … }` children block MUST be node-shaped
-//! (`IDENT(kwargs?) { … }?`). Bare string literals and bare
-//! `{expr}` blocks are rejected with a hard parser error (see the
-//! comment in [`Node`]'s `Parse` impl for why — it keeps the block on
-//! rust-analyzer's completion happy-path).
+//! (`IDENT(kwargs?) { … }?`). Bare string literals and bare `{expr}`
+//! blocks are rejected with a hard parser error, which keeps the block
+//! on rust-analyzer's completion happy-path.
 
 use proc_macro2::TokenStream as TokenStream2;
 use syn::{
@@ -90,10 +88,9 @@ pub struct Kwarg {
 
 impl Parse for Node {
     fn parse(input: ParseStream) -> Result<Self> {
-        // Every node starts with an ident. Reject anything else at
-        // this position with a targeted error message — that's the
-        // only way to give a useful hint when the user writes bare
-        // `"hi"` or `{ count }` as a child.
+        // Every node starts with an ident. A targeted error at this
+        // position is the only way to give a useful hint when the user
+        // writes bare `"hi"` or `{ count }` as a child.
         if input.peek(LitStr) {
             let lit: LitStr = input.parse()?;
             return Err(syn::Error::new(
@@ -103,8 +100,7 @@ impl Parse for Node {
             ));
         }
         if input.peek(token::Brace) {
-            // Take the span from the brace itself for a clean
-            // arrow in the diagnostic.
+            // The brace's own span gives a clean diagnostic arrow.
             let body;
             let _ = braced!(body in input);
             let _ = body; // discard contents — we're erroring out
@@ -116,29 +112,22 @@ impl Parse for Node {
 
         let tag: Ident = input.parse()?;
 
-        // Special-case the `children()` slot before the regular
-        // kwarg path runs. Shape requirements:
-        //   - ident `children`
-        //   - immediately followed by an EMPTY paren group `()`
-        //   - no `{ … }` block after it
-        // Anything else (`children(arg)`, `children { … }`, bare
-        // `children`) falls through to the standard tag path.
+        // The `children()` slot requires ident `children`, an empty
+        // `()` immediately after, and no `{ … }` block. Anything else
+        // (`children(arg)`, `children { … }`, bare `children`) falls
+        // through to the standard tag path.
         if tag == "children" && input.peek(token::Paren) {
-            // Speculative parse of the paren body — we only commit
-            // to the slot interpretation if the body is empty AND
-            // no `{}` block follows.
+            // Speculative: commit to the slot interpretation only if
+            // the body is empty AND no `{}` block follows.
             let fork = input.fork();
             let body;
             parenthesized!(body in fork);
             if body.is_empty() && !fork.peek(token::Brace) {
-                // Consume the same tokens off the real input cursor
-                // now that we've decided.
                 let consume;
                 parenthesized!(consume in input);
                 debug_assert!(consume.is_empty());
                 return Ok(Node::ChildrenSlot { span: tag.span() });
             }
-            // Not a slot — fall through to the regular tag path.
         }
 
         let mut kwargs = Vec::new();
@@ -146,9 +135,7 @@ impl Parse for Node {
             let body;
             parenthesized!(body in input);
             while !body.is_empty() {
-                // `Ident::peek_any` / `Ident::parse_any` admits
-                // raw-style identifiers AND Rust keywords (needed for
-                // the `ref:` kwarg).
+                // `parse_any` admits Rust keywords, needed for `ref:`.
                 if !body.peek(syn::Ident::peek_any) {
                     return Err(body.error(
                         "kwargs must be `name: expr` — positional arguments \
@@ -160,9 +147,8 @@ impl Parse for Node {
                     body.parse::<Token![:]>()?;
                     (body.parse::<Expr>()?, false)
                 } else {
-                    // Partial — synthesize `()` as a placeholder so
-                    // the emitter can still place the method-name
-                    // token at the user's source span.
+                    // A `()` placeholder lets the emitter still put the
+                    // method-name token at the user's source span.
                     let placeholder: Expr = syn::parse_quote_spanned!(name.span()=> ());
                     (placeholder, true)
                 };

@@ -1,6 +1,6 @@
-//! Build the linker invocation for a hot-patch dylib by editing
-//! the captured fat-build linker call (see I4g-X1
-//! `whisker-linker-shim`) as little as possible.
+//! Build the linker invocation for a hot-patch dylib by editing the
+//! linker call `whisker-linker-shim` captured during the fat build as
+//! little as possible.
 //!
 //! ## Why we don't construct linker args from scratch
 //!
@@ -16,10 +16,10 @@
 //!   - glibc CSU layout (crt1.o vs Scrt1.o, libc_nonshared.a)
 //!   - rustc's choice of linker driver (cc, clang, lld)
 //!
-//! Re-deriving any of these is a long-tail of papercuts. So:
-//! capture the fat-build linker invocation verbatim (X1) and edit
-//! only the parts a hot-patch must change. Same principle as
-//! `build_obj_plan` does for rustc.
+//! Re-deriving any of these is a long tail of papercuts, so the
+//! fat-build linker invocation is captured verbatim and only the
+//! parts a hot-patch must change are edited. Same principle as
+//! `build_obj_plan` applies to rustc.
 //!
 //! ## What we change
 //!
@@ -53,11 +53,10 @@
 //!         tiny ARM64 trampoline branching to that symbol's
 //!         *runtime* address, computed from the device's reported
 //!         `subsecond::aslr_reference()`. Linking it in this slot
-//!         means the patch has no `DT_NEEDED` back-edge to the
-//!         host, and no dlopen-time symbol resolution to perform —
-//!         which avoids the Android linker-namespace +
-//!         `RTLD_LOCAL` corner cases the previous "back-edge to
-//!         host dylib" scheme tripped over.
+//!         means the patch has no `DT_NEEDED` back-edge to the host
+//!         and no dlopen-time symbol resolution to perform, which is
+//!         what keeps Android's linker-namespace and `RTLD_LOCAL`
+//!         rules out of the picture.
 //!       - the new object path
 //!       - `-o <output>`
 //!
@@ -95,9 +94,9 @@ pub enum LinkerOs {
     Macos,
     /// Linux host or Android device.
     Linux,
-    /// Windows host. Currently unsupported — we still strip the
-    /// captured args but won't emit a useful directive (PE/COFF
-    /// hot-patch isn't on the I4g roadmap).
+    /// Windows host. Unsupported: the captured args are still
+    /// stripped, but no useful directive comes out (PE/COFF
+    /// hot-patch is unimplemented).
     Other,
 }
 
@@ -112,7 +111,7 @@ pub enum LinkerOs {
 /// trampoline branching to the symbol's runtime address. After
 /// linking with the stub, the patch dylib has no `DT_NEEDED`
 /// back-edge to the host and no dlopen-time symbol resolution to
-/// perform. See `docs/hot-reload-plan.md` "Option B" for the design.
+/// perform. See `docs/hot-reload-internals.md` for the design.
 pub fn build_link_plan(
     captured_linker_args: &[String],
     new_object: &Path,
@@ -374,10 +373,6 @@ fn is_object_or_archive_input(arg: &str) -> bool {
         Some("o" | "rlib" | "a" | "so" | "dylib" | "obj" | "lib"),
     )
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

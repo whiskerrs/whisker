@@ -59,8 +59,6 @@ impl<'a> Navigator<'a> {
         self.state.current().path.clone()
     }
 
-    // ----- navigate -------------------------------------------------
-
     /// Navigate forward to `url`. The URL is matched against route
     /// patterns (group segments optional, `:param`s captured), and the
     /// matched route is pushed onto the active Stack.
@@ -94,8 +92,6 @@ impl<'a> Navigator<'a> {
         walk_navigate(tree, self.state, dest, 0, &params);
     }
 
-    // ----- select ---------------------------------------------------
-
     /// Select the `Switch` branch that leads toward `target`, **without
     /// pushing** anything onto any `Stack`.
     ///
@@ -118,8 +114,6 @@ impl<'a> Navigator<'a> {
         Ok(())
     }
 
-    // ----- back -----------------------------------------------------
-
     /// Pop the top of the deepest non-trivial `Stack` on the active path.
     /// [`NavError::NothingToPop`] when there is nothing poppable (e.g. at a
     /// tab root) — a no-op surfaced as an error for a uniform verb result.
@@ -130,8 +124,6 @@ impl<'a> Navigator<'a> {
             Err(NavError::NothingToPop)
         }
     }
-
-    // ----- replace --------------------------------------------------
 
     /// Swap the **top** of the current stack with `target`. Same stack
     /// only: if `target` resolves outside the current stack,
@@ -155,8 +147,6 @@ impl<'a> Navigator<'a> {
         Ok(())
     }
 
-    // ----- pop_to ---------------------------------------------------
-
     /// Pop the current stack until `target` is the top. Same stack
     /// only. Errors with [`NavError::CrossStack`] if the target is not a
     /// child of the current stack, or [`NavError::NotInStack`] if no
@@ -179,8 +169,6 @@ impl<'a> Navigator<'a> {
         Ok(())
     }
 
-    // ----- reset ----------------------------------------------------
-
     /// **Reset the whole navigation state** onto a single clean path to the
     /// route matched by `url` (the logout / clear-everything case). Unlike
     /// the other verbs this is *global*, not same-stack: `url` is resolved
@@ -197,10 +185,6 @@ impl<'a> Navigator<'a> {
         Ok(())
     }
 }
-
-// ===================================================================
-// navigate machinery
-// ===================================================================
 
 /// Recursively drive `state` toward `dest`, starting at child-index
 /// `depth` of `dest`.
@@ -343,10 +327,6 @@ fn make_entry(
     }
 }
 
-// ===================================================================
-// back machinery
-// ===================================================================
-
 /// Pop the deepest non-trivial `Stack` (history > 1) on the active
 /// path. Returns whether anything was popped.
 ///
@@ -377,10 +357,6 @@ fn back_at(state: &mut RouteState) -> bool {
     }
 }
 
-// ===================================================================
-// active-stack helpers (for replace / pop_to / reset)
-// ===================================================================
-
 /// The path of the deepest `Stack` on the active path (the stack whose
 /// top is/leads to the current leaf). `None` if there is no stack on the
 /// active path at all.
@@ -396,17 +372,14 @@ fn deepest_active_stack_path(state: &RouteState) -> Option<NodePath> {
 
 /// A mutable reference to the deepest `Stack` on the active path.
 fn active_stack_mut(state: &mut RouteState) -> Option<&mut StackState> {
-    // Walk down the active path, remembering the deepest stack via raw
-    // recursion that returns the deepest one.
     fn go(state: &mut RouteState) -> Option<&mut StackState> {
         match state {
             RouteState::Route(r) => {
-                // A *leaf* Route has no stack below it. A layout/group Route
-                // (`Route(component:) { … }` / a pathless `(group)`) wraps a
-                // Switch/Stack/Route child — we must descend into it, exactly
-                // as `active_chain`/`deepest_active_stack_path` do. Without
-                // this the two disagreed (path found, but no `&mut` stack)
-                // and `replace`/`reset`/`pop_to` panicked on `expect`.
+                // A *leaf* Route has no stack below it, but a layout/group
+                // Route wraps a Switch/Stack/Route child and must be
+                // descended into — exactly as `active_chain` /
+                // `deepest_active_stack_path` do. The three have to agree, or
+                // `replace`/`reset`/`pop_to` find a path with no `&mut` stack.
                 if r.children.is_empty() {
                     return None;
                 }

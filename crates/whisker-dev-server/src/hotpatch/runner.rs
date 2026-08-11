@@ -134,9 +134,8 @@ pub async fn run_link_plan(plan: &LinkPlan, linker_path: &Path, cwd: &Path) -> R
 /// is going to run on. Returns the final `.so`/`.dylib` path that
 /// can be packaged into a `JumpTable` and sent to the device.
 ///
-/// This function is the "happy path" — the production code (Patcher,
-/// I4g-X3) calls this directly when neither captured call is missing
-/// and the target is supported.
+/// This function is the "happy path" — `Patcher` calls it directly
+/// when neither captured call is missing and the target is supported.
 ///
 /// `aslr_stub` is an optional pre-built jump-stub object
 /// ([`crate::hotpatch::create_undefined_symbol_stub`]). When `Some`,
@@ -171,10 +170,6 @@ pub async fn thin_rebuild_obj(
     );
     run_link_plan(&link_plan, linker_path, cwd).await
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

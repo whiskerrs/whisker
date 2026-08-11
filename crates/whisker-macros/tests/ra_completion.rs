@@ -10,21 +10,13 @@
 //!
 //! ## Why this exists
 //!
-//! Unit tests on the macro's emitted token stream prove the
-//! shape of the expansion but say nothing about whether RA can
-//! thread its completion through it. That gap let two real
-//! regressions slip past macro unit-tests:
+//! Unit tests on the macro's emitted token stream prove the shape of
+//! the expansion but say nothing about whether RA can thread its
+//! completion through it — the gap where completion regressions hide.
 //!
-//! 1. `view(sty|)` partial-kwarg completion broke when the macro
-//!    fell back to an `ident_ref` side block because RA injects
-//!    a sentinel suffix at the cursor and the prefix-match
-//!    heuristic stopped matching.
-//! 2. (open) `vie|` tag-name completion at child position
-//!    doesn't surface any candidates because the macro emits a
-//!    `UserComponent`-shaped call that RA can't resolve.
-//!
-//! These tests reproduce both directly. Adding a test before
-//! changing the macro / runtime keeps us from re-breaking them.
+//! Known gap: `vie|` tag-name completion at CHILD position surfaces no
+//! candidates, because the macro emits a `UserComponent`-shaped call RA
+//! can't resolve. Root position (covered below) works.
 //!
 //! ## Running
 //!
@@ -58,15 +50,12 @@ use serde_json::{Value, json};
 /// fresh download — the cache key is the version string.
 const RA_VERSION: &str = "2026-05-18";
 
-// ----- Test cases ---------------------------------------------------------
-
 /// Whether RA surfaced a completion for builder method `name`.
 ///
-/// The built-in builder methods (`style`, `class`, `on_tap`, …) live
-/// on the `ElementBuilder` trait now, and RA labels trait-provided
-/// methods as `name(as ElementBuilder)` to disambiguate them from
-/// inherent ones — selecting either inserts `name`. So accept the
-/// bare name or the trait-qualified form.
+/// The built-in builder methods (`style`, `class`, `on_tap`, …) live on
+/// the `ElementBuilder` trait, and RA labels trait-provided methods as
+/// `name(as ElementBuilder)` to disambiguate them from inherent ones —
+/// selecting either inserts `name`. So accept either form.
 fn surfaces_method(labels: &[String], name: &str) -> bool {
     labels
         .iter()
@@ -98,8 +87,8 @@ fn probe() -> Element {
 
 #[test]
 fn partial_kwarg_inside_component_body_completes_builder_methods() {
-    // The non-trivial case: the render! is inside a #[component]
-    // body, which the proc-macro rewrites into nested closures.
+    // The render! sits inside a #[component] body, which the macro
+    // rewrites into nested closures.
     let source = r#"
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
@@ -120,8 +109,6 @@ fn probe() -> Element {
 
 #[test]
 fn partial_tag_name_at_root_completes_to_builtin_view() {
-    // Regression test for tag-name completion. `vie|` at the
-    // root of a render! should surface `view` (built-in tag).
     let source = r#"
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
@@ -141,15 +128,10 @@ fn probe() -> Element {
 
 #[test]
 fn props_builder_helper_types_are_hidden_from_completion() {
-    // typed-builder generates a handful of marker types per Props
-    // (`<Name>PropsBuilder<((),(),()...)>` and friends). They're
-    // technically `pub` but pure plumbing — RA shouldn't surface
-    // them at user call sites because they pollute the candidate
-    // list with `ArtTilePropsBuilder_*` entries on every keystroke.
-    // The `#[component]` macro tucks the Props struct behind a
-    // `#[doc(hidden)] pub mod __<name>_props_internal` to gate
-    // those helpers off; only `ArtTileProps` itself re-exports
-    // outward.
+    // The builder type is `pub` but pure plumbing. `#[component]` tucks
+    // it behind a `#[doc(hidden)]` private module so RA doesn't pollute
+    // the candidate list with `ArtTilePropsBuilder` on every keystroke;
+    // only `ArtTileProps` re-exports outward.
     let source = r#"
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
@@ -197,11 +179,9 @@ fn probe() -> Element {
 
 #[test]
 fn longer_prefix_does_not_surface_builder_via_autoimport() {
-    // RA's auto-import path may surface `pub` items inside private
-    // modules when the user has typed enough characters to uniquely
-    // identify the target. Probe at `ArtTilePropsBu|` — if Builder
-    // is properly `#[doc(hidden)]` and inside a `#[doc(hidden)]`
-    // private mod, RA must not offer to auto-import it.
+    // RA's auto-import path can surface `pub` items inside private
+    // modules once the user has typed enough to identify the target, so
+    // probe at a near-complete prefix.
     let source = r#"
 use whisker::prelude::*;
 use whisker::runtime::view::Element;
@@ -237,10 +217,8 @@ fn probe() -> Element {
 
 #[test]
 fn short_prefix_user_component_does_not_leak_builder_helpers() {
-    // VS Code users typically start typing with just a few chars
-    // (`Art|`). RA's fuzzy-match may include items the strict
-    // prefix path filters out — let's verify the leak set stays
-    // empty at 3 chars too.
+    // RA's fuzzy-match at a short prefix can include items the strict
+    // prefix path filters out.
     let source = r#"
 use whisker::prelude::*;
 use whisker::runtime::view::Element;

@@ -3,9 +3,9 @@
 //! `whisker.rs` spells it) → engine → `inputs_from_with_engine` →
 //! rendered `gen/{ios,android}` trees.
 //!
-//! Complements the IR-level unit tests in
-//! `src/plugins/app_icon.rs` — here we verify the generated files
-//! actually land on disk and the pbxproj/manifest reference them.
+//! The IR-level unit tests live in `src/plugins/app_icon.rs`; this
+//! verifies the generated files land on disk and that the
+//! pbxproj / manifest reference them.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -65,7 +65,6 @@ fn ios_gen_tree_gets_asset_catalog_and_pbxproj_reference() {
     let out = tmp.join("gen/ios");
     whisker_cng::ios::sync(&out, &inputs).unwrap();
 
-    // Catalog files landed.
     let icon_png = out.join("Assets.xcassets/AppIcon.appiconset/AppIcon.png");
     assert!(icon_png.is_file(), "missing {}", icon_png.display());
     let decoded = image::open(&icon_png).unwrap();
@@ -76,9 +75,6 @@ fn ios_gen_tree_gets_asset_catalog_and_pbxproj_reference() {
     assert!(contents.contains("\"size\" : \"1024x1024\""), "{contents}");
     assert!(out.join("Assets.xcassets/Contents.json").is_file());
 
-    // pbxproj references the catalog in the Resources phase with the
-    // asset-catalog file type (so actool compiles it), and the AppIcon
-    // build setting the template ships still names it.
     // The rendered project dir is `<scheme>.xcodeproj`; the scheme
     // defaults to the app name when `ios.scheme` is unset.
     let pbxproj = std::fs::read_to_string(out.join("IconApp.xcodeproj/project.pbxproj")).unwrap();
@@ -130,8 +126,6 @@ fn android_gen_tree_gets_mipmaps_and_manifest_icon() {
         assert_eq!((decoded.width(), decoded.height()), (px, px), "{qualifier}");
     }
 
-    // Adaptive icon: definition XML + 108dp foreground layers +
-    // default white background color resource.
     let xml =
         std::fs::read_to_string(out.join("app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"))
             .unwrap();
@@ -171,7 +165,6 @@ fn ios_icon_bundle_reaches_gen_tree_and_pbxproj() {
     let crate_root = tmp.join("app");
     std::fs::create_dir_all(&crate_root).unwrap();
     write_icon(&crate_root);
-    // Minimal Icon Composer bundle fixture.
     let bundle = crate_root.join("assets/Fancy.icon");
     std::fs::create_dir_all(bundle.join("Assets")).unwrap();
     std::fs::write(
@@ -201,13 +194,10 @@ fn ios_icon_bundle_reaches_gen_tree_and_pbxproj() {
     let out = tmp.join("gen/ios");
     whisker_cng::ios::sync(&out, &inputs).unwrap();
 
-    // Bundle staged under the fixed AppIcon.icon name; no xcassets.
     assert!(out.join("AppIcon.icon/icon.json").is_file());
     assert!(out.join("AppIcon.icon/Assets/glyph.png").is_file());
     assert!(!out.join("Assets.xcassets").exists());
 
-    // pbxproj: Icon Composer file type + Resources membership; the
-    // template's AppIcon build setting resolves to the staged name.
     let pbxproj = std::fs::read_to_string(out.join("IconApp.xcodeproj/project.pbxproj")).unwrap();
     assert!(pbxproj.contains("AppIcon.icon in Resources"), "{pbxproj}");
     assert!(pbxproj.contains("folder.iconcomposer.icon"), "{pbxproj}");

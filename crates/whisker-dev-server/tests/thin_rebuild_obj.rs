@@ -1,22 +1,21 @@
 //! End-to-end check that the `--emit=obj` + own-linker pipeline
 //! actually preserves mangled `pub fn` symbols in the resulting
-//! patch dylib (I4g-X2c). This is the bit cdylib couldn't give us
-//! and the load-bearing prerequisite for hot-reload patch.
+//! patch dylib — the bit cdylib can't give us, and the load-bearing
+//! prerequisite for a hot-reload patch.
 //!
 //! Flow:
-//!   1. Build the fixture's lib.rs into an "obj" via the new
-//!      build_obj_plan + run_obj_plan pipeline (rustc).
+//!   1. Build the fixture's lib.rs into an object via
+//!      build_obj_plan + run_obj_plan (rustc).
 //!   2. Hand-craft a minimal captured linker invocation (just the
 //!      flags rustc would have passed, minus the object input list)
 //!      and run build_link_plan + run_link_plan against it.
 //!   3. Parse the resulting `.so`/`.dylib` symbol table and assert
 //!      the mangled `thin_build_fixture::calculate` is present.
 //!
-//! We deliberately don't go through whisker-linker-shim here (its
-//! capture path is verified by whisker-cli's unit tests). This test
-//! focuses on the question "does --emit=obj + dynamic_lookup link
-//! actually keep the mangled symbol exported?", which the abandoned
-//! cdylib path could not.
+//! whisker-linker-shim is deliberately out of the loop — its capture
+//! path is covered by whisker-cli's unit tests. The question here is
+//! only whether `--emit=obj` plus a dynamic_lookup link keeps the
+//! mangled symbol exported.
 
 use std::path::{Path, PathBuf};
 

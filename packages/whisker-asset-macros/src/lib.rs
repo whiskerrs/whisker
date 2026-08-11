@@ -7,8 +7,8 @@
 //!
 //! - [`asset!`] — a **runtime** call `::whisker_asset::resolve("<rel>")`
 //!   that composes a platform-absolute path/URL from the process-global
-//!   base. The file is *not* embedded; it is expected to be bundled by a
-//!   later build-plugin phase.
+//!   base. The file is *not* embedded — `whisker-asset`'s build plugin
+//!   bundles it into the app instead.
 //! - [`asset_str!`] — `include_str!` of the file content → `&'static str`.
 //! - [`asset_bytes!`] — `include_bytes!` of the file content →
 //!   `&'static [u8]`.

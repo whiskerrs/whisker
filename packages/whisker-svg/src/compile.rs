@@ -493,8 +493,6 @@ fn strip_unit_f32(s: &str) -> Option<f32> {
     s[..digits_end].parse::<f32>().ok()
 }
 
-// ---- shape → path normalisation -------------------------------------------
-
 fn shape_to_path(node: &roxmltree::Node, ctx: &mut Ctx) -> Vec<PathCommand> {
     match node.tag_name().name() {
         "path" => node

@@ -1,6 +1,6 @@
 //! App configuration types used by `whisker.rs`.
 //!
-//! Users build an `Config` via the builder API:
+//! Users build a `Config` via the builder API:
 //! ```ignore
 //! pub fn configure(app: &mut Config) {
 //!     app.name("MyApp")
@@ -18,9 +18,7 @@
 //!         .deployment_target("14.0"));
 //!
 //!     // Whisker CNG plugin declarations live alongside the platform
-//!     // blocks. The Config struct's `PluginConfig::NAME` keys the
-//!     // entry inside `plugins`, so this call replaces any prior
-//!     // configuration for the same plugin.
+//!     // blocks.
 //!     app.plugin::<Firebase>(|c| c
 //!         .google_service_path("ios/GoogleService-Info.plist"));
 //! }
@@ -501,8 +499,6 @@ mod tests {
     #[test]
     fn plugin_default_config_round_trips() {
         let mut app = Config::default();
-        // closure leaves the config at default — entry should still
-        // exist (the plugin was declared, just unconfigured).
         app.plugin::<Firebase>(|_| {});
         let v = app.plugins.get("whisker-firebase").unwrap();
         assert!(v.is_object());
@@ -564,15 +560,8 @@ mod tests {
 
     #[test]
     fn appconfig_deserializes_without_plugins_field() {
-        // Pre-PR-2 wire format: no `plugins` key at all. The
-        // `#[serde(default)]` on `plugins` should give us an empty
-        // map rather than failing — this is what keeps an
-        // already-deployed dev-server compatible with an older
-        // probe binary.
-        //
-        // (`ios` / `android` are pre-PR-2 required fields, so the
-        // probe always emits them. Including them keeps this test
-        // focused on the plugins-field omission.)
+        // `#[serde(default)]` keeps a dev-server readable by a probe
+        // binary predating the `plugins` field.
         let json = r#"{"name":"OldApp","ios":{},"android":{}}"#;
         let back: Config = serde_json::from_str(json).unwrap();
         assert_eq!(back.name.as_deref(), Some("OldApp"));

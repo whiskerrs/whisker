@@ -1,53 +1,31 @@
 //! Capture stdout/stderr from device-side Rust code and forward over
-//! the dev-server WebSocket.
-//!
-//! `whisker run` previously surfaced only its own dev-loop status —
-//! a `println!` from the user's app went to fd 1, which on Android is
-//! redirected to `/dev/null` by the Android runtime and on iOS is
-//! sunk into the simulator container with no host-side observability.
-//! Users had to attach a separate terminal (`adb logcat` / `simctl log
-//! stream`) to read their own code's output. This module fixes that:
-//! it installs a pipe over stdout/stderr at app bootstrap, reads the
-//! pipe on a background thread, and forwards each completed line over
-//! the dev-server WebSocket to `whisker-cli`.
+//! the dev-server WebSocket, so a `println!` in user code reaches the
+//! `whisker run` terminal (on Android fd 1 goes to `/dev/null`, on iOS
+//! into the simulator container).
 //!
 //! ## What gets captured
 //!
-//! Anything that eventually writes to fd 1 / fd 2:
-//!
-//! - `println!` / `eprintln!` / `dbg!`
-//! - `log` crate macros (`log::info!` etc.) with the standard backends —
-//!   `env_logger`, `simple_logger`, `pretty_env_logger` all emit to
-//!   stderr
-//! - `tracing` macros with the default `fmt::Subscriber` (writes to
-//!   stderr)
-//! - Rust's default panic hook (`set_hook` users may override this)
-//! - C FFI `printf` / `fprintf(stderr, …)` from third-party native libs
-//!
-//! Not captured:
-//!
-//! - Backends that bypass stdio and target the OS log directly
-//!   (`tracing-android` / `tracing-oslog` / `android_logger`,
-//!   `__android_log_write` / `os_log` called from FFI). Users who pick
-//!   those backends already opted into platform-log delivery; they
-//!   can read those with `adb logcat` / `simctl log stream`.
+//! Anything that eventually writes to fd 1 / fd 2: `println!` /
+//! `eprintln!` / `dbg!`, `log` and `tracing` macros with their
+//! stdio-based default backends, the default panic hook, and C FFI
+//! `printf` / `fprintf(stderr, …)`. Backends that target the OS log
+//! directly (`android_logger`, `tracing-oslog`, …) are not captured —
+//! those already deliver to `adb logcat` / `log stream`.
 //!
 //! ## Fan-out
 //!
 //! Each captured line is also written back to the original
 //! stdout/stderr fd (saved via `dup` before the redirect) and pushed
-//! to `__android_log_write` / `syslog`. That way `adb logcat -s
-//! whisker-stdout` / `simctl spawn booted log stream` still surface
-//! the same lines for users who prefer external tools, and the
-//! Xcode console attached to a simulator launch keeps working.
+//! to `__android_log_write` / `syslog`, so external tools (`adb
+//! logcat`, `simctl … log stream`, the Xcode console) keep seeing the
+//! same lines.
 //!
 //! ## Order
 //!
 //! [`start_log_capture`] must be called **before** any other code
-//! emits to stdout/stderr — calls that fire earlier go to the
-//! original (typically /dev/null on Android) destination. The
-//! canonical entry is `whisker_driver::lynx::bootstrap` right after
-//! the driver attach, before the first user component renders.
+//! emits to stdout/stderr — earlier writes go to the original
+//! destination. The canonical entry is `whisker_driver::lynx::bootstrap`
+//! right after the driver attach.
 
 use std::collections::VecDeque;
 use std::os::raw::c_int;
@@ -74,23 +52,19 @@ impl Stream {
     }
 }
 
-/// One captured line. The reader thread strips the trailing `\n`
-/// (and `\r\n` on macOS terminals) before pushing, so `text` is the
-/// payload only.
+/// One captured line, trailing newline (and `\r`) stripped.
 #[derive(Debug, Clone)]
 pub struct LogLine {
     pub stream: Stream,
     pub text: String,
-    /// Microseconds since UNIX_EPOCH, stamped on the device at the
-    /// moment the line was completed. Useful for interleaving with
-    /// host-side events. `0` if the system clock is unavailable.
+    /// Microseconds since UNIX_EPOCH, stamped on the device when the
+    /// line was completed. `0` if the system clock is unavailable.
     pub ts_micros: u128,
 }
 
 /// Bounded ring buffer shared between the reader threads and the WS
 /// session task. Drop-oldest on overflow: pre-connect buffering
-/// shouldn't crowd out fresh state when the buffer fills. `Notify`
-/// wakes the session task as soon as a line lands.
+/// shouldn't crowd out fresh state when the buffer fills.
 struct LogBuffer {
     inner: Mutex<VecDeque<LogLine>>,
     notify: Notify,
@@ -100,16 +74,14 @@ struct LogBuffer {
 impl LogBuffer {
     fn push(&self, line: LogLine) {
         let Ok(mut g) = self.inner.lock() else {
-            // Poisoned mutex — drop the line rather than propagating
-            // a panic out of the reader thread.
+            // Poisoned mutex — drop the line rather than propagating a
+            // panic out of the reader thread.
             return;
         };
         if g.len() >= self.capacity {
             g.pop_front();
         }
         g.push_back(line);
-        // `notify_one` is cheap and idempotent — extra wakeups are
-        // harmless because the drainer re-checks under lock.
         self.notify.notify_one();
     }
 
@@ -131,19 +103,16 @@ impl LogBuffer {
 
 static LOG_BUFFER: OnceLock<Arc<LogBuffer>> = OnceLock::new();
 
-/// ~1024 lines × typical short-string ~80 B ≈ 80 KB worst case.
-/// Bounded to backstop runaway log spam (panic loop, accidental
-/// `loop { println!() }`) before connect.
+/// Bounded to backstop runaway log spam (panic loop, `loop {
+/// println!() }`) before the WS session connects.
 const BUFFER_CAPACITY: usize = 1024;
 
-/// Install the stdout/stderr capture pipes. Idempotent — subsequent
-/// calls are no-ops. Returns `true` the first time, `false` on
-/// repeat calls.
+/// Install the stdout/stderr capture pipes. Idempotent — returns
+/// `true` the first time, `false` on repeat calls.
 ///
-/// Failures inside the install (pipe / dup / dup2 / thread spawn)
-/// are logged through [`super::hot_reload::devlog`] but never
-/// panic. A failed install leaves the original fds intact — the dev
-/// loop continues to function (just without device-side log capture).
+/// Failures inside the install (pipe / dup / dup2 / thread spawn) are
+/// logged through [`super::hot_reload::devlog`] but never panic. A
+/// failed install leaves the original fds intact.
 pub fn start_log_capture() -> bool {
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
     if INITIALIZED.swap(true, Ordering::AcqRel) {
@@ -155,10 +124,6 @@ pub fn start_log_capture() -> bool {
         notify: Notify::new(),
         capacity: BUFFER_CAPACITY,
     });
-    // `OnceLock::set` only fails when the slot was already populated.
-    // The `INITIALIZED` swap above guarantees we're first, so the
-    // `is_err` branch is unreachable in practice; treat it as a
-    // defensive no-op.
     let _ = LOG_BUFFER.set(Arc::clone(&buffer));
 
     if let Err(e) = install_pipe(libc::STDOUT_FILENO, Stream::Stdout, Arc::clone(&buffer)) {
@@ -171,13 +136,11 @@ pub fn start_log_capture() -> bool {
 }
 
 /// Drain pending captured log lines, awaiting at least one if the
-/// buffer is currently empty. Used by the hot-reload WS session task
-/// to forward batched log frames to the server.
+/// buffer is currently empty.
 ///
 /// If [`start_log_capture`] wasn't called (capture disabled / install
 /// failed), this returns a future that never resolves — the session
-/// task's `select!` arm parks forever and the other arms keep
-/// running unchanged.
+/// task's `select!` arm parks forever and the other arms keep running.
 pub(crate) async fn drain_pending_logs() -> Vec<LogLine> {
     match LOG_BUFFER.get() {
         Some(b) => b.drain().await,
@@ -186,7 +149,6 @@ pub(crate) async fn drain_pending_logs() -> Vec<LogLine> {
 }
 
 fn install_pipe(target_fd: c_int, stream: Stream, buffer: Arc<LogBuffer>) -> std::io::Result<()> {
-    // POSIX `pipe(2)` — two fds, [0] = read end, [1] = write end.
     let mut fds: [c_int; 2] = [-1, -1];
     let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
     if rc != 0 {
@@ -195,12 +157,8 @@ fn install_pipe(target_fd: c_int, stream: Stream, buffer: Arc<LogBuffer>) -> std
     let read_fd = fds[0];
     let write_fd = fds[1];
 
-    // Snapshot the original fd so the reader thread can fan-out the
-    // captured bytes back to whatever was wired up before us (Xcode
-    // console on iOS sim, /dev/null on Android, the host terminal on
-    // desktop). `dup` allocates a fresh fd pointing at the same open
-    // file description; the original target_fd then becomes safe to
-    // replace via `dup2`.
+    // Snapshot the original fd so the reader thread can fan the
+    // captured bytes back out to whatever was wired up before us.
     let original_fd = unsafe { libc::dup(target_fd) };
     if original_fd == -1 {
         let err = std::io::Error::last_os_error();
@@ -211,10 +169,6 @@ fn install_pipe(target_fd: c_int, stream: Stream, buffer: Arc<LogBuffer>) -> std
         return Err(err);
     }
 
-    // Atomically replace target_fd with a duplicate of write_fd.
-    // `dup2` closes target_fd first if it's open. After this call,
-    // anything that writes to fd `target_fd` (STDOUT_FILENO /
-    // STDERR_FILENO) goes into our pipe.
     if unsafe { libc::dup2(write_fd, target_fd) } == -1 {
         let err = std::io::Error::last_os_error();
         unsafe {
@@ -224,8 +178,6 @@ fn install_pipe(target_fd: c_int, stream: Stream, buffer: Arc<LogBuffer>) -> std
         }
         return Err(err);
     }
-    // We have a duplicate at target_fd now; drop the original
-    // write_fd handle so we don't leak it.
     unsafe {
         libc::close(write_fd);
     }
@@ -243,18 +195,14 @@ fn install_pipe(target_fd: c_int, stream: Stream, buffer: Arc<LogBuffer>) -> std
 
 fn reader_loop(read_fd: c_int, original_fd: c_int, stream: Stream, buffer: Arc<LogBuffer>) {
     let mut read_buf = [0u8; 4096];
-    // Bytes from a previous read that didn't end on a newline yet.
-    // Held across iterations so a `println!` that straddles a 4 KB
-    // boundary surfaces as one logical line, not two.
+    // Carryover so a line straddling a read boundary surfaces as one
+    // logical line.
     let mut partial: Vec<u8> = Vec::new();
     loop {
         let n = unsafe { libc::read(read_fd, read_buf.as_mut_ptr() as *mut _, read_buf.len()) };
         if n == -1 {
-            // EINTR = signal interrupted the syscall before any bytes
-            // were transferred. The POSIX idiom is to retry; without
-            // it a stray signal silently kills log capture for the
-            // rest of the session. Other errors (EBADF, EFAULT, …)
-            // mean the pipe is unrecoverably broken — exit.
+            // Retry on EINTR; other errors mean the pipe is
+            // unrecoverably broken.
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
                 continue;
@@ -262,35 +210,24 @@ fn reader_loop(read_fd: c_int, original_fd: c_int, stream: Stream, buffer: Arc<L
             return;
         }
         if n == 0 {
-            // EOF: every write end of the pipe is closed. In normal
-            // operation this should never fire — the process keeps
-            // STDOUT_FILENO / STDERR_FILENO open for life — but
-            // returning cleanly is safer than spinning.
             return;
         }
         let chunk = &read_buf[..n as usize];
-        // Fan out RAW bytes to the original fd FIRST so consumers of
-        // the original stdout/stderr (Xcode console attached to the
-        // sim launch, host terminal on a desktop dev build) see them
-        // exactly as the producer wrote them — no line-buffering
-        // delay, no partial-line withholding.
+        // Fan out RAW bytes to the original fd FIRST so its consumers
+        // see them exactly as written — no line-buffering delay, no
+        // partial-line withholding.
         unsafe {
             let _ = libc::write(original_fd, chunk.as_ptr() as *const _, chunk.len());
         }
 
-        // Line-split for the WS frame stream. Partial-line carryover
-        // means each `println!` reaches the host as one line even if
-        // a large payload spans multiple `read` chunks.
         partial.extend_from_slice(chunk);
         while let Some(nl_pos) = partial.iter().position(|b| *b == b'\n') {
             let mut line: Vec<u8> = partial.drain(..=nl_pos).collect();
-            // Trim trailing newline + any \r before it.
             while matches!(line.last(), Some(b'\n') | Some(b'\r')) {
                 line.pop();
             }
-            // Use `from_utf8_lossy` so a non-UTF-8 byte (raw bytes
-            // from a C lib, locale mismatch) shows up as U+FFFD
-            // rather than silently dropping the line.
+            // Lossy so a non-UTF-8 byte shows up as U+FFFD rather than
+            // dropping the line.
             let text = match String::from_utf8(line) {
                 Ok(s) => s,
                 Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
@@ -311,10 +248,8 @@ fn reader_loop(read_fd: c_int, original_fd: c_int, stream: Stream, buffer: Arc<L
 
 #[cfg(target_os = "android")]
 fn push_platform_log(stream: Stream, line: &str) {
-    // Fan out to logcat so external observers (`adb logcat -s
-    // whisker-stdout`) see the same lines. Tag chosen distinct from
-    // `whisker-dev` (the hot-reload runtime's own diagnostics) so
-    // users can filter cleanly.
+    // Tags are distinct from `whisker-dev` (the runtime's own
+    // diagnostics) so users can filter cleanly.
     unsafe extern "C" {
         fn __android_log_write(
             prio: std::os::raw::c_int,
@@ -341,8 +276,6 @@ fn push_platform_log(stream: Stream, line: &str) {
 
 #[cfg(target_os = "ios")]
 fn push_platform_log(stream: Stream, line: &str) {
-    // Fan out to syslog so `simctl spawn booted log stream` surfaces
-    // the same lines. Prefix mirrors the Android tag layout.
     unsafe extern "C" {
         fn syslog(priority: std::os::raw::c_int, fmt: *const std::os::raw::c_char, ...);
     }
@@ -363,9 +296,8 @@ fn push_platform_log(stream: Stream, line: &str) {
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn push_platform_log(_stream: Stream, _line: &str) {
-    // Host / Linux desktop: the `libc::write(original_fd, …)` above
-    // already lands lines on the user's terminal, which is the only
-    // sink that matters off-device. No additional platform log.
+    // The write to `original_fd` already lands on the terminal, which
+    // is the only sink that matters off-device.
 }
 
 // ============================================================================
@@ -377,9 +309,8 @@ mod tests {
     use super::*;
     use tokio::time::{Duration, timeout};
 
-    /// Construct a fresh LogBuffer for direct testing — the global
-    /// `LOG_BUFFER` static can only be initialised once per process,
-    /// so unit tests build their own instance.
+    /// The global `LOG_BUFFER` can only be initialised once per
+    /// process, so tests build their own instance.
     fn fresh_buffer(capacity: usize) -> Arc<LogBuffer> {
         Arc::new(LogBuffer {
             inner: Mutex::new(VecDeque::with_capacity(capacity)),
@@ -420,7 +351,6 @@ mod tests {
             });
         }
         let drained = timeout(Duration::from_secs(1), b.drain()).await.unwrap();
-        // Capacity 3: lines 0 and 1 should have been dropped.
         assert_eq!(drained.len(), 3);
         assert_eq!(drained[0].text, "line 2");
         assert_eq!(drained[1].text, "line 3");
@@ -430,7 +360,6 @@ mod tests {
     #[tokio::test]
     async fn drain_blocks_until_pushed() {
         let b = fresh_buffer(8);
-        // Spawn a producer that pushes after a delay.
         let b_clone = Arc::clone(&b);
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;

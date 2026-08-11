@@ -23,7 +23,7 @@
 //! Why `dylib` (not `staticlib`)? subsecond's hot-patch model needs
 //! the dylib's `.dynsym` available to read mangled Rust symbols
 //! against at runtime. Matches the Android side's choice. See
-//! `docs/hot-reload-plan.md` "Second Pivot".
+//! `docs/hot-reload-internals.md`.
 //!
 //! hot reload fat-build capture (see [`crate::capture`]) is opt-in via
 //! the `capture` parameter on the per-arch cargo helper. The
@@ -77,9 +77,9 @@ const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_bridge_remove_child",
     "_whisker_bridge_set_event_listener",
     "_whisker_bridge_set_event_listener_with_value",
-    // Phase 5: Rust-side event propagation. The driver registers a
-    // dispatcher the reporter hook forwards to, and queries element
-    // signs to key its tree + listener maps.
+    // Rust-side event propagation: the driver registers a dispatcher
+    // the reporter hook forwards to, and queries element signs to key
+    // its tree + listener maps.
     "_whisker_bridge_register_event_dispatcher",
     "_whisker_bridge_element_sign",
     "_whisker_bridge_set_native_event_handler",
@@ -88,19 +88,16 @@ const BRIDGE_EXPORTS: &[&str] = &[
     "_whisker_bridge_invoke_module",
     "_whisker_bridge_invoke_module_async",
     "_whisker_bridge_value_release",
-    // Phase 7-Φ.F: Swift Macro `@WhiskerModule` emits an `@_cdecl`
-    // dispatch shim per module + the generated
-    // `WhiskerModuleBehaviors.swift` calls this to register the
-    // shim against the C-side dispatch table. Replaces the
-    // previous `_OBJC_CLASS_$_WhiskerModuleRegistry` export (the
-    // Obj-C class is gone — pure C function pointer table now).
+    // The `@WhiskerModule` Swift macro emits one `@_cdecl` dispatch
+    // shim per module, and the generated `WhiskerModuleBehaviors.swift`
+    // calls this to register it against the C-side dispatch table.
     "_whisker_bridge_register_module_dispatch",
     // The `AsyncFunction` half of the same table. The codegen plugin
     // emits a call to this in EVERY module's register fn — including
     // modules that declare no async function — so leaving it out fails
     // the link for any app with any module at all, not just async ones.
     "_whisker_bridge_register_module_dispatch_async",
-    // whisker-module event system (Phase L-2c). `add/remove_event_listener`
+    // whisker-module event system. `add/remove_event_listener`
     // is consumed by Rust subscribers (e.g. AndroidPredictiveBack);
     // `send_event` is the native module → Rust fan-out;
     // `register_observer_hooks` drives OnStart/StopObserving. Without
@@ -155,13 +152,9 @@ fn cargo_build_ios_dylib(
             .with_context(|| format!("create rustc cache dir {}", c.rustc_cache_dir.display()))?;
         std::fs::create_dir_all(&c.linker_cache_dir)
             .with_context(|| format!("create linker cache dir {}", c.linker_cache_dir.display()))?;
-        // Use the *current iteration's* triple, not whatever was
-        // baked into `c.target_triple`. Without this override every
-        // slice except the matching one would build without
-        // `-Cdebug-assertions=on`, which silently disables
-        // subsecond's JumpTable dispatch — `subsecond::call` then
-        // inlines to its `if !cfg!(debug_assertions) { return f() }`
-        // early return and hot reload patches never reach user code.
+        // Override with this iteration's triple: any slice built
+        // without `-Cdebug-assertions=on` silently loses subsecond's
+        // JumpTable dispatch and never sees a patch.
         for (k, v) in capture_env_vars_for_triple(c, Some(triple)) {
             cmd.env(k, v);
         }
@@ -201,12 +194,9 @@ fn build_framework_dir(
     std::fs::copy(dylib_src, &binary_dst)
         .with_context(|| format!("copy {} → {}", dylib_src.display(), binary_dst.display()))?;
 
-    // Rewrite LC_ID_DYLIB to the @rpath form. The Cargo build sets
-    // install_name via `-Wl,-install_name,...` (see
-    // `crates/whisker-driver-sys/build.rs`), but we run
-    // `install_name_tool` here as belt-and-suspenders so the lipo'd
-    // fat binary and any pre-build-script-flag-less invocation also
-    // end up correct.
+    // `crates/whisker-driver-sys/build.rs` already passes
+    // `-Wl,-install_name,…`; rewriting it here too covers the lipo'd
+    // fat binary and any invocation that missed the build-script flag.
     let install_name = format!("@rpath/{FRAMEWORK_NAME}.framework/{FRAMEWORK_NAME}");
     let status = Command::new("install_name_tool")
         .args(["-id", &install_name])
@@ -220,7 +210,6 @@ fn build_framework_dir(
         ));
     }
 
-    // Headers/
     let hdr_dir = fw_dir.join("Headers");
     std::fs::create_dir_all(&hdr_dir)?;
     std::fs::copy(
@@ -232,16 +221,9 @@ fn build_framework_dir(
         hdr_dir.join("whisker_bridge.h"),
     )?;
 
-    // Modules/module.modulemap — framework form (`framework module …`).
-    // The repo-level modulemap is a plain `module …` declaration; the
-    // framework xcframework wants the `framework module` keyword so
-    // Xcode can `import` it.
-    //
-    // Phase 7-Φ.F: dropped `whisker_module_registry.h` from the
-    // header set — the Obj-C class is gone, replaced by a pure C
-    // function-pointer table inside `whisker_bridge_common.cc`. The
-    // C ABI in `whisker_bridge.h` (the `whisker_bridge_register_module_dispatch`
-    // declaration) is the only surface user-app code needs.
+    // The repo-level modulemap is a plain `module …` declaration; a
+    // framework needs the `framework module` keyword for Xcode to
+    // `import` it.
     let mod_dir = fw_dir.join("Modules");
     std::fs::create_dir_all(&mod_dir)?;
     std::fs::write(
@@ -291,25 +273,16 @@ pub struct XcodeRunScriptInputs<'a> {
     pub features: &'a [String],
 }
 
-/// Cross-compile + framework-wrap path for the Xcode Run Script
-/// Phase. Cargo-builds one dylib per requested arch, lipo-fuses sim
-/// slices when both archs are requested, wraps the result into a
-/// `WhiskerDriver.framework/` and drops it at
-/// `<built_products_dir>/Frameworks/<FRAMEWORK_NAME>.framework/`
-/// where xcodebuild's link step picks it up via
-/// `OTHER_LDFLAGS += -framework WhiskerDriver`.
-///
-/// Returns the path to the produced `.framework` directory.
 /// Resolve the `include` dirs of `whisker-driver` (`whisker.h` +
 /// `module.modulemap`) and `whisker-driver-sys` (`whisker_bridge.h`).
 ///
 /// Uses `cargo metadata` against `workspace_root` so the paths point at
 /// wherever cargo actually placed each crate: the monorepo
-/// `crates/whisker-driver*/…` for in-workspace development, or the
-/// registry extraction (`~/.cargo/registry/src/index.crates.io-*/
-/// whisker-driver-<v>/…`) for a `cargo install`-only user. Falls back
-/// to the legacy in-workspace layout if metadata can't be read (e.g.
-/// cargo missing from the Run Script env), preserving the old behaviour.
+/// `crates/whisker-driver*/…` in-workspace, or the registry extraction
+/// (`~/.cargo/registry/src/index.crates.io-*/whisker-driver-<v>/…`)
+/// for a `cargo install`-only user. Falls back to the in-workspace
+/// layout when metadata can't be read (e.g. cargo missing from the Run
+/// Script env).
 fn resolve_bridge_header_dirs(workspace_root: &Path) -> (PathBuf, PathBuf) {
     let legacy = || {
         (
@@ -340,6 +313,15 @@ fn resolve_bridge_header_dirs(workspace_root: &Path) -> (PathBuf, PathBuf) {
     }
 }
 
+/// Cross-compile + framework-wrap path for the Xcode Run Script
+/// Phase. Cargo-builds one dylib per requested arch, lipo-fuses sim
+/// slices when both archs are requested, wraps the result into a
+/// `WhiskerDriver.framework/` and drops it at
+/// `<built_products_dir>/Frameworks/<FRAMEWORK_NAME>.framework/`
+/// where xcodebuild's link step picks it up via
+/// `OTHER_LDFLAGS += -framework WhiskerDriver`.
+///
+/// Returns the path to the produced `.framework` directory.
 pub fn build_framework_for_xcode_run_script(
     inputs: &XcodeRunScriptInputs<'_>,
     built_products_dir: &Path,
@@ -374,7 +356,6 @@ pub fn build_framework_for_xcode_run_script(
     let lib_stem = inputs.package.replace('-', "_");
     let cargo_dylib_name = format!("lib{lib_stem}.dylib");
 
-    // Build one dylib per requested arch.
     let mut slice_paths: Vec<PathBuf> = Vec::with_capacity(inputs.archs.len());
     for arch in inputs.archs {
         let triple = map_arch_to_triple(inputs.platform, arch)?;
@@ -398,9 +379,8 @@ pub fn build_framework_for_xcode_run_script(
         );
     }
 
-    // Workspace-local scratch area: lipo + wrap happens here, then
-    // the final framework dir is copied into `built_products_dir`.
-    // Under `target/` so `cargo clean` reaps it.
+    // Scratch area for lipo + wrap, under `target/` so `cargo clean`
+    // reaps it.
     let out_dir = inputs
         .workspace_root
         .join("target/whisker-driver/run-script");
@@ -410,8 +390,6 @@ pub fn build_framework_for_xcode_run_script(
     }
     std::fs::create_dir_all(&out_dir).with_context(|| format!("mkdir -p {}", out_dir.display()))?;
 
-    // Single-arch → use the slice directly. Multi-arch → lipo into a
-    // fat binary in `out_dir`.
     let combined_dylib: PathBuf = if slice_paths.len() == 1 {
         slice_paths.into_iter().next().expect("checked len == 1")
     } else {
@@ -440,8 +418,7 @@ pub fn build_framework_for_xcode_run_script(
         &bridge_headers_src,
     )?;
 
-    // Publish into `<built_products_dir>/Frameworks/`. Xcode's
-    // embed-frameworks build phase scans that directory at link time.
+    // Xcode's embed-frameworks phase scans `Frameworks/` at link time.
     let frameworks_dst = built_products_dir.join("Frameworks");
     std::fs::create_dir_all(&frameworks_dst)
         .with_context(|| format!("mkdir -p {}", frameworks_dst.display()))?;
@@ -555,9 +532,8 @@ pub struct XcodebuildArgs<'a> {
     pub scheme: &'a str,
     /// `iphonesimulator` (Simulator) or `iphoneos` (device).
     pub sdk: &'a str,
-    /// `Release` for direct `xcodebuild` invocations; `Debug` is unused today but
-    /// kept generic so Phase 3 can reuse this for `whisker run`'s
-    /// initial build.
+    /// `Release` everywhere today; kept a free string so a caller can
+    /// ask for another xcodebuild configuration.
     pub configuration: &'a str,
     /// Almost always `<scheme>.xcodeproj` (XcodeGen output). Tests
     /// override it to point at fixtures.
@@ -581,12 +557,10 @@ pub struct XcodebuildArgs<'a> {
 }
 
 /// Generate the iOS module-aggregator SwiftPM package under
-/// `gen/ios/whisker_modules/`. Phase 7-Φ.G: replaces the previous
-/// file-copy flow (`stage_module_swift_sources`) — module source
-/// files now stay in their own package directories, and each module
-/// ships its own hand-written `Package.swift`. The aggregator simply
-/// depends on each module package via `.package(path: …)` and
-/// imports each one's per-target register fn.
+/// `gen/ios/whisker_modules/`. Module sources stay in their own
+/// package directories — each module ships a hand-written
+/// `Package.swift` — and the aggregator depends on them via
+/// `.package(path: …)`, importing each one's per-target register fn.
 ///
 /// Mirror of [`crate::android::generate_module_aggregator`] for
 /// iOS. The Android path generates `settings.gradle.kts` includes;
@@ -634,12 +608,8 @@ pub fn stage_module_swift_sources(
     std::fs::create_dir_all(&sources_root)
         .with_context(|| format!("mkdir -p {}", sources_root.display()))?;
 
-    // Each module package contributes via its own Package.swift in
-    // its manifest dir. Discovery signal: presence of `Package.swift`
-    // next to the crate's `Cargo.toml` (Phase G dropped the
-    // `swift_sources` field as the staging trigger). Modules that
-    // are Android-only naturally don't have a Package.swift, so
-    // they're skipped here without further filtering.
+    // A `Package.swift` next to the crate's `Cargo.toml` is the
+    // discovery signal, which skips Android-only modules for free.
     let ios_modules: Vec<&crate::modules::ResolvedModule> = modules
         .iter()
         .filter(|m| m.manifest_dir.join("Package.swift").is_file())
@@ -1231,10 +1201,8 @@ mod tests {
 
     /// Every bridge function Swift *calls* has to be in
     /// [`BRIDGE_EXPORTS`], or it never lands in the dylib's `.dynsym`
-    /// and the app fails to link. The list is hand-maintained and the
-    /// comment asking for that was not enough — #338 added
-    /// `whisker_bridge_register_module_dispatch_async` and every
-    /// module-using iOS app stopped linking.
+    /// and the app fails to link. The list is hand-maintained, so this
+    /// enforces it mechanically.
     #[test]
     fn swift_call_sites_are_all_exported() {
         fn swift_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

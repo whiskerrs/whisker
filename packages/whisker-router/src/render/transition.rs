@@ -227,8 +227,6 @@ impl SwipeEdge {
     }
 }
 
-// ----- Material predictive-back tunables ------------------------------
-
 /// Minimum scale the cards shrink to at full back progress (Android's
 /// system preview shrinks to ~0.9).
 const PB_MIN_SCALE: f32 = 0.9;
@@ -476,8 +474,6 @@ pub fn predictive_dim(value: f32) -> f32 {
     let dismiss = ((PB_PREVIEW_SPLIT - v) / PB_PREVIEW_SPLIT).clamp(0.0, 1.0);
     (1.0 - dismiss) * PB_MAX_DIM
 }
-
-// ----- Built-in transitions -------------------------------------------
 
 /// Push/pop duration (ms) of the iOS [`Slide`].
 const SLIDE_MS: u32 = 300;

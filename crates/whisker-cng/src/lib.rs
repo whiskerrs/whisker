@@ -6,13 +6,12 @@
 //! via a content-hashed fingerprint stored alongside each generated
 //! tree (`gen/<platform>/.whisker-fingerprint`).
 //!
-//! Modelled on Expo's CNG: the source of truth is the declarative
-//! config, the platforms directory are build artifacts (never
-//! committed). Unlike Expo, regeneration is *implicit* — there's no
-//! separate `whisker generate` command. Whichever command needs the
-//! native tree (today: `whisker run`) calls
-//! [`sync_android`] / [`sync_ios`] first; the fast path (fingerprint
-//! match) is a single file read and returns instantly.
+//! Modelled on Expo's CNG: the declarative config is the source of
+//! truth and `gen/` is a build artifact, never committed. Unlike Expo
+//! there is no separate `whisker generate` command — every command
+//! that needs the native tree (`whisker run`, `whisker build`) calls
+//! [`sync_android`] / [`sync_ios`] first, and the fingerprint-match
+//! fast path is a single file read.
 //!
 //! ## Public entry points
 //!
@@ -24,9 +23,8 @@
 //!   "extract from Config + defaults" path.
 //!
 //! The crate has no CLI surface and shells out to nothing —
-//! `whisker-cli` is responsible for running `xcodegen`, `gradle`, etc.
-//! after a sync completes. Keeping side-effects out of the renderer
-//! makes it cheap to unit-test against tempdirs.
+//! `whisker-cli` runs `xcodegen`, `gradle`, etc. after a sync
+//! completes, which keeps the renderer unit-testable against tempdirs.
 
 pub mod android;
 pub mod compose;

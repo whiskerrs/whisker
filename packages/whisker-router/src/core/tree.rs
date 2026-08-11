@@ -594,11 +594,8 @@ mod tests {
     #[test]
     fn match_url_index_literal_and_param() {
         let t = tree();
-        // Index route ("") derives "/".
         assert_eq!(t.match_url("/").map(|(id, _)| id), Some("home".into()));
-        // Literal segment.
         assert_eq!(t.match_url("/list").map(|(id, _)| id), Some("list".into()));
-        // Dynamic segment captures the param.
         let (id, params) = t.match_url("/detail/123").expect("matches detail/:id");
         assert_eq!(id, "detail");
         assert_eq!(params.get("id").map(String::as_str), Some("123"));
@@ -607,11 +604,8 @@ mod tests {
     #[test]
     fn match_url_no_match_and_arity() {
         let t = tree();
-        // Unknown path.
         assert!(t.match_url("/nope").is_none());
-        // Right prefix, wrong arity (extra segment).
         assert!(t.match_url("/detail/123/extra").is_none());
-        // Missing the dynamic segment.
         assert!(t.match_url("/detail").is_none());
     }
 
@@ -668,14 +662,10 @@ mod tests {
             .filter_map(|i| Some((i.route_id.as_deref()?, i.url.as_deref()?)))
             .collect();
         eprintln!("URLS: {urls:#?}");
-        // Group routes get their own URL.
         assert!(urls.contains(&("(home)", "/(home)")));
         assert!(urls.contains(&("(search)", "/(search)")));
-        // Home sits *under* (home) group — its "" segment → same URL as group.
-        // Check it exists (the exact URL is the key question here).
         let home_url = urls.iter().find(|(id, _)| *id == "home").map(|(_, u)| *u);
         eprintln!("home_url = {home_url:?}");
-        // The list screen is under (search) group.
         let list_url = urls.iter().find(|(id, _)| *id == "list").map(|(_, u)| *u);
         assert_eq!(list_url, Some("/(search)/list"));
     }
@@ -683,7 +673,6 @@ mod tests {
     #[test]
     fn grouped_match_url() {
         let t = grouped_tree();
-        // Group-inclusive: verbatim.
         assert_eq!(
             t.match_url("/(home)").map(|(id, _)| id),
             Some("(home)".into())
@@ -692,16 +681,13 @@ mod tests {
             t.match_url("/(search)").map(|(id, _)| id),
             Some("(search)".into())
         );
-        // Group-omitted: "/detail/42" should match either tab's detail.
         let r = t.match_url("/detail/42");
         assert!(r.is_some(), "'/detail/42' should match with group skipped");
         let (id, params) = r.unwrap();
         assert_eq!(id, "detail");
         assert_eq!(params.get("id").map(String::as_str), Some("42"));
-        // Group-inclusive detail.
         let r = t.match_url("/(home)/detail/7");
         assert!(r.is_some(), "'/(home)/detail/7' should match");
-        // "/" should match home (whose URL is "/(home)" with group optional).
         let r = t.match_url("/");
         eprintln!("match_url('/') = {r:?}");
     }

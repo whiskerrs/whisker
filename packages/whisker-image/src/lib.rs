@@ -115,10 +115,9 @@ impl std::fmt::Display for ImageMode {
 /// What a finished or failed load reports.
 ///
 /// The body of a custom event, whose payload lands under `detail` on
-/// both platforms (the iOS bridge normalises `params` to `detail`, and
-/// the Android reporter nests it there). Every field defaults, so a
-/// partial body still calls the handler — the event firing is the
-/// signal; its contents are the detail.
+/// both platforms. Every field defaults, so a partial body still calls
+/// the handler — the event firing is the signal; its contents are the
+/// detail.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[non_exhaustive]
 pub struct ImageEvent {
@@ -150,8 +149,7 @@ impl ImageEvent {
 /// Wraps `Rc<dyn Fn(ImageEvent)>` so it's `Clone` (required:
 /// `#[component]` re-clones every prop for the hot-reload remount path)
 /// and so a bare closure coerces into it via `Into` at the call site
-/// (`on_load: move |event| …`). Same reasoning as `whisker-input`'s
-/// `InputCallback`: a `Box<dyn Fn>` has neither property.
+/// (`on_load: move |event| …`). A `Box<dyn Fn>` has neither property.
 #[derive(Clone)]
 pub struct ImageCallback(std::rc::Rc<dyn Fn(ImageEvent) + 'static>);
 
@@ -288,9 +286,8 @@ mod tests {
 
     #[test]
     fn an_image_needs_only_a_src() {
-        // That this builds at all is most of the assertion: on the
-        // element, the event props were required, and every caller who
-        // only wanted a picture got a panic at mount.
+        // That this builds at all is most of the assertion: the element's
+        // own event props are required, the wrapper's are not.
         let props = ImageProps::builder()
             .src("https://example.com/a.png")
             .build();

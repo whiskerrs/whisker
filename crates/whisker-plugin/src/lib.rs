@@ -314,14 +314,9 @@ pub struct AppMeta {
 pub struct IosProjectIr {
     // ----- Core fields ------------------------------------------------------
     //
-    // These were string substitutions baked into the renderer's
-    // template up to RFC #164 Phase 4. Promoting them onto the IR
-    // lets a 3rd-party plugin override any of them via
-    // `Operation::Override` — e.g. a flavor plugin can append
-    // `.staging` to `bundle_id` without forking the user app's
-    // `whisker.rs`. The engine's `build_initial_context` seeds
-    // every field below from `Config`; the inputs-extraction
-    // step (`crate::ios::inputs_from`) reads them back.
+    // Seeded from `Config` by the engine's `build_initial_context`,
+    // read back by `crate::ios::inputs_from`. A plugin may replace any
+    // of them via `Operation::Override`.
     /// `CFBundleDisplayName` / pbxproj `PRODUCT_NAME` source.
     /// Seeded from `Config.name`.
     #[serde(default)]
@@ -430,8 +425,7 @@ pub enum PbxprojOp {
 pub struct AndroidProjectIr {
     // ----- Core fields ------------------------------------------------------
     //
-    // Seeded by `build_initial_context` from `Config`; mirror
-    // of the iOS core block above. See [`IosProjectIr`]'s rationale.
+    // Mirror of the iOS core block; same seeding and override rules.
     /// Activity label / `manifest.application.android:label` source.
     /// Seeded from `Config.name`.
     #[serde(default)]
@@ -828,12 +822,9 @@ pub fn run_as_subprocess<P: Plugin>(plugin: P) -> anyhow::Result<()> {
         ));
     }
 
-    // `null` config arrives when the user didn't declare the plugin
-    // in `whisker.rs` at all — the engine's wire protocol uses Null
-    // to mean "use the Config's `Default`". This matches the
-    // in-process path's `Option::is_none` → `Default::default()`
-    // fallback, keeping the same semantics regardless of which
-    // execution mode a plugin runs in.
+    // Wire protocol: a `null` config means "use `Default`" — the user
+    // declared no options for this plugin (or didn't declare it at
+    // all), matching the in-process path's `Option::is_none` fallback.
     let config: P::Config = if request.config.is_null() {
         Default::default()
     } else {
@@ -864,10 +855,6 @@ pub fn run_as_subprocess<P: Plugin>(plugin: P) -> anyhow::Result<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -995,8 +982,6 @@ mod tests {
 
     #[test]
     fn file_entry_text_default_decodes_without_base64_field() {
-        // A FileEntry serialized before `contents_base64` existed
-        // (only `contents` + `mode`) must still deserialize.
         let json = r#"{"contents":"old text"}"#;
         let entry: FileEntry = serde_json::from_str(json).unwrap();
         assert_eq!(entry.to_bytes().unwrap(), b"old text");
@@ -1045,8 +1030,6 @@ mod tests {
         assert_eq!(back.config["googleServicePath"], "ios/GoogleService.plist");
     }
 
-    // Tiny plugin to exercise the trait shape — verifies the
-    // associated-type bound compiles and default methods kick in.
     struct Null;
 
     #[derive(Default, Serialize, Deserialize)]
@@ -1078,10 +1061,8 @@ mod tests {
         p.apply(&mut ctx, &cfg).unwrap();
     }
 
-    // The subprocess runner reads stdin / writes stdout, which is
-    // awkward to unit-test directly. Factor the core into an
-    // in-memory shim and test that — `run_as_subprocess` is a thin
-    // wrapper over it.
+    // In-memory stand-in for `run_as_subprocess`, whose stdin/stdout
+    // plumbing can't be driven from a unit test. Keep the two in sync.
     fn run_with_pipes<P: Plugin>(plugin: P, input: &str) -> anyhow::Result<String> {
         let request: PluginRequest = serde_json::from_str(input)?;
         anyhow::ensure!(
@@ -1173,8 +1154,7 @@ mod tests {
         let request = PluginRequest {
             name: "test-permission".into(),
             config: serde_json::json!({"permission": "android.permission.CAMERA"}),
-            // No android IR — apply asserts it's present, so this
-            // exercises the error path.
+            // Default context has no android IR, which `apply` requires.
             context: GenerateContext::default(),
         };
         let input = serde_json::to_string(&request).unwrap();

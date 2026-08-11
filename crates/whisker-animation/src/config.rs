@@ -81,8 +81,6 @@ pub struct SpringConfig {
 }
 
 impl AnimConfig {
-    // ---- curve-based (time-driven) constructors -------------------------
-
     /// A linear animation over `duration_ms` milliseconds.
     pub fn linear(duration_ms: u32) -> Self {
         Self::curved(duration_ms, Curve::Linear)
@@ -124,8 +122,6 @@ impl AnimConfig {
         }
     }
 
-    // ---- spring (physics) constructors ----------------------------------
-
     /// A sensible default spring: a gentle, near-critically-damped pull
     /// that settles in a few hundred milliseconds with little to no
     /// overshoot. Defaults are iOS-ish (`stiffness 170, damping 26,
@@ -154,8 +150,6 @@ impl AnimConfig {
             }),
         }
     }
-
-    // ---- spring builder setters -----------------------------------------
 
     /// Set the spring's configured **initial velocity** (progress units
     /// per second), seeding it at the start of a run from rest. This is

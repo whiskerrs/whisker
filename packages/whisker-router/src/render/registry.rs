@@ -1,10 +1,10 @@
-//! The hand-written **route id → render fn** registry, plus the
-//! per-route [`RouteTransition`] choice.
+//! The **route id → render fn** registry, plus the per-route
+//! [`RouteTransition`] choice.
 //!
-//! In a later phase the `routes!` macro will *generate* this map from
-//! the declared screens. For now it is built by hand: the app registers
-//! a render closure for every [`RouteDef::id`](crate::core::RouteDef::id)
-//! in its [`CompiledTree`], optionally with a transition, and the
+//! The `routes!` macro generates this map from the declared screens; it
+//! can equally be built by hand. Either way it holds a render closure for
+//! every [`RouteDef::id`](crate::core::RouteDef::id) in the
+//! [`CompiledTree`], optionally with a transition, and the
 //! [`RouterHandle`](crate::render::RouterHandle) looks the closure up
 //! when an `Outlet` needs to mount a leaf.
 //!
@@ -61,7 +61,7 @@ struct Entry {
     transition: RouteTransition,
 }
 
-/// The hand-written map from a route id to its [`RenderFn`] +
+/// The map from a route id to its [`RenderFn`] +
 /// [`RouteTransition`].
 ///
 /// Cloneable (cheap — the closures are `Rc`-backed) so it can be moved
@@ -183,8 +183,8 @@ impl RouteFragment {
 /// `RouterHandle::new((tree, registry))`), so the macro and the manual path
 /// share one constructor.
 ///
-/// (Composable sub-sets — the design's `..content` spread — land with the
-/// macro in a later phase; today a `RouteSet` is a single rooted tree.)
+/// A `RouteSet` is a single rooted tree; the composable un-rooted form is
+/// [`RouteFragment`], spliced in with the macro's `..spread`.
 #[derive(Clone)]
 pub struct RouteSet {
     pub(crate) tree: CompiledTree,

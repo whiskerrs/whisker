@@ -10,22 +10,22 @@
 //!
 //! ## The two layers
 //!
-//! - [`core`] — the **pure-logic** model (phase 1):
+//! - [`core`] — the **pure-logic** model:
 //!   [`RouteTree`](core::RouteTree) / [`CompiledTree`](core::CompiledTree),
 //!   [`RouteState`](core::RouteState), and the [`Navigator`](core::Navigator)
 //!   with the five operations (`navigate` / `select` / `back` / `replace` /
 //!   `pop_to` / `reset`). No signals, no `Element` — unit-testable on its own.
 //! - [`render`] — the **reactive rendering** of that core in the Whisker
-//!   runtime (phase 2). A signal-backed [`RouterHandle`](render::RouterHandle)
+//!   runtime. A signal-backed [`RouterHandle`](render::RouterHandle)
 //!   plus [`use_navigator`](render::use_navigator), the
 //!   [`Outlet`](render::Outlet), [`Stack`](render::Stack) and
 //!   [`Switch`](render::Switch) renderers, the [`Tabs`](render::Tabs) chrome,
 //!   float-`Tween` transitions (via `whisker-animation`, not Lynx's animator),
 //!   and the iOS [`SwipeBack`](render::SwipeBack) gesture.
 //!
-//! The route id → component mapping is a hand-written
-//! [`RouteRegistry`](render::RouteRegistry) for now; the `routes!` macro
-//! will generate it in a later phase.
+//! The route id → component mapping lives in a
+//! [`RouteRegistry`](render::RouteRegistry), which the `routes!` macro
+//! generates; it can also be built by hand.
 //!
 //! ## Minimal usage
 //!
@@ -82,7 +82,6 @@ pub mod __kw {
     pub struct Route;
 }
 
-// The new API: the pure core graphs/ops + the reactive render layer.
 pub use crate::core::{
     CompiledTree, NavError, Navigator, NodeId, NodeInfo, NodePath, RouteDef, RouteInstance,
     RouteState, RouteTree, StackEntry, StackState, SwitchDef, SwitchState, resolve,

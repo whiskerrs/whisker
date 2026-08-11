@@ -2,16 +2,12 @@
 //! run` exits.
 //!
 //! The `whisker run` TUI quits (`q` / Ctrl-C) by calling
-//! [`std::process::exit`], which terminates the process **without
-//! running destructors**. So `Command`'s `kill_on_drop` — and any RAII
-//! cleanup — never fires for an in-flight `cargo` / `gradle` /
-//! `xcodebuild`, and those children keep running headless after the
-//! parent is gone (holding build locks, spewing into the terminal,
-//! racing the next `whisker run`).
-//!
-//! To handle that, every long-running build spawn registers its PID
-//! here via [`track`], and the quit path calls [`kill_all`] right
-//! before `std::process::exit`.
+//! [`std::process::exit`], which skips destructors — so `kill_on_drop`
+//! and any RAII cleanup never fires and an in-flight `cargo` /
+//! `gradle` / `xcodebuild` keeps running headless, holding build locks
+//! and racing the next `whisker run`. Every long-running build spawn
+//! therefore registers its PID via [`track`], and the quit path calls
+//! [`kill_all`] right before `std::process::exit`.
 //!
 //! **SIGTERM, not SIGKILL** — gives the build tool a chance to remove
 //! partial artifacts. **The gradle daemon is intentionally spared**:
@@ -73,28 +69,22 @@ mod tests {
 
     #[test]
     fn guard_registers_then_unregisters() {
-        // Assert only on THIS pid, never the registry's absolute length:
-        // `TRACKED` is a process-global shared with the sibling tests, which
-        // run in parallel (and one deliberately leaks a registration via
-        // `mem::forget`), so a length snapshot races them. A pid that won't
-        // collide with a real spawn keeps the check self-contained.
+        // `TRACKED` is a process-global the parallel sibling tests also
+        // write to, so assert on this pid only, never on the length.
         {
             let _g = track(999_999_001);
             assert!(TRACKED.lock().unwrap().contains(&999_999_001));
         }
-        // Dropped → unregistered.
         assert!(!TRACKED.lock().unwrap().contains(&999_999_001));
     }
 
     #[test]
     fn kill_all_tolerates_stale_pid() {
-        // A guard we deliberately leak so the pid stays registered, then
-        // kill_all() must not panic on the (non-existent) pid.
         let g = track(999_999_002);
         std::mem::forget(g);
-        kill_all(); // ESRCH ignored; no panic.
-        // Clean up the leaked registration so other tests see a clean
-        // registry.
+        kill_all();
+        // Unregister by hand — the leaked guard never will, and the
+        // registry is shared with the sibling tests.
         if let Ok(mut t) = TRACKED.lock() {
             t.retain(|&p| p != 999_999_002);
         }

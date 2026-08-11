@@ -132,20 +132,13 @@ impl Builder {
     }
 
     async fn build_ios_simulator(&self) -> Result<()> {
-        // Step 7: this method's only remaining job is to stage the
-        // module Swift sources for SwiftPM. The actual `.app` build —
-        // and the cargo cross-compile that produces
-        // `WhiskerDriver.framework` — happens during xcodebuild in
-        // `installer.rs::ios_install_and_launch`, via the cng-generated
-        // pbxproj's "Whisker Generate" Run Script Build Phase.
-        //
-        // Pre-Step-7 this method also ran `build_xcframework_with` to
-        // produce `target/whisker-driver/WhiskerDriver.xcframework`
-        // and to prime the hot reload capture shims. The xcframework is
-        // no longer referenced by anything (Step 7 dropped the SPM
-        // binaryTarget) so its output was wasted; the capture wiring
-        // moved to `installer.rs` where it gets applied as env vars
-        // on the xcodebuild Command.
+        // Staging the module Swift sources for SwiftPM is all this
+        // does. The `.app` build — and the cargo cross-compile that
+        // produces `WhiskerDriver.framework` — runs during xcodebuild
+        // in `installer.rs::ios_install_and_launch`, through the
+        // cng-generated pbxproj's "Whisker Generate" Run Script Build
+        // Phase, which is also where the capture shims get applied as
+        // env vars on the xcodebuild Command.
         let ws = self.workspace_root.clone();
         let crate_dir = self.crate_dir.clone();
         let pkg = self.package.clone();
@@ -167,10 +160,6 @@ impl Builder {
         .context("spawn_blocking iOS module-source stage")?
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

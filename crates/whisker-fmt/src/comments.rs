@@ -42,8 +42,6 @@ pub(crate) fn collect_grammar_comments(
     expr_spans: &[Span],
     body_map: &SourceMap,
 ) -> Vec<GrammarComment> {
-    // Byte ranges of the embedded exprs; a comment overlapping any of
-    // these is skipped.
     let mut expr_ranges: Vec<(usize, usize)> = Vec::new();
     for &span in expr_spans {
         if let Some((s, e)) = body_map.byte_range(span) {
@@ -79,13 +77,11 @@ pub(crate) fn collect_grammar_comments(
                     in_str = Some(b);
                     i += 1;
                 } else if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                    // `//` line comment to end of line.
                     let start = i;
                     let mut j = i + 2;
                     while j < bytes.len() && bytes[j] != b'\n' {
                         j += 1;
                     }
-                    // `end` excludes the newline; right-trim text.
                     let text = body[start..j].trim_end().to_string();
                     let end = start + text.len();
                     if !in_expr(start, j) {
@@ -98,7 +94,7 @@ pub(crate) fn collect_grammar_comments(
                     }
                     i = j;
                 } else if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-                    // `/* ... */` block comment — nests.
+                    // Block comments nest, per Rust semantics.
                     let start = i;
                     let mut j = i + 2;
                     let mut depth = 1usize;
@@ -211,12 +207,9 @@ mod tests {
 
     #[test]
     fn comment_inside_expr_span_excluded() {
-        // body has one comment inside an expr range and one outside.
         let body = "a // outside\nb";
         let map = SourceMap::new(body);
-        // Build a span covering byte 0..1 ("a"); easier: use no spans
-        // here and instead assert collection works; expr exclusion is
-        // covered via integration tests in lib.rs.
+        // Expr-span exclusion is covered by the lib.rs integration tests.
         let cs = collect_grammar_comments(body, &[], &map);
         assert_eq!(cs.len(), 1);
         assert_eq!(cs[0].text, "// outside");

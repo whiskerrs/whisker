@@ -10,9 +10,6 @@
 //!   calls [`wake_runtime`] from its WebSocket thread after parking
 //!   a patch, so the host runs another tick that picks the patch
 //!   up.
-//!
-//! Pre-Phase-6.5a this lived in `signal.rs` alongside the old
-//! `Signal<T>` API. With that gone it's a standalone module.
 
 use std::ffi::c_void;
 use std::sync::Mutex;

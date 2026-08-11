@@ -93,8 +93,8 @@ impl Animation {
 impl ToCss for Animation {
     fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
         dest.write_str(&self.name)?;
-        // The CSS animation shorthand grammar allows any order; we
-        // emit a stable order matching the Lynx spec for clarity.
+        // The shorthand grammar allows any order; this emits the Lynx
+        // spec's order so output stays stable.
         if let Some(d) = &self.duration {
             dest.write_char(' ')?;
             d.to_css(dest)?;

@@ -350,16 +350,11 @@ impl<T: 'static + Clone> RwSignal<T> {
     }
 }
 
-// Conversions: Arc-backed handle → arena-backed `Copy` handle.
-//
-// Module pattern: stash an [`ArcRwSignal`] in a `OnceLock` so the
-// value lives for the process; expose it as [`RwSignal`] /
-// [`ReadSignal`] / [`WriteSignal`] so callers get a `Copy` handle
-// with the same ergonomics as a component-local signal. The arena
-// entry is a lifecycle pin only: when its owner disposes, one Arc
-// strong count decrements but every other holder keeps the value
-// alive. Reads forward through the Arc, so every handle observes the
-// same value and the same subscriber graph.
+// Conversions: Arc-backed handle → arena-backed `Copy` handle. The
+// arena entry is a lifecycle pin only — disposing its owner drops one
+// Arc strong count and every other holder keeps the value alive. Reads
+// forward through the Arc, so all handles observe the same value and
+// the same subscriber graph.
 
 fn register_arc_in_current_owner<T: 'static>(arc: super::arc_signal::ArcRwSignal<T>) -> NodeId {
     let value: Rc<RefCell<dyn Any>> = Rc::new(RefCell::new(arc));
@@ -467,10 +462,9 @@ fn write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: bool
 
 /// `write_and_notify` variant that returns `false` instead of
 /// panicking when the signal is disposed. Used by callers that
-/// legitimately may race against owner disposal — most notably the
-/// Phase N `ElementRef::__unbind` path, which runs from an
-/// `on_cleanup` callback after the underlying RwSignal's owner has
-/// already freed its nodes.
+/// legitimately race owner disposal — `ElementRef::__unbind` runs from
+/// an `on_cleanup` callback that may fire after the underlying
+/// RwSignal's owner has freed its nodes.
 fn try_write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: bool) -> bool {
     // Short borrow to pull the Rc handle, then drop before mutating.
     let Some(value) = with_runtime(|rt| rt.nodes.get(id).and_then(|n| n.data.value().cloned()))
@@ -478,9 +472,8 @@ fn try_write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: 
         return false;
     };
 
-    // Arc-backed entries forward to `ArcRwSignal::update` so the
-    // change propagates through the shared inner (every other handle,
-    // including the original `OnceLock`-stashed Arc, sees it).
+    // Arc-backed entries forward to `ArcRwSignal::update` so the change
+    // propagates through the shared inner to every other handle.
     let arc_handle: Option<super::arc_signal::ArcRwSignal<T>> = {
         let borrow = value.borrow();
         borrow
@@ -496,8 +489,6 @@ fn try_write_and_notify<T: 'static>(id: NodeId, f: impl FnOnce(&mut T), notify: 
         return true;
     }
 
-    // Direct-T storage: mutate under the borrow, then schedule
-    // arena subscribers.
     {
         let mut borrow = value.borrow_mut();
         let typed = borrow

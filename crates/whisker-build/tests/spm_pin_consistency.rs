@@ -4,10 +4,8 @@
 //! The pbxproj cng renders references the remote `whisker` package at
 //! [`whisker_build::ios::WHISKER_IOS_SPM_VERSION`], while every
 //! module under `packages/*/Package.swift` pins the same package with
-//! `exact:`. When the two disagree — as happened when #285 bumped the
-//! root to 0.1.2 and left the modules at 0.1.1 — SwiftPM resolution
-//! fails for every module-using app the moment its `gen/ios` is
-//! regenerated:
+//! `exact:`. When the two disagree, SwiftPM resolution fails for
+//! every module-using app the moment its `gen/ios` is regenerated:
 //!
 //! ```text
 //! Dependencies could not be resolved because 'whisker-webview'

@@ -1,26 +1,20 @@
 //! View layer — element handles, type-erased renderer, `IntoView`.
 //!
-//! This is the surface the new (Phase 6.5a) `render!` macro emits
-//! against. It deliberately mirrors the shape of [`crate::renderer`]
-//! but with two key differences:
+//! This is the surface the `render!` macro emits against. Two choices
+//! shape it, both matching the reactive runtime's own pattern of a
+//! thread-local arena behind opaque handles:
 //!
-//! 1. **Type-erased handle**. The new system uses a single
-//!    [`Element`] (a `Copy` newtype around a `u32` ID) regardless
-//!    of which backend is mounted. The renderer maps these IDs to
-//!    whatever concrete types it needs internally — `MockRenderer`
-//!    keeps a `HashMap<u32, MockOp>`, the production bridge maps each
-//!    to a `Rc<LynxElement>`.
+//! 1. **Type-erased handle**. A single [`Element`] (a `Copy` newtype
+//!    around a `u32` ID) regardless of which backend is mounted. The
+//!    renderer maps these IDs to whatever concrete types it needs
+//!    internally — `MockRenderer` keeps a `HashMap<u32, MockOp>`, the
+//!    production bridge maps each to a `Rc<LynxElement>`.
 //!
-//! 2. **Thread-local active renderer**. The macro expansion calls
-//!    free functions ([`create_element`], [`set_attribute`], etc.)
-//!    that dispatch through a thread-local "currently mounted"
-//!    renderer. Avoids threading `R` through every closure the macro
+//! 2. **Thread-local active renderer**. The macro expansion calls free
+//!    functions ([`create_element`], [`set_attribute`], etc.) that
+//!    dispatch through a thread-local "currently mounted" renderer,
+//!    rather than threading an `R` through every closure the macro
 //!    generates.
-//!
-//! Both choices match the reactive runtime's pattern (thread-local
-//! arena, opaque handles). The old [`crate::renderer::Renderer`]
-//! trait + [`crate::render`] module stay until A3 Step 5 deletes
-//! them; both APIs co-exist during the transition.
 
 pub mod apply;
 pub mod control_flow;
@@ -61,9 +55,7 @@ pub use renderer::{
 // Renderer-wiring internals. Public because `whisker-driver` (and test
 // renderers) link against them across the crate boundary and the macro
 // expansions name them by path — but NOT part of the app- or
-// module-author API. `#[doc(hidden)]` keeps them out of docs.rs and
-// signals "do not depend on this" without breaking the existing
-// cross-crate references.
+// module-author API, hence `#[doc(hidden)]`.
 #[doc(hidden)]
 pub use renderer::{
     DynRenderer, EventDispatchPlan, PHANTOM_BASE, current_renderer_id, element_sign,

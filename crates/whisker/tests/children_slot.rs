@@ -15,8 +15,6 @@
 //!    (per-component remount / hot-reload) without `cannot move out
 //!    of` errors — `mount_children` takes `&Children`, never moves.
 //!
-//! Naming convention matches `component_invocation.rs` (the longer
-//! file that exercises every other Props-derived behaviour).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -27,9 +25,8 @@ use whisker::runtime::view::{DynRenderer, Element, install_renderer, uninstall_r
 
 // ----- Recording renderer ----------------------------------------------------
 //
-// Same shape as `component_invocation.rs` — duplicated rather than
-// shared because integration tests don't have a `tests/common`
-// module convention yet, and the helper code is small.
+// Same shape as `component_invocation.rs`, duplicated because
+// integration tests have no shared `tests/common` module.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Op {
@@ -154,8 +151,6 @@ fn slot_mounts_children_between_siblings_in_order() {
             }
         };
 
-        // Verify the three raw_text "text" attributes appear in the
-        // expected order: header → slot → footer.
         let texts: Vec<String> = log
             .borrow()
             .iter()
@@ -175,10 +170,9 @@ fn slot_mounts_children_between_siblings_in_order() {
 #[test]
 fn slot_mounts_multi_element_children_as_fragment() {
     with_test_env(|log| {
-        // Caller passes two text elements inside the braces — the
-        // macro routes them through a Fragment-returning closure.
-        // The slot's `mount_children` flattens the fragment so both
-        // texts end up at the slot position.
+        // Two text elements at the call site route through a
+        // Fragment-returning closure, which `mount_children` flattens
+        // at the slot position.
         let _h = render! {
             CardWithSlot() {
                 text(value: "first")
@@ -205,12 +199,9 @@ fn slot_mounts_multi_element_children_as_fragment() {
 #[test]
 fn slot_can_be_used_more_than_once() {
     with_test_env(|log| {
-        // `double_mount` writes `children()` twice. The caller's
-        // children closure is `Fn`, so invoking it twice produces
-        // two independent renders of the same content. The
-        // assertions count `raw_text` "text" attrs rather than
-        // exact equality so we don't depend on phantom-element
-        // ordering details.
+        // The assertions count `raw_text` "text" attrs rather than
+        // comparing exactly, so they don't depend on phantom-element
+        // ordering.
         let _h = render! {
             DoubleMount() {
                 text(value: "echo")
@@ -229,10 +220,9 @@ fn slot_can_be_used_more_than_once() {
 #[test]
 fn slot_with_omitted_children_renders_nothing_extra() {
     with_test_env(|log| {
-        // No `{ … }` block at the call site → children defaults
-        // to a closure returning View::Empty. `mount_children`
-        // still creates a phantom but attaches nothing to it, so
-        // no raw_text elements get created.
+        // With no `{ … }` block, children defaults to a closure
+        // returning `View::Empty`: the phantom is still created but
+        // nothing attaches to it.
         let _h = render! { BareSlot() };
 
         let raw_text_creates = log
@@ -257,11 +247,9 @@ fn slot_with_omitted_children_renders_nothing_extra() {
 
 #[test]
 fn slot_body_can_be_reinvoked() {
-    // Per-component remount / hot-reload re-invoke the component's
-    // outer `FnMut` body. `children()` lowers to a `&children`
-    // borrow inside `mount_children`, so nothing moves and the
-    // second invocation succeeds. We simulate the re-invocation by
-    // constructing the Props once and calling the inner fn twice.
+    // Remount / hot-reload re-invoke the component's outer `FnMut`.
+    // Simulated here by building the Props once and calling the inner
+    // fn twice; nothing moves, because `mount_children` borrows.
     with_test_env(|log| {
         use whisker::runtime::view::{Children, View};
         let children: Children = Rc::new(|| View::Text("echo".to_string()));
@@ -272,9 +260,6 @@ fn slot_body_can_be_reinvoked() {
         let props2 = BareSlotProps::builder().children(children.clone()).build();
         let _h2 = BareSlot(props2);
 
-        // Each invocation should produce one raw_text("echo"). Two
-        // invocations → two echoes. (If `mount_children` moved the
-        // Rc, the second call would panic / fail to compile.)
         let echoes = log
             .borrow()
             .iter()

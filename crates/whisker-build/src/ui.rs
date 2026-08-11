@@ -1,8 +1,7 @@
 //! Curated terminal output for `whisker run`.
 //!
-//! Replaces ad-hoc `eprintln!("[whisker-build] …")` /
-//! `eprintln!("[whisker-dev-server] …")` lines with a single, uniform
-//! event surface that the user sees as:
+//! One uniform event surface across whisker-build, whisker-dev-server
+//! and whisker-cli, which the user sees as:
 //!
 //! ```text
 //! ──── Build ────────────────────────────────────
@@ -21,8 +20,7 @@
 //! - **Default**: spinners + curated step list, color when stderr is
 //!   a TTY, ASCII fallback otherwise.
 //! - **`WHISKER_VERBOSE=1`**: every event is emitted as plain
-//!   `[whisker] …` lines without spinners. Same content the
-//!   pre-refactor `eprintln!` calls produced, but uniformly prefixed.
+//!   `[whisker] …` lines without spinners.
 //!   Underlying tool output (cargo / xcodebuild / gradle) also
 //!   streams through verbatim — the caller is responsible for piping
 //!   those streams; we don't capture them here.
@@ -32,14 +30,11 @@
 //! pipeline so the env-var is the single source of truth across
 //! crate boundaries.
 //!
-//! ## Why a shared module, not a trait
+//! ## Why free fns, not an `OutputSink` trait
 //!
-//! whisker-build, whisker-dev-server, and whisker-cli all need to
-//! emit status. Threading an `OutputSink` trait through every call
-//! site would be a big refactor with no payoff (there's exactly one
-//! production sink — stderr). A free-fn surface with a thread-local
-//! configuration knob keeps the migration to a per-call edit instead
-//! of a signature change.
+//! There is exactly one production sink (stderr), so threading a
+//! trait through every call site buys nothing a global mode knob
+//! doesn't already give.
 
 use std::io::IsTerminal;
 use std::sync::{Mutex, OnceLock};
@@ -49,20 +44,14 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 // ---- Shared MultiProgress + status bar -------------------------------
 //
-// Steps and the dev-server status share a single `MultiProgress` so
-// their drawing doesn't fight: the status bar is anchored at the
-// bottom, individual step bars insert above it. Without coordination,
-// indicatif's redraws and `eprintln!`s interleave and we end up with
-// the "client connected" line wedged between two spinner frames the
-// user reported.
+// Everything that draws shares one `MultiProgress`; independent bars
+// would interleave their redraws with each other's `eprintln!`s and
+// wedge printed lines between spinner frames.
 
 fn multi() -> &'static MultiProgress {
     static M: OnceLock<MultiProgress> = OnceLock::new();
     M.get_or_init(MultiProgress::new)
 }
-
-// (Removed: a persistent indicatif bar for dev-server status. See
-// the `set_status` impl below for the simpler printed-line model.)
 
 // ---- Configuration ----------------------------------------------------
 
@@ -85,10 +74,8 @@ enum Mode {
 fn mode() -> Mode {
     static MODE: OnceLock<Mode> = OnceLock::new();
     *MODE.get_or_init(|| {
-        // Order matters: verbose wins over TUI so `WHISKER_VERBOSE=1`
-        // remains the universal "show me everything plain" override
-        // even when the cli kicked the TUI on. Otherwise TUI wins over
-        // Curated when set.
+        // Verbose outranks TUI so `WHISKER_VERBOSE=1` stays a
+        // universal "show me everything plain" override.
         if is_verbose() {
             Mode::Verbose
         } else if is_tui() {
@@ -132,39 +119,22 @@ fn is_tty() -> bool {
 
 // ---- Dev-server status (printed-line model) -------------------------
 //
-// An earlier iteration anchored a persistent indicatif `ProgressBar`
-// at the bottom and updated it via `set_message`. In practice
-// `MultiProgress::println` (called every time a section header / step
-// transition fired) preserved the bar's then-current frame in the
-// scrollback above each printed line — the user saw the same
-// `◍ dev-server …` line stacked 3-4 times.
-//
-// The simpler model below skips the persistent bar entirely:
-//
-// - `ensure_status` emits a single info-style line on first call
-//   ("dev-server starting" or similar). Subsequent calls are no-ops.
-// - `set_status` deduplicates: it tracks the most-recently-emitted
-//   status string and only prints when the new value differs. That
-//   way startup events (`starting…` → `ws://… · 0 client(s)`) only
-//   produce a line per *state change*, not per call.
-// - `finish_status` prints a final line on shutdown.
-//
-// Trade-off: no live spinner. Dev-server state changes are rare
-// (bind, client connect, patch sent) so a static line per state is
-// clearer than an animated bottom anchor that has rendering bugs.
+// Deliberately no persistent bottom-anchored bar: printing above one
+// leaves its then-current spinner frame in scrollback, stacking a copy
+// of the status row per printed line. Dev-server state changes are
+// rare (bind, client connect, patch sent), so one printed line per
+// state change costs nothing and renders correctly.
 
 /// Last status string we printed. Used to dedupe rapid-fire
 /// `set_status` calls.
 static LAST_STATUS: Mutex<Option<String>> = Mutex::new(None);
 
-/// Mark the dev-server's status surface as "active". Currently a
-/// no-op recorder — kept as part of the public API because callers
-/// in `whisker-dev-server` use it as a sentinel that says "you're
-/// allowed to call `set_status` after this point".
+/// Mark the dev-server's status surface as "active". A no-op recorder
+/// beyond that: `whisker-dev-server` calls it as the sentinel meaning
+/// "`set_status` is allowed from here on".
 pub fn ensure_status(_label: impl Into<String>) {
     if matches!(mode(), Mode::Tui) {
-        // Live region carries the same data — no-op the legacy
-        // status surface to avoid double-displaying it.
+        // The cli's live region already shows this.
         return;
     }
     if let Ok(mut guard) = LAST_STATUS.lock() {
@@ -177,12 +147,9 @@ pub fn ensure_status(_label: impl Into<String>) {
 /// print the same content. The line goes through `info()` so it
 /// shares the `· <msg>` visual style with other one-shot lines.
 ///
-/// In TUI mode this is a no-op: `whisker-cli`'s live region at the
-/// bottom of the terminal already renders the ws addr and the
-/// client count (via the dev-server's `Event::ClientConnected /
-/// Disconnected` stream), so emitting the legacy `· dev-server · …`
-/// line just duplicates the same information one row above the
-/// pinned status panel.
+/// In TUI mode this is a no-op: `whisker-cli`'s live region already
+/// renders the ws addr and client count from the dev-server's
+/// `Event::ClientConnected / Disconnected` stream.
 pub fn set_status(msg: impl Into<String>) {
     if matches!(mode(), Mode::Tui) {
         return;
@@ -198,10 +165,10 @@ pub fn set_status(msg: impl Into<String>) {
     info(format!("dev-server · {m}"));
 }
 
-/// Emit a final dev-server status line on shutdown. Same code path
-/// as `set_status` minus the dedupe (we want the goodbye visible
-/// even if it matches the previous status). Also no-ops in TUI
-/// mode — the live region disappearing IS the goodbye.
+/// Emit a final dev-server status line on shutdown. Like `set_status`
+/// minus the dedupe, so the goodbye shows even when it repeats the
+/// previous status. No-ops in TUI mode — the live region disappearing
+/// is the goodbye.
 pub fn finish_status(final_msg: impl Into<String>) {
     if matches!(mode(), Mode::Tui) {
         return;
@@ -220,10 +187,7 @@ pub fn section(name: &str) {
             eprintln!("[whisker] ─── {name} ───");
         }
         Mode::Curated | Mode::Tui => {
-            // Line drawing matches what `cargo` itself emits during
-            // its "Compiling" / "Finished" phases — a single visual
-            // rhythm across the whole pipeline. Color codes are SGR
-            // (no cursor motion) so they're safe to emit even in TUI
+            // SGR color only, no cursor motion — safe to emit in TUI
             // mode where the ratatui viewport owns the bottom region.
             let bar_chars = "─".repeat(40usize.saturating_sub(name.len()));
             let line = if is_tty() {
@@ -249,21 +213,12 @@ fn indicatif_active() -> bool {
 /// instead of overlapping with their redraw. Falls back to plain
 /// `eprintln!` when nothing's animated.
 fn emit_above_bars(line: &str) {
-    // `multi.println` panics with a "no bars in multi" check? Actually
-    // `multi.suspend` is the indicatif-blessed primitive for
-    // interleaving arbitrary output with bars: it clears the bars,
-    // runs the closure (which writes via eprintln!), and redraws
-    // the bars cleanly. Earlier attempts used `multi.println`,
-    // which left the bar's then-current spinner frame stuck in
-    // scrollback every time it pushed a line above the bars —
-    // that's what produced the "`⠁ compile …` then `✓ compile …`
-    // on two separate lines" duplication users reported.
+    // `multi.suspend`, never `multi.println`: suspend clears the bars,
+    // runs the closure, and redraws, whereas println leaves the bar's
+    // then-current spinner frame stuck in scrollback above each line.
     if !indicatif_active() {
-        // Non-TTY, verbose, or TUI mode: indicatif isn't drawing
-        // anything to interleave with, so a plain `eprintln!` is
-        // both correct and necessary — `multi.suspend` here in TUI
-        // mode would still flush stale indicatif state into the
-        // ratatui-owned region.
+        // Nothing is animating, and in TUI mode `suspend` would flush
+        // stale indicatif state into the ratatui-owned region.
         eprintln!("{line}");
         return;
     }
@@ -351,20 +306,16 @@ impl Step {
         let glyph = kind.glyph();
         let line = render_step_line(glyph, &self.name, &self.detail, &summary, kind);
         if let Some(bar) = self.bar {
-            // Swap the spinner template for a plain `{msg}` so the
-            // final line is *exactly* the formatted text we built —
-            // without the leftover `{spinner}` glyph + `{prefix}`
-            // duplication + trailing `…` that the live template
-            // would otherwise re-render around it.
+            // Plain `{msg}` template so the final line is exactly the
+            // text built above; the live template would re-render its
+            // spinner glyph, prefix and trailing `…` around it.
             bar.set_style(
                 ProgressStyle::with_template("{msg}").expect("template literal is valid"),
             );
             bar.finish_with_message(line);
         } else {
-            // Tui + non-TTY Curated both fall through here. In TUI
-            // mode, also emit the matching END marker so the cli
-            // clears the live-region's `current_step` field — see
-            // the START marker emitted in `step()` above.
+            // The END marker pairs with the START one `step()` emits;
+            // it tells the cli to clear the live region's current step.
             if matches!(mode(), Mode::Tui) {
                 eprintln!("{TUI_STEP_END_MARKER}");
             }
@@ -390,9 +341,8 @@ pub const TUI_STEP_END_MARKER: &str = "\x1eWHISKER-TUI-STEP-END";
 /// 1. **Progress** (cargo/gradle/xcodebuild status line) — folded into
 ///    the spinner's `set_message` so the step row stays one live line.
 /// 2. **Known noise** (gradle daemon advisories, gradle's
-///    deprecation banner) — dropped silently. These are advisory text
-///    the user can't act on, and they're the main offender behind
-///    the "gradle build のログが見づらい" complaint.
+///    deprecation banner) — dropped silently; advisory text the user
+///    can't act on.
 /// 3. **Everything else** — printed above the bar so it persists in
 ///    scrollback for triage (rustc errors, gradle task failures,
 ///    user `println!`s reaching this path through `cmd.pipe`).
@@ -410,30 +360,20 @@ fn stream_through_bar<R: std::io::Read + Send + 'static>(
         if let Some(progress) = subprocess_progress_text(&line) {
             if let Some(bar) = &bar {
                 bar.set_message(progress.to_string());
-                // No steady_tick anymore (see step() docs) so we
-                // tick manually to repaint the new {msg}.
+                // No steady tick (see `step`), so repaint by hand.
                 bar.tick();
             }
-            // No bar (non-TTY / verbose): emit verbatim. Without
-            // this branch the progress lines would be silently
-            // discarded in CI logs.
+            // Without a bar these lines would vanish from CI logs.
             else if matches!(mode(), Mode::Verbose) {
                 eprintln!("[whisker] {line}");
             }
         } else if !line.is_empty() {
-            // Drop known-noise advisory lines that the user can't
-            // act on (gradle daemon JVM banner, etc.). Both curated
-            // and TUI modes filter — Verbose keeps everything so
-            // the user has a chance to diagnose the filter itself
-            // if a real diagnostic ever gets misclassified.
+            // Verbose keeps everything, so a real diagnostic that gets
+            // misclassified as noise is still reachable.
             if matches!(mode(), Mode::Curated | Mode::Tui) && is_subprocess_noise(&line) {
                 continue;
             }
-            // Diagnostics / errors / unrecognised tool output:
-            // persist in scrollback. Use multi.suspend (not
-            // bar.println) so the bar is properly cleared before
-            // the line lands and redrawn afterwards — same fix as
-            // `emit_above_bars`.
+            // `multi.suspend`, not `bar.println` — see `emit_above_bars`.
             if bar.is_some() {
                 let line_owned = line.clone();
                 multi().suspend(|| {
@@ -476,8 +416,7 @@ fn subprocess_progress_text(line: &str) -> Option<String> {
 fn cargo_progress_text(line: &str) -> Option<&str> {
     let stripped = strip_leading_ansi(line.trim_start());
     let first_word = stripped.split_whitespace().next()?;
-    // Keep this list aligned with cargo's `Status` shell glyphs. New
-    // verbs (`Generating`, etc.) can be added as cargo introduces them.
+    // Mirrors cargo's `Status` shell verbs.
     if matches!(
         first_word,
         "Compiling"
@@ -510,9 +449,8 @@ fn cargo_progress_text(line: &str) -> Option<&str> {
 /// - `137 actionable tasks: 6 executed, 131 up-to-date` → same prefixed
 ///
 /// Returns `None` for anything else. Gradle's output is dominated by
-/// these patterns, so folding them into the spinner removes the
-/// ~50-line scroll-burst per `whisker run` that the curated layout
-/// was drowning in.
+/// these patterns, so folding them into the spinner is what keeps an
+/// assemble from scroll-bursting the curated layout.
 fn gradle_progress_text(line: &str) -> Option<String> {
     let trimmed = line.trim_start();
     if let Some(rest) = trimmed.strip_prefix("> Task ") {
@@ -616,24 +554,11 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             }
         }
         Mode::Tui => {
-            // TUI mode: the inline ratatui viewport captures stderr
-            // and `insert_before`s each captured line into scrollback.
-            // Emitting a "⏵ started" line here would just be
-            // immediately followed by the "✓ done" line from
-            // `finish()`, doubling the row count — there's no
-            // overwrite mechanism for already-committed scrollback
-            // lines (unlike indicatif's spinner in Curated mode).
-            //
-            // Instead, emit a structured marker on stderr that
-            // whisker-cli's capture thread recognises and routes
-            // into the live region's `current_step` field, so the
-            // user sees an animated spinner during long steps
-            // (`xcodebuild`, `gradle :app:assembleDebug`, etc.)
-            // without that label entering scrollback. `finish()`
-            // emits a matching END marker plus the regular
-            // `✓ <name> <detail> <elapsed>` line that DOES enter
-            // scrollback. See `whisker_cli::tui::capture_reader_loop`
-            // for the consuming side.
+            // A committed scrollback line can't be overwritten, so a
+            // "⏵ started" line here would just stack above `finish()`'s
+            // "✓ done". The marker instead drives the cli's live-region
+            // spinner and never enters scrollback; see
+            // `whisker_cli::tui::capture_reader_loop`.
             eprintln!("{TUI_STEP_START_MARKER}\x1e{name}\x1e{detail}");
             Step {
                 bar: None,
@@ -644,18 +569,11 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
         }
         Mode::Curated if is_tty() => {
             let bar = ProgressBar::new_spinner();
-            // 12-char fixed-width name column keeps verbs left-aligned
-            // across steps (`compile     hello-world …`,
-            // `stage       xcframework …`). 18 chars covers the
-            // longest verb we use (`xcodebuild`) plus padding.
-            //
-            // No `enable_steady_tick`: combined with multi.suspend
-            // (which clears/redraws bars around external writes),
-            // an async tick raced with the suspend cycle and could
-            // briefly redraw the bar at a stale position. The
-            // {msg} column updates whenever cargo emits a new
-            // progress line — that's the actual "still working"
-            // signal, animation isn't needed on top.
+            // No `enable_steady_tick`: an async tick races the
+            // clear/redraw cycle `multi.suspend` runs around external
+            // writes and can leave the bar redrawn at a stale
+            // position. The {msg} column already moves on every cargo
+            // progress line, which is the real "still working" signal.
             bar.set_style(
                 ProgressStyle::with_template("  {spinner:.cyan} {prefix:<12} {msg:<24} …")
                     .expect("template literal is valid"),
@@ -663,8 +581,7 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             bar.set_prefix(name.clone());
             bar.set_message(detail.clone());
             let bar = multi().add(bar);
-            // Manual tick so the bar shows up immediately rather
-            // than waiting for the first `set_message` update.
+            // Show the bar now instead of at the first `set_message`.
             bar.tick();
             Step {
                 bar: Some(bar),
@@ -674,8 +591,6 @@ pub fn step(name: impl Into<String>, detail: impl Into<String>) -> Step {
             }
         }
         Mode::Curated => {
-            // Curated but non-TTY (CI, piped to file). Emit a single
-            // "started" line; `finish()` will emit the final state.
             eprintln!("  ⏵ {name:<12} {detail}");
             Step {
                 bar: None,
@@ -802,31 +717,22 @@ mod tests {
 
     #[test]
     fn step_kind_glyphs_are_recognisable_ascii() {
-        // Quick sanity — broken assertion would mean someone swapped
-        // the glyphs accidentally (we render these in non-TTY too,
-        // where we want them distinct).
         assert_eq!(StepKind::Done.glyph(), "✓");
         assert_eq!(StepKind::Fail.glyph(), "✗");
     }
 
     #[test]
     fn render_step_line_aligns_name_column_at_12_chars() {
-        // Force the non-TTY branch (plain output) so the assertion
-        // doesn't depend on `is_tty()` returning false at test time
-        // — which it does under cargo test, but explicit is better.
         // FIXME: Audit that the environment access only happens in single-threaded code.
         unsafe { std::env::set_var("WHISKER_VERBOSE", "") };
         let line = if is_tty() {
-            // Test fixture: derive the non-color version even when
-            // running interactively. We can't easily mock is_tty()
-            // from a unit test without an extra abstraction, so
-            // verify the structure on the plain branch instead.
+            // `is_tty()` can't be mocked without another abstraction,
+            // so an interactive run skips instead of asserting on the
+            // colored branch.
             return;
         } else {
             render_step_line("✓", "compile", "hello-world", "6.7s", StepKind::Done)
         };
-        // "  ✓ compile      hello-world              6.7s"
-        //          ^^^^^^^^^^^ 12 chars of name column
         assert!(line.contains("✓"));
         assert!(line.contains("compile"));
         assert!(line.contains("hello-world"));
@@ -890,9 +796,8 @@ mod tests {
     fn gradle_progress_rejects_non_gradle_lines() {
         assert!(gradle_progress_text("Compiling foo v0.1.0").is_none());
         assert!(gradle_progress_text("regular line").is_none());
-        // A `>` prefix without `Task` doesn't qualify — gradle's
-        // configure phase emits `> Configure project :app` blocks
-        // that the user may want to triage; let them surface.
+        // `> Configure project :app` blocks are triage material, so a
+        // `>` prefix without `Task` must not be folded away.
         assert!(gradle_progress_text("> Configure project :app").is_none());
     }
 
@@ -925,8 +830,6 @@ mod tests {
 
     #[test]
     fn subprocess_noise_leaves_real_diagnostics_alone() {
-        // Real failures should NOT be filtered — they need to land in
-        // scrollback so the user sees what to fix.
         assert!(!is_subprocess_noise(
             "FAILURE: Build failed with an exception."
         ));

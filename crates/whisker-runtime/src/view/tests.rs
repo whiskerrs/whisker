@@ -50,9 +50,8 @@ enum Op {
 
 #[derive(Default)]
 struct RecordingRenderer {
-    // `Cell` because `DynRenderer` methods take `&self` now (the
-    // re-entrancy fix): the renderer owns its mutable state behind
-    // interior mutability instead of `&mut self`.
+    // `Cell` because `DynRenderer` methods take `&self`: a renderer owns
+    // its mutable state behind interior mutability.
     next_id: std::cell::Cell<u32>,
     ops: std::rc::Rc<std::cell::RefCell<Vec<Op>>>,
     /// When set, the renderer advertises positioned insert and records
@@ -299,9 +298,8 @@ fn view_attach_appends_each_leaf() {
 /// to a PHANTOM slot (`mount_children`), then that phantom is appended to a
 /// REAL parent (`append_child(root, content)`). Every real child must reach
 /// the renderer attached to the real root — the mirror's phantom-hoist must
-/// not drop the 2nd..Nth child. (Pins the layer for the Android
-/// "only the first Router child mounts" symptom: if this passes, the mirror
-/// is correct and the divergence is renderer/bridge-side.)
+/// not drop the 2nd..Nth child. If this passes, the mirror is correct and
+/// any "only the first child mounts" divergence is renderer/bridge-side.
 #[test]
 fn multi_child_fragment_through_phantom_slot_hoists_all_children() {
     let (renderer, log) = RecordingRenderer::with_log();
@@ -347,7 +345,7 @@ fn multi_child_fragment_through_phantom_slot_hoists_all_children() {
 /// time of the insert — Lynx's `InsertNodeBefore` needs the reference to
 /// be a live child of the parent. A reference pointing at a batch-mate
 /// that hasn't been inserted yet silently fails on-device, dropping all
-/// but one child (the "only the first history card renders" symptom).
+/// but one child.
 #[test]
 fn multi_child_hoist_insert_support_references_already_present() {
     let (renderer, log) = RecordingRenderer::with_log_insert_support();
@@ -402,10 +400,10 @@ fn multi_child_hoist_insert_support_references_already_present() {
 
 #[test]
 fn phantom_hoist_into_non_tail_position_uses_positioned_insert() {
-    // A renderer that supports positioned insert must place a
-    // hoisted child with a single `insert_before` and NOT rotate the
-    // following sibling (the append + rotate that detaches a stateful
-    // native sibling and drops its focus).
+    // A renderer that supports positioned insert must place a hoisted
+    // child with a single `insert_before` and NOT rotate the following
+    // sibling — the rotate detaches a stateful native sibling and drops
+    // its focus.
     let (renderer, log) = RecordingRenderer::with_log_insert_support();
     let (root, a, b) = with_installed_renderer(Box::new(renderer), || {
         let root = create_element(ElementTag::View);
@@ -441,8 +439,8 @@ fn phantom_hoist_into_non_tail_position_uses_positioned_insert() {
 #[test]
 fn insert_child_at_non_tail_uses_positioned_insert_not_rotate() {
     // `insert_child_at` (hot-reload remount) must place the child with a
-    // single `insert_before` and leave the following siblings attached —
-    // not detach + re-append them (the old rotate).
+    // single `insert_before` and leave the following siblings attached,
+    // not detach and re-append them.
     let (renderer, log) = RecordingRenderer::with_log_insert_support();
     let (root, b, c, d) = with_installed_renderer(Box::new(renderer), || {
         let root = create_element(ElementTag::View);
@@ -478,12 +476,12 @@ fn insert_child_at_non_tail_uses_positioned_insert_not_rotate() {
 }
 
 // ===========================================================================
-// Re-entrancy (whisker #3) — these tests pin the root-cause fix: a native
-// event that fires *synchronously during* a renderer operation must be able
-// to re-enter the dispatch path without aborting on "RefCell already
-// borrowed". The fix is: `DynRenderer` methods take `&self`, renderers own
-// their state behind interior `RefCell`s with FFI-scoped borrows, and
-// `with_renderer` takes a *shared* borrow of the renderer slot.
+// Re-entrancy — a native event that fires *synchronously during* a renderer
+// operation must be able to re-enter the dispatch path without aborting on
+// "RefCell already borrowed". That rests on three things: `DynRenderer`
+// methods take `&self`, renderers own their state behind interior
+// `RefCell`s with FFI-scoped borrows, and `with_renderer` takes a *shared*
+// borrow of the renderer slot.
 // ===========================================================================
 mod reentrancy {
     use super::*;
@@ -635,12 +633,10 @@ mod reentrancy {
 
     /// Re-entrant *renderer op* during a renderer op does not panic.
     /// `remove_child` synchronously calls back into `set_attribute`
-    /// (another `with_renderer` shared borrow). Pre-fix this aborted
-    /// with "already borrowed".
+    /// (another `with_renderer` shared borrow).
     #[test]
     fn reentrant_renderer_op_during_remove_does_not_panic() {
         let (renderer, log) = ReentrantRenderer::new();
-        // Install a hook that re-enters the public dispatch path.
         *renderer.on_remove_hook.borrow_mut() = Some(Box::new(|| {
             // This goes through `with_renderer` again — a NESTED shared
             // borrow of CURRENT_RENDERER. Must be granted, not aborted.
@@ -681,8 +677,7 @@ mod reentrancy {
     /// synchronously and in order. `remove_child` synchronously
     /// dispatches an event whose listener performs another renderer op
     /// — both the outer op and the inner listener's effect are observed
-    /// in order. This proves there is no one-tick deferral (the #3
-    /// `DispatchQueue.main.async` workaround is no longer needed).
+    /// in order, so there is no one-tick deferral.
     #[test]
     fn reentrant_event_dispatch_runs_synchronously_in_order() {
         let (renderer, log) = ReentrantRenderer::new();

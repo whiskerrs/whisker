@@ -1,6 +1,6 @@
-//! End-to-end check on the `extra_files` IR pass-through (RFC #164
-//! B-direction PR 3): built-in plugin → engine → `inputs_from` →
-//! renderer drops the file into `gen/{ios,android}/`.
+//! End-to-end check on the `extra_files` IR pass-through: built-in
+//! plugin → engine → `inputs_from` → renderer drops the file into
+//! `gen/{ios,android}/`.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -63,10 +63,6 @@ fn sync_android(app: &Config) -> (PathBuf, PathBuf) {
     whisker_cng::android::sync(&out, &inputs).unwrap();
     (tmp, out)
 }
-
-// ============================================================================
-// iOS
-// ============================================================================
 
 #[test]
 fn ios_extra_file_lands_at_the_declared_relative_path() {
@@ -160,15 +156,10 @@ fn ios_extra_file_with_parent_dir_traversal_is_rejected() {
 fn ios_no_plugin_means_no_extra_files_written() {
     let app = base_ios_app();
     let (tmp, out) = sync_ios(&app);
-    // No spurious files outside the known set.
     assert!(out.join("Info.plist").exists());
     assert!(!out.join("Sources/Helper.swift").exists());
     let _ = std::fs::remove_dir_all(&tmp);
 }
-
-// ============================================================================
-// Android
-// ============================================================================
 
 #[test]
 fn android_extra_file_lands_at_the_declared_relative_path() {
@@ -226,15 +217,10 @@ fn android_extra_file_with_absolute_path_is_rejected() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-// ============================================================================
-// Realistic: Firebase google-services.json
-// ============================================================================
-
 #[test]
 fn android_firebase_google_services_json_drops_at_app_root() {
-    // What a real `whisker-firebase` plugin (Phase 4 dogfood)
-    // would do for Android — drop `google-services.json` next to
-    // the app's `build.gradle.kts`.
+    // What a `whisker-firebase` plugin would do for Android — drop
+    // `google-services.json` next to the app's `build.gradle.kts`.
     let mut app = base_android_app();
     app.plugin::<AndroidExtraFiles>(|c| {
         c.add(

@@ -1,10 +1,9 @@
 //! Whisker plugin for the haptics module.
 //!
 //! Haptic feedback is meaningless without `android.permission.VIBRATE`
-//! (a "normal" permission — auto-granted, no runtime dialog), so
-//! unlike `whisker-audio`'s config plugin, there's no opt-in flag to
-//! spell: opting into the plugin at all means opting into the
-//! permission.
+//! (a "normal" permission — auto-granted, no runtime dialog), so the
+//! config carries no opt-in flag: opting into the plugin at all means
+//! opting into the permission.
 //!
 //! ## Usage in `whisker.rs`
 //!
@@ -29,10 +28,8 @@ impl PluginConfig for WhiskerHapticsConfig {
 /// subprocess via the bundled `whisker-haptics-plugin` binary,
 /// depending on the engine's plugin pipeline. Also the namespace for
 /// the runtime API (`impact`/`selection`/`notification`, defined in
-/// `runtime.rs`) — one unit struct serves both roles, unlike
-/// `whisker-audio`'s split (`WhiskerAudio` the plugin vs. `Player`
-/// the runtime handle), since haptics has no handle/identity to
-/// carry, just static methods (Shape 5).
+/// `runtime.rs`) — one unit struct serves both roles, since haptics has
+/// no handle to carry, just static methods (Shape 5).
 pub struct WhiskerHaptics;
 
 impl Plugin for WhiskerHaptics {

@@ -41,7 +41,7 @@ where
     let mut consumed = false;
     let mut capture_caught = false;
 
-    // Capture phase: root → target (chain is target-first, so reverse).
+    // Root → target: the chain is target-first, hence the reverse.
     for &sign in chain.iter().rev() {
         let mut stop = false;
         for (bt, listener) in handlers_for(sign) {
@@ -64,8 +64,7 @@ where
         }
     }
 
-    // Bubble phase: target → root, skipped entirely if a capture-catch
-    // already swallowed the event.
+    // Skipped entirely if a capture-catch already swallowed the event.
     if !capture_caught {
         for &sign in chain.iter() {
             let mut stop = false;
@@ -104,7 +103,7 @@ mod tests {
         move |sign| map.get(&sign).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    // Chain target-first: target=1, parent=2, root=3  (tree 3 → 2 → 1).
+    // Chain target-first: target=1, parent=2, root=3 (tree 3 → 2 → 1).
     const TARGET: i32 = 1;
     const PARENT: i32 = 2;
     const ROOT: i32 = 3;
@@ -134,7 +133,6 @@ mod tests {
         m.insert(PARENT, vec![(BindType::Catch, "parent_catch")]);
         m.insert(ROOT, vec![(BindType::Bind, "root")]);
         let (_, firings) = plan(&chain(), lookup(&m));
-        // target fires, parent's catch fires + stops — root never runs.
         assert_eq!(order(&firings), ["target", "parent_catch"]);
     }
 
@@ -145,7 +143,6 @@ mod tests {
         m.insert(PARENT, vec![(BindType::CaptureBind, "parent_cap")]);
         m.insert(TARGET, vec![(BindType::Bind, "target_bubble")]);
         let (_, firings) = plan(&chain(), lookup(&m));
-        // capture root→target, then bubble target→root.
         assert_eq!(order(&firings), ["root_cap", "parent_cap", "target_bubble"]);
     }
 
@@ -157,8 +154,6 @@ mod tests {
         m.insert(TARGET, vec![(BindType::Bind, "target_bubble")]);
         let (consumed, firings) = plan(&chain(), lookup(&m));
         assert!(consumed);
-        // root's capture-catch fires and swallows the event: no
-        // descendant capture, no bubble.
         assert_eq!(order(&firings), ["root_cap_catch"]);
     }
 
@@ -174,7 +169,6 @@ mod tests {
     #[test]
     fn element_with_capture_and_bubble_both_fire() {
         let mut m = HashMap::new();
-        // One element registers both phases.
         m.insert(
             TARGET,
             vec![
@@ -183,7 +177,6 @@ mod tests {
             ],
         );
         let (_, firings) = plan(&chain(), lookup(&m));
-        // capture pass fires t_cap, bubble pass fires t_bubble.
         assert_eq!(order(&firings), ["t_cap", "t_bubble"]);
     }
 

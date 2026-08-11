@@ -198,7 +198,6 @@ mod tests {
         store
             .put(&android_keystore_rel("com.example.app"), b"jksbytes")
             .unwrap();
-        // meta missing → not resolvable yet
         assert!(
             store
                 .android_signing("com.example.app", &identity, &dir)
@@ -222,7 +221,6 @@ mod tests {
             .expect("both entries present");
         assert_eq!(std::fs::read(&signing.keystore_path).unwrap(), b"jksbytes");
         assert_eq!(signing.key_alias, "upload");
-        // exact-match only: a different application id resolves to none
         assert!(
             store
                 .android_signing("com.example.other", &identity, &dir)

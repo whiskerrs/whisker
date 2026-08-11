@@ -6,28 +6,22 @@
 //! operations namespaced under the unit struct [`WhiskerStatusBar`]:
 //!
 //! - [`set_hidden`](WhiskerStatusBar::set_hidden) — show/hide the system
-//!   status bar (animated fade on iOS).
+//!   status bar.
 //! - [`set_style`](WhiskerStatusBar::set_style) — set the content color
 //!   ([`StatusBarStyle::Light`] = light icons for a dark background,
 //!   [`StatusBarStyle::Dark`] = dark icons for a light background).
 //!
+//! **Android-only** — both methods no-op on iOS. The only status-bar API
+//! a view-less module can reach there is the deprecated app-level
+//! `UIApplication.setStatusBarHidden`, which corrupts `whisker-router`'s
+//! transform-based transition animations; iOS support needs
+//! `WhiskerViewController.prefersStatusBarHidden` instead.
+//!
 //! Deliberately **not async** — the native module DSL only supports
 //! synchronous `Function`s today, and toggling the status bar is
-//! effectively instant on both platforms. The native handlers hop to
-//! the UI thread themselves ([`DispatchQueue.main`] / `runOnUiThread`),
-//! so callers may invoke from a reactive-thread `on_mount`/`on_cleanup`
-//! without wrapping.
-//!
-//! ## iOS setup (handled automatically)
-//!
-//! iOS routes status-bar appearance through the foreground view
-//! controller by default, which a view-less module can't reach. This
-//! crate's [`plugin`] injects `UIViewControllerBasedStatusBarAppearance
-//! = false` into `Info.plist` (when the app opts in via
-//! `app.plugin::<WhiskerStatusBar>(|c| c)`), which re-enables the
-//! app-level `UIApplication` status-bar APIs the native module calls.
-//! Android needs no such setup — `WindowInsetsControllerCompat` drives
-//! the status bar directly off the host activity's window.
+//! effectively instant. The native handler hops to the UI thread itself
+//! (`runOnUiThread`), so callers may invoke from a reactive-thread
+//! `on_mount` / `on_cleanup` without wrapping.
 //!
 //! ## Usage
 //!
@@ -39,8 +33,8 @@
 //!
 //! ## Native source
 //!
-//! - iOS: `crates/whisker-status-bar/ios/Sources/WhiskerStatusBar/StatusBarModule.swift`
-//! - Android: `crates/whisker-status-bar/android/src/main/kotlin/rs/whisker/modules/status_bar/StatusBarModule.kt`
+//! - iOS: `packages/whisker-status-bar/ios/Sources/WhiskerStatusBar/StatusBarModule.swift`
+//! - Android: `packages/whisker-status-bar/android/src/main/kotlin/rs/whisker/modules/status_bar/StatusBarModule.kt`
 
 /// Plugin (iOS `Info.plist` injection). Always compiles — independent
 /// of the `runtime` feature so the `whisker.rs` config probe (which

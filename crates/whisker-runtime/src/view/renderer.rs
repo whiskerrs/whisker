@@ -72,24 +72,6 @@ pub struct EventDispatchPlan {
     pub firings: Vec<EventFiring>,
 }
 
-/// Object-safe renderer trait. The renderer owns whatever per-element
-/// state it needs and answers in `Element` IDs.
-///
-/// Mirrors the shape of [`crate::renderer::Renderer`] but is
-/// type-erased — the handle type is always [`Element`]. Existing
-/// `R: Renderer` implementations bridge into here via a small adapter
-/// that maintains its own `Element → R::Element` map.
-/// All mutating methods take `&self`, not `&mut self`. This is the
-/// core of the re-entrancy fix for whisker issue #3: a native event
-/// can fire *synchronously* during a renderer operation (e.g. Lynx
-/// teardown inside [`remove_child`](Self::remove_child) triggering a
-/// UIKit callback that dispatches a custom event), which re-enters the
-/// renderer through [`dispatch_event`]. With `&self` methods the
-/// thread-local [`CURRENT_RENDERER`] is held by a *shared* borrow in
-/// [`with_renderer`], so a re-entrant call (also shared) is permitted
-/// rather than panicking with "RefCell already borrowed". Renderers
-/// own their mutable state behind per-field `RefCell`s and must scope
-/// each field borrow so it does **not** span a re-entrant FFI call.
 /// One `<list>` diff-action entry as it crosses the renderer: the
 /// resolved (stable) item-key plus the per-item layout metadata Lynx's
 /// adapter ingests from the action stream. For inserts `position` is
@@ -107,12 +89,26 @@ pub struct ListItemAction {
     pub recyclable: bool,
 }
 
+/// Object-safe renderer trait. The renderer owns whatever per-element
+/// state it needs and answers in [`Element`] IDs.
+///
+/// All mutating methods take `&self`, not `&mut self`, so the renderer
+/// survives re-entrancy: a native event can fire *synchronously*
+/// during a renderer operation (e.g. Lynx teardown inside
+/// [`remove_child`](Self::remove_child) triggering a UIKit callback
+/// that dispatches a custom event) and re-enter through
+/// [`dispatch_event`]. With `&self` methods the thread-local
+/// [`CURRENT_RENDERER`] is held by a *shared* borrow in
+/// [`with_renderer`], so the nested call is granted instead of
+/// panicking with "RefCell already borrowed". Renderers own their
+/// mutable state behind per-field `RefCell`s and must scope each field
+/// borrow so it does **not** span a re-entrant FFI call.
 pub trait DynRenderer {
     fn create_element(&self, tag: ElementTag) -> Element;
-    /// Phase 7: tag-by-name dispatch for custom / xelement-style
-    /// tags ("x-input", etc.) not in the built-in [`ElementTag`]
-    /// enum. Returns [`Element::INVALID`] when the tag is unknown
-    /// to Lynx's behaviour registry.
+    /// Tag-by-name dispatch for custom / xelement-style tags
+    /// ("x-input", etc.) not in the built-in [`ElementTag`] enum.
+    /// Returns a handle whose [`id`](Element::id) is `u32::MAX` when the
+    /// tag is unknown to Lynx's behaviour registry.
     fn create_element_by_name(&self, tag_name: &str) -> Element;
     fn release_element(&self, handle: Element);
 
@@ -281,8 +277,6 @@ pub trait DynRenderer {
     /// crate having to know about the bridge's C types. Renderers
     /// that don't have a native pointer return `0`, which the
     /// driver surfaces as `WhiskerValue::Error` to the caller.
-    ///
-    /// Phase 7-Φ.H.2.3.
     fn module_component_ptr(&self, _handle: Element) -> usize {
         0
     }
@@ -301,28 +295,21 @@ thread_local! {
     /// relationship the runtime has emitted. Maintained by
     /// [`append_child`] / [`remove_child`].
     ///
-    /// Used by `mount_component_remountable` (#17 wrapper-removal
-    /// follow-up) to compute the "previous sibling at mount time"
-    /// anchor without asking Lynx — Lynx's C API doesn't expose a
-    /// child-position query, and we'd rather not add one. Side
-    /// effect: the mirror also enables `previous_sibling` /
-    /// `next_sibling` queries for any future need (e.g. insert_after
-    /// shimming when we ship the wrapper-less remount path).
+    /// The mirror exists because Lynx's C API exposes no
+    /// child-position query, so sibling/index lookups (component
+    /// remount anchors, phantom hoisting) have nowhere else to read
+    /// child order from.
     static CHILDREN_OF: RefCell<HashMap<Element, Vec<Element>>> =
         RefCell::new(HashMap::new());
 
     /// Reverse direction of [`CHILDREN_OF`]: child → its mirror
     /// parent. Maintained in lockstep with [`append_child`] /
-    /// [`remove_child`]. We need this to walk *up* the mirror — the
-    /// [phantom hoisting](create_phantom_element) machinery looks for
-    /// the nearest non-phantom ancestor on every tree mutation, and
-    /// the mirror-only direction is the only place that information
-    /// lives.
+    /// [`remove_child`] so [phantom hoisting](create_phantom_element)
+    /// can walk *up* to the nearest non-phantom ancestor.
     ///
-    /// Each child has at most one parent (we don't model the DOM's
-    /// "move from one parent to another" — every move is detach +
-    /// re-attach through us). Missing-entry = the child is currently
-    /// detached (no parent).
+    /// Each child has at most one parent — every move is a detach +
+    /// re-attach through us, never a DOM-style reparent. A missing
+    /// entry means the child is currently detached.
     static PARENT_OF: RefCell<HashMap<Element, Element>> =
         RefCell::new(HashMap::new());
 
@@ -337,11 +324,7 @@ thread_local! {
     static PHANTOM_ELEMENTS: RefCell<HashSet<Element>> =
         RefCell::new(HashSet::new());
 
-    /// Monotonic counter for phantom IDs, starting at [`PHANTOM_BASE`]
-    /// (`1 << 31`). The bridge renderer allocates real IDs from 0
-    /// upward, so the two ranges can't realistically collide (a
-    /// session would need 2 billion real elements before the real
-    /// counter reached `PHANTOM_BASE`).
+    /// Monotonic counter for phantom IDs, starting at [`PHANTOM_BASE`].
     static NEXT_PHANTOM_ID: Cell<u32> = const { Cell::new(PHANTOM_BASE) };
 }
 
@@ -360,9 +343,10 @@ pub fn install_renderer(r: Box<dyn DynRenderer>) -> Option<Box<dyn DynRenderer>>
     CURRENT_RENDERER.with_borrow_mut(|slot| slot.replace(r))
 }
 
-/// Remove the current renderer, returning it to the caller. The
-/// thread-local slot is left `None`. Subsequent dispatch calls warn
-/// (in debug) and no-op.
+/// Restore `prev` (typically what [`install_renderer`] handed back) as
+/// the current renderer, dropping whatever is installed now. Passing
+/// `None` leaves the slot empty, after which dispatch calls warn (in
+/// debug) and no-op.
 pub fn uninstall_renderer(prev: Option<Box<dyn DynRenderer>>) {
     CURRENT_RENDERER.with_borrow_mut(|slot| *slot = prev);
 }
@@ -391,18 +375,15 @@ pub fn current_renderer_id() -> Option<&'static str> {
 /// Run `f` against the installed renderer under a **shared** borrow of
 /// the [`CURRENT_RENDERER`] slot.
 ///
-/// The shared borrow is the re-entrancy fix: `RefCell` permits any
-/// number of simultaneous shared borrows, so if `f` (e.g. a
-/// `remove_child` that synchronously tears down native views) causes a
-/// native callback to re-enter Whisker through [`dispatch_event`] →
-/// another `with_renderer`, that nested shared borrow is granted
-/// instead of aborting with "already borrowed". This works because
-/// every [`DynRenderer`] method now takes `&self` and owns its mutable
-/// state behind interior `RefCell`s.
+/// The borrow must stay shared: if `f` (e.g. a `remove_child` that
+/// synchronously tears down native views) causes a native callback to
+/// re-enter Whisker through [`dispatch_event`] → another
+/// `with_renderer`, `RefCell` grants the nested shared borrow instead
+/// of aborting with "already borrowed".
 ///
-/// Slot *swapping* ([`install_renderer`] / [`uninstall_renderer`])
-/// still uses `with_borrow_mut`; those are never called during
-/// dispatch, so they can't conflict with an outstanding shared borrow.
+/// Slot *swapping* ([`install_renderer`] / [`uninstall_renderer`]) uses
+/// `with_borrow_mut`; those are never called during dispatch, so they
+/// can't conflict with an outstanding shared borrow.
 fn with_renderer<R>(f: impl FnOnce(&dyn DynRenderer) -> R, default: R) -> R {
     CURRENT_RENDERER.with_borrow(|slot| match slot.as_ref() {
         Some(r) => f(r.as_ref()),
@@ -417,10 +398,8 @@ fn with_renderer<R>(f: impl FnOnce(&dyn DynRenderer) -> R, default: R) -> R {
 // Free-function dispatch — what the `render!` macro and reactive
 // effects call.
 
-/// Free-fn helper used by the `render!` macro and reactive effects to
-/// allocate an element of any tag the bridge knows. Routes both the
-/// built-in `ElementTag` enum and tag-by-name strings through the
-/// same owner-tracking + invalid-handle logic.
+/// Allocate an element by tag name, registering it with the current
+/// reactive owner so `Owner::dispose` releases it.
 pub fn create_element_by_name(tag_name: &str) -> Element {
     let handle = with_renderer(|r| r.create_element_by_name(tag_name), Element(u32::MAX));
     if handle.id() != u32::MAX {
@@ -437,10 +416,10 @@ pub fn create_element_by_name(tag_name: &str) -> Element {
 
 pub fn create_element(tag: ElementTag) -> Element {
     let handle = with_renderer(|r| r.create_element(tag), Element(u32::MAX));
-    // Register the element with the current reactive owner so
-    // `Owner::dispose` releases it. Without this, `BridgeRenderer`'s
-    // element map (and Lynx FiberElement refcounts) accumulate across
-    // `<Show>` flips, `<For>` removals, and component remounts.
+    // Register with the current reactive owner so `Owner::dispose`
+    // releases it — otherwise the renderer's element map and Lynx's
+    // FiberElement refcounts accumulate across every `<Show>` flip,
+    // `<For>` removal, and component remount.
     if handle.id() != u32::MAX {
         crate::reactive::with_runtime(|rt| {
             if let Some(owner_id) = rt.current_owner() {
@@ -476,23 +455,16 @@ pub fn release_element(handle: Element) {
 /// attached under a phantom is hoisted to the phantom's nearest
 /// non-phantom mirror ancestor in Lynx, preserving source order.
 ///
-/// Phantom IDs come from [`NEXT_PHANTOM_ID`], starting at
-/// [`PHANTOM_BASE`] (`1 << 31`); the bridge renderer's real-element
-/// counter starts at 0, so the two ranges are disjoint in any
-/// realistic session.
-///
-/// Owner-tracking parity: the freshly-allocated phantom is added to
-/// the currently-active reactive owner's `elements` list, so the
-/// same dispose-cascade that releases real elements also reaches
-/// phantoms — [`release_element`] detects the phantom case and
-/// clears its mirror + set membership without touching Lynx.
+/// The phantom joins the current reactive owner's `elements` list like
+/// a real element, so the same dispose-cascade reaches it;
+/// [`release_element`] then clears its mirror state without touching
+/// Lynx.
 ///
 /// **Use case**: the wrapper-less `fragment` builtin and the
 /// `For` / `Show` control-flow components — each allocates one
 /// phantom as its "transparent grouping" element so its reactive
-/// children appear in the user's mirror tree as a group while
-/// landing in Lynx as flat siblings of the surrounding non-phantom
-/// container.
+/// children appear in the mirror tree as a group while landing in Lynx
+/// as flat siblings of the surrounding non-phantom container.
 pub fn create_phantom_element() -> Element {
     let id = NEXT_PHANTOM_ID.with(|c| {
         let id = c.get();
@@ -513,10 +485,9 @@ pub fn create_phantom_element() -> Element {
     handle
 }
 
-/// Whether `handle` was allocated by [`create_phantom_element`].
-/// Cheap thread-local lookup — the bridge dispatchers below call
-/// this on every tree-mutation to decide whether to skip the FFI
-/// step.
+/// Whether `handle` was allocated by [`create_phantom_element`]. The
+/// dispatchers below call this on every tree mutation to decide
+/// whether to skip the FFI step.
 pub fn is_phantom(handle: Element) -> bool {
     if handle.id() < PHANTOM_BASE {
         return false;
@@ -528,11 +499,9 @@ pub fn is_phantom(handle: Element) -> bool {
 /// until a non-phantom ancestor is found. Returns `None` if `start`
 /// has no parent or the entire chain to the root is phantoms.
 ///
-/// `start` may itself be either a phantom or a real element — the
-/// function just looks at its ancestors. For the hoisting path the
-/// caller usually passes the *parent* of the just-mutated child,
-/// because the child's own type isn't what determines the
-/// effective Lynx parent; the surrounding tree is.
+/// The hoisting path passes the *parent* of the just-mutated child:
+/// what determines the effective Lynx parent is the surrounding tree,
+/// not the child's own type.
 fn nearest_real_ancestor(start: Element) -> Option<Element> {
     let mut current = start;
     loop {
@@ -711,7 +680,6 @@ pub fn install_list_native_item_provider(
 ///     phantom is later attached to a real ancestor, the same
 ///     replay path handles the queued descendants in source order.
 pub fn append_child(parent: Element, child: Element) {
-    // Mirror update — unconditional.
     CHILDREN_OF.with_borrow_mut(|map| {
         map.entry(parent).or_default().push(child);
     });
@@ -719,16 +687,13 @@ pub fn append_child(parent: Element, child: Element) {
         map.insert(child, parent);
     });
 
-    // Realize on the Lynx side. When both ends are real, this is the
-    // hot path — a direct O(1) tail append.
     if !realize_hoisted_child(parent, child) {
         with_renderer(|r| r.append_child(parent, child), ());
     }
 
-    // Wrapper-less component mount handshake: if `child` is the body
-    // root of a freshly-mounted `#[component]`, its MountSite now
-    // learns where it landed (parent + previous sibling). Hot-reload
-    // remount uses this to keep mount sites anchored across patches.
+    // If `child` is the body root of a freshly-mounted `#[component]`,
+    // its MountSite learns where it landed — hot-reload remount reads
+    // that anchor to put the replacement back in the same place.
     crate::reactive::on_component_root_attached(parent, child);
 }
 
@@ -746,22 +711,18 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
     let parent_is_phantom = is_phantom(parent);
     let child_is_phantom = is_phantom(child);
     if parent_is_phantom {
-        // Hoist into the nearest real ancestor. When no real ancestor
-        // exists yet (topmost phantom still detached), skip the bridge
-        // step — the next attach will replay things.
+        // No real ancestor yet (topmost phantom still detached) means
+        // nothing to tell Lynx — the next attach replays this subtree.
         if let Some(real_anc) = nearest_real_ancestor(parent) {
             let to_attach: Vec<Element> = if child_is_phantom {
                 collect_transparent_real_descendants(child)
             } else {
                 vec![child]
             };
-            // Insert back-to-front: each child's positioned-insert
-            // reference is its next real sibling, which must already be
-            // in the Lynx tree. Attaching the last child first makes each
-            // subsequent (earlier) child's reference a node inserted a
-            // step ago — a forward pass would reference batch-mates that
-            // don't exist on-device yet, and Lynx would drop all but the
-            // final (append-with-null-reference) child.
+            // Back-to-front: each child's positioned-insert reference
+            // is its next real sibling, so it must already be in the
+            // Lynx tree. A forward pass references batch-mates that
+            // aren't on-device yet and Lynx drops all but the last.
             for real in to_attach.into_iter().rev() {
                 let pos = count_real_descendants_before(real_anc, real);
                 bridge_insert_or_append(real_anc, real, pos);
@@ -769,11 +730,7 @@ fn realize_hoisted_child(parent: Element, child: Element) -> bool {
         }
         true
     } else if child_is_phantom {
-        // Phantom child carries a transparent subtree; replay any real
-        // descendants at their positions. Back-to-front so each
-        // positioned-insert reference (the next real sibling) is already
-        // in the Lynx tree — see the reversed loop in the phantom-parent
-        // branch above for why a forward pass drops all but one child.
+        // Back-to-front for the same reason as the branch above.
         for real in collect_transparent_real_descendants(child)
             .into_iter()
             .rev()
@@ -831,15 +788,11 @@ pub fn remove_child(parent: Element, child: Element) {
 /// *after* it in Lynx is the next real descendant (`position + 1`), if
 /// any — that's the reference node for a positioned insert.
 ///
-/// The production `BridgeRenderer` (backed by Lynx v3.8.0-whisker.13+)
-/// reports `supports_insert_before`, so this is one native bridge call
-/// with no sibling churn. The append + rotate below is the generic
-/// algorithm for renderers *without* positioned insert (test mocks, a
-/// future non-Lynx backend): append to the tail, then detach every real
-/// sibling that must sit after `real_child` and re-append it past the
-/// child. That detach + reattach re-anchors stateful native siblings (an
-/// `<input>` loses focus) — which is exactly why the Lynx path never
-/// takes it.
+/// A renderer reporting `supports_insert_before` gets one native call
+/// with no sibling churn. The append + rotate fallback (test mocks, a
+/// Lynx too old for the capi) detaches and re-appends every real
+/// sibling that must sit after `real_child`, which re-anchors stateful
+/// native siblings — a focused `<input>` loses focus.
 fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: usize) {
     let real_descendants = collect_transparent_real_descendants(real_parent);
     let reference = real_descendants.get(position + 1).copied();
@@ -852,9 +805,8 @@ fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: 
         return;
     }
 
-    // Generic path (no positioned insert): append then rotate.
-    // `real_descendants` already includes `real_child` at `position`, so
-    // the "after" slice is everything past it.
+    // `real_descendants` already includes `real_child` at `position`,
+    // so the siblings to rotate past it are everything after it.
     with_renderer(|r| r.append_child(real_parent, real_child), ());
     if position + 1 < real_descendants.len() {
         let to_move: Vec<Element> = real_descendants[position + 1..].to_vec();
@@ -872,10 +824,8 @@ fn bridge_insert_or_append(real_parent: Element, real_child: Element, position: 
 /// the Lynx side: `child` is realized with a positioned insert
 /// ([`bridge_insert_or_append`] → native `insert_before` on Lynx), so a
 /// stateful native sibling (a focused `<input>`, a scrolled list) keeps
-/// its state — unlike the old detach-siblings / append / re-append
-/// simulation this replaced.
+/// its state.
 pub fn insert_child_at(parent: Element, child: Element, index: usize) {
-    // Mirror update — insert at `index` (append if out of range).
     CHILDREN_OF.with_borrow_mut(|map| {
         let children = map.entry(parent).or_default();
         if index < children.len() {
@@ -888,9 +838,6 @@ pub fn insert_child_at(parent: Element, child: Element, index: usize) {
         map.insert(child, parent);
     });
 
-    // Realize at the mirror position. Both-real case: a positioned
-    // insert (native `insert_before`), not a tail append — so the child
-    // lands at `index` without moving its following siblings.
     if !realize_hoisted_child(parent, child) {
         let pos = count_real_descendants_before(parent, child);
         bridge_insert_or_append(parent, child, pos);
@@ -984,12 +931,11 @@ pub fn flush() {
     with_renderer(|r| r.flush(), ())
 }
 
-/// Opaque platform pointer for `handle`. Phase 7-Φ.H.2.3 — used by
-/// `whisker-driver`'s `ElementRef::invoke` to call the C bridge
-/// without leaking the bridge's `WhiskerElement*` type into the
-/// runtime crate's public surface. Returns `0` if no renderer is
-/// installed or the renderer doesn't have a native pointer for
-/// `handle`.
+/// Opaque platform pointer for `handle` — used by `whisker-driver`'s
+/// `ElementRef::invoke` to call the C bridge without leaking the
+/// bridge's `WhiskerElement*` type into the runtime crate's public
+/// surface. Returns `0` if no renderer is installed or the renderer
+/// doesn't have a native pointer for `handle`.
 pub fn module_component_ptr(handle: Element) -> usize {
     if is_phantom(handle) {
         return 0;

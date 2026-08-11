@@ -67,11 +67,6 @@ pub use component::{
 pub use computed::computed;
 pub use context::{provide_context, use_context, with_context};
 pub use effect::effect;
-// `on_cleanup` lives at the module top-level because it acts on
-// whichever owner is currently on the runtime stack — the caller
-// can't name it. Everything else owner-related lives behind the
-// `owner` module path (re-exported below) so users write
-// `whisker::owner::Owner::new(None)` / `owner.with(...)` / etc.
 pub use owner::on_cleanup;
 pub use prop::Signal;
 pub use resource::{Resource, ResourceState, resource, resource_sync};
@@ -145,10 +140,8 @@ pub(crate) fn untrack<R>(f: impl FnOnce() -> R) -> R {
     struct Restore(Option<NodeId>);
     impl Drop for Restore {
         fn drop(&mut self) {
-            // `with_runtime` reborrows the thread-local; the previous
-            // borrow opened in `untrack` was already released before
-            // `f` started, so this is a fresh borrow — no
-            // double-borrow risk.
+            // Safe to reborrow: `untrack`'s own borrow was released
+            // before `f` started.
             with_runtime(|rt| rt.current_tracker = self.0);
         }
     }

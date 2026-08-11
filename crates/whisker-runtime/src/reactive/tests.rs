@@ -98,16 +98,12 @@ fn panicking_effect_does_not_latch_flushing_flag() {
         }
     });
 
-    // Drive the panicking re-run through a caught flush. Without the
-    // RAII `FlushGuard`, the unwind would skip `flushing = false` and
-    // latch the flag — every later flush would become a silent no-op.
     set_count.set(1);
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(flush));
     assert!(caught.is_err(), "the effect was supposed to panic");
 
-    // A fresh effect created after the panic must still run on flush —
-    // proof the runtime recovered (flushing flag cleared, tracker/owner
-    // stack restored).
+    // A fresh effect must still run on flush: the unwind has to leave
+    // `flushing` cleared and the tracker / owner stack restored.
     let ran = Rc::new(RefCell::new(0));
     let r = ran.clone();
     let (dep, set_dep) = signal(0_i32).split();
@@ -250,12 +246,10 @@ fn dispose_owner_frees_nested_signals() {
     fresh();
     let owner = Owner::new(None);
     let (read, _write) = owner.with(|| signal(123_i32)).split();
-    // Signal works while owner is alive.
     assert_eq!(read.get(), 123);
     owner.dispose();
-    // After disposal the underlying node is gone; reads panic in debug
-    // and we don't want to fault the test, so we just verify the
-    // owner slot itself is freed by trying to dispose again (no-op).
+    // Reading the freed node would panic, so the second dispose (a
+    // no-op) is what shows the owner slot itself is gone.
     owner.dispose();
 }
 
@@ -307,12 +301,8 @@ fn on_cleanup_fires_lifo() {
 
 #[test]
 fn on_cleanup_can_read_and_write_own_signal() {
-    // Regression: an `on_cleanup` must be able to read (and write) a signal
-    // that its owner allocated — cleanups run BEFORE the owner frees its
-    // nodes. Freeing first made `read_at_cleanup` panic with `signal
-    // disposed`; on-device that panic (fired mid-`tick_frame` when a router
-    // screen disposed on a transition's finish) unwound the whole frame and
-    // stranded unrelated reactive work.
+    // Cleanups run BEFORE the owner frees its nodes, so an `on_cleanup`
+    // can still read and write a signal that owner allocated.
     fresh();
     let owner = Owner::new(None);
     let read_at_cleanup: Rc<RefCell<Option<i32>>> = Rc::new(RefCell::new(None));
@@ -322,7 +312,6 @@ fn on_cleanup_can_read_and_write_own_signal() {
         sig.set(42);
         let captured = read_at_cleanup.clone();
         on_cleanup(move || {
-            // Must NOT panic: `sig`'s node is still alive at cleanup time.
             sig.set(sig.get_untracked() + 1);
             *captured.borrow_mut() = Some(sig.get_untracked());
         });
@@ -444,16 +433,9 @@ fn computed_notifies_downstream_subscribers() {
 
 #[test]
 fn on_mount_callback_inside_effect_does_not_leak_subscription_to_outer() {
-    // Regression: `flush_mounts` invokes each queued `on_mount`
-    // callback as plain user code. If a callback performs a direct
-    // `signal.get()` while a tracker is still active on the call
-    // stack (e.g. `flush_mounts` invoked from inside an effect, or
-    // from a non-standard tick driver), the signal would subscribe
-    // the outer tracker instead of nothing.
-    //
-    // After fix: `flush_mounts` brackets each `cb()` invocation in
-    // `untrack`, so on_mount callbacks never leak subscriptions
-    // upward regardless of the call-stack context.
+    // An `on_mount` callback's direct `signal.get()` must not subscribe
+    // whatever tracker happens to be live where `flush_mounts` is
+    // called from.
     use super::component::{flush_mounts, on_mount};
     fresh();
     let (effect_dep, set_effect_dep) = signal(0_i32).split();
@@ -471,18 +453,15 @@ fn on_mount_callback_inside_effect_does_not_leak_subscription_to_outer() {
                 let _ = mount_src.get();
             });
         });
-        // Flush inside the effect — same call stack as the outer
-        // effect's tracker. With the fix, the callback runs under a
-        // cleared tracker, so its signal read doesn't leak.
+        // Flushed inside the effect, so the outer tracker is on the
+        // call stack.
         flush_mounts();
     });
     assert_eq!(*outer_runs.borrow(), 1);
     set_mount_src.set(1);
     flush();
-    // No leak: `mount_src` write does not re-run the outer effect.
     assert_eq!(*outer_runs.borrow(), 1);
-    // Sanity check that the outer effect's legitimate dependency
-    // still works.
+    // The outer effect's legitimate dependency still fires.
     set_effect_dep.set(1);
     flush();
     assert_eq!(*outer_runs.borrow(), 2);
@@ -490,17 +469,9 @@ fn on_mount_callback_inside_effect_does_not_leak_subscription_to_outer() {
 
 #[test]
 fn mount_component_body_inside_effect_does_not_leak_subscription_to_outer() {
-    // Regression: a `#[component]` body invoked from inside another
-    // effect / computed used to run with that outer node's
-    // `current_tracker` still set. Any direct `signal.get()` the
-    // body performed (not via a nested `effect`/`computed`) silently
-    // subscribed the outer node, turning innocent component reads
-    // into recursive remount triggers when the read signal changed.
-    //
-    // After fix: `mount_component` wraps the body invocation in
-    // `untrack`, so component bodies are tracker-isolated. Reactivity
-    // inside a body must come from explicit `effect`/`computed`
-    // calls, which establish their own tracker scope.
+    // A component body is tracker-isolated: a direct `signal.get()` in
+    // it must not subscribe the effect that mounted it, or an innocent
+    // read becomes a recursive remount trigger.
     use super::component::mount_component;
     fresh();
     let (effect_dep, set_effect_dep) = signal(0_i32).split();
@@ -510,19 +481,15 @@ fn mount_component_body_inside_effect_does_not_leak_subscription_to_outer() {
     effect(move || {
         let _ = effect_dep.get();
         *outer_runs_clone.borrow_mut() += 1;
-        // Mount a synthetic "component": fresh owner, body reads a
-        // signal directly (the typical hazard pattern for a top-level
-        // `#[component]` body that derives a value inline).
+        // Synthetic component whose body reads a signal directly — the
+        // hazard pattern for a body that derives a value inline.
         let (_owner, _value) = mount_component(0xdead_beef as *const (), || body_src.get());
     });
     assert_eq!(*outer_runs.borrow(), 1);
-    // No leak: writing to `body_src` MUST NOT re-run the outer
-    // effect — the outer effect never legitimately subscribed.
     set_body_src.set(1);
     flush();
     assert_eq!(*outer_runs.borrow(), 1);
-    // Sanity check the outer effect's legitimate dependency still
-    // fires.
+    // The outer effect's legitimate dependency still fires.
     set_effect_dep.set(1);
     flush();
     assert_eq!(*outer_runs.borrow(), 2);
@@ -530,45 +497,25 @@ fn mount_component_body_inside_effect_does_not_leak_subscription_to_outer() {
 
 #[test]
 fn computed_constructed_inside_effect_does_not_leak_subscription_to_outer() {
-    // Regression: `computed(...)`'s construction-time seed call used
-    // to run with whatever `current_tracker` happened to be set on
-    // entry. If you built a `computed` inside an `effect`, the seed's
-    // `signal.get()` registered the *outer effect* as a subscriber of
-    // every signal the computed body read — so a write to one of
-    // those signals re-ran the outer effect (whose job is often to
-    // re-mount a component subtree), leaking a fresh `computed` node
-    // on every tick.
-    //
-    // After fix: the seed run is wrapped in `untrack`, so the only
-    // subscriber registered against the signal is the computed node
-    // itself. Verified by counting outer-effect runs: a single write
-    // to the signal must produce exactly one extra effect run (the
-    // initial one + one for the explicit `effect_dep` change), not
-    // two.
+    // `computed`'s construction-time seed run must register only the
+    // computed node against the signals it reads. Subscribing the
+    // enclosing effect instead would re-run it — and leak a fresh
+    // computed node — on every write.
     fresh();
     let (effect_dep, set_effect_dep) = signal(0_i32).split();
     let (computed_src, set_computed_src) = signal(0_i32).split();
     let outer_runs = Rc::new(RefCell::new(0));
     let outer_runs_clone = outer_runs.clone();
     effect(move || {
-        // Subscribe to `effect_dep` so the outer effect has a
-        // legitimate reason to re-run.
+        // `effect_dep` is the outer effect's one legitimate dependency.
         let _ = effect_dep.get();
         *outer_runs_clone.borrow_mut() += 1;
-        // Construct a computed that reads `computed_src`. Pre-fix,
-        // this would register the outer effect as a subscriber of
-        // `computed_src` via the seed run's `track_and_fetch`.
         let _doubled = computed(move || computed_src.get() * 2);
     });
     assert_eq!(*outer_runs.borrow(), 1);
-    // Writing to `computed_src` MUST NOT re-run the outer effect —
-    // the outer effect never subscribed to it (only the inner
-    // computed should have).
     set_computed_src.set(99);
     flush();
     assert_eq!(*outer_runs.borrow(), 1);
-    // Writing to `effect_dep` IS a legitimate trigger and should
-    // re-run the outer effect exactly once.
     set_effect_dep.set(1);
     flush();
     assert_eq!(*outer_runs.borrow(), 2);
@@ -615,16 +562,13 @@ fn context_round_trip_in_same_owner() {
 #[test]
 fn with_context_closure_can_reenter_runtime() {
     // The `with_context` closure must be able to call back into the
-    // runtime (read signals, nested context lookups). Before the Rc
-    // fix, `f` ran while the thread-local runtime was still borrowed,
-    // so any re-entry double-borrowed its RefCell and panicked.
+    // runtime — no runtime borrow may span the call.
     fresh();
     let owner = Owner::new(None);
     owner.with(|| {
         provide_context(Theme("ctx"));
         let (count, _set) = signal(7_i32).split();
-        // Read a signal AND do a nested context lookup from inside the
-        // with_context closure — both re-enter the runtime.
+        // Both the signal read and the nested lookup re-enter.
         let combined = with_context::<Theme, _>(|theme| {
             let n = count.get();
             let nested = use_context::<Theme>();
@@ -804,8 +748,6 @@ fn flush_breaks_self_feedback_loop_with_warning() {
     });
     set_count.set(1);
     flush();
-    // We don't assert the exact run count, only that flush returned
-    // rather than spinning forever, and that the run count is bounded.
     let runs_after = *runs.borrow();
     assert!(
         runs_after < 1000,
@@ -844,15 +786,10 @@ fn effect_reading_and_writing_unrelated_signals_terminates() {
 // `computed` calls, which establish their own tracker scope via the
 // scheduler. The runtime guarantees no ambient subscription leaks.
 //
-// The tests below enforce this invariant for each entrypoint in the
-// public surface. A future contributor who adds a new entrypoint that
-// invokes user code without `untrack`-bracketing will break one of
-// these tests.
-//
-// The pattern: enter an outer `effect`, which sets `current_tracker` to
-// the effect's node id. From inside that effect, call the entrypoint
-// under test and capture `current_tracker` as observed by the user
-// closure. Assert it was `None`.
+// The tests below enforce this for each entrypoint in the public
+// surface: enter an outer `effect` (which sets `current_tracker`), call
+// the entrypoint from inside it, and assert the tracker the user
+// closure observes is `None`.
 
 /// Snapshot the runtime's `current_tracker` at call time.
 fn observed_tracker() -> Option<super::runtime::NodeId> {
@@ -936,11 +873,9 @@ fn untrack_restores_tracker_when_f_panics() {
 
 #[test]
 fn computed_seed_runs_with_no_tracker_when_constructed_inside_effect() {
-    // The computed's compute closure runs at construction-time
-    // (seed) AND again on every scheduled re-run. We only care
-    // about the seed observation — capture the FIRST call and
-    // ignore later scheduled runs (those legitimately get
-    // tracker = Some(computed_node) set by `run_node_if_alive`).
+    // Only the seed observation matters — later scheduled runs
+    // legitimately see `tracker = Some(computed_node)`, so capture the
+    // FIRST call and ignore the rest.
     fresh();
     let observed: Rc<RefCell<Option<Option<super::runtime::NodeId>>>> = Rc::new(RefCell::new(None));
     let observed_clone = observed.clone();
@@ -989,8 +924,6 @@ fn mount_component_remountable_body_runs_with_no_tracker_when_invoked_inside_eff
     let observed_clone = observed.clone();
     effect(move || {
         let observed_inner = observed_clone.clone();
-        // Component body must return an Element. A phantom element
-        // is fine — we're not asserting on the tree shape here.
         let _root = mount_component_remountable(
             0x2345_6789 as *const (),
             move || {
@@ -1009,9 +942,8 @@ fn mount_component_remountable_body_runs_with_no_tracker_when_invoked_inside_eff
 
 #[test]
 fn remount_components_for_reports_zero_when_nothing_can_reflect() {
-    // The return value is the full-remount trigger:
-    // `remounted == 0` must mean "this patch had no attached
-    // component to reflect through". Three shapes of zero:
+    // `remounted == 0` is the full-remount trigger, so it must mean
+    // "this patch had no attached component to reflect through".
     use super::component::{RemountStats, mount_component_remountable, remount_components_for};
     use crate::view::create_phantom_element;
     fresh();
@@ -1025,10 +957,9 @@ fn remount_components_for_reports_zero_when_nothing_can_reflect() {
         RemountStats::default(),
     );
 
-    // (c) a matching site whose body_root was never attached to a
-    // parent (orphan) — the candidate is found but filtered out.
-    // Orphans don't count as layout_changed either: their stored
-    // closures never re-run, so there's nothing to protect.
+    // (c) a matching site whose body_root was never attached (orphan).
+    // Orphans aren't layout_changed either — their stored closures
+    // never re-run, so there is nothing to protect.
     let fn_ptr = 0x3456_789a as *const ();
     let _root = mount_component_remountable(fn_ptr, create_phantom_element, Box::new(|| 0));
     assert_eq!(remount_components_for(&[fn_ptr]), RemountStats::default());
@@ -1099,9 +1030,8 @@ fn remount_components_for_refuses_sites_whose_props_layout_changed() {
 #[test]
 fn remounted_component_still_resolves_root_context() {
     // Hot-reload remounts run from the tick callback with an empty
-    // owner stack; the fresh owner must inherit the old owner's
-    // parent or `use_context` loses everything the app root provided
-    // (giga: "provide_theme() must run at the app root" panic).
+    // owner stack, so the fresh owner must inherit the old owner's
+    // parent or `use_context` loses everything the app root provided.
     use super::component::{
         mount_component_remountable, on_component_root_attached, remount_components_for,
     };
@@ -1148,10 +1078,9 @@ fn remounted_component_still_resolves_root_context() {
     );
 }
 
-// Note: `remount_components_for`'s body invocation reuses the
-// exact same `untrack(|| new_owner.with(|| (*info.body)()))`
-// bracket the initial mount uses; the no-tracker half of that
-// contract is pinned by
+// `remount_components_for`'s body invocation reuses the same
+// `untrack(|| new_owner.with(|| (*info.body)()))` bracket as the
+// initial mount, whose no-tracker half is pinned by
 // `mount_component_remountable_body_runs_with_no_tracker_...` below.
 
 #[test]
@@ -1209,8 +1138,6 @@ fn computed_constructed_inside_computed_does_not_leak_subscription_to_outer_comp
     let outer_runs_clone = outer_runs.clone();
     let outer = computed(move || {
         *outer_runs_clone.borrow_mut() += 1;
-        // Construct an inner computed reading `src`. Pre-fix this
-        // would have subscribed `outer` to `src` via the seed leak.
         let inner = computed(move || src.get() * 2);
         inner.get()
     });
@@ -1274,9 +1201,8 @@ fn arc_signal_split_round_trip() {
 
 #[test]
 fn arc_signal_survives_caller_owner_disposal() {
-    // The bug this whole family exists to fix: a signal whose
-    // declaring owner is disposed must still be readable through
-    // any clone of its handle, because the value lives by Arc
+    // A signal whose declaring owner is disposed must still be readable
+    // through any clone of its handle — the value lives by Arc
     // refcount, not by an arena slot.
     fresh();
     let stash: Rc<RefCell<Option<ArcReadSignal<i32>>>> = Rc::new(RefCell::new(None));
@@ -1285,16 +1211,12 @@ fn arc_signal_survives_caller_owner_disposal() {
     let owner = Owner::new(None);
     owner.with(|| {
         let (r, w) = arc_signal(99_i32).split();
-        // Pretend `w` is the write half kept by a native module's
-        // event callback; we don't need to keep it for this test.
         drop(w);
         *stash_for_install.borrow_mut() = Some(r);
     });
 
     owner.dispose();
 
-    // Pre-fix this would have panicked (`expect("signal disposed")`)
-    // for Copy signals. Post-fix Arc signals survive the disposal.
     let cached = stash.borrow().clone().expect("stashed signal");
     assert_eq!(cached.get(), 99);
 }

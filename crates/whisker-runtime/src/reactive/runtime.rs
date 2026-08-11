@@ -157,27 +157,22 @@ pub struct Scope {
     pub parent: Option<Owner>,
     pub children: Vec<Owner>,
     pub nodes: Vec<NodeId>,
-    // `Rc` (not `Box`) so `with_context` can clone the handle out in a
-    // short runtime borrow, drop the borrow, and only then invoke the
-    // user closure — letting the closure safely re-enter the runtime
-    // (read signals, nested `use_context`, etc.) without a double
-    // borrow, and keeping the value alive even if the closure
-    // re-provides the same type mid-call.
+    // `Rc` (not `Box`) so `with_context` can clone the handle out under
+    // a short borrow and invoke the user closure with the runtime
+    // released — the closure may re-enter, and the value must survive
+    // the closure re-providing the same type mid-call.
     pub contexts: HashMap<TypeId, Rc<dyn Any>>,
     pub cleanups: Vec<Box<dyn FnOnce()>>,
     /// Function-pointer fingerprint of the component fn that created
-    /// this scope. Used by Strategy C hot reload (A6) to map
-    /// subsecond-patched fn pointers back to live owners. `None` for
-    /// non-component scopes (e.g. the root, or manually-created
-    /// scopes in tests).
+    /// this scope, mapping subsecond-patched fn pointers back to live
+    /// owners on hot reload. `None` for non-component scopes (the
+    /// root, or manually-created scopes in tests).
     pub mount_fn: Option<*const ()>,
     /// Element handles created via `view::create_element` while this
     /// scope was at the top of the owner stack. Released through
-    /// `view::release_element` when the scope is disposed (or its
-    /// ancestor disposes via cascade), preventing the renderer-side
-    /// `BridgeRenderer::elements` map from accumulating dangling
-    /// `WhiskerElement*` pointers across `<Show>` flips, `<For>`
-    /// item removals, and per-component remounts.
+    /// `view::release_element` on disposal, so the renderer's element
+    /// map doesn't accumulate dangling native pointers across `<Show>`
+    /// flips, `<For>` item removals, and per-component remounts.
     pub elements: Vec<crate::view::Element>,
     /// When `true`, effects / computeds owned by this scope skip
     /// flush — they're deferred onto [`ReactiveRuntime::deferred`]
@@ -247,9 +242,9 @@ pub struct ReactiveRuntime {
     /// rather than recursing).
     pub flushing: bool,
     /// Component-fn-pointer → list of live owners that ran that fn.
-    /// Populated by `register_component`; consulted by the A6 hot-
-    /// reload path to find which owners to dispose when a fn body
-    /// gets subsecond-patched.
+    /// Populated by `register_component`; the hot-reload path reads it
+    /// to find which owners to dispose when a fn body gets
+    /// subsecond-patched.
     pub component_owners: HashMap<*const (), Vec<Owner>>,
     /// Side table of remountable component mount sites
     /// (`#[component]` with all-`Clone` props), keyed by a stable
@@ -266,8 +261,8 @@ pub struct ReactiveRuntime {
     /// Monotonic counter for fresh `MountId`s.
     pub mount_id_counter: u64,
     /// Pending on_mount callbacks, in the order they were registered.
-    /// Drained by [`super::flush_mounts`] — which the renderer (A3)
-    /// will call after appending a component's view to its parent.
+    /// Drained by [`super::flush_mounts`] once a component's view has
+    /// been appended to its parent.
     pub pending_mounts: Vec<Box<dyn FnOnce()>>,
 }
 

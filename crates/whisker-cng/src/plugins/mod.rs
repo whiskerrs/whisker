@@ -9,37 +9,18 @@
 //!
 //! ## Opt-in semantics
 //!
-//! Every built-in is opt-in: the engine runs it on every
-//! `compose()` call, but it only writes IR entries when the user
-//! supplied a non-default Config via
-//! `app.plugin::<MyPlugin>(|c| …)`. A built-in's `Config::default()`
-//! produces an empty contribution, so apps that don't declare any
-//! built-in see the legacy behavior bit-identical.
+//! Every built-in is opt-in: the engine runs it on every `compose()`
+//! call, but a `Config::default()` produces an empty contribution, so
+//! nothing lands in the IR until the user writes
+//! `app.plugin::<MyPlugin>(|c| …)`.
 //!
-//! ## Why these three
+//! [`app_icon`] is the exception to the "narrow" rule and to where
+//! declaration types live: its `AppIcon` / `AppIconConfig` sit in
+//! `whisker-config`, because the config probe depends only on that
+//! crate and so any type the user names in `app.plugin::<…>` must be
+//! reachable from there.
 //!
-//! - **[`info_plist_extra`]** — covers "I need an extra Info.plist
-//!   key I didn't expect" (privacy strings, capabilities, custom
-//!   URL schemes). The most common reason apps end up patching
-//!   Xcode-generated plists by hand.
-//! - **[`android_permissions`]** — covers the same shape for
-//!   Android's `<uses-permission>` list. Single most common manifest
-//!   edit.
-//! - **[`android_meta_data`]** — covers `<meta-data>` rows inside
-//!   `<application>`. Required by Firebase, Google Maps SDK keys,
-//!   App Links host declarations, and most other 1st-party Google
-//!   SDKs.
-//!
-//! - **[`app_icon`]** — generates the launcher/home-screen icon for
-//!   both platforms from one square source PNG. Store submission is
-//!   impossible without it, so it ships built-in rather than as an
-//!   external package. Unlike the other built-ins its user-facing
-//!   declaration types (`AppIcon` / `AppIconConfig`) live in
-//!   `whisker-config` — the config probe only depends on that crate,
-//!   so a type the user names in `app.plugin::<…>` must be there.
-//!
-//! Future built-ins land here additively. Each new entry needs a
-//! brief justification in this list and a registration line in
+//! A new built-in needs a module here and a registration line in
 //! [`crate::Engine::with_builtins`].
 
 pub mod android_application_attributes;

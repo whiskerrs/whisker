@@ -162,6 +162,13 @@ not to narrate the code.
   *before* invoking the callback — otherwise re-entering the
   runtime panics."
 
+- **`SAFETY:` comments on `unsafe`** — always. State the invariants
+  that make the block sound; trim wording, never delete.
+
+- **Wire-format / protocol contracts** that two crates must agree
+  on (e.g. the hot-reload patch frame layout shared by
+  `whisker-dev-server` and `whisker-dev-runtime`).
+
 ### Delete
 
 - **Sentences that paraphrase the next line.** `// increment the

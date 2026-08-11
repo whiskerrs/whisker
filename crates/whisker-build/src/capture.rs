@@ -11,10 +11,6 @@
 //! The setup is just env vars (cargo's RUSTC_WORKSPACE_WRAPPER +
 //! per-target linker overrides). [`capture_env_vars`] computes the
 //! map; callers merge it into their `Command`.
-//!
-//! Moved here from `whisker-dev-server::builder` so `whisker-cli`'s
-//! `whisker run` path (which lives outside dev-server in Phase 3+)
-//! can also drive fat builds when it wants hot reload ready.
 
 use std::path::PathBuf;
 
@@ -61,19 +57,13 @@ pub fn capture_env_vars(c: &CaptureShims) -> Vec<(String, String)> {
 }
 
 /// Like [`capture_env_vars`] but applies the linker shim + rustflags
-/// to `triple_override` instead of `c.target_triple`. Used by
-/// multi-triple builds (e.g. iOS, which emits dylibs for
-/// device + intel-sim + arm64-sim) where every per-target slice
-/// needs the same hot-reload capture envelope — the original
-/// `CaptureShims::target_triple` only carries one slot, so a naive
-/// `capture_env_vars(c)` call would only set
-/// `CARGO_TARGET_<that-one-triple>_RUSTFLAGS` and silently leave
-/// the other slices building without `-Cdebug-assertions=on` /
-/// `-Csave-temps` / export-dynamic. The downstream symptom on iOS
-/// was that `subsecond::call` got inlined to the early-`return f()`
-/// branch in every slice except the configured one, so hot reload
-/// dispatched to OLD code on device / intel-sim no matter what the
-/// JumpTable contained.
+/// to `triple_override` instead of `c.target_triple`. Multi-triple
+/// builds (iOS emits dylibs for device + intel-sim + arm64-sim) need
+/// the capture envelope on *every* slice, and
+/// `CaptureShims::target_triple` carries one slot: calling
+/// [`capture_env_vars`] instead leaves the other slices without the
+/// rustflags below, so hot-reload dispatch on them silently keeps
+/// running the old code.
 pub fn capture_env_vars_for_triple(
     c: &CaptureShims,
     triple_override: Option<&str>,
@@ -100,52 +90,33 @@ pub fn capture_env_vars_for_triple(
     let shim = c.linker_shim.to_string_lossy().to_string();
     // Three flags every fat build needs for hot reload to work:
     //
-    // `-Csave-temps=y` keeps rustc's temp dir (containing the
-    // version script and bridge-static archive the linker args
-    // reference) on disk after the fat build finishes — without it,
-    // rustc deletes everything in `/var/folders/.../rustc*/` on
-    // exit and the captured linker invocation becomes unreplayable.
+    // `-Csave-temps=y` keeps rustc's temp dir — holding the version
+    // script and bridge-static archive the captured linker argv
+    // references — alive past the build, without which that argv is
+    // unreplayable.
     //
-    // `-Clink-arg=-Wl,--export-dynamic` (Linux/Android) /
-    // `-Clink-arg=-Wl,-export_dynamic` (macOS) exports every
-    // symbol from the original cdylib into its dynamic-symbol
-    // table. The patch dylib references std::fmt, alloc, etc.
-    // via undefined refs and resolves them against the loaded
-    // process at `dlopen` time — but cdylib's default symbol
-    // visibility hides those internal-to-the-library symbols.
-    // Without --export-dynamic, `dlopen` on the patch fails with
-    // "cannot locate symbol _ZN4core3fmt3num...". The cost is a
-    // slightly larger .so (the dynamic symbol table grows);
-    // acceptable for dev builds.
+    // `-Wl,--export-dynamic` puts the cdylib's internal symbols in its
+    // dynamic-symbol table. The patch dylib resolves `std::fmt`,
+    // `alloc`, … against the loaded process at `dlopen` time, which
+    // cdylib's default visibility would hide. Costs a larger .so.
     //
-    // `-Cdebug-assertions=on` toggles the only `cfg!(debug_assertions)`
-    // branch in `subsecond::HotFn::try_call` — in release builds
-    // without this, subsecond compiles to `self.inner.call_it(args)`
-    // and skips the JumpTable entirely (apply_patch becomes a no-op
-    // from the caller's perspective). hot reload dev builds want the
-    // JumpTable lookup; this flag flips the cfg without dropping to the
-    // dev profile. (We also force `-Copt-level=0` below so the host's
-    // per-component dispatch closures match the patch's — see there.)
+    // `-Cdebug-assertions=on` selects the `cfg!(debug_assertions)`
+    // branch of `subsecond::HotFn::try_call`; the other branch calls
+    // `self.inner.call_it(args)` directly and never consults the
+    // JumpTable, making `apply_patch` a no-op.
     //
-    // Pick the export-dynamic flag spelling for the *target* triple,
-    // not the host — Apple linkers take `-export_dynamic`; GNU / lld
-    // take `--export-dynamic`. Default to the GNU form when
-    // target_triple is None (host-only setups land here).
+    // The spelling follows the *target* linker: Apple takes
+    // `-export_dynamic`, GNU / lld `--export-dynamic`.
     let export_dynamic = match triple_override {
         Some(t) if t.contains("apple") => "-Clink-arg=-Wl,-export_dynamic",
         _ => "-Clink-arg=-Wl,--export-dynamic",
     };
-    // `-Copt-level=0` matches the thin patch's opt-level (the patch
-    // forces 0 via `hotpatch::thin_build::override_opt_level`). This is
-    // load-bearing for hot reload: at -O3 the host *inlines* each
-    // `#[component]`'s `__hot::call(move ||{…})` dispatch closure into
-    // its parent fn, so the standalone `HotFunction::call_it` /
-    // `call_as_ptr` symbol subsecond keys its JumpTable on either isn't
-    // emitted or gets a different mangling hash than the -O0 patch's.
-    // The lookup then misses and a remounted component body dispatches to
-    // the OLD (inlined) code — "patch applied" but the screen never
-    // updates. Forcing -O0 on the captured (host) build keeps both sides'
-    // dispatch closures symbol-identical so patches actually take effect.
+    // `-Copt-level=0` must match the thin patch's opt-level (forced to 0
+    // by `hotpatch::thin_build::override_opt_level`). Optimized, the host
+    // inlines each `#[component]`'s `__hot::call(move ||{…})` dispatch
+    // closure, so the `HotFunction::call_it` / `call_as_ptr` symbol the
+    // JumpTable is keyed on is missing or mangled differently from the
+    // patch's — lookups miss and the component keeps running old code.
     let save_temps = format!("-Csave-temps=y -Cdebug-assertions=on -Copt-level=0 {export_dynamic}");
     let save_temps = save_temps.as_str();
     match triple_override {
@@ -283,7 +254,6 @@ mod tests {
         let vars = capture_env_vars(&shim_for_triple(None));
         let names: std::collections::HashSet<&str> = vars.iter().map(|(k, _)| k.as_str()).collect();
         assert!(names.contains("RUSTFLAGS"));
-        // Per-target keys should not appear.
         assert!(!names.iter().any(|k| k.contains("CARGO_TARGET_")));
     }
 }

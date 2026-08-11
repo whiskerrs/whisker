@@ -9,20 +9,13 @@
 //!     .add("LSApplicationQueriesSchemes", "comgooglemaps"));
 //! ```
 //!
-//! The plugin writes each `(key, value)` straight into
-//! `ctx.ios.info_plist` as a `PlistValue::String`. Two different
-//! plugins (built-in or 3rd-party) writing the same key surfaces as
-//! a conflict via the [`Operation::Set`] / mutation-journal path —
-//! this plugin is no different from a 3rd-party one in that
-//! respect.
+//! Each `(key, value)` goes into `ctx.ios.info_plist` as a
+//! `PlistValue::String`; two plugins writing the same key surface as a
+//! conflict through the [`Operation::Set`] mutation-journal path.
 //!
-//! ## Why string-only
-//!
-//! 90%+ of Info.plist additions are either privacy strings or
-//! capability flags expressed as strings. Dict / array values
-//! exist but are rarer and not yet shipped — a future built-in
-//! (`whisker-info-plist-structured`) can extend the schema when
-//! the first real consumer asks.
+//! String-only by design — privacy strings and capability flags cover
+//! nearly every Info.plist addition. The IR itself carries richer
+//! `PlistValue` variants for plugins that need them.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -30,18 +23,15 @@ use whisker_plugin::{GenerateContext, Operation, PlistValue, Plugin, PluginConfi
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct InfoPlistExtraConfig {
-    /// `(key, value)` pairs added to `Info.plist`. `BTreeMap` for
-    /// deterministic iteration order — the engine's fingerprint
-    /// hashes the IR, and `HashMap` random ordering would invalidate
-    /// the skip path.
+    /// `(key, value)` pairs added to `Info.plist`. `BTreeMap` because
+    /// the engine fingerprints the IR, and `HashMap` ordering would
+    /// invalidate the skip path on every sync.
     #[serde(default)]
     pub entries: BTreeMap<String, String>,
 }
 
 impl InfoPlistExtraConfig {
-    /// Add (or replace) one `(key, value)` pair. Returns `&mut Self`
-    /// for fluent chaining inside the `app.plugin::<…>(|c| …)`
-    /// closure.
+    /// Add (or replace) one `(key, value)` pair.
     pub fn add(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
         self.entries.insert(key.into(), value.into());
         self
@@ -59,7 +49,6 @@ impl Plugin for InfoPlistExtra {
 
     fn apply(&self, ctx: &mut GenerateContext, cfg: &InfoPlistExtraConfig) -> anyhow::Result<()> {
         let Some(ios) = ctx.ios.as_mut() else {
-            // Target not enabled — nothing to do.
             return Ok(());
         };
         for (key, value) in &cfg.entries {

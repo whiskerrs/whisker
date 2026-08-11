@@ -47,8 +47,7 @@ fn root_svg_paint_cascades_to_child_shapes() {
 
 #[test]
 fn child_can_still_override_root_paint() {
-    // The cascade fix mustn't break shapes that pull their own
-    // explicit colour over the inherited tint.
+    // An explicit colour on the shape wins over the inherited tint.
     let svg = r##"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M 0 0 L 10 10" stroke="#ff0000"/></svg>"##;
     let compiled = compile(svg).expect("compile");
     let mut trace = TraceVisitor::new();

@@ -9,11 +9,9 @@
 //!     .add("android.permission.RECORD_AUDIO"));
 //! ```
 //!
-//! The plugin appends each permission to
-//! `ctx.android.manifest.permissions`. Duplicates within a single
-//! `add(...)` chain stay duplicated — the renderer dedups at write
-//! time so the manifest doesn't carry redundant entries even when
-//! several plugins contribute the same permission.
+//! Each permission is appended to `ctx.android.manifest.permissions`.
+//! Duplicates survive in the IR; the renderer dedups at write time, so
+//! several plugins may contribute the same permission freely.
 
 use serde::{Deserialize, Serialize};
 use whisker_plugin::{GenerateContext, Operation, Plugin, PluginConfig, Target};

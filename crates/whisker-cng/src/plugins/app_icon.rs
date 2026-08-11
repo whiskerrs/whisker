@@ -10,8 +10,8 @@
 //! ```
 //!
 //! The user-facing `AppIcon` marker + `AppIconConfig` live in
-//! `whisker-config` (the only crate the config probe can name types
-//! from); this module is the engine-side implementation registered
+//! `whisker-config`, the only crate the config probe can name types
+//! from; this module is the engine-side implementation registered
 //! under the same `PluginConfig::NAME`.
 //!
 //! ## What `apply` produces
@@ -58,9 +58,8 @@ use whisker_plugin::{
     Target,
 };
 
-/// Minimum source edge. 1024 is what the App Store's marketing-icon
-/// slot requires verbatim; anything smaller would have to upscale
-/// (blurry) so we reject it instead.
+/// Minimum source edge — the App Store's marketing-icon slot takes
+/// 1024 verbatim, and anything smaller would upscale blurrily.
 const MIN_SOURCE_PX: u32 = 1024;
 
 /// iOS single-size catalog edge.
@@ -120,10 +119,9 @@ const APPICONSET_CONTENTS: &str = r#"{
 "#;
 
 /// Engine-side implementation of the `whisker-app-icon` built-in.
-/// Distinct from `whisker_config::AppIcon` (the declaration marker
-/// users name in `app.plugin::<AppIcon>(…)`); both resolve to the
-/// same `AppIconConfig::NAME`, which is how a user's declaration
-/// reaches this plugin.
+/// Distinct from the `whisker_config::AppIcon` declaration marker;
+/// both resolve to the same `AppIconConfig::NAME`, which is how a
+/// user's declaration reaches this plugin.
 pub struct AppIcon;
 
 impl Plugin for AppIcon {
@@ -269,16 +267,12 @@ impl Plugin for AppIcon {
             );
         }
 
-        // ----- iOS: Icon Composer bundle OR single-size asset catalog ------
         if let Some(ios) = ctx.ios.as_mut() {
             let (resource, count) = if let Some(icon_bundle) = &cfg.ios_icon {
-                // Icon Composer bundle: stage the whole tree under
-                // the fixed name `AppIcon.icon` so the template's
-                // hardcoded `ASSETCATALOG_COMPILER_APPICON_NAME =
-                // AppIcon` resolves to it regardless of what the
-                // user called their export. actool renders every
-                // Liquid Glass appearance (+ pre-iOS-26 fallbacks)
-                // from the bundle.
+                // Stage the bundle under the fixed name
+                // `AppIcon.icon` so the template's hardcoded
+                // `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`
+                // resolves regardless of the user's export name.
                 let files = collect_icon_bundle(&crate_root, icon_bundle)?;
                 let count = files.len();
                 for (rel, bytes) in files {
@@ -327,13 +321,11 @@ impl Plugin for AppIcon {
             );
         }
 
-        // ----- Android: legacy mipmaps + adaptive icon + android:icon ------
         if let Some(android) = ctx.android.as_mut() {
             let mut count = 0usize;
 
-            // Legacy launcher icons — the only thing API ≤ 25 reads,
-            // and the fallback launchers use when they ignore the
-            // adaptive definition.
+            // The only icons API ≤ 25 reads, and the fallback for
+            // launchers that ignore the adaptive definition.
             for (qualifier, px) in ANDROID_DENSITIES {
                 let scaled = img.resize_exact(*px, *px, FilterType::Lanczos3);
                 android.extra_files.insert(
@@ -343,8 +335,8 @@ impl Plugin for AppIcon {
                 count += 1;
             }
 
-            // Adaptive icon (API 26+). Foreground defaults to the
-            // shared source (Expo's default), background to white.
+            // Adaptive icon (API 26+); foreground defaults to the
+            // shared source, background to white.
             let foreground = match &cfg.android_foreground {
                 Some(p) => load_adaptive_layer(&crate_root, p, "android_foreground")?,
                 None => img.clone(),
@@ -727,7 +719,6 @@ mod tests {
     #[test]
     fn apply_flattens_transparency_onto_white_for_ios() {
         let root = unique_tempdir("alpha");
-        // Fully transparent source — every flattened pixel must be white.
         write_png(&root, "assets/icon.png", 1024, [200, 10, 10, 0]);
         let mut ctx = ctx_both(&root);
         AppIcon
@@ -783,7 +774,6 @@ mod tests {
             .unwrap();
 
         let android = ctx.android.as_ref().unwrap();
-        // Foreground layers at the 108dp densities.
         for (qualifier, px) in ADAPTIVE_DENSITIES {
             let path = PathBuf::from(format!(
                 "app/src/main/res/mipmap-{qualifier}/ic_launcher_foreground.png"
@@ -798,8 +788,6 @@ mod tests {
             assert_eq!((decoded.width(), decoded.height()), (*px, *px));
         }
 
-        // Adaptive definition points at the color background; no
-        // monochrome line without an explicit monochrome layer.
         let xml = String::from_utf8(
             android.extra_files[Path::new("app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml")]
                 .to_bytes()
@@ -810,7 +798,6 @@ mod tests {
         assert!(xml.contains(r#"@mipmap/ic_launcher_foreground"#), "{xml}");
         assert!(!xml.contains("monochrome"), "{xml}");
 
-        // Default background color is white.
         let colors = String::from_utf8(
             android.extra_files[Path::new("app/src/main/res/values/ic_launcher_background.xml")]
                 .to_bytes()
@@ -819,7 +806,6 @@ mod tests {
         .unwrap();
         assert!(colors.contains("#FFFFFF"), "{colors}");
 
-        // No background/monochrome bitmaps were emitted.
         assert!(!android.extra_files.contains_key(Path::new(
             "app/src/main/res/mipmap-mdpi/ic_launcher_background.png"
         )));
@@ -856,8 +842,6 @@ mod tests {
         .unwrap();
         assert!(colors.contains("#1E90FF"), "{colors}");
 
-        // Monochrome bitmaps landed at every density; foreground
-        // bitmaps keep their alpha channel.
         for (qualifier, _) in ADAPTIVE_DENSITIES {
             assert!(android.extra_files.contains_key(&PathBuf::from(format!(
                 "app/src/main/res/mipmap-{qualifier}/ic_launcher_monochrome.png"
@@ -908,26 +892,22 @@ mod tests {
 
     #[test]
     fn validate_rejects_adaptive_misconfiguration() {
-        // Both background kinds at once.
         let mut cfg = cfg_with("assets/icon.png");
         cfg.android_background("assets/bg.png")
             .android_background_color("#FFFFFF");
         let err = AppIcon.validate(&cfg).unwrap_err();
         assert!(err.to_string().contains("pick one"), "{err}");
 
-        // Bad color literal.
         let mut cfg = cfg_with("assets/icon.png");
         cfg.android_background_color("blue");
         let err = AppIcon.validate(&cfg).unwrap_err();
         assert!(err.to_string().contains("hex color"), "{err}");
 
-        // Adaptive options without a source.
         let mut cfg = AppIconConfig::default();
         cfg.android_foreground("assets/fg.png");
         let err = AppIcon.validate(&cfg).unwrap_err();
         assert!(err.to_string().contains("`source` is not"), "{err}");
 
-        // Traversal in an adaptive path.
         let mut cfg = cfg_with("assets/icon.png");
         cfg.android_monochrome("../mono.png");
         let err = AppIcon.validate(&cfg).unwrap_err();
@@ -973,7 +953,6 @@ mod tests {
         AppIcon.apply(&mut ctx, &cfg).unwrap();
 
         let ios = ctx.ios.as_ref().unwrap();
-        // Bundle staged under the fixed AppIcon.icon name, tree intact.
         assert!(
             ios.extra_files
                 .contains_key(Path::new("AppIcon.icon/icon.json"))
@@ -982,7 +961,6 @@ mod tests {
             ios.extra_files
                 .contains_key(Path::new("AppIcon.icon/Assets/glyph.png"))
         );
-        // No PNG-derived catalog alongside it.
         assert!(
             !ios.extra_files
                 .keys()
@@ -1000,14 +978,12 @@ mod tests {
         let root = unique_tempdir("ios-icon-bad");
         write_png(&root, "assets/icon.png", 1024, [10, 20, 30, 255]);
 
-        // Missing directory.
         let mut cfg = cfg_with("assets/icon.png");
         cfg.ios_icon("assets/Nope.icon");
         let mut ctx = ctx_both(&root);
         let err = AppIcon.apply(&mut ctx, &cfg).unwrap_err();
         assert!(err.to_string().contains("not a directory"), "{err}");
 
-        // Directory without icon.json.
         std::fs::create_dir_all(root.join("assets/Empty.icon")).unwrap();
         let mut cfg = cfg_with("assets/icon.png");
         cfg.ios_icon("assets/Empty.icon");
@@ -1047,7 +1023,6 @@ mod tests {
             .apply(&mut ctx, &cfg_with("assets/icon.png"))
             .unwrap();
         assert!(ctx.ios.is_none());
-        // 5 legacy + 5 foreground + adaptive XML + color resource.
         assert_eq!(
             ctx.android.unwrap().extra_files.len(),
             ANDROID_DENSITIES.len() + ADAPTIVE_DENSITIES.len() + 2

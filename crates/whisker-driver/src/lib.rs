@@ -196,10 +196,10 @@ impl AnimateOptions {
     /// Start from the defaults (300ms linear forwards, plays once) and
     /// override fields with the chained setters below.
     ///
-    /// Because `AnimateOptions` is `#[non_exhaustive]`, this builder is
-    /// the construction path for code outside `whisker-driver` — a
-    /// struct literal won't compile across the crate boundary, which is
-    /// what lets new fields be added without a breaking change.
+    /// `AnimateOptions` is `#[non_exhaustive]`, so a struct literal
+    /// won't compile outside this crate — this builder is the
+    /// construction path, which is what lets new fields be added
+    /// without a breaking change.
     pub fn new() -> Self {
         Self::default()
     }
@@ -418,10 +418,9 @@ pub fn invoke_element_animate(
 /// callback.
 ///
 /// The bridge invokes the callback exactly once (synchronously with a
-/// `WhiskerValue::Error` on a precondition / unsupported-platform
-/// failure, asynchronously with the result on success), so the boxed
-/// oneshot sender is always consumed by the trampoline — the caller
-/// never recovers it.
+/// `WhiskerValue::Error` on a precondition failure, asynchronously
+/// with the result on success), so the boxed oneshot sender is always
+/// consumed by the trampoline — the caller never recovers it.
 pub async fn invoke_element_method_async(
     handle: Element,
     method: &str,
@@ -447,9 +446,6 @@ pub async fn invoke_element_method_async(
     let tx_box: Box<Option<futures_channel::oneshot::Sender<WhiskerValue>>> = Box::new(Some(tx));
     let tx_ptr = Box::into_raw(tx_box) as *mut c_void;
 
-    // The bridge guarantees exactly one callback (sync error or async
-    // result), so `async_trampoline` always consumes the boxed sender —
-    // we just await the channel.
     let _scheduled = unsafe {
         ffi::whisker_bridge_invoke_element_method_async(
             ptr_usize as *mut WhiskerElement,

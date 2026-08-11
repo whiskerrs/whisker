@@ -230,7 +230,6 @@ mod tests {
 
     #[test]
     fn calc_div_right_assoc_parens() {
-        // 100% / (2 / 4) keeps the inner division grouped.
         let inner = CalcExpr::number(2.0).div(CalcExpr::number(4.0));
         let expr = CalcExpr::value(Percentage(100.0)).div(inner);
         assert_eq!(

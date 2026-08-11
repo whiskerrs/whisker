@@ -33,24 +33,20 @@
 //! the formatted expr at column 0, ready for the printer to splice in
 //! and re-indent to the kwarg's column.
 //!
-//! # Column-shift limitation (MVP)
+//! # Column-shift limitation
 //!
 //! rustfmt wraps each expr against the synthetic wrapper's SHALLOW
 //! indent (one level), not against the expr's true, possibly-deeper
-//! column in the macro. So a value that lands at, say, column 24 in the
-//! final output may wrap a few columns later than a from-scratch rustfmt
-//! run would. dioxus-fmt and yew-fmt have the same limitation. A future
-//! refinement could compute a per-expr `max_width` adjusted by the
-//! expr's target column and run a wrapper per width-bucket — deliberately
-//! NOT done in this pass.
+//! column in the macro, so a value may wrap a few columns later than a
+//! from-scratch rustfmt run would. dioxus-fmt and yew-fmt share this
+//! limitation.
 //!
 //! # Fallbacks
 //!
-//! Every step degrades gracefully to the verbatim slice (the prior
-//! behavior): no rustfmt binary, a wrapper that fails to format, or an
-//! individual `__wsk_eN` body that can't be re-extracted all leave that
-//! expr (or all exprs of the body) verbatim. A formatting hiccup in one
-//! expr never errors the whole file.
+//! Every step degrades to the verbatim slice: no rustfmt binary, a
+//! wrapper that fails to format, or an individual `__wsk_eN` body that
+//! can't be re-extracted all leave that expr (or all exprs of the body)
+//! verbatim. A formatting hiccup in one expr never errors the file.
 
 use crate::options::FmtOptions;
 use proc_macro2::{LineColumn, Span};
@@ -154,7 +150,6 @@ impl ExprFormatter {
             return map;
         }
 
-        // ---- build the batched synthetic source ----
         let mut synthetic = String::new();
         for (i, (_, src)) in exprs.iter().enumerate() {
             synthetic.push_str(&format!("fn __wsk_e{i}() {{\n"));
@@ -167,16 +162,13 @@ impl ExprFormatter {
             synthetic.push_str("}\n");
         }
 
-        // ---- one rustfmt spawn for the whole batch ----
         let formatted_file =
             match crate::run_rustfmt(&synthetic, &self.opts, self.config_dir.as_deref()) {
                 Ok(s) => s,
-                // No rustfmt, or the batch failed to parse/format as a whole
-                // → leave every expr verbatim.
+                // No rustfmt, or the batch failed as a whole → verbatim.
                 Err(_) => return map,
             };
 
-        // ---- extract each __wsk_eN body ----
         let bodies = match extract_bodies(&formatted_file, exprs.len()) {
             Some(b) => b,
             None => return map,
@@ -201,7 +193,6 @@ fn extract_bodies(formatted_file: &str, count: usize) -> Option<Vec<Option<Strin
     let parsed: syn::File = syn::parse_file(formatted_file).ok()?;
     let map = crate::source_map::SourceMap::new(formatted_file);
 
-    // index -> body text
     let mut found: HashMap<usize, String> = HashMap::new();
     for item in &parsed.items {
         let syn::Item::Fn(f) = item else { continue };
@@ -212,30 +203,23 @@ fn extract_bodies(formatted_file: &str, count: usize) -> Option<Vec<Option<Strin
         else {
             continue;
         };
-        // The block's brace span covers `{ … }`. Slice the inside.
         let brace = f.block.brace_token.span;
-        // `Span::join` of the open/close delimiters gives the full
-        // `{ … }` range; use the group span directly.
         let span: Span = brace.join();
         let Some((open, close)) = map.byte_range(span) else {
             continue;
         };
-        // Strip the outer braces: byte `open` is `{`, `close-1` is `}`.
         if close <= open + 1 {
-            // Empty body — keep as empty string.
             found.insert(idx, String::new());
             continue;
         }
         let inner = &formatted_file[open + 1..close - 1];
-        // Trim a single leading / trailing newline introduced by the
-        // braces being on their own lines; keep internal indentation so
-        // `dedent_one_level` can strip exactly one level.
+        // Keep internal indentation so `dedent_one_level` can strip
+        // exactly one level.
         let inner = inner.strip_prefix('\n').unwrap_or(inner);
         let inner = inner.strip_suffix('\n').unwrap_or(inner);
         found.insert(idx, inner.to_string());
     }
 
-    // Require every expected wrapper to be present.
     let mut bodies = Vec::with_capacity(count);
     for i in 0..count {
         bodies.push(Some(found.remove(&i)?));
@@ -301,7 +285,6 @@ mod tests {
     #[test]
     fn extract_requires_all() {
         let file = "fn __wsk_e0() {\n    a\n}\n";
-        // Asking for 2 but only 1 present → None.
         assert!(extract_bodies(file, 2).is_none());
     }
 

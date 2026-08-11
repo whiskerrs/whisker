@@ -7,10 +7,10 @@
 //! reformat them.
 //!
 //! The codegen side (the `to_tokens` lowering) lives in
-//! `whisker-macros`. Because these types are now defined here, the
-//! orphan rule forbids `whisker-macros` from adding *inherent* methods
-//! to them; the lowering is expressed there as free functions over
-//! `&Root` / `&Node` / … (see `whisker-macros/src/render.rs`).
+//! `whisker-macros`. The orphan rule forbids it from adding *inherent*
+//! methods to these types, so the lowering is expressed there as free
+//! functions over `&Root` / `&Node` / … (see
+//! `whisker-macros/src/render.rs`).
 //!
 //! Spans are retained throughout the AST (every ident / expr carries
 //! its `proc_macro2::Span`) so the formatter can recover source slices

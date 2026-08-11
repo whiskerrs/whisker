@@ -1,6 +1,6 @@
 //! `Patcher` — the integrator. Turns a [`crate::Change`] into a
 //! [`subsecond_types::JumpTable`] (wrapped in [`PatchPlan`]) by
-//! stitching together the pieces from I4g-1 through I4g-X2:
+//! stitching the pipeline together:
 //!
 //!   - captured rustc args + linker args from the fat build
 //!     (`wrapper`, `whisker-rustc-shim`, `whisker-linker-shim`)
@@ -135,8 +135,9 @@ impl Patcher {
     /// alongside the JumpTable so the dev loop can log warnings
     /// (added / removed / weak symbols).
     ///
-    /// `aslr_reference` is the runtime address of `main` reported by
-    /// the connected device through the `hello` WebSocket handshake.
+    /// `aslr_reference` is the runtime address of
+    /// `whisker_aslr_anchor` reported by the connected device through
+    /// the `hello` WebSocket handshake.
     /// We compute the ASLR slide as
     /// `aslr_reference - cache.aslr_reference` and bake the result
     /// into a small stub object that resolves every host symbol the
@@ -146,8 +147,8 @@ impl Patcher {
     /// caller should refrain from sending it in that state).
     ///
     /// `crate_key` is the **rustc-form** name of the crate that owns
-    /// the change. `None` defaults to the user crate. Sub-crate
-    /// patches (#103) pass the changed crate's name so the thin
+    /// the change. `None` defaults to the user crate. A sub-crate
+    /// patch passes the changed crate's name so the thin
     /// build picks up that crate's captured rustc args (a fresh `.o`
     /// of the changed sub-crate), then links it into a patch dylib
     /// using the user crate's linker invocation as template. The
@@ -234,8 +235,8 @@ impl Patcher {
         // yet" / test-fixture path. In that case the host's
         // `dynamic_lookup` (macOS) or `--unresolved-symbols=ignore-all`
         // (Linux) satisfies the patch's references against the
-        // already-loaded test process — same as before Option B. Real
-        // device dispatch always goes through the stub branch since
+        // already-loaded test process. Real device dispatch always
+        // goes through the stub branch since
         // `lib.rs::run` skips hot reload entirely when no aslr_reference
         // has been reported.
         let extras: Vec<PathBuf> = if aslr_reference == 0 {
@@ -322,9 +323,9 @@ impl Patcher {
     /// `aslr_reference` / `target_os` are unchanged — the common case
     /// when an edit only touches a function body.
     ///
-    /// Pass `extra` for sub-crate patches (#103): the union of UND
-    /// symbols across both objects, minus their union of defined,
-    /// gives the right "still unresolved" set.
+    /// Pass `extra` for a sub-crate patch: the union of UND symbols
+    /// across both objects, minus their union of defined, gives the
+    /// right "still unresolved" set.
     fn stub_bytes_for_objects(
         &self,
         object: &Path,
@@ -458,12 +459,11 @@ fn hash_needed(needed: &[String]) -> u64 {
 ///            = patch image base.
 /// ```
 ///
-/// Using `relative_address_base()` here (always 0 for an ELF PIE
-/// dylib) sent `new_offset = patch_runtime_anchor`, leaving the
-/// JumpTable's values shifted by the runtime address of the anchor
-/// rather than by the image base — every patched function would land
-/// somewhere meaningless. Symmetric to the host-side anchor lookup
-/// in [`crate::hotpatch::cache::HotpatchModuleCache::from_path`].
+/// It must be the anchor's address, not `relative_address_base()`
+/// (0 for an ELF PIE dylib), which would shift every JumpTable value
+/// by the anchor's runtime address instead of the image base.
+/// Symmetric to the host-side lookup in
+/// [`crate::hotpatch::cache::HotpatchModuleCache::from_path`].
 fn read_image_base(path: &Path) -> Result<u64> {
     let table = parse_symbol_table(path).with_context(|| format!("parse {}", path.display()))?;
     // Same fallback semantics as the host cache: 0 when the anchor
@@ -477,10 +477,6 @@ fn read_image_base(path: &Path) -> Result<u64> {
         .map(|s| s.address)
         .unwrap_or(0))
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
