@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-paths-v0.10.12...whisker-paths-v0.11.0) - 2026-08-11
+
+### Other
+
+- Point apps at Android SDK 0.1.18 and iOS SwiftPM 0.1.8 ([#386](https://github.com/whiskerrs/whisker/pull/386))
+
 ## [0.10.8](https://github.com/whiskerrs/whisker/compare/whisker-paths-v0.10.7...whisker-paths-v0.10.8) - 2026-08-07
 
 ### Other
