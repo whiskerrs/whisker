@@ -143,15 +143,21 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // singletons (safe-area insets, the back registry, …) are minted
     // under their OWN detached roots, so they survive untouched.
     //
-    // Uninstall the renderer FIRST: the previous BridgeRenderer points
-    // at the now-freed engine #1 (the old WhiskerView's `destroy()`
-    // called `whisker_bridge_engine_release`, which `delete`s it), so
-    // the element releases the dispose fans out must not reach the
-    // native side. With no renderer installed they no-op, and the
-    // fresh engine #2 renderer is installed further down.
+    // Clear every process-global wiring that pointed at engine #1
+    // FIRST. The old WhiskerView's `destroy()` called
+    // `whisker_bridge_engine_release`, which `delete`s the engine, so
+    // the renderer, the host-wake callback, and the main-thread
+    // dispatcher all dangle. Any call through them during the dispose
+    // (element releases; an `on_cleanup` writing a signal, which wakes
+    // the host; a background async completion marshalling onto the main
+    // thread) would be a use-after-free. Nulled, they no-op; engine #2's
+    // wirings install further down.
     APP_ROOT_OWNER.with(|slot| {
         if let Some(prev) = slot.borrow_mut().take() {
             uninstall_renderer(None);
+            whisker_runtime::host_wake::set_request_frame_callback(None, std::ptr::null_mut());
+            whisker_runtime::main_thread::set_main_thread_dispatcher(None, std::ptr::null_mut());
+            whisker_runtime::main_thread::set_drive_callback(None);
             prev.dispose();
         }
     });
