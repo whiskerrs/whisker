@@ -19,7 +19,7 @@ let package = Package(
         .library(name: "WhiskerStatusBar", targets: ["WhiskerStatusBar"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.9"),
+        .package(url: "https://github.com/whiskerrs/whisker.git", exact: "0.1.10"),
     ],
     targets: [
         .target(
