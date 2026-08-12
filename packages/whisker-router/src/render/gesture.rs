@@ -372,8 +372,14 @@ pub fn android_predictive_back() -> Element {
         let nav_for_enabled = nav.clone();
         let last_sent: Rc<std::cell::Cell<Option<bool>>> = Rc::new(std::cell::Cell::new(None));
         whisker::runtime::reactive::effect(move || {
-            let _ = nav_for_enabled.state().get();
-            let can_pop = nav_for_enabled.active_stack_bridge().is_some();
+            // Derived from the state itself, not the gesture bridges:
+            // `Stack` re-registers its bridge during reconcile AFTER the
+            // state write, so a bridge-based read here is one navigation
+            // stale (first push → back exits the app).
+            let state = nav_for_enabled.state().get();
+            let can_pop = state.active_chain().iter().any(
+                |node| matches!(node, crate::core::RouteState::Stack(s) if s.history.len() > 1),
+            );
             // `has_any_handler`, not `has_active_handler`: a pop's
             // survivor stays paused until its settle finishes, and the
             // pause-filtered predicate would disable back past a
