@@ -56,7 +56,7 @@ use whisker_runtime::reactive::{
 };
 use whisker_runtime::view::{
     DynRenderer, Element, append_child, create_element, flush as renderer_flush, install_renderer,
-    set_inline_styles, set_root,
+    set_inline_styles, set_root, uninstall_renderer,
 };
 
 thread_local! {
@@ -66,6 +66,16 @@ thread_local! {
     /// the callback runs synchronously, so this is flipped back to
     /// `false` before `tick()` returns.
     static PENDING: Cell<bool> = const { Cell::new(false) };
+
+    /// The current bootstrap's app-root owner. Retained so a
+    /// re-`run()` in the same process — Android recreates the Activity
+    /// (hence the WhiskerView, the engine, and this bootstrap) after a
+    /// back-out finishes it while the process lives on — can tear the
+    /// previous app tree down before building the next one. Without
+    /// this the second tree stacks on top of the first in the shared
+    /// thread-local runtime and never paints (issue #396).
+    static APP_ROOT_OWNER: std::cell::RefCell<Option<whisker_runtime::reactive::Owner>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Bootstrap the runtime. Called from the FFI export the
@@ -125,6 +135,32 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     if user_data.is_null() {
         return;
     }
+    // Re-`run()` in a live process (Android Activity recreation): tear
+    // the previous app tree down before building the next. Disposing
+    // the app-root owner cascades the run owner and every element /
+    // signal / on_cleanup below it — including the `BackGuard`s and
+    // other registrations tree #1 held. Process-global module
+    // singletons (safe-area insets, the back registry, …) are minted
+    // under their OWN detached roots, so they survive untouched.
+    //
+    // Clear every process-global wiring that pointed at engine #1
+    // FIRST. The old WhiskerView's `destroy()` called
+    // `whisker_bridge_engine_release`, which `delete`s the engine, so
+    // the renderer, the host-wake callback, and the main-thread
+    // dispatcher all dangle. Any call through them during the dispose
+    // (element releases; an `on_cleanup` writing a signal, which wakes
+    // the host; a background async completion marshalling onto the main
+    // thread) would be a use-after-free. Nulled, they no-op; engine #2's
+    // wirings install further down.
+    APP_ROOT_OWNER.with(|slot| {
+        if let Some(prev) = slot.borrow_mut().take() {
+            uninstall_renderer(None);
+            whisker_runtime::host_wake::set_request_frame_callback(None, std::ptr::null_mut());
+            whisker_runtime::main_thread::set_main_thread_dispatcher(None, std::ptr::null_mut());
+            whisker_runtime::main_thread::set_drive_callback(None);
+            prev.dispose();
+        }
+    });
     let mut ctx: Box<InitCtx> = unsafe { Box::from_raw(user_data as *mut InitCtx) };
 
     let renderer = match unsafe { BridgeRenderer::from_raw(ctx.engine) } {
@@ -201,9 +237,11 @@ extern "C" fn init_callback(user_data: *mut c_void) {
     // owner to attach to; without one it silently no-ops and any
     // descendant's `use_context::<T>().expect(...)` panics across this
     // `extern "C"` boundary (aborting on Android, blank-screening on
-    // iOS). This root owner is never disposed — the disposable child
-    // "run owner" below is what a full remount tears down.
+    // iOS). Disposed only by a re-`run()` in the same process (see the
+    // teardown at the top of this fn); a full remount tears down the
+    // disposable child "run owner" below instead.
     let root_owner = whisker_runtime::reactive::Owner::detached_root();
+    APP_ROOT_OWNER.with(|slot| *slot.borrow_mut() = Some(root_owner));
     root_owner.with(|| {
         // Lynx requires the shell root to be a `page` element and keeps
         // it FIXED for the app's lifetime (it can't be swapped — see
@@ -247,6 +285,14 @@ fn start_hot_reload_receiver() {}
 // so a current-thread reactor would never advance registered IO.
 #[cfg(feature = "tokio")]
 fn init_tokio_runtime() {
+    // Once per process: the runtime + its entered context outlive any
+    // single bootstrap, so a re-`run()` (Android Activity recreation)
+    // must not build and leak a second one.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::Relaxed) {
+        return;
+    }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all() // IO (mio: epoll on Android / kqueue on iOS) + timer
         .worker_threads(2) // conservative for mobile; tune later if needed
