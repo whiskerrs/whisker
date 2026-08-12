@@ -365,16 +365,39 @@ fn reconcile_stack(
                 let drive = w.ctrl.clone();
                 w.ctrl.set_value(0.0);
                 set_pose(&w, &drive, Role::Top, Direction::Push);
-                {
+                let under_owner = {
                     let l = live.borrow();
-                    if let Some(under) = l.last() {
+                    l.last().map(|under| {
                         under.owner.resume(); // animate it while covered
                         set_pose(under, &drive, Role::Under, Direction::Push);
-                    }
-                }
+                        under.owner
+                    })
+                };
                 if w.transition.is_instant() {
                     drive.set_value(1.0);
+                    if let Some(owner) = under_owner {
+                        owner.pause();
+                    }
                 } else {
+                    // The steady-state settle skips wrappers whose pose is
+                    // still animating and no reconcile re-runs after the
+                    // slide, so the covered under has to be frozen from the
+                    // run's own completion. One-shot: `on_finish` callbacks
+                    // persist across a controller's later runs, and firing
+                    // again on a pop's reverse would pause the screen that
+                    // pop just revealed.
+                    if let Some(owner) = under_owner {
+                        let mut done = false;
+                        drive.on_finish(move |finished| {
+                            if done {
+                                return;
+                            }
+                            done = true;
+                            if finished {
+                                owner.pause();
+                            }
+                        });
+                    }
                     drive.forward();
                 }
                 live.borrow_mut().push(w);

@@ -487,6 +487,70 @@ fn settle_animations() {
 }
 
 #[test]
+fn push_pauses_the_covered_under_once_the_slide_finishes() {
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        h.navigate("/detail/1").unwrap();
+        flush();
+        settle_animations();
+
+        let under_owner = h
+            .active_stack_bridge()
+            .and_then(|b| b.under_owner)
+            .expect("under owner present after push");
+        assert!(
+            under_owner.is_paused(),
+            "the covered under must be frozen after the push settles — an \
+             unfrozen under keeps its back-handler registrations active"
+        );
+
+        // Popping revives it: the revealed screen must not stay paused.
+        assert!(h.back().is_ok());
+        flush();
+        settle_animations();
+        assert!(
+            !under_owner.is_paused(),
+            "the pop's survivor must be resumed"
+        );
+    });
+}
+
+#[test]
+fn can_pop_is_derivable_from_state_before_any_reconcile() {
+    // The platform enabled effect computes can-pop from the state
+    // signal; the gesture bridges update one reconcile later and must
+    // not be its source.
+    whisker::runtime::reactive::__reset_for_tests();
+    whisker_animation::__reset_for_tests();
+    let owner = Owner::new(None);
+    owner.with(|| {
+        let h = slide_stack_handle();
+        let _slot = mount_node(&h, NodePath::root());
+        flush();
+
+        let can_pop = |h: &RouterHandle| {
+            h.state().get_untracked().active_chain().iter().any(
+                |node| matches!(node, crate::core::RouteState::Stack(s) if s.history.len() > 1),
+            )
+        };
+        assert!(!can_pop(&h), "root: nothing to pop");
+        h.navigate("/detail/1").unwrap();
+        assert!(
+            can_pop(&h),
+            "immediately after the state write, before any flush/reconcile"
+        );
+        assert!(h.back().is_ok());
+        assert!(!can_pop(&h), "back at root");
+    });
+}
+
+#[test]
 fn pop_settles_survivor_to_active_pose() {
     whisker::runtime::reactive::__reset_for_tests();
     whisker_animation::__reset_for_tests();
