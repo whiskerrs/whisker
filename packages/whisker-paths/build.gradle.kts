@@ -41,6 +41,6 @@ ksp {
 }
 
 dependencies {
-    implementation("rs.whisker:whisker-module-android:0.1.0")
-    ksp("rs.whisker:ksp:0.1.0")
+    implementation("rs.whisker:whisker-module-android:0.1.19")
+    ksp("rs.whisker:ksp:0.1.19")
 }

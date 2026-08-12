@@ -74,23 +74,23 @@ let package = Package(
         // `swiftpm-manifest-<ver>.txt` published alongside each release.
         .binaryTarget(
             name: "Lynx",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.1/Lynx-4.0.1-whisker.1.xcframework.zip",
-            checksum: "e5161bf110a1d22869412689b89362798fd35e53dad9467980e9390918261c1d"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.2/Lynx-4.0.1-whisker.2.xcframework.zip",
+            checksum: "71a6ae0fcdae9b0ed33734bf954cc9c5971011d0e247f6b785ec81dcd132cd51"
         ),
         .binaryTarget(
             name: "LynxBase",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.1/LynxBase-4.0.1-whisker.1.xcframework.zip",
-            checksum: "875c389e2a33ad846ae43a29bcb1dad131d8b1e75ab36a2d41f39355e68cd25e"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.2/LynxBase-4.0.1-whisker.2.xcframework.zip",
+            checksum: "269d768cd268e952d74e6d53fa7af1d3cd3eb909bacc8a4ffb461eb4ac3e2263"
         ),
         .binaryTarget(
             name: "LynxServiceAPI",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.1/LynxServiceAPI-4.0.1-whisker.1.xcframework.zip",
-            checksum: "9347769f21d9c41e0274cdb555698d7489f67ab9ed26fe2146688061f55a9b24"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.2/LynxServiceAPI-4.0.1-whisker.2.xcframework.zip",
+            checksum: "20d974529ebf8c2358f8f799922b7d0b854eccd5e182bca275bb2298c06e5b9c"
         ),
         .binaryTarget(
             name: "PrimJS",
-            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.1/PrimJS-4.0.1-whisker.1.xcframework.zip",
-            checksum: "76502d535310b42d7c15d9dcb8e802622d17f8541bcee5a8dcf8863b59d8f45b"
+            url: "https://github.com/whiskerrs/lynx/releases/download/v4.0.1-whisker.2/PrimJS-4.0.1-whisker.2.xcframework.zip",
+            checksum: "3993b821603dea83152abe281152ec07bcb0cbea90841776dc5f80f2fd02187e"
         ),
 
         // Header-only mirror of `WhiskerDriver`'s public C ABI. Source
