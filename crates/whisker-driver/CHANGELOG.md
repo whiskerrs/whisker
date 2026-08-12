@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-driver-v0.11.0...whisker-driver-v0.11.1) - 2026-08-12
+
+### Other
+
+- Tear down the previous app tree when run() is called again ([#396](https://github.com/whiskerrs/whisker/pull/396)) ([#397](https://github.com/whiskerrs/whisker/pull/397))
+- Give apps the Android back button, and give it back to Android ([#392](https://github.com/whiskerrs/whisker/pull/392))
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-driver-v0.10.12...whisker-driver-v0.11.0) - 2026-08-11
 
 ### Other

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.11.0...whisker-router-v0.11.1) - 2026-08-12
+
+### Other
+
+- Fix the two back-handling regressions the batch E2E caught ([#395](https://github.com/whiskerrs/whisker/pull/395))
+- Repair the release pins the batch E2E caught ([#394](https://github.com/whiskerrs/whisker/pull/394))
+- Give apps the Android back button, and give it back to Android ([#392](https://github.com/whiskerrs/whisker/pull/392))
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-router-v0.10.12...whisker-router-v0.11.0) - 2026-08-11
 
 ### Other

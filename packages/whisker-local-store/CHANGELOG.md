@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/whiskerrs/whisker/compare/whisker-local-store-v0.11.0...whisker-local-store-v0.11.1) - 2026-08-12
+
+### Other
+
+- Repair the release pins the batch E2E caught ([#394](https://github.com/whiskerrs/whisker/pull/394))
+- Point apps at Lynx 4.0.1-whisker.2, Android SDK 0.1.19, iOS SwiftPM 0.1.9 ([#393](https://github.com/whiskerrs/whisker/pull/393))
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-local-store-v0.10.12...whisker-local-store-v0.11.0) - 2026-08-11
 
 ### Other
