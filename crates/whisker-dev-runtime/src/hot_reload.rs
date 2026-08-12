@@ -97,6 +97,14 @@ pub fn take_pending_patch() -> Option<JumpTable> {
 /// on connection failure so a dev server starting later still gets
 /// picked up.
 pub fn start_receiver() {
+    // Once per process: the receiver thread + its WebSocket outlive any
+    // single bootstrap, so a re-`run()` (Android Activity recreation)
+    // must not spawn a second thread racing the same dev server.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let addr = std::env::var("WHISKER_DEV_ADDR")
         .ok()
         .filter(|a| !a.is_empty())
