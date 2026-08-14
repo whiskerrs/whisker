@@ -62,18 +62,46 @@ use std::process::Command;
 /// The rustfmt binary independently reads `rustfmt.toml`; pass
 /// `opts.edition` through so both passes agree on the edition.
 pub fn format_source(src: &str, opts: &FmtOptions) -> Result<String> {
-    let base = run_rustfmt(src, opts, None)?;
     let exprfmt = ExprFormatter::new(opts);
-    reformat_macros_inner(&base, opts, Some(&exprfmt))
+    format_converged(src, opts, None, &exprfmt)
 }
 
 /// Like [`format_source`] but tells rustfmt to resolve `rustfmt.toml`
 /// from `config_dir` (its `--config-path`). Used by the CLI so each
 /// file's nearest `rustfmt.toml` governs.
 pub fn format_source_in_dir(src: &str, opts: &FmtOptions, config_dir: &Path) -> Result<String> {
-    let base = run_rustfmt(src, opts, Some(config_dir))?;
     let exprfmt = ExprFormatter::new_in_dir(opts, config_dir);
-    reformat_macros_inner(&base, opts, Some(&exprfmt))
+    format_converged(src, opts, Some(config_dir), &exprfmt)
+}
+
+/// Run rustfmt + the macro pass repeatedly until the output is a fixed
+/// point, capped at 3 rounds. The two passes are individually idempotent
+/// but their COMPOSITION need not be: the macro pass can emit a shape
+/// (e.g. a multi-line `move || css!(…)` closure body) that the next
+/// round's rustfmt rewrites again (into `move || { css!(…) }`), which
+/// then IS stable.
+fn format_converged(
+    src: &str,
+    opts: &FmtOptions,
+    config_dir: Option<&Path>,
+    exprfmt: &ExprFormatter,
+) -> Result<String> {
+    let round = |input: &str| -> Result<String> {
+        let base = run_rustfmt(input, opts, config_dir)?;
+        reformat_macros_inner(&base, opts, Some(exprfmt))
+    };
+    let mut cur = round(src)?;
+    if cur == src {
+        return Ok(cur);
+    }
+    for _ in 0..2 {
+        let next = round(&cur)?;
+        if next == cur {
+            break;
+        }
+        cur = next;
+    }
+    Ok(cur)
 }
 
 /// `--check` helper: returns `Ok(None)` if the source is already

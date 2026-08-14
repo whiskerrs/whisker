@@ -190,6 +190,41 @@ fn full_pipeline_nested_routes_in_render_idempotent() {
 }
 
 #[test]
+fn statement_macro_in_closure_converges_in_one_call() {
+    if !rustfmt_available() {
+        return;
+    }
+    // The macro pass emits a multi-line `move || css!(…)`; a later
+    // rustfmt round rewrites the closure body into a block. One
+    // format_source call must already return that stable form.
+    let src = "fn ui() -> Element {\n    let style = computed(move || css!(flex_direction: FlexDirection::Column, gap: px(12.0), margin_bottom: px(16.0), padding_left: px(20.0)));\n    render! { view(style: style) }\n}\n";
+    let once = format_source(src, &opts(4, 100)).unwrap();
+    let twice = format_source(&once, &opts(4, 100)).unwrap();
+    assert_eq!(
+        once, twice,
+        "must converge within one call:\n--once--\n{once}\n--twice--\n{twice}"
+    );
+}
+
+#[test]
+fn closure_wrapped_render_kwarg_converges_in_one_call() {
+    if !rustfmt_available() {
+        return;
+    }
+    let src = "fn ui() -> Element {\n    render! { view { ForEach(each: move || rows(), key: |i: &usize| i.to_string(), children: move |_: usize| render! { view(style: row_style) }) } }\n}\n";
+    let once = format_source(src, &opts(4, 100)).unwrap();
+    let twice = format_source(&once, &opts(4, 100)).unwrap();
+    assert_eq!(
+        once, twice,
+        "must converge within one call:\n--once--\n{once}\n--twice--\n{twice}"
+    );
+    assert!(
+        once.contains("render! {\n"),
+        "closure-wrapped render! must format:\n{once}"
+    );
+}
+
+#[test]
 fn full_pipeline_composite_podcast_like_tree() {
     if !rustfmt_available() {
         return;
