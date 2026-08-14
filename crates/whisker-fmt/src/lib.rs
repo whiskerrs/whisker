@@ -1343,9 +1343,9 @@ mod comment_tests {
     #[test]
     fn wallet_faithful_reduction_formats_and_preserves_comments() {
         let input = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n        view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false\n    )\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n        }\n        }\n    }\n}\n";
-        // The css!'s trailing comma is a keep-vertical hint, so it stays
-        // broken and the enclosing kwarg list wraps around it.
-        let expected = "fn d() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        ) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
+        // The css!'s trailing comma keeps IT vertical, and last-argument
+        // overflow keeps it combined on the view's own line.
+        let expected = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
         let out = fmt(input);
         assert_ne!(out, input, "must not fall back:\n{out}");
         assert_eq!(out, expected, "got:\n{out}");
@@ -1663,6 +1663,33 @@ mod coverage_tests {
         let out = fmt(input);
         assert!(out.contains("a: css!(x: 1)"), "got:\n{out}");
         assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
+    }
+
+    // ---- last-argument overflow (combine) ---------------------------------
+
+    #[test]
+    fn multiline_last_kwarg_combines_on_open_line() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            text(value: \"hi\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn single_line_kwargs_before_multiline_last_stay_on_open_line() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(key: 1, style: css!(\n            flex_grow: 1.0,\n        ))\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn outer_trailing_comma_beats_combine() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n            ),\n        )\n    }\n}\n";
+        assert_eq!(
+            fmt(input),
+            input,
+            "authored outer trailing comma pins the wrap"
+        );
+        assert_idempotent(input);
     }
 
     // ---- comments anchored to kwargs --------------------------------------
