@@ -76,6 +76,7 @@ pub(crate) fn print_render(
         exprfmt,
         comments,
         next: Cell::new(0),
+        prev_end: Cell::new(None),
     };
     let mut out = String::new();
     if let Some(start) = p.ir_node_start_byte(root) {
@@ -127,6 +128,7 @@ pub(crate) fn print_css(
         exprfmt,
         comments,
         next: Cell::new(0),
+        prev_end: Cell::new(None),
     };
     p.css(input, base_indent + 1, body_len, inline_budget)
 }
@@ -151,15 +153,18 @@ pub(crate) fn print_routes(
         exprfmt,
         comments,
         next: Cell::new(0),
+        prev_end: Cell::new(None),
     };
     let mut out = String::new();
     let level = base_indent + 1;
     for (i, node) in roots.iter().enumerate() {
         if let Some(start) = p.ir_node_start_byte(node) {
             p.flush(start, level, &mut out);
+            p.maybe_blank_line(start, &mut out);
         }
         p.ir_node(node, level, &mut out);
         if let Some((_, end)) = p.ir_node_extent(node) {
+            p.prev_end.set(Some(end));
             if let Some(idx) = p.pending_trailing_on_line(end) {
                 let before = p.comments[idx].start + 1;
                 p.flush(before, level, &mut out);
@@ -196,6 +201,10 @@ struct Printer<'a> {
     comments: &'a [GrammarComment],
     /// Index of the next unconsumed comment.
     next: Cell<usize>,
+    /// Source byte just past the previously emitted item (sibling or
+    /// comment), for carrying authored blank lines between items.
+    /// `None` suppresses the blank-line check (block start).
+    prev_end: Cell<Option<usize>>,
 }
 
 impl Printer<'_> {
@@ -454,6 +463,17 @@ impl Printer<'_> {
         self.opts.indent_prefix(level)
     }
 
+    /// Emit ONE blank line when the source had one or more between the
+    /// previously emitted item ([`Printer::prev_end`]) and the item
+    /// starting at `next_start`.
+    fn maybe_blank_line(&self, next_start: usize, out: &mut String) {
+        if let Some(prev) = self.prev_end.get() {
+            if self.map.has_blank_line_between(prev, next_start) {
+                out.push('\n');
+            }
+        }
+    }
+
     // ---- comment reattachment ------------------------------------------
 
     /// Emit every not-yet-consumed comment whose `start < before`, at the
@@ -469,6 +489,7 @@ impl Printer<'_> {
         while idx < self.comments.len() && self.comments[idx].start < before {
             let c = &self.comments[idx];
             if c.own_line {
+                self.maybe_blank_line(c.start, out);
                 out.push_str(&indent);
                 out.push_str(&reindent(&c.text, &indent));
                 out.push('\n');
@@ -485,6 +506,7 @@ impl Printer<'_> {
                     out.push('\n');
                 }
             }
+            self.prev_end.set(Some(c.end));
             idx += 1;
         }
         self.next.set(idx);
@@ -612,12 +634,17 @@ impl Printer<'_> {
         if !tag.children.is_empty() || tag.always_block || has_block_comments {
             out.push_str(" {\n");
             let child_level = level + 1;
+            // Blank lines at the block's edges are dropped: the check is
+            // disarmed until the first child/comment sets a new anchor.
+            self.prev_end.set(None);
             for child in &tag.children {
                 if let Some(cs) = self.ir_node_start_byte(child) {
                     self.flush(cs, child_level, out);
+                    self.maybe_blank_line(cs, out);
                 }
                 self.ir_node(child, child_level, out);
                 if let Some((_, child_end)) = self.ir_node_extent(child) {
+                    self.prev_end.set(Some(child_end));
                     if let Some(idx) = self.pending_trailing_on_line(child_end) {
                         let before = self.comments[idx].start + 1;
                         self.flush(before, child_level, out);
@@ -630,6 +657,9 @@ impl Printer<'_> {
             }
             out.push_str(&indent);
             out.push('}');
+            if let Some(close) = inner_close {
+                self.prev_end.set(Some(close + 1));
+            }
         }
     }
 
@@ -678,10 +708,14 @@ impl Printer<'_> {
             }
             let indent = self.indent(level);
             let mut out = String::new();
-            for part in &parts {
+            for (kw, part) in input.kwargs.iter().zip(&parts) {
+                if let Some((s, _)) = self.map.byte_range(kw.name.span()) {
+                    self.maybe_blank_line(s, &mut out);
+                }
                 out.push_str(&indent);
                 out.push_str(&reindent(part, &indent));
                 out.push_str(",\n");
+                self.prev_end.set(Some(css_field_end(self.map, kw)));
             }
             out.pop();
             return out;
@@ -695,22 +729,13 @@ impl Printer<'_> {
             let start = self.map.byte_range(kw.name.span()).map(|(s, _)| s);
             if let Some(s) = start {
                 self.flush(s, level, &mut out);
+                self.maybe_blank_line(s, &mut out);
             }
             out.push_str(&indent);
             out.push_str(&reindent(&self.css_kwarg(kw, level), &indent));
             out.push(',');
-            let field_end = self
-                .map
-                .byte_range(kw.name.span())
-                .map(|(_, e)| e)
-                .unwrap_or(0);
-            // Use the value's end if present for a tighter line bound.
-            let line_end = kw
-                .value
-                .as_ref()
-                .and_then(|e| self.map.byte_range(span_of(e)))
-                .map(|(_, e)| e)
-                .unwrap_or(field_end);
+            let line_end = css_field_end(self.map, kw);
+            self.prev_end.set(Some(line_end));
             if let Some(idx) = self.pending_trailing_on_line(line_end) {
                 let before = self.comments[idx].start + 1;
                 self.flush(before, level, &mut out);
@@ -735,6 +760,17 @@ impl Printer<'_> {
             None => name,
         }
     }
+}
+
+/// Byte just past a css field in the source: the value's end when
+/// present, else the name's.
+fn css_field_end(map: &SourceMap, kw: &whisker_macro_syntax::CssKwarg) -> usize {
+    kw.value
+        .as_ref()
+        .and_then(|e| map.byte_range(span_of(e)))
+        .map(|(_, e)| e)
+        .or_else(|| map.byte_range(kw.name.span()).map(|(_, e)| e))
+        .unwrap_or(0)
 }
 
 /// Width contribution of a ` { … }` children block when deciding

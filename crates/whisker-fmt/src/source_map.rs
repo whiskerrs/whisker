@@ -156,6 +156,22 @@ impl<'a> SourceMap<'a> {
         last == Some(b',')
     }
 
+    /// `true` if `[lo, hi)` spans at least one BLANK line — i.e. two or
+    /// more newlines. Used to carry (at most one) authored blank line
+    /// between emitted siblings into the output.
+    pub(crate) fn has_blank_line_between(&self, lo: usize, hi: usize) -> bool {
+        let lo = lo.min(self.src.len());
+        let hi = hi.min(self.src.len());
+        if hi <= lo {
+            return false;
+        }
+        self.src.as_bytes()[lo..hi]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count()
+            >= 2
+    }
+
     /// Advance past whitespace and comments (line + nested block) from
     /// `i`, returning the index of the next significant byte.
     fn skip_trivia(&self, mut i: usize) -> usize {

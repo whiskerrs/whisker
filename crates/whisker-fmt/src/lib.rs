@@ -1665,6 +1665,45 @@ mod coverage_tests {
         assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
     }
 
+    // ---- blank-line preservation ------------------------------------------
+
+    #[test]
+    fn blank_line_between_siblings_preserved() {
+        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            text(value: \"b\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn multiple_blank_lines_collapse_to_one() {
+        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n\n\n            text(value: \"b\")\n        }\n    }\n}\n";
+        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            text(value: \"b\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), expected);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn blank_line_before_section_comment_preserved() {
+        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            // section\n            text(value: \"b\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn blank_lines_at_block_edges_dropped() {
+        let input = "fn ui() -> Element {\n    render! {\n        view {\n\n            text(value: \"a\")\n\n        }\n    }\n}\n";
+        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), expected);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn blank_line_between_css_field_groups_preserved() {
+        let input = "fn s() -> Css {\n    css! {\n        color: red,\n        padding: px(8),\n\n        margin_top: px(4),\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
     // ---- inline-when-fits statement macros --------------------------------
 
     #[test]
