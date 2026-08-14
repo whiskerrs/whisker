@@ -9,6 +9,14 @@
 //! | `tab_spaces` | `tab_spaces`     | 4       |
 //! | `hard_tabs`  | `hard_tabs`      | false   |
 //! | `edition`    | (CLI `--edition`)| 2015    |
+//! | `single_line_if_else_max_width` | same | `None` |
+//!
+//! `single_line_if_else_max_width` is the one key with a whisker twist:
+//! when the user leaves it unset, the EMBEDDED-EXPR pass widens it to
+//! `max_width` so an `if c { a } else { b }` kwarg value stays on one
+//! line like any other DSL slot value; the base Rust pass keeps
+//! rustfmt's own default. An explicit `rustfmt.toml` value wins in both
+//! passes.
 //!
 //! The rustfmt *binary* reads `rustfmt.toml` itself for the base Rust
 //! pass, so any key it understands is honored. The subset captured here
@@ -33,6 +41,9 @@ pub struct FmtOptions {
     /// though `syn` is edition-agnostic for our purposes). `None` lets
     /// rustfmt pick its own default.
     pub edition: Option<String>,
+    /// `single_line_if_else_max_width` — `None` = unset by the user; the
+    /// embedded-expr pass then widens it to `max_width` (see module doc).
+    pub single_line_if_else_max_width: Option<usize>,
 }
 
 impl Default for FmtOptions {
@@ -42,6 +53,7 @@ impl Default for FmtOptions {
             tab_spaces: 4,
             hard_tabs: false,
             edition: None,
+            single_line_if_else_max_width: None,
         }
     }
 }
@@ -101,6 +113,11 @@ impl FmtOptions {
                 }
                 "edition" => {
                     opts.edition = Some(value.to_string());
+                }
+                "single_line_if_else_max_width" => {
+                    if let Ok(v) = value.parse() {
+                        opts.single_line_if_else_max_width = Some(v);
+                    }
                 }
                 _ => {}
             }

@@ -87,7 +87,7 @@ fn format_converged(
     exprfmt: &ExprFormatter,
 ) -> Result<String> {
     let round = |input: &str| -> Result<String> {
-        let base = run_rustfmt(input, opts, config_dir)?;
+        let base = run_rustfmt(input, opts, config_dir, &[])?;
         reformat_macros_inner(&base, opts, Some(exprfmt))
     };
     let mut cur = round(src)?;
@@ -172,8 +172,15 @@ pub fn rustfmt_available() -> bool {
 
 /// Run the rustfmt binary over `src`, returning its stdout. rustfmt is
 /// run with cwd = `config_dir` (when given) so it resolves the right
-/// `rustfmt.toml`; otherwise it runs in the current dir.
-fn run_rustfmt(src: &str, opts: &FmtOptions, config_dir: Option<&Path>) -> Result<String> {
+/// `rustfmt.toml`; otherwise it runs in the current dir. `extra_config`
+/// key=value pairs are passed via `--config`, overriding the config
+/// file — the embedded-expr pass uses this for its slot-specific keys.
+fn run_rustfmt(
+    src: &str,
+    opts: &FmtOptions,
+    config_dir: Option<&Path>,
+    extra_config: &[(&str, String)],
+) -> Result<String> {
     use std::io::Write;
     use std::process::Stdio;
 
@@ -181,6 +188,13 @@ fn run_rustfmt(src: &str, opts: &FmtOptions, config_dir: Option<&Path>) -> Resul
     cmd.arg("--emit").arg("stdout");
     if let Some(ed) = &opts.edition {
         cmd.arg("--edition").arg(ed);
+    }
+    if !extra_config.is_empty() {
+        let joined: Vec<String> = extra_config
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        cmd.arg("--config").arg(joined.join(","));
     }
     if let Some(dir) = config_dir {
         // `--config-path` must be the config FILE, not `dir`: the config
@@ -802,6 +816,7 @@ mod tests {
             tab_spaces: tab,
             hard_tabs: false,
             edition: None,
+            single_line_if_else_max_width: None,
         }
     }
 
@@ -1194,6 +1209,7 @@ mod comment_tests {
             tab_spaces: 4,
             hard_tabs: false,
             edition: None,
+            single_line_if_else_max_width: None,
         }
     }
 
@@ -1383,6 +1399,7 @@ mod coverage_tests {
             tab_spaces: tab,
             hard_tabs: false,
             edition: None,
+            single_line_if_else_max_width: None,
         }
     }
 
@@ -1663,6 +1680,43 @@ mod coverage_tests {
         let out = fmt(input);
         assert!(out.contains("a: css!(x: 1)"), "got:\n{out}");
         assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
+    }
+
+    // ---- closure-body unblocking ------------------------------------------
+
+    #[test]
+    fn blockified_closure_macro_body_unblocks() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(child: move || {\n            render! { text(value: \"hi\") }\n        })\n    }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("child: move || render! { text(value: \"hi\") }"),
+            "sole-macro closure body must unblock:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn closure_with_extra_statement_keeps_block() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(child: move || {\n            log_render();\n            render! { text(value: \"hi\") }\n        })\n    }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("move || {"),
+            "multi-statement closure body must keep its block:\n{out}"
+        );
+        assert!(out.contains("log_render();"), "got:\n{out}");
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn closure_with_leading_comment_keeps_block() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(child: move || {\n            // c\n            render! { text(value: \"hi\") }\n        })\n    }\n}\n";
+        let out = fmt(input);
+        assert!(out.contains("// c"), "comment must survive:\n{out}");
+        assert!(
+            out.contains("move || {"),
+            "comment-bearing closure body must keep its block:\n{out}"
+        );
+        assert_idempotent(input);
     }
 
     // ---- last-argument overflow (combine) ---------------------------------

@@ -231,7 +231,7 @@ impl Printer<'_> {
         if let Some(nested) = self.nested_macro_src(expr, level) {
             return nested;
         }
-        let fragment = if let Some(formatted) = self.expr_map.get(span) {
+        let mut fragment = if let Some(formatted) = self.expr_map.get(span) {
             formatted.to_string()
         } else if let Some(s) = self.map.slice(span) {
             // Continuation lines must be dedented to column 0 (the
@@ -242,8 +242,13 @@ impl Printer<'_> {
             return expr.to_token_stream().to_string();
         };
         if contains_target_macro(expr.to_token_stream()) {
+            // Unblock BEFORE the re-entrant pass so the macro body is
+            // measured at the depth it will actually print at.
+            if let Some(s) = unblock_macro_closure(&fragment, &self.opts.indent_unit()) {
+                fragment = s;
+            }
             if let Some(s) = self.fragment_macro_src(&fragment, level) {
-                return s;
+                fragment = s;
             }
         }
         fragment
@@ -930,6 +935,50 @@ fn reindent(fragment: &str, prefix: &str) -> String {
 fn span_of(expr: &syn::Expr) -> Span {
     use syn::spanned::Spanned;
     expr.span()
+}
+
+/// Rewrite a closure whose block body is EXACTLY one `render!`/`css!`/
+/// `routes!` call — `|args| { mac! { … } }` — to `|args| mac! { … }`.
+/// rustfmt blocks such closure bodies in the embedded-expr pass, but a
+/// macro-body slot is whisker-fmt's to lay out and the unblocked form
+/// is the DSL idiom. Returns `None` (leave the fragment alone) unless
+/// the pattern matches exactly: a comment or second statement in the
+/// block keeps the block.
+fn unblock_macro_closure(fragment: &str, unit: &str) -> Option<String> {
+    let mut lines = fragment.lines();
+    let header = lines.next()?.strip_suffix(" {")?;
+    if !header.trim_end().ends_with('|') {
+        return None;
+    }
+    let rest: Vec<&str> = lines.collect();
+    let (&last, middle) = rest.split_last()?;
+    if last != "}" || middle.is_empty() {
+        return None;
+    }
+    let mut body = String::new();
+    for (i, line) in middle.iter().enumerate() {
+        if i > 0 {
+            body.push('\n');
+        }
+        body.push_str(line.strip_prefix(unit).unwrap_or(line));
+    }
+    for name in ["render!", "css!", "routes!"] {
+        if body.trim_start().starts_with(name) {
+            let ts: TokenStream = body.parse().ok()?;
+            let trees: Vec<TokenTree> = ts.into_iter().collect();
+            let sole_macro = matches!(
+                trees.as_slice(),
+                [TokenTree::Ident(_), TokenTree::Punct(p), TokenTree::Group(_)]
+                    if p.as_char() == '!'
+            );
+            if !sole_macro {
+                return None;
+            }
+            let candidate = format!("{header} {body}");
+            return syn::parse_str::<Expr>(&candidate).ok().map(|_| candidate);
+        }
+    }
+    None
 }
 
 /// `true` if the token stream contains a `render!`/`css!`/`routes!`
