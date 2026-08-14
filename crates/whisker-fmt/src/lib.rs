@@ -549,6 +549,14 @@ fn macro_body_edit(
                 }
                 let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
                 let expr_map = build_expr_map(&spans, &body_map, exprfmt);
+                let inline_budget = inline_body_budget(
+                    group.delimiter(),
+                    rust_src,
+                    line_start,
+                    group_start,
+                    close_byte,
+                    opts,
+                );
                 let s = printer::print_css(
                     &input,
                     &body_map,
@@ -558,6 +566,7 @@ fn macro_body_edit(
                     exprfmt,
                     &comments,
                     body_len,
+                    inline_budget,
                 );
                 (s, comments)
             }
@@ -566,14 +575,23 @@ fn macro_body_edit(
         _ => return Ok(None),
     };
 
-    // The printer emits the body already indented to `base_indent + 1`,
-    // so only the surrounding newlines and closing indent are added
-    // here. Every delimiter form breaks onto its own lines, matching
-    // rustfmt's treatment of multi-item macros.
+    // A single-line body stays on the macro's own line when the whole
+    // line (prefix, delimiters, and whatever follows the macro) fits
+    // `max_width`; otherwise the body breaks onto its own lines. The
+    // printer already indented a multi-line body to `base_indent + 1`.
     let closing_indent = opts.indent_prefix(base_indent);
-    let replacement = match group.delimiter() {
-        Delimiter::Brace => format!("\n{formatted}\n{closing_indent}"),
-        _ => format!("\n{formatted}\n{closing_indent}"),
+    let replacement = if let Some(inline) = inline_replacement(
+        &formatted,
+        group.delimiter(),
+        rust_src,
+        line_start,
+        group_start,
+        close_byte,
+        opts,
+    ) {
+        inline
+    } else {
+        format!("\n{formatted}\n{closing_indent}")
     };
 
     if body_src == replacement {
@@ -597,6 +615,66 @@ fn macro_body_edit(
         close_byte,
         replacement,
     }))
+}
+
+/// Char budget a single-line BODY (delimiter padding excluded) may use
+/// and still keep the macro's whole original line — the text before the
+/// opening delimiter through the text after the closing one — within
+/// `max_width`.
+fn inline_body_budget(
+    delimiter: Delimiter,
+    rust_src: &str,
+    line_start: usize,
+    group_start: usize,
+    close_byte: usize,
+    opts: &FmtOptions,
+) -> usize {
+    let prefix = rust_src[line_start..group_start].chars().count();
+    let after_close = close_byte + 1;
+    let line_end = rust_src[after_close..]
+        .find('\n')
+        .map(|n| after_close + n)
+        .unwrap_or(rust_src.len());
+    let suffix = rust_src[after_close..line_end].trim_end().chars().count();
+    let pads = if delimiter == Delimiter::Brace { 2 } else { 0 };
+    opts.max_width.saturating_sub(prefix + 2 + pads + suffix)
+}
+
+/// The inline (single-line) body replacement, or `None` when the body
+/// must break: it is multi-line or over [`inline_body_budget`]. Brace
+/// bodies get rustfmt's `name! { … }` interior padding; paren/bracket
+/// bodies none.
+#[allow(clippy::too_many_arguments)]
+fn inline_replacement(
+    formatted: &str,
+    delimiter: Delimiter,
+    rust_src: &str,
+    line_start: usize,
+    group_start: usize,
+    close_byte: usize,
+    opts: &FmtOptions,
+) -> Option<String> {
+    if formatted.contains('\n') {
+        return None;
+    }
+    let body = formatted.trim_start();
+    let budget = inline_body_budget(
+        delimiter,
+        rust_src,
+        line_start,
+        group_start,
+        close_byte,
+        opts,
+    );
+    if body.chars().count() > budget {
+        return None;
+    }
+    let pad = if delimiter == Delimiter::Brace {
+        " "
+    } else {
+        ""
+    };
+    Some(format!("{pad}{body}{pad}"))
 }
 
 // ---- comment-preservation fail-safe helpers -----------------------------
@@ -801,7 +879,8 @@ mod tests {
     fn trailing_block_comment_preserved_and_reflowed() {
         let input = "fn ui() -> Element {\n    render! { view(style:\"x\") /* keep me */ }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        let expected = "fn ui() -> Element {\n    render! {\n        view(style: \"x\") /* keep me */\n    }\n}\n";
+        let expected =
+            "fn ui() -> Element {\n    render! { view(style: \"x\") /* keep me */ }\n}\n";
         assert_eq!(out, expected, "got:\n{out}");
     }
 
@@ -932,7 +1011,7 @@ mod tests {
         let input = "fn ui() -> Element {\n    render! { view(child: render!{text(value:\"nested\")}) }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
         assert!(
-            out.contains("render! {text(value: \"nested\")}"),
+            out.contains("render! { text(value: \"nested\") }"),
             "nested render! must be reformatted:\n{out}"
         );
     }
@@ -1398,12 +1477,17 @@ mod coverage_tests {
 
     #[test]
     fn render_bare_tag_no_parens_no_children() {
-        // Parens are omitted, but `macro_body_edit` wraps every macro
-        // body onto its own lines however short, so `view` still breaks.
+        // A bare tag stays bare (no parens invented) and a body this
+        // short stays on the macro's own line.
         let input = "fn ui() -> Element {\n    render! { view }\n}\n";
-        let out = fmt(input);
-        let expected = "fn ui() -> Element {\n    render! {\n        view\n    }\n}\n";
-        assert_eq!(out, expected, "got:\n{out}");
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn render_empty_parens_preserved() {
+        let input = "fn ui() -> Element {\n    render! { FreeQuotaBanner() }\n}\n";
+        assert_eq!(fmt(input), input, "authored empty () must survive");
         assert_idempotent(input);
     }
 
@@ -1581,6 +1665,57 @@ mod coverage_tests {
         assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
     }
 
+    // ---- inline-when-fits statement macros --------------------------------
+
+    #[test]
+    fn statement_css_stays_inline_when_it_fits() {
+        let input = "fn s() {\n    let a = css!(color: red, padding: px(8));\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn statement_css_trailing_comma_stays_vertical() {
+        let input = "fn s() {\n    let a = css!(\n        color: red,\n        padding: px(8),\n    );\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn over_budget_statement_css_goes_one_field_per_line() {
+        // Whole line doesn't fit → each field on its own line; never the
+        // broken-delimiter + one-joined-line middle form.
+        let input = "fn s() {\n    let label_column_style = css!(\n        flex_direction: FlexDirection::Column, flex_grow: 1.0, margin_right: px(16.0)\n    );\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains(
+                "css!(\n        flex_direction: FlexDirection::Column,\n        flex_grow: 1.0,\n        margin_right: px(16.0),\n    );"
+            ),
+            "must go one field per line:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn paren_broken_single_line_css_body_reinlines() {
+        // The shape an older whisker fmt used to emit: delimiters broken
+        // but fields joined. It must collapse back to one line.
+        let input = "fn s() {\n    let a = css!(\n        color: red, padding: px(8)\n    );\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("let a = css!(color: red, padding: px(8));"),
+            "fits on one line, must re-inline:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn tiny_render_body_stays_on_one_line() {
+        let input = "fn ui() -> Element {\n    return render! { view() };\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
     // ---- trailing-comma keep-vertical hint --------------------------------
 
     #[test]
@@ -1637,10 +1772,25 @@ mod coverage_tests {
         let input = "fn ui() -> Element {\n    render! { view(child: move || render! { text(value:\"hi\") }) }\n}\n";
         let out = fmt(input);
         assert!(
-            out.contains(
-                "child: move || render! {\n                text(value: \"hi\")\n            },"
-            ),
+            out.contains("child: move || render! { text(value: \"hi\") }"),
             "closure-wrapped render! body must be reformatted:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn closure_wrapped_render_in_kwarg_wraps_when_too_wide() {
+        let input = "fn ui() -> Element {\n    render! { view(child: move || render! { text(value:\"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\") }) }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("child: move || render! {\n"),
+            "over-budget closure-wrapped render! must break:\n{out}"
+        );
+        assert!(
+            out.contains(
+                "text(value: \"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\")"
+            ),
+            "inner body must be reformatted:\n{out}"
         );
         assert_idempotent(input);
     }

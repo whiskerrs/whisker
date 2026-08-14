@@ -102,6 +102,12 @@ pub(crate) fn print_render(
 }
 
 /// Pretty-print a parsed `css!` body.
+///
+/// `inline_budget` is the char count the joined field list may have and
+/// still fit the macro's ORIGINAL line (prefix, delimiters and trailing
+/// text included) — the caller inlines a single-line result there. Over
+/// budget the body goes one field per line: there is no middle form
+/// with broken delimiters around one joined line.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn print_css(
     input: &CssInput,
@@ -112,6 +118,7 @@ pub(crate) fn print_css(
     exprfmt: Option<&ExprFormatter>,
     comments: &[GrammarComment],
     body_len: usize,
+    inline_budget: usize,
 ) -> String {
     let p = Printer {
         map,
@@ -121,7 +128,7 @@ pub(crate) fn print_css(
         comments,
         next: Cell::new(0),
     };
-    p.css(input, base_indent + 1, body_len)
+    p.css(input, base_indent + 1, body_len, inline_budget)
 }
 
 /// Pretty-print an adapted `routes!` root list
@@ -552,6 +559,10 @@ impl Printer<'_> {
         out.push_str(&indent);
         out.push_str(&tag.tag);
 
+        let paren_range = tag
+            .tag_span
+            .and_then(|s| self.map.byte_range(s))
+            .and_then(|(start, _)| self.map.kwarg_paren_range(start));
         if !tag.kwargs.is_empty() {
             let parts: Vec<String> = tag
                 .kwargs
@@ -559,10 +570,7 @@ impl Printer<'_> {
                 .map(|kw| self.ir_kwarg(kw, level))
                 .collect();
             let suffix = ir_brace_width(&tag.children, tag.always_block);
-            let force_wrap = tag
-                .tag_span
-                .and_then(|s| self.map.byte_range(s))
-                .and_then(|(start, _)| self.map.kwarg_paren_range(start))
+            let force_wrap = paren_range
                 .map(|(open, close)| self.map.trailing_comma_in(open + 1, close))
                 .unwrap_or(false);
             out.push_str(&self.delimited_list(
@@ -575,6 +583,9 @@ impl Printer<'_> {
                 suffix,
                 force_wrap,
             ));
+        } else if paren_range.is_some() {
+            // The author's empty `()` is preserved, not stripped.
+            out.push_str("()");
         }
 
         // Resolve this node's block byte bounds so comments are placed
@@ -642,7 +653,7 @@ impl Printer<'_> {
 
     // ---- css! ----------------------------------------------------------
 
-    fn css(&self, input: &CssInput, level: usize, body_len: usize) -> String {
+    fn css(&self, input: &CssInput, level: usize, body_len: usize, inline_budget: usize) -> String {
         if input.kwargs.is_empty() {
             return String::new();
         }
@@ -650,8 +661,9 @@ impl Printer<'_> {
         let has_comments = !self.comments.is_empty();
 
         // Inline form only when there are NO comments to place (comments
-        // imply line breaks) and the author left no keep-vertical hint
-        // (a trailing comma after the last field).
+        // imply line breaks), the author left no keep-vertical hint (a
+        // trailing comma after the last field), and the joined list fits
+        // the macro's original line (`inline_budget`).
         if !has_comments {
             let parts: Vec<String> = input
                 .kwargs
@@ -660,8 +672,7 @@ impl Printer<'_> {
                 .collect();
             let force_wrap = self.map.trailing_comma_in(0, body_len);
             let inline = parts.join(", ");
-            let inline_width = self.opts.indent_width(level) + inline.len();
-            if !force_wrap && !inline.contains('\n') && inline_width <= self.opts.max_width {
+            if !force_wrap && !inline.contains('\n') && inline.chars().count() <= inline_budget {
                 let indent = self.indent(level);
                 return format!("{indent}{inline}");
             }
@@ -831,7 +842,8 @@ fn nested_wrap(name: &str, bang: &str, open: char, close: char, body: &str) -> S
     if body.contains('\n') {
         format!("{name}{bang}{open}\n{body}\n{close}")
     } else {
-        format!("{name}{bang}{open}{}{close}", body.trim_start())
+        let pad = if open == '{' { " " } else { "" };
+        format!("{name}{bang}{open}{pad}{}{pad}{close}", body.trim_start())
     }
 }
 
