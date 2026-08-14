@@ -62,18 +62,46 @@ use std::process::Command;
 /// The rustfmt binary independently reads `rustfmt.toml`; pass
 /// `opts.edition` through so both passes agree on the edition.
 pub fn format_source(src: &str, opts: &FmtOptions) -> Result<String> {
-    let base = run_rustfmt(src, opts, None)?;
     let exprfmt = ExprFormatter::new(opts);
-    reformat_macros_inner(&base, opts, Some(&exprfmt))
+    format_converged(src, opts, None, &exprfmt)
 }
 
 /// Like [`format_source`] but tells rustfmt to resolve `rustfmt.toml`
 /// from `config_dir` (its `--config-path`). Used by the CLI so each
 /// file's nearest `rustfmt.toml` governs.
 pub fn format_source_in_dir(src: &str, opts: &FmtOptions, config_dir: &Path) -> Result<String> {
-    let base = run_rustfmt(src, opts, Some(config_dir))?;
     let exprfmt = ExprFormatter::new_in_dir(opts, config_dir);
-    reformat_macros_inner(&base, opts, Some(&exprfmt))
+    format_converged(src, opts, Some(config_dir), &exprfmt)
+}
+
+/// Run rustfmt + the macro pass repeatedly until the output is a fixed
+/// point, capped at 3 rounds. The two passes are individually idempotent
+/// but their COMPOSITION need not be: the macro pass can emit a shape
+/// (e.g. a multi-line `move || css!(…)` closure body) that the next
+/// round's rustfmt rewrites again (into `move || { css!(…) }`), which
+/// then IS stable.
+fn format_converged(
+    src: &str,
+    opts: &FmtOptions,
+    config_dir: Option<&Path>,
+    exprfmt: &ExprFormatter,
+) -> Result<String> {
+    let round = |input: &str| -> Result<String> {
+        let base = run_rustfmt(input, opts, config_dir)?;
+        reformat_macros_inner(&base, opts, Some(exprfmt))
+    };
+    let mut cur = round(src)?;
+    if cur == src {
+        return Ok(cur);
+    }
+    for _ in 0..2 {
+        let next = round(&cur)?;
+        if next == cur {
+            break;
+        }
+        cur = next;
+    }
+    Ok(cur)
 }
 
 /// `--check` helper: returns `Ok(None)` if the source is already
@@ -473,6 +501,7 @@ fn macro_body_edit(
                     opts,
                     base_indent,
                     &expr_map,
+                    exprfmt,
                     &comments,
                     body_len,
                 );
@@ -499,6 +528,7 @@ fn macro_body_edit(
                     opts,
                     base_indent,
                     &expr_map,
+                    exprfmt,
                     &comments,
                     body_len,
                 );
@@ -519,14 +549,24 @@ fn macro_body_edit(
                 }
                 let comments = comments::collect_grammar_comments(body_src, &spans, &body_map);
                 let expr_map = build_expr_map(&spans, &body_map, exprfmt);
+                let inline_budget = inline_body_budget(
+                    group.delimiter(),
+                    rust_src,
+                    line_start,
+                    group_start,
+                    close_byte,
+                    opts,
+                );
                 let s = printer::print_css(
                     &input,
                     &body_map,
                     opts,
                     base_indent,
                     &expr_map,
+                    exprfmt,
                     &comments,
                     body_len,
+                    inline_budget,
                 );
                 (s, comments)
             }
@@ -535,14 +575,23 @@ fn macro_body_edit(
         _ => return Ok(None),
     };
 
-    // The printer emits the body already indented to `base_indent + 1`,
-    // so only the surrounding newlines and closing indent are added
-    // here. Every delimiter form breaks onto its own lines, matching
-    // rustfmt's treatment of multi-item macros.
+    // A single-line body stays on the macro's own line when the whole
+    // line (prefix, delimiters, and whatever follows the macro) fits
+    // `max_width`; otherwise the body breaks onto its own lines. The
+    // printer already indented a multi-line body to `base_indent + 1`.
     let closing_indent = opts.indent_prefix(base_indent);
-    let replacement = match group.delimiter() {
-        Delimiter::Brace => format!("\n{formatted}\n{closing_indent}"),
-        _ => format!("\n{formatted}\n{closing_indent}"),
+    let replacement = if let Some(inline) = inline_replacement(
+        &formatted,
+        group.delimiter(),
+        rust_src,
+        line_start,
+        group_start,
+        close_byte,
+        opts,
+    ) {
+        inline
+    } else {
+        format!("\n{formatted}\n{closing_indent}")
     };
 
     if body_src == replacement {
@@ -566,6 +615,66 @@ fn macro_body_edit(
         close_byte,
         replacement,
     }))
+}
+
+/// Char budget a single-line BODY (delimiter padding excluded) may use
+/// and still keep the macro's whole original line — the text before the
+/// opening delimiter through the text after the closing one — within
+/// `max_width`.
+fn inline_body_budget(
+    delimiter: Delimiter,
+    rust_src: &str,
+    line_start: usize,
+    group_start: usize,
+    close_byte: usize,
+    opts: &FmtOptions,
+) -> usize {
+    let prefix = rust_src[line_start..group_start].chars().count();
+    let after_close = close_byte + 1;
+    let line_end = rust_src[after_close..]
+        .find('\n')
+        .map(|n| after_close + n)
+        .unwrap_or(rust_src.len());
+    let suffix = rust_src[after_close..line_end].trim_end().chars().count();
+    let pads = if delimiter == Delimiter::Brace { 2 } else { 0 };
+    opts.max_width.saturating_sub(prefix + 2 + pads + suffix)
+}
+
+/// The inline (single-line) body replacement, or `None` when the body
+/// must break: it is multi-line or over [`inline_body_budget`]. Brace
+/// bodies get rustfmt's `name! { … }` interior padding; paren/bracket
+/// bodies none.
+#[allow(clippy::too_many_arguments)]
+fn inline_replacement(
+    formatted: &str,
+    delimiter: Delimiter,
+    rust_src: &str,
+    line_start: usize,
+    group_start: usize,
+    close_byte: usize,
+    opts: &FmtOptions,
+) -> Option<String> {
+    if formatted.contains('\n') {
+        return None;
+    }
+    let body = formatted.trim_start();
+    let budget = inline_body_budget(
+        delimiter,
+        rust_src,
+        line_start,
+        group_start,
+        close_byte,
+        opts,
+    );
+    if body.chars().count() > budget {
+        return None;
+    }
+    let pad = if delimiter == Delimiter::Brace {
+        " "
+    } else {
+        ""
+    };
+    Some(format!("{pad}{body}{pad}"))
 }
 
 // ---- comment-preservation fail-safe helpers -----------------------------
@@ -770,7 +879,8 @@ mod tests {
     fn trailing_block_comment_preserved_and_reflowed() {
         let input = "fn ui() -> Element {\n    render! { view(style:\"x\") /* keep me */ }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
-        let expected = "fn ui() -> Element {\n    render! {\n        view(style: \"x\") /* keep me */\n    }\n}\n";
+        let expected =
+            "fn ui() -> Element {\n    render! { view(style: \"x\") /* keep me */ }\n}\n";
         assert_eq!(out, expected, "got:\n{out}");
     }
 
@@ -901,7 +1011,7 @@ mod tests {
         let input = "fn ui() -> Element {\n    render! { view(child: render!{text(value:\"nested\")}) }\n}\n";
         let out = reformat_macros(input, &opts(4, 100)).unwrap();
         assert!(
-            out.contains("render! {text(value: \"nested\")}"),
+            out.contains("render! { text(value: \"nested\") }"),
             "nested render! must be reformatted:\n{out}"
         );
     }
@@ -1233,7 +1343,9 @@ mod comment_tests {
     #[test]
     fn wallet_faithful_reduction_formats_and_preserves_comments() {
         let input = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n        view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false\n    )\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n        }\n        }\n    }\n}\n";
-        let expected = "fn d() -> Element {\n    render! {\n        view(style: css!(flex_grow: 1.0, background_color: BG)) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
+        // The css!'s trailing comma keeps IT vertical, and last-argument
+        // overflow keeps it combined on the view's own line.
+        let expected = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
         let out = fmt(input);
         assert_ne!(out, input, "must not fall back:\n{out}");
         assert_eq!(out, expected, "got:\n{out}");
@@ -1365,12 +1477,17 @@ mod coverage_tests {
 
     #[test]
     fn render_bare_tag_no_parens_no_children() {
-        // Parens are omitted, but `macro_body_edit` wraps every macro
-        // body onto its own lines however short, so `view` still breaks.
+        // A bare tag stays bare (no parens invented) and a body this
+        // short stays on the macro's own line.
         let input = "fn ui() -> Element {\n    render! { view }\n}\n";
-        let out = fmt(input);
-        let expected = "fn ui() -> Element {\n    render! {\n        view\n    }\n}\n";
-        assert_eq!(out, expected, "got:\n{out}");
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn render_empty_parens_preserved() {
+        let input = "fn ui() -> Element {\n    render! { FreeQuotaBanner() }\n}\n";
+        assert_eq!(fmt(input), input, "authored empty () must survive");
         assert_idempotent(input);
     }
 
@@ -1546,6 +1663,287 @@ mod coverage_tests {
         let out = fmt(input);
         assert!(out.contains("a: css!(x: 1)"), "got:\n{out}");
         assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
+    }
+
+    // ---- last-argument overflow (combine) ---------------------------------
+
+    #[test]
+    fn multiline_last_kwarg_combines_on_open_line() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n            text(value: \"hi\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn single_line_kwargs_before_multiline_last_stay_on_open_line() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(key: 1, style: css!(\n            flex_grow: 1.0,\n        ))\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn outer_trailing_comma_beats_combine() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n            ),\n        )\n    }\n}\n";
+        assert_eq!(
+            fmt(input),
+            input,
+            "authored outer trailing comma pins the wrap"
+        );
+        assert_idempotent(input);
+    }
+
+    // ---- comments anchored to kwargs --------------------------------------
+
+    #[test]
+    fn own_line_comment_between_kwargs_stays_on_its_kwarg() {
+        let input = "fn ui() -> Element {\n    render! {\n        ConnectionTab(\n            icon: home_icon,\n            active: home_active,\n            // Only Home's own root switches connections.\n            at_root: home_at_root,\n        )\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn trailing_comment_on_kwarg_line_stays_there() {
+        let input = "fn ui() -> Element {\n    render! {\n        TabButton(\n            icon: home_icon,\n            active: home_active, // updated per nav\n            label: home_label,\n        )\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn comments_before_first_and_after_last_kwarg_stay_inside_parens() {
+        let input = "fn ui() -> Element {\n    render! {\n        TabButton(\n            // leading\n            icon: home_icon,\n            active: home_active,\n            // last\n        )\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn kwarg_comments_reflow_from_messy_input() {
+        let input = "fn ui() -> Element {\n    render! {\n        TabButton(icon: home_icon,\n            // anchor\n            active: home_active) { text(value: \"x\") }\n    }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("            // anchor\n            active: home_active,\n"),
+            "comment must stay anchored to its kwarg:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    // ---- blank-line preservation ------------------------------------------
+
+    #[test]
+    fn blank_line_between_siblings_preserved() {
+        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            text(value: \"b\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn multiple_blank_lines_collapse_to_one() {
+        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n\n\n            text(value: \"b\")\n        }\n    }\n}\n";
+        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            text(value: \"b\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), expected);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn blank_line_before_section_comment_preserved() {
+        let input = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n\n            // section\n            text(value: \"b\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn blank_lines_at_block_edges_dropped() {
+        let input = "fn ui() -> Element {\n    render! {\n        view {\n\n            text(value: \"a\")\n\n        }\n    }\n}\n";
+        let expected = "fn ui() -> Element {\n    render! {\n        view {\n            text(value: \"a\")\n        }\n    }\n}\n";
+        assert_eq!(fmt(input), expected);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn blank_line_between_css_field_groups_preserved() {
+        let input = "fn s() -> Css {\n    css! {\n        color: red,\n        padding: px(8),\n\n        margin_top: px(4),\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    // ---- inline-when-fits statement macros --------------------------------
+
+    #[test]
+    fn statement_css_stays_inline_when_it_fits() {
+        let input = "fn s() {\n    let a = css!(color: red, padding: px(8));\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn statement_css_trailing_comma_stays_vertical() {
+        let input = "fn s() {\n    let a = css!(\n        color: red,\n        padding: px(8),\n    );\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn over_budget_statement_css_goes_one_field_per_line() {
+        // Whole line doesn't fit → each field on its own line; never the
+        // broken-delimiter + one-joined-line middle form.
+        let input = "fn s() {\n    let label_column_style = css!(\n        flex_direction: FlexDirection::Column, flex_grow: 1.0, margin_right: px(16.0)\n    );\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains(
+                "css!(\n        flex_direction: FlexDirection::Column,\n        flex_grow: 1.0,\n        margin_right: px(16.0),\n    );"
+            ),
+            "must go one field per line:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn paren_broken_single_line_css_body_reinlines() {
+        // Delimiters broken around one joined line that fits: collapses
+        // back to a single line.
+        let input = "fn s() {\n    let a = css!(\n        color: red, padding: px(8)\n    );\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("let a = css!(color: red, padding: px(8));"),
+            "fits on one line, must re-inline:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn tiny_render_body_stays_on_one_line() {
+        let input = "fn ui() -> Element {\n    return render! { view() };\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    // ---- trailing-comma keep-vertical hint --------------------------------
+
+    #[test]
+    fn trailing_comma_keeps_kwargs_vertical() {
+        let input = "fn ui() -> Element {\n    render! {\n        LabeledField(\n            label: \"Name\",\n            value: v,\n        )\n    }\n}\n";
+        assert_eq!(
+            fmt(input),
+            input,
+            "trailing comma must keep the list vertical"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn no_trailing_comma_joins_kwargs_when_they_fit() {
+        let input = "fn ui() -> Element {\n    render! {\n        LabeledField(\n            label: \"Name\",\n            value: v\n        )\n    }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("LabeledField(label: \"Name\", value: v)"),
+            "no hint, fits → joined:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn trailing_comma_keeps_css_fields_vertical() {
+        let input =
+            "fn s() -> Css {\n    css! {\n        color: red,\n        padding: px(8),\n    }\n}\n";
+        assert_eq!(fmt(input), input, "trailing comma must keep css! vertical");
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn trailing_comma_keeps_nested_css_vertical() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        )\n    }\n}\n";
+        assert_eq!(fmt(input), input, "nested css! trailing comma must hold");
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn comma_inside_string_is_not_a_keep_vertical_hint() {
+        let input = "fn ui() -> Element {\n    render! {\n        text(\n            value: \"a, b,\"\n        )\n    }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("text(value: \"a, b,\")"),
+            "a comma inside a string is no hint:\n{out}"
+        );
+    }
+
+    // ---- macros nested inside closures / arbitrary exprs ------------------
+
+    #[test]
+    fn closure_wrapped_render_in_kwarg_reformats() {
+        let input = "fn ui() -> Element {\n    render! { view(child: move || render! { text(value:\"hi\") }) }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("child: move || render! { text(value: \"hi\") }"),
+            "closure-wrapped render! body must be reformatted:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn closure_wrapped_render_in_kwarg_wraps_when_too_wide() {
+        let input = "fn ui() -> Element {\n    render! { view(child: move || render! { text(value:\"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\") }) }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("child: move || render! {\n"),
+            "over-budget closure-wrapped render! must break:\n{out}"
+        );
+        assert!(
+            out.contains(
+                "text(value: \"a-value-plenty-wide-enough-to-overflow-the-line-budget-here\")"
+            ),
+            "inner body must be reformatted:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn closure_wrapped_render_with_comment_survives_and_reformats() {
+        let input = "fn ui() -> Element {\n    render! { view(child: move || render! {\n        // note\n        text(value:\"hi\")\n    }) }\n}\n";
+        let out = fmt(input);
+        assert!(out.contains("// note"), "comment must survive:\n{out}");
+        assert!(
+            out.contains("text(value: \"hi\")"),
+            "body around the comment must still reformat:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn comment_bearing_routes_kwarg_value_reformats() {
+        let input = "fn ui() -> Element {\n    render! {\n        Router(routes: routes! {\n            // home\n            Stack { Route(path: \"a\", component: A) }\n        })\n    }\n}\n";
+        let out = fmt(input);
+        assert!(out.contains("// home"), "comment must survive:\n{out}");
+        assert!(
+            out.contains("Stack {\n"),
+            "comment-bearing routes! must still reformat:\n{out}"
+        );
+        assert!(
+            out.contains("Route(path: \"a\", component: A)\n"),
+            "route must land on its own line:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn url_string_in_nested_css_not_frozen() {
+        let input = "fn ui() -> Element {\n    render! { view(style: css!(background_image:\"https://x.com/a.png\",flex_grow:1.0)) }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("css!(background_image: \"https://x.com/a.png\", flex_grow: 1.0)"),
+            "a // inside a string must not freeze the nested css!:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn closure_wrapped_render_respects_max_width_at_real_depth() {
+        let input = "fn ui() -> Element {\n    render! { view { Show(fallback: move || render! { text(value: \"a-quite-long-fallback-value-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold)) }) } }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("text(\n"),
+            "inner kwargs must wrap at their real depth:\n{out}"
+        );
+        assert_no_line_over(&out, 100);
+        assert_idempotent(input);
     }
 
     // ---- width boundary ---------------------------------------------------

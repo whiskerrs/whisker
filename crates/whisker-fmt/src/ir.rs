@@ -53,9 +53,15 @@ pub(crate) struct IrTag {
 
 pub(crate) struct IrKwarg {
     pub name: String,
+    /// Source span of the kwarg's name (routes!'s synthesized kwargs use
+    /// the value token's span), locating the kwarg for comment placement.
+    pub name_span: Option<Span>,
     /// `None` = partial (mid-typing: no `:` yet, or the value failed to
     /// parse) — printed as the bare name, no value.
     pub value: Option<IrValue>,
+    /// Source span of the value, bounding the kwarg's line for trailing-
+    /// comment attachment.
+    pub value_span: Option<Span>,
 }
 
 pub(crate) enum IrValue {
@@ -101,15 +107,18 @@ fn adapt_render_node(node: &whisker_macro_syntax::render::Node) -> IrNode {
 }
 
 fn adapt_render_kwargs(kwargs: &[whisker_macro_syntax::render::Kwarg]) -> Vec<IrKwarg> {
+    use syn::spanned::Spanned;
     kwargs
         .iter()
         .map(|kw| IrKwarg {
             name: kw.name.to_string(),
+            name_span: Some(kw.name.span()),
             value: if kw.partial {
                 None
             } else {
                 Some(IrValue::Expr(Box::new(kw.value.clone())))
             },
+            value_span: (!kw.partial).then(|| kw.value.span()),
         })
         .collect()
 }
@@ -143,23 +152,30 @@ fn adapt_routes_node(node: &whisker_macro_syntax::routes::RoutesNode) -> IrNode 
             transition,
             children,
         } => {
+            use syn::spanned::Spanned;
             let mut kwargs = Vec::new();
             if let Some(p) = path {
                 kwargs.push(IrKwarg {
                     name: "path".to_string(),
+                    name_span: Some(p.span()),
                     value: Some(IrValue::Literal(format!("{:?}", p.value()))),
+                    value_span: Some(p.span()),
                 });
             }
             if let Some(c) = component {
                 kwargs.push(IrKwarg {
                     name: "component".to_string(),
+                    name_span: Some(c.span()),
                     value: Some(IrValue::Literal(c.to_string())),
+                    value_span: Some(c.span()),
                 });
             }
             if let Some(t) = transition {
                 kwargs.push(IrKwarg {
                     name: "transition".to_string(),
+                    name_span: Some(t.span()),
                     value: Some(IrValue::Expr(Box::new(t.clone()))),
+                    value_span: Some(t.span()),
                 });
             }
             IrNode::Tag(IrTag {
