@@ -1665,6 +1665,40 @@ mod coverage_tests {
         assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
     }
 
+    // ---- comments anchored to kwargs --------------------------------------
+
+    #[test]
+    fn own_line_comment_between_kwargs_stays_on_its_kwarg() {
+        let input = "fn ui() -> Element {\n    render! {\n        ConnectionTab(\n            icon: home_icon,\n            active: home_active,\n            // Only Home's own root switches connections.\n            at_root: home_at_root,\n        )\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn trailing_comment_on_kwarg_line_stays_there() {
+        let input = "fn ui() -> Element {\n    render! {\n        TabButton(\n            icon: home_icon,\n            active: home_active, // updated per nav\n            label: home_label,\n        )\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn comments_before_first_and_after_last_kwarg_stay_inside_parens() {
+        let input = "fn ui() -> Element {\n    render! {\n        TabButton(\n            // leading\n            icon: home_icon,\n            active: home_active,\n            // last\n        )\n    }\n}\n";
+        assert_eq!(fmt(input), input);
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn kwarg_comments_reflow_from_messy_input() {
+        let input = "fn ui() -> Element {\n    render! {\n        TabButton(icon: home_icon,\n            // anchor\n            active: home_active) { text(value: \"x\") }\n    }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("            // anchor\n            active: home_active,\n"),
+            "comment must stay anchored to its kwarg:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
     // ---- blank-line preservation ------------------------------------------
 
     #[test]

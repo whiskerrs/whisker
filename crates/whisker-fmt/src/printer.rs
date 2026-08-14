@@ -585,7 +585,20 @@ impl Printer<'_> {
             .tag_span
             .and_then(|s| self.map.byte_range(s))
             .and_then(|(start, _)| self.map.kwarg_paren_range(start));
-        if !tag.kwargs.is_empty() {
+        // A pending comment inside the parens anchors to its kwarg, so
+        // the list must print one kwarg per line with interleaved
+        // flushes instead of going through `delimited_list`.
+        let kwarg_comments = paren_range
+            .map(|(open, close)| {
+                self.comments
+                    .get(self.next.get())
+                    .map(|c| c.start > open && c.start < close)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if !tag.kwargs.is_empty() && kwarg_comments {
+            self.kwargs_with_comments(tag, level, paren_range, out);
+        } else if !tag.kwargs.is_empty() {
             let parts: Vec<String> = tag
                 .kwargs
                 .iter()
@@ -660,6 +673,52 @@ impl Printer<'_> {
             if let Some(close) = inner_close {
                 self.prev_end.set(Some(close + 1));
             }
+        }
+    }
+
+    /// One kwarg per line with comments flushed in place: own-line
+    /// comments at the kwarg indent, trailing comments after the comma
+    /// of the kwarg whose line they share.
+    fn kwargs_with_comments(
+        &self,
+        tag: &IrTag,
+        level: usize,
+        paren_range: Option<(usize, usize)>,
+        out: &mut String,
+    ) {
+        out.push_str("(\n");
+        let kw_level = level + 1;
+        let indent = self.indent(kw_level);
+        self.prev_end.set(None);
+        for kw in &tag.kwargs {
+            if let Some((s, _)) = kw.name_span.and_then(|sp| self.map.byte_range(sp)) {
+                self.flush(s, kw_level, out);
+                self.maybe_blank_line(s, out);
+            }
+            out.push_str(&indent);
+            out.push_str(&reindent(&self.ir_kwarg(kw, level), &indent));
+            out.push(',');
+            let end = kw
+                .value_span
+                .or(kw.name_span)
+                .and_then(|sp| self.map.byte_range(sp))
+                .map(|(_, e)| e);
+            if let Some(end) = end {
+                self.prev_end.set(Some(end));
+                if let Some(idx) = self.pending_trailing_on_line(end) {
+                    let before = self.comments[idx].start + 1;
+                    self.flush(before, kw_level, out);
+                }
+            }
+            out.push('\n');
+        }
+        if let Some((_, close)) = paren_range {
+            self.flush(close, kw_level, out);
+        }
+        out.push_str(&self.indent(level));
+        out.push(')');
+        if let Some((_, close)) = paren_range {
+            self.prev_end.set(Some(close + 1));
         }
     }
 
