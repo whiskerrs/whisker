@@ -1798,8 +1798,8 @@ mod coverage_tests {
 
     #[test]
     fn paren_broken_single_line_css_body_reinlines() {
-        // The shape an older whisker fmt used to emit: delimiters broken
-        // but fields joined. It must collapse back to one line.
+        // Delimiters broken around one joined line that fits: collapses
+        // back to a single line.
         let input = "fn s() {\n    let a = css!(\n        color: red, padding: px(8)\n    );\n}\n";
         let out = fmt(input);
         assert!(
