@@ -109,6 +109,53 @@ impl<'a> SourceMap<'a> {
         (None, after_parens)
     }
 
+    /// Byte range of a node's kwarg `( … )` group starting at byte
+    /// `start` (the first byte of its tag ident): `(open, close)` are the
+    /// indices of `(` and `)` themselves. `None` when the tag has no
+    /// paren group.
+    pub(crate) fn kwarg_paren_range(&self, start: usize) -> Option<(usize, usize)> {
+        let bytes = self.src.as_bytes();
+        let len = bytes.len();
+        let mut i = start;
+        while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        i = self.skip_trivia(i);
+        if i < len && bytes[i] == b'(' {
+            let after = self.skip_balanced(i, b'(', b')');
+            return Some((i, after - 1));
+        }
+        None
+    }
+
+    /// `true` if the last significant byte in `[lo, hi)` — ignoring
+    /// whitespace, comments and string/char literal interiors — is a
+    /// `,`. This is the author's keep-vertical hint: a trailing comma
+    /// means the list must not be joined onto one line.
+    pub(crate) fn trailing_comma_in(&self, lo: usize, hi: usize) -> bool {
+        let bytes = self.src.as_bytes();
+        let hi = hi.min(bytes.len());
+        let mut i = lo;
+        let mut last: Option<u8> = None;
+        while i < hi {
+            let b = bytes[i];
+            if b == b'"' || b == b'\'' {
+                last = Some(b);
+                i = self.skip_string(i, b);
+                continue;
+            }
+            if i + 1 < hi && b == b'/' && (bytes[i + 1] == b'/' || bytes[i + 1] == b'*') {
+                i = self.skip_trivia(i);
+                continue;
+            }
+            if !b.is_ascii_whitespace() {
+                last = Some(b);
+            }
+            i += 1;
+        }
+        last == Some(b',')
+    }
+
     /// Advance past whitespace and comments (line + nested block) from
     /// `i`, returning the index of the next significant byte.
     fn skip_trivia(&self, mut i: usize) -> usize {

@@ -1264,7 +1264,9 @@ mod comment_tests {
     #[test]
     fn wallet_faithful_reduction_formats_and_preserves_comments() {
         let input = "fn d() -> Element {\n    render! {\n        view(style: css!(\n            flex_grow: 1.0,\n            background_color: BG,\n        )) {\n        view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false\n    )\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n        }\n        }\n    }\n}\n";
-        let expected = "fn d() -> Element {\n    render! {\n        view(style: css!(flex_grow: 1.0, background_color: BG)) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
+        // The css!'s trailing comma is a keep-vertical hint, so it stays
+        // broken and the enclosing kwarg list wraps around it.
+        let expected = "fn d() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        ) {\n            view {\n                // \u{2500}\u{2500} Recent \u{2500}\u{2500}\n                Tx(icon: cart, name: \"Groceries\", positive: false)\n                Tx(icon: coffee, name: \"Coffee\", positive: false)\n            }\n        }\n    }\n}\n";
         let out = fmt(input);
         assert_ne!(out, input, "must not fall back:\n{out}");
         assert_eq!(out, expected, "got:\n{out}");
@@ -1577,6 +1579,55 @@ mod coverage_tests {
         let out = fmt(input);
         assert!(out.contains("a: css!(x: 1)"), "got:\n{out}");
         assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
+    }
+
+    // ---- trailing-comma keep-vertical hint --------------------------------
+
+    #[test]
+    fn trailing_comma_keeps_kwargs_vertical() {
+        let input = "fn ui() -> Element {\n    render! {\n        LabeledField(\n            label: \"Name\",\n            value: v,\n        )\n    }\n}\n";
+        assert_eq!(
+            fmt(input),
+            input,
+            "trailing comma must keep the list vertical"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn no_trailing_comma_joins_kwargs_when_they_fit() {
+        let input = "fn ui() -> Element {\n    render! {\n        LabeledField(\n            label: \"Name\",\n            value: v\n        )\n    }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("LabeledField(label: \"Name\", value: v)"),
+            "no hint, fits → joined:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn trailing_comma_keeps_css_fields_vertical() {
+        let input =
+            "fn s() -> Css {\n    css! {\n        color: red,\n        padding: px(8),\n    }\n}\n";
+        assert_eq!(fmt(input), input, "trailing comma must keep css! vertical");
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn trailing_comma_keeps_nested_css_vertical() {
+        let input = "fn ui() -> Element {\n    render! {\n        view(\n            style: css!(\n                flex_grow: 1.0,\n                background_color: BG,\n            ),\n        )\n    }\n}\n";
+        assert_eq!(fmt(input), input, "nested css! trailing comma must hold");
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn comma_inside_string_is_not_a_keep_vertical_hint() {
+        let input = "fn ui() -> Element {\n    render! {\n        text(\n            value: \"a, b,\"\n        )\n    }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("text(value: \"a, b,\")"),
+            "a comma inside a string is no hint:\n{out}"
+        );
     }
 
     // ---- macros nested inside closures / arbitrary exprs ------------------

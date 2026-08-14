@@ -323,10 +323,19 @@ impl Printer<'_> {
                     .iter()
                     .map(|kw| self.css_kwarg(kw, level))
                     .collect();
+                let force_wrap = full_map.trailing_comma_in(1, full_src.len().saturating_sub(1));
                 // `output_level = 0`: a relative, column-0-anchored
                 // fragment — see `delimited_list`'s doc.
-                let list =
-                    self.delimited_list(level, 0, name.len() + bang.len(), &parts, open, close, 0);
+                let list = self.delimited_list(
+                    level,
+                    0,
+                    name.len() + bang.len(),
+                    &parts,
+                    open,
+                    close,
+                    0,
+                    force_wrap,
+                );
                 Some(format!("{name}{bang}{list}"))
             }
             "render" => {
@@ -405,6 +414,10 @@ impl Printer<'_> {
     /// group's own line that isn't one of `parts` (e.g. a tag name
     /// before the opening delimiter, or a trailing ` {` before a child
     /// block).
+    ///
+    /// `force_wrap` is the author's keep-vertical hint (a trailing comma
+    /// in the source list): the wrapped form is used even when the
+    /// inline form would fit.
     #[allow(clippy::too_many_arguments)]
     fn delimited_list(
         &self,
@@ -415,10 +428,12 @@ impl Printer<'_> {
         open: char,
         close: char,
         suffix_width: usize,
+        force_wrap: bool,
     ) -> String {
         let inline = parts.join(", ");
         let delimited = format!("{open}{inline}{close}");
-        let fits = !inline.contains('\n')
+        let fits = !force_wrap
+            && !inline.contains('\n')
             && self.opts.indent_width(check_level) + prefix_width + delimited.len() + suffix_width
                 <= self.opts.max_width;
         if fits {
@@ -544,6 +559,12 @@ impl Printer<'_> {
                 .map(|kw| self.ir_kwarg(kw, level))
                 .collect();
             let suffix = ir_brace_width(&tag.children, tag.always_block);
+            let force_wrap = tag
+                .tag_span
+                .and_then(|s| self.map.byte_range(s))
+                .and_then(|(start, _)| self.map.kwarg_paren_range(start))
+                .map(|(open, close)| self.map.trailing_comma_in(open + 1, close))
+                .unwrap_or(false);
             out.push_str(&self.delimited_list(
                 level,
                 level,
@@ -552,6 +573,7 @@ impl Printer<'_> {
                 '(',
                 ')',
                 suffix,
+                force_wrap,
             ));
         }
 
@@ -628,16 +650,18 @@ impl Printer<'_> {
         let has_comments = !self.comments.is_empty();
 
         // Inline form only when there are NO comments to place (comments
-        // imply line breaks).
+        // imply line breaks) and the author left no keep-vertical hint
+        // (a trailing comma after the last field).
         if !has_comments {
             let parts: Vec<String> = input
                 .kwargs
                 .iter()
                 .map(|kw| self.css_kwarg(kw, level))
                 .collect();
+            let force_wrap = self.map.trailing_comma_in(0, body_len);
             let inline = parts.join(", ");
             let inline_width = self.opts.indent_width(level) + inline.len();
-            if !inline.contains('\n') && inline_width <= self.opts.max_width {
+            if !force_wrap && !inline.contains('\n') && inline_width <= self.opts.max_width {
                 let indent = self.indent(level);
                 return format!("{indent}{inline}");
             }
