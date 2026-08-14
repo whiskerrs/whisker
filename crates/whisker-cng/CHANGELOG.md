@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1](https://github.com/whiskerrs/whisker/compare/whisker-cng-v0.12.0...whisker-cng-v0.12.1) - 2026-08-14
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-cng-v0.10.12...whisker-cng-v0.11.0) - 2026-08-11
 
 ### Other
