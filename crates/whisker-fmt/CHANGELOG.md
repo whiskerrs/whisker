@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.11.2...whisker-fmt-v0.12.0) - 2026-08-14
+
+### Other
+
+- keep DSL slot values in expression form through the expr pass ([#402](https://github.com/whiskerrs/whisker/pull/402))
+
 ## [0.11.2](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.11.1...whisker-fmt-v0.11.2) - 2026-08-14
 
 ### Other
