@@ -473,6 +473,7 @@ fn macro_body_edit(
                     opts,
                     base_indent,
                     &expr_map,
+                    exprfmt,
                     &comments,
                     body_len,
                 );
@@ -499,6 +500,7 @@ fn macro_body_edit(
                     opts,
                     base_indent,
                     &expr_map,
+                    exprfmt,
                     &comments,
                     body_len,
                 );
@@ -525,6 +527,7 @@ fn macro_body_edit(
                     opts,
                     base_indent,
                     &expr_map,
+                    exprfmt,
                     &comments,
                     body_len,
                 );
@@ -1546,6 +1549,72 @@ mod coverage_tests {
         let out = fmt(input);
         assert!(out.contains("a: css!(x: 1)"), "got:\n{out}");
         assert!(out.contains("b: css!(y: 2)"), "got:\n{out}");
+    }
+
+    // ---- macros nested inside closures / arbitrary exprs ------------------
+
+    #[test]
+    fn closure_wrapped_render_in_kwarg_reformats() {
+        let input = "fn ui() -> Element {\n    render! { view(child: move || render! { text(value:\"hi\") }) }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains(
+                "child: move || render! {\n                text(value: \"hi\")\n            },"
+            ),
+            "closure-wrapped render! body must be reformatted:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn closure_wrapped_render_with_comment_survives_and_reformats() {
+        let input = "fn ui() -> Element {\n    render! { view(child: move || render! {\n        // note\n        text(value:\"hi\")\n    }) }\n}\n";
+        let out = fmt(input);
+        assert!(out.contains("// note"), "comment must survive:\n{out}");
+        assert!(
+            out.contains("text(value: \"hi\")"),
+            "body around the comment must still reformat:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn comment_bearing_routes_kwarg_value_reformats() {
+        let input = "fn ui() -> Element {\n    render! {\n        Router(routes: routes! {\n            // home\n            Stack { Route(path: \"a\", component: A) }\n        })\n    }\n}\n";
+        let out = fmt(input);
+        assert!(out.contains("// home"), "comment must survive:\n{out}");
+        assert!(
+            out.contains("Stack {\n"),
+            "comment-bearing routes! must still reformat:\n{out}"
+        );
+        assert!(
+            out.contains("Route(path: \"a\", component: A)\n"),
+            "route must land on its own line:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn url_string_in_nested_css_not_frozen() {
+        let input = "fn ui() -> Element {\n    render! { view(style: css!(background_image:\"https://x.com/a.png\",flex_grow:1.0)) }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("css!(background_image: \"https://x.com/a.png\", flex_grow: 1.0)"),
+            "a // inside a string must not freeze the nested css!:\n{out}"
+        );
+        assert_idempotent(input);
+    }
+
+    #[test]
+    fn closure_wrapped_render_respects_max_width_at_real_depth() {
+        let input = "fn ui() -> Element {\n    render! { view { Show(fallback: move || render! { text(value: \"a-quite-long-fallback-value-here\", style: css!(font_size: 24.0.px(), font_weight: FontWeight::Bold)) }) } }\n}\n";
+        let out = fmt(input);
+        assert!(
+            out.contains("text(\n"),
+            "inner kwargs must wrap at their real depth:\n{out}"
+        );
+        assert_no_line_over(&out, 100);
+        assert_idempotent(input);
     }
 
     // ---- width boundary ---------------------------------------------------

@@ -34,11 +34,11 @@
 //! and is easy to keep idempotent.
 
 use crate::comments::GrammarComment;
-use crate::expr_fmt::ExprMap;
+use crate::expr_fmt::{ExprFormatter, ExprMap};
 use crate::ir::{IrKwarg, IrNode, IrTag, IrValue};
 use crate::options::FmtOptions;
 use crate::source_map::SourceMap;
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::ToTokens;
 use std::cell::Cell;
 use syn::Expr;
@@ -65,6 +65,7 @@ pub(crate) fn print_render(
     opts: &FmtOptions,
     base_indent: usize,
     expr_map: &ExprMap,
+    exprfmt: Option<&ExprFormatter>,
     comments: &[GrammarComment],
     body_len: usize,
 ) -> String {
@@ -72,6 +73,7 @@ pub(crate) fn print_render(
         map,
         opts,
         expr_map,
+        exprfmt,
         comments,
         next: Cell::new(0),
     };
@@ -100,12 +102,14 @@ pub(crate) fn print_render(
 }
 
 /// Pretty-print a parsed `css!` body.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn print_css(
     input: &CssInput,
     map: &SourceMap,
     opts: &FmtOptions,
     base_indent: usize,
     expr_map: &ExprMap,
+    exprfmt: Option<&ExprFormatter>,
     comments: &[GrammarComment],
     body_len: usize,
 ) -> String {
@@ -113,6 +117,7 @@ pub(crate) fn print_css(
         map,
         opts,
         expr_map,
+        exprfmt,
         comments,
         next: Cell::new(0),
     };
@@ -128,6 +133,7 @@ pub(crate) fn print_routes(
     opts: &FmtOptions,
     base_indent: usize,
     expr_map: &ExprMap,
+    exprfmt: Option<&ExprFormatter>,
     comments: &[GrammarComment],
     body_len: usize,
 ) -> String {
@@ -135,6 +141,7 @@ pub(crate) fn print_routes(
         map,
         opts,
         expr_map,
+        exprfmt,
         comments,
         next: Cell::new(0),
     };
@@ -175,6 +182,10 @@ struct Printer<'a> {
     map: &'a SourceMap<'a>,
     opts: &'a FmtOptions,
     expr_map: &'a ExprMap,
+    /// Threaded through so a re-entrant macro pass over an expr fragment
+    /// ([`Printer::fragment_macro_src`]) formats ITS embedded exprs with
+    /// the same rustfmt settings as the enclosing body.
+    exprfmt: Option<&'a ExprFormatter>,
     comments: &'a [GrammarComment],
     /// Index of the next unconsumed comment.
     next: Cell<usize>,
@@ -204,17 +215,57 @@ impl Printer<'_> {
         if let Some(nested) = self.nested_macro_src(expr, level) {
             return nested;
         }
-        if let Some(formatted) = self.expr_map.get(span) {
-            return formatted.to_string();
-        }
-        if let Some(s) = self.map.slice(span) {
+        let fragment = if let Some(formatted) = self.expr_map.get(span) {
+            formatted.to_string()
+        } else if let Some(s) = self.map.slice(span) {
             // Continuation lines must be dedented to column 0 (the
             // [`ExprMap`] contract) or the later [`reindent`] compounds
             // the indentation on every pass.
             dedent_continuation(s.trim())
         } else {
-            expr.to_token_stream().to_string()
+            return expr.to_token_stream().to_string();
+        };
+        if contains_target_macro(expr.to_token_stream()) {
+            if let Some(s) = self.fragment_macro_src(&fragment, level) {
+                return s;
+            }
         }
+        fragment
+    }
+
+    /// Re-enter the whole macro pass over an expr fragment that contains
+    /// a `render!`/`css!`/`routes!` call somewhere INSIDE it (nested in a
+    /// closure, a method chain, …) where [`Printer::nested_macro_src`]'s
+    /// direct-`Expr::Macro` fast path can't reach. The fragment is
+    /// wrapped in a synthetic fn at `level`'s indent — so nested bodies
+    /// measure width at their real depth — reformatted by
+    /// [`crate::reformat_macros_pass`] (comment fail-safes included),
+    /// then unwrapped back to a column-0-anchored fragment.
+    fn fragment_macro_src(&self, fragment: &str, level: usize) -> Option<String> {
+        const HEAD: &str = "fn __wsk_frag() {\nlet _x =\n";
+        const TAIL: &str = ";\n}\n";
+        let indent = self.indent(level);
+        let mut synthetic = String::from(HEAD);
+        for (i, line) in fragment.split('\n').enumerate() {
+            if i > 0 {
+                synthetic.push('\n');
+            }
+            if !line.is_empty() {
+                synthetic.push_str(&indent);
+                synthetic.push_str(line);
+            }
+        }
+        synthetic.push_str(TAIL);
+        let out = crate::reformat_macros_pass(&synthetic, self.opts, self.exprfmt, true).ok()?;
+        let inner = out.strip_prefix(HEAD)?.strip_suffix(TAIL)?;
+        let mut result = String::new();
+        for (i, line) in inner.split('\n').enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+            result.push_str(line.strip_prefix(indent.as_str()).unwrap_or(line));
+        }
+        Some(result)
     }
 
     /// If `expr` is a `css!( … )` / `render!{ … }` / `routes!{ … }` macro
@@ -231,12 +282,11 @@ impl Printer<'_> {
     /// exact: the true depth depends on the outer wrap decision, which
     /// depends circularly on this one.
     ///
-    /// Returns `None` — falling back to the [`ExprMap`] / verbatim path
-    /// in [`Printer::expr_src`] — when `expr` isn't one of those macros,
-    /// its body doesn't parse or is empty, or its source contains `//`
-    /// or `/*`. Grammar-comment recovery runs once over the OUTER body,
-    /// before this nested printer exists, so a nested call carrying a
-    /// comment is left untouched rather than risk dropping it.
+    /// Returns `None` — falling back to [`Printer::fragment_macro_src`]'s
+    /// re-entrant pass in [`Printer::expr_src`] — when `expr` isn't one
+    /// of those macros, its body doesn't parse or is empty, or its source
+    /// carries a comment (this fast path has no comment reattachment; the
+    /// fragment pass does).
     fn nested_macro_src(&self, expr: &Expr, level: usize) -> Option<String> {
         let Expr::Macro(em) = expr else {
             return None;
@@ -254,7 +304,10 @@ impl Printer<'_> {
             syn::MacroDelimiter::Bracket(bk) => ('[', ']', bk.span),
         };
         let full_src = self.map.slice(delim_span.join())?;
-        if full_src.contains("//") || full_src.contains("/*") {
+        // String-aware comment scan: a `//` inside a string literal
+        // (`"https://…"`) must not force the fallback.
+        let full_map = SourceMap::new(full_src);
+        if !crate::comments::collect_grammar_comments(full_src, &[], &full_map).is_empty() {
             return None;
         }
         // rustfmt spaces a brace-delimited macro's `{` but not `(`/`[`.
@@ -279,7 +332,16 @@ impl Printer<'_> {
             "render" => {
                 let root = whisker_macro_syntax::render::parse_root(em.mac.tokens.clone()).ok()?;
                 let ir_root = crate::ir::adapt_render_root(&root);
-                let body = print_render(&ir_root, self.map, self.opts, 0, self.expr_map, &[], 0);
+                let body = print_render(
+                    &ir_root,
+                    self.map,
+                    self.opts,
+                    0,
+                    self.expr_map,
+                    self.exprfmt,
+                    &[],
+                    0,
+                );
                 Some(nested_wrap(&name, bang, open, close, &body))
             }
             "routes" => {
@@ -289,7 +351,16 @@ impl Printer<'_> {
                     return None;
                 }
                 let roots = crate::ir::adapt_routes_roots(&input);
-                let body = print_routes(&roots, self.map, self.opts, 0, self.expr_map, &[], 0);
+                let body = print_routes(
+                    &roots,
+                    self.map,
+                    self.opts,
+                    0,
+                    self.expr_map,
+                    self.exprfmt,
+                    &[],
+                    0,
+                );
                 Some(nested_wrap(&name, bang, open, close, &body))
             }
             _ => None,
@@ -702,6 +773,28 @@ fn reindent(fragment: &str, prefix: &str) -> String {
 fn span_of(expr: &syn::Expr) -> Span {
     use syn::spanned::Spanned;
     expr.span()
+}
+
+/// `true` if the token stream contains a `render!`/`css!`/`routes!`
+/// invocation (`IDENT ! GROUP`) at any nesting depth.
+fn contains_target_macro(tokens: TokenStream) -> bool {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    for (i, tree) in trees.iter().enumerate() {
+        match tree {
+            TokenTree::Ident(ident)
+                if matches!(ident.to_string().as_str(), "render" | "css" | "routes")
+                    && matches!(trees.get(i + 1), Some(TokenTree::Punct(p)) if p.as_char() == '!')
+                    && matches!(trees.get(i + 2), Some(TokenTree::Group(_))) =>
+            {
+                return true;
+            }
+            TokenTree::Group(group) if contains_target_macro(group.stream()) => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Wrap a nested `render!`/`routes!` macro's already-printed `body` with
