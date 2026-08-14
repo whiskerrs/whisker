@@ -11,6 +11,7 @@ fn opts(tab: usize, width: usize) -> FmtOptions {
         tab_spaces: tab,
         hard_tabs: false,
         edition: Some("2021".to_string()),
+        single_line_if_else_max_width: None,
     }
 }
 
@@ -222,6 +223,68 @@ fn closure_wrapped_render_kwarg_converges_in_one_call() {
         once.contains("render! {\n"),
         "closure-wrapped render! must format:\n{once}"
     );
+}
+
+#[test]
+fn closure_wrapped_render_stays_unblocked_through_rustfmt() {
+    if !rustfmt_available() {
+        return;
+    }
+    // rustfmt blocks a multi-line `|…| render! {…}` closure body in the
+    // embedded-expr pass; inside a macro body the slot is whisker-fmt's,
+    // so the sole-macro body must come back unblocked.
+    let src = "fn ui() -> Element {\n    render! {\n        ForEach(\n            each: move || rows(),\n            key: |i: &usize| i.to_string(),\n            children: move |_: usize| render! {\n                view(style: row_style, on_tap: move |_| handle_row_tap_for(row_identifier))\n            },\n        )\n    }\n}\n";
+    let once = format_source(src, &opts(4, 100)).unwrap();
+    assert!(
+        once.contains("children: move |_: usize| render! {\n"),
+        "closure body must stay unblocked:\n{once}"
+    );
+    assert!(
+        !once.contains("|_: usize| {"),
+        "closure body must not be blockified:\n{once}"
+    );
+    let twice = format_source(&once, &opts(4, 100)).unwrap();
+    assert_eq!(once, twice, "not idempotent:\n--once--\n{once}");
+}
+
+#[test]
+fn single_line_if_else_slot_value_stays_inline() {
+    if !rustfmt_available() {
+        return;
+    }
+    // 52 chars — over rustfmt's default single_line_if_else_max_width
+    // of 50, which the embedded-expr pass widens to max_width.
+    let src = "fn s() -> Css {\n    css! {\n        opacity: if dimming_is_enabled_now.get() { 0.5 } else { 1.0 },\n        color: red,\n    }\n}\n";
+    let once = format_source(src, &opts(4, 100)).unwrap();
+    assert!(
+        once.contains("opacity: if dimming_is_enabled_now.get() { 0.5 } else { 1.0 },"),
+        "slot if-else must stay on one line:\n{once}"
+    );
+    let twice = format_source(&once, &opts(4, 100)).unwrap();
+    assert_eq!(once, twice, "not idempotent:\n--once--\n{once}");
+}
+
+#[test]
+fn deep_if_else_slot_value_expands_when_line_lacks_room() {
+    if !rustfmt_available() {
+        return;
+    }
+    // A 78-char if at column 25: the expression alone fits max_width,
+    // but its line doesn't — the per-column allowance must break it.
+    let src = "fn s() -> Css {\n    css! {\n        justify_content: if value.get() { JustifyContent::FlexEnd } else { JustifyContent::FlexStart },\n        color: red,\n    }\n}\n";
+    let once = format_source(src, &opts(4, 100)).unwrap();
+    for line in once.lines() {
+        assert!(
+            line.chars().count() <= 100,
+            "line exceeds max_width:\n{line}\nfull output:\n{once}"
+        );
+    }
+    assert!(
+        once.contains("justify_content: if value.get() {\n"),
+        "over-allowance if must break:\n{once}"
+    );
+    let twice = format_source(&once, &opts(4, 100)).unwrap();
+    assert_eq!(once, twice, "not idempotent:\n--once--\n{once}");
 }
 
 #[test]

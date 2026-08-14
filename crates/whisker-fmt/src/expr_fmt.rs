@@ -138,9 +138,18 @@ impl ExprFormatter {
     }
 
     /// Format every expr (given as `(span, source_slice)` pairs) of ONE
-    /// macro body with a single rustfmt spawn, returning a map from span
-    /// to formatted text. Exprs that fail to format are simply absent
-    /// from the map (the printer then falls back to verbatim).
+    /// macro body, returning a map from span to formatted text. Exprs
+    /// that fail to format are simply absent from the map (the printer
+    /// then falls back to verbatim).
+    ///
+    /// Most exprs share ONE rustfmt spawn. `if` expressions are the
+    /// exception: bare in the wrapper's tail position they format as
+    /// control flow (always broken), so they're parenthesized — and
+    /// `single_line_if_else_max_width` measures the EXPRESSION's own
+    /// width, so each one's allowance is `max_width` minus its source
+    /// column (capped by an explicit user setting). One extra spawn per
+    /// distinct allowance keeps an if single-line exactly when its real
+    /// line has room.
     ///
     /// `exprs` carries the body-relative span of each expr (for keying)
     /// alongside its verbatim source slice (the text we format).
@@ -150,46 +159,99 @@ impl ExprFormatter {
             return map;
         }
 
-        let mut synthetic = String::new();
-        for (i, (_, src)) in exprs.iter().enumerate() {
-            synthetic.push_str(&format!("fn __wsk_e{i}() {{\n"));
-            synthetic.push_str(src);
-            // Guarantee the body ends on its own line so the closing
-            // brace is on a fresh line (slicing relies on this).
-            if !src.ends_with('\n') {
-                synthetic.push('\n');
+        let user_cap = self
+            .opts
+            .single_line_if_else_max_width
+            .unwrap_or(self.opts.max_width);
+        let mut batches: Vec<(Option<usize>, Vec<usize>)> = Vec::new();
+        let mut by_allowance: HashMap<usize, usize> = HashMap::new();
+        let mut plain: Vec<usize> = Vec::new();
+        for (i, (span, src)) in exprs.iter().enumerate() {
+            if src.trim_start().starts_with("if ") {
+                let allowed = self
+                    .opts
+                    .max_width
+                    .saturating_sub(span.start().column)
+                    .min(user_cap);
+                let bi = *by_allowance.entry(allowed).or_insert_with(|| {
+                    batches.push((Some(allowed), Vec::new()));
+                    batches.len() - 1
+                });
+                batches[bi].1.push(i);
+            } else {
+                plain.push(i);
             }
-            synthetic.push_str("}\n");
+        }
+        if !plain.is_empty() {
+            batches.push((None, plain));
         }
 
-        let formatted_file =
-            match crate::run_rustfmt(&synthetic, &self.opts, self.config_dir.as_deref()) {
+        let unit = self.opts.indent_unit();
+        for (if_allowance, indices) in &batches {
+            let mut synthetic = String::new();
+            for &i in indices {
+                synthetic.push_str(&format!("fn __wsk_e{i}() {{\n"));
+                if if_allowance.is_some() {
+                    synthetic.push('(');
+                }
+                synthetic.push_str(&exprs[i].1);
+                if if_allowance.is_some() {
+                    synthetic.push(')');
+                }
+                // Guarantee the body ends on its own line so the closing
+                // brace is on a fresh line (slicing relies on this).
+                if !synthetic.ends_with('\n') {
+                    synthetic.push('\n');
+                }
+                synthetic.push_str("}\n");
+            }
+            let extra: Vec<(&str, String)> = match if_allowance {
+                Some(v) => vec![("single_line_if_else_max_width", v.to_string())],
+                None => vec![],
+            };
+            let formatted = match crate::run_rustfmt(
+                &synthetic,
+                &self.opts,
+                self.config_dir.as_deref(),
+                &extra,
+            ) {
                 Ok(s) => s,
                 // No rustfmt, or the batch failed as a whole → verbatim.
-                Err(_) => return map,
+                Err(_) => continue,
             };
-
-        let bodies = match extract_bodies(&formatted_file, exprs.len()) {
-            Some(b) => b,
-            None => return map,
-        };
-
-        let unit = self.opts.indent_unit();
-        for (i, (span, _)) in exprs.iter().enumerate() {
-            if let Some(body) = bodies.get(i).and_then(|b| b.as_deref()) {
-                let dedented = dedent_one_level(body, &unit);
-                map.insert(*span, dedented);
+            let Some(found) = extract_bodies(&formatted) else {
+                continue;
+            };
+            for &i in indices {
+                if let Some(body) = found.get(&i) {
+                    let mut dedented = dedent_one_level(body, &unit);
+                    if if_allowance.is_some() {
+                        dedented = strip_outer_parens(&dedented);
+                    }
+                    map.insert(exprs[i].0, dedented);
+                }
             }
         }
         map
     }
 }
 
-/// Re-parse the rustfmt output, locate every `__wsk_eN` fn (in order),
-/// and return its raw body text (between the `{` and `}` braces, newline
-/// boundaries trimmed). Returns `None` if the output can't be parsed or
-/// any wrapper fn is missing — so the caller falls back wholesale.
-fn extract_bodies(formatted_file: &str, count: usize) -> Option<Vec<Option<String>>> {
+/// Undo the wrapper's added `( … )` around an `if` expression. The text
+/// is left alone when the parens aren't the outermost characters.
+fn strip_outer_parens(s: &str) -> String {
+    let t = s.trim();
+    match t.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
+        Some(inner) => inner.to_string(),
+        None => s.to_string(),
+    }
+}
+
+/// Re-parse the rustfmt output, locate every `__wsk_eN` fn, and return
+/// its raw body text (between the `{` and `}` braces, newline boundaries
+/// trimmed) keyed by N. Returns `None` if the output can't be parsed —
+/// so the caller falls back wholesale; an individually missing fn is
+/// simply absent from the map.
+fn extract_bodies(formatted_file: &str) -> Option<HashMap<usize, String>> {
     let parsed: syn::File = syn::parse_file(formatted_file).ok()?;
     let map = crate::source_map::SourceMap::new(formatted_file);
 
@@ -219,12 +281,7 @@ fn extract_bodies(formatted_file: &str, count: usize) -> Option<Vec<Option<Strin
         let inner = inner.strip_suffix('\n').unwrap_or(inner);
         found.insert(idx, inner.to_string());
     }
-
-    let mut bodies = Vec::with_capacity(count);
-    for i in 0..count {
-        bodies.push(Some(found.remove(&i)?));
-    }
-    Some(bodies)
+    Some(found)
 }
 
 /// Strip exactly one indentation level (`unit`) from the front of every
@@ -260,6 +317,7 @@ mod tests {
             tab_spaces: 4,
             hard_tabs: false,
             edition: Some("2021".to_string()),
+            single_line_if_else_max_width: None,
         }
     }
 
@@ -278,14 +336,15 @@ mod tests {
     #[test]
     fn extract_single_body() {
         let file = "fn __wsk_e0() {\n    foo(a, b)\n}\n";
-        let bodies = extract_bodies(file, 1).unwrap();
-        assert_eq!(bodies[0].as_deref(), Some("    foo(a, b)"));
+        let bodies = extract_bodies(file).unwrap();
+        assert_eq!(bodies.get(&0).map(String::as_str), Some("    foo(a, b)"));
     }
 
     #[test]
-    fn extract_requires_all() {
+    fn extract_missing_index_absent() {
         let file = "fn __wsk_e0() {\n    a\n}\n";
-        assert!(extract_bodies(file, 2).is_none());
+        let bodies = extract_bodies(file).unwrap();
+        assert!(!bodies.contains_key(&1));
     }
 
     #[test]
