@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.11.1...whisker-fmt-v0.11.2) - 2026-08-14
+
+### Other
+
+- reach nested macros, converge with rustfmt, and respect authored layout ([#400](https://github.com/whiskerrs/whisker/pull/400))
+
 ## [0.11.0](https://github.com/whiskerrs/whisker/compare/whisker-fmt-v0.10.12...whisker-fmt-v0.11.0) - 2026-08-11
 
 ### Other
