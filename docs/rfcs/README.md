@@ -47,4 +47,4 @@ are specified independently inside each RFC.
 | RFC | Title | Status |
 |---|---|---|
 | [0001](0001-runtime-modules-and-build-plugins.md) | Runtime Modules and Build-time Plugins | Draft |
-
+| [0002](0002-renderer-interface-and-frame-protocol.md) | Renderer Interface and Frame Protocol | Draft |
