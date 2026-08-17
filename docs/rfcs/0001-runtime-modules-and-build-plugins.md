@@ -243,7 +243,7 @@ Application code and framework modules depend on interface contracts:
 
 ```rust
 let renderer = registry.require::<RendererV1>()?;
-let surface = renderer.open_surface(config)?;
+let surface = renderer.attach_surface(host_surface, config, events)?;
 ```
 
 They do not perform a method-name lookup on every call. The registry resolves
@@ -253,6 +253,84 @@ selects one. Collection interfaces may explicitly accept multiple providers.
 
 Concrete module IDs remain available for diagnostics, configuration, explicit
 provider selection, and tests.
+
+### Dependency cardinality and resolution
+
+Runtime dependencies are edges between a consumer and a versioned interface,
+not between Cargo crates and not normally between concrete module IDs. A
+requirement declares its cardinality:
+
+```rust,ignore
+enum Cardinality {
+    ExactlyOne,
+    ZeroOrOne,
+    Many,
+}
+```
+
+`ExactlyOne` rejects both a missing provider and an ambiguous set of providers
+unless application policy explicitly selects one. `ZeroOrOne` injects an
+optional typed handle. `Many` injects every compatible provider in a stable,
+deterministic order and is used for extension collections such as element or
+style-extension providers.
+
+For example, a scene runtime can require one renderer and collect multiple UI
+element providers without any UI module naming or depending on that renderer:
+
+```text
+Application --requires exactly one--> SceneV1
+
+Scene Runtime --requires exactly one--> RendererV1
+Scene Runtime --requires many---------> ElementProviderV1
+
+View Module ----provides--------------> ElementProviderV1
+Text Module ----provides--------------> ElementProviderV1
+DOM Renderer ---provides--------------> RendererV1
+```
+
+The registry performs these steps before starting application code:
+
+1. collect descriptors embedded by build-time composition;
+2. discard providers incompatible with the target or requested scope;
+3. match every requirement by interface ID and compatible version;
+4. apply explicit provider-selection policy;
+5. reject missing, ambiguous, duplicate singular, or cyclic dependencies;
+6. construct typed dependency handles or collections;
+7. start providers before their consumers.
+
+Two providers in a `Many` collection may still conflict at the contract level.
+For example, two element providers claiming the same canonical element key are
+an error unless that interface defines an explicit replacement policy.
+
+Callbacks do not create reverse registry dependencies. If module A requires
+module B and B must later notify A, A passes B a typed callback or event sink
+while binding. B must not resolve A from the registry, because doing so would
+turn a directed dependency into a cycle:
+
+```text
+A --requires--> B
+A --passes callback/event sink--> B
+B --emits through sink----------> A
+```
+
+This rule is particularly important for a renderer returning frame and input
+events to the scene runtime.
+
+### Runtime dependencies are not package or plugin dependencies
+
+Three graphs coexist and must remain explicit:
+
+| Graph | Edge means |
+|---|---|
+| Package/build graph | Code or artifacts are needed to compile and distribute another package |
+| Plugin graph | One build-time Project IR transformation must run with or after another |
+| Runtime module graph | A running module instance requires a versioned interface provider |
+
+A Rust UI crate may depend on an `element-api` crate to compile while its
+runtime module only *provides* `ElementProviderV1`. Selecting that runtime
+provider may activate a companion build plugin that embeds a Host factory, but
+neither relationship implies that the UI module requires a concrete renderer
+at runtime.
 
 ### Identity and versioning
 
@@ -658,4 +736,3 @@ The following must be resolved before this RFC becomes `Accepted`:
   input model;
 - how application configuration selects one provider when several satisfy the
   same interface.
-

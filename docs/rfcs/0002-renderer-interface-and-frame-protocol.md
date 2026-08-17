@@ -167,6 +167,76 @@ An element instance is a scene node identified by `NodeId`. Thousands of nodes
 may be created from one registered element type. Nodes follow scene lifecycle,
 not module-registry lifecycle.
 
+### Module dependency graph
+
+UI modules do not require a concrete renderer and do not call `present`,
+`measure_batch`, or Host factories. The Scene Runtime is the coordinator that
+requires both sides:
+
+```text
+Application Module
+    |
+    | requires exactly one SceneV1
+    v
+Scene Runtime Module
+    |
+    | requires exactly one RendererV1
+    +---------------------------> DOM / Android / iOS Renderer
+    |
+    | requires many ElementProviderV1
+    +---------------------------> View Module
+    +---------------------------> Text Module
+    +---------------------------> Image Module
+    `---------------------------> Video Module
+```
+
+Conceptually, the Scene Runtime declares:
+
+```rust,ignore
+ModuleDescriptor {
+    id: "whisker.scene",
+    provides: [interface("whisker.scene", "1")],
+    requires: [
+        exactly_one("whisker.renderer", "^1"),
+        many("whisker.element-provider", "^1"),
+    ],
+    lifecycle: LifecycleScope::Surface,
+}
+```
+
+A UI module declares only the element-provider side unless it has independent
+service dependencies:
+
+```rust,ignore
+ModuleDescriptor {
+    id: "whisker.ui.text",
+    provides: [interface("whisker.element-provider", "1")],
+    requires: [],
+    lifecycle: LifecycleScope::Application,
+}
+```
+
+The registry starts the renderer and element providers before the Scene
+Runtime, then starts the Application module. The Scene Runtime collects the
+schemas, validates duplicate canonical element keys, and passes registrations
+to the resolved renderer. Shutdown occurs in reverse order.
+
+The renderer does not resolve the Scene Runtime to send events back. During
+`attach_surface`, the Scene Runtime passes a typed `RendererEventSink`. This
+keeps the registry graph directed and avoids a `Scene -> Renderer -> Scene`
+cycle:
+
+```text
+Scene --requires RendererV1---------> Renderer
+Scene --passes RendererEventSink----> Renderer
+Scene <-------events through sink---- Renderer
+```
+
+Likewise, the renderer does not resolve `ElementProvider` modules itself. It
+receives normalized `ElementRegistration` values from the Scene Runtime. This
+keeps provider discovery, duplicate detection, and schema policy in Rust while
+the renderer remains responsible for binding schemas to Host factories.
+
 ## Renderer interface
 
 The conceptual typed Rust-facing interface is:
@@ -443,6 +513,53 @@ Several changes to the same property before a frame collapse to the final
 value. Structural changes preserve required ordering. Static nodes produce no
 packet operations while unchanged. An idle application requests no frames.
 
+## Styling boundary for UI modules
+
+An element provider defines what an element *is*; it does not implement CSS
+parsing, selectors, cascade, inheritance, layout, or common paint properties.
+The Scene Runtime connects independent style and layout services with element
+providers and the renderer:
+
+```text
+ElementProvider modules -------+
+Style Engine ------------------+--> Scene Runtime --> FramePacket --> Renderer
+Layout Engine -----------------+
+```
+
+Element schemas declare semantic traits used by the common style system:
+
+```rust,ignore
+enum ElementTrait {
+    Box,
+    Container,
+    TextContent,
+    Replaced,
+    ScrollContainer,
+    HitTestable,
+    Accessible,
+}
+```
+
+The final trait set belongs to RFC 0003. The boundary is fixed here: a `View`
+can declare `Box + Container`, `Text` can declare `Box + TextContent`, and
+`Image` or `Video` can declare `Box + Replaced`; the common Style Engine uses
+those declarations to determine property applicability.
+
+Standard CSS properties such as width, padding, background, opacity,
+transform, border, and clip are not repeated in each element schema. An
+element schema contains only element-specific properties such as a video's
+source, autoplay behavior, or playback rate. Element defaults may be supplied
+as precompiled typed declarations, but the Style Engine performs their cascade.
+
+A UI package that truly needs selector- and cascade-aware custom properties
+may additionally provide a collection-valued `StyleExtensionProvider`
+interface. Behavioral configuration should remain an element property rather
+than becoming CSS merely because it affects a visual component.
+
+At the Cargo level, a UI crate may depend on small `element-api` and
+`style-types` crates for stable IDs and schema types. That compile-time
+dependency is not a runtime dependency on a concrete Style Engine or renderer.
+
 ## Standard View example
 
 The built-in UI package provides an Application-scoped module such as
@@ -497,40 +614,285 @@ Desktop -> div in the WebView DOM
 
 ## Custom UI modules
 
-A custom UI package such as `whisker-video` commonly contains:
+A third-party UI package such as `whisker-video` commonly distributes all of
+these pieces together:
 
 ```text
 whisker-video package
-|- Rust component and typed ElementHandle API
-|- runtime module providing whisker.video/Video@1
+|- Rust declarative component API
+|- Rust typed ElementHandle, props, events, and commands
+|- runtime module providing an ElementProvider
+|- versioned whisker.video/Video@1 element schema
 |- Android Host element factory
 |- iOS Host element factory
 |- JavaScript Host element factory
-`- optional build plugin for dependencies, permissions, and registration
+|- generated bindings and registration metadata
+`- optional build plugin for dependencies, permissions, and lifecycle hooks
 ```
 
-The runtime module contributes an element schema. The package metadata or its
-companion plugin causes the target Host factory and generated registration to
-be included in the project. During bootstrap, `register_elements` verifies that
-the Rust schema and Host factory agree on interface version and assigns a
-compact `ElementTypeId`.
+These are distribution contents, not one runtime object. The Rust module is
+typically Application-scoped and registers one element type. Each rendered
+video is a Scene-owned node with separate Host state.
 
-Creating and updating a video still uses the ordinary frame path:
+### Application-author surface
+
+Application code should see an ordinary Rust crate, a declarative component,
+typed events, and a typed element handle:
+
+```rust,ignore
+fn configure(app: &mut App) {
+    app.module::<WhiskerVideo>();
+}
+
+fn player() -> Element {
+    let video = ElementRef::<VideoHandle>::new();
+
+    render! {
+        <Video
+            ref:=video.r()
+            source="https://example.com/movie.mp4"
+            autoplay=true
+            muted=false
+            style=css! {
+                width: 100%;
+                aspect-ratio: 16 / 9;
+                border-radius: 12px;
+            }
+            on:ready=move |event| log_duration(event.duration)
+            on:ended=move |_| play_next()
+            on:error=move |error| report(error)
+        />
+
+        <Button on:click=move |_| video.play()>
+            "Play"
+        </Button>
+    }
+}
+```
+
+Official and third-party typed APIs must not require application authors to
+spell module names, method strings, numeric property IDs, or raw
+`WhiskerValue`s. The generic dynamic module API remains an escape hatch.
+
+Selecting the module makes its companion build requirements eligible for
+activation under RFC 0001. An application may configure the companion plugin
+explicitly when it has options, but ordinary use should not require redundant
+module and plugin declarations.
+
+### Module-author contract
+
+A module author declares a canonical element key and typed properties, events,
+commands, measurement policy, child policy, and traits. The exact macro syntax
+is deliberately not fixed by this RFC; conceptually the declaration produces:
+
+- the Rust component builder and props;
+- a generation-checked `ElementHandle` API;
+- typed event and command payloads;
+- `ElementSchema` and stable symbolic property/event/command IDs;
+- FramePacket encoders and decoders;
+- Kotlin, Swift, and TypeScript binding inputs;
+- module and debug-symbol descriptors.
+
+An illustrative generated schema is:
+
+```rust,ignore
+ElementSchema {
+    key: "whisker.video/Video@1",
+    traits: &[BOX, REPLACED, ACCESSIBLE, MEDIA],
+    children: ChildrenPolicy::None,
+    measure: MeasurePolicy::FixedAspectRatioOrHostIntrinsic,
+    properties: &[
+        VIDEO_SOURCE,
+        VIDEO_AUTOPLAY,
+        VIDEO_MUTED,
+        VIDEO_LOOPING,
+        VIDEO_CONTROLS,
+        VIDEO_PLAYBACK_RATE,
+    ],
+    events: &[
+        VIDEO_READY,
+        VIDEO_PLAYING,
+        VIDEO_PAUSED,
+        VIDEO_PROGRESS,
+        VIDEO_ENDED,
+        VIDEO_ERROR,
+    ],
+    commands: &[VIDEO_PLAY, VIDEO_PAUSE, VIDEO_SEEK, VIDEO_SNAPSHOT],
+}
+```
+
+Source, autoplay, muted, looping, controls, and playback rate are
+element-specific properties. Width, height, aspect ratio, object fit, opacity,
+transform, border radius, and clip are common styles supplied by the traits and
+the Style Engine.
+
+### Typed updates, events, and commands
+
+Creating and updating a custom element uses the ordinary frame path:
 
 ```text
 CreateNode(100, VIDEO)
 SetProperty(100, VIDEO_SOURCE, resource)
+SetProperty(100, VIDEO_MUTED, false)
 SetLayout(100, ...)
 InvokeCommand(100, VIDEO_PLAY, ...)
 ```
 
-The Host factory maps this to `PlayerView`, an `AVPlayerLayer`-backed view, or
-an HTML `video` element. It may hold per-node platform state, but that state is
-destroyed with the scene node. The runtime module itself is not instantiated
-once per video element.
+Property changes are typed slots and are collapsed to their final value before
+the frame. A Host factory receives a property patch, not arbitrary method
+names. Player callbacks return typed events through the renderer event sink,
+which routes them by `NodeId` to Rust listeners.
 
-Custom factories register through the one platform Host. They do not create a
-second bridge or module registry.
+View-bound imperative methods use a generation-checked handle:
+
+```rust,ignore
+video.play();
+video.pause();
+video.seek(Duration::from_secs(30));
+let image = video.snapshot().await?;
+```
+
+Fire-and-forget commands are ordered inside the frame packet after any
+properties or geometry they depend on. Result-bearing commands allocate a
+typed `ResultId` and complete through `CommandCompleted`. Calling a handle
+after its node generation was deleted returns a stale-element error rather
+than targeting a reused node.
+
+### Host element factory
+
+Every supported target provides a factory conforming to the generated element
+binding. At the information level it implements:
+
+```rust,ignore
+trait HostElementFactory {
+    fn create(&mut self, context: ElementContext) -> HostElement;
+    fn apply_properties(&mut self, element: &mut HostElement, patch: PropertyPatch);
+    fn invoke_command(&mut self, element: &mut HostElement, command: Command);
+    fn measure(&mut self, element: &HostElement, request: MeasureRequest)
+        -> MeasureResponse;
+    fn destroy(&mut self, element: HostElement);
+}
+```
+
+This is a cross-language behavioral shape, not a Rust trait that Kotlin,
+Swift, or JavaScript literally implements. Binding generation supplies native
+typed payloads and verifies the common schema so authors do not manually keep
+wire IDs synchronized.
+
+The same element key can map to different concrete objects:
+
+```text
+whisker.video/Video@1
+  Android -> PlayerView / Media3 player
+  iOS     -> AVPlayerLayer-backed UIView
+  Web     -> HTMLVideoElement
+  Desktop -> HTMLVideoElement in the WebView
+```
+
+Factories register through the one Host renderer registry. They do not create
+a module-specific bridge, renderer, or second Host.
+
+### Bootstrap binding
+
+The package metadata or companion plugin causes the selected target factory
+and generated registration to be included in Project IR. At runtime:
+
+```text
+Video module
+  -> provides ElementSchema("whisker.video/Video@1")
+
+Scene Runtime
+  -> collects and normalizes the schema
+  -> Renderer.register_elements(...)
+
+Host Renderer
+  -> looks up embedded Host factory by canonical key and major version
+  -> verifies supported properties, events, commands, and measurement
+  -> assigns compact ElementTypeId::VIDEO
+```
+
+Missing or incompatible factories fail before the first application frame and
+name both the runtime provider and expected build contribution.
+
+### Build companion
+
+A package-specific plugin is required only for target work that generic module
+integration metadata cannot express. For a video package, Project IR
+contributions might include:
+
+```text
+Android
+  MavenDependency(androidx.media3:media3-exoplayer:...)
+  MavenDependency(androidx.media3:media3-ui:...)
+  HostElementFactory(VideoElementFactory)
+
+iOS
+  SystemFramework(AVFoundation)
+  HostSourceModule(WhiskerVideo)
+  HostElementFactory(VideoElementFactory)
+
+Web / Desktop
+  JavaScriptProvider(whisker-video/host)
+  HostElementFactory(VideoElementFactory)
+```
+
+Generic target plugins can handle ordinary source inclusion, binding
+generation, and registration directly from module-provider metadata. A custom
+build plugin adds permissions, dependencies, resources, lifecycle hooks, or
+configurable behavior beyond that generic path.
+
+The relationship is:
+
+```text
+select WhiskerVideo runtime provider
+  -> activate declared companion build requirements
+  -> compose target Project IR
+  -> generate and build Host project with Video factory
+  -> validate and bind Video element during runtime bootstrap
+```
+
+Discovery alone does not execute a third-party plugin, as specified by RFC
+0001.
+
+### Unsupported targets and capability variants
+
+If a selected UI module has no compatible Host factory for the target, project
+composition fails. It must not silently emit an empty view or ignore commands:
+
+```text
+cannot compose target `web`:
+  whisker.video/Video@1 is selected
+  available Host providers: android, ios
+  missing Host provider: web
+```
+
+A package may deliberately provide a reduced-capability target variant, but
+the variant advertises those capabilities and required application behavior is
+validated before use.
+
+### Module and node lifecycle
+
+The Video module is normally started once per Application. Each scene node
+owns a separate Host player lifecycle:
+
+```text
+Application start
+  -> start Video module and register schema once
+
+CreateNode(Video)
+  -> create AVPlayer / Media3 player / HTMLVideoElement
+
+DeleteNode(Video)
+  -> detach observers, stop playback, release per-node resources
+
+Application shutdown
+  -> stop Video module
+```
+
+An independent media session is a different runtime concept. A package may
+also provide `VideoSessionV1` for preloading or background playback not owned
+by a scene node. View-bound operations use `ElementHandle` commands; detached
+resources use the service interface and its own lifecycle.
 
 ## Measurement
 
@@ -772,13 +1134,19 @@ how server-emitted CSS relates to Rust-resolved interactive styling.
 9. Ordinary Web/Desktop frames do not cross native IPC.
 10. Host-dependent measurement is batched, keyed, cached, and epoch-validated.
 11. Renderer and protocol behavior can be tested with a Rust-only provider.
+12. The Scene Runtime, not UI modules, requires and coordinates the renderer.
+13. Renderer callbacks use the event sink passed during binding and do not
+    create a reverse registry dependency on the Scene Runtime.
+14. A third-party UI element uses the same schema registration, frame,
+    measurement, event, and command paths as a built-in element.
 
 ## Open questions
 
 The following must be resolved before this RFC becomes `Accepted`:
 
-- the exact boundary between `Renderer` and the collection-valued
-  `ElementProvider` interface;
+- final data structures for normalized `ElementRegistration`, Host factory
+  capabilities, and compact binding results at the now-defined
+  Scene/Renderer/ElementProvider boundary;
 - final binary header, opcode numbering, alignment, and table encoding;
 - whether scene revisions acknowledge decoded state or completed visible
   platform application when a backend internally defers work;
@@ -788,6 +1156,8 @@ The following must be resolved before this RFC becomes `Accepted`:
 - whether accessibility uses frame operations or a separately versioned but
   transaction-linked semantics packet;
 - command cancellation and result ordering when an element is deleted;
+- the final standard `ElementTrait` and `StyleExtensionProvider` contracts,
+  which RFC 0003 must define consistently with this boundary;
 - debug symbol-table format for compact element, property, event, and command
   IDs;
 - hydration and event attachment requirements for a future SSR DOM renderer.
