@@ -69,8 +69,8 @@ Removing Lynx requires a boundary that:
 
 ## Non-goals
 
-- Defining the supported CSS surface, cascade, selector matching, or exact
-  layout and paint semantics. RFC 0003 owns those decisions.
+- Defining the supported typed style surface or exact layout and paint
+  semantics. RFC 0003 owns those decisions.
 - Standardizing the binary encoding byte-for-byte in this RFC. This RFC fixes
   the information model and invariants; implementation work will assign final
   opcodes, alignments, and field widths.
@@ -95,7 +95,8 @@ Removing Lynx requires a boundary that:
 - the logical element tree and stable `NodeId`s;
 - component and reactive-owner lifetimes;
 - signal dependency tracking and dirty propagation;
-- CSS parsing, selector matching, cascade, inheritance, and resolved values;
+- typed inline-style composition, limited text-property inheritance, and
+  resolved values;
 - layout constraints and the Taffy layout tree;
 - animation timelines, interpolation, springs, decay, and gesture handoff;
 - classification of changes as layout, paint, composite, text, or semantics;
@@ -635,10 +636,10 @@ packet operations while unchanged. An idle application requests no frames.
 
 ## Styling boundary for UI modules
 
-An element provider defines what an element *is*; it does not implement CSS
-parsing, selectors, cascade, inheritance, layout, or common paint properties.
-The Scene Runtime connects independent style and layout services with element
-providers and the renderer:
+An element provider defines what an element *is*; it does not implement common
+style resolution, limited text-property inheritance, layout, or paint
+properties. The Scene Runtime connects independent style and layout services
+with element providers and the renderer:
 
 ```text
 ElementProvider modules -------+
@@ -665,16 +666,18 @@ can declare `Box + Container`, `Text` can declare `Box + TextContent`, and
 `Image` or `Video` can declare `Box + Replaced`; the common Style Engine uses
 those declarations to determine property applicability.
 
-Standard CSS properties such as width, padding, background, opacity,
+Common typed style properties such as width, padding, background, opacity,
 transform, border, and clip are not repeated in each element schema. An
 element schema contains only element-specific properties such as a video's
-source, autoplay behavior, or playback rate. Element defaults may be supplied
-as precompiled typed declarations, but the Style Engine performs their cascade.
+source, autoplay behavior, or playback rate. Public authoring is inline-only;
+there is no public stylesheet, selector, specificity, or general CSS cascade.
+Element defaults and the fixed inherited text context are resolved before the
+node's inline style.
 
-A UI package that truly needs selector- and cascade-aware custom properties
-may additionally provide a collection-valued `StyleExtensionProvider`
-interface. Behavioral configuration should remain an element property rather
-than becoming CSS merely because it affects a visual component.
+Third-party UI packages express visual extensions as typed element properties
+in their versioned schema. They do not extend a selector language or register
+custom cascading properties. Behavioral configuration remains an element
+property even when it affects a visual component.
 
 At the Cargo level, a UI crate may depend on small `element-api` and
 `style-types` crates for stable IDs and schema types. That compile-time
@@ -699,8 +702,8 @@ ElementSchema {
 }
 ```
 
-Width, padding, background, transform, and other CSS properties are common
-resolved-style data, not bespoke `View` properties.
+Width, padding, background, transform, and other typed style properties are
+common resolved-style data, not bespoke `View` properties.
 
 One module instance registers the type. Every rendered `View` creates a cheap
 scene node:
@@ -1142,14 +1145,14 @@ objects that do so.
 This means paint is not implemented twice as independent style logic:
 
 ```text
-Rust CSS/style engine
+Rust typed style engine
   -> ResolvedBackground / ResolvedBorder / ResolvedClip / ...
   -> typed frame operations
   -> Host platform implementation
 ```
 
 Backend capability negotiation determines whether a feature is native,
-emulated, or unsupported. The exact required CSS-to-paint mapping belongs to
+emulated, or unsupported. The exact required style-to-paint mapping belongs to
 RFC 0003.
 
 ## Backpressure and failure
@@ -1202,13 +1205,13 @@ are not required to test engine or protocol correctness.
 
 Because the renderer is an interface, a Rust-only serializer or headless
 renderer can consume the same logical scene without a platform Host. This RFC
-does not define HTML serialization, CSS emission, or hydration markers, but it
+does not define HTML serialization, style emission, or hydration markers, but it
 does not make SSR impossible.
 
 An SSR renderer may require different capabilities and output rules from the
 interactive DOM renderer. Both can implement renderer interfaces without
 making runtime DOM layout the semantic source of truth. RFC 0003 will define
-how server-emitted CSS relates to Rust-resolved interactive styling.
+how server-emitted presentation relates to Rust-resolved interactive styling.
 
 ## Mapping from the current implementation
 
@@ -1245,7 +1248,7 @@ how server-emitted CSS relates to Rust-resolved interactive styling.
 ## Invariants
 
 1. Rust owns the logical scene and accepted revision.
-2. The Host owns concrete platform objects but not CSS cascade or animation
+2. The Host owns concrete platform objects but not style resolution or animation
    state.
 3. One surface has one ordered renderer lane and one Whisker-visible Host.
 4. One changed frame produces at most one normal `present` call per surface.
@@ -1284,8 +1287,8 @@ The following must be resolved before this RFC becomes `Accepted`:
 - whether accessibility uses frame operations or a separately versioned but
   transaction-linked semantics packet;
 - command cancellation and result ordering when an element is deleted;
-- the final standard `ElementTrait` and `StyleExtensionProvider` contracts,
-  which RFC 0003 must define consistently with this boundary;
+- the final standard `ElementTrait` and typed custom-property contracts, which
+  RFC 0003 must define consistently with this boundary;
 - debug symbol-table format for compact element, property, event, and command
   IDs;
 - hydration and event attachment requirements for a future SSR DOM renderer.
