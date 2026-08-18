@@ -49,6 +49,10 @@ runs on iOS and Android by driving Lynx's element tree directly.
    (Host-independent retained scene + incremental frame journal;
     migration foundation, not yet wired into render! or Lynx)
 
+   whisker-layout ──────────► whisker-style + whisker-protocol
+   (Host-independent retained Taffy tree + intrinsic-measurement boundary;
+    migration foundation, not yet wired into whisker-engine)
+
    subsecond  (= whisker-subsecond, [lib] name = "subsecond")
      pulled into whisker / whisker-driver / whisker-dev-runtime
      when `hot-reload` is on.
@@ -103,6 +107,7 @@ runs on iOS and Android by driving Lynx's element tree directly.
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
 | `whisker-protocol` | Host-independent semantic frame types, stable IDs, and transactional retained-tree validation. It is currently a migration foundation and is not yet used by the production Lynx path. | future scene engine and renderer providers |
 | `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, and frame acceptance/recovery lifecycle. It is currently a migration foundation and is not yet connected to `render!`. | future scene runtime |
+| `whisker-layout` | Host-independent retained box layout. It privately owns Taffy, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer, and returns deterministic logical-pixel snapshots. It is not yet connected to `whisker-engine`. | future scene runtime |
 | `whisker-subsecond` | Whisker's fork of DioxusLabs `subsecond` — anchors the ASLR-slide lookup on `whisker_aslr_anchor` (emitted by `#[whisker::main]`) instead of `main`. `[lib] name = "subsecond"` keeps `use subsecond::*`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
 ### Modules and the router (`packages/*`)

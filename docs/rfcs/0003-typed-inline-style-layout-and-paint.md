@@ -388,6 +388,22 @@ Lynx property that Taffy cannot represent requires an explicit engine
 extension, preprocessing rule, or documented unsupported status; it must not
 silently acquire target-dependent browser behavior.
 
+The first retained implementation lives in the Rust-only `whisker-layout`
+crate. Its public boundary consists of Whisker-owned `NodeId`,
+`ComputedLayoutStyle`, viewport/measurement values, and `LayoutSnapshot`;
+Taffy types remain private. The tree supports create, subtree removal,
+reparent/reorder, style replacement, intrinsic-measure invalidation, and
+viewport computation. Fractional logical coordinates are preserved so that
+physical-pixel snapping remains a renderer concern.
+
+This first slice explicitly rejects, rather than approximates, backend gaps:
+mixed non-zero length-plus-percentage values, intrinsic size keywords,
+`flex-basis: content`, and fixed/sticky positioning. `linear` currently lowers
+to flex and `relative` to block as migration-compatible layout modes. These
+statuses are implementation milestones, not reductions of the RFC's Lynx
+coverage goal; each rejection must later be replaced by a faithful Taffy
+extension/preprocessing rule or remain recorded in the coverage registry.
+
 ## Text and intrinsic measurement
 
 The Host owns shaping, fallback font selection, line breaking, glyph metrics,
@@ -627,7 +643,9 @@ testing. Visual snapshots supplement but do not replace semantic assertions.
    `InheritedStyle`, Taffy-independent computed box/flex values, and Rust-only
    resolution tests.
 4. Map computed layout values into a retained Taffy tree and connect RFC
-   0002's measurement batches.
+   0002's measurement batches. The retained tree and synchronous measurement
+   abstraction are implemented; engine integration, pending/batched Host
+   measurement, and the explicitly diagnosed backend gaps remain.
 5. Resolve paint, clip, stacking, transforms, text, and semantics into typed
    renderer operations.
 6. Route signal and `whisker-motion` writes through the shared property slots
