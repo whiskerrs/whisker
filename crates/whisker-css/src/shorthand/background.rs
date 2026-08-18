@@ -176,7 +176,7 @@ impl Css {
     /// Sets the `background` shorthand.
     /// <https://lynxjs.org/api/css/properties/background>
     pub fn background(self, b: Background) -> Self {
-        self.push("background", b)
+        self.push(crate::StyleProperty::Background, b)
     }
 }
 

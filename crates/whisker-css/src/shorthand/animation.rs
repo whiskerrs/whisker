@@ -131,7 +131,7 @@ impl Css {
     /// Sets the `animation` shorthand for a single animation.
     /// <https://lynxjs.org/api/css/properties/animation>
     pub fn animation(self, a: Animation) -> Self {
-        self.push("animation", a)
+        self.push(crate::StyleProperty::Animation, a)
     }
 
     /// Sets the `animation` shorthand for multiple comma-separated
@@ -144,7 +144,7 @@ impl Css {
             }
             let _ = a.to_css(&mut s);
         }
-        self.push_raw("animation", s)
+        self.push_raw(crate::StyleProperty::Animation, s)
     }
 }
 

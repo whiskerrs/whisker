@@ -1,8 +1,8 @@
 //! The [`Css`] container and its internal [`CssProp`] entries.
 //!
-//! Every typed builder method on [`Css`] resolves its argument to
-//! CSS text via [`ToCss`] and pushes a [`CssProp`] onto an internal
-//! list. Shorthand methods expand to their constituent longhands so
+//! Every typed builder method on [`Css`] records a stable [`StyleProperty`]
+//! identity and temporarily resolves its argument to CSS text via [`ToCss`].
+//! Shorthand methods expand to their constituent longhands where possible, so
 //! the canonical last-write-wins rule applies per longhand
 //! property — calling `.padding(px(8)).padding_top(px(0))` leaves
 //! `padding-top: 0px; padding-right: 8px; padding-bottom: 8px;
@@ -10,7 +10,29 @@
 
 use core::fmt;
 
-use crate::to_css::ToCss;
+use crate::{
+    property::{StyleProperty, StylePropertyId},
+    to_css::ToCss,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PropertyKey {
+    Known(StyleProperty),
+    Legacy(&'static str),
+}
+
+impl PropertyKey {
+    fn from_name(name: &'static str) -> Self {
+        StyleProperty::from_css_name(name).map_or(Self::Legacy(name), Self::Known)
+    }
+
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Known(property) => property.css_name(),
+            Self::Legacy(name) => name,
+        }
+    }
+}
 
 /// One CSS declaration stored inside a [`Css`].
 ///
@@ -19,20 +41,44 @@ use crate::to_css::ToCss;
 /// switch to a typed enum without breaking callers.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CssProp {
-    name: &'static str,
+    property: PropertyKey,
     value: String,
 }
 
 impl CssProp {
     /// Build a property from a CSS name and an already-serialized
     /// value. Crate-public; users should go through [`Css`].
-    pub(crate) fn new(name: &'static str, value: String) -> Self {
-        Self { name, value }
+    pub(crate) fn new(property: StyleProperty, value: String) -> Self {
+        Self {
+            property: PropertyKey::Known(property),
+            value,
+        }
+    }
+
+    fn legacy(name: &'static str, value: String) -> Self {
+        Self {
+            property: PropertyKey::from_name(name),
+            value,
+        }
     }
 
     /// The CSS property name (`"padding-top"`, `"background-color"`).
     pub fn name(&self) -> &'static str {
-        self.name
+        self.property.name()
+    }
+
+    /// The registered property identity, or `None` for an unknown name added
+    /// through the temporary [`Css::raw`] migration escape hatch.
+    pub fn property(&self) -> Option<StyleProperty> {
+        match self.property {
+            PropertyKey::Known(property) => Some(property),
+            PropertyKey::Legacy(_) => None,
+        }
+    }
+
+    /// The stable common-property ID, or `None` for an unknown legacy name.
+    pub fn property_id(&self) -> Option<StylePropertyId> {
+        self.property().map(StyleProperty::id)
     }
 
     /// The serialized CSS value (`"8px"`, `"rgb(26, 26, 46)"`).
@@ -43,7 +89,7 @@ impl CssProp {
 
 impl ToCss for CssProp {
     fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
-        dest.write_str(self.name)?;
+        dest.write_str(self.name())?;
         dest.write_str(": ")?;
         dest.write_str(&self.value)?;
         dest.write_char(';')
@@ -80,14 +126,15 @@ impl Css {
 
     /// Push a property, taking ownership of `self` to return it. All
     /// public builder methods funnel through this helper.
-    pub(crate) fn push(mut self, name: &'static str, value: impl ToCss) -> Self {
-        self.props.push(CssProp::new(name, value.to_css_string()));
+    pub(crate) fn push(mut self, property: StyleProperty, value: impl ToCss) -> Self {
+        self.props
+            .push(CssProp::new(property, value.to_css_string()));
         self
     }
 
     /// Push a property whose value is an already-serialized string.
-    pub(crate) fn push_raw(mut self, name: &'static str, value: impl Into<String>) -> Self {
-        self.props.push(CssProp::new(name, value.into()));
+    pub(crate) fn push_raw(mut self, property: StyleProperty, value: impl Into<String>) -> Self {
+        self.props.push(CssProp::new(property, value.into()));
         self
     }
 
@@ -100,7 +147,9 @@ impl Css {
     /// part of the CSS grammar, not runtime data. The value is taken
     /// verbatim and not validated.
     pub fn raw(self, name: &'static str, value: impl Into<String>) -> Self {
-        self.push_raw(name, value)
+        let mut this = self;
+        this.props.push(CssProp::legacy(name, value.into()));
+        this
     }
 
     /// True if no declarations have been added.
@@ -126,10 +175,10 @@ impl Css {
     /// only the final occurrence of each property name is yielded,
     /// in the position of that final occurrence.
     pub fn resolved(&self) -> Vec<&CssProp> {
-        let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<PropertyKey> = std::collections::HashSet::new();
         let mut out: Vec<&CssProp> = Vec::new();
         for prop in self.props.iter().rev() {
-            if seen.insert(prop.name) {
+            if seen.insert(prop.property) {
                 out.push(prop);
             }
         }
@@ -276,7 +325,35 @@ mod tests {
         let s = Css::new().raw("color", "red");
         let prop = s.entries().next().unwrap();
         assert_eq!(prop.name(), "color");
+        assert_eq!(prop.property(), Some(StyleProperty::Color));
+        assert_eq!(prop.property_id(), Some(StyleProperty::Color.id()));
         assert_eq!(prop.value(), "red");
         assert_eq!(prop.to_css_string(), "color: red;");
+    }
+
+    #[test]
+    fn unknown_raw_property_has_no_registered_identity() {
+        let s = Css::new().raw("future-property", "value");
+        let prop = s.entries().next().unwrap();
+        assert_eq!(prop.name(), "future-property");
+        assert_eq!(prop.property(), None);
+        assert_eq!(prop.property_id(), None);
+    }
+
+    #[test]
+    fn known_raw_and_typed_writes_share_the_same_slot() {
+        let s = Css::new()
+            .push(StyleProperty::Color, Token("red"))
+            .raw("color", "blue");
+        assert_eq!(s.resolved().len(), 1);
+        assert_eq!(s.to_css_string(), "color: blue;");
+    }
+
+    struct Token(&'static str);
+
+    impl ToCss for Token {
+        fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
+            dest.write_str(self.0)
+        }
     }
 }

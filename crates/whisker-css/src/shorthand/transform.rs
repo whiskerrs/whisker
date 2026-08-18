@@ -194,7 +194,7 @@ impl Css {
     /// applied left-to-right.
     /// <https://lynxjs.org/api/css/properties/transform>
     pub fn transform(self, t: impl Into<Transform>) -> Self {
-        self.push("transform", t.into())
+        self.push(crate::StyleProperty::Transform, t.into())
     }
 }
 

@@ -75,7 +75,7 @@ impl Css {
     /// Sets the `transition` shorthand for a single transition.
     /// <https://lynxjs.org/api/css/properties/transition>
     pub fn transition(self, t: Transition) -> Self {
-        self.push("transition", t)
+        self.push(crate::StyleProperty::Transition, t)
     }
 
     /// Sets the `transition` shorthand for multiple comma-separated
@@ -88,7 +88,7 @@ impl Css {
             }
             let _ = t.to_css(&mut s);
         }
-        self.push_raw("transition", s)
+        self.push_raw(crate::StyleProperty::Transition, s)
     }
 }
 

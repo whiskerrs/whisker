@@ -12,68 +12,68 @@ impl Css {
     /// Sets `background-color`. Lynx default: `transparent`.
     /// <https://lynxjs.org/api/css/properties/background-color>
     pub fn background_color(self, v: Color) -> Self {
-        self.push("background-color", v)
+        self.push(crate::StyleProperty::BackgroundColor, v)
     }
 
     /// Sets `background-image`. Accepts `url(...)` and `<gradient>`.
     /// `none` clears any existing image.
     /// <https://lynxjs.org/api/css/properties/background-image>
     pub fn background_image(self, v: impl Into<ImageRef>) -> Self {
-        self.push("background-image", v.into())
+        self.push(crate::StyleProperty::BackgroundImage, v.into())
     }
 
     /// Sets `background-repeat`.
     /// <https://lynxjs.org/api/css/properties/background-repeat>
     pub fn background_repeat(self, v: BackgroundRepeat) -> Self {
-        self.push("background-repeat", v)
+        self.push(crate::StyleProperty::BackgroundRepeat, v)
     }
 
     /// Sets `background-position`.
     /// <https://lynxjs.org/api/css/properties/background-position>
     pub fn background_position(self, v: Position) -> Self {
-        self.push("background-position", v)
+        self.push(crate::StyleProperty::BackgroundPosition, v)
     }
 
     /// Sets `background-position-x` — horizontal component only.
     /// <https://lynxjs.org/api/css/properties/background-position-x>
     pub fn background_position_x(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("background-position-x", v.into())
+        self.push(crate::StyleProperty::BackgroundPositionX, v.into())
     }
 
     /// Sets `background-position-y` — vertical component only.
     /// <https://lynxjs.org/api/css/properties/background-position-y>
     pub fn background_position_y(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("background-position-y", v.into())
+        self.push(crate::StyleProperty::BackgroundPositionY, v.into())
     }
 
     /// Sets `background-size`.
     /// <https://lynxjs.org/api/css/properties/background-size>
     pub fn background_size(self, v: BackgroundSize) -> Self {
-        self.push("background-size", v)
+        self.push(crate::StyleProperty::BackgroundSize, v)
     }
 
     /// Sets `background-origin`. Lynx default: `padding-box`.
     /// <https://lynxjs.org/api/css/properties/background-origin>
     pub fn background_origin(self, v: BackgroundOrigin) -> Self {
-        self.push("background-origin", v)
+        self.push(crate::StyleProperty::BackgroundOrigin, v)
     }
 
     /// Sets `background-clip`. Lynx default: `border-box`.
     /// <https://lynxjs.org/api/css/properties/background-clip>
     pub fn background_clip(self, v: BackgroundClip) -> Self {
-        self.push("background-clip", v)
+        self.push(crate::StyleProperty::BackgroundClip, v)
     }
 
     /// Sets `background-attachment`. Lynx default: `scroll`.
     /// <https://lynxjs.org/api/css/properties/background-attachment>
     pub fn background_attachment(self, v: BackgroundAttachment) -> Self {
-        self.push("background-attachment", v)
+        self.push(crate::StyleProperty::BackgroundAttachment, v)
     }
 
     /// Sets `color` — the foreground color used by text and SVG strokes.
     /// <https://lynxjs.org/api/css/properties/color>
     pub fn color(self, v: Color) -> Self {
-        self.push("color", v)
+        self.push(crate::StyleProperty::Color, v)
     }
 }
 

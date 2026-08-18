@@ -9,44 +9,48 @@ impl Css {
     /// Sets `opacity`. Lynx clamps to `0.0..=1.0`. Default: `1`.
     /// <https://lynxjs.org/api/css/properties/opacity>
     pub fn opacity(self, v: f32) -> Self {
-        self.push_raw("opacity", crate::to_css::number_to_string(v))
+        self.push_raw(
+            crate::StyleProperty::Opacity,
+            crate::to_css::number_to_string(v),
+        )
     }
 
     /// Sets `visibility`. Lynx default: `visible`. `collapse` is not
     /// supported.
     /// <https://lynxjs.org/api/css/properties/visibility>
     pub fn visibility(self, v: Visibility) -> Self {
-        self.push("visibility", v)
+        self.push(crate::StyleProperty::Visibility, v)
     }
 
     /// Sets `overflow`. Lynx accepts only `visible` and `hidden`.
     /// <https://lynxjs.org/api/css/properties/overflow>
     pub fn overflow(self, v: Overflow) -> Self {
-        self.push("overflow-x", v).push("overflow-y", v)
+        self.push(crate::StyleProperty::OverflowX, v)
+            .push(crate::StyleProperty::OverflowY, v)
     }
 
     /// Sets `overflow-x`.
     /// <https://lynxjs.org/api/css/properties/overflow-x>
     pub fn overflow_x(self, v: Overflow) -> Self {
-        self.push("overflow-x", v)
+        self.push(crate::StyleProperty::OverflowX, v)
     }
 
     /// Sets `overflow-y`.
     /// <https://lynxjs.org/api/css/properties/overflow-y>
     pub fn overflow_y(self, v: Overflow) -> Self {
-        self.push("overflow-y", v)
+        self.push(crate::StyleProperty::OverflowY, v)
     }
 
     /// Sets `cursor`.
     /// <https://lynxjs.org/api/css/properties/cursor>
     pub fn cursor(self, v: Cursor) -> Self {
-        self.push("cursor", v)
+        self.push(crate::StyleProperty::Cursor, v)
     }
 
     /// Sets `pointer-events`.
     /// <https://lynxjs.org/api/css/properties/pointer-events>
     pub fn pointer_events(self, v: PointerEvents) -> Self {
-        self.push("pointer-events", v)
+        self.push(crate::StyleProperty::PointerEvents, v)
     }
 
     /// Sets `box-shadow` to a single shadow. Pass `None` for inset
@@ -71,7 +75,7 @@ impl Css {
         let _ = spread_radius.to_css(&mut s);
         s.push(' ');
         let _ = color.to_css(&mut s);
-        self.push_raw("box-shadow", s)
+        self.push_raw(crate::StyleProperty::BoxShadow, s)
     }
 
     /// Sets an inset `box-shadow`.
@@ -95,7 +99,7 @@ impl Css {
         let _ = spread_radius.to_css(&mut s);
         s.push(' ');
         let _ = color.to_css(&mut s);
-        self.push_raw("box-shadow", s)
+        self.push_raw(crate::StyleProperty::BoxShadow, s)
     }
 
     /// Sets `filter` to a raw CSS filter list. Use raw because the
@@ -103,74 +107,77 @@ impl Css {
     /// and rarely worth typing.
     /// <https://lynxjs.org/api/css/properties/filter>
     pub fn filter(self, value: impl Into<String>) -> Self {
-        self.push_raw("filter", value)
+        self.push_raw(crate::StyleProperty::Filter, value)
     }
 
     /// Sets `mask-image` to a raw CSS value (URL or gradient).
     /// <https://lynxjs.org/api/css/properties/mask-image>
     pub fn mask_image(self, value: impl Into<String>) -> Self {
-        self.push_raw("mask-image", value)
+        self.push_raw(crate::StyleProperty::MaskImage, value)
     }
 
     /// Sets `clip-path` to a raw CSS value.
     /// <https://lynxjs.org/api/css/properties/clip-path>
     pub fn clip_path(self, value: impl Into<String>) -> Self {
-        self.push_raw("clip-path", value)
+        self.push_raw(crate::StyleProperty::ClipPath, value)
     }
 
     /// Sets `caret-color`.
     /// <https://lynxjs.org/api/css/properties/caret-color>
     pub fn caret_color(self, v: Color) -> Self {
-        self.push("caret-color", v)
+        self.push(crate::StyleProperty::CaretColor, v)
     }
 
     /// Sets `outline-width`.
     /// <https://lynxjs.org/api/css/properties/outline-width>
     pub fn outline_width(self, v: Length) -> Self {
-        self.push("outline-width", v)
+        self.push(crate::StyleProperty::OutlineWidth, v)
     }
 
     /// Sets `outline-color`.
     /// <https://lynxjs.org/api/css/properties/outline-color>
     pub fn outline_color(self, v: Color) -> Self {
-        self.push("outline-color", v)
+        self.push(crate::StyleProperty::OutlineColor, v)
     }
 
     /// Sets `outline-style`.
     /// <https://lynxjs.org/api/css/properties/outline-style>
     pub fn outline_style(self, v: crate::keyword::BorderStyle) -> Self {
-        self.push("outline-style", v)
+        self.push(crate::StyleProperty::OutlineStyle, v)
     }
 
     /// Sets `outline-offset`.
     /// <https://lynxjs.org/api/css/properties/outline-offset>
     pub fn outline_offset(self, v: Length) -> Self {
-        self.push("outline-offset", v)
+        self.push(crate::StyleProperty::OutlineOffset, v)
     }
 
     /// Sets `-x-caret-width`. Lynx accepts a length controlling the
     /// rendered caret thickness. Lynx 4.0 renamed the unprefixed
     /// `caret-width` (unlike `caret-color`, which kept its name).
     pub fn caret_width(self, v: Length) -> Self {
-        self.push("-x-caret-width", v)
+        self.push(crate::StyleProperty::XCaretWidth, v)
     }
 
     /// Sets `-x-handle-color` — Lynx-only selection-handle color.
     /// <https://lynxjs.org/api/css/properties/-x-handle-color>
     pub fn x_handle_color(self, v: Color) -> Self {
-        self.push("-x-handle-color", v)
+        self.push(crate::StyleProperty::XHandleColor, v)
     }
 
     /// Sets `-x-handle-size` — Lynx-only selection-handle size.
     /// <https://lynxjs.org/api/css/properties/-x-handle-size>
     pub fn x_handle_size(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push("-x-handle-size", v.into())
+        self.push(crate::StyleProperty::XHandleSize, v.into())
     }
 
     /// Sets `-x-auto-font-size` — Lynx-only auto font-size flag.
     /// <https://lynxjs.org/api/css/properties/-x-auto-font-size>
     pub fn x_auto_font_size(self, enabled: bool) -> Self {
-        self.push_raw("-x-auto-font-size", if enabled { "true" } else { "false" })
+        self.push_raw(
+            crate::StyleProperty::XAutoFontSize,
+            if enabled { "true" } else { "false" },
+        )
     }
 
     /// Sets `-x-auto-font-size-preset-sizes` — Lynx-only list of preset sizes.
@@ -186,7 +193,7 @@ impl Css {
             let _ = sz.to_css(&mut s);
             first = false;
         }
-        self.push_raw("-x-auto-font-size-preset-sizes", s)
+        self.push_raw(crate::StyleProperty::XAutoFontSizePresetSizes, s)
     }
 }
 

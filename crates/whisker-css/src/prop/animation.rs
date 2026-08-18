@@ -12,49 +12,49 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/animation-name>
     pub fn animation_name(self, name: impl Into<String>) -> Self {
         // Names are CSS identifiers, written bare.
-        self.push_raw("animation-name", name)
+        self.push_raw(crate::StyleProperty::AnimationName, name)
     }
 
     /// Sets `animation-duration`.
     /// <https://lynxjs.org/api/css/properties/animation-duration>
     pub fn animation_duration(self, v: Time) -> Self {
-        self.push("animation-duration", v)
+        self.push(crate::StyleProperty::AnimationDuration, v)
     }
 
     /// Sets `animation-timing-function`.
     /// <https://lynxjs.org/api/css/properties/animation-timing-function>
     pub fn animation_timing_function(self, v: EasingFunction) -> Self {
-        self.push("animation-timing-function", v)
+        self.push(crate::StyleProperty::AnimationTimingFunction, v)
     }
 
     /// Sets `animation-delay`.
     /// <https://lynxjs.org/api/css/properties/animation-delay>
     pub fn animation_delay(self, v: Time) -> Self {
-        self.push("animation-delay", v)
+        self.push(crate::StyleProperty::AnimationDelay, v)
     }
 
     /// Sets `animation-iteration-count`.
     /// <https://lynxjs.org/api/css/properties/animation-iteration-count>
     pub fn animation_iteration_count(self, v: AnimationIterationCount) -> Self {
-        self.push("animation-iteration-count", v)
+        self.push(crate::StyleProperty::AnimationIterationCount, v)
     }
 
     /// Sets `animation-direction`.
     /// <https://lynxjs.org/api/css/properties/animation-direction>
     pub fn animation_direction(self, v: AnimationDirection) -> Self {
-        self.push("animation-direction", v)
+        self.push(crate::StyleProperty::AnimationDirection, v)
     }
 
     /// Sets `animation-fill-mode`.
     /// <https://lynxjs.org/api/css/properties/animation-fill-mode>
     pub fn animation_fill_mode(self, v: AnimationFillMode) -> Self {
-        self.push("animation-fill-mode", v)
+        self.push(crate::StyleProperty::AnimationFillMode, v)
     }
 
     /// Sets `animation-play-state`.
     /// <https://lynxjs.org/api/css/properties/animation-play-state>
     pub fn animation_play_state(self, v: AnimationPlayState) -> Self {
-        self.push("animation-play-state", v)
+        self.push(crate::StyleProperty::AnimationPlayState, v)
     }
 }
 

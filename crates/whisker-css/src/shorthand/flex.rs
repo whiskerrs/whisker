@@ -55,9 +55,9 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/flex>
     pub fn flex(self, v: Flex) -> Self {
         let (grow, shrink, basis) = v.expand();
-        self.push_raw("flex-grow", number_to_string(grow))
-            .push_raw("flex-shrink", number_to_string(shrink))
-            .push("flex-basis", basis)
+        self.push_raw(crate::StyleProperty::FlexGrow, number_to_string(grow))
+            .push_raw(crate::StyleProperty::FlexShrink, number_to_string(shrink))
+            .push(crate::StyleProperty::FlexBasis, basis)
     }
 }
 

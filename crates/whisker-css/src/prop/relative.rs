@@ -11,100 +11,109 @@ impl Css {
     /// references.
     /// <https://lynxjs.org/api/css/properties/relative-id>
     pub fn relative_id(self, v: i32) -> Self {
-        self.push_raw("relative-id", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeId, v.to_string())
     }
 
     /// Sets `relative-align-top` — id of the sibling to top-align with.
     /// <https://lynxjs.org/api/css/properties/relative-align-top>
     pub fn relative_align_top(self, v: i32) -> Self {
-        self.push_raw("relative-align-top", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeAlignTop, v.to_string())
     }
 
     /// Sets `relative-align-right` — id of the sibling to right-align with.
     /// <https://lynxjs.org/api/css/properties/relative-align-right>
     pub fn relative_align_right(self, v: i32) -> Self {
-        self.push_raw("relative-align-right", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeAlignRight, v.to_string())
     }
 
     /// Sets `relative-align-bottom`.
     /// <https://lynxjs.org/api/css/properties/relative-align-bottom>
     pub fn relative_align_bottom(self, v: i32) -> Self {
-        self.push_raw("relative-align-bottom", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeAlignBottom, v.to_string())
     }
 
     /// Sets `relative-align-left`.
     /// <https://lynxjs.org/api/css/properties/relative-align-left>
     pub fn relative_align_left(self, v: i32) -> Self {
-        self.push_raw("relative-align-left", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeAlignLeft, v.to_string())
     }
 
     /// Sets `relative-top-of` — id of the sibling this element sits below.
     /// <https://lynxjs.org/api/css/properties/relative-top-of>
     pub fn relative_top_of(self, v: i32) -> Self {
-        self.push_raw("relative-top-of", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeTopOf, v.to_string())
     }
 
     /// Sets `relative-right-of` — id of the sibling this element sits to the right of.
     /// <https://lynxjs.org/api/css/properties/relative-right-of>
     pub fn relative_right_of(self, v: i32) -> Self {
-        self.push_raw("relative-right-of", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeRightOf, v.to_string())
     }
 
     /// Sets `relative-bottom-of`.
     /// <https://lynxjs.org/api/css/properties/relative-bottom-of>
     pub fn relative_bottom_of(self, v: i32) -> Self {
-        self.push_raw("relative-bottom-of", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeBottomOf, v.to_string())
     }
 
     /// Sets `relative-left-of`.
     /// <https://lynxjs.org/api/css/properties/relative-left-of>
     pub fn relative_left_of(self, v: i32) -> Self {
-        self.push_raw("relative-left-of", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeLeftOf, v.to_string())
     }
 
     /// Sets `relative-center` — centers the element relative to a sibling.
     /// <https://lynxjs.org/api/css/properties/relative-center>
     pub fn relative_center(self, v: i32) -> Self {
-        self.push_raw("relative-center", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeCenter, v.to_string())
     }
 
     /// Sets `relative-center-horizontal` — centers horizontally only.
     /// <https://lynxjs.org/api/css/properties/relative-center-horizontal>
     pub fn relative_center_horizontal(self, v: i32) -> Self {
-        self.push_raw("relative-center-horizontal", v.to_string())
+        self.push_raw(
+            crate::StyleProperty::RelativeCenterHorizontal,
+            v.to_string(),
+        )
     }
 
     /// Sets `relative-center-vertical` — centers vertically only.
     /// <https://lynxjs.org/api/css/properties/relative-center-vertical>
     pub fn relative_center_vertical(self, v: i32) -> Self {
-        self.push_raw("relative-center-vertical", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeCenterVertical, v.to_string())
     }
 
     /// Sets `relative-layout-once` — performs the relative-layout
     /// pass only on the first render.
     /// <https://lynxjs.org/api/css/properties/relative-layout-once>
     pub fn relative_layout_once(self, v: bool) -> Self {
-        self.push_raw("relative-layout-once", if v { "true" } else { "false" })
+        self.push_raw(
+            crate::StyleProperty::RelativeLayoutOnce,
+            if v { "true" } else { "false" },
+        )
     }
 
     /// Sets `relative-align-inline-start` (logical-direction alias).
     pub fn relative_align_inline_start(self, v: i32) -> Self {
-        self.push_raw("relative-align-inline-start", v.to_string())
+        self.push_raw(
+            crate::StyleProperty::RelativeAlignInlineStart,
+            v.to_string(),
+        )
     }
 
     /// Sets `relative-align-inline-end` (logical-direction alias).
     pub fn relative_align_inline_end(self, v: i32) -> Self {
-        self.push_raw("relative-align-inline-end", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeAlignInlineEnd, v.to_string())
     }
 
     /// Sets `relative-inline-start-of`.
     pub fn relative_inline_start_of(self, v: i32) -> Self {
-        self.push_raw("relative-inline-start-of", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeInlineStartOf, v.to_string())
     }
 
     /// Sets `relative-inline-end-of`.
     pub fn relative_inline_end_of(self, v: i32) -> Self {
-        self.push_raw("relative-inline-end-of", v.to_string())
+        self.push_raw(crate::StyleProperty::RelativeInlineEndOf, v.to_string())
     }
 }
 
