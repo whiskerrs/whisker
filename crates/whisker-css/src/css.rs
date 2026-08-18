@@ -320,7 +320,7 @@ impl From<&Css> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Length;
+    use crate::{Color, FontStyle, FontWeight, Length, LineHeight, NamedColor};
 
     #[test]
     fn empty_style_serializes_to_empty_string() {
@@ -474,6 +474,34 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "style property `future-property` still requires Lynx CSS compatibility"
+        );
+    }
+
+    #[test]
+    fn inherited_text_fragment_resolves_entirely_in_rust() {
+        let css = Css::new()
+            .font_family("Inter")
+            .font_size(Length::Px(20.0))
+            .font_weight(FontWeight::Bold)
+            .font_style(FontStyle::Italic)
+            .line_height(LineHeight::Number(1.5))
+            .letter_spacing(Length::Px(1.0))
+            .color(Color::Named(NamedColor::Red));
+        let specified = css.to_specified_style().unwrap();
+        let resolved = whisker_style::resolve_text_style(
+            &specified,
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        let text = resolved.inherited_for_children();
+        assert_eq!(text.font_size(), 20.0);
+        assert_eq!(text.font_weight(), whisker_style::FontWeightValue::BOLD);
+        assert_eq!(text.font_style(), whisker_style::FontStyleValue::Italic);
+        assert_eq!(text.letter_spacing(), 1.0);
+        assert_eq!(
+            text.line_height(),
+            whisker_style::ComputedLineHeight::LogicalPixels(whisker_style::StyleNumber::new(30.0))
         );
     }
 

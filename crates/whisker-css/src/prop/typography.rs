@@ -3,6 +3,7 @@
 use crate::css::Css;
 use crate::data_type::{CssString, Length, LengthPercentage};
 use crate::keyword::{FontStyle, FontVariant, FontWeight};
+use crate::to_css::ToCss;
 use crate::value::LineHeight;
 
 impl Css {
@@ -13,7 +14,14 @@ impl Css {
     pub fn font_family(self, v: impl Into<String>) -> Self {
         // Lynx accepts either bare identifiers or quoted strings; quoting
         // unconditionally is always safe.
-        self.push_typed(crate::StyleProperty::FontFamily, CssString::new(v))
+        let name = v.into();
+        self.push_semantic(
+            crate::StyleProperty::FontFamily,
+            whisker_style::StyleValue::FontFamily(whisker_style::FontFamilyValue::Named(
+                name.clone(),
+            )),
+            CssString::new(name).to_css_string(),
+        )
     }
 
     /// Sets `font-size`. Lynx default: `14px`.
@@ -25,14 +33,14 @@ impl Css {
     /// Sets `font-style`. Lynx default: `normal`.
     /// <https://lynxjs.org/api/css/properties/font-style>
     pub fn font_style(self, v: FontStyle) -> Self {
-        self.push(crate::StyleProperty::FontStyle, v)
+        self.push_typed(crate::StyleProperty::FontStyle, v)
     }
 
     /// Sets `font-weight`. Lynx default: `normal`. `bolder`/`lighter`
     /// are not supported.
     /// <https://lynxjs.org/api/css/properties/font-weight>
     pub fn font_weight(self, v: FontWeight) -> Self {
-        self.push(crate::StyleProperty::FontWeight, v)
+        self.push_typed(crate::StyleProperty::FontWeight, v)
     }
 
     /// Sets `font-variant`.
@@ -50,7 +58,7 @@ impl Css {
     /// Sets `line-height`. Lynx default: `normal`.
     /// <https://lynxjs.org/api/css/properties/line-height>
     pub fn line_height(self, v: impl Into<LineHeight>) -> Self {
-        self.push(crate::StyleProperty::LineHeight, v.into())
+        self.push_typed(crate::StyleProperty::LineHeight, v.into())
     }
 }
 

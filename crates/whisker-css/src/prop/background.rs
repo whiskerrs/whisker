@@ -73,7 +73,7 @@ impl Css {
     /// Sets `color` — the foreground color used by text and SVG strokes.
     /// <https://lynxjs.org/api/css/properties/color>
     pub fn color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::Color, v)
+        self.push_typed(crate::StyleProperty::Color, v)
     }
 }
 

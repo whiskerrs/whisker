@@ -9,10 +9,17 @@
 
 mod declaration;
 mod property;
+mod resolution;
 mod value;
 
 pub use declaration::{SpecifiedStyle, StyleDeclaration};
 pub use property::{PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyId};
+pub use resolution::{
+    ComputedLineHeight, ComputedStyle, InheritedPropertySet, InheritedStyle, InheritedStyleChange,
+    PropertyImpactSet, ResolvedNodeStyle, StyleEnvironment, StyleResolutionError,
+    resolve_text_style,
+};
 pub use value::{
-    CalcExpression, LengthPercentageValue, LengthUnit, LengthValue, StyleNumber, StyleValue,
+    CalcExpression, ColorValue, FontFamilyValue, FontStyleValue, FontWeightValue,
+    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, StyleNumber, StyleValue,
 };

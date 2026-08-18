@@ -32,11 +32,11 @@ a general CSS cascade. Reuse and conditional styling use ordinary Rust values,
 functions, composition, components, and signals. A small fixed set of text
 properties inherit from parent nodes when a child does not specify them.
 
-The Rust Style Engine resolves typed input into layout, paint, compositing,
-text, and semantics data. Taffy computes layout. Rust motion updates the same
-typed property slots. The renderer protocol sends only changed resolved
-properties and geometry; the Host implements native text shaping and concrete
-painting with Android Views, UIViews, or DOM nodes.
+The Rust `whisker-style` subsystem resolves typed input into layout, paint,
+compositing, text, and semantics data. Taffy computes layout. Rust motion
+updates the same typed property slots. The renderer protocol sends only
+changed resolved properties and geometry; the Host implements native text
+shaping and concrete painting with Android Views, UIViews, or DOM nodes.
 
 Supporting the styling surface of Lynx means covering its useful visual
 properties and values, not preserving CSS text syntax or browser cascade
@@ -257,6 +257,12 @@ Only the following properties inherit in version 1:
 - `letter_spacing`;
 - `color`.
 
+The initial inherited context is platform system font, `14px`, weight `400`,
+`normal` font style, platform-normal line height, zero letter spacing, and
+opaque black. A surface may provide a different root font size through its
+`StyleEnvironment`; `rem` and an otherwise unspecified root `font_size` use
+that value.
+
 For each property, resolution is:
 
 ```text
@@ -345,9 +351,10 @@ allows the Host to reinterpret a change with different layout semantics.
 
 ## Layout
 
-Taffy is authoritative for box layout on Android, iOS, Web, and Desktop. The
-Style Engine converts `ComputedStyle` into Taffy input and maintains a retained
-Taffy node for each layout-participating scene node.
+Taffy is authoritative for box layout on Android, iOS, Web, and Desktop.
+`whisker-style` produces renderer-independent `ComputedStyle`; `whisker-layout`
+converts its layout slice into Taffy input and maintains a retained Taffy node
+for each layout-participating scene node.
 
 ```text
 ComputedStyle + child structure + intrinsic measurements
@@ -558,7 +565,7 @@ whisker-style
   stable typed values, property IDs, declaration storage
   composition, applicability, inheritance, computed values, invalidation
 
-whisker-layout-engine module
+whisker-layout module
   retained Taffy tree, measurement requests, layout results
 
 whisker-motion module
@@ -654,7 +661,7 @@ The following must be resolved before this RFC becomes `Accepted`:
 - whether the public typed declaration value keeps the name `Css` or becomes
   `Style` while `css!` remains the macro name;
 - the exact fragment composition helpers and constant-style support;
-- the initial values and element applicability of every inherited property;
+- the element applicability of every inherited property;
 - the baseline and multi-line text measurement representation;
 - the minimum filter, blend, shadow, and clip capability required of all
   interactive renderers;

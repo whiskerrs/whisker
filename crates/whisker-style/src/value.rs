@@ -77,6 +77,99 @@ pub enum CalcExpression {
     Div(Box<Self>, Box<Self>),
 }
 
+/// A font family selected by application code or by the platform default.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FontFamilyValue {
+    /// The platform's default application font.
+    System,
+    /// One explicitly named font family.
+    Named(String),
+}
+
+/// The face style used to render text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FontStyleValue {
+    /// An upright face.
+    Normal,
+    /// An italic face.
+    Italic,
+    /// An oblique or synthesized slanted face.
+    Oblique,
+}
+
+/// A numeric font weight in the CSS-compatible `1..=1000` range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FontWeightValue(u16);
+
+impl FontWeightValue {
+    /// The normal font weight.
+    pub const NORMAL: Self = Self(400);
+
+    /// The bold font weight.
+    pub const BOLD: Self = Self(700);
+
+    /// Creates a font weight when it is in the supported range.
+    pub const fn new(value: u16) -> Option<Self> {
+        if value >= 1 && value <= 1000 {
+            Some(Self(value))
+        } else {
+            None
+        }
+    }
+
+    /// Preserves an authoring value for later resolver validation.
+    ///
+    /// Prefer [`Self::new`] outside compatibility adapters.
+    pub const fn from_raw(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Returns the numeric weight.
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+/// A semantic color that does not require parsing CSS text.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ColorValue {
+    /// A named color accepted by Whisker's typed authoring API.
+    Named(String),
+    /// An sRGB color with a floating-point alpha channel.
+    Rgba {
+        /// Red channel.
+        red: u8,
+        /// Green channel.
+        green: u8,
+        /// Blue channel.
+        blue: u8,
+        /// Alpha in the range `0.0..=1.0`.
+        alpha: StyleNumber,
+    },
+    /// An HSL color, normalized to degrees and percentages.
+    Hsla {
+        /// Hue in degrees.
+        hue_degrees: StyleNumber,
+        /// Saturation percentage.
+        saturation: StyleNumber,
+        /// Lightness percentage.
+        lightness: StyleNumber,
+        /// Alpha in the range `0.0..=1.0`.
+        alpha: StyleNumber,
+    },
+}
+
+/// A specified line height before environment and font-size resolution.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LineHeightValue {
+    /// Let the platform text shaper select its normal line height.
+    Normal,
+    /// A multiplier of the node's computed font size.
+    Number(StyleNumber),
+    /// An explicit length or percentage of the node's computed font size.
+    LengthPercentage(LengthPercentageValue),
+}
+
 /// An owned value in a specified inline-style declaration.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StyleValue {
@@ -92,6 +185,16 @@ pub enum StyleValue {
     Length(LengthValue),
     /// Length, percentage, or typed `calc` expression.
     LengthPercentage(LengthPercentageValue),
+    /// Font family.
+    FontFamily(FontFamilyValue),
+    /// Font face style.
+    FontStyle(FontStyleValue),
+    /// Numeric font weight.
+    FontWeight(FontWeightValue),
+    /// Text color.
+    Color(ColorValue),
+    /// Line height.
+    LineHeight(LineHeightValue),
 }
 
 #[cfg(test)]
@@ -137,6 +240,32 @@ mod tests {
         assert_eq!(
             StyleValue::Length(LengthValue::Zero),
             StyleValue::Length(LengthValue::Zero)
+        );
+    }
+
+    #[test]
+    fn font_weight_accepts_only_the_supported_range() {
+        assert_eq!(FontWeightValue::new(1).unwrap().get(), 1);
+        assert_eq!(FontWeightValue::new(1000).unwrap().get(), 1000);
+        assert_eq!(FontWeightValue::new(0), None);
+        assert_eq!(FontWeightValue::new(1001), None);
+        assert_eq!(FontWeightValue::NORMAL.get(), 400);
+        assert_eq!(FontWeightValue::BOLD.get(), 700);
+    }
+
+    #[test]
+    fn typography_variants_are_semantically_distinct() {
+        assert_ne!(
+            StyleValue::FontFamily(FontFamilyValue::System),
+            StyleValue::Text("system-ui".into())
+        );
+        assert_ne!(
+            StyleValue::FontStyle(FontStyleValue::Italic),
+            StyleValue::FontWeight(FontWeightValue::BOLD)
+        );
+        assert_ne!(
+            StyleValue::Color(ColorValue::Named("red".into())),
+            StyleValue::LineHeight(LineHeightValue::Normal)
         );
     }
 }

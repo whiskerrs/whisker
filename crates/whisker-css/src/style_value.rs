@@ -1,10 +1,14 @@
 //! Conversion from the compatibility authoring types to semantic style values.
 
 use whisker_style::{
-    CalcExpression, LengthPercentageValue, LengthUnit, LengthValue, StyleNumber, StyleValue,
+    CalcExpression, ColorValue, FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit,
+    LengthValue, LineHeightValue, StyleNumber, StyleValue,
 };
 
-use crate::{CalcExpr, CssString, Integer, Length, LengthPercentage, Number, Percentage};
+use crate::{
+    Angle, CalcExpr, Color, CssString, FontStyle, FontWeight, Integer, Length, LengthPercentage,
+    LineHeight, Number, Percentage,
+};
 
 pub(crate) trait ToStyleValue {
     fn to_style_value(&self) -> StyleValue;
@@ -43,6 +47,75 @@ impl ToStyleValue for Integer {
 impl ToStyleValue for CssString {
     fn to_style_value(&self) -> StyleValue {
         StyleValue::Text(self.0.clone())
+    }
+}
+
+impl ToStyleValue for FontStyle {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::FontStyle(match self {
+            Self::Normal => FontStyleValue::Normal,
+            Self::Italic => FontStyleValue::Italic,
+            Self::Oblique => FontStyleValue::Oblique,
+        })
+    }
+}
+
+impl ToStyleValue for FontWeight {
+    fn to_style_value(&self) -> StyleValue {
+        let value = match self {
+            Self::Normal => FontWeightValue::NORMAL,
+            Self::Bold => FontWeightValue::BOLD,
+            Self::Numeric(value) => FontWeightValue::from_raw(*value),
+        };
+        StyleValue::FontWeight(value)
+    }
+}
+
+impl ToStyleValue for LineHeight {
+    fn to_style_value(&self) -> StyleValue {
+        let value = match self {
+            Self::Normal => LineHeightValue::Normal,
+            Self::Number(value) => LineHeightValue::Number(StyleNumber::new(*value)),
+            Self::LengthPercentage(value) => {
+                LineHeightValue::LengthPercentage(to_length_percentage(value))
+            }
+        };
+        StyleValue::LineHeight(value)
+    }
+}
+
+impl ToStyleValue for Color {
+    fn to_style_value(&self) -> StyleValue {
+        let value = match self {
+            Self::Named(value) => ColorValue::Named(value.name().into()),
+            Self::Transparent => ColorValue::Rgba {
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: StyleNumber::new(0.0),
+            },
+            Self::Rgba(red, green, blue, alpha) => ColorValue::Rgba {
+                red: *red,
+                green: *green,
+                blue: *blue,
+                alpha: StyleNumber::new(*alpha),
+            },
+            Self::Hsla { h, s, l, a } => ColorValue::Hsla {
+                hue_degrees: StyleNumber::new(angle_degrees(*h)),
+                saturation: StyleNumber::new(*s),
+                lightness: StyleNumber::new(*l),
+                alpha: StyleNumber::new(*a),
+            },
+        };
+        StyleValue::Color(value)
+    }
+}
+
+fn angle_degrees(value: Angle) -> f32 {
+    match value {
+        Angle::Deg(value) => value,
+        Angle::Rad(value) => value.to_degrees(),
+        Angle::Turn(value) => value * 360.0,
     }
 }
 
@@ -150,6 +223,85 @@ mod tests {
                 value,
                 StyleValue::LengthPercentage(LengthPercentageValue::Calc(_))
             ));
+        }
+    }
+
+    #[test]
+    fn inherited_authoring_values_convert_without_css_parsing() {
+        for (input, expected) in [
+            (FontStyle::Normal, FontStyleValue::Normal),
+            (FontStyle::Italic, FontStyleValue::Italic),
+            (FontStyle::Oblique, FontStyleValue::Oblique),
+        ] {
+            assert_eq!(input.to_style_value(), StyleValue::FontStyle(expected));
+        }
+        for (input, expected) in [
+            (FontWeight::Normal, FontWeightValue::NORMAL),
+            (FontWeight::Bold, FontWeightValue::BOLD),
+            (FontWeight::Numeric(650), FontWeightValue::from_raw(650)),
+        ] {
+            assert_eq!(input.to_style_value(), StyleValue::FontWeight(expected));
+        }
+        assert_eq!(
+            LineHeight::Normal.to_style_value(),
+            StyleValue::LineHeight(LineHeightValue::Normal)
+        );
+        assert_eq!(
+            LineHeight::Number(1.5).to_style_value(),
+            StyleValue::LineHeight(LineHeightValue::Number(StyleNumber::new(1.5)))
+        );
+        assert_eq!(
+            LineHeight::LengthPercentage(Length::Px(20.0).into()).to_style_value(),
+            StyleValue::LineHeight(LineHeightValue::LengthPercentage(
+                LengthPercentageValue::Length(dimension(20.0, LengthUnit::Px))
+            ))
+        );
+    }
+
+    #[test]
+    fn every_color_form_becomes_a_typed_color_value() {
+        assert_eq!(
+            Color::Named(crate::NamedColor::Red).to_style_value(),
+            StyleValue::Color(ColorValue::Named("red".into()))
+        );
+        assert_eq!(
+            Color::Transparent.to_style_value(),
+            StyleValue::Color(ColorValue::Rgba {
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: StyleNumber::new(0.0),
+            })
+        );
+        assert_eq!(
+            Color::rgba(1, 2, 3, 0.5).to_style_value(),
+            StyleValue::Color(ColorValue::Rgba {
+                red: 1,
+                green: 2,
+                blue: 3,
+                alpha: StyleNumber::new(0.5),
+            })
+        );
+        for (angle, degrees) in [
+            (Angle::Deg(90.0), 90.0),
+            (Angle::Rad(core::f32::consts::FRAC_PI_2), 90.0),
+            (Angle::Turn(0.25), 90.0),
+        ] {
+            assert_eq!(
+                Color::Hsla {
+                    h: angle,
+                    s: 50.0,
+                    l: 25.0,
+                    a: 0.75,
+                }
+                .to_style_value(),
+                StyleValue::Color(ColorValue::Hsla {
+                    hue_degrees: StyleNumber::new(degrees),
+                    saturation: StyleNumber::new(50.0),
+                    lightness: StyleNumber::new(25.0),
+                    alpha: StyleNumber::new(0.75),
+                })
+            );
         }
     }
 
