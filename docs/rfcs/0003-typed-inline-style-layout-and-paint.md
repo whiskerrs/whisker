@@ -431,11 +431,15 @@ batched, cached, and tagged with the scene and environment epochs as required
 by RFC 0002.
 
 Android and iOS may answer synchronously within the renderer binding when safe.
-Web and Desktop v1 call JavaScript from WASM in the same event-loop turn; they
-do not cross native desktop IPC. If a font, image, or custom control is not
-ready, the Host returns a pending result. Rust may present a provisional layout
-and relayout when the resource epoch changes. The scheduler coalesces that
-correction into the next frame and prevents stale responses from applying.
+Web calls its JavaScript Host from WASM in the same event-loop turn and batches
+browser text measurement. Desktop calls the native Rust/GPUI Host through an
+in-process WASM import; the Host uses GPUI's platform text system and returns a
+measurement derived from the same shaped/wrapped line object that it later
+paints. Neither path requires native-process IPC. If a font, image, or custom
+control is not ready, the Host returns a pending result. Rust may present a
+provisional layout and relayout when the resource epoch changes. The scheduler
+coalesces that correction into the next frame and prevents stale responses
+from applying.
 
 Exact prevention of visible correction for unavailable fonts is impossible on
 any backend. Applications can preload fonts, reserve explicit dimensions, or
@@ -473,13 +477,13 @@ Animation is owned by Rust. There is no Android animator, Core Animation, Web
 Animation, or CSS Animation offload in the semantic model.
 
 `whisker-motion` owns timelines, easing, keyframes, springs, decay, gesture
-handoff, interruption, and cancellation. On each Host VSync or
-`requestAnimationFrame` callback it samples active values, writes changed typed
-property slots, runs required layout at most once, and emits at most one frame
-packet for the surface.
+handoff, interruption, and cancellation. On each Host VSync,
+`requestAnimationFrame`, or GPUI frame callback it samples active values,
+writes changed typed property slots, runs required layout at most once, and
+emits at most one frame packet for the surface.
 
 ```text
-Host VSync/rAF
+Host VSync/rAF/GPUI frame
   -> Rust scheduler
   -> sample motion and gesture state
   -> update typed property slots
@@ -505,12 +509,12 @@ capabilities may be convenience constructors over `whisker-motion`. They do
 not require CSS parsing and must obey the same interruption and gesture
 handoff semantics as direct motion APIs.
 
-## Web and Desktop
+## Web Host and DOM renderer
 
-The Web renderer and Desktop v1 renderer share the JavaScript DOM backend.
-Desktop runs Whisker Rust as WASM inside the system WebView, so its frame path
-is the same synchronous WASM-to-JavaScript path as Web and does not involve a
-Tauri-style command IPC round trip.
+Web uses a Whisker-owned JavaScript Host and DOM renderer. It does not use GPUI
+or `gpui_web`. Whisker Rust runs as WASM in the browser; JavaScript enters WASM
+from `requestAnimationFrame`, and the renderer applies the returned typed DOM
+deltas before that callback returns.
 
 The DOM backend may cache normalized style applications, intern repeated
 values, use generated classes for immutable repeated paint data, and apply
@@ -523,6 +527,31 @@ influence. The backend should use a shadow root, reset boundary, or equivalent
 generated rules so external selectors and inherited page CSS cannot change
 Whisker's computed semantics. Host-owned focus, IME, accessibility, and native
 text behavior remain available through that boundary.
+
+## Desktop GPUI Host
+
+Desktop uses native Rust/GPUI rather than the Web Host or DOM renderer. The
+generated native shell embeds the Whisker WASM runtime in-process and mounts
+one custom GPUI `WhiskerView` element. GPUI may lay out that outer element, but
+Whisker's retained Taffy tree remains authoritative for all inner nodes.
+
+The Desktop renderer stores accepted Whisker scene state and lowers it during
+GPUI's lifecycle through low-level paint, shaped text, image, clip, hit-test,
+focus, IME, and accessibility APIs. It must not rebuild the Whisker tree as a
+declarative GPUI `div` tree or allow GPUI's inner layout to compete with
+Whisker layout.
+
+GPUI's Scene is an implementation detail of the Desktop Host, not the common
+Whisker frame protocol. Common operations remain semantic enough for Android
+Views, UIViews, and DOM; only the Desktop provider lowers them further into
+quads, shadows, paths, glyph/image sprites, and external surfaces.
+
+GPUI does not presently expose every Lynx-targeted paint capability through a
+stable low-level API. The Desktop capability profile must therefore track
+group opacity/compositing, general transforms, rounded or path clips, filters,
+blend modes, hierarchical accessibility, and external media surfaces. Missing
+required capabilities are explicit conformance gaps, not permission to change
+style semantics.
 
 ## SSR and hydration
 
@@ -650,9 +679,13 @@ testing. Visual snapshots supplement but do not replace semantic assertions.
    renderer operations.
 6. Route signal and `whisker-motion` writes through the shared property slots
    and incremental dirty classifier.
-7. Implement and conform Android, iOS, and JavaScript DOM application paths.
-8. Add the optional SSR serializer and hydration contract in a follow-up RFC.
-9. Remove raw CSS string inputs, Lynx inline-style serialization, Lynx style
+7. Implement and conform Android, iOS, the JavaScript DOM Web path, and the
+   native Rust/GPUI Desktop path independently.
+8. Add GPUI lowering conformance for paint, text, clipping, compositing,
+   accessibility, and external surfaces without making GPUI Scene part of the
+   common protocol.
+9. Add the optional SSR serializer and hydration contract in a follow-up RFC.
+10. Remove raw CSS string inputs, Lynx inline-style serialization, Lynx style
    ownership, and temporary migration adapters.
 
 Steps may overlap, but raw-string removal must not land without diagnostics and
@@ -691,6 +724,8 @@ The following must be resolved before this RFC becomes `Accepted`:
 - the baseline and multi-line text measurement representation;
 - the minimum filter, blend, shadow, and clip capability required of all
   interactive renderers;
+- which missing GPUI low-level paint/compositing capabilities must be added
+  upstream before Desktop can satisfy that minimum profile;
 - scrolling ownership for platform-native and fully Rust-coordinated modes;
 - the fallback font-metrics policy for SSR and pre-font-load Web layout;
 - which Lynx style features are deliberately excluded as browser-oriented

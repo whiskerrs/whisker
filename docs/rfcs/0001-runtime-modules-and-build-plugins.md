@@ -127,9 +127,11 @@ providers and zero or more plugins.
 ### Host
 
 The platform environment to which the Whisker runtime is connected:
-Kotlin/Java on Android, Swift/Objective-C on iOS, and JavaScript on Web and the
-initial Desktop WebView backend. A Host implementation can provide module
-interfaces, but `Host` is not a second module type.
+Kotlin/Java on Android, Swift/Objective-C on iOS, JavaScript in the browser on
+Web, and native Rust/GPUI on Desktop. A Host implementation can provide module
+interfaces, but `Host` is not a second module type. Desktop has one
+Whisker-visible Host: the native Rust process containing GPUI and the WASM
+runtime; there is no JavaScript or WebView Host in the Desktop architecture.
 
 ### Kernel
 
@@ -365,7 +367,7 @@ The initial lifecycle scopes are:
 |---|---|---|---|
 | Process | Once per process | Process shutdown | diagnostics sink |
 | Application | Once per Whisker application | application shutdown | router root |
-| Window | Once per native/WebView window | window close | window commands |
+| Window | Once per native or browser window | window close | window commands |
 | Surface | Once per rendered surface | surface close | renderer |
 | Owner | Bound to a reactive owner | owner disposal | scoped resource |
 
@@ -658,10 +660,13 @@ package and release version for convenience without becoming the same entity.
 ### Example: renderer
 
 A DOM renderer package can provide a `whisker.renderer@1` module implemented by
-JavaScript and a build plugin that adds the Host bootstrap, WASM loader, DOM
-entry point, and generated module registry to Web and Desktop projects. A Rust
-recording renderer used in unit tests can provide the same interface without a
-plugin or Host code.
+JavaScript and a build plugin that adds the browser Host bootstrap, WASM loader,
+DOM entry point, and generated module registry to Web projects. A separate
+GPUI renderer package provides the same interface from native Rust and has a
+build plugin that contributes the GPUI dependency, native window entry point,
+embedded WASM runtime, and generated module registry to Desktop projects. A
+Rust recording renderer used in unit tests can provide the same interface
+without a plugin or Host code.
 
 This is how renderer selection becomes ordinary module resolution while the
 target-specific project assembly remains a plugin responsibility.
@@ -698,13 +703,14 @@ produce the same input.
 | Android | Native Rust | Kotlin/Java | Gradle project |
 | iOS | Native Rust | Swift/Objective-C | Xcode project |
 | Web | Rust/WASM | JavaScript | Web project/bundle |
-| Desktop v1 | Rust/WASM in system WebView | WebView JavaScript | Desktop launcher plus Web assets |
+| Desktop v1 | Rust/WASM in an in-process WASM runtime | Native Rust/GPUI | Native Desktop project and application bundle |
 
-Desktop v1 has one Whisker-visible Host: JavaScript. Native launcher code may
-be generated to create the WebView and load assets, but it is not a second
-runtime Host or module registry. If native Desktop capabilities are introduced
-later, their internal bridge remains behind the JavaScript Host unless a later
-RFC deliberately changes this model.
+Desktop v1 has one Whisker-visible Host: native Rust. The generated launcher
+creates the GPUI application and window, instantiates the Whisker WASM runtime,
+and registers native module providers. GPUI and those providers are parts of
+the same Host and module registry, not a second rendering process. Calls across
+the WASM boundary may be synchronous because they remain in-process; a normal
+frame does not use WebView, JavaScript, Tauri commands, or process IPC.
 
 ## Invariants
 

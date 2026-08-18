@@ -17,7 +17,8 @@ projects the resulting retained scene onto a platform Host:
 - Android Views through Kotlin/Java;
 - UIViews through Swift/Objective-C;
 - DOM nodes through JavaScript on Web;
-- DOM nodes through JavaScript inside the system WebView on Desktop v1.
+- a retained Whisker scene lowered to GPUI paint, text, input, and
+  accessibility primitives by native Rust on Desktop.
 
 The Host supplies frame callbacks, native text and intrinsic measurement,
 input, viewport changes, resource readiness, and concrete element factories.
@@ -61,9 +62,11 @@ Removing Lynx requires a boundary that:
 - Make full-tree initialization and incremental updates use the same protocol.
 - Distinguish runtime modules, element types, and element instances.
 - Support Rust-only recording, test, headless, and future SSR renderers.
-- Keep Web and Desktop animation within one JavaScript animation-frame callback
-  without asynchronous native IPC.
-- Permit custom native/DOM views while retaining a single Host per platform.
+- Keep Web animation within one JavaScript animation-frame callback and
+  Desktop animation within one GPUI frame callback, without asynchronous
+  native-process IPC.
+- Permit custom native, DOM, and GPUI-backed elements while retaining a single
+  Host per platform.
 - Use the same `#[whisker::main]` Application descriptor and surface runtime
   for a generated standalone root and an optional embedded Host container.
 
@@ -79,8 +82,8 @@ Removing Lynx requires a boundary that:
   the application.
 - Preserving Lynx element handles, raw inline-style strings, or the current
   imperative animation extension.
-- Introducing a second native Host for Desktop. Desktop v1 has a JavaScript
-  Host inside its WebView.
+- Defining a DOM or WebView fallback renderer for Desktop. Desktop v1 uses the
+  native Rust/GPUI Host.
 - Making every element instance a Whisker module.
 - Changing Whisker's existing function-call-style `render!` syntax. The new
   scene and renderer pipeline remains behind the current authoring API.
@@ -107,7 +110,8 @@ Removing Lynx requires a boundary that:
 
 ### The Host owns
 
-- concrete Android View, UIView, or DOM object allocation and destruction;
+- concrete Android View, UIView, DOM object, or GPUI presentation-resource
+  allocation and destruction;
 - applying geometry, paint, clipping, transforms, content, and accessibility
   changes to those objects;
 - native text shaping, line breaking, glyph metrics, and intrinsic measurement;
@@ -130,12 +134,79 @@ the corresponding Android, UIKit, or DOM clip.
 | Android | Native Rust | Kotlin/Java | Android Views |
 | iOS | Native Rust | Swift/Objective-C | UIViews |
 | Web | Rust/WASM | JavaScript | DOM |
-| Desktop v1 | Rust/WASM in WebView | WebView JavaScript | DOM |
+| Desktop v1 | Rust/WASM in an in-process WASM runtime | Native Rust/GPUI | GPUI Scene rendered by Metal, DirectX, or wgpu |
 
-The Desktop launcher creates a system WebView and loads the application. It is
-generated build infrastructure, not a second Whisker Host. In particular, a
-normal Desktop frame does not travel from WASM to JavaScript, through IPC to a
-native Rust process, and back.
+The Desktop launcher creates a native GPUI application and embeds the Whisker
+WASM runtime in the same process. Native Rust is the sole Whisker-visible Host.
+The GPUI renderer provider receives the same versioned renderer operations as
+other providers, stores their retained semantic state, and lowers that state
+through GPUI only while GPUI is in its layout, prepaint, or paint phase. A
+normal Desktop frame crosses an in-process WASM ABI but does not cross
+JavaScript, WebView IPC, a Tauri command channel, or a process boundary.
+
+### Desktop GPUI integration boundary
+
+Desktop does not construct one declarative GPUI element for every Whisker
+node. It mounts one custom `WhiskerView` element. GPUI lays out that outer
+element in its containing window; Whisker's retained Taffy tree remains
+authoritative for every node inside it.
+
+The adapter maps Whisker presentation operations onto GPUI's public low-level
+surface:
+
+```text
+Whisker box/shadow     -> Window::paint_quad / paint_*_shadows
+Whisker path           -> Window::paint_path
+Whisker text layout    -> GPUI TextSystem shaped/wrapped line
+Whisker text paint     -> ShapedLine/WrappedLine::paint
+Whisker image          -> Window::paint_image
+Whisker clip/layer     -> Window::with_content_mask / paint_layer
+Whisker pointer input  -> root GPUI listener -> Whisker hit testing
+Whisker keyboard/IME   -> GPUI focus and InputHandler -> Whisker event routing
+```
+
+Incoming renderer packets cannot call GPUI paint methods immediately because
+GPUI restricts them to its paint lifecycle. The Desktop provider first applies
+the packet to a retained adapter scene and marks the GPUI window dirty. During
+the next GPUI frame, the custom element reads that retained state in
+`request_layout`, `prepaint`, and `paint` order and emits GPUI primitives.
+
+The first implementation may require narrow upstream additions or a pinned
+patch for hierarchical accessibility subtrees, group opacity/compositing, and
+cross-platform external surfaces. Those additions must remain low-level GPUI
+capabilities; Whisker must not depend on GPUI's declarative `div` component
+tree or make GPUI layout authoritative for the inner surface.
+
+### GPUI dependency policy
+
+Desktop v1 depends on GPUI as a pinned external library. Web must not compile,
+link, or bundle GPUI. GPUI's current Cargo features do not isolate only the
+window, scene, renderer, and text paths: the core crate also has unconditional
+image, SVG, HTTP, Taffy, and application-framework dependencies. Link-time
+dead-code elimination helps the installed artifact but does not remove build
+cost or make those boundaries independently versioned.
+
+At the time of this RFC revision, the released `gpui` crate and the current
+Zed repository do not expose the same package boundaries: the repository has
+separate `gpui_platform`, `gpui_macos`, `gpui_windows`, `gpui_linux`, and
+renderer crates that are not yet available as one coordinated crates.io
+release. The prototype must therefore pin an exact Zed git revision. A release
+must either consume coordinated published versions or keep the exact revision
+and patch set reproducible in Project IR and lockfiles.
+
+The initial implementation therefore uses the upstream crates with unused
+features such as inspector and screen capture disabled. It does not copy the
+Metal, DirectX, or wgpu renderers into Whisker. If measured release artifacts
+make the dependency unacceptable, the preferred follow-up is to contribute or
+maintain feature boundaries that separate GPUI core facilities; a source copy
+of selected renderer files is a last resort because shader, atlas, Scene, text,
+and platform APIs evolve together.
+
+For planning rather than as a protocol guarantee, a stripped minimal GPUI
+Desktop executable should be budgeted at roughly 15--30 MiB per architecture.
+An embedded WASM engine is a separate cost. Release builds must record actual
+per-target size, compile time, and enabled dependency features so this choice
+can be revisited with evidence.
 
 ## Runtime concepts
 
@@ -148,7 +219,8 @@ handle. No module-name or method-name lookup occurs while constructing a frame.
 ### Surface
 
 A `Surface` is one independently presented root: an Android Activity content
-root, iOS window/root view, browser document root, or Desktop WebView document.
+root, iOS window/root view, browser document root, or GPUI window/embedded
+element region on Desktop.
 Every node, frame, measurement request, and input event belongs to exactly one
 surface.
 
@@ -173,7 +245,7 @@ The platform shape is:
 Android   WhiskerView : Host ViewGroup
 iOS       WhiskerView : Host UIView
 Web       DOM custom element (for example `whisker-view`) or JavaScript object
-Desktop   system-WebView-backed container, with JavaScript as the Host
+Desktop   GPUI custom Element backed by one Whisker Surface
 ```
 
 `WhiskerView` is a Host SDK/bootstrap primitive, not a scene element and not a
@@ -490,10 +562,10 @@ Rust
 `Frame` is a scheduling callback, not permission for the Host to calculate
 animation values. Motion state remains in Rust.
 
-### Web and Desktop timing
+### Web timing
 
-On Web and Desktop, JavaScript calls into WASM from a
-`requestAnimationFrame` callback. Rust advances motion and calls
+On Web, JavaScript calls into WASM from a `requestAnimationFrame` callback.
+Rust advances motion and calls
 `Renderer::present`; the generated binding invokes JavaScript synchronously,
 and JavaScript applies the DOM patch before the same animation-frame callback
 returns:
@@ -507,9 +579,29 @@ JavaScript rAF
   <- return
 ```
 
-There is no Tauri command or native-process IPC on this path. DOM measurement
-can still trigger expensive browser layout, so reads are batched and cached,
-but it is not forced to be asynchronous by the Desktop architecture.
+DOM measurement can still trigger expensive browser layout, so reads are
+batched and cached.
+
+### Desktop timing
+
+On Desktop, GPUI's frame callback enters the in-process Whisker WASM runtime.
+Rust advances motion, produces renderer operations, and returns to the native
+adapter before GPUI performs prepaint and paint for the `WhiskerView` element:
+
+```text
+GPUI frame callback
+  -> WASM frame entry
+       -> Rust motion/reactivity/style/layout
+       -> in-process Host present(packet)
+            -> update retained GPUI adapter scene
+  -> WhiskerView prepaint/paint
+       -> GPUI low-level paint operations
+  <- submit GPUI Scene
+```
+
+The WASM ABI is synchronous on this path. It is an isolation/versioning
+boundary, not asynchronous IPC. GPUI text shaping and intrinsic measurement
+may therefore be queried synchronously and cached during the frame.
 
 ## Frame packet
 
@@ -732,7 +824,7 @@ The Host binding maps `VIEW` to its registered standard factory:
 Android -> standard Whisker ViewGroup
 iOS     -> UIView
 Web     -> div
-Desktop -> div in the WebView DOM
+Desktop -> retained box lowered to GPUI quad/shadow/path primitives
 ```
 
 ## Custom UI modules
@@ -749,6 +841,7 @@ whisker-video package
 |- Android Host element factory
 |- iOS Host element factory
 |- JavaScript Host element factory
+|- Desktop Rust/GPUI Host element factory
 |- generated bindings and registration metadata
 `- optional build plugin for dependencies, permissions, and lifecycle hooks
 ```
@@ -815,7 +908,7 @@ is deliberately not fixed by this RFC; conceptually the declaration produces:
 - typed event and command payloads;
 - `ElementSchema` and stable symbolic property/event/command IDs;
 - FramePacket encoders and decoders;
-- Kotlin, Swift, and TypeScript binding inputs;
+- Kotlin, Swift, TypeScript, and Desktop Rust binding inputs;
 - module and debug-symbol descriptors.
 
 An illustrative generated schema is:
@@ -911,7 +1004,7 @@ whisker.video/Video@1
   Android -> PlayerView / Media3 player
   iOS     -> AVPlayerLayer-backed UIView
   Web     -> HTMLVideoElement
-  Desktop -> HTMLVideoElement in the WebView
+  Desktop -> native media provider presented through a GPUI external surface
 ```
 
 Factories register through the one Host renderer registry. They do not create
@@ -956,9 +1049,14 @@ iOS
   HostSourceModule(WhiskerVideo)
   HostElementFactory(VideoElementFactory)
 
-Web / Desktop
+Web
   JavaScriptProvider(whisker-video/host)
   HostElementFactory(VideoElementFactory)
+
+Desktop
+  NativeRustProvider(whisker_video_gpui)
+  NativeMediaDependency(...)
+  GpuiElementFactory(VideoElementFactory)
 ```
 
 Generic target plugins can handle ordinary source inclusion, binding
@@ -1005,7 +1103,7 @@ Application start
   -> start Video module and register schema once
 
 CreateNode(Video)
-  -> create AVPlayer / Media3 player / HTMLVideoElement
+  -> create AVPlayer / Media3 player / HTMLVideoElement / Desktop media player
 
 DeleteNode(Video)
   -> detach observers, stop playback, release per-node resources
@@ -1055,9 +1153,11 @@ Unsupported { key, reason }
 ```
 
 Android, iOS, Web, and Desktop v1 are expected to provide synchronous `Ready`
-results for ordinary text measurement. Web/Desktop may do synchronous work in
-JavaScript during the WASM frame callback; they are not forced through native
-IPC. Requests are batched to avoid interleaved DOM reads and writes.
+results for ordinary text measurement. Web may do synchronous browser text
+measurement during the WASM frame callback; requests are batched to avoid
+interleaved DOM reads and writes. Desktop uses GPUI's platform text system in
+the native Host and returns shaped/wrapped metrics across the in-process WASM
+ABI. Neither path requires native-process IPC.
 
 Asynchronous `Pending` is reserved for resources and custom providers that
 cannot answer immediately. The Host later emits `MeasurementReady`; Rust
@@ -1239,10 +1339,15 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
    property slots and one transaction per frame.
 5. Implement standard element factories, measurement, events, and packet
    application for Android and iOS.
-6. Implement the JavaScript DOM provider shared by Web and Desktop v1.
-7. Migrate custom UI modules to versioned element schemas, generated Host
+6. Implement the JavaScript DOM provider for Web.
+7. Implement the native Rust GPUI provider for Desktop using one custom
+   `WhiskerView` element and GPUI's low-level paint/text/input APIs.
+8. Add the narrow GPUI capability extensions required for hierarchical
+   accessibility, group compositing, and external surfaces, preferably
+   upstream rather than by copying renderer code.
+9. Migrate custom UI modules to versioned element schemas, generated Host
    factories, and typed commands.
-8. Remove the temporary Lynx renderer, C++ bridge, fork artifacts, and obsolete
+10. Remove the temporary Lynx renderer, C++ bridge, fork artifacts, and obsolete
    distribution paths after conformance and visual parity are reached.
 
 ## Invariants
@@ -1256,7 +1361,9 @@ how server-emitted presentation relates to Rust-resolved interactive styling.
 6. A frame packet is an ordered transaction, not a bag of independent calls.
 7. Element instances are scene nodes, not module instances.
 8. Custom UI modules use registered element types and the same frame protocol.
-9. Ordinary Web/Desktop frames do not cross native IPC.
+9. Ordinary Web frames use an in-callback WASM/JavaScript call and ordinary
+   Desktop frames use an in-process WASM/native-Rust call; neither crosses
+   native-process IPC.
 10. Host-dependent measurement is batched, keyed, cached, and epoch-validated.
 11. Renderer and protocol behavior can be tested with a Rust-only provider.
 12. The Scene Runtime, not UI modules, requires and coordinates the renderer.
@@ -1292,6 +1399,10 @@ The following must be resolved before this RFC becomes `Accepted`:
 - debug symbol-table format for compact element, property, event, and command
   IDs;
 - hydration and event attachment requirements for a future SSR DOM renderer.
+- the GPUI version pin and the exact upstream API additions required by the
+  Desktop conformance suite;
+- the Desktop WASM engine and ABI implementation, including its independent
+  binary-size and startup-time budget;
 - the binary ABI and generated Host representation of an
   `ApplicationDescriptor`, including collision-free selection when several
   independently built applications are linked into one Host;
