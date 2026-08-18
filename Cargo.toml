@@ -19,6 +19,7 @@ members = [
     "packages/whisker-asset-macros",
     "crates/whisker-css",
     "crates/whisker-plugin",
+    "crates/whisker-protocol",
     "crates/whisker-runtime",
     "crates/whisker-subsecond",
     "examples/anim-smoke",
@@ -103,6 +104,7 @@ whisker-asset = { path = "packages/whisker-asset", version = "0.12.0" }
 whisker-asset-macros = { path = "packages/whisker-asset-macros", version = "0.12.0" }
 whisker-css = { path = "crates/whisker-css", version = "0.12.0" }
 whisker-plugin = { path = "crates/whisker-plugin", version = "0.12.0" }
+whisker-protocol = { path = "crates/whisker-protocol", version = "0.12.0" }
 whisker-runtime = { path = "crates/whisker-runtime", version = "0.12.0" }
 whisker-router = { path = "packages/whisker-router", version = "0.12.0" }
 whisker-router-macros = { path = "packages/whisker-router-macros", version = "0.12.0" }

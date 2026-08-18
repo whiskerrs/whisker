@@ -4487,6 +4487,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "whisker-protocol"
+version = "0.12.0"
+
+[[package]]
 name = "whisker-router"
 version = "0.12.0"
 dependencies = [

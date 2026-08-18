@@ -35,6 +35,10 @@ runs on iOS and Android by driving Lynx's element tree directly.
                                         (WebSocket receiver,
                                          subsecond::apply_patch)
 
+   whisker-protocol
+   (Host-independent frame model + transactional reference validator;
+    migration foundation, not yet wired into the production Lynx path)
+
    subsecond  (= whisker-subsecond, [lib] name = "subsecond")
      pulled into whisker / whisker-driver / whisker-dev-runtime
      when `hot-reload` is on.
@@ -86,6 +90,7 @@ runs on iOS and Android by driving Lynx's element tree directly.
 | `whisker-build` | Lynx artifact fetch, cargo cross-compile, AAR/xcframework packaging. | `whisker-dev-server` |
 | `whisker-cng` | Continuous Native Generation: pure renderer of `gen/{android,ios}/` from Config, fingerprint-gated. No CLI surface, no side effects. | `whisker-cli` |
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
+| `whisker-protocol` | Host-independent semantic frame types, stable IDs, and transactional retained-tree validation. It is currently a migration foundation and is not yet used by the production Lynx path. | future scene engine and renderer providers |
 | `whisker-subsecond` | Whisker's fork of DioxusLabs `subsecond` — anchors the ASLR-slide lookup on `whisker_aslr_anchor` (emitted by `#[whisker::main]`) instead of `main`. `[lib] name = "subsecond"` keeps `use subsecond::*`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
 ### Modules and the router (`packages/*`)
