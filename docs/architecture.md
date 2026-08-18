@@ -45,13 +45,15 @@ runs on iOS and Android by driving Lynx's element tree directly.
    (Host-independent frame model + transactional reference validator;
     migration foundation, not yet wired into the production Lynx path)
 
-   whisker-engine ──────────► whisker-protocol
+   whisker-engine ──────────► whisker-layout + whisker-style
+          │                  (surface orchestration + dirty layout)
+          └────────────────► whisker-protocol
    (Host-independent retained scene + incremental frame journal;
     migration foundation, not yet wired into render! or Lynx)
 
    whisker-layout ──────────► whisker-style + whisker-protocol
    (Host-independent retained Taffy tree + intrinsic-measurement boundary;
-    migration foundation, not yet wired into whisker-engine)
+    paired with the retained scene by whisker-engine::SurfaceEngine)
 
    subsecond  (= whisker-subsecond, [lib] name = "subsecond")
      pulled into whisker / whisker-driver / whisker-dev-runtime
@@ -106,8 +108,8 @@ runs on iOS and Android by driving Lynx's element tree directly.
 | `whisker-cng` | Continuous Native Generation: pure renderer of `gen/{android,ios}/` from Config, fingerprint-gated. No CLI surface, no side effects. | `whisker-cli` |
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
 | `whisker-protocol` | Host-independent semantic frame types, stable IDs, and transactional retained-tree validation. It is currently a migration foundation and is not yet used by the production Lynx path. | future scene engine and renderer providers |
-| `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, and frame acceptance/recovery lifecycle. It is currently a migration foundation and is not yet connected to `render!`. | future scene runtime |
-| `whisker-layout` | Host-independent retained box layout. It privately owns Taffy, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer, and returns deterministic logical-pixel snapshots. It is not yet connected to `whisker-engine`. | future scene runtime |
+| `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, and frame acceptance/recovery lifecycle. `SurfaceEngine` keeps scene and layout structure synchronized, classifies dirty work, and journals only changed layout rectangles. It is currently a migration foundation and is not yet connected to `render!`. | future scene runtime |
+| `whisker-layout` | Host-independent retained box layout. It privately owns Taffy, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer, and returns deterministic logical-pixel snapshots. `whisker-engine::SurfaceEngine` owns its coordination with scene/frame production. | `whisker-engine`, future scene runtime |
 | `whisker-subsecond` | Whisker's fork of DioxusLabs `subsecond` — anchors the ASLR-slide lookup on `whisker_aslr_anchor` (emitted by `#[whisker::main]`) instead of `main`. `[lib] name = "subsecond"` keeps `use subsecond::*`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
 ### Modules and the router (`packages/*`)

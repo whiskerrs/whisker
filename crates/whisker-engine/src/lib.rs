@@ -6,6 +6,10 @@
 //! incremental [`FramePacket`], then advances its accepted revision only after
 //! the renderer confirms the complete transaction.
 //!
+//! [`SurfaceEngine`] pairs that scene with a retained Taffy layout tree. It
+//! keeps structural mutations synchronized, skips clean layout passes, and
+//! journals only geometry that changed from the previous snapshot.
+//!
 //! [`RecordingRenderer`] is the reference Rust-only consumer. Together with
 //! `whisker-protocol` it lets tree, revision, recovery, and incremental-update
 //! behavior run without Android, UIKit, DOM, Lynx, FFI, or WASM.
@@ -15,7 +19,11 @@
 
 mod recording;
 mod scene;
+mod surface;
 
 pub use recording::{FrameSink, RecordedFrame, RecordingRenderer};
 pub use scene::{Scene, SceneError, SceneNode};
+pub use surface::{LayoutUpdate, SurfaceEngine, SurfaceError};
+pub use whisker_layout;
 pub use whisker_protocol;
+pub use whisker_style;

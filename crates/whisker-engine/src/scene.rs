@@ -248,6 +248,11 @@ impl Scene {
         self.pending.is_some() || self.needs_snapshot || !self.journal.operations.is_empty()
     }
 
+    /// Returns whether a prepared frame is waiting for acceptance or discard.
+    pub fn has_prepared_frame(&self) -> bool {
+        self.pending.is_some()
+    }
+
     /// Creates an unattached retained node and returns its epoch-unique ID.
     pub fn create_node(&mut self, element_type: ElementTypeId) -> Result<NodeId, SceneError> {
         self.ensure_mutable()?;

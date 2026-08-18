@@ -231,6 +231,14 @@ impl LayoutTree {
         self.nodes.contains_key(&node)
     }
 
+    /// Validates that a computed style can be represented by this backend.
+    ///
+    /// This performs the same conversion used by node creation and updates
+    /// without changing retained state.
+    pub fn validate_style(style: &ComputedLayoutStyle) -> Result<(), LayoutError> {
+        convert_style(style).map(drop)
+    }
+
     /// Creates an unattached, initially non-measurable node.
     pub fn create_node(
         &mut self,
@@ -286,20 +294,20 @@ impl LayoutTree {
     }
 
     /// Marks or unmarks a leaf as requiring intrinsic Host measurement.
-    pub fn set_measurable(&mut self, node: NodeId, measurable: bool) -> Result<(), LayoutError> {
+    pub fn set_measurable(&mut self, node: NodeId, measurable: bool) -> Result<bool, LayoutError> {
         let retained = self
             .nodes
             .get(&node)
             .ok_or(LayoutError::UnknownNode(node))?;
         if retained.measurable == measurable {
-            return Ok(());
+            return Ok(false);
         }
         let backend = retained.backend;
         self.backend
             .set_node_context(backend, measurable.then_some(node))
             .expect("retained backend node");
         self.nodes.get_mut(&node).expect("checked above").measurable = measurable;
-        Ok(())
+        Ok(true)
     }
 
     /// Invalidates cached intrinsic measurement for a node and its ancestors.
@@ -1072,6 +1080,7 @@ mod tests {
         tree.create_node(root, sized(30.0, 10.0)).unwrap();
         tree.create_node(left, sized(10.0, 10.0)).unwrap();
         tree.create_node(right, sized(10.0, 10.0)).unwrap();
+        assert_eq!(LayoutTree::validate_style(&sized(1.0, 1.0)), Ok(()));
         tree.set_children(root, &[left, right]).unwrap();
         let mut resized_root = sized(31.0, 10.0);
         resized_root.display = DisplayValue::Linear;
@@ -1105,6 +1114,14 @@ mod tests {
             tree.update_style(left, unsupported),
             Err(LayoutError::UnsupportedStyle(
                 UnsupportedLayoutFeature::FixedPosition
+            ))
+        );
+        let mut unsupported = sized(10.0, 10.0);
+        unsupported.position = PositionValue::Sticky;
+        assert_eq!(
+            LayoutTree::validate_style(&unsupported),
+            Err(LayoutError::UnsupportedStyle(
+                UnsupportedLayoutFeature::StickyPosition
             ))
         );
         assert_eq!(snapshot.get(id(44)), None);

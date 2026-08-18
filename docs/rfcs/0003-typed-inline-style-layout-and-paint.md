@@ -672,9 +672,10 @@ testing. Visual snapshots supplement but do not replace semantic assertions.
    `InheritedStyle`, Taffy-independent computed box/flex values, and Rust-only
    resolution tests.
 4. Map computed layout values into a retained Taffy tree and connect RFC
-   0002's measurement batches. The retained tree and synchronous measurement
-   abstraction are implemented; engine integration, pending/batched Host
-   measurement, and the explicitly diagnosed backend gaps remain.
+   0002's measurement batches. The retained tree, synchronous measurement
+   abstraction, and `SurfaceEngine` integration into incremental scene/frame
+   production are implemented; pending/batched Host measurement and the
+   explicitly diagnosed backend gaps remain.
 5. Resolve paint, clip, stacking, transforms, text, and semantics into typed
    renderer operations.
 6. Route signal and `whisker-motion` writes through the shared property slots

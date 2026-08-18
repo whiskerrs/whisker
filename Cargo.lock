@@ -4378,7 +4378,9 @@ dependencies = [
 name = "whisker-engine"
 version = "0.12.0"
 dependencies = [
+ "whisker-layout",
  "whisker-protocol",
+ "whisker-style",
 ]
 
 [[package]]
