@@ -195,6 +195,34 @@ pub enum StyleValue {
     Color(ColorValue),
     /// Line height.
     LineHeight(LineHeightValue),
+    /// Layout algorithm.
+    Display(crate::DisplayValue),
+    /// Positioning model.
+    Position(crate::PositionValue),
+    /// Box sizing model.
+    BoxSizing(crate::BoxSizingValue),
+    /// Inline writing direction.
+    Direction(crate::DirectionValue),
+    /// Width or height constraint.
+    Size(crate::SizeValue),
+    /// Margin or inset value.
+    LengthPercentageAuto(crate::LengthPercentageAutoValue),
+    /// Flex main-axis direction.
+    FlexDirection(crate::FlexDirectionValue),
+    /// Flex wrapping behavior.
+    FlexWrap(crate::FlexWrapValue),
+    /// Flex basis.
+    FlexBasis(crate::FlexBasisValue),
+    /// Main-axis distribution.
+    JustifyContent(crate::JustifyContentValue),
+    /// Cross-axis item alignment.
+    AlignItems(crate::AlignItemsValue),
+    /// Per-item cross-axis alignment.
+    AlignSelf(crate::AlignSelfValue),
+    /// Cross-axis line distribution.
+    AlignContent(crate::AlignContentValue),
+    /// Width-to-height ratio.
+    AspectRatio(crate::AspectRatioValue),
 }
 
 #[cfg(test)]

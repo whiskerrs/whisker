@@ -320,7 +320,10 @@ impl From<&Css> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Color, FontStyle, FontWeight, Length, LineHeight, NamedColor};
+    use crate::{
+        Color, Display, FlexDirection, FontStyle, FontWeight, Length, LineHeight, NamedColor,
+        Percentage,
+    };
 
     #[test]
     fn empty_style_serializes_to_empty_string() {
@@ -503,6 +506,37 @@ mod tests {
             text.line_height(),
             whisker_style::ComputedLineHeight::LogicalPixels(whisker_style::StyleNumber::new(30.0))
         );
+    }
+
+    #[test]
+    fn box_and_flex_fragment_resolves_entirely_in_rust() {
+        let specified = Css::new()
+            .display(Display::Flex)
+            .flex_direction(FlexDirection::Column)
+            .width(Length::Px(120.0))
+            .row_gap(Percentage(10.0))
+            .to_specified_style()
+            .unwrap();
+        let resolved = whisker_style::resolve_style(
+            &specified,
+            None,
+            whisker_style::StyleEnvironment::default(),
+        )
+        .unwrap();
+        let layout = resolved.computed().layout();
+        assert_eq!(layout.display, whisker_style::DisplayValue::Flex);
+        assert_eq!(
+            layout.flex_direction,
+            whisker_style::FlexDirectionValue::Column
+        );
+        assert_eq!(
+            layout.size.width,
+            whisker_style::ComputedSizeValue::Value(whisker_style::ComputedLengthPercentage::new(
+                120.0, 0.0
+            ))
+        );
+        assert_eq!(layout.gap.height.length(), 0.0);
+        assert_eq!(layout.gap.height.fraction(), 0.1);
     }
 
     struct Token(&'static str);

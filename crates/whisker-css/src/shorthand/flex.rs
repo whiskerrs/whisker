@@ -1,7 +1,6 @@
 //! `flex` shorthand.
 
 use crate::css::Css;
-use crate::to_css::number_to_string;
 use crate::value::FlexBasis;
 
 /// `flex` shorthand value. CSS allows `flex: <grow> <shrink>?
@@ -55,9 +54,7 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/flex>
     pub fn flex(self, v: Flex) -> Self {
         let (grow, shrink, basis) = v.expand();
-        self.push_raw(crate::StyleProperty::FlexGrow, number_to_string(grow))
-            .push_raw(crate::StyleProperty::FlexShrink, number_to_string(shrink))
-            .push(crate::StyleProperty::FlexBasis, basis)
+        self.flex_grow(grow).flex_shrink(shrink).flex_basis(basis)
     }
 }
 

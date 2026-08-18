@@ -15,37 +15,37 @@ impl Css {
     /// Sets `width`. Lynx default: `auto`.
     /// <https://lynxjs.org/api/css/properties/width>
     pub fn width(self, v: impl Into<Size>) -> Self {
-        self.push(crate::StyleProperty::Width, v.into())
+        self.push_typed(crate::StyleProperty::Width, v.into())
     }
 
     /// Sets `height`. Lynx default: `auto`.
     /// <https://lynxjs.org/api/css/properties/height>
     pub fn height(self, v: impl Into<Size>) -> Self {
-        self.push(crate::StyleProperty::Height, v.into())
+        self.push_typed(crate::StyleProperty::Height, v.into())
     }
 
     /// Sets `min-width`. Lynx default: `0`.
     /// <https://lynxjs.org/api/css/properties/min-width>
     pub fn min_width(self, v: impl Into<Size>) -> Self {
-        self.push(crate::StyleProperty::MinWidth, v.into())
+        self.push_typed(crate::StyleProperty::MinWidth, v.into())
     }
 
     /// Sets `min-height`. Lynx default: `0`.
     /// <https://lynxjs.org/api/css/properties/min-height>
     pub fn min_height(self, v: impl Into<Size>) -> Self {
-        self.push(crate::StyleProperty::MinHeight, v.into())
+        self.push_typed(crate::StyleProperty::MinHeight, v.into())
     }
 
     /// Sets `max-width`. Lynx default: `none`.
     /// <https://lynxjs.org/api/css/properties/max-width>
     pub fn max_width(self, v: impl Into<Size>) -> Self {
-        self.push(crate::StyleProperty::MaxWidth, v.into())
+        self.push_typed(crate::StyleProperty::MaxWidth, v.into())
     }
 
     /// Sets `max-height`. Lynx default: `none`.
     /// <https://lynxjs.org/api/css/properties/max-height>
     pub fn max_height(self, v: impl Into<Size>) -> Self {
-        self.push(crate::StyleProperty::MaxHeight, v.into())
+        self.push_typed(crate::StyleProperty::MaxHeight, v.into())
     }
 
     // ---------- box-sizing / aspect-ratio ----------
@@ -53,14 +53,17 @@ impl Css {
     /// Sets `box-sizing`. Lynx default: `border-box`.
     /// <https://lynxjs.org/api/css/properties/box-sizing>
     pub fn box_sizing(self, v: BoxSizing) -> Self {
-        self.push(crate::StyleProperty::BoxSizing, v)
+        self.push_typed(crate::StyleProperty::BoxSizing, v)
     }
 
     /// Sets `aspect-ratio` to `<width> / <height>`.
     /// <https://lynxjs.org/api/css/properties/aspect-ratio>
     pub fn aspect_ratio(self, width: f32, height: f32) -> Self {
-        self.push_raw(
+        self.push_semantic(
             crate::StyleProperty::AspectRatio,
+            whisker_style::StyleValue::AspectRatio(whisker_style::AspectRatioValue::new(
+                width, height,
+            )),
             format!("{width} / {height}"),
         )
     }
@@ -96,25 +99,25 @@ impl Css {
     /// Sets `margin-top`. Lynx allows negative values and `auto`.
     /// <https://lynxjs.org/api/css/properties/margin-top>
     pub fn margin_top(self, v: impl Into<MarginValue>) -> Self {
-        self.push(crate::StyleProperty::MarginTop, v.into())
+        self.push_typed(crate::StyleProperty::MarginTop, v.into())
     }
 
     /// Sets `margin-right`. Lynx allows negative values and `auto`.
     /// <https://lynxjs.org/api/css/properties/margin-right>
     pub fn margin_right(self, v: impl Into<MarginValue>) -> Self {
-        self.push(crate::StyleProperty::MarginRight, v.into())
+        self.push_typed(crate::StyleProperty::MarginRight, v.into())
     }
 
     /// Sets `margin-bottom`. Lynx allows negative values and `auto`.
     /// <https://lynxjs.org/api/css/properties/margin-bottom>
     pub fn margin_bottom(self, v: impl Into<MarginValue>) -> Self {
-        self.push(crate::StyleProperty::MarginBottom, v.into())
+        self.push_typed(crate::StyleProperty::MarginBottom, v.into())
     }
 
     /// Sets `margin-left`. Lynx allows negative values and `auto`.
     /// <https://lynxjs.org/api/css/properties/margin-left>
     pub fn margin_left(self, v: impl Into<MarginValue>) -> Self {
-        self.push(crate::StyleProperty::MarginLeft, v.into())
+        self.push_typed(crate::StyleProperty::MarginLeft, v.into())
     }
 
     // ---------- Gap ----------

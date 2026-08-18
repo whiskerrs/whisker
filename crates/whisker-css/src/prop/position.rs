@@ -11,7 +11,7 @@ impl Css {
     /// `static` is **not** supported by Lynx.
     /// <https://lynxjs.org/api/css/properties/position>
     pub fn position(self, v: PositionKind) -> Self {
-        self.push(crate::StyleProperty::Position, v)
+        self.push_typed(crate::StyleProperty::Position, v)
     }
 
     /// Sets `top` offset (positioned elements).

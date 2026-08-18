@@ -212,6 +212,13 @@ layout and rendering. `PresentationStyle` contains the current values after
 motion and layout have been sampled for a frame, ready for dirty comparison
 and protocol encoding.
 
+The computed layout slice remains independent of Taffy. Absolute and relative
+length units are normalized to logical pixels, while percentages and mixed
+`calc()` expressions are retained as an affine `logical_px + fraction *
+containing_block` value. The later `whisker-layout` module supplies the
+containing-block constraint and maps these semantic values into its private
+Taffy representation.
+
 The conceptual interfaces are:
 
 ```rust,ignore
@@ -617,7 +624,8 @@ testing. Visual snapshots supplement but do not replace semantic assertions.
 2. Change `Css`/`Style` internals from serialized strings to typed declaration
    storage while preserving `css!` and `render!` call syntax.
 3. Add deterministic style composition, the seven-property
-   `InheritedStyle`, and Rust-only resolution tests.
+   `InheritedStyle`, Taffy-independent computed box/flex values, and Rust-only
+   resolution tests.
 4. Map computed layout values into a retained Taffy tree and connect RFC
    0002's measurement batches.
 5. Resolve paint, clip, stacking, transforms, text, and semantics into typed

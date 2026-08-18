@@ -3,9 +3,9 @@
 use core::fmt;
 
 use crate::{
-    CalcExpression, ColorValue, FontFamilyValue, FontStyleValue, FontWeightValue,
-    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, SpecifiedStyle, StyleNumber,
-    StyleProperty, StyleValue,
+    CalcExpression, ColorValue, ComputedLayoutStyle, FontFamilyValue, FontStyleValue,
+    FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
+    SpecifiedStyle, StyleNumber, StyleProperty, StyleValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -194,12 +194,18 @@ impl InheritedStyle {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ComputedStyle {
     inherited_text: InheritedStyle,
+    layout: ComputedLayoutStyle,
 }
 
 impl ComputedStyle {
     /// Returns computed text values for this node.
     pub const fn inherited_text(&self) -> &InheritedStyle {
         &self.inherited_text
+    }
+
+    /// Returns Taffy-independent computed layout input for this node.
+    pub const fn layout(&self) -> &ComputedLayoutStyle {
+        &self.layout
     }
 }
 
@@ -348,8 +354,8 @@ impl InheritedStyleChange {
     }
 }
 
-/// Resolves the fixed inherited text context for one scene node.
-pub fn resolve_text_style(
+/// Resolves all currently implemented computed-style slices for one node.
+pub fn resolve_style(
     specified: &SpecifiedStyle,
     parent: Option<&InheritedStyle>,
     environment: StyleEnvironment,
@@ -452,19 +458,36 @@ pub fn resolve_text_style(
         None => base.color.clone(),
     };
 
+    let inherited_text = InheritedStyle {
+        font_family,
+        font_size,
+        font_weight,
+        font_style,
+        line_height,
+        letter_spacing,
+        color,
+    };
+    let layout =
+        crate::layout::resolve_layout_style(specified, inherited_text.font_size(), environment)?;
+
     Ok(ResolvedNodeStyle {
         computed: ComputedStyle {
-            inherited_text: InheritedStyle {
-                font_family,
-                font_size,
-                font_weight,
-                font_style,
-                line_height,
-                letter_spacing,
-                color,
-            },
+            inherited_text,
+            layout,
         },
     })
+}
+
+/// Compatibility name for callers that initially consumed only text styles.
+///
+/// The returned [`ComputedStyle`] also includes every implemented layout
+/// property. New code may use [`resolve_style`] for a name matching that scope.
+pub fn resolve_text_style(
+    specified: &SpecifiedStyle,
+    parent: Option<&InheritedStyle>,
+    environment: StyleEnvironment,
+) -> Result<ResolvedNodeStyle, StyleResolutionError> {
+    resolve_style(specified, parent, environment)
 }
 
 #[derive(Default)]
@@ -760,6 +783,10 @@ mod tests {
         assert_eq!(environment.root_font_size(), 14.0);
 
         let resolved = resolve_text_style(&SpecifiedStyle::new(), None, environment).unwrap();
+        assert_eq!(
+            resolved.computed().layout(),
+            &ComputedLayoutStyle::default()
+        );
         let text = inherited(&resolved);
         assert_eq!(text.font_family(), &FontFamilyValue::System);
         assert_eq!(text.font_size(), 14.0);
@@ -775,6 +802,20 @@ mod tests {
                 blue: 0,
                 alpha: number(1.0),
             }
+        );
+    }
+
+    #[test]
+    fn layout_resolution_errors_propagate_from_the_combined_resolver() {
+        let error = resolve_style(
+            &declaration(StyleProperty::Width, StyleValue::Bool(true)),
+            None,
+            StyleEnvironment::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            StyleResolutionError::InvalidPropertyValue(StyleProperty::Width)
         );
     }
 

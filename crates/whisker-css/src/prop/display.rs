@@ -7,38 +7,38 @@ impl Css {
     /// Sets `display`. Lynx default: `linear`.
     /// <https://lynxjs.org/api/css/properties/display>
     pub fn display(self, v: Display) -> Self {
-        self.push(crate::StyleProperty::Display, v)
+        self.push_typed(crate::StyleProperty::Display, v)
     }
 
     /// Sets `display: none` — element is removed from the layout tree.
     pub fn display_none(self) -> Self {
-        self.push(crate::StyleProperty::Display, Display::None)
+        self.push_typed(crate::StyleProperty::Display, Display::None)
     }
 
     /// Sets `display: flex` — opt into CSS flexbox.
     pub fn display_flex(self) -> Self {
-        self.push(crate::StyleProperty::Display, Display::Flex)
+        self.push_typed(crate::StyleProperty::Display, Display::Flex)
     }
 
     /// Sets `display: grid` — opt into CSS grid.
     pub fn display_grid(self) -> Self {
-        self.push(crate::StyleProperty::Display, Display::Grid)
+        self.push_typed(crate::StyleProperty::Display, Display::Grid)
     }
 
     /// Sets `display: linear` — Lynx default linear layout.
     pub fn display_linear(self) -> Self {
-        self.push(crate::StyleProperty::Display, Display::Linear)
+        self.push_typed(crate::StyleProperty::Display, Display::Linear)
     }
 
     /// Sets `display: relative` — Lynx relative-positioning container.
     pub fn display_relative(self) -> Self {
-        self.push(crate::StyleProperty::Display, Display::Relative)
+        self.push_typed(crate::StyleProperty::Display, Display::Relative)
     }
 
     /// Sets `direction`. Lynx default: `ltr`.
     /// <https://lynxjs.org/api/css/properties/direction>
     pub fn direction(self, v: Direction) -> Self {
-        self.push(crate::StyleProperty::Direction, v)
+        self.push_typed(crate::StyleProperty::Direction, v)
     }
 }
 

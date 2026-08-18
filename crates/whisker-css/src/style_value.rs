@@ -1,13 +1,17 @@
 //! Conversion from the compatibility authoring types to semantic style values.
 
 use whisker_style::{
-    CalcExpression, ColorValue, FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit,
-    LengthValue, LineHeightValue, StyleNumber, StyleValue,
+    AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, CalcExpression, ColorValue,
+    DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue,
+    FontStyleValue, FontWeightValue, JustifyContentValue, LengthPercentageAutoValue,
+    LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PositionValue, SizeValue,
+    StyleNumber, StyleValue,
 };
 
 use crate::{
-    Angle, CalcExpr, Color, CssString, FontStyle, FontWeight, Integer, Length, LengthPercentage,
-    LineHeight, Number, Percentage,
+    AlignContent, AlignItems, AlignSelf, Angle, BoxSizing, CalcExpr, Color, CssString, Direction,
+    Display, FlexBasis, FlexDirection, FlexWrap, FontStyle, FontWeight, Integer, JustifyContent,
+    Length, LengthPercentage, LineHeight, MarginValue, Number, Percentage, PositionKind, Size,
 };
 
 pub(crate) trait ToStyleValue {
@@ -108,6 +112,167 @@ impl ToStyleValue for Color {
             },
         };
         StyleValue::Color(value)
+    }
+}
+
+impl ToStyleValue for Display {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Display(match self {
+            Self::None => DisplayValue::None,
+            Self::Flex => DisplayValue::Flex,
+            Self::Grid => DisplayValue::Grid,
+            Self::Linear => DisplayValue::Linear,
+            Self::Relative => DisplayValue::Relative,
+        })
+    }
+}
+
+impl ToStyleValue for PositionKind {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Position(match self {
+            Self::Relative => PositionValue::Relative,
+            Self::Absolute => PositionValue::Absolute,
+            Self::Fixed => PositionValue::Fixed,
+            Self::Sticky => PositionValue::Sticky,
+        })
+    }
+}
+
+impl ToStyleValue for BoxSizing {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::BoxSizing(match self {
+            Self::ContentBox => BoxSizingValue::ContentBox,
+            Self::BorderBox => BoxSizingValue::BorderBox,
+        })
+    }
+}
+
+impl ToStyleValue for Direction {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Direction(match self {
+            Self::Ltr => DirectionValue::Ltr,
+            Self::Rtl => DirectionValue::Rtl,
+        })
+    }
+}
+
+impl ToStyleValue for Size {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Size(match self {
+            Self::Auto => SizeValue::Auto,
+            Self::LengthPercentage(value) => {
+                SizeValue::LengthPercentage(to_length_percentage(value))
+            }
+            Self::MaxContent => SizeValue::MaxContent,
+            Self::MinContent => SizeValue::MinContent,
+            Self::FitContent(value) => {
+                SizeValue::FitContent(value.0.as_ref().map(to_length_percentage))
+            }
+            Self::None => SizeValue::None,
+        })
+    }
+}
+
+impl ToStyleValue for MarginValue {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::LengthPercentageAuto(match self {
+            Self::Auto => LengthPercentageAutoValue::Auto,
+            Self::LengthPercentage(value) => {
+                LengthPercentageAutoValue::LengthPercentage(to_length_percentage(value))
+            }
+        })
+    }
+}
+
+impl ToStyleValue for FlexDirection {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::FlexDirection(match self {
+            Self::Row => FlexDirectionValue::Row,
+            Self::RowReverse => FlexDirectionValue::RowReverse,
+            Self::Column => FlexDirectionValue::Column,
+            Self::ColumnReverse => FlexDirectionValue::ColumnReverse,
+        })
+    }
+}
+
+impl ToStyleValue for FlexWrap {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::FlexWrap(match self {
+            Self::Nowrap => FlexWrapValue::NoWrap,
+            Self::Wrap => FlexWrapValue::Wrap,
+            Self::WrapReverse => FlexWrapValue::WrapReverse,
+        })
+    }
+}
+
+impl ToStyleValue for FlexBasis {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::FlexBasis(match self {
+            Self::Auto => FlexBasisValue::Auto,
+            Self::Content => FlexBasisValue::Content,
+            Self::LengthPercentage(value) => {
+                FlexBasisValue::LengthPercentage(to_length_percentage(value))
+            }
+        })
+    }
+}
+
+impl ToStyleValue for JustifyContent {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::JustifyContent(match self {
+            Self::Stretch => JustifyContentValue::Stretch,
+            Self::FlexStart => JustifyContentValue::FlexStart,
+            Self::FlexEnd => JustifyContentValue::FlexEnd,
+            Self::Center => JustifyContentValue::Center,
+            Self::SpaceBetween => JustifyContentValue::SpaceBetween,
+            Self::SpaceAround => JustifyContentValue::SpaceAround,
+            Self::SpaceEvenly => JustifyContentValue::SpaceEvenly,
+            Self::Start => JustifyContentValue::Start,
+            Self::End => JustifyContentValue::End,
+        })
+    }
+}
+
+impl ToStyleValue for AlignItems {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::AlignItems(match self {
+            Self::Stretch => AlignItemsValue::Stretch,
+            Self::FlexStart => AlignItemsValue::FlexStart,
+            Self::FlexEnd => AlignItemsValue::FlexEnd,
+            Self::Center => AlignItemsValue::Center,
+            Self::Baseline => AlignItemsValue::Baseline,
+            Self::Start => AlignItemsValue::Start,
+            Self::End => AlignItemsValue::End,
+        })
+    }
+}
+
+impl ToStyleValue for AlignSelf {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::AlignSelf(match self {
+            Self::Auto => AlignSelfValue::Auto,
+            Self::Stretch => AlignSelfValue::Stretch,
+            Self::FlexStart => AlignSelfValue::FlexStart,
+            Self::FlexEnd => AlignSelfValue::FlexEnd,
+            Self::Center => AlignSelfValue::Center,
+            Self::Baseline => AlignSelfValue::Baseline,
+            Self::Start => AlignSelfValue::Start,
+            Self::End => AlignSelfValue::End,
+        })
+    }
+}
+
+impl ToStyleValue for AlignContent {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::AlignContent(match self {
+            Self::Stretch => AlignContentValue::Stretch,
+            Self::FlexStart => AlignContentValue::FlexStart,
+            Self::FlexEnd => AlignContentValue::FlexEnd,
+            Self::Center => AlignContentValue::Center,
+            Self::SpaceBetween => AlignContentValue::SpaceBetween,
+            Self::SpaceAround => AlignContentValue::SpaceAround,
+            Self::SpaceEvenly => AlignContentValue::SpaceEvenly,
+        })
     }
 }
 
