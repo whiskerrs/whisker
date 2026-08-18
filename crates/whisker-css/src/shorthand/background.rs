@@ -243,6 +243,26 @@ mod tests {
     }
 
     #[test]
+    fn background_layer_propagates_size_format_errors() {
+        struct RejectCover;
+
+        impl fmt::Write for RejectCover {
+            fn write_str(&mut self, value: &str) -> fmt::Result {
+                if value == "cover" {
+                    Err(fmt::Error)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let layer = BackgroundLayer::new(ImageRef::None)
+            .position(Position::Keyword(PositionKeyword::Center))
+            .size(BackgroundSize::Cover);
+        assert_eq!(layer.to_css(&mut RejectCover), Err(fmt::Error));
+    }
+
+    #[test]
     fn background_layer_size_without_position_inserts_zero() {
         let layer = BackgroundLayer::new(ImageRef::Url(CssString::new("a.png")))
             .size(BackgroundSize::Cover);

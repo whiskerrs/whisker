@@ -81,6 +81,11 @@ mod tests {
     }
 
     #[test]
+    fn carriage_return_uses_css_escape() {
+        assert_eq!(CssString::new("a\rb").to_css_string(), "\"a\\D b\"");
+    }
+
+    #[test]
     fn from_str_and_string() {
         let from_str: CssString = "x".into();
         let from_string: CssString = String::from("y").into();
