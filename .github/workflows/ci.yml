@@ -143,6 +143,16 @@ jobs:
           cargo llvm-cov --workspace --lcov --output-path lcov.info
           cargo llvm-cov report --summary-only | tee coverage-summary.txt
 
+      - name: Enforce coverage for the new Rust renderer foundation
+        # Legacy crates are raised incrementally as they move onto the new
+        # engine. New Host-independent foundation crates start at the strict
+        # gate and must keep line, function, and region coverage at 100%.
+        run: |
+          cargo llvm-cov -p whisker-protocol --summary-only \
+            --fail-under-lines 100 \
+            --fail-under-functions 100 \
+            --fail-under-regions 100
+
       - name: Render Markdown summary
         # cargo-llvm-cov's summary is a wide fixed-width table; wrap it
         # in a Markdown fenced block so both the Job Summary and PR

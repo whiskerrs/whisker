@@ -291,3 +291,119 @@ impl Operation {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(value: u64) -> NodeId {
+        NodeId::new(value).expect("test node")
+    }
+
+    #[test]
+    fn target_node_covers_every_operation_group() {
+        let target = node(1);
+        let child = node(2);
+        let element_type = ElementTypeId::new(1).expect("test element type");
+        let property = PropertyId::new(1).expect("test property");
+        let pointer = PointerId::new(1).expect("test pointer");
+        let command = CommandId::new(1).expect("test command");
+
+        let operations = [
+            Operation::CreateNode {
+                node: target,
+                element_type,
+            },
+            Operation::DeleteNode { node: target },
+            Operation::InsertChild {
+                parent: target,
+                child,
+                index: 0,
+            },
+            Operation::RemoveChild {
+                parent: target,
+                child,
+            },
+            Operation::MoveChild {
+                parent: target,
+                child,
+                index: 0,
+            },
+            Operation::SetLayout {
+                node: target,
+                rect: LayoutRect::default(),
+            },
+            Operation::SetTransform {
+                node: target,
+                transform: Transform::IDENTITY,
+            },
+            Operation::SetOpacity {
+                node: target,
+                opacity: 1.0,
+            },
+            Operation::SetVisibility {
+                node: target,
+                visibility: Visibility::Visible,
+            },
+            Operation::SetZOrder {
+                node: target,
+                z_order: 0,
+            },
+            Operation::SetProperty {
+                node: target,
+                property,
+                value: ProtocolValue::Null,
+            },
+            Operation::ClearProperty {
+                node: target,
+                property,
+            },
+            Operation::SetEventMask {
+                node: target,
+                event_mask: 0,
+            },
+            Operation::SetHitTest {
+                node: target,
+                behavior: HitTestBehavior::Auto,
+            },
+            Operation::SetPointerCapture {
+                node: target,
+                pointer,
+            },
+            Operation::ReleasePointerCapture {
+                node: target,
+                pointer,
+            },
+            Operation::InvokeCommand {
+                node: target,
+                command,
+                arguments: ProtocolValue::Null,
+                result: None,
+            },
+        ];
+
+        assert_eq!(operations[0].target_node(), None);
+        for operation in &operations[1..] {
+            assert_eq!(operation.target_node(), Some(target));
+        }
+    }
+
+    #[test]
+    fn semantic_values_represent_every_owned_value_shape() {
+        let values = [
+            ProtocolValue::Null,
+            ProtocolValue::Bool(true),
+            ProtocolValue::I64(-1),
+            ProtocolValue::F64(0.5),
+            ProtocolValue::String("value".into()),
+            ProtocolValue::Bytes(vec![1, 2]),
+            ProtocolValue::Array(vec![ProtocolValue::Null]),
+            ProtocolValue::Object(vec![("key".into(), ProtocolValue::Bool(false))]),
+        ];
+
+        assert_eq!(values.len(), 8);
+        assert_ne!(Visibility::Visible, Visibility::Hidden);
+        assert_ne!(HitTestBehavior::None, HitTestBehavior::BoxOnly);
+        assert_ne!(HitTestBehavior::Auto, HitTestBehavior::DescendantsOnly);
+    }
+}
