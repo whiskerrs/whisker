@@ -13,13 +13,13 @@ impl Css {
     pub fn font_family(self, v: impl Into<String>) -> Self {
         // Lynx accepts either bare identifiers or quoted strings; quoting
         // unconditionally is always safe.
-        self.push(crate::StyleProperty::FontFamily, CssString::new(v))
+        self.push_typed(crate::StyleProperty::FontFamily, CssString::new(v))
     }
 
     /// Sets `font-size`. Lynx default: `14px`.
     /// <https://lynxjs.org/api/css/properties/font-size>
     pub fn font_size(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::FontSize, v.into())
+        self.push_typed(crate::StyleProperty::FontSize, v.into())
     }
 
     /// Sets `font-style`. Lynx default: `normal`.
@@ -44,7 +44,7 @@ impl Css {
     /// Sets `letter-spacing`. Accepts `<length>`.
     /// <https://lynxjs.org/api/css/properties/letter-spacing>
     pub fn letter_spacing(self, v: Length) -> Self {
-        self.push(crate::StyleProperty::LetterSpacing, v)
+        self.push_typed(crate::StyleProperty::LetterSpacing, v)
     }
 
     /// Sets `line-height`. Lynx default: `normal`.

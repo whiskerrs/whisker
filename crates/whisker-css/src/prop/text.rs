@@ -36,7 +36,7 @@ impl Css {
     /// Sets `text-decoration-thickness`.
     /// <https://lynxjs.org/api/css/properties/text-decoration-thickness>
     pub fn text_decoration_thickness(self, v: Length) -> Self {
-        self.push(crate::StyleProperty::TextDecorationThickness, v)
+        self.push_typed(crate::StyleProperty::TextDecorationThickness, v)
     }
 
     /// Sets `text-overflow`.
@@ -54,7 +54,7 @@ impl Css {
     /// Sets `text-indent` — first-line indentation.
     /// <https://lynxjs.org/api/css/properties/text-indent>
     pub fn text_indent(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::TextIndent, v.into())
+        self.push_typed(crate::StyleProperty::TextIndent, v.into())
     }
 
     /// Sets `vertical-align`.
@@ -90,13 +90,17 @@ impl Css {
     /// Sets `-webkit-line-clamp` — limit the visible line count.
     /// <https://lynxjs.org/api/css/properties/-webkit-line-clamp>
     pub fn webkit_line_clamp(self, v: u32) -> Self {
-        self.push_raw(crate::StyleProperty::WebkitLineClamp, v.to_string())
+        self.push_semantic(
+            crate::StyleProperty::WebkitLineClamp,
+            whisker_style::StyleValue::Integer(i64::from(v)),
+            v.to_string(),
+        )
     }
 
     /// Sets `text-stroke-width`.
     /// <https://lynxjs.org/api/css/properties/text-stroke-width>
     pub fn text_stroke_width(self, v: Length) -> Self {
-        self.push(crate::StyleProperty::TextStrokeWidth, v)
+        self.push_typed(crate::StyleProperty::TextStrokeWidth, v)
     }
 
     /// Sets `text-stroke-color`.

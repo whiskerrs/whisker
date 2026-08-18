@@ -17,43 +17,43 @@ impl Css {
     /// Sets `top` offset (positioned elements).
     /// <https://lynxjs.org/api/css/properties/top>
     pub fn top(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::Top, v.into())
+        self.push_typed(crate::StyleProperty::Top, v.into())
     }
 
     /// Sets `right` offset (positioned elements).
     /// <https://lynxjs.org/api/css/properties/right>
     pub fn right(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::Right, v.into())
+        self.push_typed(crate::StyleProperty::Right, v.into())
     }
 
     /// Sets `bottom` offset (positioned elements).
     /// <https://lynxjs.org/api/css/properties/bottom>
     pub fn bottom(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::Bottom, v.into())
+        self.push_typed(crate::StyleProperty::Bottom, v.into())
     }
 
     /// Sets `left` offset (positioned elements).
     /// <https://lynxjs.org/api/css/properties/left>
     pub fn left(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::Left, v.into())
+        self.push_typed(crate::StyleProperty::Left, v.into())
     }
 
     /// Sets `inset-inline-start` — logical start edge.
     /// <https://lynxjs.org/api/css/properties/inset-inline-start>
     pub fn inset_inline_start(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::InsetInlineStart, v.into())
+        self.push_typed(crate::StyleProperty::InsetInlineStart, v.into())
     }
 
     /// Sets `inset-inline-end` — logical end edge.
     /// <https://lynxjs.org/api/css/properties/inset-inline-end>
     pub fn inset_inline_end(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::InsetInlineEnd, v.into())
+        self.push_typed(crate::StyleProperty::InsetInlineEnd, v.into())
     }
 
     /// Sets `z-index`. Lynx default: `auto` (no stacking context promotion).
     /// <https://lynxjs.org/api/css/properties/z-index>
     pub fn z_index(self, v: i32) -> Self {
-        self.push(crate::StyleProperty::ZIndex, Integer(v))
+        self.push_typed(crate::StyleProperty::ZIndex, Integer(v))
     }
 }
 

@@ -33,7 +33,7 @@ impl Css {
     /// Sets `perspective` — distance from the viewer to the z=0 plane.
     /// <https://lynxjs.org/api/css/properties/perspective>
     pub fn perspective(self, v: Length) -> Self {
-        self.push(crate::StyleProperty::Perspective, v)
+        self.push_typed(crate::StyleProperty::Perspective, v)
     }
 
     /// Sets `perspective-origin`.

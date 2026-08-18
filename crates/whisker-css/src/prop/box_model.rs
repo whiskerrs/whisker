@@ -70,25 +70,25 @@ impl Css {
     /// Sets `padding-top`. Negative values are clamped to zero by Lynx.
     /// <https://lynxjs.org/api/css/properties/padding-top>
     pub fn padding_top(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::PaddingTop, v.into())
+        self.push_typed(crate::StyleProperty::PaddingTop, v.into())
     }
 
     /// Sets `padding-right`. Negative values are clamped to zero by Lynx.
     /// <https://lynxjs.org/api/css/properties/padding-right>
     pub fn padding_right(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::PaddingRight, v.into())
+        self.push_typed(crate::StyleProperty::PaddingRight, v.into())
     }
 
     /// Sets `padding-bottom`. Negative values are clamped to zero by Lynx.
     /// <https://lynxjs.org/api/css/properties/padding-bottom>
     pub fn padding_bottom(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::PaddingBottom, v.into())
+        self.push_typed(crate::StyleProperty::PaddingBottom, v.into())
     }
 
     /// Sets `padding-left`. Negative values are clamped to zero by Lynx.
     /// <https://lynxjs.org/api/css/properties/padding-left>
     pub fn padding_left(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::PaddingLeft, v.into())
+        self.push_typed(crate::StyleProperty::PaddingLeft, v.into())
     }
 
     // ---------- Margin longhand ----------
@@ -123,20 +123,20 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/gap>
     pub fn gap(self, v: impl Into<LengthPercentage>) -> Self {
         let v = v.into();
-        self.push(crate::StyleProperty::RowGap, v.clone())
-            .push(crate::StyleProperty::ColumnGap, v)
+        self.push_typed(crate::StyleProperty::RowGap, v.clone())
+            .push_typed(crate::StyleProperty::ColumnGap, v)
     }
 
     /// Sets `row-gap` — inline gap between rows in flex/grid layouts.
     /// <https://lynxjs.org/api/css/properties/row-gap>
     pub fn row_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::RowGap, v.into())
+        self.push_typed(crate::StyleProperty::RowGap, v.into())
     }
 
     /// Sets `column-gap` — gap between columns in flex/grid layouts.
     /// <https://lynxjs.org/api/css/properties/column-gap>
     pub fn column_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::ColumnGap, v.into())
+        self.push_typed(crate::StyleProperty::ColumnGap, v.into())
     }
 }
 

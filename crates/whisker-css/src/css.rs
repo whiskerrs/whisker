@@ -10,8 +10,34 @@
 
 use core::fmt;
 
+use crate::style_value::ToStyleValue;
 use crate::to_css::ToCss;
-use whisker_style::{StyleProperty, StylePropertyId};
+use whisker_style::{SpecifiedStyle, StyleProperty, StylePropertyId, StyleValue};
+
+/// A declaration still requiring the temporary Lynx CSS compatibility path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnmigratedStyleValue {
+    property: &'static str,
+}
+
+impl UnmigratedStyleValue {
+    /// Returns the compatibility property that has no semantic value yet.
+    pub const fn property(self) -> &'static str {
+        self.property
+    }
+}
+
+impl fmt::Display for UnmigratedStyleValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "style property `{}` still requires Lynx CSS compatibility",
+            self.property
+        )
+    }
+}
+
+impl std::error::Error for UnmigratedStyleValue {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PropertyKey {
@@ -40,7 +66,8 @@ impl PropertyKey {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CssProp {
     property: PropertyKey,
-    value: String,
+    style_value: Option<StyleValue>,
+    lynx_value: String,
 }
 
 impl CssProp {
@@ -49,14 +76,28 @@ impl CssProp {
     pub(crate) fn new(property: StyleProperty, value: String) -> Self {
         Self {
             property: PropertyKey::Known(property),
-            value,
+            style_value: None,
+            lynx_value: value,
+        }
+    }
+
+    pub(crate) fn typed(
+        property: StyleProperty,
+        style_value: StyleValue,
+        lynx_value: String,
+    ) -> Self {
+        Self {
+            property: PropertyKey::Known(property),
+            style_value: Some(style_value),
+            lynx_value,
         }
     }
 
     fn legacy(name: &'static str, value: String) -> Self {
         Self {
             property: PropertyKey::from_name(name),
-            value,
+            style_value: None,
+            lynx_value: value,
         }
     }
 
@@ -79,9 +120,15 @@ impl CssProp {
         self.property().map(StyleProperty::id)
     }
 
+    /// The semantic value, or `None` while this declaration still uses the
+    /// compatibility-only Lynx CSS representation.
+    pub fn style_value(&self) -> Option<&StyleValue> {
+        self.style_value.as_ref()
+    }
+
     /// The serialized CSS value (`"8px"`, `"rgb(26, 26, 46)"`).
     pub fn value(&self) -> &str {
-        &self.value
+        &self.lynx_value
     }
 }
 
@@ -89,7 +136,7 @@ impl ToCss for CssProp {
     fn to_css(&self, dest: &mut dyn fmt::Write) -> fmt::Result {
         dest.write_str(self.name())?;
         dest.write_str(": ")?;
-        dest.write_str(&self.value)?;
+        dest.write_str(&self.lynx_value)?;
         dest.write_char(';')
     }
 }
@@ -127,6 +174,30 @@ impl Css {
     pub(crate) fn push(mut self, property: StyleProperty, value: impl ToCss) -> Self {
         self.props
             .push(CssProp::new(property, value.to_css_string()));
+        self
+    }
+
+    /// Pushes a semantic value while retaining its temporary Lynx spelling.
+    pub(crate) fn push_typed<T>(mut self, property: StyleProperty, value: T) -> Self
+    where
+        T: ToCss + ToStyleValue,
+    {
+        let lynx_value = value.to_css_string();
+        self.props
+            .push(CssProp::typed(property, value.to_style_value(), lynx_value));
+        self
+    }
+
+    /// Pushes an already-normalized semantic value and its migration-only Lynx
+    /// spelling.
+    pub(crate) fn push_semantic(
+        mut self,
+        property: StyleProperty,
+        style_value: StyleValue,
+        lynx_value: impl Into<String>,
+    ) -> Self {
+        self.props
+            .push(CssProp::typed(property, style_value, lynx_value.into()));
         self
     }
 
@@ -191,6 +262,28 @@ impl Css {
         self.props.extend(other.props);
         self
     }
+
+    /// Converts this authoring fragment to renderer-independent typed storage.
+    ///
+    /// Migration-only declarations fail with the first property that still
+    /// depends on Lynx CSS text. No CSS parsing is performed.
+    pub fn to_specified_style(&self) -> Result<SpecifiedStyle, UnmigratedStyleValue> {
+        let mut style = SpecifiedStyle::new();
+        for property in &self.props {
+            let Some(value) = property.style_value.clone() else {
+                return Err(UnmigratedStyleValue {
+                    property: property.name(),
+                });
+            };
+            let Some(property_id) = property.property() else {
+                return Err(UnmigratedStyleValue {
+                    property: property.name(),
+                });
+            };
+            style = style.push(property_id, value);
+        }
+        Ok(style)
+    }
 }
 
 impl ToCss for Css {
@@ -227,6 +320,7 @@ impl From<&Css> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Length;
 
     #[test]
     fn empty_style_serializes_to_empty_string() {
@@ -325,6 +419,7 @@ mod tests {
         assert_eq!(prop.name(), "color");
         assert_eq!(prop.property(), Some(StyleProperty::Color));
         assert_eq!(prop.property_id(), Some(StyleProperty::Color.id()));
+        assert_eq!(prop.style_value(), None);
         assert_eq!(prop.value(), "red");
         assert_eq!(prop.to_css_string(), "color: red;");
     }
@@ -345,6 +440,41 @@ mod tests {
             .raw("color", "blue");
         assert_eq!(s.resolved().len(), 1);
         assert_eq!(s.to_css_string(), "color: blue;");
+    }
+
+    #[test]
+    fn typed_push_keeps_semantics_separate_from_lynx_text() {
+        let s = Css::new().push_typed(StyleProperty::PaddingTop, Length::Px(8.0));
+        let prop = s.entries().next().unwrap();
+        assert_eq!(
+            prop.style_value(),
+            Some(&StyleValue::Length(whisker_style::LengthValue::Dimension {
+                value: whisker_style::StyleNumber::new(8.0),
+                unit: whisker_style::LengthUnit::Px,
+            }))
+        );
+        assert_eq!(prop.value(), "8px");
+    }
+
+    #[test]
+    fn typed_fragment_converts_without_parsing_css() {
+        let css = Css::new().padding_top(Length::Px(8.0));
+        let style = css.to_specified_style().unwrap();
+        assert_eq!(style.len(), 1);
+        assert_eq!(style.resolved()[0].property(), StyleProperty::PaddingTop);
+    }
+
+    #[test]
+    fn compatibility_fragment_reports_the_blocking_property() {
+        let error = Css::new()
+            .raw("future-property", "value")
+            .to_specified_style()
+            .unwrap_err();
+        assert_eq!(error.property(), "future-property");
+        assert_eq!(
+            error.to_string(),
+            "style property `future-property` still requires Lynx CSS compatibility"
+        );
     }
 
     struct Token(&'static str);

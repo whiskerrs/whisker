@@ -63,13 +63,13 @@ impl Css {
     /// Sets `grid-row-gap` (legacy alias for `row-gap`).
     /// <https://lynxjs.org/api/css/properties/grid-row-gap>
     pub fn grid_row_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::GridRowGap, v.into())
+        self.push_typed(crate::StyleProperty::GridRowGap, v.into())
     }
 
     /// Sets `grid-column-gap` (legacy alias for `column-gap`).
     /// <https://lynxjs.org/api/css/properties/grid-column-gap>
     pub fn grid_column_gap(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::GridColumnGap, v.into())
+        self.push_typed(crate::StyleProperty::GridColumnGap, v.into())
     }
 }
 

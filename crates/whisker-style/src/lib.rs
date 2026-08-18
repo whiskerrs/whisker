@@ -7,6 +7,12 @@
 
 #![warn(missing_docs)]
 
+mod declaration;
 mod property;
+mod value;
 
+pub use declaration::{SpecifiedStyle, StyleDeclaration};
 pub use property::{PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyId};
+pub use value::{
+    CalcExpression, LengthPercentageValue, LengthUnit, LengthValue, StyleNumber, StyleValue,
+};

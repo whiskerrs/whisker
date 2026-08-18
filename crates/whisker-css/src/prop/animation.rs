@@ -12,7 +12,12 @@ impl Css {
     /// <https://lynxjs.org/api/css/properties/animation-name>
     pub fn animation_name(self, name: impl Into<String>) -> Self {
         // Names are CSS identifiers, written bare.
-        self.push_raw(crate::StyleProperty::AnimationName, name)
+        let name = name.into();
+        self.push_semantic(
+            crate::StyleProperty::AnimationName,
+            whisker_style::StyleValue::Text(name.clone()),
+            name,
+        )
     }
 
     /// Sets `animation-duration`.

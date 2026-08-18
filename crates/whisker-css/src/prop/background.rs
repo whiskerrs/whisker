@@ -37,13 +37,13 @@ impl Css {
     /// Sets `background-position-x` — horizontal component only.
     /// <https://lynxjs.org/api/css/properties/background-position-x>
     pub fn background_position_x(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BackgroundPositionX, v.into())
+        self.push_typed(crate::StyleProperty::BackgroundPositionX, v.into())
     }
 
     /// Sets `background-position-y` — vertical component only.
     /// <https://lynxjs.org/api/css/properties/background-position-y>
     pub fn background_position_y(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BackgroundPositionY, v.into())
+        self.push_typed(crate::StyleProperty::BackgroundPositionY, v.into())
     }
 
     /// Sets `background-size`.

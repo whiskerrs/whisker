@@ -23,8 +23,9 @@ impl Css {
     /// clamped to zero.
     /// <https://lynxjs.org/api/css/properties/flex-grow>
     pub fn flex_grow(self, v: f32) -> Self {
-        self.push_raw(
+        self.push_semantic(
             crate::StyleProperty::FlexGrow,
+            whisker_style::StyleValue::Number(whisker_style::StyleNumber::new(v)),
             crate::to_css::number_to_string(v),
         )
     }
@@ -33,8 +34,9 @@ impl Css {
     /// clamped to zero.
     /// <https://lynxjs.org/api/css/properties/flex-shrink>
     pub fn flex_shrink(self, v: f32) -> Self {
-        self.push_raw(
+        self.push_semantic(
             crate::StyleProperty::FlexShrink,
+            whisker_style::StyleValue::Number(whisker_style::StyleNumber::new(v)),
             crate::to_css::number_to_string(v),
         )
     }
@@ -72,7 +74,11 @@ impl Css {
     /// Sets `order` — controls layout order among flex/grid siblings.
     /// <https://lynxjs.org/api/css/properties/order>
     pub fn order(self, v: i32) -> Self {
-        self.push_raw(crate::StyleProperty::Order, v.to_string())
+        self.push_semantic(
+            crate::StyleProperty::Order,
+            whisker_style::StyleValue::Integer(i64::from(v)),
+            v.to_string(),
+        )
     }
 }
 

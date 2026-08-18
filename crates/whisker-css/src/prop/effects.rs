@@ -9,8 +9,9 @@ impl Css {
     /// Sets `opacity`. Lynx clamps to `0.0..=1.0`. Default: `1`.
     /// <https://lynxjs.org/api/css/properties/opacity>
     pub fn opacity(self, v: f32) -> Self {
-        self.push_raw(
+        self.push_semantic(
             crate::StyleProperty::Opacity,
+            whisker_style::StyleValue::Number(whisker_style::StyleNumber::new(v)),
             crate::to_css::number_to_string(v),
         )
     }
@@ -131,7 +132,7 @@ impl Css {
     /// Sets `outline-width`.
     /// <https://lynxjs.org/api/css/properties/outline-width>
     pub fn outline_width(self, v: Length) -> Self {
-        self.push(crate::StyleProperty::OutlineWidth, v)
+        self.push_typed(crate::StyleProperty::OutlineWidth, v)
     }
 
     /// Sets `outline-color`.
@@ -149,14 +150,14 @@ impl Css {
     /// Sets `outline-offset`.
     /// <https://lynxjs.org/api/css/properties/outline-offset>
     pub fn outline_offset(self, v: Length) -> Self {
-        self.push(crate::StyleProperty::OutlineOffset, v)
+        self.push_typed(crate::StyleProperty::OutlineOffset, v)
     }
 
     /// Sets `-x-caret-width`. Lynx accepts a length controlling the
     /// rendered caret thickness. Lynx 4.0 renamed the unprefixed
     /// `caret-width` (unlike `caret-color`, which kept its name).
     pub fn caret_width(self, v: Length) -> Self {
-        self.push(crate::StyleProperty::XCaretWidth, v)
+        self.push_typed(crate::StyleProperty::XCaretWidth, v)
     }
 
     /// Sets `-x-handle-color` — Lynx-only selection-handle color.
@@ -168,14 +169,15 @@ impl Css {
     /// Sets `-x-handle-size` — Lynx-only selection-handle size.
     /// <https://lynxjs.org/api/css/properties/-x-handle-size>
     pub fn x_handle_size(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::XHandleSize, v.into())
+        self.push_typed(crate::StyleProperty::XHandleSize, v.into())
     }
 
     /// Sets `-x-auto-font-size` — Lynx-only auto font-size flag.
     /// <https://lynxjs.org/api/css/properties/-x-auto-font-size>
     pub fn x_auto_font_size(self, enabled: bool) -> Self {
-        self.push_raw(
+        self.push_semantic(
             crate::StyleProperty::XAutoFontSize,
+            whisker_style::StyleValue::Bool(enabled),
             if enabled { "true" } else { "false" },
         )
     }

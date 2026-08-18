@@ -39,8 +39,9 @@ impl Css {
     /// Sets `linear-weight` — relative size weight along the main axis.
     /// <https://lynxjs.org/api/css/properties/linear-weight>
     pub fn linear_weight(self, v: f32) -> Self {
-        self.push_raw(
+        self.push_semantic(
             crate::StyleProperty::LinearWeight,
+            whisker_style::StyleValue::Number(whisker_style::StyleNumber::new(v)),
             crate::to_css::number_to_string(v),
         )
     }
@@ -48,8 +49,9 @@ impl Css {
     /// Sets `linear-weight-sum` — denominator for weight calculations.
     /// <https://lynxjs.org/api/css/properties/linear-weight-sum>
     pub fn linear_weight_sum(self, v: f32) -> Self {
-        self.push_raw(
+        self.push_semantic(
             crate::StyleProperty::LinearWeightSum,
+            whisker_style::StyleValue::Number(whisker_style::StyleNumber::new(v)),
             crate::to_css::number_to_string(v),
         )
     }

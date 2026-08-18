@@ -10,25 +10,25 @@ impl Css {
     /// Sets `border-top-width`.
     /// <https://lynxjs.org/api/css/properties/border-top-width>
     pub fn border_top_width(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BorderTopWidth, v.into())
+        self.push_typed(crate::StyleProperty::BorderTopWidth, v.into())
     }
 
     /// Sets `border-right-width`.
     /// <https://lynxjs.org/api/css/properties/border-right-width>
     pub fn border_right_width(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BorderRightWidth, v.into())
+        self.push_typed(crate::StyleProperty::BorderRightWidth, v.into())
     }
 
     /// Sets `border-bottom-width`.
     /// <https://lynxjs.org/api/css/properties/border-bottom-width>
     pub fn border_bottom_width(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BorderBottomWidth, v.into())
+        self.push_typed(crate::StyleProperty::BorderBottomWidth, v.into())
     }
 
     /// Sets `border-left-width`.
     /// <https://lynxjs.org/api/css/properties/border-left-width>
     pub fn border_left_width(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BorderLeftWidth, v.into())
+        self.push_typed(crate::StyleProperty::BorderLeftWidth, v.into())
     }
 
     // ---------- border-style longhands ----------
