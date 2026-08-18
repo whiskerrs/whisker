@@ -680,7 +680,7 @@ custom cascading properties. Behavioral configuration remains an element
 property even when it affects a visual component.
 
 At the Cargo level, a UI crate may depend on small `element-api` and
-`style-types` crates for stable IDs and schema types. That compile-time
+`whisker-style` crates for stable IDs and schema types. That compile-time
 dependency is not a runtime dependency on a concrete Style Engine or renderer.
 
 ## Standard View example

@@ -10,10 +10,8 @@
 
 use core::fmt;
 
-use crate::{
-    property::{StyleProperty, StylePropertyId},
-    to_css::ToCss,
-};
+use crate::to_css::ToCss;
+use whisker_style::{StyleProperty, StylePropertyId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PropertyKey {

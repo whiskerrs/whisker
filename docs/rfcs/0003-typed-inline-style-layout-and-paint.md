@@ -554,10 +554,8 @@ ordinary Whisker runtime module where runtime lifecycle or replaceability is
 needed:
 
 ```text
-whisker-style-types
+whisker-style
   stable typed values, property IDs, declaration storage
-
-whisker-style-engine module
   composition, applicability, inheritance, computed values, invalidation
 
 whisker-layout-engine module
@@ -566,18 +564,21 @@ whisker-layout-engine module
 whisker-motion module
   time, interpolation, springs, gestures, presentation updates
 
-whisker-scene module
+whisker-engine module
   coordinates style/layout/motion and emits renderer operations
 
 whisker-renderer module
   versioned Host boundary defined by RFC 0002
 ```
 
-UI element modules depend at compile time on stable style and element schema
-types, not on a concrete style engine, layout engine, or renderer. At runtime,
-the Scene Runtime resolves the required providers through versioned module
-interfaces and coordinates them. A Rust-only crate can implement one of these
-interfaces and still be a `whisker-module` under RFC 0001.
+UI element modules depend at compile time on `whisker-style` and stable element
+schema types, not on `whisker-engine`, a concrete layout engine, or a renderer.
+Style resolution is a deterministic Rust subsystem of `whisker-style`; the
+retained `whisker-engine` owns per-node state and decides when to invoke it.
+It does not require a separate `whisker-style-engine` crate or runtime module.
+At runtime, the Scene Runtime resolves replaceable providers through versioned
+module interfaces and coordinates them. A Rust-only crate can implement one of
+these interfaces and still be a `whisker-module` under RFC 0001.
 
 The exact crate split is not normative. The ownership boundaries, typed
 interfaces, and ability to substitute Rust-only recording/test providers are.

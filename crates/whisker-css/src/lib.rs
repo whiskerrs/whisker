@@ -48,7 +48,6 @@ pub mod data_type_ext;
 pub mod ext;
 pub mod keyword;
 pub mod prop;
-pub mod property;
 pub mod shorthand;
 mod to_css;
 pub mod value;
@@ -66,7 +65,6 @@ pub use crate::data_type::{
 };
 pub use crate::data_type_ext::{EasingFunction, Integer, Position};
 pub use crate::keyword::*;
-pub use crate::property::{PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyId};
 pub use crate::shorthand::{
     Animation, Background, BackgroundLayer, Border, Flex, Margin, MarginValue, Padding, Transform,
     TransformFn, Transition,
@@ -75,3 +73,4 @@ pub use crate::to_css::ToCss;
 pub use crate::value::{
     BorderRadius, FlexBasis, GridLine, GridTemplate, ImageRef, LineHeight, Repeated, Size,
 };
+pub use whisker_style::{PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyId};

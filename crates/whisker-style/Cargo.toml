@@ -1,5 +1,5 @@
 [package]
-name = "whisker-css"
+name = "whisker-style"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,6 @@ authors.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Type-safe CSS builder for Whisker. Mirrors the Lynx CSS surface."
+description = "Typed inline style model and resolution semantics for Whisker."
 
 [dependencies]
-whisker-macros = { workspace = true }
-whisker-style = { workspace = true }

@@ -25,7 +25,13 @@ runs on iOS and Android by driving Lynx's element tree directly.
                                    │     events, tasks). Renderer-agnostic.
                                    │
                                    ├──► whisker-css
-                                   │    (type-safe CSS builder + css!)
+                                   │    (css! authoring facade + temporary
+                                   │     Lynx CSS serializer)
+                                   │             │
+                                   │             ▼
+                                   │         whisker-style
+                                   │         (typed inline-style model,
+                                   │          stable property registry)
                                    │
                                    └──► whisker-driver ──► whisker-driver-sys
                                         (safe Lynx backend)  (unsafe FFI +
@@ -84,7 +90,8 @@ runs on iOS and Android by driving Lynx's element tree directly.
 | `whisker` | Umbrella. Users `use whisker::prelude::*`; almost everything is a re-export surfaced through one import root. | user crates |
 | `whisker-config` | `Config` metadata types users build in `whisker.rs`. Intentionally tiny. | `whisker`, `whisker-cli`, `whisker-cng` |
 | `whisker-runtime` | The reactive runtime (signals/effects/computed/owners/scheduler), the element tree, events, async tasks, and the renderer that wires effects to Lynx handles. Renderer-agnostic. | `whisker`, `whisker-driver` |
-| `whisker-css` | Type-safe CSS builder mirroring Lynx's CSS surface + the `css!` macro. | `whisker` |
+| `whisker-style` | Renderer-independent typed inline-style model and stable common-property registry. It will own declaration composition, fixed inheritance, and computed-style resolution as the migration advances. | `whisker-css`, future UI modules and `whisker-engine` |
+| `whisker-css` | Compatibility authoring facade for the existing `css!` API plus the temporary Lynx CSS serializer. It constructs and re-exports `whisker-style` identities rather than owning renderer semantics. | `whisker` |
 | `whisker-driver-sys` | Raw `extern "C"` decls matching the C++ bridge (`bridge/…`), plus the bridge sources themselves. Unsafe-only. | `whisker-driver` |
 | `whisker-driver` | Safe Rust wrappers over the bridge + the Lynx backend; exposes the host shims (`run`/`tick`) the iOS/Android shells call into. Bootstraps `subsecond` under `hot-reload`. | `whisker` |
 | `whisker-dev-runtime` | App-side WebSocket receiver + log capture for hot patches. **Compiled only with `hot-reload`** — release builds drop it entirely. | `whisker-driver` (feature-gated) |
