@@ -1,0 +1,15 @@
+[package]
+name = "whisker-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Host-independent retained scene and frame production for Whisker."
+
+[dependencies]
+whisker-protocol = { workspace = true }

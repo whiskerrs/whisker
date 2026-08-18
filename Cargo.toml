@@ -12,6 +12,7 @@ members = [
     "crates/whisker-dev-server",
     "crates/whisker-driver",
     "crates/whisker-driver-sys",
+    "crates/whisker-engine",
     "crates/whisker-macros",
     "crates/whisker-macro-syntax",
     "crates/whisker-fmt",
@@ -97,6 +98,7 @@ whisker-dev-runtime = { path = "crates/whisker-dev-runtime", version = "0.12.0" 
 whisker-dev-server = { path = "crates/whisker-dev-server", version = "0.12.0" }
 whisker-driver = { path = "crates/whisker-driver", version = "0.12.0" }
 whisker-driver-sys = { path = "crates/whisker-driver-sys", version = "0.12.0" }
+whisker-engine = { path = "crates/whisker-engine", version = "0.12.0" }
 whisker-macros = { path = "crates/whisker-macros", version = "0.12.0" }
 whisker-macro-syntax = { path = "crates/whisker-macro-syntax", version = "0.12.0" }
 whisker-fmt = { path = "crates/whisker-fmt", version = "0.12.0" }
