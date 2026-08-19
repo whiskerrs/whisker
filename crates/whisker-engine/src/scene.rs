@@ -5,8 +5,9 @@ use std::error::Error;
 use std::fmt;
 
 use whisker_protocol::{
-    CommandId, ElementTypeId, FrameHeader, FrameMode, FramePacket, HitTestBehavior, LayoutRect,
-    NodeId, Operation, PointerId, PropertyId, ProtocolValue, ProtocolVersion, ResultId, SurfaceId,
+    BoxClip, BoxPaint, CommandId, ElementTypeId, FrameHeader, FrameMode, FramePacket,
+    HitTestBehavior, InputPoint, LayoutRect, NodeId, Operation, OverflowClip, PointerId,
+    PropertyId, ProtocolValue, ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError,
     Transform, Visibility,
 };
 
@@ -17,10 +18,13 @@ pub struct SceneNode {
     parent: Option<NodeId>,
     children: Vec<NodeId>,
     layout: Option<LayoutRect>,
+    box_paint: Option<BoxPaint>,
+    clip: Option<BoxClip>,
     transform: Option<Transform>,
     opacity: Option<f32>,
     visibility: Option<Visibility>,
     z_order: Option<i32>,
+    text: Option<TextContent>,
     properties: BTreeMap<PropertyId, ProtocolValue>,
     event_mask: Option<u64>,
     hit_test: Option<HitTestBehavior>,
@@ -34,10 +38,13 @@ impl SceneNode {
             parent: None,
             children: Vec::new(),
             layout: None,
+            box_paint: None,
+            clip: None,
             transform: None,
             opacity: None,
             visibility: None,
             z_order: None,
+            text: None,
             properties: BTreeMap::new(),
             event_mask: None,
             hit_test: None,
@@ -58,6 +65,46 @@ impl SceneNode {
     /// Returns children in logical presentation order.
     pub fn children(&self) -> &[NodeId] {
         &self.children
+    }
+
+    /// Returns retained plain-text presentation when this is a text node.
+    pub const fn text(&self) -> Option<&TextContent> {
+        self.text.as_ref()
+    }
+
+    /// Returns retained background and border paint.
+    pub const fn box_paint(&self) -> Option<&BoxPaint> {
+        self.box_paint.as_ref()
+    }
+
+    /// Returns retained descendant overflow clipping.
+    pub const fn clip(&self) -> Option<BoxClip> {
+        self.clip
+    }
+
+    /// Returns retained group opacity.
+    pub const fn opacity(&self) -> Option<f32> {
+        self.opacity
+    }
+
+    /// Returns retained paint visibility.
+    pub const fn visibility(&self) -> Option<Visibility> {
+        self.visibility
+    }
+
+    /// Returns retained sibling stacking key.
+    pub const fn z_order(&self) -> Option<i32> {
+        self.z_order
+    }
+
+    /// Returns retained event subscription bits.
+    pub const fn event_mask(&self) -> Option<u64> {
+        self.event_mask
+    }
+
+    /// Returns retained Host hit-test behavior.
+    pub const fn hit_test(&self) -> Option<HitTestBehavior> {
+        self.hit_test
     }
 }
 
@@ -117,6 +164,13 @@ pub enum SceneError {
     },
     /// Layout or transform contained NaN or infinity.
     NonFiniteNumber,
+    /// Plain-text presentation contained invalid shaping inputs.
+    InvalidText {
+        /// Stable invalid-input category.
+        error: TextContentError,
+    },
+    /// Background or border paint contained an invalid value.
+    InvalidBoxPaint,
     /// A pending command result identifier was reused.
     DuplicateResultId {
         /// Duplicate result identifier.
@@ -143,10 +197,13 @@ impl Error for SceneError {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum DirtySlot {
     Layout(NodeId),
+    BoxPaint(NodeId),
+    Clip(NodeId),
     Transform(NodeId),
     Opacity(NodeId),
     Visibility(NodeId),
     ZOrder(NodeId),
+    Text(NodeId),
     Property(NodeId, PropertyId),
     EventMask(NodeId),
     HitTest(NodeId),
@@ -243,9 +300,81 @@ impl Scene {
         self.nodes.get(&node)
     }
 
+    /// Finds the visually topmost node at one surface-space point.
+    pub fn hit_test(&self, root: NodeId, point: InputPoint) -> Result<Option<NodeId>, SceneError> {
+        self.require_node(root)?;
+        Ok(self.hit_test_node(root, point, 0.0, 0.0))
+    }
+
+    /// Returns the node currently retaining one pointer capture.
+    pub fn pointer_capture_target(&self, pointer: PointerId) -> Option<NodeId> {
+        self.nodes
+            .iter()
+            .find_map(|(node, state)| state.captured_pointers.contains(&pointer).then_some(*node))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_scene_epoch_for_tests(&mut self, scene_epoch: u32) {
+        self.scene_epoch = scene_epoch;
+    }
+
+    fn hit_test_node(
+        &self,
+        node: NodeId,
+        point: InputPoint,
+        parent_x: f32,
+        parent_y: f32,
+    ) -> Option<NodeId> {
+        let state = self
+            .nodes
+            .get(&node)
+            .expect("hit-test traversal only visits retained nodes");
+        if state.visibility == Some(Visibility::Hidden)
+            || state.hit_test == Some(HitTestBehavior::None)
+        {
+            return None;
+        }
+        let layout = state.layout?;
+        let x = parent_x + layout.x;
+        let y = parent_y + layout.y;
+        let contains_x = point.x >= x && point.x <= x + layout.width;
+        let contains_y = point.y >= y && point.y <= y + layout.height;
+        let contains = contains_x && contains_y;
+        let children_clipped = state.clip.is_some_and(|clip| {
+            (clip.horizontal == OverflowClip::Hidden && !contains_x)
+                || (clip.vertical == OverflowClip::Hidden && !contains_y)
+        });
+
+        if state.hit_test != Some(HitTestBehavior::BoxOnly) && !children_clipped {
+            let mut children: Vec<(usize, NodeId)> =
+                state.children.iter().copied().enumerate().collect();
+            children.sort_by_key(|(index, child)| {
+                (
+                    self.nodes
+                        .get(child)
+                        .and_then(|child| child.z_order)
+                        .unwrap_or(0),
+                    *index,
+                )
+            });
+            for (_, child) in children.into_iter().rev() {
+                if let Some(target) = self.hit_test_node(child, point, x, y) {
+                    return Some(target);
+                }
+            }
+        }
+
+        (contains && state.hit_test != Some(HitTestBehavior::DescendantsOnly)).then_some(node)
+    }
+
     /// Returns whether a snapshot, mutation, command, or retry needs a frame.
     pub fn has_pending_work(&self) -> bool {
         self.pending.is_some() || self.needs_snapshot || !self.journal.operations.is_empty()
+    }
+
+    /// Returns whether a prepared frame is waiting for acceptance or discard.
+    pub fn has_prepared_frame(&self) -> bool {
+        self.pending.is_some()
     }
 
     /// Creates an unattached retained node and returns its epoch-unique ID.
@@ -407,6 +536,38 @@ impl Scene {
         Ok(())
     }
 
+    /// Sets background and border paint when it differs from retained state.
+    pub fn set_box_paint(&mut self, node: NodeId, paint: BoxPaint) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        if !paint.validate() {
+            return Err(SceneError::InvalidBoxPaint);
+        }
+        if self.require_node(node)?.box_paint.as_ref() == Some(&paint) {
+            return Ok(());
+        }
+        self.nodes
+            .get_mut(&node)
+            .expect("node checked above")
+            .box_paint = Some(paint.clone());
+        self.journal.push_coalesced(
+            DirtySlot::BoxPaint(node),
+            Operation::SetBoxPaint { node, paint },
+        );
+        Ok(())
+    }
+
+    /// Sets descendant overflow clipping when it differs from retained state.
+    pub fn set_clip(&mut self, node: NodeId, clip: BoxClip) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        if self.require_node(node)?.clip == Some(clip) {
+            return Ok(());
+        }
+        self.nodes.get_mut(&node).expect("node checked above").clip = Some(clip);
+        self.journal
+            .push_coalesced(DirtySlot::Clip(node), Operation::SetClip { node, clip });
+        Ok(())
+    }
+
     /// Sets a resolved transform when it differs from retained state.
     pub fn set_transform(&mut self, node: NodeId, transform: Transform) -> Result<(), SceneError> {
         self.ensure_mutable()?;
@@ -482,6 +643,21 @@ impl Scene {
             DirtySlot::ZOrder(node),
             Operation::SetZOrder { node, z_order },
         );
+        Ok(())
+    }
+
+    /// Sets plain-text presentation when it differs from retained state.
+    pub fn set_text(&mut self, node: NodeId, content: TextContent) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        content
+            .validate()
+            .map_err(|error| SceneError::InvalidText { error })?;
+        if self.require_node(node)?.text.as_ref() == Some(&content) {
+            return Ok(());
+        }
+        self.nodes.get_mut(&node).expect("node checked above").text = Some(content.clone());
+        self.journal
+            .push_coalesced(DirtySlot::Text(node), Operation::SetText { node, content });
         Ok(())
     }
 
@@ -795,6 +971,15 @@ impl Scene {
             if let Some(rect) = state.layout {
                 operations.push(Operation::SetLayout { node: *node, rect });
             }
+            if let Some(paint) = &state.box_paint {
+                operations.push(Operation::SetBoxPaint {
+                    node: *node,
+                    paint: paint.clone(),
+                });
+            }
+            if let Some(clip) = state.clip {
+                operations.push(Operation::SetClip { node: *node, clip });
+            }
             if let Some(transform) = state.transform {
                 operations.push(Operation::SetTransform {
                     node: *node,
@@ -817,6 +1002,12 @@ impl Scene {
                 operations.push(Operation::SetZOrder {
                     node: *node,
                     z_order,
+                });
+            }
+            if let Some(content) = &state.text {
+                operations.push(Operation::SetText {
+                    node: *node,
+                    content: content.clone(),
                 });
             }
             for (property, value) in &state.properties {
@@ -859,7 +1050,12 @@ impl Scene {
 mod tests {
     use super::*;
     use crate::{FrameSink, RecordingRenderer};
-    use whisker_protocol::{ApplyResult, ValidationError};
+    use whisker_protocol::{
+        ApplyResult, BorderLineStyle, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+        MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, PaintColor, PaintCorners,
+        PaintEdges, PaintLengthPercentage, TextContentError, TextMeasurePayload, TextMeasureStyle,
+        ValidationError,
+    };
 
     fn surface() -> SurfaceId {
         SurfaceId::new(1).expect("test surface")
@@ -887,6 +1083,60 @@ mod tests {
 
     fn result_id(value: u64) -> ResultId {
         ResultId::new(value).expect("test result")
+    }
+
+    fn text_content(text: &str) -> TextContent {
+        TextContent {
+            payload: TextMeasurePayload {
+                text: text.into(),
+                style: TextMeasureStyle {
+                    font_families: vec![MeasureFontFamily::System],
+                    font_size: 14.0,
+                    font_weight: 400,
+                    font_style: MeasureFontStyle::Normal,
+                    line_height: MeasureLineHeight::Normal,
+                    letter_spacing: 0.0,
+                },
+                locale: None,
+                direction: MeasureTextDirection::Auto,
+                wrap: MeasureTextWrap::Wrap,
+                max_lines: None,
+                overflow: MeasureTextOverflow::Clip,
+            },
+            paint: whisker_protocol::TextPaint::default(),
+            prepared_content: None,
+        }
+    }
+
+    fn box_paint(color: &str) -> BoxPaint {
+        let zero = PaintLengthPercentage::default();
+        BoxPaint {
+            background_color: PaintColor::Named(color.into()),
+            border_widths: PaintEdges {
+                top: zero,
+                right: zero,
+                bottom: zero,
+                left: zero,
+            },
+            border_colors: PaintEdges {
+                top: PaintColor::default(),
+                right: PaintColor::default(),
+                bottom: PaintColor::default(),
+                left: PaintColor::default(),
+            },
+            border_styles: PaintEdges {
+                top: BorderLineStyle::None,
+                right: BorderLineStyle::None,
+                bottom: BorderLineStyle::None,
+                left: BorderLineStyle::None,
+            },
+            border_radii: PaintCorners {
+                top_left: zero,
+                top_right: zero,
+                bottom_right: zero,
+                bottom_left: zero,
+            },
+        }
     }
 
     fn prepared(scene: &mut Scene) -> FramePacket {
@@ -934,6 +1184,13 @@ mod tests {
             height: 200.0,
         };
         scene.set_layout(root, rect).expect("layout");
+        let paint = box_paint("navy");
+        scene.set_box_paint(root, paint.clone()).expect("box paint");
+        let clip = BoxClip {
+            horizontal: OverflowClip::Hidden,
+            vertical: OverflowClip::Visible,
+        };
+        scene.set_clip(root, clip).expect("clip");
         scene
             .set_transform(root, Transform::IDENTITY)
             .expect("transform");
@@ -942,6 +1199,8 @@ mod tests {
             .set_visibility(root, Visibility::Visible)
             .expect("visibility");
         scene.set_z_order(root, -1).expect("z order");
+        let text = text_content("hello");
+        scene.set_text(root, text.clone()).expect("text");
         scene
             .set_property(root, property(1), ProtocolValue::String("red".into()))
             .expect("property");
@@ -965,6 +1224,14 @@ mod tests {
         assert_eq!(root_state.element_type(), element_type(1));
         assert_eq!(root_state.parent(), None);
         assert_eq!(root_state.children(), &[child]);
+        assert_eq!(root_state.text(), Some(&text));
+        assert_eq!(root_state.box_paint(), Some(&paint));
+        assert_eq!(root_state.clip(), Some(clip));
+        assert_eq!(root_state.opacity(), Some(0.75));
+        assert_eq!(root_state.visibility(), Some(Visibility::Visible));
+        assert_eq!(root_state.z_order(), Some(-1));
+        assert_eq!(root_state.event_mask(), Some(3));
+        assert_eq!(root_state.hit_test(), Some(HitTestBehavior::BoxOnly));
         assert_eq!(scene.node(child).expect("child state").parent(), Some(root));
         assert_eq!(scene.node_count(), 2);
 
@@ -996,6 +1263,23 @@ mod tests {
         scene.set_layout(root, first).expect("first layout");
         scene.set_layout(root, second).expect("second layout");
         scene.set_layout(root, second).expect("equal layout");
+        let first_paint = box_paint("red");
+        let second_paint = box_paint("blue");
+        scene
+            .set_box_paint(root, first_paint)
+            .expect("first box paint");
+        scene
+            .set_box_paint(root, second_paint.clone())
+            .expect("coalesced box paint");
+        scene
+            .set_box_paint(root, second_paint)
+            .expect("equal box paint");
+        let clip = BoxClip {
+            horizontal: OverflowClip::Visible,
+            vertical: OverflowClip::Hidden,
+        };
+        scene.set_clip(root, clip).expect("clip");
+        scene.set_clip(root, clip).expect("equal clip");
         scene
             .set_transform(root, Transform::IDENTITY)
             .expect("transform");
@@ -1013,6 +1297,9 @@ mod tests {
             .expect("equal visibility");
         scene.set_z_order(root, 4).expect("z order");
         scene.set_z_order(root, 4).expect("equal z order");
+        let text = text_content("updated");
+        scene.set_text(root, text.clone()).expect("text");
+        scene.set_text(root, text).expect("equal text");
         scene
             .set_property(root, property(1), ProtocolValue::I64(1))
             .expect("first property");
@@ -1139,6 +1426,10 @@ mod tests {
         assert!(scene.has_pending_work());
         assert_eq!(scene.prepare_frame(7), Err(SceneError::FramePending));
         assert_eq!(scene.set_opacity(root, 0.7), Err(SceneError::FramePending));
+        assert_eq!(
+            scene.set_text(root, text_content("pending")),
+            Err(SceneError::FramePending)
+        );
         assert_eq!(
             scene.create_node(element_type(3)),
             Err(SceneError::FramePending)
@@ -1329,10 +1620,19 @@ mod tests {
         let operations = [
             scene.delete_node(missing),
             scene.set_layout(missing, LayoutRect::default()),
+            scene.set_box_paint(missing, box_paint("missing")),
+            scene.set_clip(
+                missing,
+                BoxClip {
+                    horizontal: OverflowClip::Visible,
+                    vertical: OverflowClip::Visible,
+                },
+            ),
             scene.set_transform(missing, Transform::IDENTITY),
             scene.set_opacity(missing, 1.0),
             scene.set_visibility(missing, Visibility::Visible),
             scene.set_z_order(missing, 0),
+            scene.set_text(missing, text_content("missing")),
             scene.set_property(missing, property(1), ProtocolValue::Null),
             scene.clear_property(missing, property(1)),
             scene.set_event_mask(missing, 0),
@@ -1358,6 +1658,22 @@ mod tests {
         assert_eq!(
             scene.set_layout(root, invalid_layout),
             Err(SceneError::NonFiniteNumber)
+        );
+        let mut invalid_paint = box_paint("invalid");
+        invalid_paint.border_widths.top.length = -1.0;
+        assert_eq!(
+            scene.set_box_paint(root, invalid_paint),
+            Err(SceneError::InvalidBoxPaint)
+        );
+        let mut invalid_text = text_content("invalid");
+        invalid_text.payload.style.font_families.clear();
+        assert_eq!(
+            scene.set_text(root, invalid_text),
+            Err(SceneError::InvalidText {
+                error: TextContentError::InvalidMeasurement(
+                    whisker_protocol::MeasurementPayloadError::InvalidFontFamily,
+                ),
+            })
         );
         let mut invalid_transform = Transform::IDENTITY;
         invalid_transform.0[0] = f32::INFINITY;
@@ -1439,6 +1755,131 @@ mod tests {
                 expected: SurfaceId::new(2).expect("different recording surface"),
                 received: surface(),
             })
+        );
+    }
+
+    #[test]
+    fn hit_testing_respects_z_order_visibility_clip_and_pointer_capture() {
+        let mut scene = Scene::new(surface());
+        let root = scene.create_node(element_type(1)).unwrap();
+        let back = scene.create_node(element_type(1)).unwrap();
+        let front = scene.create_node(element_type(1)).unwrap();
+        scene.insert_child(root, back, 0).unwrap();
+        scene.insert_child(root, front, 1).unwrap();
+        assert_eq!(
+            scene.hit_test(root, InputPoint { x: 0.0, y: 0.0 }),
+            Ok(None)
+        );
+        scene
+            .set_layout(
+                root,
+                LayoutRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                },
+            )
+            .unwrap();
+        for child in [back, front] {
+            scene
+                .set_layout(
+                    child,
+                    LayoutRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 50.0,
+                        height: 50.0,
+                    },
+                )
+                .unwrap();
+        }
+        scene.set_z_order(back, 1).unwrap();
+        scene.set_z_order(front, 2).unwrap();
+        let point = InputPoint { x: 10.0, y: 10.0 };
+        assert_eq!(scene.hit_test(root, point), Ok(Some(front)));
+
+        scene.set_hit_test(root, HitTestBehavior::BoxOnly).unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(Some(root)));
+        scene.set_hit_test(root, HitTestBehavior::Auto).unwrap();
+
+        scene.set_visibility(front, Visibility::Hidden).unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(Some(back)));
+        scene.set_hit_test(front, HitTestBehavior::None).unwrap();
+        scene.set_visibility(front, Visibility::Visible).unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(Some(back)));
+        scene
+            .set_hit_test(back, HitTestBehavior::DescendantsOnly)
+            .unwrap();
+        assert_eq!(scene.hit_test(root, point), Ok(Some(root)));
+
+        scene
+            .set_layout(
+                back,
+                LayoutRect {
+                    x: 120.0,
+                    y: 0.0,
+                    width: 50.0,
+                    height: 50.0,
+                },
+            )
+            .unwrap();
+        scene.set_hit_test(back, HitTestBehavior::Auto).unwrap();
+        scene
+            .set_clip(
+                root,
+                BoxClip {
+                    horizontal: OverflowClip::Hidden,
+                    vertical: OverflowClip::Visible,
+                },
+            )
+            .unwrap();
+        let outside = InputPoint { x: 130.0, y: 10.0 };
+        assert_eq!(scene.hit_test(root, outside), Ok(None));
+        scene
+            .set_clip(
+                root,
+                BoxClip {
+                    horizontal: OverflowClip::Visible,
+                    vertical: OverflowClip::Visible,
+                },
+            )
+            .unwrap();
+        assert_eq!(scene.hit_test(root, outside), Ok(Some(back)));
+
+        scene
+            .set_layout(
+                back,
+                LayoutRect {
+                    x: 0.0,
+                    y: 120.0,
+                    width: 50.0,
+                    height: 50.0,
+                },
+            )
+            .unwrap();
+        scene
+            .set_clip(
+                root,
+                BoxClip {
+                    horizontal: OverflowClip::Visible,
+                    vertical: OverflowClip::Hidden,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            scene.hit_test(root, InputPoint { x: 10.0, y: 130.0 }),
+            Ok(None)
+        );
+
+        let pointer = pointer(9);
+        scene.set_pointer_capture(back, pointer).unwrap();
+        assert_eq!(scene.pointer_capture_target(pointer), Some(back));
+        scene.release_pointer_capture(back, pointer).unwrap();
+        assert_eq!(scene.pointer_capture_target(pointer), None);
+        assert_eq!(
+            scene.hit_test(node(999), point),
+            Err(SceneError::UnknownNode { node: node(999) })
         );
     }
 }

@@ -16,11 +16,30 @@
 
 mod frame;
 mod id;
+mod input;
+mod measurement;
 mod validation;
 
 pub use frame::{
-    FrameHeader, FrameMode, FramePacket, HitTestBehavior, LayoutRect, Operation, PROTOCOL_MAJOR,
-    PROTOCOL_MINOR, ProtocolValue, ProtocolVersion, Transform, Visibility,
+    BorderLineStyle, BoxClip, BoxPaint, FrameHeader, FrameMode, FramePacket, HitTestBehavior,
+    LayoutRect, Operation, OverflowClip, PROTOCOL_MAJOR, PROTOCOL_MINOR, PaintColor, PaintCorners,
+    PaintEdges, PaintLengthPercentage, ProtocolValue, ProtocolVersion, TextContent,
+    TextContentError, TextPaint, Transform, Visibility,
 };
-pub use id::{CommandId, ElementTypeId, NodeId, PointerId, PropertyId, ResultId, SurfaceId};
+pub use id::{
+    CommandId, ElementTypeId, MeasurementKey, MeasurementRequestId, NodeId, PointerId,
+    PreparedContentId, PropertyId, ResultId, SurfaceId,
+};
+pub use input::{
+    InputEvent, InputEventError, InputEventKind, InputPoint, PointerInput, PointerKind,
+};
+pub use measurement::{
+    AvailableSpace, CustomMeasurePayload, EmbeddedSurfaceMeasurePayload, MeasureConstraints,
+    MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+    MeasureTextOverflow, MeasureTextWrap, MeasuredSize, MeasurementBatchError, MeasurementKind,
+    MeasurementMetrics, MeasurementPayload, MeasurementPayloadError, MeasurementReady,
+    MeasurementRequest, MeasurementResponse, MeasurementSpec, NativeControlMeasurePayload,
+    PendingMeasurePolicy, ReplacedContentMeasurePayload, TextMeasurePayload, TextMeasureStyle,
+    UnsupportedMeasurementReason, validate_measurement_batch,
+};
 pub use validation::{ApplyResult, NodeProjection, SceneProjection, ValidationError};

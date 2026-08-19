@@ -21,19 +21,11 @@
 //!   `Copy` event-handler-prop wrapper (the `Signal<T>` idea applied
 //!   to closures instead of values).
 //!
-//! All operations are single-threaded — reactive UI runs on the Lynx
-//! TASM thread. The runtime lives in a `thread_local!`. Operations
-//! that need a runtime borrow go through [`with_runtime`], which gives
-//! a `&mut ReactiveRuntime` for the duration of the closure.
-//!
-//! ## Why a single thread-local
-//!
-//! Lynx renders UI on its TASM thread; Whisker's bridge schedules all
-//! reactive work onto that thread (see
-//! `whisker-driver-sys/bridge/src/whisker_bridge_common.cc`). A single
-//! thread-local instance keeps the implementation borrow-checker-clean
-//! (no `Arc`, no locks) while matching how the runtime actually
-//! executes.
+//! All operations are single-threaded. Public primitives resolve the
+//! currently entered runtime through a thread-local execution slot. A
+//! Host-facing [`RuntimeContext`](crate::RuntimeContext) swaps an isolated
+//! instance into that slot while it handles one event or frame, allowing
+//! several surfaces to share one UI thread without sharing reactive state.
 
 pub mod arc_signal;
 pub mod callback;
@@ -101,6 +93,10 @@ thread_local! {
 /// runtime would let callers violate borrow-window invariants.
 pub(crate) fn with_runtime<R>(f: impl FnOnce(&mut ReactiveRuntime) -> R) -> R {
     RUNTIME.with_borrow_mut(f)
+}
+
+pub(crate) fn swap_runtime(runtime: &mut ReactiveRuntime) {
+    RUNTIME.with_borrow_mut(|active| std::mem::swap(active, runtime));
 }
 
 /// Warn (debug only) when a reactive primitive is allocated outside

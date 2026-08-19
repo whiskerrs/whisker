@@ -193,6 +193,12 @@ pub enum StyleValue {
     FontWeight(FontWeightValue),
     /// Text color.
     Color(ColorValue),
+    /// Border line style.
+    BorderStyle(crate::BorderStyleValue),
+    /// Overflow behavior on one axis.
+    Overflow(crate::OverflowValue),
+    /// Paint visibility.
+    Visibility(crate::VisibilityValue),
     /// Line height.
     LineHeight(LineHeightValue),
     /// Layout algorithm.

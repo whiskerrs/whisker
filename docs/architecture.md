@@ -3,10 +3,12 @@
 How the workspace is sliced into crates, what each crate is for, and how
 the **`whisker run` dev loop** wires them together.
 
-Whisker is a cross-platform mobile UI framework for Rust built on the
-Lynx C++ engine. App code is plain Rust — a `#[whisker::main]` entry
-point and `render! { … }` views over fine-grained reactive signals — and
-runs on iOS and Android by driving Lynx's element tree directly.
+Whisker is a cross-platform UI framework for Rust migrating from its legacy
+Lynx C++ backend to a Rust-owned retained scene, layout, and scheduling model.
+App code remains plain Rust — a `#[whisker::main]` entry point and
+`render! { … }` views over fine-grained reactive signals. The legacy iOS and
+Android product path still drives Lynx while the new Host implementations are
+built against the retained protocol.
 
 ## Crate graph
 
@@ -42,16 +44,19 @@ runs on iOS and Android by driving Lynx's element tree directly.
                                          subsecond::apply_patch)
 
    whisker-protocol
-   (Host-independent frame model + transactional reference validator;
-    migration foundation, not yet wired into the production Lynx path)
+   (Host-independent frame, measurement, and input model with strict batch
+    validation and a transactional reference validator)
 
-   whisker-engine ──────────► whisker-protocol
-   (Host-independent retained scene + incremental frame journal;
-    migration foundation, not yet wired into render! or Lynx)
+   whisker-engine ──────────► whisker-layout + whisker-style
+          │                  (surface orchestration + dirty layout)
+          └────────────────► whisker-protocol
+   (Host-independent retained scene + incremental frame journal + batched
+    measurement state machine + Rust-facing Host traits; wired through
+    SurfaceRuntime and awaiting platform Hosts)
 
    whisker-layout ──────────► whisker-style + whisker-protocol
    (Host-independent retained Taffy tree + intrinsic-measurement boundary;
-    migration foundation, not yet wired into whisker-engine)
+    paired with the retained scene by whisker-engine::SurfaceEngine)
 
    subsecond  (= whisker-subsecond, [lib] name = "subsecond")
      pulled into whisker / whisker-driver / whisker-dev-runtime
@@ -91,9 +96,9 @@ runs on iOS and Android by driving Lynx's element tree directly.
 
 | Crate | One-line | Depended on by |
 |---|---|---|
-| `whisker` | Umbrella. Users `use whisker::prelude::*`; almost everything is a re-export surfaced through one import root. | user crates |
+| `whisker` | Umbrella. Users `use whisker::prelude::*`; almost everything is a re-export surfaced through one import root. `SurfaceRuntime` accepts `render!` mutations and drives retained rendering. `RuntimeInstance` owns the final Host-driven application lifecycle and enters an isolated runtime context for events and frames; it has no thread or event loop of its own. | user crates |
 | `whisker-config` | `Config` metadata types users build in `whisker.rs`. Intentionally tiny. | `whisker`, `whisker-cli`, `whisker-cng` |
-| `whisker-runtime` | The reactive runtime (signals/effects/computed/owners/scheduler), the element tree, events, async tasks, and the renderer that wires effects to Lynx handles. Renderer-agnostic. | `whisker`, `whisker-driver` |
+| `whisker-runtime` | Signals/effects/computed/owners, renderer-agnostic view operations, events, local async tasks, any-thread wake handles, and background-to-UI dispatch. `RuntimeContext` isolates these values per mounted instance while letting the Host drive short transactions on one UI thread. | `whisker`, `whisker-driver` |
 | `whisker-style` | Renderer-independent typed inline-style model and stable common-property registry. It owns declaration composition, fixed inheritance for seven text properties, and computed text plus box/flex layout inputs without exposing Taffy types. | `whisker-css`, future UI modules, `whisker-layout`, and `whisker-engine` |
 | `whisker-css` | Compatibility authoring facade for the existing `css!` API plus the temporary Lynx CSS serializer. It constructs and re-exports `whisker-style` identities rather than owning renderer semantics. | `whisker` |
 | `whisker-driver-sys` | Raw `extern "C"` decls matching the C++ bridge (`bridge/…`), plus the bridge sources themselves. Unsafe-only. | `whisker-driver` |
@@ -105,9 +110,9 @@ runs on iOS and Android by driving Lynx's element tree directly.
 | `whisker-build` | Lynx artifact fetch, cargo cross-compile, AAR/xcframework packaging. | `whisker-dev-server` |
 | `whisker-cng` | Continuous Native Generation: pure renderer of `gen/{android,ios}/` from Config, fingerprint-gated. No CLI surface, no side effects. | `whisker-cli` |
 | `whisker-plugin` | CNG plugin surface: `Plugin` trait, IR types, JSON envelope, subprocess runner shared by the engine and 3rd-party plugin binaries. | `whisker-cng`, 3rd-party plugins |
-| `whisker-protocol` | Host-independent semantic frame types, stable IDs, and transactional retained-tree validation. It is currently a migration foundation and is not yet used by the production Lynx path. | future scene engine and renderer providers |
-| `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, and frame acceptance/recovery lifecycle. It is currently a migration foundation and is not yet connected to `render!`. | future scene runtime |
-| `whisker-layout` | Host-independent retained box layout. It privately owns Taffy, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer, and returns deterministic logical-pixel snapshots. It is not yet connected to `whisker-engine`. | future scene runtime |
+| `whisker-protocol` | Host-independent semantic frame, intrinsic-measurement, and normalized input types; stable IDs; strict batch validation; and transactional retained-tree validation. Plain text and common box paint are retained semantic presentation, while pointer/provider events enter Rust through typed input values. The legacy production Lynx path does not consume this protocol. | scene engine and Host providers |
+| `whisker-engine` | Host-independent retained scene, coalescing mutation journal, snapshot/delta production, frame acceptance/recovery, and retained measurement coordination. `SurfaceEngine` is the core surface state machine, not a Lynx migration adapter: it pairs Scene and Taffy, batches Host measurements, lowers computed text/box paint and overflow clips, presents directly through `FrameSink`, and applies acknowledgements. Generated cross-language bindings and platform providers are not implemented. | scene runtime and renderer providers |
+| `whisker-layout` | Host-independent retained box layout. It privately owns Taffy, accepts `ComputedLayoutStyle` and stable `NodeId`s, calls an abstract intrinsic measurer using protocol-owned constraints, and returns deterministic logical-pixel snapshots. `whisker-engine::SurfaceEngine` owns its coordination with scene/frame production. | `whisker-engine`, future scene runtime |
 | `whisker-subsecond` | Whisker's fork of DioxusLabs `subsecond` — anchors the ASLR-slide lookup on `whisker_aslr_anchor` (emitted by `#[whisker::main]`) instead of `main`. `[lib] name = "subsecond"` keeps `use subsecond::*`. | `whisker`, `whisker-driver`, `whisker-dev-runtime` |
 
 ### Modules and the router (`packages/*`)
@@ -137,14 +142,18 @@ Three layers, each renderer-agnostic until the bottom:
    signals, effects, computed, owners/scopes, batching scheduler. No
    virtual DOM and **no diff pass**. See
    [`reactivity-design.md`](reactivity-design.md).
-2. **View / renderer** (`whisker-runtime/src/view`) — `Element` is a
-   `Copy` handle wrapping a Lynx `FiberElement`. The `render!` macro and
-   builder chains create elements, set attributes once for static props,
-   and wrap dynamic props in `effect`s that call `SetAttribute` /
-   `SetRawInlineStyles` directly. Control flow (`Show`, `ForEach`) and
-   the native `<list>` provider live here too.
-3. **Driver / bridge** (`whisker-driver` + `whisker-driver-sys`) — the
-   Lynx C++ engine boundary.
+2. **View / renderer** (`whisker-runtime/src/view`) — `Element` is a small,
+   `Copy`, runtime-local handle. The installed renderer maps it either to a
+   retained `NodeId` or, on the migration path, a Lynx element. `render!`
+   creates the tree and dynamic props use effects to emit typed mutations.
+3. **Retained surface** (`whisker::SurfaceRuntime` → `whisker-engine`) — maps
+   authoring operations into scene/layout state, routes input in Rust, batches
+   Host measurement, and presents transactional frame packets.
+
+The current product path also retains a separate **legacy Driver / bridge**
+(`whisker-driver` + `whisker-driver-sys`) for Lynx. It is not an architectural
+layer in the new retained path and will be removed after the platform Hosts
+replace it.
 
 ### The Lynx bridge
 

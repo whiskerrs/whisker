@@ -2,7 +2,7 @@
 //! built-in element tag.
 //!
 //! The element builder's `style(...)` method accepts any value that
-//! converts into a [`Style`], which absorbs four sources:
+//! converts into a [`Style`], which absorbs three source families:
 //!
 //! 1. A [`whisker_css::Css`] builder value (`Css::new().padding(8.px())`).
 //! 2. A raw CSS string (`String` or `&str` / `&String`).
@@ -24,19 +24,21 @@ use whisker_runtime::reactive::{ReadSignal, RwSignal, effect};
 use whisker_runtime::view::Element;
 use whisker_runtime::view::set_inline_styles;
 
-/// Value the `style:` builder method receives. One of the two
-/// variants below.
+/// Value the `style:` builder method receives.
 ///
-/// `Clone` is cheap: the `Dynamic` variant holds an [`Rc`], so a
-/// clone shares the same closure rather than re-boxing it. This lets
+/// `Clone` is cheap: dynamic variants hold an [`Rc`], so a clone
+/// shares the same closure rather than re-boxing it. This lets
 /// the `#[component]` / `#[module_component]` macros store a `Style`
 /// prop and re-clone it on every re-invoke (hot-reload remount path).
 #[derive(Clone)]
 pub enum Style {
+    /// Typed declarations that can flow directly into the new scene engine.
+    Typed(Css),
     /// CSS source the builder applies once, at element-construction
-    /// time. Both [`Css`] builder values and raw strings collapse to
-    /// this variant.
+    /// time. Raw string inputs use this compatibility variant.
     Static(String),
+    /// Typed declarations produced by a reactive subscription.
+    DynamicTyped(Rc<dyn Fn() -> Css + 'static>),
     /// CSS source produced by a reactive subscription. The shared
     /// closure is called inside an `effect` and re-fires whenever
     /// any signal it reads changes.
@@ -56,13 +58,13 @@ impl Default for Style {
 
 impl From<Css> for Style {
     fn from(s: Css) -> Self {
-        Style::Static(s.to_css_string())
+        Style::Typed(s)
     }
 }
 
 impl From<&Css> for Style {
     fn from(s: &Css) -> Self {
-        Style::Static(s.to_css_string())
+        Style::Typed(s.clone())
     }
 }
 
@@ -92,7 +94,7 @@ impl From<&String> for Style {
 
 impl From<ReadSignal<Css>> for Style {
     fn from(sig: ReadSignal<Css>) -> Self {
-        Style::Dynamic(Rc::new(move || sig.get().to_css_string()))
+        Style::DynamicTyped(Rc::new(move || sig.get()))
     }
 }
 
@@ -120,11 +122,24 @@ impl From<RwSignal<String>> for Style {
 /// reads fires.
 pub fn apply_style(h: Element, v: impl Into<Style>) {
     match v.into() {
+        Style::Typed(css) => apply_typed_or_legacy(h, &css),
         Style::Static(css) => set_inline_styles(h, &css),
+        Style::DynamicTyped(f) => {
+            effect(move || apply_typed_or_legacy(h, &f()));
+        }
         Style::Dynamic(f) => {
             effect(move || set_inline_styles(h, &f()));
         }
     }
+}
+
+fn apply_typed_or_legacy(h: Element, css: &Css) {
+    if let Ok(specified) = css.to_specified_style()
+        && whisker_runtime::view::set_specified_style(h, &specified)
+    {
+        return;
+    }
+    set_inline_styles(h, &css.to_css_string());
 }
 
 #[cfg(test)]
@@ -134,7 +149,9 @@ mod tests {
 
     fn css(d: Style) -> String {
         match d {
+            Style::Typed(s) => s.to_css_string(),
             Style::Static(s) => s,
+            Style::DynamicTyped(f) => f().to_css_string(),
             Style::Dynamic(f) => f(),
         }
     }

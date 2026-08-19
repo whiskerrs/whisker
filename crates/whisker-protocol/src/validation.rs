@@ -6,6 +6,7 @@ use std::fmt;
 
 use crate::{
     ElementTypeId, FrameMode, FramePacket, NodeId, Operation, PROTOCOL_MAJOR, ResultId, SurfaceId,
+    TextContentError,
 };
 
 /// Minimal retained state for one node in a reference projection.
@@ -125,8 +126,15 @@ pub enum ValidationError {
         /// Invalid opacity.
         opacity: f32,
     },
+    /// Box paint contained an invalid color, length, or percentage.
+    InvalidBoxPaint,
     /// A geometry or transform component was NaN or infinite.
     NonFiniteNumber,
+    /// Plain-text presentation contained invalid shaping inputs.
+    InvalidText {
+        /// Stable invalid-input category.
+        error: TextContentError,
+    },
     /// One packet reused a command result identifier.
     DuplicateResultId {
         /// Duplicate result correlation.
@@ -303,6 +311,12 @@ impl SceneProjection {
                     return Err(ValidationError::NonFiniteNumber);
                 }
             }
+            Operation::SetBoxPaint { node, paint } => {
+                self.require_node(*node)?;
+                if !paint.validate() {
+                    return Err(ValidationError::InvalidBoxPaint);
+                }
+            }
             Operation::SetTransform { node, transform } => {
                 self.require_node(*node)?;
                 if !transform.0.into_iter().all(f32::is_finite) {
@@ -315,6 +329,12 @@ impl SceneProjection {
                     return Err(ValidationError::InvalidOpacity { opacity: *opacity });
                 }
             }
+            Operation::SetText { node, content } => {
+                self.require_node(*node)?;
+                content
+                    .validate()
+                    .map_err(|error| ValidationError::InvalidText { error })?;
+            }
             Operation::InvokeCommand { node, result, .. } => {
                 self.require_node(*node)?;
                 if let Some(result) = result
@@ -323,7 +343,8 @@ impl SceneProjection {
                     return Err(ValidationError::DuplicateResultId { result: *result });
                 }
             }
-            Operation::SetVisibility { node, .. }
+            Operation::SetClip { node, .. }
+            | Operation::SetVisibility { node, .. }
             | Operation::SetZOrder { node, .. }
             | Operation::SetProperty { node, .. }
             | Operation::ClearProperty { node, .. }
@@ -478,8 +499,11 @@ impl SceneProjection {
 mod tests {
     use super::*;
     use crate::{
-        CommandId, ElementTypeId, FrameHeader, HitTestBehavior, LayoutRect, Operation, PointerId,
-        PropertyId, ProtocolValue, ProtocolVersion, ResultId, Transform, Visibility,
+        CommandId, ElementTypeId, FrameHeader, HitTestBehavior, LayoutRect, MeasureFontFamily,
+        MeasureFontStyle, MeasureLineHeight, MeasureTextDirection, MeasureTextOverflow,
+        MeasureTextWrap, Operation, PointerId, PropertyId, ProtocolValue, ProtocolVersion,
+        ResultId, TextContent, TextContentError, TextMeasurePayload, TextMeasureStyle, Transform,
+        Visibility,
     };
 
     fn surface() -> SurfaceId {
@@ -492,6 +516,29 @@ mod tests {
 
     fn element_type() -> ElementTypeId {
         ElementTypeId::new(1).expect("test element type")
+    }
+
+    fn text_content(text: &str) -> TextContent {
+        TextContent {
+            payload: TextMeasurePayload {
+                text: text.into(),
+                style: TextMeasureStyle {
+                    font_families: vec![MeasureFontFamily::System],
+                    font_size: 14.0,
+                    font_weight: 400,
+                    font_style: MeasureFontStyle::Normal,
+                    line_height: MeasureLineHeight::Normal,
+                    letter_spacing: 0.0,
+                },
+                locale: None,
+                direction: MeasureTextDirection::Auto,
+                wrap: MeasureTextWrap::Wrap,
+                max_lines: None,
+                overflow: MeasureTextOverflow::Clip,
+            },
+            paint: crate::TextPaint::default(),
+            prepared_content: None,
+        }
     }
 
     fn packet(
@@ -559,6 +606,40 @@ mod tests {
             revision + 1,
             operations,
         ))
+    }
+
+    fn box_paint() -> crate::BoxPaint {
+        let zero = crate::PaintLengthPercentage {
+            length: 0.0,
+            fraction: 0.0,
+        };
+        crate::BoxPaint {
+            background_color: crate::PaintColor::default(),
+            border_widths: crate::PaintEdges {
+                top: zero,
+                right: zero,
+                bottom: zero,
+                left: zero,
+            },
+            border_colors: crate::PaintEdges {
+                top: crate::PaintColor::default(),
+                right: crate::PaintColor::default(),
+                bottom: crate::PaintColor::default(),
+                left: crate::PaintColor::default(),
+            },
+            border_styles: crate::PaintEdges {
+                top: crate::BorderLineStyle::None,
+                right: crate::BorderLineStyle::None,
+                bottom: crate::BorderLineStyle::None,
+                left: crate::BorderLineStyle::None,
+            },
+            border_radii: crate::PaintCorners {
+                top_left: zero,
+                top_right: zero,
+                bottom_right: zero,
+                bottom_left: zero,
+            },
+        }
     }
 
     #[test]
@@ -843,6 +924,17 @@ mod tests {
                         height: 40.0,
                     },
                 },
+                Operation::SetBoxPaint {
+                    node: root,
+                    paint: box_paint(),
+                },
+                Operation::SetClip {
+                    node: root,
+                    clip: crate::BoxClip {
+                        horizontal: crate::OverflowClip::Hidden,
+                        vertical: crate::OverflowClip::Visible,
+                    },
+                },
                 Operation::SetTransform {
                     node: root,
                     transform: Transform::IDENTITY,
@@ -862,6 +954,10 @@ mod tests {
                 Operation::SetZOrder {
                     node: root,
                     z_order: -2,
+                },
+                Operation::SetText {
+                    node: root,
+                    content: text_content("hello"),
                 },
                 Operation::SetProperty {
                     node: root,
@@ -970,6 +1066,17 @@ mod tests {
                 node: missing,
                 rect: LayoutRect::default(),
             },
+            Operation::SetBoxPaint {
+                node: missing,
+                paint: box_paint(),
+            },
+            Operation::SetClip {
+                node: missing,
+                clip: crate::BoxClip {
+                    horizontal: crate::OverflowClip::Visible,
+                    vertical: crate::OverflowClip::Visible,
+                },
+            },
             Operation::SetTransform {
                 node: missing,
                 transform: Transform::IDENTITY,
@@ -977,6 +1084,10 @@ mod tests {
             Operation::SetOpacity {
                 node: missing,
                 opacity: 1.0,
+            },
+            Operation::SetText {
+                node: missing,
+                content: text_content("missing"),
             },
             Operation::SetProperty {
                 node: missing,
@@ -996,6 +1107,46 @@ mod tests {
             assert_eq!(error, ValidationError::UnknownNode { node: missing });
             assert_eq!(scene.revision(), 1);
         }
+    }
+
+    #[test]
+    fn malformed_box_paint_is_rejected_transactionally() {
+        let (mut scene, root, _) = initial_tree();
+        let mut paint = box_paint();
+        paint.border_radii.bottom_left.length = -1.0;
+
+        let error = apply_next(
+            &mut scene,
+            vec![Operation::SetBoxPaint { node: root, paint }],
+        )
+        .expect_err("invalid box paint");
+
+        assert_eq!(error, ValidationError::InvalidBoxPaint);
+        assert_eq!(scene.revision(), 1);
+    }
+
+    #[test]
+    fn malformed_text_is_rejected_transactionally() {
+        let (mut scene, root, _) = initial_tree();
+        let mut content = text_content("invalid");
+        content.payload.style.font_families.clear();
+        let error = apply_next(
+            &mut scene,
+            vec![Operation::SetText {
+                node: root,
+                content,
+            }],
+        )
+        .expect_err("invalid text payload");
+        assert_eq!(
+            error,
+            ValidationError::InvalidText {
+                error: TextContentError::InvalidMeasurement(
+                    crate::MeasurementPayloadError::InvalidFontFamily,
+                ),
+            }
+        );
+        assert_eq!(scene.revision(), 1);
     }
 
     #[test]

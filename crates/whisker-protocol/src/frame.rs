@@ -1,6 +1,217 @@
 //! Owned semantic frame values.
 
-use crate::{CommandId, ElementTypeId, NodeId, PointerId, PropertyId, ResultId, SurfaceId};
+use crate::{
+    CommandId, ElementTypeId, MeasurementPayloadError, NodeId, PointerId, PreparedContentId,
+    PropertyId, ResultId, SurfaceId, TextMeasurePayload,
+};
+
+/// Backend-independent color used by semantic paint operations.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PaintColor {
+    /// A canonical named color retained from the typed authoring value.
+    Named(String),
+    /// An sRGB color with an alpha channel in `0.0..=1.0`.
+    Srgba {
+        /// Red channel.
+        red: u8,
+        /// Green channel.
+        green: u8,
+        /// Blue channel.
+        blue: u8,
+        /// Alpha channel.
+        alpha: f32,
+    },
+    /// An HSL color with percentage saturation/lightness and alpha.
+    Hsla {
+        /// Hue in degrees. Values outside one turn are permitted.
+        hue_degrees: f32,
+        /// Saturation percentage in `0.0..=100.0`.
+        saturation: f32,
+        /// Lightness percentage in `0.0..=100.0`.
+        lightness: f32,
+        /// Alpha channel in `0.0..=1.0`.
+        alpha: f32,
+    },
+}
+
+impl PaintColor {
+    fn is_valid(&self) -> bool {
+        match self {
+            Self::Named(name) => !name.trim().is_empty(),
+            Self::Srgba { alpha, .. } => alpha.is_finite() && (0.0..=1.0).contains(alpha),
+            Self::Hsla {
+                hue_degrees,
+                saturation,
+                lightness,
+                alpha,
+            } => {
+                hue_degrees.is_finite()
+                    && saturation.is_finite()
+                    && (0.0..=100.0).contains(saturation)
+                    && lightness.is_finite()
+                    && (0.0..=100.0).contains(lightness)
+                    && alpha.is_finite()
+                    && (0.0..=1.0).contains(alpha)
+            }
+        }
+    }
+}
+
+impl Default for PaintColor {
+    fn default() -> Self {
+        Self::Srgba {
+            red: 0,
+            green: 0,
+            blue: 0,
+            alpha: 1.0,
+        }
+    }
+}
+
+/// Resolved paint values for plain text.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextPaint {
+    /// Foreground glyph color.
+    pub foreground: PaintColor,
+}
+
+/// An affine logical length retaining a border-box-relative fraction.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PaintLengthPercentage {
+    /// Absolute logical-pixel component.
+    pub length: f32,
+    /// Fraction of the relevant border-box axis, where `1.0` is 100 percent.
+    pub fraction: f32,
+}
+
+impl PaintLengthPercentage {
+    fn is_valid(self) -> bool {
+        self.length.is_finite()
+            && self.length >= 0.0
+            && self.fraction.is_finite()
+            && self.fraction >= 0.0
+    }
+}
+
+/// Four physical edges in top, right, bottom, left order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaintEdges<T> {
+    /// Top edge.
+    pub top: T,
+    /// Right edge.
+    pub right: T,
+    /// Bottom edge.
+    pub bottom: T,
+    /// Left edge.
+    pub left: T,
+}
+
+/// Four corners in top-left, top-right, bottom-right, bottom-left order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaintCorners<T> {
+    /// Top-left corner.
+    pub top_left: T,
+    /// Top-right corner.
+    pub top_right: T,
+    /// Bottom-right corner.
+    pub bottom_right: T,
+    /// Bottom-left corner.
+    pub bottom_left: T,
+}
+
+/// Renderer-independent border line style.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BorderLineStyle {
+    /// No line is painted.
+    None,
+    /// Hidden line, equivalent to none outside table conflict resolution.
+    Hidden,
+    /// One solid line.
+    Solid,
+    /// Dashed line.
+    Dashed,
+    /// Dotted line.
+    Dotted,
+    /// Two parallel lines.
+    Double,
+    /// Grooved 3-D line.
+    Groove,
+    /// Ridged 3-D line.
+    Ridge,
+    /// Inset 3-D line.
+    Inset,
+    /// Outset 3-D line.
+    Outset,
+}
+
+/// Resolved background and border paint for one box.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoxPaint {
+    /// Background color painted behind content and borders.
+    pub background_color: PaintColor,
+    /// Border widths retaining their percentage components.
+    pub border_widths: PaintEdges<PaintLengthPercentage>,
+    /// Border colors.
+    pub border_colors: PaintEdges<PaintColor>,
+    /// Border line styles.
+    pub border_styles: PaintEdges<BorderLineStyle>,
+    /// Corner radii retaining their border-box percentage components.
+    pub border_radii: PaintCorners<PaintLengthPercentage>,
+}
+
+impl BoxPaint {
+    /// Validates every numeric and color component.
+    pub fn validate(&self) -> bool {
+        self.background_color.is_valid()
+            && [
+                self.border_widths.top,
+                self.border_widths.right,
+                self.border_widths.bottom,
+                self.border_widths.left,
+                self.border_radii.top_left,
+                self.border_radii.top_right,
+                self.border_radii.bottom_right,
+                self.border_radii.bottom_left,
+            ]
+            .into_iter()
+            .all(PaintLengthPercentage::is_valid)
+            && [
+                &self.border_colors.top,
+                &self.border_colors.right,
+                &self.border_colors.bottom,
+                &self.border_colors.left,
+            ]
+            .into_iter()
+            .all(PaintColor::is_valid)
+    }
+}
+
+/// Descendant overflow behavior on one axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OverflowClip {
+    /// Allow paint outside the border box.
+    Visible,
+    /// Clip paint to the border box and its corner radii.
+    Hidden,
+}
+
+/// Semantic clip applied to a node's descendants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BoxClip {
+    /// Horizontal overflow behavior.
+    pub horizontal: OverflowClip,
+    /// Vertical overflow behavior.
+    pub vertical: OverflowClip,
+}
+
+/// A malformed plain-text presentation payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextContentError {
+    /// Text shaping or line-breaking input was invalid.
+    InvalidMeasurement(MeasurementPayloadError),
+    /// The resolved foreground color was invalid.
+    InvalidPaint,
+}
 
 /// Protocol major version implemented by this semantic model.
 pub const PROTOCOL_MAJOR: u16 = 1;
@@ -135,6 +346,35 @@ pub enum ProtocolValue {
     Object(Vec<(String, Self)>),
 }
 
+/// Plain-text presentation selected after intrinsic measurement.
+///
+/// `payload` repeats the semantic shaping inputs used for measurement so a
+/// renderer can validate that presentation still matches those metrics.
+/// `prepared_content` identifies the exact Host-shaped object when the
+/// measurement provider retained one for painting.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextContent {
+    /// UTF-8 content and resolved metric-affecting text inputs.
+    pub payload: TextMeasurePayload,
+    /// Resolved values that affect painting but not intrinsic measurement.
+    pub paint: TextPaint,
+    /// Host object produced by the accepted measurement, when available.
+    pub prepared_content: Option<PreparedContentId>,
+}
+
+impl TextContent {
+    /// Validates the contained shaping and paint inputs.
+    pub fn validate(&self) -> Result<(), TextContentError> {
+        self.payload
+            .validate()
+            .map_err(TextContentError::InvalidMeasurement)?;
+        if !self.paint.foreground.is_valid() {
+            return Err(TextContentError::InvalidPaint);
+        }
+        Ok(())
+    }
+}
+
 /// A semantic mutation within a [`FramePacket`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
@@ -182,6 +422,20 @@ pub enum Operation {
         /// Resolved logical-pixel rectangle.
         rect: LayoutRect,
     },
+    /// Sets resolved background and border paint.
+    SetBoxPaint {
+        /// Target node.
+        node: NodeId,
+        /// Resolved paint values.
+        paint: BoxPaint,
+    },
+    /// Sets descendant overflow clipping.
+    SetClip {
+        /// Target node.
+        node: NodeId,
+        /// Resolved clip behavior.
+        clip: BoxClip,
+    },
     /// Sets the resolved transform matrix.
     SetTransform {
         /// Target node.
@@ -209,6 +463,13 @@ pub enum Operation {
         node: NodeId,
         /// Backend-independent stacking order.
         z_order: i32,
+    },
+    /// Sets plain UTF-8 text presentation and its optional prepared Host object.
+    SetText {
+        /// Target node.
+        node: NodeId,
+        /// Resolved text inputs used for both measurement and painting.
+        content: TextContent,
     },
     /// Sets a typed common or element-specific property.
     SetProperty {
@@ -274,10 +535,13 @@ impl Operation {
             Self::CreateNode { .. } => None,
             Self::DeleteNode { node }
             | Self::SetLayout { node, .. }
+            | Self::SetBoxPaint { node, .. }
+            | Self::SetClip { node, .. }
             | Self::SetTransform { node, .. }
             | Self::SetOpacity { node, .. }
             | Self::SetVisibility { node, .. }
             | Self::SetZOrder { node, .. }
+            | Self::SetText { node, .. }
             | Self::SetProperty { node, .. }
             | Self::ClearProperty { node, .. }
             | Self::SetEventMask { node, .. }
@@ -298,6 +562,137 @@ mod tests {
 
     fn node(value: u64) -> NodeId {
         NodeId::new(value).expect("test node")
+    }
+
+    fn length(length: f32, fraction: f32) -> PaintLengthPercentage {
+        PaintLengthPercentage { length, fraction }
+    }
+
+    fn box_paint() -> BoxPaint {
+        BoxPaint {
+            background_color: PaintColor::Named("transparent".into()),
+            border_widths: PaintEdges {
+                top: length(0.0, 0.0),
+                right: length(1.0, 0.0),
+                bottom: length(0.0, 0.5),
+                left: length(1.0, 0.5),
+            },
+            border_colors: PaintEdges {
+                top: PaintColor::default(),
+                right: PaintColor::Named("red".into()),
+                bottom: PaintColor::default(),
+                left: PaintColor::Named("blue".into()),
+            },
+            border_styles: PaintEdges {
+                top: BorderLineStyle::None,
+                right: BorderLineStyle::Solid,
+                bottom: BorderLineStyle::Dashed,
+                left: BorderLineStyle::Dotted,
+            },
+            border_radii: PaintCorners {
+                top_left: length(0.0, 0.0),
+                top_right: length(2.0, 0.0),
+                bottom_right: length(0.0, 0.25),
+                bottom_left: length(2.0, 0.25),
+            },
+        }
+    }
+
+    #[test]
+    fn paint_colors_validate_every_semantic_form_and_range() {
+        assert!(PaintColor::Named("red".into()).is_valid());
+        assert!(!PaintColor::Named("  ".into()).is_valid());
+
+        for alpha in [f32::NAN, -0.1, 1.1] {
+            assert!(
+                !PaintColor::Srgba {
+                    red: 1,
+                    green: 2,
+                    blue: 3,
+                    alpha,
+                }
+                .is_valid()
+            );
+        }
+        assert!(
+            PaintColor::Srgba {
+                red: 1,
+                green: 2,
+                blue: 3,
+                alpha: 0.5,
+            }
+            .is_valid()
+        );
+
+        let hsla = |hue_degrees, saturation, lightness, alpha| PaintColor::Hsla {
+            hue_degrees,
+            saturation,
+            lightness,
+            alpha,
+        };
+        assert!(hsla(720.0, 50.0, 25.0, 1.0).is_valid());
+        for color in [
+            hsla(f32::NAN, 50.0, 25.0, 1.0),
+            hsla(0.0, f32::NAN, 25.0, 1.0),
+            hsla(0.0, -0.1, 25.0, 1.0),
+            hsla(0.0, 100.1, 25.0, 1.0),
+            hsla(0.0, 50.0, f32::NAN, 1.0),
+            hsla(0.0, 50.0, -0.1, 1.0),
+            hsla(0.0, 50.0, 100.1, 1.0),
+            hsla(0.0, 50.0, 25.0, f32::NAN),
+            hsla(0.0, 50.0, 25.0, -0.1),
+            hsla(0.0, 50.0, 25.0, 1.1),
+        ] {
+            assert!(!color.is_valid());
+        }
+
+        let mut content = TextContent {
+            payload: crate::TextMeasurePayload {
+                text: "paint".into(),
+                style: crate::TextMeasureStyle {
+                    font_families: vec![crate::MeasureFontFamily::System],
+                    font_size: 14.0,
+                    font_weight: 400,
+                    font_style: crate::MeasureFontStyle::Normal,
+                    line_height: crate::MeasureLineHeight::Normal,
+                    letter_spacing: 0.0,
+                },
+                locale: None,
+                direction: crate::MeasureTextDirection::Auto,
+                wrap: crate::MeasureTextWrap::Wrap,
+                max_lines: None,
+                overflow: crate::MeasureTextOverflow::Clip,
+            },
+            paint: TextPaint::default(),
+            prepared_content: None,
+        };
+        assert_eq!(content.validate(), Ok(()));
+        content.paint.foreground = PaintColor::Named(String::new());
+        assert_eq!(content.validate(), Err(TextContentError::InvalidPaint));
+    }
+
+    #[test]
+    fn box_paint_validates_lengths_colors_and_short_circuit_paths() {
+        assert!(box_paint().validate());
+
+        for invalid in [
+            length(f32::NAN, 0.0),
+            length(-1.0, 0.0),
+            length(0.0, f32::NAN),
+            length(0.0, -1.0),
+        ] {
+            assert!(!invalid.is_valid());
+            let mut paint = box_paint();
+            paint.border_widths.top = invalid;
+            assert!(!paint.validate());
+        }
+
+        let mut paint = box_paint();
+        paint.background_color = PaintColor::Named(String::new());
+        assert!(!paint.validate());
+        let mut paint = box_paint();
+        paint.border_colors.left = PaintColor::Named(String::new());
+        assert!(!paint.validate());
     }
 
     #[test]
@@ -333,6 +728,17 @@ mod tests {
                 node: target,
                 rect: LayoutRect::default(),
             },
+            Operation::SetBoxPaint {
+                node: target,
+                paint: box_paint(),
+            },
+            Operation::SetClip {
+                node: target,
+                clip: BoxClip {
+                    horizontal: OverflowClip::Visible,
+                    vertical: OverflowClip::Hidden,
+                },
+            },
             Operation::SetTransform {
                 node: target,
                 transform: Transform::IDENTITY,
@@ -348,6 +754,29 @@ mod tests {
             Operation::SetZOrder {
                 node: target,
                 z_order: 0,
+            },
+            Operation::SetText {
+                node: target,
+                content: TextContent {
+                    payload: crate::TextMeasurePayload {
+                        text: "hello".into(),
+                        style: crate::TextMeasureStyle {
+                            font_families: vec![crate::MeasureFontFamily::System],
+                            font_size: 14.0,
+                            font_weight: 400,
+                            font_style: crate::MeasureFontStyle::Normal,
+                            line_height: crate::MeasureLineHeight::Normal,
+                            letter_spacing: 0.0,
+                        },
+                        locale: None,
+                        direction: crate::MeasureTextDirection::Auto,
+                        wrap: crate::MeasureTextWrap::Wrap,
+                        max_lines: None,
+                        overflow: crate::MeasureTextOverflow::Clip,
+                    },
+                    paint: TextPaint::default(),
+                    prepared_content: None,
+                },
             },
             Operation::SetProperty {
                 node: target,

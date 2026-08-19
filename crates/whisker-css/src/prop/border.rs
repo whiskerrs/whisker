@@ -36,25 +36,25 @@ impl Css {
     /// Sets `border-top-style`.
     /// <https://lynxjs.org/api/css/properties/border-top-style>
     pub fn border_top_style(self, v: BorderStyle) -> Self {
-        self.push(crate::StyleProperty::BorderTopStyle, v)
+        self.push_typed(crate::StyleProperty::BorderTopStyle, v)
     }
 
     /// Sets `border-right-style`.
     /// <https://lynxjs.org/api/css/properties/border-right-style>
     pub fn border_right_style(self, v: BorderStyle) -> Self {
-        self.push(crate::StyleProperty::BorderRightStyle, v)
+        self.push_typed(crate::StyleProperty::BorderRightStyle, v)
     }
 
     /// Sets `border-bottom-style`.
     /// <https://lynxjs.org/api/css/properties/border-bottom-style>
     pub fn border_bottom_style(self, v: BorderStyle) -> Self {
-        self.push(crate::StyleProperty::BorderBottomStyle, v)
+        self.push_typed(crate::StyleProperty::BorderBottomStyle, v)
     }
 
     /// Sets `border-left-style`.
     /// <https://lynxjs.org/api/css/properties/border-left-style>
     pub fn border_left_style(self, v: BorderStyle) -> Self {
-        self.push(crate::StyleProperty::BorderLeftStyle, v)
+        self.push_typed(crate::StyleProperty::BorderLeftStyle, v)
     }
 
     // ---------- border-color longhands ----------
@@ -62,25 +62,25 @@ impl Css {
     /// Sets `border-top-color`.
     /// <https://lynxjs.org/api/css/properties/border-top-color>
     pub fn border_top_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::BorderTopColor, v)
+        self.push_typed(crate::StyleProperty::BorderTopColor, v)
     }
 
     /// Sets `border-right-color`.
     /// <https://lynxjs.org/api/css/properties/border-right-color>
     pub fn border_right_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::BorderRightColor, v)
+        self.push_typed(crate::StyleProperty::BorderRightColor, v)
     }
 
     /// Sets `border-bottom-color`.
     /// <https://lynxjs.org/api/css/properties/border-bottom-color>
     pub fn border_bottom_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::BorderBottomColor, v)
+        self.push_typed(crate::StyleProperty::BorderBottomColor, v)
     }
 
     /// Sets `border-left-color`.
     /// <https://lynxjs.org/api/css/properties/border-left-color>
     pub fn border_left_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::BorderLeftColor, v)
+        self.push_typed(crate::StyleProperty::BorderLeftColor, v)
     }
 
     // ---------- border-radius corners ----------
@@ -88,25 +88,25 @@ impl Css {
     /// Sets `border-top-left-radius`.
     /// <https://lynxjs.org/api/css/properties/border-top-left-radius>
     pub fn border_top_left_radius(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BorderTopLeftRadius, v.into())
+        self.push_typed(crate::StyleProperty::BorderTopLeftRadius, v.into())
     }
 
     /// Sets `border-top-right-radius`.
     /// <https://lynxjs.org/api/css/properties/border-top-right-radius>
     pub fn border_top_right_radius(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BorderTopRightRadius, v.into())
+        self.push_typed(crate::StyleProperty::BorderTopRightRadius, v.into())
     }
 
     /// Sets `border-bottom-right-radius`.
     /// <https://lynxjs.org/api/css/properties/border-bottom-right-radius>
     pub fn border_bottom_right_radius(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BorderBottomRightRadius, v.into())
+        self.push_typed(crate::StyleProperty::BorderBottomRightRadius, v.into())
     }
 
     /// Sets `border-bottom-left-radius`.
     /// <https://lynxjs.org/api/css/properties/border-bottom-left-radius>
     pub fn border_bottom_left_radius(self, v: impl Into<LengthPercentage>) -> Self {
-        self.push(crate::StyleProperty::BorderBottomLeftRadius, v.into())
+        self.push_typed(crate::StyleProperty::BorderBottomLeftRadius, v.into())
     }
 
     /// Sets `border-radius` shorthand. Expands to the four corner

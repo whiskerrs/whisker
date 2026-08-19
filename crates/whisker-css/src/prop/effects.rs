@@ -20,26 +20,26 @@ impl Css {
     /// supported.
     /// <https://lynxjs.org/api/css/properties/visibility>
     pub fn visibility(self, v: Visibility) -> Self {
-        self.push(crate::StyleProperty::Visibility, v)
+        self.push_typed(crate::StyleProperty::Visibility, v)
     }
 
     /// Sets `overflow`. Lynx accepts only `visible` and `hidden`.
     /// <https://lynxjs.org/api/css/properties/overflow>
     pub fn overflow(self, v: Overflow) -> Self {
-        self.push(crate::StyleProperty::OverflowX, v)
-            .push(crate::StyleProperty::OverflowY, v)
+        self.push_typed(crate::StyleProperty::OverflowX, v)
+            .push_typed(crate::StyleProperty::OverflowY, v)
     }
 
     /// Sets `overflow-x`.
     /// <https://lynxjs.org/api/css/properties/overflow-x>
     pub fn overflow_x(self, v: Overflow) -> Self {
-        self.push(crate::StyleProperty::OverflowX, v)
+        self.push_typed(crate::StyleProperty::OverflowX, v)
     }
 
     /// Sets `overflow-y`.
     /// <https://lynxjs.org/api/css/properties/overflow-y>
     pub fn overflow_y(self, v: Overflow) -> Self {
-        self.push(crate::StyleProperty::OverflowY, v)
+        self.push_typed(crate::StyleProperty::OverflowY, v)
     }
 
     /// Sets `cursor`.

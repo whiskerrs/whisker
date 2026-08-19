@@ -151,6 +151,14 @@ thread_local! {
     static PENDING_MOUNT: Cell<Option<(MountId, Element)>> = const { Cell::new(None) };
 }
 
+pub(crate) fn swap_pending_mount(pending: &mut Option<(MountId, Element)>) {
+    PENDING_MOUNT.with(|active| {
+        let current = active.take();
+        active.set(pending.take());
+        *pending = current;
+    });
+}
+
 /// Stable identifier for a remountable mount site. Generationless on
 /// purpose — entries are removed when the site is torn down, so the
 /// monotonic counter never collides for live entries.

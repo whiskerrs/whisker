@@ -17,11 +17,19 @@
 //!   background work (HTTP fetch, channels, etc.).
 
 pub mod anim_hook;
+mod dispatch;
 pub mod element;
 pub mod event;
 pub mod host_wake;
 pub mod main_thread;
 pub mod reactive;
+mod runtime_context;
 pub mod tasks;
 pub mod value;
 pub mod view;
+
+#[doc(hidden)]
+pub use dispatch::drain_runtime_dispatches;
+pub use dispatch::{RuntimeDispatcher, runtime_dispatcher};
+pub use host_wake::{RuntimeWake, RuntimeWakeHandle};
+pub use runtime_context::RuntimeContext;

@@ -13,7 +13,8 @@ use taffy::{
     Direction, Display, FlexDirection, FlexWrap, LengthPercentage, LengthPercentageAuto, Position,
     Rect, Size, Style, TaffyTree,
 };
-use whisker_protocol::{LayoutRect, NodeId};
+pub use whisker_protocol::AvailableSpace;
+use whisker_protocol::{LayoutRect, MeasureConstraints, NodeId};
 use whisker_style::{
     AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, ComputedFlexBasis,
     ComputedLayoutStyle, ComputedLengthPercentage, ComputedLengthPercentageAuto, ComputedSizeValue,
@@ -41,25 +42,8 @@ impl LayoutSize {
     }
 }
 
-/// The constraint presented to an intrinsic measurer on one axis.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum AvailableSpace {
-    /// A finite logical-pixel constraint.
-    Definite(f32),
-    /// Measure the smallest unbreakable content size.
-    MinContent,
-    /// Measure the unconstrained content size.
-    MaxContent,
-}
-
 /// Inputs supplied when measuring an intrinsically sized leaf.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MeasureRequest {
-    /// Dimensions already fixed by the layout algorithm.
-    pub known_dimensions: [Option<f32>; 2],
-    /// Width and height constraints.
-    pub available_space: [AvailableSpace; 2],
-}
+pub type MeasureRequest = MeasureConstraints;
 
 /// Supplies intrinsic leaf sizes, normally by asking the Host text or media backend.
 pub trait IntrinsicMeasurer {
@@ -231,6 +215,14 @@ impl LayoutTree {
         self.nodes.contains_key(&node)
     }
 
+    /// Validates that a computed style can be represented by this backend.
+    ///
+    /// This performs the same conversion used by node creation and updates
+    /// without changing retained state.
+    pub fn validate_style(style: &ComputedLayoutStyle) -> Result<(), LayoutError> {
+        convert_style(style).map(drop)
+    }
+
     /// Creates an unattached, initially non-measurable node.
     pub fn create_node(
         &mut self,
@@ -286,20 +278,20 @@ impl LayoutTree {
     }
 
     /// Marks or unmarks a leaf as requiring intrinsic Host measurement.
-    pub fn set_measurable(&mut self, node: NodeId, measurable: bool) -> Result<(), LayoutError> {
+    pub fn set_measurable(&mut self, node: NodeId, measurable: bool) -> Result<bool, LayoutError> {
         let retained = self
             .nodes
             .get(&node)
             .ok_or(LayoutError::UnknownNode(node))?;
         if retained.measurable == measurable {
-            return Ok(());
+            return Ok(false);
         }
         let backend = retained.backend;
         self.backend
             .set_node_context(backend, measurable.then_some(node))
             .expect("retained backend node");
         self.nodes.get_mut(&node).expect("checked above").measurable = measurable;
-        Ok(())
+        Ok(true)
     }
 
     /// Invalidates cached intrinsic measurement for a node and its ancestors.
@@ -602,6 +594,12 @@ fn convert_style(input: &ComputedLayoutStyle) -> Result<Style, LayoutError> {
             right: length(input.padding.right, true)?,
             bottom: length(input.padding.bottom, true)?,
             left: length(input.padding.left, true)?,
+        },
+        border: Rect {
+            top: length(input.border.top, true)?,
+            right: length(input.border.right, true)?,
+            bottom: length(input.border.bottom, true)?,
+            left: length(input.border.left, true)?,
         },
         inset: Rect {
             top: length_auto(input.inset.top)?,
@@ -1072,6 +1070,7 @@ mod tests {
         tree.create_node(root, sized(30.0, 10.0)).unwrap();
         tree.create_node(left, sized(10.0, 10.0)).unwrap();
         tree.create_node(right, sized(10.0, 10.0)).unwrap();
+        assert_eq!(LayoutTree::validate_style(&sized(1.0, 1.0)), Ok(()));
         tree.set_children(root, &[left, right]).unwrap();
         let mut resized_root = sized(31.0, 10.0);
         resized_root.display = DisplayValue::Linear;
@@ -1105,6 +1104,14 @@ mod tests {
             tree.update_style(left, unsupported),
             Err(LayoutError::UnsupportedStyle(
                 UnsupportedLayoutFeature::FixedPosition
+            ))
+        );
+        let mut unsupported = sized(10.0, 10.0);
+        unsupported.position = PositionValue::Sticky;
+        assert_eq!(
+            LayoutTree::validate_style(&unsupported),
+            Err(LayoutError::UnsupportedStyle(
+                UnsupportedLayoutFeature::StickyPosition
             ))
         );
         assert_eq!(snapshot.get(id(44)), None);
@@ -1142,6 +1149,12 @@ mod tests {
                 right: ComputedLengthPercentage::new(0.0, -0.2),
                 bottom: ComputedLengthPercentage::ZERO,
                 left: ComputedLengthPercentage::ZERO,
+            },
+            border: Edges {
+                top: ComputedLengthPercentage::new(1.0, 0.0),
+                right: ComputedLengthPercentage::new(2.0, 0.0),
+                bottom: ComputedLengthPercentage::new(3.0, 0.0),
+                left: ComputedLengthPercentage::new(4.0, 0.0),
             },
             inset: Edges {
                 top: ComputedLengthPercentageAuto::Auto,
@@ -1313,11 +1326,15 @@ mod tests {
             |style| style.inset.bottom = ComputedLengthPercentageAuto::Value(MIXED),
             |style| style.inset.left = ComputedLengthPercentageAuto::Value(MIXED),
         ];
-        let length_setters: [fn(&mut ComputedLayoutStyle); 5] = [
+        let length_setters: [fn(&mut ComputedLayoutStyle); 9] = [
             |style| style.padding.top = MIXED,
             |style| style.padding.right = MIXED,
             |style| style.padding.bottom = MIXED,
             |style| style.padding.left = MIXED,
+            |style| style.border.top = MIXED,
+            |style| style.border.right = MIXED,
+            |style| style.border.bottom = MIXED,
+            |style| style.border.left = MIXED,
             |style| style.gap.height = MIXED,
         ];
         for setter in size_setters
