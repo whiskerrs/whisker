@@ -12,7 +12,7 @@ impl Css {
     /// Sets `background-color`. Lynx default: `transparent`.
     /// <https://lynxjs.org/api/css/properties/background-color>
     pub fn background_color(self, v: Color) -> Self {
-        self.push(crate::StyleProperty::BackgroundColor, v)
+        self.push_typed(crate::StyleProperty::BackgroundColor, v)
     }
 
     /// Sets `background-image`. Accepts `url(...)` and `<gradient>`.

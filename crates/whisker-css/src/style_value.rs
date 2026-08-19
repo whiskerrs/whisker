@@ -1,9 +1,9 @@
 //! Conversion from the compatibility authoring types to semantic style values.
 
 use whisker_style::{
-    AlignContentValue, AlignItemsValue, AlignSelfValue, BoxSizingValue, CalcExpression, ColorValue,
-    DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue,
-    FontStyleValue, FontWeightValue, JustifyContentValue, LengthPercentageAutoValue,
+    AlignContentValue, AlignItemsValue, AlignSelfValue, BorderStyleValue, BoxSizingValue,
+    CalcExpression, ColorValue, DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue,
+    FlexWrapValue, FontStyleValue, FontWeightValue, JustifyContentValue, LengthPercentageAutoValue,
     LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue, PositionValue, SizeValue,
     StyleNumber, StyleValue,
 };
@@ -11,8 +11,10 @@ use whisker_style::{
 use crate::{
     AlignContent, AlignItems, AlignSelf, Angle, BoxSizing, CalcExpr, Color, CssString, Direction,
     Display, FlexBasis, FlexDirection, FlexWrap, FontStyle, FontWeight, Integer, JustifyContent,
-    Length, LengthPercentage, LineHeight, MarginValue, Number, Percentage, PositionKind, Size,
+    Length, LengthPercentage, LineHeight, MarginValue, Number, Overflow, Percentage, PositionKind,
+    Size, Visibility,
 };
+use whisker_style::{OverflowValue, VisibilityValue};
 
 pub(crate) trait ToStyleValue {
     fn to_style_value(&self) -> StyleValue;
@@ -112,6 +114,41 @@ impl ToStyleValue for Color {
             },
         };
         StyleValue::Color(value)
+    }
+}
+
+impl ToStyleValue for crate::BorderStyle {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::BorderStyle(match self {
+            Self::None => BorderStyleValue::None,
+            Self::Hidden => BorderStyleValue::Hidden,
+            Self::Solid => BorderStyleValue::Solid,
+            Self::Dashed => BorderStyleValue::Dashed,
+            Self::Dotted => BorderStyleValue::Dotted,
+            Self::Double => BorderStyleValue::Double,
+            Self::Groove => BorderStyleValue::Groove,
+            Self::Ridge => BorderStyleValue::Ridge,
+            Self::Inset => BorderStyleValue::Inset,
+            Self::Outset => BorderStyleValue::Outset,
+        })
+    }
+}
+
+impl ToStyleValue for Overflow {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Overflow(match self {
+            Self::Visible => OverflowValue::Visible,
+            Self::Hidden => OverflowValue::Hidden,
+        })
+    }
+}
+
+impl ToStyleValue for Visibility {
+    fn to_style_value(&self) -> StyleValue {
+        StyleValue::Visibility(match self {
+            Self::Visible => VisibilityValue::Visible,
+            Self::Hidden => VisibilityValue::Hidden,
+        })
     }
 }
 

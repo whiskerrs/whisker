@@ -163,10 +163,15 @@ pub use whisker_runtime::tasks::{run_blocking, spawn_local};
 pub use whisker_runtime::tasks::run_until_stalled;
 mod control_flow;
 mod style;
+mod surface_runtime;
 
 pub mod attrs;
 
 pub use style::{Style, apply_style};
+pub use surface_runtime::{
+    RuntimeBindingError, RuntimeFrame, RuntimeFrameError, RuntimeLayoutError, RuntimePresentError,
+    SurfaceRuntime,
+};
 
 pub use control_flow::{ForEach, ForEachProps, Show, ShowProps};
 pub use whisker_runtime::view::Children;

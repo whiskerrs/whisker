@@ -5,9 +5,9 @@ use std::error::Error;
 use std::fmt;
 
 use whisker_protocol::{
-    CommandId, ElementTypeId, FrameHeader, FrameMode, FramePacket, HitTestBehavior, LayoutRect,
-    NodeId, Operation, PointerId, PropertyId, ProtocolValue, ProtocolVersion, ResultId, SurfaceId,
-    Transform, Visibility,
+    BoxClip, BoxPaint, CommandId, ElementTypeId, FrameHeader, FrameMode, FramePacket,
+    HitTestBehavior, LayoutRect, NodeId, Operation, PointerId, PropertyId, ProtocolValue,
+    ProtocolVersion, ResultId, SurfaceId, TextContent, TextContentError, Transform, Visibility,
 };
 
 /// A retained logical node owned by a [`Scene`].
@@ -17,10 +17,13 @@ pub struct SceneNode {
     parent: Option<NodeId>,
     children: Vec<NodeId>,
     layout: Option<LayoutRect>,
+    box_paint: Option<BoxPaint>,
+    clip: Option<BoxClip>,
     transform: Option<Transform>,
     opacity: Option<f32>,
     visibility: Option<Visibility>,
     z_order: Option<i32>,
+    text: Option<TextContent>,
     properties: BTreeMap<PropertyId, ProtocolValue>,
     event_mask: Option<u64>,
     hit_test: Option<HitTestBehavior>,
@@ -34,10 +37,13 @@ impl SceneNode {
             parent: None,
             children: Vec::new(),
             layout: None,
+            box_paint: None,
+            clip: None,
             transform: None,
             opacity: None,
             visibility: None,
             z_order: None,
+            text: None,
             properties: BTreeMap::new(),
             event_mask: None,
             hit_test: None,
@@ -58,6 +64,36 @@ impl SceneNode {
     /// Returns children in logical presentation order.
     pub fn children(&self) -> &[NodeId] {
         &self.children
+    }
+
+    /// Returns retained plain-text presentation when this is a text node.
+    pub const fn text(&self) -> Option<&TextContent> {
+        self.text.as_ref()
+    }
+
+    /// Returns retained background and border paint.
+    pub const fn box_paint(&self) -> Option<&BoxPaint> {
+        self.box_paint.as_ref()
+    }
+
+    /// Returns retained descendant overflow clipping.
+    pub const fn clip(&self) -> Option<BoxClip> {
+        self.clip
+    }
+
+    /// Returns retained group opacity.
+    pub const fn opacity(&self) -> Option<f32> {
+        self.opacity
+    }
+
+    /// Returns retained paint visibility.
+    pub const fn visibility(&self) -> Option<Visibility> {
+        self.visibility
+    }
+
+    /// Returns retained sibling stacking key.
+    pub const fn z_order(&self) -> Option<i32> {
+        self.z_order
     }
 }
 
@@ -117,6 +153,13 @@ pub enum SceneError {
     },
     /// Layout or transform contained NaN or infinity.
     NonFiniteNumber,
+    /// Plain-text presentation contained invalid shaping inputs.
+    InvalidText {
+        /// Stable invalid-input category.
+        error: TextContentError,
+    },
+    /// Background or border paint contained an invalid value.
+    InvalidBoxPaint,
     /// A pending command result identifier was reused.
     DuplicateResultId {
         /// Duplicate result identifier.
@@ -143,10 +186,13 @@ impl Error for SceneError {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum DirtySlot {
     Layout(NodeId),
+    BoxPaint(NodeId),
+    Clip(NodeId),
     Transform(NodeId),
     Opacity(NodeId),
     Visibility(NodeId),
     ZOrder(NodeId),
+    Text(NodeId),
     Property(NodeId, PropertyId),
     EventMask(NodeId),
     HitTest(NodeId),
@@ -412,6 +458,38 @@ impl Scene {
         Ok(())
     }
 
+    /// Sets background and border paint when it differs from retained state.
+    pub fn set_box_paint(&mut self, node: NodeId, paint: BoxPaint) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        if !paint.validate() {
+            return Err(SceneError::InvalidBoxPaint);
+        }
+        if self.require_node(node)?.box_paint.as_ref() == Some(&paint) {
+            return Ok(());
+        }
+        self.nodes
+            .get_mut(&node)
+            .expect("node checked above")
+            .box_paint = Some(paint.clone());
+        self.journal.push_coalesced(
+            DirtySlot::BoxPaint(node),
+            Operation::SetBoxPaint { node, paint },
+        );
+        Ok(())
+    }
+
+    /// Sets descendant overflow clipping when it differs from retained state.
+    pub fn set_clip(&mut self, node: NodeId, clip: BoxClip) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        if self.require_node(node)?.clip == Some(clip) {
+            return Ok(());
+        }
+        self.nodes.get_mut(&node).expect("node checked above").clip = Some(clip);
+        self.journal
+            .push_coalesced(DirtySlot::Clip(node), Operation::SetClip { node, clip });
+        Ok(())
+    }
+
     /// Sets a resolved transform when it differs from retained state.
     pub fn set_transform(&mut self, node: NodeId, transform: Transform) -> Result<(), SceneError> {
         self.ensure_mutable()?;
@@ -487,6 +565,21 @@ impl Scene {
             DirtySlot::ZOrder(node),
             Operation::SetZOrder { node, z_order },
         );
+        Ok(())
+    }
+
+    /// Sets plain-text presentation when it differs from retained state.
+    pub fn set_text(&mut self, node: NodeId, content: TextContent) -> Result<(), SceneError> {
+        self.ensure_mutable()?;
+        content
+            .validate()
+            .map_err(|error| SceneError::InvalidText { error })?;
+        if self.require_node(node)?.text.as_ref() == Some(&content) {
+            return Ok(());
+        }
+        self.nodes.get_mut(&node).expect("node checked above").text = Some(content.clone());
+        self.journal
+            .push_coalesced(DirtySlot::Text(node), Operation::SetText { node, content });
         Ok(())
     }
 
@@ -800,6 +893,15 @@ impl Scene {
             if let Some(rect) = state.layout {
                 operations.push(Operation::SetLayout { node: *node, rect });
             }
+            if let Some(paint) = &state.box_paint {
+                operations.push(Operation::SetBoxPaint {
+                    node: *node,
+                    paint: paint.clone(),
+                });
+            }
+            if let Some(clip) = state.clip {
+                operations.push(Operation::SetClip { node: *node, clip });
+            }
             if let Some(transform) = state.transform {
                 operations.push(Operation::SetTransform {
                     node: *node,
@@ -822,6 +924,12 @@ impl Scene {
                 operations.push(Operation::SetZOrder {
                     node: *node,
                     z_order,
+                });
+            }
+            if let Some(content) = &state.text {
+                operations.push(Operation::SetText {
+                    node: *node,
+                    content: content.clone(),
                 });
             }
             for (property, value) in &state.properties {
@@ -864,7 +972,11 @@ impl Scene {
 mod tests {
     use super::*;
     use crate::{FrameSink, RecordingRenderer};
-    use whisker_protocol::{ApplyResult, ValidationError};
+    use whisker_protocol::{
+        ApplyResult, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight, MeasureTextDirection,
+        MeasureTextOverflow, MeasureTextWrap, TextContentError, TextMeasurePayload,
+        TextMeasureStyle, ValidationError,
+    };
 
     fn surface() -> SurfaceId {
         SurfaceId::new(1).expect("test surface")
@@ -892,6 +1004,29 @@ mod tests {
 
     fn result_id(value: u64) -> ResultId {
         ResultId::new(value).expect("test result")
+    }
+
+    fn text_content(text: &str) -> TextContent {
+        TextContent {
+            payload: TextMeasurePayload {
+                text: text.into(),
+                style: TextMeasureStyle {
+                    font_families: vec![MeasureFontFamily::System],
+                    font_size: 14.0,
+                    font_weight: 400,
+                    font_style: MeasureFontStyle::Normal,
+                    line_height: MeasureLineHeight::Normal,
+                    letter_spacing: 0.0,
+                },
+                locale: None,
+                direction: MeasureTextDirection::Auto,
+                wrap: MeasureTextWrap::Wrap,
+                max_lines: None,
+                overflow: MeasureTextOverflow::Clip,
+            },
+            paint: whisker_protocol::TextPaint::default(),
+            prepared_content: None,
+        }
     }
 
     fn prepared(scene: &mut Scene) -> FramePacket {
@@ -947,6 +1082,8 @@ mod tests {
             .set_visibility(root, Visibility::Visible)
             .expect("visibility");
         scene.set_z_order(root, -1).expect("z order");
+        let text = text_content("hello");
+        scene.set_text(root, text.clone()).expect("text");
         scene
             .set_property(root, property(1), ProtocolValue::String("red".into()))
             .expect("property");
@@ -970,6 +1107,7 @@ mod tests {
         assert_eq!(root_state.element_type(), element_type(1));
         assert_eq!(root_state.parent(), None);
         assert_eq!(root_state.children(), &[child]);
+        assert_eq!(root_state.text(), Some(&text));
         assert_eq!(scene.node(child).expect("child state").parent(), Some(root));
         assert_eq!(scene.node_count(), 2);
 
@@ -1018,6 +1156,9 @@ mod tests {
             .expect("equal visibility");
         scene.set_z_order(root, 4).expect("z order");
         scene.set_z_order(root, 4).expect("equal z order");
+        let text = text_content("updated");
+        scene.set_text(root, text.clone()).expect("text");
+        scene.set_text(root, text).expect("equal text");
         scene
             .set_property(root, property(1), ProtocolValue::I64(1))
             .expect("first property");
@@ -1144,6 +1285,10 @@ mod tests {
         assert!(scene.has_pending_work());
         assert_eq!(scene.prepare_frame(7), Err(SceneError::FramePending));
         assert_eq!(scene.set_opacity(root, 0.7), Err(SceneError::FramePending));
+        assert_eq!(
+            scene.set_text(root, text_content("pending")),
+            Err(SceneError::FramePending)
+        );
         assert_eq!(
             scene.create_node(element_type(3)),
             Err(SceneError::FramePending)
@@ -1338,6 +1483,7 @@ mod tests {
             scene.set_opacity(missing, 1.0),
             scene.set_visibility(missing, Visibility::Visible),
             scene.set_z_order(missing, 0),
+            scene.set_text(missing, text_content("missing")),
             scene.set_property(missing, property(1), ProtocolValue::Null),
             scene.clear_property(missing, property(1)),
             scene.set_event_mask(missing, 0),
@@ -1363,6 +1509,16 @@ mod tests {
         assert_eq!(
             scene.set_layout(root, invalid_layout),
             Err(SceneError::NonFiniteNumber)
+        );
+        let mut invalid_text = text_content("invalid");
+        invalid_text.payload.style.font_families.clear();
+        assert_eq!(
+            scene.set_text(root, invalid_text),
+            Err(SceneError::InvalidText {
+                error: TextContentError::InvalidMeasurement(
+                    whisker_protocol::MeasurementPayloadError::InvalidFontFamily,
+                ),
+            })
         );
         let mut invalid_transform = Transform::IDENTITY;
         invalid_transform.0[0] = f32::INFINITY;

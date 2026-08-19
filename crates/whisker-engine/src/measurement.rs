@@ -334,6 +334,13 @@ impl MeasurementCoordinator {
         self.specs.get(&node)?.last_ready.as_ref()
     }
 
+    pub(crate) fn ready_nodes(&self) -> Vec<NodeId> {
+        self.specs
+            .iter()
+            .filter_map(|(node, state)| state.last_ready.as_ref().map(|_| *node))
+            .collect()
+    }
+
     pub(crate) fn outstanding_requests(&self) -> Vec<MeasurementRequest> {
         self.outstanding
             .values()
@@ -620,7 +627,13 @@ impl IntrinsicMeasurer for MeasurementCoordinator {
             entry.consumers.insert(node);
             let cached = entry.state.clone();
             return match cached {
-                CachedState::Ready(metrics) => to_layout_size(metrics.size),
+                CachedState::Ready(metrics) => {
+                    self.specs
+                        .get_mut(&node)
+                        .expect("measurement node retains its registered spec")
+                        .last_ready = Some(metrics.clone());
+                    to_layout_size(metrics.size)
+                }
                 CachedState::Pending {
                     request_id,
                     provisional,

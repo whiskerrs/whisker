@@ -10,6 +10,7 @@
 mod declaration;
 mod layout;
 mod layout_value;
+mod paint;
 mod property;
 mod resolution;
 mod value;
@@ -24,6 +25,7 @@ pub use layout_value::{
     DirectionValue, DisplayValue, FlexBasisValue, FlexDirectionValue, FlexWrapValue,
     JustifyContentValue, LengthPercentageAutoValue, PositionValue, SizeValue,
 };
+pub use paint::{BorderStyleValue, ComputedPaintStyle, Corners, OverflowValue, VisibilityValue};
 pub use property::{PropertyMetadata, PropertyOrigin, StyleProperty, StylePropertyId};
 pub use resolution::{
     ComputedLineHeight, ComputedStyle, InheritedPropertySet, InheritedStyle, InheritedStyleChange,

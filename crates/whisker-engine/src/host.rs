@@ -12,7 +12,7 @@ use crate::{LayoutProgress, SurfaceEngine, SurfaceError};
 
 /// Host capability required to resolve one batch of intrinsic measurements.
 ///
-/// Android, UIKit, DOM, and GPUI bindings implement this information flow at
+/// Android, UIKit, DOM, and native Desktop bindings implement this information flow at
 /// their generated boundary. The trait itself contains no platform types and
 /// is also the conformance seam used by Rust-only tests.
 pub trait MeasurementHost {
@@ -132,14 +132,16 @@ mod tests {
     use std::error::Error as _;
 
     use whisker_protocol::{
-        ElementTypeId, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
+        ApplyResult, ElementTypeId, MeasureFontFamily, MeasureFontStyle, MeasureLineHeight,
         MeasureTextDirection, MeasureTextOverflow, MeasureTextWrap, MeasuredSize,
-        MeasurementMetrics, MeasurementPayload, MeasurementRequestId, MeasurementSpec,
-        PendingMeasurePolicy, TextMeasurePayload, TextMeasureStyle,
+        MeasurementMetrics, MeasurementPayload, MeasurementPayloadError, MeasurementRequestId,
+        MeasurementSpec, Operation, PendingMeasurePolicy, PreparedContentId,
+        ReplacedContentMeasurePayload, TextMeasurePayload, TextMeasureStyle,
     };
-    use whisker_style::ComputedLayoutStyle;
+    use whisker_style::{ComputedLayoutStyle, SpecifiedStyle, StyleEnvironment, resolve_style};
 
     use super::*;
+    use crate::{FrameSink, PlainTextInput, RecordingRenderer, SceneError};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum TestHostError {
@@ -157,6 +159,7 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Reply {
         Ready(MeasuredSize),
+        ReadyPreparedText,
         InvalidMetrics,
         Pending,
         Missing,
@@ -196,6 +199,26 @@ mod tests {
                         metrics: MeasurementMetrics::from_size(size),
                     }))
                 }
+                Reply::ReadyPreparedText => responses.extend(requests.iter().map(|request| {
+                    let MeasurementPayload::Text(payload) = &request.payload else {
+                        panic!("plain-text Host received a non-text request");
+                    };
+                    let width = payload.text.chars().count() as f32 * 9.0;
+                    MeasurementResponse::Ready {
+                        key: request.key,
+                        environment_epoch: request.environment_epoch,
+                        metrics: MeasurementMetrics {
+                            size: MeasuredSize::new(width, 21.0),
+                            first_baseline: Some(15.0),
+                            last_baseline: Some(15.0),
+                            overflow: None,
+                            prepared_content: Some(
+                                PreparedContentId::new(request.key.get())
+                                    .expect("measurement keys are non-zero"),
+                            ),
+                        },
+                    }
+                })),
                 Reply::InvalidMetrics => {
                     responses.extend(requests.iter().map(|request| MeasurementResponse::Ready {
                         key: request.key,
@@ -286,6 +309,199 @@ mod tests {
         assert_eq!(
             surface.last_measurement(root).map(|metrics| metrics.size),
             Some(MeasuredSize::new(48.0, 20.0))
+        );
+    }
+
+    #[test]
+    fn plain_text_reaches_final_snapshot_and_incremental_frame_with_mock_host() {
+        let resolved = resolve_style(&SpecifiedStyle::new(), None, StyleEnvironment::default())
+            .expect("default computed style");
+        let mut surface = SurfaceEngine::new(id(SurfaceId::new));
+        let root = surface
+            .create_node(
+                ElementTypeId::new(1).expect("text element type"),
+                resolved.computed().layout().clone(),
+            )
+            .expect("create text node");
+        let first_input = PlainTextInput::new("hello");
+        let missing = NodeId::new(99).expect("missing node");
+        assert_eq!(
+            surface.set_plain_text(missing, &first_input, resolved.computed().inherited_text(),),
+            Err(SurfaceError::Scene(SceneError::UnknownNode {
+                node: missing
+            }))
+        );
+        let mut invalid = first_input.clone();
+        invalid.locale = Some(String::new());
+        assert_eq!(
+            surface.set_plain_text(root, &invalid, resolved.computed().inherited_text()),
+            Err(SurfaceError::Measurement(
+                crate::MeasurementError::InvalidPayload {
+                    node: root,
+                    error: MeasurementPayloadError::InvalidLocale,
+                }
+            ))
+        );
+        assert!(
+            surface
+                .set_plain_text(root, &first_input, resolved.computed().inherited_text())
+                .expect("lower first text")
+        );
+        assert!(
+            !surface
+                .set_plain_text(root, &first_input, resolved.computed().inherited_text())
+                .expect("equal unmeasured text is idle")
+        );
+
+        let mut host = TestHost::new(Reply::ReadyPreparedText);
+        let progress = surface
+            .drive_layout_with_host(
+                root,
+                LayoutSize::new(200.0, 100.0),
+                3,
+                &mut host,
+                HostLayoutOptions::default(),
+            )
+            .expect("measure and finalize first text layout");
+        assert!(progress.has_layout());
+        assert_eq!(host.calls.len(), 1);
+        assert_eq!(
+            surface.last_measurement(root),
+            Some(&MeasurementMetrics {
+                size: MeasuredSize::new(45.0, 21.0),
+                first_baseline: Some(15.0),
+                last_baseline: Some(15.0),
+                overflow: None,
+                prepared_content: PreparedContentId::new(1),
+            })
+        );
+
+        let first_packet = surface
+            .prepare_frame(3)
+            .expect("prepare snapshot")
+            .expect("snapshot has text work")
+            .clone();
+        assert_eq!(
+            surface.set_plain_text(root, &first_input, resolved.computed().inherited_text()),
+            Err(SurfaceError::Scene(SceneError::FramePending))
+        );
+        assert!(matches!(
+            first_packet
+                .operations
+                .iter()
+                .find(|operation| matches!(operation, Operation::SetLayout { .. })),
+            Some(Operation::SetLayout { node, rect })
+                if *node == root && *rect == whisker_protocol::LayoutRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 45.0,
+                    height: 21.0,
+                }
+        ));
+        assert!(matches!(
+            first_packet
+                .operations
+                .iter()
+                .find(|operation| matches!(operation, Operation::SetText { .. })),
+            Some(Operation::SetText { node, content })
+                if *node == root
+                    && content.payload.text == "hello"
+                    && content.prepared_content == PreparedContentId::new(1)
+        ));
+
+        let mut renderer = RecordingRenderer::new(surface.surface());
+        assert_eq!(
+            renderer.present(&first_packet),
+            Ok(ApplyResult::Accepted { revision: 1 })
+        );
+        surface.accept_pending(1).expect("accept snapshot");
+        assert_eq!(renderer.projection().node_count(), 1);
+
+        let second_input = PlainTextInput::new("hello world");
+        assert!(
+            surface
+                .set_plain_text(root, &second_input, resolved.computed().inherited_text())
+                .expect("lower changed text")
+        );
+        surface
+            .drive_layout_with_host(
+                root,
+                LayoutSize::new(200.0, 100.0),
+                3,
+                &mut host,
+                HostLayoutOptions::default(),
+            )
+            .expect("measure and finalize changed text layout");
+        assert_eq!(host.calls.len(), 2);
+        let delta = surface
+            .prepare_frame(3)
+            .expect("prepare delta")
+            .expect("changed text has work")
+            .clone();
+        assert!(matches!(
+            delta.operations.as_slice(),
+            [Operation::SetText { node: text_node, content }, Operation::SetLayout { node: layout_node, rect }]
+                if *text_node == root
+                    && *layout_node == root
+                    && content.payload.text == "hello world"
+                    && content.prepared_content == PreparedContentId::new(2)
+                    && rect.width == 99.0
+                    && rect.height == 21.0
+        ));
+        assert_eq!(
+            renderer.present(&delta),
+            Ok(ApplyResult::Accepted { revision: 2 })
+        );
+        surface.accept_pending(2).expect("accept delta");
+
+        assert!(
+            !surface
+                .set_plain_text(root, &second_input, resolved.computed().inherited_text())
+                .expect("equal text is idle")
+        );
+        surface
+            .drive_layout_with_host(
+                root,
+                LayoutSize::new(200.0, 100.0),
+                3,
+                &mut host,
+                HostLayoutOptions::default(),
+            )
+            .expect("equal text reuses retained layout");
+        assert_eq!(host.calls.len(), 2);
+        assert_eq!(surface.prepare_frame(3).expect("idle prepare"), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "plain-text Host received a non-text request")]
+    fn plain_text_test_host_rejects_non_text_requests() {
+        let mut surface = SurfaceEngine::new(id(SurfaceId::new));
+        let root = surface
+            .create_node(
+                ElementTypeId::new(1).expect("element type"),
+                ComputedLayoutStyle::default(),
+            )
+            .expect("create node");
+        surface
+            .set_measurement(
+                root,
+                Some(MeasurementSpec {
+                    content_hash: 1,
+                    style_hash: 1,
+                    payload: MeasurementPayload::ReplacedContent(
+                        ReplacedContentMeasurePayload::default(),
+                    ),
+                    pending_policy: PendingMeasurePolicy::Block,
+                }),
+            )
+            .expect("register replaced measurement");
+        let mut host = TestHost::new(Reply::ReadyPreparedText);
+        let _ = surface.drive_layout_with_host(
+            root,
+            LayoutSize::new(100.0, 100.0),
+            1,
+            &mut host,
+            HostLayoutOptions::default(),
         );
     }
 

@@ -4,14 +4,15 @@ use std::{error::Error, fmt};
 
 use whisker_layout::{IntrinsicMeasurer, LayoutError, LayoutSize, LayoutSnapshot, LayoutTree};
 use whisker_protocol::{
-    ElementTypeId, FramePacket, LayoutRect, MeasurementMetrics, MeasurementReady,
-    MeasurementResponse, MeasurementSpec, NodeId, SurfaceId,
+    ApplyResult, ElementTypeId, FramePacket, LayoutRect, MeasurementMetrics, MeasurementReady,
+    MeasurementResponse, MeasurementSpec, NodeId, SurfaceId, TextContent,
 };
-use whisker_style::{ComputedLayoutStyle, PropertyImpactSet};
+use whisker_style::{ComputedLayoutStyle, ComputedStyle, InheritedStyle, PropertyImpactSet};
 
 use crate::{
-    DeferredMeasurementApply, LayoutProgress, MeasurementApply, MeasurementError, Scene,
-    SceneError, SceneNode, measurement::MeasurementCoordinator,
+    DeferredMeasurementApply, FrameSink, LayoutProgress, MeasurementApply, MeasurementError,
+    PlainTextInput, Scene, SceneError, SceneNode, lower_paint, lower_plain_text,
+    measurement::MeasurementCoordinator,
 };
 
 /// Result of requesting one layout pass.
@@ -93,6 +94,30 @@ impl From<LayoutError> for SurfaceError {
 impl From<MeasurementError> for SurfaceError {
     fn from(error: MeasurementError) -> Self {
         Self::Measurement(error)
+    }
+}
+
+/// Failure while presenting one prepared transaction to a Host.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SurfacePresentError<SinkError> {
+    /// Scene preparation or revision bookkeeping failed.
+    Surface(SurfaceError),
+    /// The Host rejected the call before accepting the transaction.
+    Sink(SinkError),
+}
+
+impl<SinkError: fmt::Debug> fmt::Display for SurfacePresentError<SinkError> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Whisker surface presentation error: {self:?}")
+    }
+}
+
+impl<SinkError: Error + 'static> Error for SurfacePresentError<SinkError> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Surface(error) => Some(error),
+            Self::Sink(error) => Some(error),
+        }
     }
 }
 
@@ -257,6 +282,37 @@ impl SurfaceEngine {
         Ok(impact)
     }
 
+    /// Applies every currently supported computed layout and paint value.
+    pub fn update_computed_style(
+        &mut self,
+        node: NodeId,
+        style: &ComputedStyle,
+    ) -> Result<PropertyImpactSet, SurfaceError> {
+        self.ensure_mutable()?;
+        let lowered = lower_paint(style.paint(), style.layout());
+        let paint_changed = {
+            let current = self
+                .scene
+                .node(node)
+                .ok_or(SceneError::UnknownNode { node })?;
+            current.box_paint() != Some(&lowered.box_paint)
+                || current.clip() != Some(lowered.clip)
+                || current.opacity() != Some(lowered.opacity)
+                || current.visibility() != Some(lowered.visibility)
+                || current.z_order() != Some(lowered.z_order)
+        };
+        let mut impacts = self.update_layout_style(node, style.layout().clone())?;
+        self.scene.set_box_paint(node, lowered.box_paint)?;
+        self.scene.set_clip(node, lowered.clip)?;
+        self.scene.set_opacity(node, lowered.opacity)?;
+        self.scene.set_visibility(node, lowered.visibility)?;
+        self.scene.set_z_order(node, lowered.z_order)?;
+        if paint_changed {
+            impacts |= PropertyImpactSet::PAINT;
+        }
+        Ok(impacts)
+    }
+
     /// Marks or unmarks a leaf as requiring intrinsic Host measurement.
     ///
     /// Returns whether retained measurement behavior changed.
@@ -300,6 +356,36 @@ impl SurfaceEngine {
             self.layout_dirty = true;
         }
         Ok(changed)
+    }
+
+    /// Lowers and registers one plain UTF-8 Text v1 presentation.
+    ///
+    /// Metric-affecting values come from the already resolved inherited text
+    /// context. The same payload is retained for final frame production and
+    /// registered with Taffy for Host intrinsic measurement.
+    pub fn set_plain_text(
+        &mut self,
+        node: NodeId,
+        input: &PlainTextInput,
+        style: &InheritedStyle,
+    ) -> Result<bool, SurfaceError> {
+        self.ensure_mutable()?;
+        let previous = self
+            .scene
+            .node(node)
+            .ok_or(SceneError::UnknownNode { node })?
+            .text()
+            .cloned();
+        let (mut content, measurement) = lower_plain_text(input, style).into_parts();
+        if previous.as_ref().map(|value| &value.payload) == Some(&content.payload) {
+            content.prepared_content = previous.as_ref().and_then(|value| value.prepared_content);
+        }
+        let content_changed = previous.as_ref() != Some(&content);
+        let measurement_changed = self.set_measurement(node, Some(measurement))?;
+        self.scene
+            .set_text(node, content)
+            .expect("validated synchronized text node remains mutable");
+        Ok(content_changed || measurement_changed)
     }
 
     /// Returns the last final Host metrics retained for a node.
@@ -394,6 +480,8 @@ impl SurfaceEngine {
             .layout
             .compute(root, viewport, &mut self.measurements)?;
         let pass = self.measurements.finish_pass()?;
+        let ready_nodes = self.measurements.ready_nodes();
+        self.sync_text_presentations(&ready_nodes);
         if pass.blocking {
             self.layout_dirty = true;
             return Ok(LayoutProgress::Blocked {
@@ -426,6 +514,7 @@ impl SurfaceEngine {
     ) -> Result<MeasurementApply, SurfaceError> {
         self.ensure_mutable()?;
         let apply = self.measurements.apply_batch(responses)?;
+        self.sync_text_presentations(apply.invalidated_nodes());
         for node in apply.invalidated_nodes() {
             self.layout
                 .invalidate_measurement(*node)
@@ -442,6 +531,7 @@ impl SurfaceEngine {
     ) -> Result<DeferredMeasurementApply, SurfaceError> {
         self.ensure_mutable()?;
         let apply = self.measurements.apply_ready(ready)?;
+        self.sync_text_presentations(apply.invalidated_nodes());
         for node in apply.invalidated_nodes() {
             self.layout
                 .invalidate_measurement(*node)
@@ -457,6 +547,42 @@ impl SurfaceEngine {
         viewport_epoch: u32,
     ) -> Result<Option<&FramePacket>, SurfaceError> {
         self.scene.prepare_frame(viewport_epoch).map_err(Into::into)
+    }
+
+    /// Presents the next transaction and applies the Host acknowledgement.
+    ///
+    /// `NeedSnapshot` rotates the scene epoch and leaves a complete snapshot
+    /// ready for the next call. A sink error discards only the prepared packet;
+    /// retained semantic changes remain dirty and can be retried.
+    pub fn present<Sink: FrameSink>(
+        &mut self,
+        viewport_epoch: u32,
+        sink: &mut Sink,
+    ) -> Result<Option<ApplyResult>, SurfacePresentError<Sink::Error>> {
+        let packet = self
+            .prepare_frame(viewport_epoch)
+            .map_err(SurfacePresentError::Surface)?
+            .cloned();
+        let Some(packet) = packet else {
+            return Ok(None);
+        };
+        let result = match sink.present(&packet) {
+            Ok(result) => result,
+            Err(error) => {
+                self.discard_pending()
+                    .map_err(SurfacePresentError::Surface)?;
+                return Err(SurfacePresentError::Sink(error));
+            }
+        };
+        match result {
+            ApplyResult::Accepted { revision } => self
+                .accept_pending(revision)
+                .map_err(SurfacePresentError::Surface)?,
+            ApplyResult::NeedSnapshot { .. } => self
+                .require_snapshot()
+                .map_err(SurfacePresentError::Surface)?,
+        }
+        Ok(Some(result))
     }
 
     /// Commits the prepared frame after renderer acceptance.
@@ -511,6 +637,25 @@ impl SurfaceEngine {
         self.last_inputs = Some(inputs);
         self.layout_dirty = false;
         Ok(LayoutUpdate::computed(changed.len()))
+    }
+
+    fn sync_text_presentations(&mut self, nodes: &[NodeId]) {
+        for node in nodes {
+            let Some(metrics) = self.measurements.last_ready(*node) else {
+                continue;
+            };
+            let Some(current) = self.scene.node(*node).and_then(SceneNode::text) else {
+                continue;
+            };
+            let content = TextContent {
+                payload: current.payload.clone(),
+                paint: current.paint.clone(),
+                prepared_content: metrics.prepared_content,
+            };
+            self.scene
+                .set_text(*node, content)
+                .expect("measured text remains valid and the scene is mutable");
+        }
     }
 }
 
@@ -1396,6 +1541,60 @@ mod tests {
         assert_eq!(
             format!("{layout_error}"),
             "Whisker surface error: Layout(InvalidViewport)"
+        );
+    }
+
+    #[test]
+    fn present_applies_acknowledgements_recovery_and_retry() {
+        struct FailingSink;
+
+        impl FrameSink for FailingSink {
+            type Error = &'static str;
+
+            fn present(&mut self, _packet: &FramePacket) -> Result<ApplyResult, Self::Error> {
+                Err("transport")
+            }
+        }
+
+        let mut surface = SurfaceEngine::new(surface_id());
+        let root = surface
+            .create_node(element_type(), ComputedLayoutStyle::default())
+            .unwrap();
+        let mut renderer = RecordingRenderer::new(surface_id());
+        assert_eq!(
+            surface.present(1, &mut renderer),
+            Ok(Some(ApplyResult::Accepted { revision: 1 }))
+        );
+        assert_eq!(surface.scene().accepted_revision(), 1);
+
+        surface
+            .scene
+            .set_visibility(root, whisker_protocol::Visibility::Hidden)
+            .unwrap();
+        let mut empty_host = RecordingRenderer::new(surface_id());
+        assert_eq!(
+            surface.present(1, &mut empty_host),
+            Ok(Some(ApplyResult::NeedSnapshot { host_revision: 0 }))
+        );
+        assert_eq!(surface.scene().accepted_revision(), 1);
+        assert_eq!(
+            surface.present(1, &mut empty_host),
+            Ok(Some(ApplyResult::Accepted { revision: 2 }))
+        );
+        assert_eq!(
+            empty_host.frames()[1].packet.header.mode,
+            FrameMode::Snapshot
+        );
+
+        surface.scene.set_z_order(root, 5).unwrap();
+        assert_eq!(
+            surface.present(1, &mut FailingSink),
+            Err(SurfacePresentError::Sink("transport"))
+        );
+        assert!(surface.has_pending_work());
+        assert_eq!(
+            surface.present(1, &mut empty_host),
+            Ok(Some(ApplyResult::Accepted { revision: 3 }))
         );
     }
 }

@@ -25,6 +25,7 @@ use std::rc::Rc;
 use super::handle::Element;
 use crate::element::ElementTag;
 use crate::value::WhiskerValue;
+use whisker_style::SpecifiedStyle;
 
 /// Event-handler propagation type — a faithful 1:1 mapping to Lynx's
 /// four handler kinds (`bind` / `catch` / `capture-bind` /
@@ -132,6 +133,13 @@ pub trait DynRenderer {
         self.set_attribute(handle, key, &value.to_string());
     }
     fn set_inline_styles(&self, handle: Element, css: &str);
+
+    /// Applies renderer-independent typed style and reports whether it was
+    /// accepted. Renderers that still consume Lynx CSS use the default `false`
+    /// result so the caller can fall back to [`Self::set_inline_styles`].
+    fn set_specified_style(&self, _handle: Element, _style: &SpecifiedStyle) -> bool {
+        false
+    }
 
     /// Underlying Lynx sign (`impl_id`) for `handle`, or 0 if the
     /// renderer doesn't model signs (test renderers) or the handle
@@ -603,6 +611,20 @@ pub fn set_inline_styles(handle: Element, css: &str) {
         return;
     }
     with_renderer(|r| r.set_inline_styles(handle, css), ())
+}
+
+/// Attempts to apply renderer-independent typed style.
+///
+/// A `false` result asks the umbrella authoring layer to preserve its legacy
+/// CSS-string fallback for renderers that have not migrated yet.
+pub fn set_specified_style(handle: Element, style: &SpecifiedStyle) -> bool {
+    if is_phantom(handle) {
+        return true;
+    }
+    with_renderer(
+        |renderer| renderer.set_specified_style(handle, style),
+        false,
+    )
 }
 
 /// See [`DynRenderer::element_sign`]. Returns 0 when no renderer is

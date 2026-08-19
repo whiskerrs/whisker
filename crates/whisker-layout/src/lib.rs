@@ -595,6 +595,12 @@ fn convert_style(input: &ComputedLayoutStyle) -> Result<Style, LayoutError> {
             bottom: length(input.padding.bottom, true)?,
             left: length(input.padding.left, true)?,
         },
+        border: Rect {
+            top: length(input.border.top, true)?,
+            right: length(input.border.right, true)?,
+            bottom: length(input.border.bottom, true)?,
+            left: length(input.border.left, true)?,
+        },
         inset: Rect {
             top: length_auto(input.inset.top)?,
             right: length_auto(input.inset.right)?,
@@ -1143,6 +1149,12 @@ mod tests {
                 right: ComputedLengthPercentage::new(0.0, -0.2),
                 bottom: ComputedLengthPercentage::ZERO,
                 left: ComputedLengthPercentage::ZERO,
+            },
+            border: Edges {
+                top: ComputedLengthPercentage::new(1.0, 0.0),
+                right: ComputedLengthPercentage::new(2.0, 0.0),
+                bottom: ComputedLengthPercentage::new(3.0, 0.0),
+                left: ComputedLengthPercentage::new(4.0, 0.0),
             },
             inset: Edges {
                 top: ComputedLengthPercentageAuto::Auto,

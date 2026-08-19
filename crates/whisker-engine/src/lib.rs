@@ -19,17 +19,21 @@
 
 mod host;
 mod measurement;
+mod paint;
 mod recording;
 mod scene;
 mod surface;
+mod text;
 
 pub use host::{HostLayoutError, HostLayoutOptions, MeasurementHost};
 pub use measurement::{
     DeferredMeasurementApply, LayoutProgress, MeasurementApply, MeasurementError,
 };
+pub use paint::{LoweredPaint, lower_paint};
 pub use recording::{FrameSink, RecordedFrame, RecordingRenderer};
 pub use scene::{Scene, SceneError, SceneNode};
-pub use surface::{LayoutUpdate, SurfaceEngine, SurfaceError};
+pub use surface::{LayoutUpdate, SurfaceEngine, SurfaceError, SurfacePresentError};
+pub use text::{LoweredPlainText, PlainTextInput, lower_plain_text};
 pub use whisker_layout;
 pub use whisker_protocol;
 pub use whisker_style;

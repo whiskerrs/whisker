@@ -3,9 +3,9 @@
 use core::fmt;
 
 use crate::{
-    CalcExpression, ColorValue, ComputedLayoutStyle, FontFamilyValue, FontStyleValue,
-    FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue, LineHeightValue,
-    SpecifiedStyle, StyleNumber, StyleProperty, StyleValue,
+    CalcExpression, ColorValue, ComputedLayoutStyle, ComputedPaintStyle, FontFamilyValue,
+    FontStyleValue, FontWeightValue, LengthPercentageValue, LengthUnit, LengthValue,
+    LineHeightValue, SpecifiedStyle, StyleNumber, StyleProperty, StyleValue,
 };
 
 const RPX_REFERENCE_WIDTH: f32 = 750.0;
@@ -195,6 +195,7 @@ impl InheritedStyle {
 pub struct ComputedStyle {
     inherited_text: InheritedStyle,
     layout: ComputedLayoutStyle,
+    paint: ComputedPaintStyle,
 }
 
 impl ComputedStyle {
@@ -206,6 +207,11 @@ impl ComputedStyle {
     /// Returns Taffy-independent computed layout input for this node.
     pub const fn layout(&self) -> &ComputedLayoutStyle {
         &self.layout
+    }
+
+    /// Returns Host-independent computed paint input for this node.
+    pub const fn paint(&self) -> &ComputedPaintStyle {
+        &self.paint
     }
 }
 
@@ -469,11 +475,13 @@ pub fn resolve_style(
     };
     let layout =
         crate::layout::resolve_layout_style(specified, inherited_text.font_size(), environment)?;
+    let paint = crate::paint::resolve_paint_style(specified, &inherited_text, environment)?;
 
     Ok(ResolvedNodeStyle {
         computed: ComputedStyle {
             inherited_text,
             layout,
+            paint,
         },
     })
 }
@@ -693,7 +701,14 @@ fn evaluate_calc(
 }
 
 fn normalize_color(value: &ColorValue) -> Result<ColorValue, StyleResolutionError> {
-    let invalid = || StyleResolutionError::InvalidPropertyValue(StyleProperty::Color);
+    normalize_color_for(value, StyleProperty::Color)
+}
+
+pub(crate) fn normalize_color_for(
+    value: &ColorValue,
+    property: StyleProperty,
+) -> Result<ColorValue, StyleResolutionError> {
+    let invalid = || StyleResolutionError::InvalidPropertyValue(property);
     match value {
         ColorValue::Named(name) if name.is_empty() => Err(invalid()),
         ColorValue::Named(name) => Ok(ColorValue::Named(name.clone())),
@@ -703,7 +718,7 @@ fn normalize_color(value: &ColorValue) -> Result<ColorValue, StyleResolutionErro
             blue,
             alpha,
         } => {
-            let alpha = finite(*alpha, StyleProperty::Color)?;
+            let alpha = finite(*alpha, property)?;
             if !(0.0..=1.0).contains(&alpha) {
                 return Err(invalid());
             }
@@ -720,10 +735,10 @@ fn normalize_color(value: &ColorValue) -> Result<ColorValue, StyleResolutionErro
             lightness,
             alpha,
         } => {
-            let hue = finite(*hue_degrees, StyleProperty::Color)?.rem_euclid(360.0);
-            let saturation = finite(*saturation, StyleProperty::Color)?;
-            let lightness = finite(*lightness, StyleProperty::Color)?;
-            let alpha = finite(*alpha, StyleProperty::Color)?;
+            let hue = finite(*hue_degrees, property)?.rem_euclid(360.0);
+            let saturation = finite(*saturation, property)?;
+            let lightness = finite(*lightness, property)?;
+            let alpha = finite(*alpha, property)?;
             if !(0.0..=100.0).contains(&saturation)
                 || !(0.0..=100.0).contains(&lightness)
                 || !(0.0..=1.0).contains(&alpha)

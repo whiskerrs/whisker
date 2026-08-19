@@ -35,4 +35,5 @@ whisker-macros = { workspace = true }
 whisker-driver = { workspace = true }
 whisker-config = { workspace = true }
 whisker-css = { workspace = true }
+whisker-engine = { workspace = true }
 subsecond = { workspace = true, optional = true }

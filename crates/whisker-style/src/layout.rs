@@ -151,6 +151,8 @@ pub struct ComputedLayoutStyle {
     pub margin: Edges<ComputedLengthPercentageAuto>,
     /// Physical padding. Negative results are clamped by `whisker-layout`.
     pub padding: Edges<ComputedLengthPercentage>,
+    /// Physical border widths. Negative results are rejected during resolution.
+    pub border: Edges<ComputedLengthPercentage>,
     /// Physical position offsets after resolving logical inline edges.
     pub inset: Edges<ComputedLengthPercentageAuto>,
     /// Main-axis flex direction.
@@ -193,6 +195,7 @@ impl Default for ComputedLayoutStyle {
                 ComputedLengthPercentage::ZERO,
             )),
             padding: Edges::all(ComputedLengthPercentage::ZERO),
+            border: Edges::all(ComputedLengthPercentage::ZERO),
             inset: Edges::all(ComputedLengthPercentageAuto::Auto),
             flex_direction: FlexDirectionValue::Row,
             flex_wrap: FlexWrapValue::NoWrap,
@@ -366,6 +369,35 @@ pub(crate) fn resolve_layout_style(
         font_size,
         environment,
         StyleProperty::PaddingLeft,
+    )?;
+
+    style.border.top = resolve_non_negative_length_percentage(
+        declarations.border_top_width,
+        style.border.top,
+        font_size,
+        environment,
+        StyleProperty::BorderTopWidth,
+    )?;
+    style.border.right = resolve_non_negative_length_percentage(
+        declarations.border_right_width,
+        style.border.right,
+        font_size,
+        environment,
+        StyleProperty::BorderRightWidth,
+    )?;
+    style.border.bottom = resolve_non_negative_length_percentage(
+        declarations.border_bottom_width,
+        style.border.bottom,
+        font_size,
+        environment,
+        StyleProperty::BorderBottomWidth,
+    )?;
+    style.border.left = resolve_non_negative_length_percentage(
+        declarations.border_left_width,
+        style.border.left,
+        font_size,
+        environment,
+        StyleProperty::BorderLeftWidth,
     )?;
 
     style.inset = resolve_insets(specified, style.direction, font_size, environment)?;
@@ -576,6 +608,22 @@ fn resolve_optional_length_percentage(
     }
 }
 
+fn resolve_non_negative_length_percentage(
+    value: Option<&StyleValue>,
+    initial: ComputedLengthPercentage,
+    font_size: f32,
+    environment: StyleEnvironment,
+    property: StyleProperty,
+) -> Result<ComputedLengthPercentage, StyleResolutionError> {
+    let resolved =
+        resolve_optional_length_percentage(value, initial, font_size, environment, property)?;
+    if resolved.length() < 0.0 || resolved.fraction() < 0.0 {
+        Err(invalid(property))
+    } else {
+        Ok(resolved)
+    }
+}
+
 fn resolve_insets(
     specified: &SpecifiedStyle,
     direction: DirectionValue,
@@ -645,7 +693,7 @@ fn resolve_aspect_ratio(value: AspectRatioValue) -> Result<f32, StyleResolutionE
     }
 }
 
-fn resolve_affine(
+pub(crate) fn resolve_affine(
     value: &LengthPercentageValue,
     font_size: f32,
     environment: StyleEnvironment,
@@ -834,6 +882,10 @@ struct LayoutDeclarations<'a> {
     padding_right: Option<&'a StyleValue>,
     padding_bottom: Option<&'a StyleValue>,
     padding_left: Option<&'a StyleValue>,
+    border_top_width: Option<&'a StyleValue>,
+    border_right_width: Option<&'a StyleValue>,
+    border_bottom_width: Option<&'a StyleValue>,
+    border_left_width: Option<&'a StyleValue>,
     flex_direction: Option<&'a StyleValue>,
     flex_wrap: Option<&'a StyleValue>,
     flex_grow: Option<&'a StyleValue>,
@@ -872,6 +924,10 @@ impl<'a> LayoutDeclarations<'a> {
                 StyleProperty::PaddingRight => &mut values.padding_right,
                 StyleProperty::PaddingBottom => &mut values.padding_bottom,
                 StyleProperty::PaddingLeft => &mut values.padding_left,
+                StyleProperty::BorderTopWidth => &mut values.border_top_width,
+                StyleProperty::BorderRightWidth => &mut values.border_right_width,
+                StyleProperty::BorderBottomWidth => &mut values.border_bottom_width,
+                StyleProperty::BorderLeftWidth => &mut values.border_left_width,
                 StyleProperty::FlexDirection => &mut values.flex_direction,
                 StyleProperty::FlexWrap => &mut values.flex_wrap,
                 StyleProperty::FlexGrow => &mut values.flex_grow,

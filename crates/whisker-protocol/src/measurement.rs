@@ -230,7 +230,7 @@ impl MeasurementPayload {
 }
 
 impl TextMeasurePayload {
-    fn validate(&self) -> Result<(), MeasurementPayloadError> {
+    pub(crate) fn validate(&self) -> Result<(), MeasurementPayloadError> {
         if self.style.font_families.is_empty()
             || self
                 .style
