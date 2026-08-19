@@ -474,6 +474,14 @@ This is an information-level contract, not a final Rust trait signature. A
 generated binding may use function tables, FFI functions, JNI methods, or
 WASM imports. The semantics and ordering remain the same.
 
+The semantic layer deliberately does not mandate one serialized measurement
+packet for every platform. Generated bindings may lower the same typed batch
+to JNI arrays, C-compatible tables, or WASM linear-memory views without an
+intermediate encoding. Each generated transport must round-trip the shared
+Rust conformance fixtures and preserve the batch validation rules. This keeps
+transport allocation and binary-format versioning out of the common hot path
+while `MeasurementHost` remains the final common Rust-facing seam.
+
 `attach_surface` attaches to a Host root already supplied by bootstrap; it does
 not require Rust to create an operating-system window. `RendererEventSink` is
 the reverse-direction callback interface registered once for that surface.
